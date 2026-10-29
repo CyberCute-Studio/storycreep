@@ -7,9 +7,9 @@
 //
 // schema/conformance holds the conformance suite, of scenarios of inputs to
 // a runtime of a snapshot and what it observes of them, which
-// TestConformance runs, and which the TypeScript engine (plan item 44) and
-// the GDScript runtime (item 103) run too; schema/conformance/README.md
-// describes the format and the observations.
+// TestConformance runs, and which play mode's TypeScript engine, in
+// web/shared/src/flow, runs too, as the GDScript runtime (item 103) will;
+// schema/conformance/README.md describes the format and the observations.
 package flow
 
 import (

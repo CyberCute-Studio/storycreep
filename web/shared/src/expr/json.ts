@@ -1,0 +1,397 @@
+// A reader of JSON that keeps each number as it is written, so that a value
+// is read by its declaration rather than by the double that JSON.parse makes
+// of it (PRD §5.8.9), and that refuses what no file of the published format
+// holds, as the Go package server/internal/value's CheckJSON does: null
+// anywhere (§6.2), an escape of a lone surrogate, which is no character, and
+// a number written with an exponent beyond ±999, as 0e1000.
+
+/** The greatest exponent, either way, that a number may be written with. */
+export const MAX_EXPONENT = 999;
+
+/**
+ * How deeply arrays and objects may nest, as deeply as Go's encoding/json
+ * reads them.
+ */
+export const MAX_JSON_DEPTH = 10000;
+
+/** A JSON number, as it is written. */
+export class JsonNumber {
+  readonly raw: string;
+
+  constructor(raw: string) {
+    this.raw = raw;
+  }
+
+  /** The double nearest the number, as JSON.parse reads it. */
+  get value(): number {
+    return Number(this.raw);
+  }
+}
+
+/** A JSON value as readJSON reads it: an object's prototype is null. */
+export type JsonValue =
+  | boolean
+  | string
+  | JsonNumber
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/** The error of a text that readJSON refuses. */
+export class JsonError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "JsonError";
+  }
+}
+
+/**
+ * Returns the JSON value that text holds, as the Go package reads one: an
+ * object of the key that it has twice the last, as a consumer reads it, with
+ * a null prototype, so that a key such as __proto__ is a key like any other;
+ * an array; a number as the JsonNumber that it is written as; a string; and
+ * a boolean. It throws a JsonError of a text that is not one JSON value, or
+ * that holds null anywhere, a lone surrogate, escaped or not, a number
+ * written with an exponent beyond ±MAX_EXPONENT, or arrays and objects
+ * nested more than MAX_JSON_DEPTH deep. It never recurses.
+ */
+export function readJSON(text: string): JsonValue {
+  return new Reader(text).document();
+}
+
+/**
+ * Returns the JSON value of bytes, read as UTF-8, as readJSON reads a text,
+ * or throws a JsonError of bytes that are not UTF-8, or that start with a
+ * byte order mark, which no JSON text does.
+ */
+export function readJSONBytes(bytes: Uint8Array): JsonValue {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
+  } catch {
+    throw new JsonError("is not UTF-8");
+  }
+  return readJSON(text);
+}
+
+/**
+ * Returns v as JSON.parse would have read it, each number the double nearest
+ * it, and each object a plain one, without recursing.
+ */
+export function plain(v: JsonValue): unknown {
+  const root: { value?: unknown } = {};
+  const stack: [JsonValue, (x: unknown) => void][] = [
+    [
+      v,
+      (x) => {
+        root.value = x;
+      },
+    ],
+  ];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [from, put] = top;
+    if (from instanceof JsonNumber) {
+      put(from.value);
+    } else if (Array.isArray(from)) {
+      const out: unknown[] = new Array(from.length);
+      put(out);
+      from.forEach((item, i) => {
+        stack.push([
+          item,
+          (x) => {
+            out[i] = x;
+          },
+        ]);
+      });
+    } else if (typeof from === "object") {
+      const out: Record<string, unknown> = {};
+      put(out);
+      // Each key is defined in its order, and set once its value is read.
+      for (const key of Object.keys(from)) {
+        Object.defineProperty(out, key, {
+          value: undefined,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+        stack.push([
+          from[key],
+          (x) => {
+            Object.defineProperty(out, key, { value: x });
+          },
+        ]);
+      }
+    } else {
+      put(from);
+    }
+  }
+  return root.value;
+}
+
+/** Reports whether v is an object of readJSON's, neither an array nor a scalar. */
+export function isJsonObject(v: unknown): v is { [key: string]: JsonValue } {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    !(v instanceof JsonNumber)
+  );
+}
+
+// A container that the reader has opened: an array, or an object and the key
+// of the value that it reads.
+type Container =
+  | { array: JsonValue[] }
+  | { object: { [key: string]: JsonValue }; key: string };
+
+const numberPattern = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+
+class Reader {
+  private i = 0;
+
+  constructor(private readonly text: string) {}
+
+  private fail(problem: string): JsonError {
+    return new JsonError(problem);
+  }
+
+  // space steps past the white space at the next character: a space, a tab,
+  // a line feed, or a carriage return.
+  private space(): void {
+    for (; this.i < this.text.length; this.i++) {
+      const c = this.text.charCodeAt(this.i);
+      if (c !== 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) {
+        return;
+      }
+    }
+  }
+
+  document(): JsonValue {
+    const v = this.value();
+    this.space();
+    if (this.i !== this.text.length) {
+      throw this.fail("is not one JSON value");
+    }
+    return v;
+  }
+
+  // value reads a value, its arrays and objects by a stack of the containers
+  // that are open, rather than by recursing.
+  private value(): JsonValue {
+    const stack: Container[] = [];
+    for (;;) {
+      this.space();
+      let v: JsonValue;
+      const c = this.text[this.i];
+      if (c === "{" || c === "[") {
+        this.i++;
+        this.space();
+        const object = c === "{";
+        if (this.text[this.i] === (object ? "}" : "]")) {
+          this.i++;
+          v = object ? Object.create(null) : [];
+        } else {
+          if (stack.length >= MAX_JSON_DEPTH) {
+            throw this.fail(
+              `nests arrays and objects more than ${MAX_JSON_DEPTH} deep`,
+            );
+          }
+          stack.push(
+            object
+              ? { object: Object.create(null), key: this.key() }
+              : { array: [] },
+          );
+          continue;
+        }
+      } else {
+        v = this.scalar();
+      }
+      // v goes into the container that is open, and closes each that ends
+      // after it, until one goes on with another value.
+      for (;;) {
+        const top = stack[stack.length - 1];
+        if (top === undefined) {
+          return v;
+        }
+        if ("array" in top) {
+          top.array.push(v);
+        } else {
+          top.object[top.key] = v;
+        }
+        this.space();
+        const next = this.text[this.i];
+        if (next === ",") {
+          this.i++;
+          if (!("array" in top)) {
+            this.space();
+            top.key = this.key();
+          }
+          break;
+        }
+        if (next !== ("array" in top ? "]" : "}")) {
+          throw this.fail("is not one JSON value");
+        }
+        this.i++;
+        stack.pop();
+        v = "array" in top ? top.array : top.object;
+      }
+    }
+  }
+
+  // key reads an object's key and the colon after it.
+  private key(): string {
+    if (this.text[this.i] !== '"') {
+      throw this.fail("is not one JSON value");
+    }
+    const key = this.string();
+    this.space();
+    if (this.text[this.i] !== ":") {
+      throw this.fail("is not one JSON value");
+    }
+    this.i++;
+    return key;
+  }
+
+  // scalar reads a string, a number, true, or false.
+  private scalar(): JsonValue {
+    const c = this.text[this.i];
+    if (c === '"') {
+      return this.string();
+    }
+    if (c === "-" || (c >= "0" && c <= "9")) {
+      return this.number();
+    }
+    for (const [word, v] of [
+      ["true", true],
+      ["false", false],
+    ] as const) {
+      if (this.text.startsWith(word, this.i)) {
+        this.i += word.length;
+        return v;
+      }
+    }
+    if (this.text.startsWith("null", this.i)) {
+      throw this.fail("holds null");
+    }
+    throw this.fail("is not one JSON value");
+  }
+
+  // number reads a number, which it keeps as it is written, once it has
+  // checked that its exponent, if it has one, is within ±MAX_EXPONENT, read
+  // without its leading zeros, however many.
+  private number(): JsonNumber {
+    numberPattern.lastIndex = this.i;
+    const m = numberPattern.exec(this.text);
+    if (m === null) {
+      throw this.fail("is not one JSON value");
+    }
+    const raw = m[0];
+    this.i += raw.length;
+    const e = raw.search(/[eE]/);
+    if (e >= 0) {
+      const magnitude = raw
+        .slice(e + 1)
+        .replace(/^[+-]/, "")
+        .replace(/^0+/, "");
+      if (magnitude.length > 3 || Number(magnitude) > MAX_EXPONENT) {
+        throw this.fail(
+          `writes the number ${raw.slice(0, 40)} with an exponent beyond ±${MAX_EXPONENT}, as no number of a file is written`,
+        );
+      }
+    }
+    return new JsonNumber(raw);
+  }
+
+  // string reads a string, from its opening quote to its closing one.
+  private string(): string {
+    this.i++;
+    let out = "";
+    let run = this.i;
+    for (;;) {
+      if (this.i >= this.text.length) {
+        throw this.fail("is not one JSON value");
+      }
+      const c = this.text.charCodeAt(this.i);
+      if (c === 0x22) {
+        out += this.text.slice(run, this.i);
+        this.i++;
+        return out;
+      }
+      if (c < 0x20) {
+        throw this.fail("is not one JSON value");
+      }
+      if (c >= 0xd800 && c <= 0xdfff) {
+        // A pair, of a high surrogate and then a low one, is a character,
+        // and anything else no text.
+        const low = this.text.charCodeAt(this.i + 1);
+        if (c > 0xdbff || !(low >= 0xdc00 && low <= 0xdfff)) {
+          throw this.fail("holds a lone surrogate, which is not UTF-8");
+        }
+        this.i += 2;
+        continue;
+      }
+      if (c !== 0x5c) {
+        this.i++;
+        continue;
+      }
+      out += this.text.slice(run, this.i);
+      out += this.escape();
+      run = this.i;
+    }
+  }
+
+  // escape reads the escape at the next character, a backslash, and returns
+  // the character that it stands for: a \u of a high surrogate is one with
+  // the \u of a low one that follows it at once, and any other \u of a
+  // surrogate no character.
+  private escape(): string {
+    const c = this.text[this.i + 1];
+    const simple: Record<string, string> = {
+      '"': '"',
+      "\\": "\\",
+      "/": "/",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+    };
+    if (c !== undefined && Object.hasOwn(simple, c)) {
+      this.i += 2;
+      return simple[c];
+    }
+    if (c !== "u") {
+      throw this.fail("is not one JSON value");
+    }
+    const u = this.hex4(this.i + 2);
+    this.i += 6;
+    if (u >= 0xdc00 && u <= 0xdfff) {
+      throw this.fail(
+        "escapes a lone surrogate in a string, which is not a character",
+      );
+    }
+    if (u >= 0xd800 && u <= 0xdbff) {
+      const low = this.text.startsWith("\\u", this.i)
+        ? this.hex4(this.i + 2)
+        : -1;
+      if (!(low >= 0xdc00 && low <= 0xdfff)) {
+        throw this.fail(
+          "escapes a lone surrogate in a string, which is not a character",
+        );
+      }
+      this.i += 6;
+      return String.fromCharCode(u, low);
+    }
+    return String.fromCharCode(u);
+  }
+
+  // hex4 returns the value of the four hexadecimal digits at i.
+  private hex4(i: number): number {
+    const digits = this.text.slice(i, i + 4);
+    if (!/^[0-9a-fA-F]{4}$/.test(digits)) {
+      throw this.fail("is not one JSON value");
+    }
+    return Number.parseInt(digits, 16);
+  }
+}

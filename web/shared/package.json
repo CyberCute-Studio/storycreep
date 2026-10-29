@@ -6,6 +6,8 @@
   "type": "module",
   "exports": {
     "./api": "./src/api/index.ts",
+    "./expr": "./src/expr/index.ts",
+    "./flow": "./src/flow/index.ts",
     "./i18n": "./src/i18n/index.ts",
     "./ids": "./src/ids.ts",
     "./published": "./src/published/index.ts",

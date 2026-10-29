@@ -4,7 +4,7 @@ The tables of Unicode that the expression language's `upper`, `lower`, and `trim
 
 | File | Contents |
 | --- | --- |
-| [`tables.json`](tables.json) | The tables, generated from the files of `ucd/`. `server/internal/semantics` generates it, and its own copy of the tables, `tables.go`, and `go test ./...` fails when either is not what the files of `ucd/` generate; `go test ./internal/semantics -run TestTables -update`, in `server/`, rewrites both. |
+| [`tables.json`](tables.json) | The tables, generated from the files of `ucd/`. `server/internal/semantics` generates it, and its own copy of the tables, `tables.go`, and `go test ./...` fails when either is not what the files of `ucd/` generate; `go test ./internal/semantics -run TestTables -update`, in `server/`, rewrites both. The TypeScript evaluator, `web/shared/src/expr/semantics.ts`, reads it as it is, so that it has no copy to go out of date. |
 | [`ucd/UnicodeData.txt`](ucd/UnicodeData.txt) | The UCD's `UnicodeData.txt`, as unicode.org publishes it at `https://www.unicode.org/Public/18.0.0/ucd/`, whose fields 12 and 13 are a code point's `Simple_Uppercase_Mapping` and `Simple_Lowercase_Mapping`. |
 | [`ucd/PropList.txt`](ucd/PropList.txt) | The UCD's `PropList.txt`, from the same place, which lists the code points of `White_Space`. |
 | [`ucd/LICENSE.txt`](ucd/LICENSE.txt) | The Unicode License v3, under which Unicode, Inc. publishes the UCD, and under which the files of `ucd/` and the tables generated from them are distributed here. |

@@ -162,6 +162,19 @@ export function decodeId(kind: IdKind, id: string): Uint8Array {
 }
 
 /**
+ * Reports whether id is the identifier of an entity of the given type in its
+ * canonical spelling, as encodeId writes it: the published format holds
+ * identifiers so, so that a consumer compares them as strings.
+ */
+export function isCanonicalId(kind: IdKind, id: string): boolean {
+  try {
+    return encodeId(kind, decodeId(kind, id)) === id;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returns the entity type and the UUID of the public identifier, whatever its
  * type.
  *
