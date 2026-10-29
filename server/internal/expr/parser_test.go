@@ -18,13 +18,11 @@ func children(n Node) []Node {
 	return out
 }
 
-// ranges returns the kind and the range of each node of n, n first, each
-// node before its children.
+// ranges returns the kind and the range of each node of n, as Walk gives
+// them: n first, each node before its children.
 func ranges(n Node) []string {
-	out := []string{fmt.Sprintf("%s %d-%d", n.Kind(), n.Range().Start, n.Range().End)}
-	for _, c := range children(n) {
-		out = append(out, ranges(c)...)
-	}
+	var out []string
+	Walk(n, func(n Node) { out = append(out, fmt.Sprintf("%s %d-%d", n.Kind(), n.Range().Start, n.Range().End)) })
 	return out
 }
 
@@ -32,7 +30,8 @@ func ranges(n Node) []string {
 // first token to its last, with the parentheses around its operands but not
 // those around itself, so that an error that names an operand can cover it as
 // it is written, and a name's range is the name's alone, which a rename
-// rewrites.
+// rewrites. It checks too that Walk gives every node of each kind that has
+// children, each before its children, and those in the order of the source.
 func TestRanges(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

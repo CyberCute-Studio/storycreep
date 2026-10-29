@@ -63,6 +63,22 @@ type Board struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type BranchOutput struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardID     pgtype.UUID
+	NodeID      pgtype.UUID
+	Kind        string
+	Order       pgtype.Text
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Component struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID
@@ -99,20 +115,42 @@ type ComponentType struct {
 }
 
 type Connection struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
-	FromNodeID  pgtype.UUID
-	ToNodeID    pgtype.UUID
-	Order       string
-	Label       []byte
-	Rev         int64
-	DeletedAt   pgtype.Timestamptz
-	CreatedBy   pgtype.UUID
-	UpdatedBy   pgtype.UUID
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	BoardID      pgtype.UUID
+	FromNodeID   pgtype.UUID
+	ToNodeID     pgtype.UUID
+	Order        string
+	Label        []byte
+	Rev          int64
+	DeletedAt    pgtype.Timestamptz
+	CreatedBy    pgtype.UUID
+	UpdatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	FromOutputID pgtype.UUID
+}
+
+type Expression struct {
+	ID             pgtype.UUID
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	BoardID        pgtype.UUID
+	NodeID         pgtype.UUID
+	ConnectionID   pgtype.UUID
+	BranchOutputID pgtype.UUID
+	Field          string
+	Context        string
+	Source         string
+	Ast            []byte
+	AstVersion     pgtype.Int4
+	IsValid        bool
+	Error          []byte
+	Refs           []pgtype.UUID
+	Keys           []string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type Folder struct {
@@ -207,20 +245,21 @@ type LiveComponentType struct {
 }
 
 type LiveConnection struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
-	FromNodeID  pgtype.UUID
-	ToNodeID    pgtype.UUID
-	Order       string
-	Label       []byte
-	Rev         int64
-	DeletedAt   pgtype.Timestamptz
-	CreatedBy   pgtype.UUID
-	UpdatedBy   pgtype.UUID
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	BoardID      pgtype.UUID
+	FromNodeID   pgtype.UUID
+	ToNodeID     pgtype.UUID
+	Order        string
+	Label        []byte
+	Rev          int64
+	DeletedAt    pgtype.Timestamptz
+	CreatedBy    pgtype.UUID
+	UpdatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	FromOutputID pgtype.UUID
 }
 
 type LiveFolder struct {

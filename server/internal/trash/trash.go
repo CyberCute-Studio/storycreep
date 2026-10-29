@@ -18,20 +18,23 @@
 // folder once its time has passed and it holds nothing. So do a component
 // type and an attribute definition (package component): restoring a
 // component restores its type, and the purge deletes a type once it holds
-// no component either. So does a connection deleted on its own (package
-// connection), which its undo restores. A node's connections are in the
-// trash with it, as its nodes are with a board, and come back once neither
-// of their nodes is in the trash: restoring a node, or its board, reconnects
-// them where they can be, and its batch's answer lists those that it could
-// not reconnect, through the reconnections that package connection registers
-// with the pipeline (commands.RegisterReconnection, AC1).
+// no component either. So do a connection and a branch's output deleted on
+// their own (package connection, package node), which the undo of their
+// deletion restores. A node's connections and outputs are in the trash with
+// it, as its nodes are with a board, and an output's connections with the
+// output, and a connection comes back once neither of its nodes, nor the
+// output that it leaves, is in the trash: restoring a node, an output, or a
+// board reconnects them where they can be, and its batch's answer lists
+// those that it could not reconnect, through the reconnections that package
+// connection registers with the pipeline (commands.RegisterReconnection,
+// AC1).
 //
 // A table whose rows go to the trash is registered with it by its live view,
 // its branch of the list's query (TrashItems) if its rows are listed, and
-// its purge (PurgeBoards, PurgeNodes, PurgeConnections, PurgeVariables,
-// PurgeComponents, PurgeAttributeDefs, PurgeComponentTypes, PurgeFolders),
-// which the package's tests hold every table of a project's content with a
-// deleted_at to.
+// its purge (PurgeBoards, PurgeNodes, PurgeBranchOutputs, PurgeConnections,
+// PurgeVariables, PurgeComponents, PurgeAttributeDefs, PurgeComponentTypes,
+// PurgeFolders), which the package's tests hold every table of a project's
+// content with a deleted_at to.
 //
 // Listing the trash is reading the project's content (§5.6): it needs a role
 // on the project that is not none, and project:read of an API token.

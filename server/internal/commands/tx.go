@@ -39,8 +39,11 @@ type Tx struct {
 	// changed are the entities that the batch's commands changed, with their
 	// latest revisions, in the order of their first change, and at their
 	// indexes. revs are the revisions that the batch has seen of each entity,
-	// read by the pipeline or reported by a command.
+	// read by the pipeline or reported by a command. by are the types of the
+	// commands, and the names of the derivations, that changed each entity of
+	// changed, at its index, each once, which a derivation reads (Change).
 	changed []Revision
+	by      [][]Type
 	at      map[Ref]int
 	revs    map[Ref]int64
 	// steps are the steps of the inverse of the command that applies, none
@@ -97,6 +100,9 @@ type Tx struct {
 	// keeps each once however many the batch restores.
 	restored map[ids.Kind][]ids.UUID
 	reported map[Ref]struct{}
+	// left are the names of the derivations that the batch's commands left
+	// work for (Leave).
+	left map[string]bool
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -164,7 +170,8 @@ func (t *Tx) UndoRoom() int {
 // commands of the batch change is named once, with its latest revision. It
 // returns an error, which the command returns to refuse the batch, unless it
 // is called from the command's Apply, which alone changes anything (not from
-// an Inverse, nor from an Entity's functions), the command touches the kind
+// an Inverse, nor from an Entity's functions), or from a derivation's Derive
+// (RegisterDerivation), the command, or the derivation, touches the kind
 // (Spec.Touches), and rev is above every revision of the entity that the
 // batch has seen, as it is when the command incremented it; and it returns
 // ErrUndoTooLarge, which the pipeline refuses the command for as one whose
@@ -219,10 +226,14 @@ func (t *Tx) Changed(kind ids.Kind, id ids.UUID, rev int64) error {
 	}
 	if i, ok := t.at[ref]; ok {
 		t.changed[i].Rev = rev
+		if !slices.Contains(t.by[i], t.current.typ) {
+			t.by[i] = append(t.by[i], t.current.typ)
+		}
 		return nil
 	}
 	t.at[ref] = len(t.changed)
 	t.changed = append(t.changed, Revision{Ref: ref, Rev: rev})
+	t.by = append(t.by, []Type{t.current.typ})
 	return nil
 }
 
@@ -251,6 +262,57 @@ func (t *Tx) Restored(kind ids.Kind, id ids.UUID) error {
 	}
 	t.reported[ref] = struct{}{}
 	t.restored[kind] = append(t.restored[kind], id)
+	return nil
+}
+
+// Leave reports that the command leaves work for the derivation of the name
+// (RegisterDerivation), which the pipeline runs once every command of the
+// batch has applied, as one that writes an expression's source leaves
+// package expression's to compile it, so that the derivation knows that the
+// batch left it work (Left), and passes over one that left it none, as one
+// that only moves nodes. It returns an error, which the command returns to
+// refuse the batch, unless the registry has the derivation, so that a
+// registry that lacks it fails the batch rather than commit what only the
+// derivation would have made whole.
+func (t *Tx) Leave(name string) error {
+	if !slices.ContainsFunc(t.pipeline.registry.derivations, func(d derivation) bool { return d.Name == name }) {
+		return fmt.Errorf("commands: the registry has no derivation %q, which a command leaves work for: register "+
+			"it (RegisterDerivation)", name)
+	}
+	if t.left == nil {
+		t.left = map[string]bool{}
+	}
+	t.left[name] = true
+	return nil
+}
+
+// Left reports whether a command of the batch left work for the derivation
+// of the name (Leave).
+func (t *Tx) Left(name string) bool {
+	return t.left[name]
+}
+
+// derive runs the registry's derivations, in the order of their
+// registration, once every command of the batch has applied, each with what
+// the batch has changed so far, its commands and the derivations before it,
+// and the types of those that changed each entity. A derivation reports its
+// changes as a command does (Changed), as one that touches its kinds, but no
+// step of the batch's undo expects them.
+func (t *Tx) derive(ctx context.Context) error {
+	for _, d := range t.pipeline.registry.derivations {
+		t.current, t.steps = d.spec, nil
+		clear(t.expecting)
+		clear(t.expected)
+		changed := make([]Change, len(t.changed))
+		for i, c := range t.changed {
+			changed[i] = Change{Revision: c, By: slices.Clone(t.by[i])}
+		}
+		err := d.Derive(ctx, t, changed)
+		t.current = nil
+		if err != nil {
+			return fmt.Errorf("commands: the derivation %s: %w", d.Name, err)
+		}
+	}
 	return nil
 }
 

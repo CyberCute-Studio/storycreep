@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 	"github.com/CyberCute-Studio/storycreep/server/internal/slug"
 )
@@ -136,7 +137,7 @@ type entityRevisionBody struct {
 // the project's trash, which the batch could not reconnect.
 type unreconnectedBody struct {
 	ID         string   `json:"id" doc:"The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves"`
-	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too"`
+	WaitingFor []string `json:"waiting_for" nullable:"false" doc:"The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order"`
 }
 
 // undoCommandBody is a command of a batch's undo, as a client sends it back
@@ -321,8 +322,10 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute " +
 			"definition, or a component that is not an identifier, 409 key_taken for a key that another entity of " +
 			"its scope has, 409 component_type_in_use for a component type to delete of which a component that " +
-			"is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other " +
-			"boards target, which the command does not confirm, whose details list them." +
+			"is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other " +
+			"boards target, which the command does not confirm, whose details list them, or 409 " +
+			"branch_output_connected for a branch output to delete that connections leave, which the command " +
+			"does not confirm, whose details list them." +
 			fmt.Sprintf(" A batch whose undo, the inverses of its commands as the operation log keeps them, "+
 				"each number without an exponent, would take more than %d MiB, with the revisions that they "+
 				"expect, or would have more than %d commands, so that the batch that undoes it would not fit in a "+
@@ -557,7 +560,11 @@ func pipelineError(err error) error {
 // of which a component that is not in the trash is, 409 board_referenced, with
 // the jumpers that target the board as details.jumpers and how many there are
 // as details.jumper_count, for a board to delete whose nodes jumpers on other
-// boards target, which the command does not confirm, and 422 validation_failed
+// boards target, which the command does not confirm, 409
+// branch_output_connected, with the connections that leave the output as
+// details.connections and how many there are as details.connection_count, for
+// a branch output to delete that connections leave, which the command does
+// not confirm, and 422 validation_failed
 // for any other value that the project's state does not take, as an ID of a
 // board that the project does not have, each with the field's problem in
 // details.errors, and with undo_too_large as details.reason for a command
@@ -569,6 +576,7 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	var invalid *slug.Error
 	var key *ident.Error
 	var referenced *board.ReferencedError
+	var connected *node.ConnectedError
 	switch {
 	case errors.Is(r.Reason, commands.ErrUndoTooLarge):
 		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"reason": undoTooLarge,
@@ -590,6 +598,9 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	case errors.As(r.Reason, &referenced):
 		return &api.Error{Code: api.CodeBoardReferenced, Details: map[string]any{"errors": problems,
 			"jumpers": referenced.Jumpers, "jumper_count": referenced.Count}}
+	case errors.As(r.Reason, &connected):
+		return &api.Error{Code: api.CodeOutputConnected, Details: map[string]any{"errors": problems,
+			"connections": connected.Connections, "connection_count": connected.Count}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

@@ -269,8 +269,9 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 	// of random batches, most of them creations, which leave entities of each
 	// kind, some in the trash.
 	creations := []string{"folder.create", "board.create", "node.create", "node.create", "node.create",
-		"connection.create", "connection.create", "variable.create", "component_type.create", "attribute.create",
-		"attribute.create", "component.create", "component.create"}
+		"connection.create", "connection.create", "variable.create", "variable.create", "component_type.create",
+		"attribute.create", "attribute.create", "component.create", "component.create", "branch_output.create",
+		"branch_output.create"}
 	for range 120 {
 		typ := creations[g.r.IntN(len(creations))]
 		if g.r.IntN(3) == 0 {
@@ -509,7 +510,8 @@ func (c *undoClient) revert(e *undoEntry) *undoEntry {
 var undoTables = []struct{ table, live string }{
 	{"folder", "live_folder"}, {"board", "live_board"}, {"variable", "live_variable"},
 	{"component_type", "live_component_type"}, {"attribute_def", "live_attribute_def"},
-	{"component", "live_component"}, {"node", "live_node"}, {"connection", "live_connection"},
+	{"component", "live_component"}, {"node", "live_node"}, {"branch_output", "live_branch_output"},
+	{"connection", "live_connection"},
 }
 
 // undoRevisions returns the revision of every entity of the project, by its
@@ -518,7 +520,7 @@ func undoRevisions(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]in
 	t.Helper()
 	kinds := map[string]ids.Kind{"folder": ids.Folder, "board": ids.Board, "variable": ids.Variable,
 		"component_type": ids.ComponentType, "attribute_def": ids.AttributeDef, "component": ids.Component,
-		"node": ids.Node, "connection": ids.Connection}
+		"node": ids.Node, "branch_output": ids.BranchOutput, "connection": ids.Connection}
 	revs := map[string]int64{}
 	var rev int64
 	if err := conn.QueryRow(context.Background(), "SELECT rev FROM project WHERE id = $1", project).
@@ -593,6 +595,15 @@ func readUndoState(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]un
 		read(tb.table, "SELECT t.id::text, to_jsonb(t), EXISTS (SELECT 1 FROM "+tb.live+" l WHERE l.id = t.id) "+
 			"FROM "+tb.table+" t WHERE t.project_id = $1")
 	}
+	// An expression's own ID is made anew when it is added again, so it is
+	// read by its owner and its field, with what compiling its source gives,
+	// which compiling it against the project as the undo leaves it gives
+	// again. It is in the trash with its owner.
+	read("expression", `SELECT coalesce(e.node_id, e.connection_id, e.branch_output_id)::text || '/' || e.field,
+		to_jsonb(e) - 'id', EXISTS (SELECT 1 FROM live_node l WHERE l.id = e.node_id)
+			OR EXISTS (SELECT 1 FROM live_connection l WHERE l.id = e.connection_id)
+			OR EXISTS (SELECT 1 FROM live_branch_output l WHERE l.id = e.branch_output_id)
+		FROM expression e WHERE e.project_id = $1`)
 	// A value's own ID is made anew when it is added again.
 	read("attribute_value", `SELECT v.component_id::text || '/' || v.attribute_def_id::text, to_jsonb(v) - 'id',
 		EXISTS (SELECT 1 FROM live_component c WHERE c.id = v.component_id)
@@ -609,6 +620,7 @@ type undoModel struct {
 	folders           []undoEntity
 	boards            []undoEntity
 	nodes             []undoEntity
+	outputs           []undoEntity
 	connections       []undoEntity
 	variables         []undoEntity
 	types             []undoEntity
@@ -621,13 +633,14 @@ type undoModel struct {
 type undoEntity struct {
 	id            string
 	live, deleted bool
-	// kind is a folder's, typ a node's, a variable's, or an attribute
-	// definition's, scope a variable's, board a node's or a connection's,
+	// kind is a folder's or a branch output's, typ a node's, a variable's,
+	// or an attribute definition's, scope a variable's, board a node's, an
+	// output's, or a connection's, node an output's, key a variable's,
 	// componentType an attribute definition's or a component's, options an
 	// enum's, and runtime an attribute definition's.
-	kind, typ, scope, board, componentType string
-	options                                []string
-	runtime                                bool
+	kind, typ, scope, board, node, key, componentType string
+	options                                           []string
+	runtime                                           bool
 }
 
 // readUndoModel reads the project's content for the generators.
@@ -668,10 +681,14 @@ func readUndoModel(t *testing.T, conn *pgx.Conn, project ids.UUID) *undoModel {
 	read(ids.Board, common("board")+" FROM board t WHERE t.project_id = $1 ORDER BY t.id", &m.boards, none)
 	read(ids.Node, common("node")+", t.type, t.board_id FROM node t WHERE t.project_id = $1 ORDER BY t.id",
 		&m.nodes, func(e *undoEntity) []any { return []any{&e.typ, encoded(ids.Board, &e.board)} })
+	read(ids.BranchOutput, common("branch_output")+", t.kind, t.node_id, t.board_id FROM branch_output t "+
+		"WHERE t.project_id = $1 ORDER BY t.id", &m.outputs, func(e *undoEntity) []any {
+		return []any{&e.kind, encoded(ids.Node, &e.node), encoded(ids.Board, &e.board)}
+	})
 	read(ids.Connection, common("connection")+", t.board_id FROM connection t WHERE t.project_id = $1 ORDER BY t.id",
 		&m.connections, func(e *undoEntity) []any { return []any{encoded(ids.Board, &e.board)} })
-	read(ids.Variable, common("variable")+", t.type, t.scope FROM variable t WHERE t.project_id = $1 ORDER BY t.id",
-		&m.variables, func(e *undoEntity) []any { return []any{&e.typ, &e.scope} })
+	read(ids.Variable, common("variable")+", t.type, t.scope, t.key FROM variable t WHERE t.project_id = $1 "+
+		"ORDER BY t.id", &m.variables, func(e *undoEntity) []any { return []any{&e.typ, &e.scope, &e.key} })
 	read(ids.ComponentType, common("component_type")+" FROM component_type t WHERE t.project_id = $1 ORDER BY t.id",
 		&m.types, none)
 	read(ids.AttributeDef, common("attribute_def")+", t.type, t.component_type_id, t.enum_options, t.is_runtime "+
@@ -1148,31 +1165,53 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	"node.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.nodes, false) },
 
 	"connection.create": func(g *undoGen) (map[string]any, bool) {
-		from, ok := g.pick(g.m.nodes, func(n undoEntity) bool { return n.live && n.typ == "element" })
+		from, port, ok := g.port(func(n undoEntity) bool { return true })
 		if !ok {
 			return nil, false
 		}
 		to, _ := g.pick(g.m.nodes, func(n undoEntity) bool { return n.live && n.board == from.board })
 		p := obj("id", g.id(ids.Connection), "from_node_id", from.id, "to_node_id", to.id)
+		if port != "" {
+			p["from_port"] = port
+		}
 		if g.coin() {
 			p["label"] = paragraph(g.text())
+		}
+		if g.coin() {
+			p["condition"] = g.condition()
+		}
+		if g.coin() {
+			p["on_traverse"] = g.script()
 		}
 		g.maybeOrder(p)
 		return p, true
 	},
 	"connection.update": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.connections, func(c undoEntity) map[string]any {
-			return obj("id", c.id, "label", paragraph(g.text()))
+			p := obj("id", c.id)
+			for len(p) == 1 {
+				if g.coin() {
+					p["label"] = paragraph(g.text())
+				}
+				if g.coin() {
+					p["condition"] = []string{"", g.condition()}[g.r.IntN(2)]
+				}
+				if g.coin() {
+					p["on_traverse"] = []string{"", g.script()}[g.r.IntN(2)]
+				}
+			}
+			return p
 		})
 	},
 	"connection.reconnect": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.connections, func(c undoEntity) map[string]any {
 			p := obj("id", c.id)
 			for len(p) == 1 {
-				if n, ok := g.pick(g.m.nodes, func(n undoEntity) bool {
-					return n.live && n.board == c.board && n.typ == "element"
-				}); ok && g.coin() {
+				if n, port, ok := g.port(func(n undoEntity) bool { return n.board == c.board }); ok && g.coin() {
 					p["from_node_id"] = n.id
+					if port != "" {
+						p["from_port"] = port
+					}
 				}
 				if n, ok := g.pick(g.m.nodes, func(n undoEntity) bool { return n.live && n.board == c.board }); ok &&
 					g.coin() {
@@ -1192,6 +1231,109 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	},
 	"connection.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.connections, true) },
 	"connection.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.connections, false) },
+
+	"branch_output.create": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.nodesOf("branch"), func(n undoEntity) map[string]any {
+			p := obj("id", g.id(ids.BranchOutput), "node_id", n.id)
+			if g.r.IntN(4) == 0 {
+				p["else"] = true
+				return p
+			}
+			if g.coin() {
+				p["condition"] = g.condition()
+			}
+			g.maybeOrder(p)
+			return p
+		})
+	},
+	"branch_output.update": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.conditional(), func(o undoEntity) map[string]any {
+			return obj("id", o.id, "condition", []string{"", g.condition()}[g.r.IntN(2)])
+		})
+	},
+	"branch_output.reorder": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.conditional(), func(o undoEntity) map[string]any {
+			p := obj("id", o.id)
+			g.maybeOrder(p)
+			return p
+		})
+	},
+	"branch_output.delete": func(g *undoGen) (map[string]any, bool) {
+		p, ok := g.idOf(g.m.outputs, true)
+		p["confirm"] = g.r.IntN(4) != 0
+		return p, ok
+	},
+	"branch_output.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.outputs, false) },
+}
+
+// nodesOf returns the model's nodes of the type typ.
+func (g *undoGen) nodesOf(typ string) []undoEntity {
+	var out []undoEntity
+	for _, n := range g.m.nodes {
+		if n.typ == typ {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// conditional returns the model's conditional outputs, which are no else.
+func (g *undoGen) conditional() []undoEntity {
+	var out []undoEntity
+	for _, o := range g.m.outputs {
+		if o.kind != "else" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// port returns a random node outside the trash that keep keeps, which a
+// connection may leave, and the port that it leaves it by: "" for an
+// element's out, or an output of a branch outside the trash, or false if
+// there is none.
+func (g *undoGen) port(keep func(undoEntity) bool) (undoEntity, string, bool) {
+	n, ok := g.pick(g.m.nodes, func(n undoEntity) bool {
+		if !n.live || !keep(n) {
+			return false
+		}
+		return n.typ == "element" || n.typ == "branch" && slices.ContainsFunc(g.m.outputs, func(o undoEntity) bool {
+			return o.live && o.node == n.id
+		})
+	})
+	if !ok || n.typ == "element" {
+		return n, "", ok
+	}
+	o, _ := g.pick(g.m.outputs, func(o undoEntity) bool { return o.live && o.node == n.id })
+	return n, o.id, true
+}
+
+// condition returns the source of a random condition, which reads a random
+// variable of the model, in the trash or not, of its board or not, compared
+// with a value of a random type, so that it compiles, or does not, and may
+// compile otherwise once the variable changes, which the undo must give
+// back; or a source that does not parse.
+func (g *undoGen) condition() string {
+	v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true })
+	if !ok || g.r.IntN(6) == 0 {
+		return []string{"true", "1 +"}[g.r.IntN(2)]
+	}
+	return v.key + " == " + g.literal()
+}
+
+// script returns the source of a random script, which assigns a random
+// variable of the model a value of a random type, as condition reads one.
+func (g *undoGen) script() string {
+	v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true })
+	if !ok || g.r.IntN(6) == 0 {
+		return []string{"signal(\"done\")", "= 1"}[g.r.IntN(2)]
+	}
+	return v.key + " = " + g.literal()
+}
+
+// literal returns the source of a literal of a random type.
+func (g *undoGen) literal() string {
+	return []string{"true", "1", "1.5", "\"x\""}[g.r.IntN(4)]
 }
 
 // obj returns a payload of the fields kv, each a name and its value.
@@ -1291,6 +1433,14 @@ func (g *undoGen) nodeFields(p map[string]any, typ string) {
 	}
 	if g.coin() {
 		p["size"] = obj("width", float64(1+g.r.IntN(400)), "height", float64(1+g.r.IntN(400)))
+	}
+	if typ != "jumper" {
+		if g.coin() {
+			p["on_enter"] = []string{"", g.script()}[g.r.IntN(2)]
+		}
+		if g.coin() {
+			p["on_exit"] = []string{"", g.script()}[g.r.IntN(2)]
+		}
 	}
 	switch typ {
 	case "element":

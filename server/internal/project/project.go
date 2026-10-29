@@ -570,6 +570,35 @@ func (s *Service) ReadContent(ctx context.Context, db DB, actor commands.Actor, 
 	})
 }
 
+// SnapshotDB runs a transaction of the application login, and one that reads
+// as of one moment, as *database.DB does.
+type SnapshotDB interface {
+	DB
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+}
+
+// ReadSnapshot runs fn as ReadContent does, in a transaction of db that only
+// reads, as of one moment, that of its start, and locks nothing
+// (database.DB.InSnapshot), for a service whose read of the project's content
+// is several statements that must agree with one another, as a node's row
+// and its scripts, or a page at a time, so that a batch that commits between
+// two of them is read whole or not at all. It returns the errors of
+// ReadContent.
+func (s *Service) ReadSnapshot(ctx context.Context, db SnapshotDB, actor commands.Actor, projectID ids.UUID,
+	fn func(tx pgx.Tx, workspaceID ids.UUID) error) error {
+	return s.ReadContent(ctx, snapshot{db}, actor, projectID, fn)
+}
+
+// snapshot is the DB whose transactions read as of one moment
+// (database.DB.InSnapshot), in which ReadSnapshot reads.
+type snapshot struct {
+	db SnapshotDB
+}
+
+func (d snapshot) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.db.InSnapshot(ctx, scope, fn)
+}
+
 // GetIn returns the project projectID as Get does, read in tx, a transaction
 // of its workspace workspaceID, which ActorWorkspace returns, for a service
 // that reads or changes what belongs to the project in the same

@@ -20,10 +20,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -70,6 +72,8 @@ func newFixture(t *testing.T) *fixture {
 	board.Register(reg)
 	component.Register(reg)
 	node.Register(reg)
+	connection.Register(reg)
+	expression.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
 	f.projects = project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline, Seed: component.Seed})
@@ -1305,12 +1309,17 @@ func TestLockWaits(t *testing.T) {
 }
 
 // TestStates checks that an answer of revision_conflict shows a node of a
-// board in the trash as in the trash, with its board's deletion.
+// board in the trash as in the trash, with its board's deletion, and a branch
+// there with the outputs that are there with it, which come back with it, as
+// in the trash too.
 func TestStates(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	b := f.newBoard(t, f.project, "Harbour")
-	id := f.newNode(t, b, node.TypeElement, nil)
+	id := f.newNode(t, b, node.TypeBranch, nil)
+	kept, deleted := newOutputID(), newOutputID()
+	f.must(t, createOutput(kept, id, payload{"condition": "true"}), createOutput(deleted, id, nil))
+	f.must(t, cmd{node.DeleteOutput, payload{"id": deleted}})
 	f.must(t, cmd{board.Delete, payload{"id": b}})
 	raw := must(json.Marshal(payload{"id": id, "title": "Kept"}))
 	_, err := f.pipeline.Apply(context.Background(), f.actor(), f.project, []commands.Command{{ID: ids.New(),
@@ -1321,7 +1330,8 @@ func TestStates(t *testing.T) {
 		t.Fatalf("a stale revision of a node is answered with %v", err)
 	}
 	var state node.Node
-	if err := json.Unmarshal(conflict.Conflicts[0].State, &state); err != nil || state.DeletedAt == nil {
+	if err := json.Unmarshal(conflict.Conflicts[0].State, &state); err != nil || state.DeletedAt == nil ||
+		len(state.Outputs) != 1 || state.Outputs[0].ID != kept || state.Outputs[0].DeletedAt == nil {
 		t.Errorf("the conflict shows the node of a board in the trash as %s (%v)", conflict.Conflicts[0].State, err)
 	}
 }

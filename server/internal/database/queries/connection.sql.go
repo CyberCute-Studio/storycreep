@@ -12,7 +12,7 @@ import (
 )
 
 const boardConnections = `-- name: BoardConnections :many
-SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at
+SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at, live_connection.from_output_id
 FROM live_connection
 WHERE workspace_id = $1 AND project_id = $2 AND board_id = $3
     AND ($4::uuid IS NULL OR id > $4::uuid)
@@ -65,6 +65,7 @@ func (q *Queries) BoardConnections(ctx context.Context, arg BoardConnectionsPara
 			&i.LiveConnection.UpdatedBy,
 			&i.LiveConnection.CreatedAt,
 			&i.LiveConnection.UpdatedAt,
+			&i.LiveConnection.FromOutputID,
 		); err != nil {
 			return nil, err
 		}
@@ -77,13 +78,18 @@ func (q *Queries) BoardConnections(ctx context.Context, arg BoardConnectionsPara
 }
 
 const boardUnreconnectedConnections = `-- name: BoardUnreconnectedConnections :many
-SELECT c.id, (CASE WHEN f.deleted_at IS NULL THEN c.to_node_id ELSE c.from_node_id END)::uuid AS waiting_for
+SELECT c.id, (CASE WHEN f.deleted_at IS NOT NULL THEN c.from_node_id END)::uuid AS from_waiting,
+    (CASE WHEN o.deleted_at IS NOT NULL THEN c.from_output_id END)::uuid AS output_waiting,
+    (CASE WHEN t.deleted_at IS NOT NULL THEN c.to_node_id END)::uuid AS to_waiting
 FROM connection c
 JOIN node f ON f.workspace_id = c.workspace_id AND f.project_id = c.project_id AND f.id = c.from_node_id
 JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
+LEFT JOIN branch_output o ON o.workspace_id = c.workspace_id AND o.project_id = c.project_id
+    AND o.id = c.from_output_id
 JOIN board b ON b.workspace_id = c.workspace_id AND b.project_id = c.project_id AND b.id = c.board_id
 WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.board_id = ANY($3::uuid[])
-    AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (f.deleted_at IS NULL) <> (t.deleted_at IS NULL)
+    AND c.deleted_at IS NULL AND b.deleted_at IS NULL AND (f.deleted_at IS NULL OR t.deleted_at IS NULL)
+    AND (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL)
 ORDER BY c.id
 `
 
@@ -94,19 +100,24 @@ type BoardUnreconnectedConnectionsParams struct {
 }
 
 type BoardUnreconnectedConnectionsRow struct {
-	ID         pgtype.UUID
-	WaitingFor pgtype.UUID
+	ID            pgtype.UUID
+	FromWaiting   pgtype.UUID
+	OutputWaiting pgtype.UUID
+	ToWaiting     pgtype.UUID
 }
 
 // BoardUnreconnectedConnections returns the connections, not deleted
 // themselves, of the project's boards whose IDs are among ids, which are not
-// in the trash, of which one node is not in the trash and the other is, by
-// its own deletion, each with that node's ID as waiting_for, in the order of
-// their IDs: those that the restoration of the boards ids could not bring
-// back with the nodes that came back with them, which come back once that
-// node does (FR-PROJ-06 AC1). One whose nodes are both in the trash, as a
-// connection that enters the node that it leaves in the trash is, has
-// neither of them back, and is left out.
+// in the trash, of which a node is not in the trash, and which are in the
+// trash still with the node at the other end, or with the output that they
+// leave, by its own deletion, each with what it waits for, as
+// UnreconnectedConnections returns it, in the order of their IDs: those that
+// the restoration of the boards ids could not bring back with the nodes that
+// came back with them, which come back once what they wait for does
+// (FR-PROJ-06 AC1). One whose nodes are both in the trash, as a connection
+// that enters the node that it leaves in the trash is, has neither of them
+// back, and is left out; an output of a node in the trash is in the trash
+// with it, and is waited for only if it is deleted itself.
 func (q *Queries) BoardUnreconnectedConnections(ctx context.Context, arg BoardUnreconnectedConnectionsParams) ([]BoardUnreconnectedConnectionsRow, error) {
 	rows, err := q.db.Query(ctx, boardUnreconnectedConnections, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
@@ -116,7 +127,12 @@ func (q *Queries) BoardUnreconnectedConnections(ctx context.Context, arg BoardUn
 	var items []BoardUnreconnectedConnectionsRow
 	for rows.Next() {
 		var i BoardUnreconnectedConnectionsRow
-		if err := rows.Scan(&i.ID, &i.WaitingFor); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromWaiting,
+			&i.OutputWaiting,
+			&i.ToWaiting,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -128,7 +144,7 @@ func (q *Queries) BoardUnreconnectedConnections(ctx context.Context, arg BoardUn
 }
 
 const connection = `-- name: Connection :one
-SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at
+SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at, live_connection.from_output_id
 FROM live_connection
 WHERE workspace_id = $1 AND project_id = $2 AND id = $3
 `
@@ -164,19 +180,25 @@ func (q *Queries) Connection(ctx context.Context, arg ConnectionParams) (Connect
 		&i.LiveConnection.UpdatedBy,
 		&i.LiveConnection.CreatedAt,
 		&i.LiveConnection.UpdatedAt,
+		&i.LiveConnection.FromOutputID,
 	)
 	return i, err
 }
 
 const connectionAny = `-- name: ConnectionAny :one
-SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at,
-    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at, connection.from_output_id,
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL
+        OR b.deleted_at IS NOT NULL)::boolean AS ends_deleted,
+    (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL)::boolean AS nodes_deleted,
+    (o.deleted_at IS NOT NULL)::boolean AS output_deleted,
     (b.deleted_at IS NOT NULL)::boolean AS board_deleted
 FROM connection
 JOIN node f ON f.workspace_id = connection.workspace_id AND f.project_id = connection.project_id
     AND f.id = connection.from_node_id
 JOIN node t ON t.workspace_id = connection.workspace_id AND t.project_id = connection.project_id
     AND t.id = connection.to_node_id
+LEFT JOIN branch_output o ON o.workspace_id = connection.workspace_id AND o.project_id = connection.project_id
+    AND o.id = connection.from_output_id
 JOIN board b ON b.workspace_id = connection.workspace_id AND b.project_id = connection.project_id
     AND b.id = connection.board_id
 WHERE connection.workspace_id = $1 AND connection.project_id = $2 AND connection.id = $3
@@ -189,15 +211,19 @@ type ConnectionAnyParams struct {
 }
 
 type ConnectionAnyRow struct {
-	Connection   Connection
-	EndsDeleted  bool
-	BoardDeleted bool
+	Connection    Connection
+	EndsDeleted   bool
+	NodesDeleted  bool
+	OutputDeleted bool
+	BoardDeleted  bool
 }
 
 // ConnectionAny returns a connection of the project, whether or not it is in
-// the trash, and whether it is in the trash with one of its nodes or its
-// board, which ends_deleted says, and with its board, which board_deleted
-// says, and no row if the project has no such connection.
+// the trash, and whether it is in the trash with one of its nodes, the
+// output that it leaves, or its board, which ends_deleted says, with one of
+// its nodes, deleted on their own, which nodes_deleted says, with the output,
+// which output_deleted says, and with its board, which board_deleted says,
+// and no row if the project has no such connection.
 func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (ConnectionAnyRow, error) {
 	row := q.db.QueryRow(ctx, connectionAny, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var i ConnectionAnyRow
@@ -216,7 +242,10 @@ func (q *Queries) ConnectionAny(ctx context.Context, arg ConnectionAnyParams) (C
 		&i.Connection.UpdatedBy,
 		&i.Connection.CreatedAt,
 		&i.Connection.UpdatedAt,
+		&i.Connection.FromOutputID,
 		&i.EndsDeleted,
+		&i.NodesDeleted,
+		&i.OutputDeleted,
 		&i.BoardDeleted,
 	)
 	return i, err
@@ -262,12 +291,15 @@ func (q *Queries) ConnectionRevs(ctx context.Context, arg ConnectionRevsParams) 
 }
 
 const connectionsByID = `-- name: ConnectionsByID :many
-SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at, LEAST(f.deleted_at, t.deleted_at, b.deleted_at)::timestamptz AS ends_deleted_at
+SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at, connection.from_output_id, LEAST(f.deleted_at, t.deleted_at, o.deleted_at, b.deleted_at)::timestamptz
+    AS ends_deleted_at
 FROM connection
 JOIN node f ON f.workspace_id = connection.workspace_id AND f.project_id = connection.project_id
     AND f.id = connection.from_node_id
 JOIN node t ON t.workspace_id = connection.workspace_id AND t.project_id = connection.project_id
     AND t.id = connection.to_node_id
+LEFT JOIN branch_output o ON o.workspace_id = connection.workspace_id AND o.project_id = connection.project_id
+    AND o.id = connection.from_output_id
 JOIN board b ON b.workspace_id = connection.workspace_id AND b.project_id = connection.project_id
     AND b.id = connection.board_id
 WHERE connection.workspace_id = $1 AND connection.project_id = $2
@@ -287,8 +319,9 @@ type ConnectionsByIDRow struct {
 
 // ConnectionsByID returns the connections of the project whose IDs are among
 // ids, whether or not they are in the trash, each with when the first of its
-// nodes and its board that is in the trash went there, as ends_deleted_at, if
-// one is, which the connection is in the trash with.
+// nodes, the output that it leaves, and its board that is in the trash went
+// there, as ends_deleted_at, if one is, which the connection is in the trash
+// with.
 func (q *Queries) ConnectionsByID(ctx context.Context, arg ConnectionsByIDParams) ([]ConnectionsByIDRow, error) {
 	rows, err := q.db.Query(ctx, connectionsByID, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
@@ -313,6 +346,7 @@ func (q *Queries) ConnectionsByID(ctx context.Context, arg ConnectionsByIDParams
 			&i.Connection.UpdatedBy,
 			&i.Connection.CreatedAt,
 			&i.Connection.UpdatedAt,
+			&i.Connection.FromOutputID,
 			&i.EndsDeletedAt,
 		); err != nil {
 			return nil, err
@@ -327,22 +361,23 @@ func (q *Queries) ConnectionsByID(ctx context.Context, arg ConnectionsByIDParams
 
 const insertConnection = `-- name: InsertConnection :exec
 
-INSERT INTO connection (id, workspace_id, project_id, board_id, from_node_id, to_node_id, "order", label, created_by,
-    updated_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-    $9)
+INSERT INTO connection (id, workspace_id, project_id, board_id, from_node_id, from_output_id, to_node_id, "order",
+    label, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5, $6::uuid, $7,
+    $8, $9, $10, $10)
 `
 
 type InsertConnectionParams struct {
-	ID          pgtype.UUID
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
-	FromNodeID  pgtype.UUID
-	ToNodeID    pgtype.UUID
-	SortKey     string
-	Label       []byte
-	CreatedBy   pgtype.UUID
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	BoardID      pgtype.UUID
+	FromNodeID   pgtype.UUID
+	FromOutputID pgtype.UUID
+	ToNodeID     pgtype.UUID
+	SortKey      string
+	Label        []byte
+	CreatedBy    pgtype.UUID
 }
 
 // Connections (package connection, PRD FR-EDIT-03): the arrows of a
@@ -352,8 +387,10 @@ type InsertConnectionParams struct {
 // project's row, so what these queries read of the project's connections
 // stays as it is until the batch changes it. What is not in the project's
 // trash is read through the live view, live_connection, which leaves out the
-// connections of a node or a board in the trash too (package trash).
-// InsertConnection adds a connection.
+// connections of a node, of a branch's output, or of a board in the trash too
+// (package trash).
+// InsertConnection adds a connection, from the port out of its node, if
+// from_output_id is null, or else from that output of its node.
 func (q *Queries) InsertConnection(ctx context.Context, arg InsertConnectionParams) error {
 	_, err := q.db.Exec(ctx, insertConnection,
 		arg.ID,
@@ -361,6 +398,7 @@ func (q *Queries) InsertConnection(ctx context.Context, arg InsertConnectionPara
 		arg.ProjectID,
 		arg.BoardID,
 		arg.FromNodeID,
+		arg.FromOutputID,
 		arg.ToNodeID,
 		arg.SortKey,
 		arg.Label,
@@ -374,7 +412,8 @@ WITH c (id, sort_key, deleted) AS (
     SELECT c.id, c."order", c.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL FROM connection c
     JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
     WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.from_node_id = $3
-        AND c.id IS DISTINCT FROM $4::uuid
+        AND c.from_output_id IS NOT DISTINCT FROM $4::uuid
+        AND c.id IS DISTINCT FROM $5::uuid
 ), live AS (
     SELECT c.id, c.sort_key FROM c WHERE NOT c.deleted ORDER BY c.sort_key DESC, c.id DESC LIMIT 1
 )
@@ -384,10 +423,11 @@ SELECT coalesce((SELECT max(c.sort_key) FROM c), '')::text AS last,
 `
 
 type LastConnectionSortKeysParams struct {
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	FromNodeID  pgtype.UUID
-	Moved       pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	FromNodeID   pgtype.UUID
+	FromOutputID pgtype.UUID
+	Moved        pgtype.UUID
 }
 
 type LastConnectionSortKeysRow struct {
@@ -397,19 +437,22 @@ type LastConnectionSortKeysRow struct {
 }
 
 // LastConnectionSortKeys returns the greatest order of the connections that
-// leave the node from_node_id, but for the connection moved, if it is not
-// null, which moves among them, those in the trash included, so that one
-// restored later keeps its place, as last, or an empty string if there is
-// none, and the last of those that are not in the trash, neither deleted
-// themselves nor with the node that they enter, in their order, by their
-// orders and then their IDs, as last_live, with its ID as last_live_id, or an
-// empty string and null if there is none. The node that they leave is one
-// that is not in the trash, which a connection is placed after the others of.
+// leave the node from_node_id by its port, the output from_output_id, or
+// out if it is null, but for the connection moved, if it is not null, which
+// moves among them, those in the trash included, so that one restored later
+// keeps its place, as last, or an empty string if there is none, and the
+// last of those that are not in the trash, neither deleted themselves nor
+// with the node that they enter, in their order, by their orders and then
+// their IDs, as last_live, with its ID as last_live_id, or an empty string
+// and null if there is none. The node and the port that they leave are ones
+// that are not in the trash, which a connection is placed after the others
+// of.
 func (q *Queries) LastConnectionSortKeys(ctx context.Context, arg LastConnectionSortKeysParams) (LastConnectionSortKeysRow, error) {
 	row := q.db.QueryRow(ctx, lastConnectionSortKeys,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.FromNodeID,
+		arg.FromOutputID,
 		arg.Moved,
 	)
 	var i LastConnectionSortKeysRow
@@ -417,30 +460,89 @@ func (q *Queries) LastConnectionSortKeys(ctx context.Context, arg LastConnection
 	return i, err
 }
 
+const outputUnreconnectedConnections = `-- name: OutputUnreconnectedConnections :many
+SELECT c.id, NULL::uuid AS from_waiting, NULL::uuid AS output_waiting, c.to_node_id AS to_waiting
+FROM connection c
+JOIN live_branch_output o ON o.workspace_id = c.workspace_id AND o.project_id = c.project_id
+    AND o.id = c.from_output_id AND o.node_id = c.from_node_id
+JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.from_output_id = ANY($3::uuid[])
+    AND c.deleted_at IS NULL AND t.deleted_at IS NOT NULL
+ORDER BY c.id
+`
+
+type OutputUnreconnectedConnectionsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type OutputUnreconnectedConnectionsRow struct {
+	ID            pgtype.UUID
+	FromWaiting   pgtype.UUID
+	OutputWaiting pgtype.UUID
+	ToWaiting     pgtype.UUID
+}
+
+// OutputUnreconnectedConnections returns the connections, not deleted
+// themselves, that leave the project's outputs whose IDs are among ids,
+// which are not in the trash, themselves or with their nodes or their
+// boards, whose node at the other end is in the trash, each with what it
+// waits for, as UnreconnectedConnections returns it, in the order of their
+// IDs: those that the restoration of the outputs ids could not bring back,
+// which come back once that node does (FR-PROJ-06 AC1).
+func (q *Queries) OutputUnreconnectedConnections(ctx context.Context, arg OutputUnreconnectedConnectionsParams) ([]OutputUnreconnectedConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, outputUnreconnectedConnections, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OutputUnreconnectedConnectionsRow
+	for rows.Next() {
+		var i OutputUnreconnectedConnectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromWaiting,
+			&i.OutputWaiting,
+			&i.ToWaiting,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reconnectConnection = `-- name: ReconnectConnection :one
-UPDATE connection SET from_node_id = $1, to_node_id = $2, "order" = $3, rev = rev + 1,
-    updated_at = now(), updated_by = $4
-WHERE workspace_id = $5 AND project_id = $6 AND id = $7
-    AND (from_node_id <> $1 OR to_node_id <> $2 OR "order" <> $3)
+UPDATE connection SET from_node_id = $1, from_output_id = $2::uuid,
+    to_node_id = $3, "order" = $4, rev = rev + 1, updated_at = now(), updated_by = $5
+WHERE workspace_id = $6 AND project_id = $7 AND id = $8
+    AND (from_node_id <> $1 OR from_output_id IS DISTINCT FROM $2::uuid
+        OR to_node_id <> $3 OR "order" <> $4)
 RETURNING rev
 `
 
 type ReconnectConnectionParams struct {
-	FromNodeID  pgtype.UUID
-	ToNodeID    pgtype.UUID
-	SortKey     string
-	UpdatedBy   pgtype.UUID
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	ID          pgtype.UUID
+	FromNodeID   pgtype.UUID
+	FromOutputID pgtype.UUID
+	ToNodeID     pgtype.UUID
+	SortKey      string
+	UpdatedBy    pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	ID           pgtype.UUID
 }
 
-// ReconnectConnection sets the nodes that the connection leaves and enters,
-// and its order, unless it has each of them already, and returns its new
-// revision, or no row if it does.
+// ReconnectConnection sets the node and the port that the connection
+// leaves, the node that it enters, and its order, unless it has each of them
+// already, and returns its new revision, or no row if it does.
 func (q *Queries) ReconnectConnection(ctx context.Context, arg ReconnectConnectionParams) (int64, error) {
 	row := q.db.QueryRow(ctx, reconnectConnection,
 		arg.FromNodeID,
+		arg.FromOutputID,
 		arg.ToNodeID,
 		arg.SortKey,
 		arg.UpdatedBy,
@@ -537,40 +639,48 @@ func (q *Queries) TrashConnection(ctx context.Context, arg TrashConnectionParams
 }
 
 const unreconnectedConnections = `-- name: UnreconnectedConnections :many
-SELECT c.id, (CASE WHEN c.from_node_id = ANY($1::uuid[]) AND f.deleted_at IS NULL THEN c.to_node_id
-    ELSE c.from_node_id END)::uuid AS waiting_for
+SELECT c.id, (CASE WHEN f.deleted_at IS NOT NULL THEN c.from_node_id END)::uuid AS from_waiting,
+    (CASE WHEN o.deleted_at IS NOT NULL THEN c.from_output_id END)::uuid AS output_waiting,
+    (CASE WHEN t.deleted_at IS NOT NULL THEN c.to_node_id END)::uuid AS to_waiting
 FROM connection c
 JOIN node f ON f.workspace_id = c.workspace_id AND f.project_id = c.project_id AND f.id = c.from_node_id
 JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id AND t.id = c.to_node_id
-WHERE c.workspace_id = $2 AND c.project_id = $3 AND c.deleted_at IS NULL
-    AND (c.from_node_id = ANY($1::uuid[]) AND f.deleted_at IS NULL AND t.deleted_at IS NOT NULL
-        OR c.to_node_id = ANY($1::uuid[]) AND t.deleted_at IS NULL AND f.deleted_at IS NOT NULL)
+LEFT JOIN branch_output o ON o.workspace_id = c.workspace_id AND o.project_id = c.project_id
+    AND o.id = c.from_output_id
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.deleted_at IS NULL
+    AND (c.from_node_id = ANY($3::uuid[]) AND f.deleted_at IS NULL
+        OR c.to_node_id = ANY($3::uuid[]) AND t.deleted_at IS NULL)
+    AND (f.deleted_at IS NOT NULL OR t.deleted_at IS NOT NULL OR o.deleted_at IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = c.workspace_id AND b.project_id = c.project_id
         AND b.id = c.board_id AND b.deleted_at IS NOT NULL)
 ORDER BY c.id
 `
 
 type UnreconnectedConnectionsParams struct {
-	Ids         []pgtype.UUID
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
 }
 
 type UnreconnectedConnectionsRow struct {
-	ID         pgtype.UUID
-	WaitingFor pgtype.UUID
+	ID            pgtype.UUID
+	FromWaiting   pgtype.UUID
+	OutputWaiting pgtype.UUID
+	ToWaiting     pgtype.UUID
 }
 
 // UnreconnectedConnections returns the connections, not deleted themselves,
 // of the project's nodes whose IDs are among ids, which are not in the trash
-// themselves, nor with their board, whose node at the other end is in the
-// trash, each with that node's ID as waiting_for, in the order of their IDs:
-// those that the restoration of the nodes ids could not bring back, which
-// come back once that node does (FR-PROJ-06 AC1). Both of a connection's
-// nodes are of its board, so the node at the other end is in the trash only
-// by its own deletion.
+// themselves, nor with their board, that are in the trash still with the
+// node at their other end, or with the output that they leave, in the order
+// of their IDs, each with what it waits for: the node that it leaves, the
+// output, and the node that it enters, each if it is in the trash, or else
+// null: those that the restoration of the nodes ids could not bring back,
+// which come back once what they wait for does (FR-PROJ-06 AC1). Both of a
+// connection's nodes are of its board, so a node of a connection is in the
+// trash only by its own deletion, and so is an output of a node that is not.
 func (q *Queries) UnreconnectedConnections(ctx context.Context, arg UnreconnectedConnectionsParams) ([]UnreconnectedConnectionsRow, error) {
-	rows, err := q.db.Query(ctx, unreconnectedConnections, arg.Ids, arg.WorkspaceID, arg.ProjectID)
+	rows, err := q.db.Query(ctx, unreconnectedConnections, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +688,12 @@ func (q *Queries) UnreconnectedConnections(ctx context.Context, arg Unreconnecte
 	var items []UnreconnectedConnectionsRow
 	for rows.Next() {
 		var i UnreconnectedConnectionsRow
-		if err := rows.Scan(&i.ID, &i.WaitingFor); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.FromWaiting,
+			&i.OutputWaiting,
+			&i.ToWaiting,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

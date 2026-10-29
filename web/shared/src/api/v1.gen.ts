@@ -495,6 +495,126 @@ export interface BoardSetSlugPayload {
   slug: string;
 }
 
+export interface BranchOutput {
+  /** A conditional output's condition, which picks it, the first of its branch's whose condition holds (PRD §5.8.5). An else has none. */
+  condition?: Expression;
+  /** When the output was created */
+  created_at: string;
+  /** When the output went to the project's trash, if it is there: when it was deleted, or, if it was not, but its branch, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
+  deleted_at?: string;
+  /** The output's ID, which the connections that leave it name as their from_port */
+  id: string;
+  /** The output's kind, which follows its place among its branch's outputs that are not in the project's trash (PRD FR-EDIT-04): the first conditional output is the branch's if, the others its elseifs, and the else, which has no condition, comes after them */
+  kind: "if" | "elseif" | "else";
+  /** The ID of the output's branch */
+  node_id: string;
+  /** A conditional output's place among its branch's conditional outputs, which orders the evaluation of their conditions: a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, bo_, compared by their bytes too. An else has none. */
+  order?: string;
+  /** The output's revision, which every change of it increments, of its kind among them, and which a change expects with expected_rev */
+  rev: number;
+  /** When the output last changed */
+  updated_at: string;
+}
+
+/** A command of the type branch_output.create. */
+export interface BranchOutputCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BranchOutputCreatePayload;
+  /** The command's type. */
+  type: "branch_output.create";
+}
+
+/** The payload of a command of the type branch_output.create. */
+export interface BranchOutputCreatePayload {
+  /** A conditional output's condition, the source of a condition (PRD §5.8.5), of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, the empty source, which does not compile, until the condition is written. An else has none. */
+  condition?: string;
+  /** Whether the output is the branch's else, which the flow takes when the condition of none of its other outputs holds (PRD FR-EDIT-04), which has neither a condition nor an order, and comes after them. A branch has one else at most, and one only while it has a conditional output, so an else for a branch that has one already, or that has no conditional output, is answered with 422 validation_failed. Without it, the output is a conditional one. */
+  else?: boolean;
+  /** The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The ID of the output's branch, a branch of the project that is not in its trash. Another type of node is answered with 422 validation_failed. */
+  node_id: string;
+  /** A conditional output's place among its branch's conditional outputs, which orders the evaluation of their conditions. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the outputs by its bytes, and those with the same key by their IDs without the prefix, bo_, compared by their bytes too: pick one between the keys of the outputs that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the output goes after the branch's last conditional output. An else has none. */
+  order?: string;
+}
+
+/** A command of the type branch_output.delete. */
+export interface BranchOutputDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BranchOutputDeletePayload;
+  /** The command's type. */
+  type: "branch_output.delete";
+}
+
+/** The payload of a command of the type branch_output.delete. */
+export interface BranchOutputDeletePayload {
+  /** Whether to delete the output even though connections that are not in the project's trash leave it, which go to the trash with it, and come back with it (PRD FR-EDIT-04 AC3). Without it, an output that such connections leave is not deleted: the command is answered with 409 branch_output_connected, which lists them, for a client to ask to confirm before it sends the command again with confirm. */
+  confirm?: boolean;
+  /** The output's ID. A branch's last conditional output that is not in the trash, while the branch has an else, which needs one, is answered with 422 validation_failed: delete the else first. */
+  id: string;
+}
+
+/** A command of the type branch_output.reorder. */
+export interface BranchOutputReorderCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BranchOutputReorderPayload;
+  /** The command's type. */
+  type: "branch_output.reorder";
+}
+
+/** The payload of a command of the type branch_output.reorder. */
+export interface BranchOutputReorderPayload {
+  /** The output's ID, a conditional output's: an else has no place among its branch's conditional outputs, and is answered with 422 validation_failed. */
+  id: string;
+  /** The output's place among its branch's conditional outputs, a key as branch_output.create's order is. Without it, the output goes after the branch's last conditional output, or stays where it is if it is the last already that is not in the trash. */
+  order?: string;
+}
+
+/** A command of the type branch_output.restore. */
+export interface BranchOutputRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BranchOutputRestorePayload;
+  /** The command's type. */
+  type: "branch_output.restore";
+}
+
+/** The payload of a command of the type branch_output.restore. */
+export interface BranchOutputRestorePayload {
+  /** The output's ID */
+  id: string;
+}
+
+/** A command of the type branch_output.update. */
+export interface BranchOutputUpdateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: BranchOutputUpdatePayload;
+  /** The command's type. */
+  type: "branch_output.update";
+}
+
+/** The payload of a command of the type branch_output.update. */
+export interface BranchOutputUpdatePayload {
+  /** A conditional output's new condition, the source of a condition (PRD §5.8.5), of at most 16384 characters, which may be empty, and may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). An else has none, and is answered with 422 validation_failed for one. */
+  condition?: string;
+  /** The output's ID */
+  id: string;
+}
+
 export interface ChangeRoleBody {
   /** The membership's new role. Only an owner grants the role owner, and an admin is answered with 403 owner_required. */
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
@@ -513,7 +633,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -546,6 +666,21 @@ export interface CommandResultBody {
 export interface CommandResultsBody {
   /** A result for each batch of the request, in the order of the batches */
   results: Array<CommandOutcomeBody> | null;
+}
+
+export interface CompileError {
+  /** The error's stable code, as the expression corpus's README lists them (schema/expr-corpus/README.md) */
+  code: string;
+  /** The offset of the character after the last that the error covers, counted in code points from 0: start itself for an error that covers none, as the end of a source that ends too early */
+  end: number;
+  /** The types that a type_mismatch's operand's place takes */
+  expected?: Array<string> | null;
+  /** The offset of the first character that the error covers, counted in code points from 0 */
+  start: number;
+  /** What an unknown name or function might be, nearest first, if anything near is */
+  suggestions?: Array<string> | null;
+  /** A type_mismatch's operand's type: bool, int, float, string, or node */
+  type?: string;
 }
 
 export interface CompleteSetupBody {
@@ -926,23 +1061,27 @@ export interface ComponentTypeSetKeyPayload {
 export interface Connection {
   /** The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created */
   board_id: string;
+  /** The connection's condition, which makes it a choice while it holds (PRD §5.8.5), if it has one; without one, it always is */
+  condition?: Expression;
   /** When the connection was created */
   created_at: string;
-  /** When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
+  /** When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, the branch output that it leaves, or its board, is in the trash, with which it is in the trash too, when the first of them went there */
   deleted_at?: string;
   /** The ID of the node that the connection leaves, a node of its board */
   from_node_id: string;
-  /** The port of the node that the connection leaves: out, an element's one port, which every connection leaves for now. A branch's ports are its outputs (PRD FR-EDIT-04), which a branch output's ID will name. */
+  /** The port of the node that the connection leaves: out, an element's one port, or the ID of an output of a branch (PRD FR-EDIT-04) */
   from_port: string;
   /** The connection's ID */
   id: string;
   /** The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none */
   label: RichTextDoc;
+  /** The connection's on-traverse script, which runs when the flow traverses it (PRD §5.8.5), if it has one */
+  on_traverse?: Expression;
   /** The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too */
   order: string;
   /** The ID of the connection's project */
   project_id: string;
-  /** The connection's revision, which every change of it increments, and which a change expects with expected_rev */
+  /** The connection's revision, which every change of it increments, a change of its expressions' compilation among them, and which a change expects with expected_rev */
   rev: number;
   /** The ID of the node that the connection enters, a node of its board, which may be the node that it leaves */
   to_node_id: string;
@@ -963,13 +1102,19 @@ export interface ConnectionCreateCommand {
 
 /** The payload of a command of the type connection.create. */
 export interface ConnectionCreatePayload {
-  /** The ID of the node that the connection leaves, by its port out: an element of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), and a branch's connections leave its outputs (PRD FR-EDIT-04), so either is answered with 422 validation_failed. */
+  /** The connection's condition, which makes it a choice while it holds (PRD §5.8.5): the source of a condition, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, or with the empty string, none, and the connection always is a choice. */
+  condition?: string;
+  /** The ID of the node that the connection leaves, by from_port: an element or a branch of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), so it is answered with 422 validation_failed. */
   from_node_id: string;
+  /** The port of from_node_id that the connection leaves: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, since a branch's connections leave its outputs (PRD FR-EDIT-04). Without it, out, which a branch is answered with 422 validation_failed for. */
+  from_port?: string;
   /** The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
   id: string;
   /** The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered. Without it, an empty paragraph, for none. */
   label?: RichTextDoc;
-  /** The connection's place among the connections that leave from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a node by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the node's last. */
+  /** The connection's on-traverse script, which runs when the flow traverses it (PRD §5.8.5): the source of a script, as condition's source is. Without it, or with the empty string, none. */
+  on_traverse?: string;
+  /** The connection's place among the connections that leave from_port of from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a port by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the port's last. */
   order?: string;
   /** The ID of the node that the connection enters: a node of the board of from_node_id, of any type, that is not in the project's trash, which may be from_node_id itself, and which other connections of from_node_id may enter too */
   to_node_id: string;
@@ -1005,11 +1150,13 @@ export interface ConnectionReconnectCommand {
 
 /** The payload of a command of the type connection.reconnect. */
 export interface ConnectionReconnectPayload {
-  /** The ID of the node that the connection leaves from now on, by its port out: an element of the connection's board that is not in the project's trash, or the node that it leaves. A jumper or a branch is answered with 422 validation_failed, as by connection.create. */
+  /** The ID of the node that the connection leaves from now on: an element or a branch of the connection's board that is not in the project's trash, or the node that it leaves. A jumper is answered with 422 validation_failed, as by connection.create. */
   from_node_id?: string;
+  /** The port that the connection leaves from now on, of the node that it leaves once it is reconnected: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, as connection.create's from_port is. Without it, the port that it leaves if it keeps its node, or else out, which a branch is answered with 422 validation_failed for. */
+  from_port?: string;
   /** The connection's ID */
   id: string;
-  /** The connection's place among the connections that leave the node that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the node's last if it leaves another node than it did, or keeps its place. */
+  /** The connection's place among the connections that leave the port that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the port's last if it leaves another port than it did, or keeps its place. */
   order?: string;
   /** The ID of the node that the connection enters from now on: a node of the connection's board, of any type, that is not in the project's trash, or the node that it enters */
   to_node_id?: string;
@@ -1030,7 +1177,7 @@ export interface ConnectionReorderCommand {
 export interface ConnectionReorderPayload {
   /** The connection's ID */
   id: string;
-  /** The connection's place among the connections that leave its node, the choices that the node offers, a key as connection.create's order is. Without it, the connection goes after the node's last, or stays where it is if it is the last already that is not in the trash. */
+  /** The connection's place among the connections that leave its port, the choices that the port offers, a key as connection.create's order is. Without it, the connection goes after the port's last, or stays where it is if it is the last already that is not in the trash. */
   order?: string;
 }
 
@@ -1064,10 +1211,14 @@ export interface ConnectionUpdateCommand {
 
 /** The payload of a command of the type connection.update. */
 export interface ConnectionUpdatePayload {
+  /** The connection's new condition (PRD §5.8.5): the source of a condition, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4), or the empty string for none */
+  condition?: string;
   /** The connection's ID */
   id: string;
   /** The connection's new label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none */
   label?: RichTextDoc;
+  /** The connection's new on-traverse script (PRD §5.8.5), as condition's source is, or the empty string for none */
+  on_traverse?: string;
 }
 
 export interface CreateInviteBody {
@@ -1147,6 +1298,19 @@ export interface ErrorBody {
 
 export interface ErrorEnvelope {
   error: ErrorBody;
+}
+
+export interface Expression {
+  /** The AST of a valid expression, in its canonical form, its names resolved to the IDs of what they name (PRD §5.8.8): a condition's expression, or a script's script node, as the published format holds it. An invalid expression has none. */
+  ast?: unknown;
+  /** The ast_version of the constructs that a valid expression's AST uses (PRD FR-EXPR-04). An invalid expression has none. */
+  ast_version?: number;
+  /** The first error of an invalid expression's source. A valid expression has none. */
+  error?: CompileError;
+  /** Whether the source compiles, against what the project's expressions can name at the board of the expression's owner: an expression that does not is kept, marked invalid, which the validation reports, and which blocks publishing (PRD FR-EDIT-03 AC4) */
+  is_valid: boolean;
+  /** The expression's source, as its author wrote it (PRD §5.8) */
+  source: string;
 }
 
 export interface Folder {
@@ -1416,11 +1580,17 @@ export interface Node {
   is_ending: boolean;
   /** An element's kind: dialogue, which a speaker says, or narration. Another type has none. */
   kind?: "dialogue" | "narration";
+  /** An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5), if it has one. A jumper has none. */
+  on_enter?: Expression;
+  /** An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none. */
+  on_exit?: Expression;
+  /** A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. Each is an entity of its own, at a revision of its own, which a change of it increments, and not the branch's. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it. */
+  outputs?: Array<BranchOutput> | null;
   /** Where the node is on its board's canvas */
   position: NodePosition;
   /** The ID of the node's project */
   project_id: string;
-  /** The node's revision, which every change of it increments, and which a change expects with expected_rev */
+  /** The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev. A change of one of a branch's outputs changes the output's revision, not the node's. */
   rev: number;
   /** The node's width and height, if it has a size of its own; without one, the canvas lays the node out by itself */
   size?: NodeSize;
@@ -1465,6 +1635,10 @@ export interface NodeCreatePayload {
   is_ending?: boolean;
   /** An element's kind: dialogue, which a speaker says, or narration. Without it, dialogue. Another type has none, and is answered with 422 validation_failed for one. */
   kind?: "dialogue" | "narration";
+  /** An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, or with the empty string, none. A jumper has none. */
+  on_enter?: string;
+  /** An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), as on_enter's source is. Without it, or with the empty string, none. A jumper has none. */
+  on_exit?: string;
   /** Where the node goes on its board's canvas */
   position: NodePosition;
   /** The node's width and height. Without it, or with {}, the node has no size of its own, and the canvas lays it out by itself. */
@@ -1517,7 +1691,7 @@ export interface NodeDuplicatePayload {
   id: string;
   /** Where the new node goes on the board's canvas */
   position: NodePosition;
-  /** The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, and target among them */
+  /** The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, target, and scripts among them, but neither a branch's outputs nor the node's connections, which are entities of their own, and which a client copies with commands of their own */
   source_id: string;
 }
 
@@ -1606,6 +1780,10 @@ export interface NodeUpdatePayload {
   is_ending?: boolean;
   /** An element's new kind. Another type has none, and is answered with 422 validation_failed for one. */
   kind?: "dialogue" | "narration";
+  /** An element's or a branch's new on-enter script (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4), or the empty string for none. A jumper has none. */
+  on_enter?: string;
+  /** An element's or a branch's new on-exit script, as on_enter's is, or the empty string for none. A jumper has none. */
+  on_exit?: string;
   /** The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for */
   size?: NodeSize;
   /** The ID of an element's new speaker, a component of the project, in its trash or not, or the empty string for none. Another type has none. */
@@ -2253,7 +2431,7 @@ export interface UndoCommandBody {
 export interface UnreconnectedBody {
   /** The entity's ID, as a connection's, cn_…, the one kind of entity so far that a restoration leaves */
   id: string;
-  /** The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too */
+  /** The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order */
   waiting_for: Array<string>;
 }
 
@@ -2611,7 +2789,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *

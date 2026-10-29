@@ -1560,6 +1560,350 @@
         ],
         "type": "object"
       },
+      "BranchOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "$ref": "#/components/schemas/Expression",
+            "description": "A conditional output's condition, which picks it, the first of its branch's whose condition holds (PRD §5.8.5). An else has none."
+          },
+          "created_at": {
+            "description": "When the output was created",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the output went to the project's trash, if it is there: when it was deleted, or, if it was not, but its branch, or its board, is in the trash, with which it is in the trash too, when the first of them went there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The output's ID, which the connections that leave it name as their from_port",
+            "type": "string"
+          },
+          "kind": {
+            "description": "The output's kind, which follows its place among its branch's outputs that are not in the project's trash (PRD FR-EDIT-04): the first conditional output is the branch's if, the others its elseifs, and the else, which has no condition, comes after them",
+            "enum": [
+              "if",
+              "elseif",
+              "else"
+            ],
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the output's branch",
+            "type": "string"
+          },
+          "order": {
+            "description": "A conditional output's place among its branch's conditional outputs, which orders the evaluation of their conditions: a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, bo_, compared by their bytes too. An else has none.",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The output's revision, which every change of it increments, of its kind among them, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the output last changed",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "kind",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "BranchOutputCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type branch_output.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/BranchOutputCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "branch_output.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BranchOutputCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type branch_output.create.",
+        "properties": {
+          "condition": {
+            "description": "A conditional output's condition, the source of a condition (PRD §5.8.5), of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, the empty source, which does not compile, until the condition is written. An else has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "else": {
+            "description": "Whether the output is the branch's else, which the flow takes when the condition of none of its other outputs holds (PRD FR-EDIT-04), which has neither a condition nor an order, and comes after them. A branch has one else at most, and one only while it has a conditional output, so an else for a branch that has one already, or that has no conditional output, is answered with 422 validation_failed. Without it, the output is a conditional one.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the output's branch, a branch of the project that is not in its trash. Another type of node is answered with 422 validation_failed.",
+            "type": "string"
+          },
+          "order": {
+            "description": "A conditional output's place among its branch's conditional outputs, which orders the evaluation of their conditions. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the outputs by its bytes, and those with the same key by their IDs without the prefix, bo_, compared by their bytes too: pick one between the keys of the outputs that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the output goes after the branch's last conditional output. An else has none.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id"
+        ],
+        "type": "object"
+      },
+      "BranchOutputDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type branch_output.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/BranchOutputDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "branch_output.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BranchOutputDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type branch_output.delete.",
+        "properties": {
+          "confirm": {
+            "description": "Whether to delete the output even though connections that are not in the project's trash leave it, which go to the trash with it, and come back with it (PRD FR-EDIT-04 AC3). Without it, an output that such connections leave is not deleted: the command is answered with 409 branch_output_connected, which lists them, for a client to ask to confirm before it sends the command again with confirm.",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The output's ID. A branch's last conditional output that is not in the trash, while the branch has an else, which needs one, is answered with 422 validation_failed: delete the else first.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "BranchOutputReorderCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type branch_output.reorder.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/BranchOutputReorderPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "branch_output.reorder"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BranchOutputReorderPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type branch_output.reorder.",
+        "properties": {
+          "id": {
+            "description": "The output's ID, a conditional output's: an else has no place among its branch's conditional outputs, and is answered with 422 validation_failed.",
+            "type": "string"
+          },
+          "order": {
+            "description": "The output's place among its branch's conditional outputs, a key as branch_output.create's order is. Without it, the output goes after the branch's last conditional output, or stays where it is if it is the last already that is not in the trash.",
+            "maxLength": 128,
+            "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "BranchOutputRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type branch_output.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/BranchOutputRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "branch_output.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BranchOutputRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type branch_output.restore.",
+        "properties": {
+          "id": {
+            "description": "The output's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "BranchOutputUpdateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type branch_output.update.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/BranchOutputUpdatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "branch_output.update"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BranchOutputUpdatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type branch_output.update.",
+        "properties": {
+          "condition": {
+            "description": "A conditional output's new condition, the source of a condition (PRD §5.8.5), of at most 16384 characters, which may be empty, and may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). An else has none, and is answered with 422 validation_failed for one.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "id": {
+            "description": "The output's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
       "ChangeRoleBody": {
         "additionalProperties": false,
         "properties": {
@@ -1678,6 +2022,21 @@
           },
           {
             "$ref": "#/components/schemas/BoardSetSlugCommand"
+          },
+          {
+            "$ref": "#/components/schemas/BranchOutputCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/BranchOutputDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/BranchOutputReorderCommand"
+          },
+          {
+            "$ref": "#/components/schemas/BranchOutputRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/BranchOutputUpdateCommand"
           },
           {
             "$ref": "#/components/schemas/ComponentCreateCommand"
@@ -1951,6 +2310,55 @@
         },
         "required": [
           "results"
+        ],
+        "type": "object"
+      },
+      "CompileError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "description": "The error's stable code, as the expression corpus's README lists them (schema/expr-corpus/README.md)",
+            "type": "string"
+          },
+          "end": {
+            "description": "The offset of the character after the last that the error covers, counted in code points from 0: start itself for an error that covers none, as the end of a source that ends too early",
+            "format": "int64",
+            "type": "integer"
+          },
+          "expected": {
+            "description": "The types that a type_mismatch's operand's place takes",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "start": {
+            "description": "The offset of the first character that the error covers, counted in code points from 0",
+            "format": "int64",
+            "type": "integer"
+          },
+          "suggestions": {
+            "description": "What an unknown name or function might be, nearest first, if anything near is",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "type": {
+            "description": "A type_mismatch's operand's type: bool, int, float, string, or node",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "start",
+          "end"
         ],
         "type": "object"
       },
@@ -3104,13 +3512,17 @@
             "description": "The ID of the connection's board, the board of both of its nodes, which is fixed once the connection is created",
             "type": "string"
           },
+          "condition": {
+            "$ref": "#/components/schemas/Expression",
+            "description": "The connection's condition, which makes it a choice while it holds (PRD §5.8.5), if it has one; without one, it always is"
+          },
           "created_at": {
             "description": "When the connection was created",
             "format": "date-time",
             "type": "string"
           },
           "deleted_at": {
-            "description": "When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, or its board, is in the trash, with which it is in the trash too, when the first of them went there",
+            "description": "When the connection went to the project's trash, if it is there: when it was deleted, or, if it was not, but one of its nodes, the branch output that it leaves, or its board, is in the trash, with which it is in the trash too, when the first of them went there",
             "format": "date-time",
             "type": "string"
           },
@@ -3119,7 +3531,7 @@
             "type": "string"
           },
           "from_port": {
-            "description": "The port of the node that the connection leaves: out, an element's one port, which every connection leaves for now. A branch's ports are its outputs (PRD FR-EDIT-04), which a branch output's ID will name.",
+            "description": "The port of the node that the connection leaves: out, an element's one port, or the ID of an output of a branch (PRD FR-EDIT-04)",
             "type": "string"
           },
           "id": {
@@ -3130,6 +3542,10 @@
             "$ref": "#/components/schemas/RichTextDoc",
             "description": "The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"
           },
+          "on_traverse": {
+            "$ref": "#/components/schemas/Expression",
+            "description": "The connection's on-traverse script, which runs when the flow traverses it (PRD §5.8.5), if it has one"
+          },
           "order": {
             "description": "The connection's place among the connections that leave its port, the choices that its node offers, in their order (PRD FR-EDIT-03 AC1): a key of base-62 digits, 0-9, A-Z, and a-z, which orders them by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too",
             "type": "string"
@@ -3139,7 +3555,7 @@
             "type": "string"
           },
           "rev": {
-            "description": "The connection's revision, which every change of it increments, and which a change expects with expected_rev",
+            "description": "The connection's revision, which every change of it increments, a change of its expressions' compilation among them, and which a change expects with expected_rev",
             "format": "int64",
             "type": "integer"
           },
@@ -3208,8 +3624,17 @@
         "additionalProperties": false,
         "description": "The payload of a command of the type connection.create.",
         "properties": {
+          "condition": {
+            "description": "The connection's condition, which makes it a choice while it holds (PRD §5.8.5): the source of a condition, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, or with the empty string, none, and the connection always is a choice.",
+            "maxLength": 16384,
+            "type": "string"
+          },
           "from_node_id": {
-            "description": "The ID of the node that the connection leaves, by its port out: an element of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), and a branch's connections leave its outputs (PRD FR-EDIT-04), so either is answered with 422 validation_failed.",
+            "description": "The ID of the node that the connection leaves, by from_port: an element or a branch of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), so it is answered with 422 validation_failed.",
+            "type": "string"
+          },
+          "from_port": {
+            "description": "The port of from_node_id that the connection leaves: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, since a branch's connections leave its outputs (PRD FR-EDIT-04). Without it, out, which a branch is answered with 422 validation_failed for.",
             "type": "string"
           },
           "id": {
@@ -3220,8 +3645,13 @@
             "$ref": "#/components/schemas/RichTextDoc",
             "description": "The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered. Without it, an empty paragraph, for none."
           },
+          "on_traverse": {
+            "description": "The connection's on-traverse script, which runs when the flow traverses it (PRD §5.8.5): the source of a script, as condition's source is. Without it, or with the empty string, none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
           "order": {
-            "description": "The connection's place among the connections that leave from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a node by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the node's last.",
+            "description": "The connection's place among the connections that leave from_port of from_node_id, the choices that it offers. A key of base-62 digits, 0-9, A-Z, and a-z, that does not end in 0, of at most 128 digits, which orders the connections that leave a port by its bytes, and those with the same key by their IDs without the prefix, cn_, compared by their bytes too: pick one between the keys of the connections that it goes between, as V where there are none, 8 between 7 and 9, or 7V between 7 and 8. Without it, the connection goes after the port's last.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -3329,7 +3759,11 @@
         "description": "The payload of a command of the type connection.reconnect.",
         "properties": {
           "from_node_id": {
-            "description": "The ID of the node that the connection leaves from now on, by its port out: an element of the connection's board that is not in the project's trash, or the node that it leaves. A jumper or a branch is answered with 422 validation_failed, as by connection.create.",
+            "description": "The ID of the node that the connection leaves from now on: an element or a branch of the connection's board that is not in the project's trash, or the node that it leaves. A jumper is answered with 422 validation_failed, as by connection.create.",
+            "type": "string"
+          },
+          "from_port": {
+            "description": "The port that the connection leaves from now on, of the node that it leaves once it is reconnected: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, as connection.create's from_port is. Without it, the port that it leaves if it keeps its node, or else out, which a branch is answered with 422 validation_failed for.",
             "type": "string"
           },
           "id": {
@@ -3337,7 +3771,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The connection's place among the connections that leave the node that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the node's last if it leaves another node than it did, or keeps its place.",
+            "description": "The connection's place among the connections that leave the port that it leaves once it is reconnected, a key as connection.create's order is. Without it, the connection goes after the port's last if it leaves another port than it did, or keeps its place.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -3397,7 +3831,7 @@
             "type": "string"
           },
           "order": {
-            "description": "The connection's place among the connections that leave its node, the choices that the node offers, a key as connection.create's order is. Without it, the connection goes after the node's last, or stays where it is if it is the last already that is not in the trash.",
+            "description": "The connection's place among the connections that leave its port, the choices that the port offers, a key as connection.create's order is. Without it, the connection goes after the port's last, or stays where it is if it is the last already that is not in the trash.",
             "maxLength": 128,
             "pattern": "^[0-9A-Za-z]*[1-9A-Za-z]$",
             "type": "string"
@@ -3498,6 +3932,11 @@
         "additionalProperties": false,
         "description": "The payload of a command of the type connection.update.",
         "properties": {
+          "condition": {
+            "description": "The connection's new condition (PRD §5.8.5): the source of a condition, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4), or the empty string for none",
+            "maxLength": 16384,
+            "type": "string"
+          },
           "id": {
             "description": "The connection's ID",
             "type": "string"
@@ -3505,6 +3944,11 @@
           "label": {
             "$ref": "#/components/schemas/RichTextDoc",
             "description": "The connection's new label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered, or an empty paragraph for none"
+          },
+          "on_traverse": {
+            "description": "The connection's new on-traverse script (PRD §5.8.5), as condition's source is, or the empty string for none",
+            "maxLength": 16384,
+            "type": "string"
           }
         },
         "required": [
@@ -3745,6 +4189,36 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      "Expression": {
+        "additionalProperties": false,
+        "properties": {
+          "ast": {
+            "description": "The AST of a valid expression, in its canonical form, its names resolved to the IDs of what they name (PRD §5.8.8): a condition's expression, or a script's script node, as the published format holds it. An invalid expression has none."
+          },
+          "ast_version": {
+            "description": "The ast_version of the constructs that a valid expression's AST uses (PRD FR-EXPR-04). An invalid expression has none.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "error": {
+            "$ref": "#/components/schemas/CompileError",
+            "description": "The first error of an invalid expression's source. A valid expression has none."
+          },
+          "is_valid": {
+            "description": "Whether the source compiles, against what the project's expressions can name at the board of the expression's owner: an expression that does not is kept, marked invalid, which the validation reports, and which blocks publishing (PRD FR-EDIT-03 AC4)",
+            "type": "boolean"
+          },
+          "source": {
+            "description": "The expression's source, as its author wrote it (PRD §5.8)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "is_valid"
         ],
         "type": "object"
       },
@@ -4544,6 +5018,24 @@
             ],
             "type": "string"
           },
+          "on_enter": {
+            "$ref": "#/components/schemas/Expression",
+            "description": "An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5), if it has one. A jumper has none."
+          },
+          "on_exit": {
+            "$ref": "#/components/schemas/Expression",
+            "description": "An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), if it has one. A jumper has none."
+          },
+          "outputs": {
+            "description": "A branch's outputs that are not in the project's trash, in their order (PRD FR-EDIT-04): its conditional outputs, the first its if and the others its elseifs, and its else after them, if it has one. Without them, the branch has none, which the validation reports. Another type has none. Each is an entity of its own, at a revision of its own, which a change of it increments, and not the branch's. An answer of revision_conflict for a branch in the trash shows those that are there with it alone, which come back with it.",
+            "items": {
+              "$ref": "#/components/schemas/BranchOutput"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "position": {
             "$ref": "#/components/schemas/NodePosition",
             "description": "Where the node is on its board's canvas"
@@ -4553,7 +5045,7 @@
             "type": "string"
           },
           "rev": {
-            "description": "The node's revision, which every change of it increments, and which a change expects with expected_rev",
+            "description": "The node's revision, which every change of it increments, a change of its scripts' compilation among them, and which a change expects with expected_rev. A change of one of a branch's outputs changes the output's revision, not the node's.",
             "format": "int64",
             "type": "integer"
           },
@@ -4693,6 +5185,16 @@
               "dialogue",
               "narration"
             ],
+            "type": "string"
+          },
+          "on_enter": {
+            "description": "An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, or with the empty string, none. A jumper has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "on_exit": {
+            "description": "An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), as on_enter's source is. Without it, or with the empty string, none. A jumper has none.",
+            "maxLength": 16384,
             "type": "string"
           },
           "position": {
@@ -4848,7 +5350,7 @@
             "description": "Where the new node goes on the board's canvas"
           },
           "source_id": {
-            "description": "The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, and target among them",
+            "description": "The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, target, and scripts among them, but neither a branch's outputs nor the node's connections, which are entities of their own, and which a client copies with commands of their own",
             "type": "string"
           }
         },
@@ -5110,6 +5612,16 @@
               "dialogue",
               "narration"
             ],
+            "type": "string"
+          },
+          "on_enter": {
+            "description": "An element's or a branch's new on-enter script (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4), or the empty string for none. A jumper has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "on_exit": {
+            "description": "An element's or a branch's new on-exit script, as on_enter's is, or the empty string for none. A jumper has none.",
+            "maxLength": 16384,
             "type": "string"
           },
           "size": {
@@ -7117,7 +7629,7 @@
             "type": "string"
           },
           "waiting_for": {
-            "description": "The IDs of the entities in the project's trash that it refers to, as a connection's node, nd_…, which bring it back once they are restored too",
+            "description": "The IDs of the entities in the project's trash that it refers to, which bring it back once they are restored too: of a connection, those of the node that it leaves, nd_…, the branch output that it leaves, bo_…, and the node that it enters, nd_…, that are in the trash, in that order",
             "items": {
               "type": "string"
             },
@@ -12109,7 +12621,7 @@
     },
     "/api/v1/projects/{project_id}/commands": {
       "post": {
-        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, or 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
         "operationId": "applyCommands",
         "parameters": [
           {

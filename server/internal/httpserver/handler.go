@@ -23,6 +23,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/email"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
@@ -104,6 +105,7 @@ func newCommandRegistry() *commands.Registry {
 	component.Register(registry)
 	node.Register(registry)
 	connection.Register(registry)
+	expression.Register(registry)
 	return registry
 }
 

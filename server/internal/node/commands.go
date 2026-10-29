@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
@@ -36,7 +37,9 @@ const (
 	// (FR-EDIT-02 AC2). Moving them back undoes it.
 	Move commands.Type = "node.move"
 	// Duplicate creates a node, whose ID the client makes, as a copy of
-	// another of the same board at another position. Deleting it undoes it.
+	// another of the same board at another position, with its scripts, but
+	// neither its outputs nor its connections, which are entities of their
+	// own. Deleting it undoes it.
 	Duplicate commands.Type = "node.duplicate"
 	// Delete deletes a node to the project's trash, and Restore restores it.
 	// Each undoes the other. The node's connections are in the trash with it,
@@ -66,6 +69,8 @@ type createPayload struct {
 	Size               *NodeSize     `json:"size,omitempty" doc:"The node's width and height. Without it, or with {}, the node has no size of its own, and the canvas lays it out by itself."`
 	IsEnding           bool          `json:"is_ending,omitempty" doc:"Whether the flow ends at the element (PRD §5.8.5). Without it, false. Another type may not."`
 	Target             *NodeTarget   `json:"target,omitempty" doc:"A jumper's target: a node of the project, in its trash or not, and that node's board, which may be the jumper's own. Without it, or with {}, the jumper has none, which the validation reports. Another type has none."`
+	OnEnter            string        `json:"on_enter,omitempty" maxLength:"16384" doc:"An element's or a branch's on-enter script, which runs when the flow enters the node (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, or with the empty string, none. A jumper has none."`
+	OnExit             string        `json:"on_exit,omitempty" maxLength:"16384" doc:"An element's or a branch's on-exit script, which runs when the flow leaves the node, by a connection or by ending there (PRD §5.8.5), as on_enter's source is. Without it, or with the empty string, none. A jumper has none."`
 }
 
 // updatePayload is Update's payload. A field that it leaves out stays as it
@@ -82,6 +87,8 @@ type updatePayload struct {
 	Size               *NodeSize     `json:"size,omitempty" doc:"The node's new width and height, or {} for no size of its own, which the canvas then lays the node out by itself for"`
 	IsEnding           *bool         `json:"is_ending,omitempty" doc:"Whether the flow ends at the element (PRD §5.8.5). Another type may not."`
 	Target             *NodeTarget   `json:"target,omitempty" doc:"A jumper's new target: a node of the project, in its trash or not, and that node's board, or the target that it has, which may no longer exist, or {} for none, which the validation reports. Another type has none."`
+	OnEnter            *string       `json:"on_enter,omitempty" maxLength:"16384" doc:"An element's or a branch's new on-enter script (PRD §5.8.5): the source of a script, of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4), or the empty string for none. A jumper has none."`
+	OnExit             *string       `json:"on_exit,omitempty" maxLength:"16384" doc:"An element's or a branch's new on-exit script, as on_enter's is, or the empty string for none. A jumper has none."`
 }
 
 // NodePlace is where node.move moves a node to.
@@ -98,7 +105,7 @@ type movePayload struct {
 // duplicatePayload is Duplicate's payload.
 type duplicatePayload struct {
 	ID       string       `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
-	SourceID string       `json:"source_id" doc:"The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, and target among them"`
+	SourceID string       `json:"source_id" doc:"The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, target, and scripts among them, but neither a branch's outputs nor the node's connections, which are entities of their own, and which a client copies with commands of their own"`
 	Position NodePosition `json:"position" doc:"Where the new node goes on the board's canvas"`
 }
 
@@ -121,9 +128,13 @@ type entryPayload struct {
 // text, expressions" (§5.6), but board.set_entry_node, a change of a board,
 // which needs "Create/rename/archive boards", as the board's other commands
 // do, and which Register registers here, because it refers to a node, which
-// the board's registration (board.Register) knows nothing of. The node's
-// commands refer to its board and its speaker, so r has the board and the
-// component registered already (board.Register, component.Register).
+// the board's registration (board.Register) knows nothing of. It registers a
+// branch's outputs and their commands too. The node's commands refer to its
+// board and its speaker, so r has the board and the component registered
+// already (board.Register, component.Register). A node's scripts and an
+// output's condition are expressions, which the derivation that
+// expression.Register registers compiles, once connection.Register has
+// registered the connection, whose expressions it compiles too.
 func Register(r *commands.Registry) {
 	commands.RegisterEntity(r, commands.Entity{
 		Kind: ids.Node,
@@ -140,28 +151,44 @@ func Register(r *commands.Registry) {
 			return out, nil
 		},
 		States: func(ctx context.Context, tx *commands.Tx, entities []ids.UUID) (map[ids.UUID]any, error) {
-			rows, err := queries.New(tx).NodesByID(ctx, queries.NodesByIDParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
-				ProjectID: nullUUID(tx.ProjectID()), Ids: uuids(entities)})
+			q := queries.New(tx)
+			ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
+			rows, err := q.NodesByID(ctx, queries.NodesByIDParams{WorkspaceID: ws, ProjectID: project,
+				Ids: uuids(entities)})
+			if err != nil {
+				return nil, err
+			}
+			list := make([]queries.Node, len(rows))
+			for i, row := range rows {
+				list[i] = row.Node
+			}
+			nodes, err := nodesOf(ctx, q, ws, project, list)
 			if err != nil {
 				return nil, err
 			}
 			out := make(map[ids.UUID]any, len(rows))
-			for _, row := range rows {
-				n, err := nodeOf(row.Node)
-				if err != nil {
-					return nil, err
-				}
+			for i, row := range rows {
+				n := nodes[i]
 				// A node of a board in the trash is in the trash with it, which
 				// its state says, as the state of an entity in the trash does,
 				// though only its board's deletion put it there.
 				if n.DeletedAt == nil && row.BoardDeletedAt.Valid {
 					n.DeletedAt = timeOf(row.BoardDeletedAt)
 				}
+				// A branch in the trash shows the outputs that are there with
+				// it alone, which come back with it, each with the branch's
+				// deleted_at.
+				for j := range n.Outputs {
+					if n.Outputs[j].DeletedAt == nil {
+						n.Outputs[j].DeletedAt = n.DeletedAt
+					}
+				}
 				out[row.Node.ID.Bytes] = n
 			}
 			return out, nil
 		},
 	})
+	registerOutputs(r)
 
 	node := []ids.Kind{ids.Node}
 	op, sc := authz.EditContent, scope.ProjectWrite
@@ -202,6 +229,12 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
+			scripts, err := expression.Back(ctx, queries.New(tx), n.WorkspaceID, n.ProjectID, ids.Node, n.ID,
+				map[expression.Field]*string{expression.OnEnter: p.OnEnter, expression.OnExit: p.OnExit})
+			if err != nil {
+				return nil, err
+			}
+			back.OnEnter, back.OnExit = scripts[expression.OnEnter], scripts[expression.OnExit]
 			return []commands.Step{{Type: Update, Payload: back}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p updatePayload) error {
@@ -209,8 +242,16 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
+			owner := expression.Owner{Kind: ids.Node, ID: n.ID, Board: n.BoardID}
+			scripts, err := setScripts(ctx, tx, owner, p.OnEnter, p.OnExit)
+			if err != nil {
+				return err
+			}
 			next.UpdatedBy, next.WorkspaceID, next.ProjectID, next.ID = by(tx), n.WorkspaceID, n.ProjectID, n.ID
-			return changed(tx, n.ID)(queries.New(tx).UpdateNode(ctx, next))
+			rev, err := queries.New(tx).UpdateNode(ctx, next)
+			// A change of the node's scripts alone is a change of the node,
+			// whose revision it increments.
+			return changed(tx, n.ID)(expression.OwnerRevision(ctx, tx, owner, scripts, rev, err))
 		},
 	})
 
@@ -404,7 +445,10 @@ func checkCreate(p createPayload) input.FieldErrors {
 	errs := newID(ids.Node, p.ID)
 	errs = append(errs, entityID(ids.Board, "board_id", p.BoardID)...)
 	errs = append(errs, typedFields{kind: p.Kind != "", text: p.Text != nil, speaker: p.SpeakerComponentID != "",
-		cover: p.CoverAssetID != "", isEnding: p.IsEnding, target: p.Target != nil}.misplaced(p.Type)...)
+		cover: p.CoverAssetID != "", isEnding: p.IsEnding, target: p.Target != nil, onEnter: p.OnEnter != "",
+		onExit: p.OnExit != ""}.misplaced(p.Type)...)
+	errs = append(errs, field("on_enter", expression.CheckSource(p.OnEnter))...)
+	errs = append(errs, field("on_exit", expression.CheckSource(p.OnExit))...)
 	errs = append(errs, optionalID(ids.Component, "speaker_component_id", p.SpeakerComponentID)...)
 	errs = append(errs, optionalID(ids.Asset, "cover_asset_id", p.CoverAssetID)...)
 	errs = append(errs, checkPosition("position", p.Position)...)
@@ -433,6 +477,12 @@ func checkUpdate(p updatePayload) input.FieldErrors {
 	}
 	if p.Target != nil {
 		errs = append(errs, checkTarget("target", *p.Target)...)
+	}
+	if p.OnEnter != nil {
+		errs = append(errs, field("on_enter", expression.CheckSource(*p.OnEnter))...)
+	}
+	if p.OnExit != nil {
+		errs = append(errs, field("on_exit", expression.CheckSource(*p.OnExit))...)
 	}
 	return errs
 }
@@ -477,13 +527,17 @@ func checkTarget(at string, t NodeTarget) input.FieldErrors {
 	return append(entityID(ids.Board, at+".board_id", t.BoardID), entityID(ids.Node, at+".node_id", t.NodeID)...)
 }
 
-// typedFields says which of the fields that only an element has, or only a
-// jumper, a payload sets: a create's and an update's, which check them alike.
+// typedFields says which of the fields that only an element has, only a
+// jumper, or only an element or a branch, a payload sets: a create's and an
+// update's, which check them alike.
 type typedFields struct {
 	// kind, text, speaker, cover, and isEnding are an element's alone.
 	kind, text, speaker, cover, isEnding bool
 	// target is a jumper's alone.
 	target bool
+	// onEnter and onExit are an element's or a branch's, which a jumper,
+	// where the flow never stops, has none of (§5.8.5).
+	onEnter, onExit bool
 }
 
 // misplaced returns the problems of the fields that the payload sets, as f
@@ -504,6 +558,18 @@ func (f typedFields) misplaced(nodeType string) input.FieldErrors {
 	}
 	if nodeType != TypeJumper && f.target {
 		errs = append(errs, notOf("target", nodeType, TypeJumper))
+	}
+	if nodeType == TypeJumper {
+		for _, c := range []struct {
+			name string
+			set  bool
+		}{{"on_enter", f.onEnter}, {"on_exit", f.onExit}} {
+			if c.set {
+				errs = append(errs, input.FieldError{Field: c.name, Message: "is set on a jumper, which has no " +
+					"scripts, since the flow continues at its target before anything happens at it (PRD §5.8.5): " +
+					"only an element or a branch has them"})
+			}
+		}
 	}
 	return errs
 }
@@ -588,10 +654,26 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return fmt.Errorf("node: add the node: %w", err)
 	}
+	if p.OnEnter != "" || p.OnExit != "" {
+		if _, err := setScripts(ctx, tx, expression.Owner{Kind: ids.Node, ID: id, Board: boardID}, &p.OnEnter,
+			&p.OnExit); err != nil {
+			return err
+		}
+	}
 	if err := tx.Changed(ids.Node, id.Bytes, 1); err != nil {
 		return err
 	}
 	return tx.AddUsage(usage.Nodes, 1)
+}
+
+// setScripts sets the on-enter and on-exit scripts of the node owner, each to
+// its source, or removes it for the empty string, but for one that is nil,
+// which stays as it is, and reports whether that changed either
+// (expression.SetFields).
+func setScripts(ctx context.Context, tx *commands.Tx, owner expression.Owner, onEnter, onExit *string) (bool,
+	error) {
+	return expression.SetFields(ctx, tx, owner, map[expression.Field]*string{expression.OnEnter: onEnter,
+		expression.OnExit: onExit})
 }
 
 // applyDuplicate is Duplicate's Apply.
@@ -616,6 +698,11 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 		return fmt.Errorf("node: duplicate the node: %w", err)
 	case n != 1:
 		return fmt.Errorf("node: duplicating the node added %d nodes", n)
+	}
+	// Its scripts are copies of the node's, which the batch compiles at the
+	// copy's board, the node's own.
+	if err := expression.CopyNode(ctx, tx, source.ID, id); err != nil {
+		return err
 	}
 	if err := tx.Changed(ids.Node, id.Bytes, 1); err != nil {
 		return err
@@ -667,7 +754,8 @@ func planUpdate(ctx context.Context, tx *commands.Tx, p updatePayload) (queries.
 		next.Tags = []string{}
 	}
 	typed := typedFields{kind: p.Kind != nil, text: p.Text != nil, speaker: p.SpeakerComponentID != nil,
-		cover: p.CoverAssetID != nil, isEnding: p.IsEnding != nil, target: p.Target != nil}
+		cover: p.CoverAssetID != nil, isEnding: p.IsEnding != nil, target: p.Target != nil,
+		onEnter: p.OnEnter != nil, onExit: p.OnExit != nil}
 	if errs := typed.misplaced(n.Type); len(errs) > 0 {
 		return n, next, commands.Refuse(errs[0].Field, errs[0].Message, nil)
 	}
