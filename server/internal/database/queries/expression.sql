@@ -48,9 +48,10 @@ WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id AND s.node_i
 
 -- name: ExpressionsToCompile :many
 -- ExpressionsToCompile returns the project's expressions that the batch has
--- yet to compile, those whose refs or keys are among refs or keys, and, if
--- names is true, every one that does not compile but names something, which
--- a change of what the project's expressions can name may let compile, in
+-- yet to compile, those whose refs or keys are among refs or keys, those
+-- whose IDs are among ids (BoardExpressionsToCompile), and, if names is
+-- true, every one that does not compile but names something, which a change
+-- of what the project's expressions can name may let compile, each once, in
 -- the order of their IDs, each with what it is compiled from alone: its
 -- source, read in its context, at its board, and whether the board is in the
 -- trash, whose expressions see what it holds that is there with it alone
@@ -60,40 +61,44 @@ SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHER
 FROM expression e
 WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
     AND (e.ast IS NULL AND e.error IS NULL OR e.refs && @refs::uuid[] OR e.keys && @keys::text[]
+        OR e.id = ANY(@ids::uuid[])
         OR @names::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
 ORDER BY e.id;
 
 -- name: BoardNames :many
--- BoardNames returns what the deletion of the project's board board_id to
--- the trash, or its restoration, changes of what the other boards'
--- expressions can name: the UUIDs of its nodes, which have no key, and the
--- keys of its variables, which no other board's expression resolves, that
--- are not deleted to the trash themselves, which its deletion takes out of
--- it, and its restoration brings back.
-SELECT n.id, NULL::text AS key FROM node n
-WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.board_id = @board_id
+-- BoardNames returns what the deletion of the project's boards board_ids to
+-- the trash, or their restoration, changes of what the other boards'
+-- expressions can name, each with its board: the UUIDs of their nodes, which
+-- have no key, and the keys of their variables, which no other board's
+-- expression resolves, that are not deleted to the trash themselves, which a
+-- board's deletion takes out of it, and its restoration brings back.
+SELECT n.board_id, n.id, NULL::text AS key FROM node n
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.board_id = ANY(@board_ids::uuid[])
     AND n.deleted_at IS NULL
 UNION ALL
-SELECT v.id, v.key::text FROM variable v
-WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.board_id = @board_id
+SELECT v.board_id, v.id, v.key::text FROM variable v
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.board_id = ANY(@board_ids::uuid[])
     AND v.deleted_at IS NULL;
 
 -- name: BoardExpressionsToCompile :many
--- BoardExpressionsToCompile returns the expressions of the project's boards
--- other than board_id whose refs or keys are among refs or keys, what the
--- deletion of the board board_id or its restoration changes of what they can
--- name (BoardNames), each as ExpressionsToCompile returns it, in the order of
--- their IDs. The board's own expressions compile as they did, as an
--- expression of a board in the trash sees what the board holds that is there
--- with it alone. refs and keys are parameters, rather than read here, so
--- that the planner reads them through the indexes of refs and keys when they
--- are few, as for a board of a few nodes in a project of many expressions.
-SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = e.workspace_id
-        AND b.project_id = e.project_id AND b.id = e.board_id AND b.deleted_at IS NOT NULL)::boolean AS board_deleted
-FROM expression e
-WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.board_id <> @board_id
-    AND (e.refs && @refs::uuid[] OR e.keys && @keys::text[])
-ORDER BY e.id;
+-- BoardExpressionsToCompile returns the project's expressions whose refs are
+-- among refs, the nodes of the boards board_ids, and those that do not
+-- compile whose keys are among keys, the keys of the boards' variables
+-- (BoardNames), as one that compiles names its own board's variables and the
+-- global ones alone, which no board's deletion or restoration changes: each
+-- with its board, whether it compiles, and its refs and keys, by which
+-- package expression keeps those that name what a board other than their own
+-- holds. A board's own expressions compile as they did, as one of a board in
+-- the trash sees what the board holds that is there with it alone, so those
+-- of the boards are returned only when there are several, whose expressions
+-- may name what another holds. refs and keys are parameters, rather than read
+-- here, so that the planner reads them through the indexes of refs and keys
+-- when they are few, as for a board of a few nodes in a project of many
+-- expressions.
+SELECT id, board_id, is_valid, refs, keys FROM expression
+WHERE workspace_id = @workspace_id AND project_id = @project_id
+    AND (refs && @refs::uuid[] OR NOT is_valid AND keys && @keys::text[])
+    AND (board_id <> ALL(@board_ids::uuid[]) OR cardinality(@board_ids::uuid[]) > 1);
 
 -- name: CompileExpressions :many
 -- CompileExpressions sets what compiling the source of each of the project's
@@ -175,15 +180,17 @@ ORDER BY id;
 
 -- name: ExpressionNodes :many
 -- ExpressionNodes returns those of the project's nodes whose IDs are among
--- ids that are not deleted to its trash themselves, each with its type, its
--- board, and whether the board is in the trash: one that is not, which a node
--- reference can name, or one in the trash with its board alone, which an
--- expression of its own board alone can name.
-SELECT n.id, n.type, n.board_id, (b.deleted_at IS NOT NULL)::boolean AS board_deleted
-FROM node n
+-- ids that are not in its trash, which a node reference can name, and those
+-- that are there with their boards alone, not deleted themselves, which an
+-- expression of their own board alone can name, each with its type, its
+-- board, and whether the board is in the trash.
+SELECT l.id, l.type, l.board_id, false AS board_deleted FROM live_node l
+WHERE l.workspace_id = @workspace_id AND l.project_id = @project_id AND l.id = ANY(@ids::uuid[])
+UNION ALL
+SELECT n.id, n.type, n.board_id, true FROM node n
 JOIN board b ON b.workspace_id = n.workspace_id AND b.project_id = n.project_id AND b.id = n.board_id
 WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@ids::uuid[])
-    AND n.deleted_at IS NULL;
+    AND n.deleted_at IS NULL AND b.deleted_at IS NOT NULL;
 
 -- name: TouchNodes :many
 -- TouchNodes increments the revisions of the project's nodes whose IDs are

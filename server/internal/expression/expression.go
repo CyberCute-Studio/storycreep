@@ -26,9 +26,9 @@
 // in the trash is compiled as it would be once the board is restored, against
 // the board's own variables and nodes that are in the trash with it too, so
 // that a board's deletion and its restoration change none of the expressions
-// that it holds, which they do not compile again. Until a
-// rename rewrites the sources that name what it renames (FR-VAR-03, plan
-// item 47), a source that names a renamed key no longer compiles.
+// that it holds, which they do not compile again. Until a rename rewrites the
+// sources that name what it renames (FR-VAR-03, plan item 47), a source that
+// names a renamed key no longer compiles.
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash

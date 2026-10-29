@@ -637,6 +637,41 @@ func TestProjectWith(t *testing.T) {
 			t.Errorf("%s: With = %v; want an error that wraps ErrProject", c.name, err)
 		}
 	}
+	// Two Projects that add to one a board's variable of a key that three of
+	// its boards have, whose slice of them has room for a fourth, each append
+	// to a slice of their own.
+	board := func(n byte) Variable {
+		return Variable{ID: testID(ids.Variable, n), Key: "depth", Type: value.Int, Board: testID(ids.Board, n)}
+	}
+	shared, err := NewProject([]Variable{board(30), board(31), board(32)}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := shared.boardsOf["depth"]; cap(s) == len(s) {
+		t.Fatalf("the key's boards %v have no room for another, so that no append would share them", s)
+	}
+	first, err := shared.With(testID(ids.Board, 33), []Variable{board(33)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := shared.With(testID(ids.Board, 34), []Variable{board(34)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		p      *Project
+		boards []byte
+	}{{"the Project added to", shared, []byte{30, 31, 32}}, {"the first", first, []byte{30, 31, 32, 33}},
+		{"the second", second, []byte{30, 31, 32, 34}}} {
+		var want []string
+		for _, n := range c.boards {
+			want = append(want, testID(ids.Board, n))
+		}
+		if got := c.p.boardsOf["depth"]; !slices.Equal(got, want) {
+			t.Errorf("%s has the boards %v of the key, want %v", c.name, got, want)
+		}
+	}
 	// The zero Project names nothing, and takes a board's names.
 	zero, err := (&Project{}).With(boardElara, []Variable{{ID: varTide, Key: "tide", Type: value.Int,
 		Board: boardElara}}, []BoardNode{{ID: nodeBuoy}})

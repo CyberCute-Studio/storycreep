@@ -37,9 +37,12 @@ func Register(r *commands.Registry) {
 // project's expressions can name, and the near matches that an error
 // suggests: their keys, their types, their scopes, and whether they are in
 // the trash. The nodes, which an expression names only by their IDs (node
-// references), and the boards, whose deletions and restorations change what
-// expressions can name of the variables and the nodes that they hold, are
-// read apart (derive).
+// references), and the boards are read apart (derive): all that expressions
+// read of a board is whether it is in the trash, which changes what the
+// other boards' expressions can name of the variables and the nodes that it
+// holds, so a change of a board that commands of neutral types alone did not
+// make is read as its deletion to the trash or its restoration, which
+// TestNeutral holds every type of command of a board to, or to neutral.
 var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.ComponentType}
 
 // ownerKinds are the kinds of the owners of expressions, whose commands alone
@@ -47,12 +50,12 @@ var nameKinds = []ids.Kind{ids.Variable, ids.Component, ids.AttributeDef, ids.Co
 var ownerKinds = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}
 
 // neutral are the types of command that change an entity of one of
-// nameKinds, or a node, but neither what the project's expressions can name
-// nor what a name of theirs resolves to: a board's creation, which holds
-// neither variables nor nodes yet, and its name, description, colour, slug,
-// place, and entry node; a node's update and its move, which leave as they
-// are its type, which no command changes, and whether it is in the trash,
-// all that a node reference reads; a variable's description, default,
+// nameKinds, a board, or a node, but neither what the project's expressions
+// can name nor what a name of theirs resolves to: a board's creation, which
+// holds neither variables nor nodes yet, and its name, description, colour,
+// slug, place, and entry node; a node's update and its move, which leave as
+// they are its type, which no command changes, and whether it is in the
+// trash, all that a node reference reads; a variable's description, default,
 // reset_on_enter, and place; a component's name, description, image, values,
 // and place; an attribute definition's name, default, and place, which no
 // near match depends on, as they come nearest first and then by their bytes;
@@ -64,7 +67,8 @@ var ownerKinds = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}
 // that does not compile; it still compiles the sources that such a command
 // wrote, as a node's update does its scripts. A type that is not here is
 // taken to change what expressions can name, so that a new type of command
-// compiles too much, never too little, until it is added here. The types are
+// compiles too much, never too little, until it is added here, and one of a
+// board to delete it to the trash or restore it (nameKinds). The types are
 // spelt out, rather than named by the constants of their packages, which
 // import this one, or will, as package variable's rename will rewrite the
 // sources that name the variable (plan item 47); TestNeutral checks that
@@ -81,12 +85,12 @@ var neutral = []commands.Type{
 // derive compiles the expressions of the batch's project that changed leaves
 // to compile: those whose sources its commands wrote, which have neither an
 // AST nor an error yet; those whose sources name, by their IDs or by their
-// keys, an entity that it changed, or a variable, a component, an attribute
-// definition, or a node of a type that it changed; those of the other boards
-// of a board that it deleted to the trash or restored whose sources name the
-// keys of the board's variables or its nodes, whose deletion takes them out
-// of what those expressions can name, and whose restoration brings them back
-// (BoardExpressionsToCompile); and, if it changed a variable, a component, a
+// keys, an entity that it changed, or a component or an attribute definition
+// of a type that it changed; those of the other boards of a board that it
+// deleted to the trash or restored whose sources name the board's nodes, or
+// do not compile and name the keys of its variables, whose deletion takes
+// them out of what those expressions can name, and whose restoration brings
+// them back (boardExpressions); and, if it changed a variable, a component, a
 // definition, or a type, every one that does not compile but names
 // something, whose error, or the near matches that it suggests, may change
 // with any of them; but for a change that the commands of neutral types alone
@@ -301,48 +305,74 @@ func touchOwners(ctx context.Context, tx *commands.Tx, kind ids.Kind, owners []p
 }
 
 // toCompile returns the expressions to compile of the project: those that
-// ExpressionsToCompile returns of p, and those of the other boards of each of
-// the boards whose deletions to the trash or restorations change what those
-// expressions can name of them (BoardExpressionsToCompile), each once, in the
-// order of their IDs.
+// ExpressionsToCompile returns of p, and those that name what the boards
+// hold whose deletions to the trash or restorations change what they can
+// name of it (boardExpressions), each once, in the order of their IDs.
 func toCompile(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
 	p queries.ExpressionsToCompileParams, boards []pgtype.UUID) ([]queries.ExpressionsToCompileRow, error) {
+	p.Ids = []pgtype.UUID{}
+	if len(boards) > 0 {
+		var err error
+		if p.Ids, err = boardExpressions(ctx, q, ws, project, boards); err != nil {
+			return nil, err
+		}
+	}
 	rows, err := q.ExpressionsToCompile(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions to compile: %w", err)
 	}
-	if len(boards) == 0 {
-		return rows, nil
+	return rows, nil
+}
+
+// boardExpressions returns the UUIDs of the project's expressions that the
+// deletions to the trash, or the restorations, of the boards change: those
+// that name a node of a board other than their own among them, or that do
+// not compile and name the key of a variable of one, which its deletion takes
+// out of what they can name, and its restoration brings back. One that
+// compiles names its own board's variables and the global ones alone, and
+// one of a board among them sees what the board holds as it did, an
+// expression of a board in the trash seeing what is there with it alone
+// (projects).
+func boardExpressions(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, boards []pgtype.UUID) (
+	[]pgtype.UUID, error) {
+	names, err := q.BoardNames(ctx, queries.BoardNamesParams{WorkspaceID: ws, ProjectID: project, BoardIds: boards})
+	if err != nil {
+		return nil, fmt.Errorf("expression: read what the boards hold that expressions name: %w", err)
 	}
-	for _, b := range boards {
-		names, err := q.BoardNames(ctx, queries.BoardNamesParams{WorkspaceID: ws, ProjectID: project, BoardID: b})
-		if err != nil {
-			return nil, fmt.Errorf("expression: read what a board holds that expressions name: %w", err)
-		}
-		refs, keys := []pgtype.UUID{}, []string{}
-		for _, n := range names {
-			if n.Key.Valid {
-				keys = append(keys, n.Key.String)
-			} else {
-				refs = append(refs, n.ID)
-			}
-		}
-		if len(refs) == 0 && len(keys) == 0 {
+	// The board of each node, and the boards of each key, which several may
+	// have a variable of.
+	nodeBoard, keyBoards := map[pgtype.UUID]pgtype.UUID{}, map[string][]pgtype.UUID{}
+	refs, keys := []pgtype.UUID{}, []string{}
+	for _, n := range names {
+		if !n.Key.Valid {
+			nodeBoard[n.ID] = n.BoardID
+			refs = append(refs, n.ID)
 			continue
 		}
-		more, err := q.BoardExpressionsToCompile(ctx, queries.BoardExpressionsToCompileParams{WorkspaceID: ws,
-			ProjectID: project, BoardID: b, Refs: refs, Keys: keys})
-		if err != nil {
-			return nil, fmt.Errorf("expression: read the expressions that name what a board holds: %w", err)
+		if keyBoards[n.Key.String] == nil {
+			keys = append(keys, n.Key.String)
 		}
-		for _, m := range more {
-			rows = append(rows, queries.ExpressionsToCompileRow(m))
+		keyBoards[n.Key.String] = append(keyBoards[n.Key.String], n.BoardID)
+	}
+	if len(refs) == 0 && len(keys) == 0 {
+		return []pgtype.UUID{}, nil
+	}
+	rows, err := q.BoardExpressionsToCompile(ctx, queries.BoardExpressionsToCompileParams{WorkspaceID: ws,
+		ProjectID: project, Refs: refs, Keys: keys, BoardIds: boards})
+	if err != nil {
+		return nil, fmt.Errorf("expression: read the expressions that name what the boards hold: %w", err)
+	}
+	ids := []pgtype.UUID{}
+	for _, r := range rows {
+		other := func(b pgtype.UUID) bool { return b != r.BoardID }
+		if slices.ContainsFunc(r.Refs, func(n pgtype.UUID) bool { b, ok := nodeBoard[n]; return ok && other(b) }) ||
+			!r.IsValid && slices.ContainsFunc(r.Keys, func(k string) bool {
+				return slices.ContainsFunc(keyBoards[k], other)
+			}) {
+			ids = append(ids, r.ID)
 		}
 	}
-	slices.SortFunc(rows, func(a, b queries.ExpressionsToCompileRow) int {
-		return bytes.Compare(a.ID.Bytes[:], b.ID.Bytes[:])
-	})
-	return slices.CompactFunc(rows, func(a, b queries.ExpressionsToCompileRow) bool { return a.ID == b.ID }), nil
+	return ids, nil
 }
 
 // projects are what the project's expressions can name (§5.8.3), as the

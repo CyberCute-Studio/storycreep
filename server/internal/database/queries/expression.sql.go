@@ -12,46 +12,49 @@ import (
 )
 
 const boardExpressionsToCompile = `-- name: BoardExpressionsToCompile :many
-SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHERE b.workspace_id = e.workspace_id
-        AND b.project_id = e.project_id AND b.id = e.board_id AND b.deleted_at IS NOT NULL)::boolean AS board_deleted
-FROM expression e
-WHERE e.workspace_id = $1 AND e.project_id = $2 AND e.board_id <> $3
-    AND (e.refs && $4::uuid[] OR e.keys && $5::text[])
-ORDER BY e.id
+SELECT id, board_id, is_valid, refs, keys FROM expression
+WHERE workspace_id = $1 AND project_id = $2
+    AND (refs && $3::uuid[] OR NOT is_valid AND keys && $4::text[])
+    AND (board_id <> ALL($5::uuid[]) OR cardinality($5::uuid[]) > 1)
 `
 
 type BoardExpressionsToCompileParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
 	Refs        []pgtype.UUID
 	Keys        []string
+	BoardIds    []pgtype.UUID
 }
 
 type BoardExpressionsToCompileRow struct {
-	ID           pgtype.UUID
-	BoardID      pgtype.UUID
-	Context      string
-	Source       string
-	BoardDeleted bool
+	ID      pgtype.UUID
+	BoardID pgtype.UUID
+	IsValid bool
+	Refs    []pgtype.UUID
+	Keys    []string
 }
 
-// BoardExpressionsToCompile returns the expressions of the project's boards
-// other than board_id whose refs or keys are among refs or keys, what the
-// deletion of the board board_id or its restoration changes of what they can
-// name (BoardNames), each as ExpressionsToCompile returns it, in the order of
-// their IDs. The board's own expressions compile as they did, as an
-// expression of a board in the trash sees what the board holds that is there
-// with it alone. refs and keys are parameters, rather than read here, so
-// that the planner reads them through the indexes of refs and keys when they
-// are few, as for a board of a few nodes in a project of many expressions.
+// BoardExpressionsToCompile returns the project's expressions whose refs are
+// among refs, the nodes of the boards board_ids, and those that do not
+// compile whose keys are among keys, the keys of the boards' variables
+// (BoardNames), as one that compiles names its own board's variables and the
+// global ones alone, which no board's deletion or restoration changes: each
+// with its board, whether it compiles, and its refs and keys, by which
+// package expression keeps those that name what a board other than their own
+// holds. A board's own expressions compile as they did, as one of a board in
+// the trash sees what the board holds that is there with it alone, so those
+// of the boards are returned only when there are several, whose expressions
+// may name what another holds. refs and keys are parameters, rather than read
+// here, so that the planner reads them through the indexes of refs and keys
+// when they are few, as for a board of a few nodes in a project of many
+// expressions.
 func (q *Queries) BoardExpressionsToCompile(ctx context.Context, arg BoardExpressionsToCompileParams) ([]BoardExpressionsToCompileRow, error) {
 	rows, err := q.db.Query(ctx, boardExpressionsToCompile,
 		arg.WorkspaceID,
 		arg.ProjectID,
-		arg.BoardID,
 		arg.Refs,
 		arg.Keys,
+		arg.BoardIds,
 	)
 	if err != nil {
 		return nil, err
@@ -63,9 +66,9 @@ func (q *Queries) BoardExpressionsToCompile(ctx context.Context, arg BoardExpres
 		if err := rows.Scan(
 			&i.ID,
 			&i.BoardID,
-			&i.Context,
-			&i.Source,
-			&i.BoardDeleted,
+			&i.IsValid,
+			&i.Refs,
+			&i.Keys,
 		); err != nil {
 			return nil, err
 		}
@@ -78,34 +81,35 @@ func (q *Queries) BoardExpressionsToCompile(ctx context.Context, arg BoardExpres
 }
 
 const boardNames = `-- name: BoardNames :many
-SELECT n.id, NULL::text AS key FROM node n
-WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.board_id = $3
+SELECT n.board_id, n.id, NULL::text AS key FROM node n
+WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.board_id = ANY($3::uuid[])
     AND n.deleted_at IS NULL
 UNION ALL
-SELECT v.id, v.key::text FROM variable v
-WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.board_id = $3
+SELECT v.board_id, v.id, v.key::text FROM variable v
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.board_id = ANY($3::uuid[])
     AND v.deleted_at IS NULL
 `
 
 type BoardNamesParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
-	BoardID     pgtype.UUID
+	BoardIds    []pgtype.UUID
 }
 
 type BoardNamesRow struct {
-	ID  pgtype.UUID
-	Key pgtype.Text
+	BoardID pgtype.UUID
+	ID      pgtype.UUID
+	Key     pgtype.Text
 }
 
-// BoardNames returns what the deletion of the project's board board_id to
-// the trash, or its restoration, changes of what the other boards'
-// expressions can name: the UUIDs of its nodes, which have no key, and the
-// keys of its variables, which no other board's expression resolves, that
-// are not deleted to the trash themselves, which its deletion takes out of
-// it, and its restoration brings back.
+// BoardNames returns what the deletion of the project's boards board_ids to
+// the trash, or their restoration, changes of what the other boards'
+// expressions can name, each with its board: the UUIDs of their nodes, which
+// have no key, and the keys of their variables, which no other board's
+// expression resolves, that are not deleted to the trash themselves, which a
+// board's deletion takes out of it, and its restoration brings back.
 func (q *Queries) BoardNames(ctx context.Context, arg BoardNamesParams) ([]BoardNamesRow, error) {
-	rows, err := q.db.Query(ctx, boardNames, arg.WorkspaceID, arg.ProjectID, arg.BoardID)
+	rows, err := q.db.Query(ctx, boardNames, arg.WorkspaceID, arg.ProjectID, arg.BoardIds)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +117,7 @@ func (q *Queries) BoardNames(ctx context.Context, arg BoardNamesParams) ([]Board
 	var items []BoardNamesRow
 	for rows.Next() {
 		var i BoardNamesRow
-		if err := rows.Scan(&i.ID, &i.Key); err != nil {
+		if err := rows.Scan(&i.BoardID, &i.ID, &i.Key); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -391,11 +395,13 @@ func (q *Queries) ExpressionComponents(ctx context.Context, arg ExpressionCompon
 }
 
 const expressionNodes = `-- name: ExpressionNodes :many
-SELECT n.id, n.type, n.board_id, (b.deleted_at IS NOT NULL)::boolean AS board_deleted
-FROM node n
+SELECT l.id, l.type, l.board_id, false AS board_deleted FROM live_node l
+WHERE l.workspace_id = $1 AND l.project_id = $2 AND l.id = ANY($3::uuid[])
+UNION ALL
+SELECT n.id, n.type, n.board_id, true FROM node n
 JOIN board b ON b.workspace_id = n.workspace_id AND b.project_id = n.project_id AND b.id = n.board_id
 WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($3::uuid[])
-    AND n.deleted_at IS NULL
+    AND n.deleted_at IS NULL AND b.deleted_at IS NOT NULL
 `
 
 type ExpressionNodesParams struct {
@@ -412,10 +418,10 @@ type ExpressionNodesRow struct {
 }
 
 // ExpressionNodes returns those of the project's nodes whose IDs are among
-// ids that are not deleted to its trash themselves, each with its type, its
-// board, and whether the board is in the trash: one that is not, which a node
-// reference can name, or one in the trash with its board alone, which an
-// expression of its own board alone can name.
+// ids that are not in its trash, which a node reference can name, and those
+// that are there with their boards alone, not deleted themselves, which an
+// expression of their own board alone can name, each with its type, its
+// board, and whether the board is in the trash.
 func (q *Queries) ExpressionNodes(ctx context.Context, arg ExpressionNodesParams) ([]ExpressionNodesRow, error) {
 	rows, err := q.db.Query(ctx, expressionNodes, arg.WorkspaceID, arg.ProjectID, arg.Ids)
 	if err != nil {
@@ -492,7 +498,8 @@ SELECT e.id, e.board_id, e.context, e.source, EXISTS (SELECT 1 FROM board b WHER
 FROM expression e
 WHERE e.workspace_id = $1 AND e.project_id = $2
     AND (e.ast IS NULL AND e.error IS NULL OR e.refs && $3::uuid[] OR e.keys && $4::text[]
-        OR $5::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
+        OR e.id = ANY($5::uuid[])
+        OR $6::boolean AND NOT e.is_valid AND (cardinality(e.refs) > 0 OR cardinality(e.keys) > 0))
 ORDER BY e.id
 `
 
@@ -501,6 +508,7 @@ type ExpressionsToCompileParams struct {
 	ProjectID   pgtype.UUID
 	Refs        []pgtype.UUID
 	Keys        []string
+	Ids         []pgtype.UUID
 	Names       bool
 }
 
@@ -513,9 +521,10 @@ type ExpressionsToCompileRow struct {
 }
 
 // ExpressionsToCompile returns the project's expressions that the batch has
-// yet to compile, those whose refs or keys are among refs or keys, and, if
-// names is true, every one that does not compile but names something, which
-// a change of what the project's expressions can name may let compile, in
+// yet to compile, those whose refs or keys are among refs or keys, those
+// whose IDs are among ids (BoardExpressionsToCompile), and, if names is
+// true, every one that does not compile but names something, which a change
+// of what the project's expressions can name may let compile, each once, in
 // the order of their IDs, each with what it is compiled from alone: its
 // source, read in its context, at its board, and whether the board is in the
 // trash, whose expressions see what it holds that is there with it alone
@@ -526,6 +535,7 @@ func (q *Queries) ExpressionsToCompile(ctx context.Context, arg ExpressionsToCom
 		arg.ProjectID,
 		arg.Refs,
 		arg.Keys,
+		arg.Ids,
 		arg.Names,
 	)
 	if err != nil {

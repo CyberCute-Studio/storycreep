@@ -186,20 +186,29 @@ func NewProject(variables []Variable, components []Component, nodes []BoardNode)
 // With returns the Project of p's names and the variables of the board whose
 // ID is board, each of which is of that board, and the nodes, as NewProject
 // returns of them all, or an error that wraps ErrProject; p stays as it is.
-// It copies only what the additions change, never the components, so that a
-// Project of each of many boards, each with names of its own, as the
-// expressions of a board in the trash see the board's own variables and
-// nodes (package expression), costs little more than what it adds.
+// It copies the maps that the additions change, of p's variables and nodes
+// by their IDs, its boards' scopes, and the boards of each key, but neither
+// the scopes of the other boards nor the components and their attributes,
+// which NewProject builds, so that a Project of each of many boards, each
+// with names of its own, as the expressions of a board in the trash see the
+// board's own variables and nodes (package expression), costs a copy of
+// those maps a board rather than a Project's construction.
 func (p *Project) With(board string, variables []Variable, nodes []BoardNode) (*Project, error) {
 	if !ids.IsCanonical(ids.Board, board) {
 		return nil, fmt.Errorf("%w: %q is not the ID of a board in its canonical spelling", ErrProject, board)
 	}
 	q := &Project{globals: p.globals, components: p.components, componentIDs: p.componentIDs,
-		boards: cloned(p.boards), boardsOf: cloned(p.boardsOf), variables: cloned(p.variables), nodes: cloned(p.nodes)}
+		boards: cloned(p.boards), boardsOf: make(map[string][]string, len(p.boardsOf)),
+		variables: cloned(p.variables), nodes: cloned(p.nodes)}
 	// The board's own variables are added to a copy of its scope, and none
-	// to another's, which q shares with p.
+	// to another's, which q shares with p, and q appends a board to a slice of
+	// its own of a key's boards, never into the array that p's slice holds, as
+	// two Projects that add to p would append into one.
 	if scope := p.boards[board]; scope != nil {
 		q.boards[board] = maps.Clone(scope)
+	}
+	for key, boards := range p.boardsOf {
+		q.boardsOf[key] = slices.Clip(boards)
 	}
 	for _, v := range variables {
 		if v.Board != board {
@@ -240,9 +249,9 @@ func (p *Project) id(k ids.Kind, s string) error {
 }
 
 // addVariable adds the variable v to p, or returns an error that wraps
-// ErrProject. It changes p's maps, and the scope of v's board in p.boards,
-// but never a slice of p.boardsOf, to a copy of which it appends v's board,
-// as a Project that With returns shares them with the one that it adds to.
+// ErrProject. It changes p's maps, the scope of v's board in p.boards, and
+// the slice of v's key's boards in p.boardsOf, which it appends v's board
+// to, so a Project that With returns has copies of its own of those.
 func (p *Project) addVariable(v Variable) error {
 	if err := p.id(ids.Variable, v.ID); err != nil {
 		return err
@@ -267,7 +276,7 @@ func (p *Project) addVariable(v Variable) error {
 		return fmt.Errorf("%w: two variables of one scope have the key %s", ErrProject, v.Key)
 	}
 	if v.Board != "" {
-		p.boardsOf[v.Key] = append(slices.Clip(p.boardsOf[v.Key]), v.Board)
+		p.boardsOf[v.Key] = append(p.boardsOf[v.Key], v.Board)
 	}
 	scope[v.Key] = &v
 	p.variables[v.ID] = &v
