@@ -2,7 +2,13 @@
 // schema/save-state/v1), of the keywords that they use, which the flow's
 // loader checks each file against before it reads it.
 
-import { JsonNumber } from "../expr";
+import {
+  compareNumbers,
+  isIntegral,
+  isJsonObject,
+  JsonNumber,
+  semantics,
+} from "../expr";
 
 /** A JSON Schema, or a document of them, as the schema files hold them. */
 export type Schema = boolean | { readonly [keyword: string]: unknown };
@@ -61,9 +67,10 @@ const anyValue = "#/$defs/AnyValue";
  * JSON pointer of the value that it does not take, or undefined if it is.
  * instance is a value that readJSON returned, whose numbers are JsonNumbers
  * that it compares as they are written, or one whose numbers are
- * JavaScript's, as a state that JSON.parse read, which it compares as String
- * writes them. It throws an Error if the document uses a keyword that it
- * does not read.
+ * JavaScript's, as a schema's example, which it compares as String writes
+ * them, and which may hold a null where the format takes any value but null
+ * (AnyValue), which it takes there as it takes any. It throws an Error if
+ * the document uses a keyword that it does not read.
  */
 export function validate(
   document: Schema,
@@ -93,10 +100,9 @@ function checkKeywords(document: Schema): void {
           `flow: a schema uses the keyword ${k}, which the validator does not read`,
         );
       }
-      if (k === "properties" || k === "$defs" || k === "dependentRequired") {
-        if (k !== "dependentRequired") {
-          stack.push(...Object.values(v as object));
-        }
+      // dependentRequired's values are lists of keys, not schemas.
+      if (k === "properties" || k === "$defs") {
+        stack.push(...Object.values(v as object));
       } else if (k === "oneOf") {
         stack.push(...(v as unknown[]));
       } else if (
@@ -111,76 +117,6 @@ function checkKeywords(document: Schema): void {
   checked.add(document);
 }
 
-// The decimal of a number as it is written: its sign, its significant
-// digits, without the zeros around them, and the power of ten of the first,
-// or none of a zero.
-interface Decimal {
-  negative: boolean;
-  digits: string;
-  exponent: number;
-}
-
-// decimalOf returns the decimal of raw, a JSON number.
-function decimalOf(raw: string): Decimal {
-  const negative = raw.startsWith("-");
-  const s = negative ? raw.slice(1) : raw;
-  const e = s.search(/[eE]/);
-  const mantissa = e < 0 ? s : s.slice(0, e);
-  const shift = e < 0 ? 0 : Number(s.slice(e + 1));
-  const point = mantissa.indexOf(".");
-  const whole = point < 0 ? mantissa : mantissa.slice(0, point);
-  const all = whole + (point < 0 ? "" : mantissa.slice(point + 1));
-  const lead = all.length - all.replace(/^0+/, "").length;
-  const digits = all.slice(lead).replace(/0+$/, "");
-  return {
-    negative: negative && digits !== "",
-    digits,
-    exponent: whole.length - lead - 1 + shift,
-  };
-}
-
-/** Returns -1, 0, or +1 as the JSON number a is less than, equal to, or greater than b, exactly. */
-export function compareNumbers(a: string, b: string): number {
-  const x = decimalOf(a);
-  const y = decimalOf(b);
-  if (x.digits === "" || y.digits === "") {
-    const sx = x.digits === "" ? 0 : x.negative ? -1 : 1;
-    const sy = y.digits === "" ? 0 : y.negative ? -1 : 1;
-    return Math.sign(sx - sy);
-  }
-  if (x.negative !== y.negative) {
-    return x.negative ? -1 : 1;
-  }
-  let c: number;
-  if (x.exponent !== y.exponent) {
-    c = x.exponent < y.exponent ? -1 : 1;
-  } else {
-    const n = Math.max(x.digits.length, y.digits.length);
-    const dx = x.digits.padEnd(n, "0");
-    const dy = y.digits.padEnd(n, "0");
-    c = dx === dy ? 0 : dx < dy ? -1 : 1;
-  }
-  return x.negative ? -c : c;
-}
-
-// isIntegral reports whether the JSON number raw is an integer, by its
-// decimal, exactly, as JSON Schema's integer is a number whose fraction is
-// zero, however it is written, as 2.0.
-function isIntegral(raw: string): boolean {
-  const d = decimalOf(raw);
-  return d.digits === "" || d.digits.length - 1 <= d.exponent;
-}
-
-// codePoints returns how many code points s has, as JSON Schema counts a
-// string's length.
-function codePoints(s: string): number {
-  let n = 0;
-  for (const _ of s) {
-    n++;
-  }
-  return n;
-}
-
 // rawOf returns the written form of a number, of readJSON's or of
 // JavaScript's.
 function rawOf(v: unknown): string | undefined {
@@ -190,22 +126,12 @@ function rawOf(v: unknown): string | undefined {
   return typeof v === "number" && Number.isFinite(v) ? String(v) : undefined;
 }
 
-// isObject reports whether v is a JSON object.
-function isObject(v: unknown): v is { [key: string]: unknown } {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    !Array.isArray(v) &&
-    !(v instanceof JsonNumber)
-  );
-}
-
 // typeOf returns the JSON type of v, as JSON Schema's type names it, but
 // that an integral number is "integer" too (isOfType).
 function isOfType(v: unknown, type: string): boolean {
   switch (type) {
     case "object":
-      return isObject(v);
+      return isJsonObject(v);
     case "array":
       return Array.isArray(v);
     case "string":
@@ -314,7 +240,8 @@ class Validator {
       }
     }
     if (typeof v === "string") {
-      const n = codePoints(v);
+      // JSON Schema counts a string's length in code points.
+      const n = semantics.len(v);
       if (typeof s.minLength === "number" && n < s.minLength) {
         return `${where} is shorter than ${s.minLength} characters`;
       }
@@ -343,7 +270,7 @@ class Validator {
     if (Array.isArray(v)) {
       return this.array(s, v, path, depth);
     }
-    if (isObject(v)) {
+    if (isJsonObject(v)) {
       return this.object(s, v, path, depth);
     }
     return undefined;
@@ -387,8 +314,8 @@ class Validator {
         : s;
     if (
       typeof schema !== "object" ||
-      !isObject(v) ||
-      !isObject(schema.properties)
+      !isJsonObject(v) ||
+      !isJsonObject(schema.properties)
     ) {
       return false;
     }
@@ -446,10 +373,9 @@ class Validator {
     depth: number,
   ): string | undefined {
     const where = path || "/";
-    const properties = (isObject(s.properties) ? s.properties : {}) as Record<
-      string,
-      Schema
-    >;
+    const properties = (
+      isJsonObject(s.properties) ? s.properties : {}
+    ) as Record<string, Schema>;
     const telling = (p: Schema) =>
       p === false || (typeof p === "object" && Object.hasOwn(p, "const"));
     for (const [k, p] of Object.entries(properties)) {
@@ -467,7 +393,7 @@ class Validator {
         }
       }
     }
-    if (isObject(s.dependentRequired)) {
+    if (isJsonObject(s.dependentRequired)) {
       for (const [k, deps] of Object.entries(s.dependentRequired)) {
         if (Object.hasOwn(v, k)) {
           for (const d of deps as string[]) {

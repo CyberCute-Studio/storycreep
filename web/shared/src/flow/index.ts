@@ -40,5 +40,5 @@ export {
   StateError,
   ValueError,
 } from "./runtime";
-export { compareNumbers, type Schema, validate } from "./schema";
+export { type Schema, validate } from "./schema";
 export { render } from "./text";

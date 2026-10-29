@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import type { Context } from "./ast";
+import { type Context, NO_RANGE, type Node } from "./ast";
+import { versionOf } from "./builtins";
 import { compile } from "./check";
 import { encode } from "./encode";
 import { COMPILE_CODES, type Code, ExprError, SYNTAX_CODES } from "./error";
@@ -124,4 +125,13 @@ test("the checker gives each source of the compile corpus its AST or its error",
 // Verifies: FR-EXPR-02/AC1
 test("the corpus that both implementations run has at least 200 expressions", () => {
   expect(cases.length).toBeGreaterThanOrEqual(200);
+});
+
+// A snapshot's ASTs, however many, as more than an engine takes as a
+// call's arguments, of which there are some hundred thousand at most.
+test("versionOf reads any number of ASTs", () => {
+  const lit: Node = { kind: "lit", type: "int", value: 1, src: NO_RANGE };
+  const asts = Array.from({ length: 500_000 }, (): Node => ({ ...lit }));
+  expect(versionOf(asts)).toBe(1);
+  expect(versionOf([])).toBe(1);
 });

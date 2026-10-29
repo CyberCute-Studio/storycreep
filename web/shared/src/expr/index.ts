@@ -66,6 +66,8 @@ export {
   run,
 } from "./eval";
 export {
+  compareNumbers,
+  isIntegral,
   isJsonObject,
   JsonError,
   JsonNumber,

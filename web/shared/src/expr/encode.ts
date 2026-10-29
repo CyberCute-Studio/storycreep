@@ -2,7 +2,7 @@
 
 import type { Lit, Node } from "./ast";
 import { UsageError } from "./error";
-import { MAX_STRING_LENGTH } from "./semantics";
+import { len, MAX_STRING_LENGTH } from "./semantics";
 import {
   ASSIGN_OPS,
   BINARY_OPS,
@@ -193,21 +193,12 @@ export function literalProblem(n: Lit): string | undefined {
       }
       return (
         textProblem(v) ??
-        (codePoints(v) > MAX_STRING_LENGTH
+        (len(v) > MAX_STRING_LENGTH
           ? `a string literal is longer than ${MAX_STRING_LENGTH} characters`
           : undefined)
       );
   }
   return `${JSON.stringify((n as { type: unknown }).type)} is no type of a literal`;
-}
-
-// codePoints returns how many code points s has.
-function codePoints(s: string): number {
-  let n = 0;
-  for (const _ of s) {
-    n++;
-  }
-  return n;
 }
 
 /**

@@ -28,12 +28,13 @@ export function near(name: string, candidates: Iterable<string>): string[] {
   );
   const matches: [string, number][] = [];
   const lower = lowerASCII(name);
+  const rows: Rows = [[], [], []];
   for (const c of candidates) {
     // The distance is at least the difference of the lengths.
     if (Math.abs(c.length - name.length) > limit) {
       continue;
     }
-    const d = distance(lower, lowerASCII(c), limit);
+    const d = distance(lower, lowerASCII(c), limit, rows);
     if (d <= limit) {
       matches.push([c, d]);
     }
@@ -51,14 +52,24 @@ export function near(name: string, candidates: Iterable<string>): string[] {
   return out;
 }
 
+// Rows are three rows of the distances of a's prefixes from b's: the one
+// before the previous one, the previous one, and the current one.
+type Rows = [number[], number[], number[]];
+
 // distance returns the optimal string alignment distance of a and b, or a
-// distance above limit once it is certain to be more than limit.
-function distance(a: string, b: string, limit: number): number {
-  // Three rows of the distances of a's prefixes from b's: the one before the
-  // previous one, the previous one, and the current one.
-  let prev2 = new Array<number>(b.length + 1).fill(0);
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  let cur = new Array<number>(b.length + 1).fill(0);
+// distance above limit once it is certain to be more than limit. It keeps
+// the distances in rows, which it grows to b's length, so that one near
+// reuses them for each of its candidates.
+function distance(a: string, b: string, limit: number, rows: Rows): number {
+  for (const row of rows) {
+    while (row.length <= b.length) {
+      row.push(0);
+    }
+  }
+  let [prev2, prev, cur] = rows;
+  for (let j = 0; j <= b.length; j++) {
+    prev[j] = j;
+  }
   for (let i = 1; i <= a.length; i++) {
     cur[0] = i;
     let least = cur[0];
@@ -74,7 +85,10 @@ function distance(a: string, b: string, limit: number): number {
     if (least > limit) {
       return limit + 1;
     }
-    [prev2, prev, cur] = [prev, cur, prev2];
+    const done = prev2;
+    prev2 = prev;
+    prev = cur;
+    cur = done;
   }
   return prev[b.length];
 }

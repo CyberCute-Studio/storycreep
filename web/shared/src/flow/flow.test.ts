@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import ast from "../../../../schema/published/v1/ast.schema.json" with {
   type: "json",
 };
@@ -29,6 +29,7 @@ import saveState from "../../../../schema/save-state/v1/save-state.schema.json" 
 };
 import {
   boolValue,
+  compareNumbers,
   floatValue,
   intValue,
   readJSON,
@@ -38,7 +39,7 @@ import {
 import type { SaveState } from "../save-state";
 import { ASTUnsupportedError, foldCase, LoadError, load } from "./load";
 import { Runtime, StateError, ValueError } from "./runtime";
-import { compareNumbers, type Schema, validate } from "./schema";
+import { type Schema, validate } from "./schema";
 
 const conformance = fileURLToPath(
   new URL("../../../../schema/conformance/", import.meta.url),
@@ -119,6 +120,43 @@ describe("load", () => {
         await expect(load(suite(name))).resolves.toBeDefined();
       }
     }
+  });
+
+  // A page that is no secure context, as a self-hosted instance's served
+  // over plain HTTP, has no WebCrypto, crypto.subtle (PRD FR-OFF-01 AC4).
+  describe("in a page without WebCrypto", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    test("hashes the files with its own SHA-256", async () => {
+      vi.stubGlobal("crypto", {});
+      expect(globalThis.crypto.subtle).toBeUndefined();
+      await expect(load(suite("choices"))).resolves.toBeDefined();
+      await expect(
+        load(
+          suite("choices", {
+            "storycreep.json": (m) => {
+              m.files[main] = zeros;
+            },
+          }),
+        ),
+      ).rejects.toThrow(/its hash/);
+    });
+  });
+
+  // ı folds to itself, as the Go runtime folds it, rather than to i, as
+  // JavaScript's toUpperCase and toLowerCase map it.
+  test("takes two tags that the Go runtime's case folding tells apart", async () => {
+    await expect(
+      load(
+        suite("choices", {
+          [main]: (b) => {
+            nodeOf(b, nd("START")).tags = ["kır", "KIR"];
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
   });
 
   test("ignores a key that the format does not define", async () => {
@@ -560,7 +598,49 @@ describe("the state", () => {
     expect(again.choices()).toEqual(r.choices());
   });
 
+  test("is what loadState loads again from its JSON, each number as it is written", async () => {
+    const s = await load(suite("choices"));
+    const r = new Runtime(s, false);
+    r.start("", "");
+    r.choose(cn("ASK"));
+    const st = r.saveState();
+    const again = new Runtime(s, false);
+    again.loadState(JSON.stringify(st));
+    expect(again.saveState()).toEqual(st);
+    expect(again.current()).toEqual(r.current());
+    // A visit count, a version, and an int written with a fraction of
+    // zeros are integers.
+    const written = JSON.stringify({
+      ...st,
+      schemaVersion: "SV",
+      visits: { [nd("START")]: "V" },
+    })
+      .replace('"SV"', `${st.schemaVersion}.0`)
+      .replace('"V"', "1.00")
+      .replace(/"stateVersion":1/, '"stateVersion":1e0');
+    again.loadState(written);
+    expect(again.visits(nd("START"))).toBe(1);
+    // An int's 2.0000000000000001, which JSON.parse reads as 2, is no
+    // integer, as the Go runtime reads it.
+    const text = JSON.stringify({
+      ...st,
+      variables: { ...st.variables, [vr("CASH")]: "CASH" },
+    }).replace('"CASH"', "2.0000000000000001");
+    expect(() => again.loadState(text)).toThrow(StateError);
+    expect(() => again.loadState(text)).toThrow(/not an integer/);
+    expect(() => again.loadState(`${JSON.stringify(st)} x`)).toThrow(
+      /not one JSON value/,
+    );
+  });
+
   test.each<[string, (st: Obj) => void, RegExp]>([
+    [
+      "holding a null where the format takes any value but null",
+      (st) => {
+        st.later = { of: [null] };
+      },
+      /holds null/,
+    ],
     [
       "of another project",
       (st) => {
@@ -693,6 +773,25 @@ describe("setVariable and setAttribute", () => {
       stringValue("wary"),
     );
   });
+
+  // As the Go runtime compares the value that a save would read back with
+  // the one that it sets, which of a -0 is 0.
+  test("set a float's -0 as 0, and refuse a float that is not finite", async () => {
+    const s = await load(suite("values"));
+    const r = new Runtime(s, false);
+    const float = [...s.declared.values()].find((d) => d.type === "float");
+    if (float === undefined) {
+      throw new Error("no float variable");
+    }
+    r.setVariable(float.id, { ...floatValue(1), float: -0 });
+    expect(Object.is(r.variable(float.id).float, 0)).toBe(true);
+    for (const f of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        r.setVariable(float.id, { ...floatValue(1), float: f }),
+      ).toThrow(ValueError);
+    }
+    expect(Object.is(r.variable(float.id).float, 0)).toBe(true);
+  });
 });
 
 describe("the schema validator", () => {
@@ -783,13 +882,26 @@ describe("the schema validator", () => {
   });
 });
 
-test("foldCase folds a tag's case as far as the platform's mappings do", () => {
-  expect(foldCase("Quest")).toBe(foldCase("QUEST"));
-  expect(foldCase("Straße")).toBe(foldCase("STRASSE"));
-  expect(foldCase("ẞ")).toBe(foldCase("ss"));
-  expect(foldCase("ΟΔΟΣ")).toBe(foldCase("οδος"));
-  expect(foldCase("é")).toBe(foldCase("e\u0301"));
-  expect(foldCase("a")).not.toBe(foldCase("b"));
+// Each tag and what the Go runtime's input.FoldCase returns of it.
+test("foldCase folds a tag's case as the Go runtime does", () => {
+  for (const [tag, folded] of [
+    ["Quest", "quest"],
+    ["QUEST", "quest"],
+    ["Straße", "strasse"],
+    ["STRASSE", "strasse"],
+    ["ẞ", "ss"],
+    ["ΟΔΟΣ", "οδοσ"],
+    ["οδος", "οδοσ"],
+    ["KIR", "kir"],
+    ["kır", "kır"],
+    ["İ", "i\u0307"],
+    ["ΐ", "ΐ"],
+    ["\u03aa\u0301", "ΐ"],
+    ["é", "é"],
+    ["e\u0301", "é"],
+  ]) {
+    expect(foldCase(tag), tag).toBe(folded);
+  }
 });
 
 // The suites' files hold what their manifests list, read as JSON with each

@@ -4,7 +4,14 @@
 
 import type { ValueType } from "./ast";
 import { textProblem } from "./encode";
-import { JsonNumber, type JsonValue, MAX_EXPONENT } from "./json";
+import {
+  compareNumbers,
+  decimalOf,
+  exponentBeyond,
+  JsonNumber,
+  type JsonValue,
+  MAX_EXPONENT,
+} from "./json";
 import {
   formatFloat,
   formatInt,
@@ -181,21 +188,9 @@ function readNumber(
  * exponent is read without its leading zeros, however many.
  */
 export function formProblem(raw: string): string | undefined {
-  const e = raw.search(/[eE]/);
-  if (e < 0) {
-    return undefined;
-  }
-  const exponent = raw
-    .slice(e + 1)
-    .replace(/^[+-]+/, "")
-    .replace(/^0+/, "");
-  if (
-    exponent !== "" &&
-    (exponent.length > 3 || Number(exponent) > MAX_EXPONENT)
-  ) {
-    return `is written with an exponent beyond ±${MAX_EXPONENT}, which no int or float needs to be`;
-  }
-  return undefined;
+  return exponentBeyond(raw)
+    ? `is written with an exponent beyond ±${MAX_EXPONENT}, which no int or float needs to be`
+    : undefined;
 }
 
 /**
@@ -206,36 +201,24 @@ export function formProblem(raw: string): string | undefined {
 export function integerOf(raw: string): [number, string | undefined] {
   const notInteger = "is not an integer, which an int is";
   const tooLarge = `is not an integer from -${MAX_INT} to ${MAX_INT}, which every runtime holds exactly`;
-  const negative = raw.startsWith("-");
-  const s = negative ? raw.slice(1) : raw;
-  const e = s.search(/[eE]/);
-  const mantissa = e < 0 ? s : s.slice(0, e);
-  const exponent = e < 0 ? "" : s.slice(e + 1);
-  const point = mantissa.indexOf(".");
-  const whole = point < 0 ? mantissa : mantissa.slice(0, point);
-  const fraction = point < 0 ? "" : mantissa.slice(point + 1);
-  let digits = (whole + fraction).replace(/^0+/, "");
-  if (digits === "") {
+  const d = decimalOf(raw);
+  if (d.digits === "") {
     return [0, undefined];
   }
-  // The value is digits times ten to the power of shift, which the
-  // exponent's bound bounds.
-  let shift = (exponent === "" ? 0 : Number(exponent)) - fraction.length;
-  while (digits.endsWith("0")) {
-    digits = digits.slice(0, -1);
-    shift++;
-  }
-  if (shift < 0) {
+  // It is an integer when its last significant digit is of a power of ten
+  // of at least 1, and then has a digit for each power of ten from its
+  // first's, which the exponent's bound bounds, down to 1.
+  if (d.digits.length - 1 > d.exponent) {
     return [0, notInteger];
   }
-  if (digits.length + shift > String(MAX_INT).length) {
+  if (d.exponent + 1 > String(MAX_INT).length) {
     return [0, tooLarge];
   }
-  const n = Number(digits + "0".repeat(shift));
+  const n = Number(d.digits.padEnd(d.exponent + 1, "0"));
   if (n > MAX_INT) {
     return [0, tooLarge];
   }
-  return [negative ? -n || 0 : n, undefined];
+  return [d.negative ? -n : n, undefined];
 }
 
 /**
@@ -266,35 +249,14 @@ export function jsonOf(
   return problem === undefined ? json : undefined;
 }
 
-// The significant digits of the greatest double, as its shortest form writes
-// them, 1.7976931348623157e+308.
-const maxDoubleDigits = "17976931348623157";
-
 /**
- * Reports whether raw, a JSON number that readValue takes as a float, is
- * beyond the bounds that the schemas give a float, ±1.7976931348623157e+308,
- * with which JSON Schema compares the number as it is written, though a
- * double, and so readValue, reads every number from there to half a unit in
- * the last place beyond the greatest double as the greatest double, as
+ * Reports whether raw, a JSON number, is beyond the bounds that the schemas
+ * give a float, ±1.7976931348623157e+308, the greatest double's shortest
+ * form, with which JSON Schema compares the number as it is written, though
+ * a double, and so readValue, reads every number from there to half a unit
+ * in the last place beyond the greatest double as the greatest double, as
  * 1.7976931348623158e308, which no number that the server writes is.
  */
 export function floatBeyondSchema(raw: string): boolean {
-  if (Math.abs(Number(raw)) !== Number.MAX_VALUE) {
-    // Within the bounds, or beyond a double's range, which readValue refuses.
-    return false;
-  }
-  // raw is within half a unit in the last place of the greatest double, so
-  // that its first significant digit is of the same power of ten as the
-  // bound's, and it is beyond the bound exactly when its significant digits,
-  // read as a fraction, are greater than the bound's.
-  let mantissa = raw.replace(/^[+-]/, "");
-  const e = mantissa.search(/[eE]/);
-  if (e >= 0) {
-    mantissa = mantissa.slice(0, e);
-  }
-  const digits = mantissa
-    .replace(".", "")
-    .replace(/^0+/, "")
-    .replace(/0+$/, "");
-  return digits > maxDoubleDigits;
+  return compareNumbers(raw.replace(/^-/, ""), "1.7976931348623157e+308") > 0;
 }

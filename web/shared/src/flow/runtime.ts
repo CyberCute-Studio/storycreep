@@ -12,12 +12,17 @@ import {
   type Env,
   type EvaluationError,
   floatValue,
+  isJsonObject,
+  JsonError,
+  type JsonValue,
   jsonOf,
+  NONE,
   type Node,
+  plain,
+  readJSON,
   readValue,
   run,
   type Script,
-  sameValue,
   semantics,
   type Value,
   valueString,
@@ -26,7 +31,6 @@ import type { SaveState } from "../save-state";
 import {
   attributeKey,
   type Connection,
-  MAX_INT,
   OUT,
   type Snapshot,
   type SnapshotNode,
@@ -200,11 +204,11 @@ export class Runtime {
     this.s = s;
     this.strict = strict;
     this.env = {
-      variable: (id) => this.vars.get(id) ?? NONE_VALUE,
+      variable: (id) => this.vars.get(id) ?? NONE,
       setVariable: (id, v) => {
         this.vars.set(id, v);
       },
-      attribute: (c, a) => this.attrs.get(attributeKey(c, a)) ?? NONE_VALUE,
+      attribute: (c, a) => this.attrs.get(attributeKey(c, a)) ?? NONE,
       setAttribute: (c, a, v) => {
         this.attrs.set(attributeKey(c, a), v);
       },
@@ -508,7 +512,7 @@ export class Runtime {
     this.phase = "";
     this.currentChoices = [];
     const count = this.visitCounts.get(id) ?? 0;
-    if (count < MAX_INT) {
+    if (count < semantics.MAX_INT) {
       this.visitCounts.set(id, count + 1);
     }
     this.emit({ kind: "enter", node: id });
@@ -681,7 +685,7 @@ export class Runtime {
         s.attribute === undefined
           ? this.vars.get(s.ref)
           : this.attrs.get(attributeKey(s.ref, s.attribute));
-      return interpolate(v ?? NONE_VALUE, s.decimals);
+      return interpolate(v ?? NONE, s.decimals);
     });
   }
 
@@ -690,7 +694,7 @@ export class Runtime {
    * by an ID, or none, of no type, of an id that is no variable's.
    */
   variable(id: string): Value {
-    return this.vars.get(id) ?? NONE_VALUE;
+    return this.vars.get(id) ?? NONE;
   }
 
   /**
@@ -713,7 +717,7 @@ export class Runtime {
    * attribute of the component whose ID is component.
    */
   attribute(component: string, attribute: string): Value {
-    return this.attrs.get(attributeKey(component, attribute)) ?? NONE_VALUE;
+    return this.attrs.get(attributeKey(component, attribute)) ?? NONE;
   }
 
   /**
@@ -777,13 +781,13 @@ export class Runtime {
     }
     for (const id of this.s.variables) {
       const d = this.s.declared.get(id);
-      const json = jsonOf(this.vars.get(id) ?? NONE_VALUE, d?.type ?? "string");
+      const json = jsonOf(this.vars.get(id) ?? NONE, d?.type ?? "string");
       if (json !== undefined) {
         st.variables[id] = json;
       }
     }
     for (const [c, a] of this.s.attributes) {
-      const v = this.attrs.get(attributeKey(c, a)) ?? NONE_VALUE;
+      const v = this.attrs.get(attributeKey(c, a)) ?? NONE;
       const json = jsonOf(v, v.type === "" ? "string" : v.type);
       st.attributes[c] ??= {};
       if (json !== undefined) {
@@ -818,9 +822,17 @@ export class Runtime {
    * is no jumper, in a phase that is neither awaiting_choice nor ended, and
    * awaits a choice only at an element that is no ending and that a
    * connection leaves, as no flow awaits one elsewhere.
+   *
+   * st is a state as JSON.parse reads one, which it reads as JSON.stringify
+   * writes it, or its JSON itself, a string, which it reads as readJSON
+   * does, each number as it is written, as the Go runtime reads a state's
+   * file (published.Decode), so that a number that JSON.parse would round,
+   * as an int's 2.0000000000000001, which is no integer, is refused rather
+   * than read as 2. Either way it refuses a null anywhere, which no state
+   * holds, as the Go runtime does.
    */
-  loadState(st: SaveState): Event[] {
-    const { vars, attrs, visits } = stateOf(this.s, st);
+  loadState(st: SaveState | string): Event[] {
+    const { state, vars, attrs, visits } = stateOf(this.s, st);
     return this.call(true, () => {
       this.vars = vars;
       this.attrs = attrs;
@@ -828,7 +840,7 @@ export class Runtime {
       this.node = "";
       this.phase = "";
       this.currentChoices = [];
-      const c = st.cursor;
+      const c = state.cursor;
       if (c !== undefined) {
         // The flow comes to rest, of the cursor's phase, once its choices
         // are built.
@@ -843,9 +855,6 @@ export class Runtime {
     });
   }
 }
-
-// NONE_VALUE is the value of an ID that is no variable's or attribute's.
-const NONE_VALUE: Value = { type: "", bool: false, int: 0, float: 0, str: "" };
 
 // typed returns v as a value of the type typ, an int widened for a float, or
 // throws when it is of another type, or an int beyond ±(2^53 − 1) for a
@@ -882,7 +891,7 @@ function asSaved(
     typ,
     options,
   );
-  if (problem !== undefined || !sameValue(read, v)) {
+  if (problem !== undefined || !equal(read, v)) {
     throw new ValueError(
       `the ${v.type || "value"} is no value of the language, as an int beyond ±(2^53 − 1), a float that is not finite, or a string of more than 4096 characters, or with a NUL, is not, or, of an enum, none of its options`,
     );
@@ -890,21 +899,63 @@ function asSaved(
   return read;
 }
 
-// stateOf returns the values and the visit counts of st, a state of the
-// snapshot s, or throws why it is none (loadState).
+// equal reports whether a and b are one value as the Go runtime compares
+// two, of which a float's 0 and -0 are one, and a NaN none.
+function equal(a: Value, b: Value): boolean {
+  return (
+    a.type === b.type &&
+    a.bool === b.bool &&
+    a.int === b.int &&
+    a.float === b.float &&
+    a.str === b.str
+  );
+}
+
+// stateOf reads given, a state of the snapshot s or its JSON, as loadState
+// reads it, and returns it with its values and its visit counts, or throws
+// why it is none.
 function stateOf(
   s: Snapshot,
-  st: SaveState,
+  given: SaveState | string,
 ): {
+  state: SaveState;
   vars: Map<string, Value>;
   attrs: Map<string, Value>;
   visits: Map<string, number>;
 } {
   const fail = (problem: string) => new StateError(problem);
-  const problem = validate(saveStateSchema as Schema, st);
-  if (problem !== undefined) {
-    throw fail(`${problem}, which its schema does not take`);
+  let text: string | undefined;
+  try {
+    text = typeof given === "string" ? given : JSON.stringify(given);
+  } catch {
+    // A BigInt, or an object that holds itself.
   }
+  if (text === undefined) {
+    throw fail("it is not JSON");
+  }
+  let raw: JsonValue;
+  try {
+    raw = readJSON(text);
+  } catch (e) {
+    if (e instanceof JsonError) {
+      throw fail(`it ${e.message}`);
+    }
+    throw e;
+  }
+  const problem = validate(saveStateSchema as Schema, raw);
+  if (problem !== undefined || !isJsonObject(raw)) {
+    throw fail(
+      `${problem ?? "/ is not an object"}, which its schema does not take`,
+    );
+  }
+  // Each number of st but the values, a version or a visit count, is one
+  // that its schema holds to an integer within ±(2^53 − 1), which plain
+  // reads exactly; the values are read from raw, as they are written.
+  const st = plain(raw) as SaveState;
+  const rawVariables = raw.variables as { [key: string]: JsonValue };
+  const rawAttributes = raw.attributes as {
+    [key: string]: { [key: string]: JsonValue };
+  };
   const m = s.manifest;
   const id = m.snapshot.channel === "release" ? m.snapshot.id : undefined;
   const version =
@@ -928,7 +979,7 @@ function stateOf(
   }
   for (const vid of keys) {
     const d = s.declared.get(vid);
-    const [read, problem] = readValue(st.variables[vid], d?.type ?? "string");
+    const [read, problem] = readValue(rawVariables[vid], d?.type ?? "string");
     if (problem !== undefined) {
       throw fail(`the value of the variable ${vid} ${problem}`);
     }
@@ -937,7 +988,7 @@ function stateOf(
   const attrs = new Map<string, Value>();
   let n = 0;
   for (const c of Object.keys(st.attributes).sort()) {
-    const values = st.attributes[c];
+    const values = rawAttributes[c];
     const names = Object.keys(values).sort();
     if (names.length === 0) {
       throw fail(`it holds attributes of ${c}, but none of its values`);
@@ -967,10 +1018,10 @@ function stateOf(
       node === undefined ||
       !Number.isInteger(count) ||
       count < 1 ||
-      count > MAX_INT
+      count > semantics.MAX_INT
     ) {
       throw fail(
-        `its visit count of ${nid} is not of a node of the snapshot, or below 1, or beyond ${MAX_INT}`,
+        `its visit count of ${nid} is not of a node of the snapshot, or below 1, or beyond ${semantics.MAX_INT}`,
       );
     }
     if (node.type === "jumper") {
@@ -1010,5 +1061,5 @@ function stateOf(
       );
     }
   }
-  return { vars, attrs, visits };
+  return { state: st, vars, attrs, visits };
 }

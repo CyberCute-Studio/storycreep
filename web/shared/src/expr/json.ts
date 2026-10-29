@@ -139,6 +139,90 @@ export function isJsonObject(v: unknown): v is { [key: string]: JsonValue } {
   );
 }
 
+/**
+ * Reports whether raw, a JSON number, is written with an exponent beyond
+ * ±MAX_EXPONENT, whatever its value, which it reads without its leading
+ * zeros, however many.
+ */
+export function exponentBeyond(raw: string): boolean {
+  const e = raw.search(/[eE]/);
+  if (e < 0) {
+    return false;
+  }
+  const magnitude = raw
+    .slice(e + 1)
+    .replace(/^[+-]/, "")
+    .replace(/^0+/, "");
+  return magnitude.length > 3 || Number(magnitude) > MAX_EXPONENT;
+}
+
+/**
+ * The decimal of a JSON number as it is written: its sign, its significant
+ * digits, without the zeros around them, and the power of ten of the first,
+ * or none of a zero, whose digits are "".
+ */
+export interface Decimal {
+  readonly negative: boolean;
+  readonly digits: string;
+  readonly exponent: number;
+}
+
+/** Returns the decimal of raw, a JSON number, exactly, however long it is. */
+export function decimalOf(raw: string): Decimal {
+  const negative = raw.startsWith("-");
+  const s = negative ? raw.slice(1) : raw;
+  const e = s.search(/[eE]/);
+  const mantissa = e < 0 ? s : s.slice(0, e);
+  const shift = e < 0 ? 0 : Number(s.slice(e + 1));
+  const point = mantissa.indexOf(".");
+  const whole = point < 0 ? mantissa : mantissa.slice(0, point);
+  const all = whole + (point < 0 ? "" : mantissa.slice(point + 1));
+  const lead = all.length - all.replace(/^0+/, "").length;
+  const digits = all.slice(lead).replace(/0+$/, "");
+  return {
+    negative: negative && digits !== "",
+    digits,
+    exponent: whole.length - lead - 1 + shift,
+  };
+}
+
+/**
+ * Returns -1, 0, or +1 as the JSON number a is less than, equal to, or
+ * greater than b, exactly, as they are written.
+ */
+export function compareNumbers(a: string, b: string): number {
+  const x = decimalOf(a);
+  const y = decimalOf(b);
+  if (x.digits === "" || y.digits === "") {
+    const sx = x.digits === "" ? 0 : x.negative ? -1 : 1;
+    const sy = y.digits === "" ? 0 : y.negative ? -1 : 1;
+    return Math.sign(sx - sy);
+  }
+  if (x.negative !== y.negative) {
+    return x.negative ? -1 : 1;
+  }
+  let c: number;
+  if (x.exponent !== y.exponent) {
+    c = x.exponent < y.exponent ? -1 : 1;
+  } else {
+    const n = Math.max(x.digits.length, y.digits.length);
+    const dx = x.digits.padEnd(n, "0");
+    const dy = y.digits.padEnd(n, "0");
+    c = dx === dy ? 0 : dx < dy ? -1 : 1;
+  }
+  return x.negative ? -c : c;
+}
+
+/**
+ * Reports whether the JSON number raw is an integer, by its decimal,
+ * exactly, as JSON Schema's integer is a number whose fraction is zero,
+ * however it is written, as 2.0.
+ */
+export function isIntegral(raw: string): boolean {
+  const d = decimalOf(raw);
+  return d.digits === "" || d.digits.length - 1 <= d.exponent;
+}
+
 // A container that the reader has opened: an array, or an object and the key
 // of the value that it reads.
 type Container =
@@ -146,6 +230,19 @@ type Container =
   | { object: { [key: string]: JsonValue }; key: string };
 
 const numberPattern = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+
+// The characters that an escape but \u stands for, by the character after
+// its backslash.
+const simpleEscapes: Record<string, string> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
 
 class Reader {
   private i = 0;
@@ -288,17 +385,10 @@ class Reader {
     }
     const raw = m[0];
     this.i += raw.length;
-    const e = raw.search(/[eE]/);
-    if (e >= 0) {
-      const magnitude = raw
-        .slice(e + 1)
-        .replace(/^[+-]/, "")
-        .replace(/^0+/, "");
-      if (magnitude.length > 3 || Number(magnitude) > MAX_EXPONENT) {
-        throw this.fail(
-          `writes the number ${raw.slice(0, 40)} with an exponent beyond ±${MAX_EXPONENT}, as no number of a file is written`,
-        );
-      }
+    if (exponentBeyond(raw)) {
+      throw this.fail(
+        `writes the number ${raw.slice(0, 40)} with an exponent beyond ±${MAX_EXPONENT}, as no number of a file is written`,
+      );
     }
     return new JsonNumber(raw);
   }
@@ -347,19 +437,9 @@ class Reader {
   // surrogate no character.
   private escape(): string {
     const c = this.text[this.i + 1];
-    const simple: Record<string, string> = {
-      '"': '"',
-      "\\": "\\",
-      "/": "/",
-      b: "\b",
-      f: "\f",
-      n: "\n",
-      r: "\r",
-      t: "\t",
-    };
-    if (c !== undefined && Object.hasOwn(simple, c)) {
+    if (c !== undefined && Object.hasOwn(simpleEscapes, c)) {
       this.i += 2;
-      return simple[c];
+      return simpleEscapes[c];
     }
     if (c !== "u") {
       throw this.fail("is not one JSON value");

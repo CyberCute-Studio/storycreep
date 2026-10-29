@@ -18,7 +18,7 @@ import {
 } from "./ast";
 import { literalProblem } from "./encode";
 import { checkContext } from "./error";
-import { JsonNumber, type JsonValue, readJSON } from "./json";
+import { isJsonObject, JsonNumber, type JsonValue, readJSON } from "./json";
 import {
   ASSIGN_OPS,
   BINARY_OPS,
@@ -107,15 +107,6 @@ export function decode(json: string | JsonValue | unknown, ctx: Context): Node {
 
 type JsonObject = { [key: string]: unknown };
 
-function isObject(v: unknown): v is JsonObject {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    !Array.isArray(v) &&
-    !(v instanceof JsonNumber)
-  );
-}
-
 // field returns the required field key of a node of the kind kind, or
 // throws when it is missing.
 function field(obj: JsonObject, kind: string, key: string): unknown {
@@ -160,7 +151,7 @@ class Decoder {
     if (++this.nodes > MAX_NODES) {
       throw new DecodeError(`the AST has more than ${MAX_NODES} nodes`);
     }
-    if (!isObject(v)) {
+    if (!isJsonObject(v)) {
       throw new DecodeError("a node is not an object");
     }
     const kind = v.kind;

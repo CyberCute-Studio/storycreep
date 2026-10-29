@@ -571,13 +571,10 @@ class Checker {
     if (n.scope !== "global" && this.p.elsewhere(this.board, n.key)) {
       throw new ExprError("board_variable_out_of_scope", src);
     }
-    const candidates: string[] = [];
-    if (n.scope !== "global") {
-      candidates.push(...this.p.boardKeys(this.board));
-    }
-    if (n.scope !== "board") {
-      candidates.push(...this.p.globalKeys());
-    }
+    const candidates = [
+      ...(n.scope !== "global" ? this.p.boardKeys(this.board) : []),
+      ...(n.scope !== "board" ? this.p.globalKeys() : []),
+    ];
     throw new ExprError("unknown_identifier", src, {
       suggestions: written(n.scope, near(n.key, candidates)),
     });

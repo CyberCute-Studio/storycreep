@@ -21,6 +21,9 @@ import manifestSchema from "../../../../schema/published/v1/storycreep.schema.js
 import variablesSchema from "../../../../schema/published/v1/variables.schema.json" with {
   type: "json",
 };
+import foldTable from "../../../../schema/unicode/fold.json" with {
+  type: "json",
+};
 import {
   AST_VERSION,
   type Context,
@@ -55,6 +58,7 @@ import type {
   Variables,
 } from "../published";
 import { type Schema, validate } from "./schema";
+import { sha256 } from "./sha256";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
 export const MANIFEST_PATH = "storycreep.json";
@@ -67,9 +71,6 @@ export const COMPONENTS_PATH = "project/components.json";
 export function boardPath(slug: string): string {
   return `boards/${slug}.json`;
 }
-
-/** The greatest integer of a file or a save state, as a visit count: 2^53 − 1. */
-export const MAX_INT = 9007199254740991;
 
 /** load's error for files that are not a snapshot that a runtime runs. */
 export class LoadError extends Error {
@@ -229,7 +230,9 @@ export class Snapshot {
  * of at most 4,096 characters without a NUL, as the language's are. It
  * rejects with a LoadError, and of a snapshot that is wrong in several ways
  * always the same one, as it reads the files and checks them in one order.
- * It is asynchronous since it hashes the files with the platform's SHA-256.
+ * It is asynchronous since it hashes the files with the platform's SHA-256,
+ * one after another, so that it holds a copy of one file at most, or, in a
+ * page that is no secure context, which has none, with its own.
  */
 export async function load(
   files: ReadonlyMap<string, Uint8Array>,
@@ -237,22 +240,33 @@ export async function load(
   const l = new Loader(files);
   const manifest = l.manifest();
   const digests = new Map<string, string>();
-  await Promise.all(
-    Object.keys(manifest.typed.files)
-      .filter((path) => files.has(path))
-      .map(async (path) => {
-        digests.set(path, await sha256(files.get(path) as Uint8Array));
-      }),
-  );
+  for (const path of Object.keys(manifest.typed.files).sort()) {
+    const bytes = files.get(path);
+    if (bytes !== undefined) {
+      digests.set(path, await digest(bytes));
+    }
+  }
   return l.load(manifest, digests);
 }
 
-// sha256 returns the hash of bytes as the manifest lists a file's: sha256:
-// and the lowercase hexadecimal SHA-256 of the bytes.
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const sum = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", bytes.slice()),
-  );
+// digest returns the hash of bytes as the manifest lists a file's: sha256:
+// and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
+// copies them, or, where the page is no secure context and has none
+// (crypto.subtle), by sha256's, which copies none.
+async function digest(bytes: Uint8Array): Promise<string> {
+  const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
+  const sum =
+    subtle === undefined
+      ? sha256(bytes)
+      : new Uint8Array(
+          await subtle.digest(
+            "SHA-256",
+            // WebCrypto reads no view of a SharedArrayBuffer.
+            bytes.buffer instanceof ArrayBuffer
+              ? (bytes as Uint8Array<ArrayBuffer>)
+              : bytes.slice(),
+          ),
+        );
   return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
@@ -532,7 +546,7 @@ class Loader {
         `the manifest's counts are ${JSON.stringify(m.counts)}, but the files hold ${JSON.stringify(counts)}`,
       );
     }
-    const v = versionOf(...this.asts);
+    const v = versionOf(this.asts);
     if (v > m.astVersion) {
       throw fail(
         `the snapshot's astVersion is ${m.astVersion}, though its expressions use constructs of version ${v} (FR-EXPR-04)`,
@@ -799,12 +813,10 @@ class Loader {
           ...(v.scope === "board" ? { board: v.boardId } : {}),
         })),
         components.components.map((c) => {
-          const defs = definitions.get(c.componentTypeId);
-          if (defs === undefined) {
-            throw fail(
-              `the component ${c.id} is of ${c.componentTypeId}, which is no component type of the snapshot`,
-            );
-          }
+          // declare has refused a component of no type of the snapshot.
+          const defs = definitions.get(
+            c.componentTypeId,
+          ) as ComponentType["attributes"];
           return {
             id: c.id,
             key: c.key,
@@ -1083,17 +1095,28 @@ class Loader {
   }
 }
 
+// folds are the code points that the Go runtime's case folding of a tag
+// changes, by schema/unicode/fold.json, and what it folds each to.
+const folds = new Map<number, string>(
+  foldTable.fold.map(([c, ...to]) => [c, String.fromCodePoint(...to)]),
+);
+
 /**
  * Returns the key by which two tags of a node are the same but for their
- * case: the tag in Unicode's normalization form C, its case folded, as far
- * as JavaScript's full case mappings fold it, upper and then lower, twice,
- * so that Quest, QUEST, and quest are one, and so are ẞ, ß, and ss, and
- * in form C again.
+ * case, as the Go runtime's, input.FoldCase, is: the tag in Unicode's
+ * normalization form C, each of its code points case folded as
+ * schema/unicode/fold.json folds it, which is the Go runtime's folding, of
+ * golang.org/x/text, rather than JavaScript's toUpperCase and toLowerCase,
+ * which follow other rules and other versions of Unicode, and the result in
+ * form C again; so that Quest, QUEST, and quest are one, and so are ẞ, ß,
+ * and ss, though kır and kir are two, as ı folds to itself. The forms C are
+ * the platform's, which for a code point that Unicode assigned after the
+ * version of the table may differ from Go's.
  */
 export function foldCase(tag: string): string {
-  let s = tag.normalize("NFC");
-  for (let i = 0; i < 2; i++) {
-    s = s.toUpperCase().toLowerCase();
+  let folded = "";
+  for (const c of tag.normalize("NFC")) {
+    folded += folds.get(c.codePointAt(0) as number) ?? c;
   }
-  return s.normalize("NFC");
+  return folded.normalize("NFC");
 }

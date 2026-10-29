@@ -203,9 +203,11 @@ const assignVersions: Record<AssignOp, number> = {
  * kinds, the operators, and the built-ins that they use, or 1, the first, for
  * none. A node that is none of an AST's at its place counts for nothing, nor
  * do its children, and a node that it reaches twice once, so that it never
- * reads without end.
+ * reads without end. It takes the ASTs as an array, as the Go function takes
+ * a slice, so that a snapshot's, however many, are never a call's arguments,
+ * of which an engine takes some hundred thousand at most.
  */
-export function versionOf(...asts: Node[]): number {
+export function versionOf(asts: readonly Node[]): number {
   let v = 1;
   const seen = new Set<Node>();
   const stack: [Node, Place][] = asts.map((n) => [n, "root"]);

@@ -310,7 +310,12 @@ export class Project {
         this.boards.set(board, vars);
       }
       vars.set(v.key, v);
-      this.boardsOf.set(v.key, [...(this.boardsOf.get(v.key) ?? []), board]);
+      let boards = this.boardsOf.get(v.key);
+      if (boards === undefined) {
+        boards = [];
+        this.boardsOf.set(v.key, boards);
+      }
+      boards.push(board);
     }
     this.variables.set(v.id, v);
   }
@@ -344,7 +349,9 @@ export class Project {
   boardKeys(board: string): string[] {
     const keys: string[] = [];
     for (let p: Project | undefined = this; p !== undefined; p = p.base) {
-      keys.push(...(p.boards.get(board)?.keys() ?? []));
+      for (const k of p.boards.get(board)?.keys() ?? []) {
+        keys.push(k);
+      }
     }
     return keys;
   }
