@@ -177,8 +177,9 @@ var (
 // and an error for one of a kind that the place cannot be of. It tells each
 // kind's nil pointer, and where each kind can be, in one switch over the
 // kinds, as eachChild tells each kind's children, at their places, in one,
-// which Check and VersionOf read an AST by; node's switch, which writes each
-// kind's children with what comes between them, lists them once more.
+// which Check, VersionOf, and Walk read an AST by; node's switch, which
+// writes each kind's children with what comes between them, lists them once
+// more.
 func check(n Node, at place) error {
 	var isNil, fits bool
 	expression := at == atRoot || at == atOperand
@@ -249,6 +250,21 @@ func eachChild(n Node, f func(child Node, at place)) {
 			}
 		}
 	}
+}
+
+// Walk calls f with n and with each node under it, each node before its
+// children, and the children in the order of the source, as eachChild tells
+// them, so that a package that reads every node of an AST, as package
+// expression reads the names and the node references of a source, finds the
+// children of each kind that has them by this package's one switch, and so
+// those of a kind that a later ast_version adds. It recurses as deep as the
+// AST is, which Parse and Check bound by MaxDepth. A nil n has no node.
+func Walk(n Node, f func(Node)) {
+	if n == nil {
+		return
+	}
+	f(n)
+	eachChild(n, func(c Node, _ place) { Walk(c, f) })
 }
 
 // node writes n, which is at the place at, but for its children, which it

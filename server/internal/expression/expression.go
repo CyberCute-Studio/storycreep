@@ -136,6 +136,9 @@ func CheckSource(source string) string {
 // is not a field of o's kind, or if it would write a source while the
 // registry lacks the derivation that compiles it (Register).
 func Set(ctx context.Context, tx *commands.Tx, o Owner, f Field, source *string) (bool, error) {
+	if err := fieldOf(o.Kind, f); err != nil {
+		return false, err
+	}
 	return write(ctx, tx, o, []fieldSource{{f, source}})
 }
 
@@ -149,8 +152,8 @@ func Set(ctx context.Context, tx *commands.Tx, o Owner, f Field, source *string)
 func SetFields(ctx context.Context, tx *commands.Tx, o Owner, sources map[Field]*string) (bool, error) {
 	var list []fieldSource
 	for f, source := range sources {
-		if !slices.Contains(fields[o.Kind], f) {
-			return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, f)
+		if err := fieldOf(o.Kind, f); err != nil {
+			return false, err
 		}
 		if source != nil {
 			list = append(list, fieldSource{f, source})
@@ -189,21 +192,26 @@ type fieldSource struct {
 	source *string
 }
 
-// write sets the source of the expression of each field of the owner o, of
-// the batch's project, that sources lists, to its source, or removes the
-// field's expression if its source is nil, and reports whether that changed
-// any of them, as Set does, reading o's expressions once.
-func write(ctx context.Context, tx *commands.Tx, o Owner, sources []fieldSource) (bool, error) {
-	compiles := false
-	for _, s := range sources {
-		if !slices.Contains(fields[o.Kind], s.field) {
-			return false, fmt.Errorf("expression: a %s has no field %s", o.Kind, s.field)
-		}
-		compiles = compiles || s.source != nil
+// fieldOf returns an error, the mistake of a command's code, unless f is a
+// field of the kind of owner, which Set, SetFields, and Back check of every
+// field that they are given, before write, which takes them as checked.
+func fieldOf(kind ids.Kind, f Field) error {
+	if !slices.Contains(fields[kind], f) {
+		return fmt.Errorf("expression: a %s has no field %s", kind, f)
 	}
+	return nil
+}
+
+// write sets the source of the expression of each field of the owner o, of
+// the batch's project, that sources lists, a field of o's kind (fieldOf), to
+// its source, or removes the field's expression if its source is nil, and
+// reports whether that changed any of them, as Set does, reading o's
+// expressions once.
+func write(ctx context.Context, tx *commands.Tx, o Owner, sources []fieldSource) (bool, error) {
 	if len(sources) == 0 {
 		return false, nil
 	}
+	compiles := slices.ContainsFunc(sources, func(s fieldSource) bool { return s.source != nil })
 	// A source that the command writes leaves the derivation work, unlike the
 	// removal of one.
 	if compiles {
@@ -297,9 +305,10 @@ func Back(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind
 	out := make(map[Field]*string, len(set))
 	var sources map[Field]string
 	for f, source := range set {
+		if err := fieldOf(kind, f); err != nil {
+			return nil, err
+		}
 		switch {
-		case !slices.Contains(fields[kind], f):
-			return nil, fmt.Errorf("expression: a %s has no field %s", kind, f)
 		case source == nil:
 			continue
 		case sources == nil:

@@ -362,7 +362,7 @@ func parseSource(source string, ctx expr.Context) parse {
 	if err != nil {
 		return out
 	}
-	walk(n, func(n expr.Node) {
+	expr.Walk(n, func(n expr.Node) {
 		switch n := n.(type) {
 		case *expr.Var:
 			out.keys = append(out.keys, n.Key)
@@ -413,7 +413,7 @@ func (s parse) compile(p *expr.Project, board string) (compiledRow, error) {
 	case err != nil:
 		return out, err
 	default:
-		walk(s.ast, func(n expr.Node) {
+		expr.Walk(s.ast, func(n expr.Node) {
 			switch n := n.(type) {
 			case *expr.Var:
 				refs = appendID(refs, ids.Variable, n.Ref)
@@ -446,34 +446,6 @@ func appendID(refs []pgtype.UUID, kind ids.Kind, id string) []pgtype.UUID {
 		refs = append(refs, nullUUID(u))
 	}
 	return refs
-}
-
-// walk calls f for n and each node under it, each node before its children,
-// and the children in order. It recurses as deep as the AST is, which Parse
-// bounds by its nodes, at most expr.MaxNodes.
-func walk(n expr.Node, f func(expr.Node)) {
-	if n == nil {
-		return
-	}
-	f(n)
-	switch n := n.(type) {
-	case *expr.Unary:
-		walk(n.Operand, f)
-	case *expr.Binary:
-		walk(n.Left, f)
-		walk(n.Right, f)
-	case *expr.Call:
-		for _, a := range n.Args {
-			walk(a, f)
-		}
-	case *expr.Assign:
-		walk(n.Target, f)
-		walk(n.Value, f)
-	case *expr.Script:
-		for _, s := range n.Statements {
-			walk(s, f)
-		}
-	}
 }
 
 // list returns l, or an empty list for nil, which a query reads as an array
