@@ -268,16 +268,11 @@ type jumperOf struct {
 // after the last ID's, and of random bits of the seed's source.
 func (g *gen) uuid() ids.UUID {
 	g.ms++
-	var u ids.UUID
-	for i := range 6 {
-		u[i] = byte(g.ms >> (40 - 8*i))
+	var r [10]byte
+	for i := range r {
+		r[i] = byte(g.idr.UintN(256))
 	}
-	for i := 6; i < len(u); i++ {
-		u[i] = byte(g.idr.UintN(256))
-	}
-	u[6] = 0x70 | u[6]&0x0F
-	u[8] = 0x80 | u[8]&0x3F
-	return u
+	return ids.NewV7(g.ms, r)
 }
 
 // add adds a command of the type and payload to the current batch, which it
@@ -484,7 +479,7 @@ func (g *gen) setup() {
 // the others of a board each, in turn, half of those reset on entering it.
 func (g *gen) variables() {
 	for i := range g.spec.Variables {
-		v := variableOf{id: g.uuid(), key: fmt.Sprintf("%s_%d", nouns[g.r.IntN(len(nouns))], i+1),
+		v := variableOf{id: g.uuid(), key: fmt.Sprintf("%s_%d", g.noun(), i+1),
 			typ: g.variableType()}
 		p := variableCreate{ID: ids.Encode(ids.Variable, v.id), Key: v.key, Type: v.typ, Scope: "global",
 			Default: g.value(v.typ)}
@@ -520,8 +515,8 @@ func (g *gen) variableType() string {
 	panic("fixture: variableTypes do not add up to 20")
 }
 
-// value returns a random value of the type. A float has a fraction, so that
-// its JSON reads as a float whatever reads it.
+// value returns a random value of the type. A float has a fraction, an odd
+// number of eighths, so that its JSON reads as a float whatever reads it.
 func (g *gen) value(typ string) any {
 	switch typ {
 	case "bool":
@@ -529,7 +524,7 @@ func (g *gen) value(typ string) any {
 	case "int":
 		return g.r.IntN(10)
 	case "float":
-		return float64(g.r.IntN(40))/4 + 0.25
+		return float64(g.r.IntN(40))/4 + 0.125
 	}
 	return g.noun()
 }
@@ -541,7 +536,7 @@ func (g *gen) components() {
 		c := componentOf{id: g.uuid()}
 		p := componentCreate{ID: ids.Encode(ids.Component, c.id)}
 		if i%3 != 2 {
-			name := names[g.r.IntN(len(names))]
+			name := pick(g.r, names)
 			c.key = fmt.Sprintf("%s_%d", name, i+1)
 			p.ComponentTypeID, p.Name = ids.Encode(ids.ComponentType, g.castType), title(name)+" "+title(g.noun())
 			p.Attributes = map[string]any{
@@ -816,6 +811,9 @@ func (g *gen) script(b int) string {
 	return strings.Join(stmts, "; ")
 }
 
+// statement returns a statement of a script of the board b: six times in ten
+// an assignment to a variable that it reads, two times to a runtime attribute
+// of the Cast, once to Prop's, and otherwise a signal.
 func (g *gen) statement(b int) string {
 	switch roll := g.r.IntN(10); {
 	case roll < 6:
@@ -829,7 +827,7 @@ func (g *gen) statement(b int) string {
 			return v.key + " += 0.5"
 		}
 		return v.key + ` = "` + g.noun() + `"`
-	case roll < 9 && len(g.cast) > 0:
+	case roll < 8 && len(g.cast) > 0:
 		c := pick(g.r, g.cast).key
 		switch g.r.IntN(3) {
 		case 0:

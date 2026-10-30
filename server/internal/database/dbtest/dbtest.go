@@ -14,6 +14,12 @@
 // that the libpq environment stays out of them and the container is stopped
 // when they are done.
 //
+// The server of tests does not keep what it commits, which they do not need,
+// and which makes them faster. The server of a test binary that runs
+// benchmarks, go test -bench, does, as a production server does, so that the
+// server's benchmarks (PRD §9.1) time what a commit costs, the flush of its
+// WAL among it.
+//
 // Two environment variables configure it. Only tests import this package, so
 // it is not part of the server, which reads its configuration only through
 // package config.
@@ -31,6 +37,7 @@ package dbtest
 import (
 	"context"
 	"crypto/rand"
+	"flag"
 	"fmt"
 	"io/fs"
 	"net"
@@ -293,15 +300,18 @@ func start(t testing.TB) *server {
 
 func startServer(ctx context.Context) (_ *server, err error) {
 	s := &server{adminPassword: rand.Text(), appPassword: rand.Text(), maintenancePassword: rand.Text()}
+	// Every test's pool has connections of its own.
+	cmd := []string{"postgres", "-c", "max_connections=500"}
+	if !benchmarking() {
+		// Durability is not needed for a test server.
+		cmd = append(cmd, "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
+	}
 	s.container, err = postgres.Run(ctx, Image(),
 		postgres.WithUsername(adminLogin),
 		postgres.WithPassword(s.adminPassword),
 		postgres.WithDatabase("postgres"),
 		postgres.BasicWaitStrategies(),
-		// Durability is not needed for a test server, and every test's
-		// pool has connections of its own.
-		testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "synchronous_commit=off",
-			"-c", "full_page_writes=off", "-c", "max_connections=500"),
+		testcontainers.WithCmd(cmd...),
 	)
 	// A server that the tests cannot use is stopped at once, and one they
 	// can use when they are done (Run). postgres.Run may return a container
@@ -336,6 +346,13 @@ func startServer(ctx context.Context) (_ *server, err error) {
 		return nil, fmt.Errorf("build the template database: %w", err)
 	}
 	return s, nil
+}
+
+// benchmarking reports whether the test binary runs benchmarks, as go test
+// -bench runs it, whose server keeps what it commits (see the package doc).
+func benchmarking() bool {
+	f := flag.Lookup("test.bench")
+	return f != nil && f.Value.String() != ""
 }
 
 // stop closes the superuser's pool and removes the container.

@@ -27,16 +27,54 @@ func TestParse(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Samples{
-		{"BenchmarkCommandRoundTrip/node.update_text", "ns/op"}:  {12713840, 12000000},
-		{"BenchmarkCommandRoundTrip/node.update_text", "p95-ms"}: {14.52, 14.00},
-		{"BenchmarkCommandRoundTrip/node.move", "ns/op"}:         {13019603},
-		{"BenchmarkCommandRoundTrip/node.move", "p95-ms"}:        {14.71},
-		{"BenchmarkSearch", "ns/op"}:                             {2000},
-		{"BenchmarkSearch", "B/op"}:                              {512},
-		{"BenchmarkSearch", "allocs/op"}:                         {4},
+		{"BenchmarkCommandRoundTrip/node.update_text-4", "ns/op"}:  {12713840, 12000000},
+		{"BenchmarkCommandRoundTrip/node.update_text-4", "p95-ms"}: {14.52, 14.00},
+		{"BenchmarkCommandRoundTrip/node.move-4", "ns/op"}:         {13019603},
+		{"BenchmarkCommandRoundTrip/node.move-4", "p95-ms"}:        {14.71},
+		{"BenchmarkSearch", "ns/op"}:                               {2000},
+		{"BenchmarkSearch", "B/op"}:                                {512},
+		{"BenchmarkSearch", "allocs/op"}:                           {4},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Parse = %v, want %v", got, want)
+	}
+}
+
+// A benchmark's own -<digits>, where go test added no GOMAXPROCS suffix, as
+// it adds none when GOMAXPROCS is 1, is part of its name, so that two
+// benchmarks that differ by it are two metrics.
+func TestParseNameDigits(t *testing.T) {
+	got, err := Parse(strings.NewReader("BenchmarkX/size-100\t10\t5 ns/op\nBenchmarkX/size-200\t10\t9 ns/op\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Samples{{"BenchmarkX/size-100", "ns/op"}: {5}, {"BenchmarkX/size-200", "ns/op"}: {9}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse = %v, want %v", got, want)
+	}
+}
+
+// A line longer than any result, as a failure's log of a large body, is
+// passed over, and the results around it read, whatever ends the last line.
+func TestParseLongLine(t *testing.T) {
+	long := "    bench_test.go:102: " + strings.Repeat("x", 3*maxLine)
+	for _, end := range []string{"\n", "\r\n", ""} {
+		in := "BenchmarkA-4\t10\t5 ns/op\n" + long + "\nBenchmarkB-4\t10\t7 ns/op" + end
+		got, err := Parse(strings.NewReader(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := Samples{{"BenchmarkA-4", "ns/op"}: {5}, {"BenchmarkB-4", "ns/op"}: {7}}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Parse, ending in %q = %v, want %v", end, got, want)
+		}
+	}
+	got, err := Parse(strings.NewReader("BenchmarkA-4\t10\t5 ns/op\n" + long))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Samples{{"BenchmarkA-4", "ns/op"}: {5}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("Parse, ending in the long line = %v, want %v", got, want)
 	}
 }
 
@@ -150,11 +188,24 @@ func TestReport(t *testing.T) {
 	if err := Report(&b, Compare(base, head, opts), opts); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"1 metric(s) regressed by more than 20%, at p < 0.05.",
+	for _, want := range []string{"1 metric(s) regressed by more than 20%, at p < 0.05. 1 metric(s) were not " +
+		"compared, since only one side has them: 1 new, of the change alone, and 0 gone, of the base alone.\n",
 		"| BenchmarkA | ns/op | 100 | 150 | +50.0% | 0.002 | ⚠ regressed |", "| BenchmarkB | ns/op | – | 1 | – | – | new |"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("the report has no %q:\n%s", want, b.String())
 		}
+	}
+	// A comparison of metrics that only one side has each says so, rather
+	// than only that nothing regressed.
+	b.Reset()
+	if err := Report(&b, Compare(Samples{{"BenchmarkA", "ns/op"}: {1}}, Samples{{"BenchmarkB", "ns/op"}: {1}}, opts),
+		opts); err != nil {
+		t.Fatal(err)
+	}
+	if want := "No metric regressed by more than 20%, at p < 0.05. 2 metric(s) were not compared, since only one " +
+		"side has them: 1 new, of the change alone, and 1 gone, of the base alone.\n\n"; !strings.HasPrefix(b.String(),
+		want) {
+		t.Errorf("the report of metrics that one side has each begins %q, want %q", b.String(), want)
 	}
 	b.Reset()
 	if err := Report(&b, nil, opts); err != nil {

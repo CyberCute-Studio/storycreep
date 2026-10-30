@@ -21,13 +21,16 @@ func New() UUID {
 	// crypto/rand.Read never returns an error: if the system's random source
 	// fails, the program crashes rather than produce guessable identifiers.
 	_, _ = rand.Read(r[:])
-	return newV7(time.Now().UnixMilli(), r)
+	return NewV7(time.Now().UnixMilli(), r)
 }
 
-// newV7 builds a UUIDv7 from a Unix time in milliseconds, of which it keeps
+// NewV7 builds a UUIDv7 from a Unix time in milliseconds, of which it keeps
 // the low 48 bits, and 10 random bytes. The version and variant bits replace
-// the top 4 bits of r[0] and the top 2 bits of r[2].
-func newV7(ms int64, r [10]byte) UUID {
+// the top 4 bits of r[0] and the top 2 bits of r[2]. New makes one of the
+// current time and of the system's random bytes; a generator that must make
+// the same IDs again, as package fixture's of a seed, makes one of a clock and
+// a source of its own.
+func NewV7(ms int64, r [10]byte) UUID {
 	var u UUID
 	t := uint64(ms)
 	for i := range 6 {

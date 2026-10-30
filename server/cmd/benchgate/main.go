@@ -4,8 +4,12 @@
 // base's, where a Mann-Whitney U test finds the two apart at p < 0.05.
 //
 // It writes a Markdown table of every metric to standard output, for the CI
-// job's summary, and exits with status 1 if any metric regressed, or with
-// status 2 if an output cannot be read.
+// job's summary, warns on standard error, as a GitHub Actions annotation, of
+// each gated metric of the base that the change's output does not have,
+// which it could not compare, as one of a benchmark that the change renamed,
+// and exits with status 1 if any metric regressed, or with status 2 if an
+// output cannot be read. A metric that only the change has, of a benchmark
+// that it adds, is in the report alone.
 package main
 
 import (
@@ -48,9 +52,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "benchgate:", err)
 		os.Exit(2)
 	}
+	regressed := false
 	for _, r := range results {
-		if r.Status == benchgate.Regressed {
-			os.Exit(1)
+		switch {
+		case r.Status == benchgate.Regressed:
+			regressed = true
+		case r.Status == benchgate.Gone && benchgate.Gated(r.Unit):
+			fmt.Fprintf(os.Stderr, "::warning::%s (%s) is not compared: the change has no such metric.\n",
+				r.Benchmark, r.Unit)
 		}
+	}
+	if regressed {
+		os.Exit(1)
 	}
 }

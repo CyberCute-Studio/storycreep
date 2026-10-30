@@ -31,24 +31,31 @@ const commandRoundTripTarget = 150 * time.Millisecond
 
 // roundTrips are the batches of BenchmarkCommandRoundTrip: what an author
 // does most as they edit, each a batch of its own, as the web app sends it.
+// Each batch is given n, a number that no other batch of the benchmarks has,
+// which its value holds, so that every batch changes what it names: a batch
+// that changed nothing, as one that sets a text that the node has already,
+// would be timed as the no-op that the server makes of it, with no revision,
+// no compilation, and no derivation.
 var roundTrips = []struct {
 	name  string
-	batch func(m *benchModel, r *rand.Rand) []wireCommand
+	batch func(m *benchModel, r *rand.Rand, n int) []wireCommand
 }{
-	{"node.update_text", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"node.update_text", func(m *benchModel, r *rand.Rand, n int) []wireCommand {
 		return []wireCommand{{Type: string(node.Update), Payload: obj("id", pickOf(r, m.elements).id,
-			"text", paragraph("The tide turns at "+strconv.Itoa(r.IntN(1000))+"."))}}
+			"text", paragraph("The tide turns at "+strconv.Itoa(n)+"."))}}
 	}},
-	{"node.update_script", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"node.update_script", func(m *benchModel, r *rand.Rand, n int) []wireCommand {
 		v := pickOf(r, m.ints)
 		return []wireCommand{{Type: string(node.Update), Payload: obj("id", pickOf(r, m.elements).id,
-			"on_enter", v.key+" += "+strconv.Itoa(1+r.IntN(5)))}}
+			"on_enter", v.key+" += "+strconv.Itoa(n))}}
 	}},
-	{"node.move", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"node.move", func(m *benchModel, r *rand.Rand, n int) []wireCommand {
+		// A fixture's positions, and a created node's, are whole numbers, and
+		// no two batches have the same n, so that x is never the node's.
 		return []wireCommand{{Type: string(node.Move), Payload: obj("nodes", []any{obj("id",
-			pickOf(r, m.elements).id, "position", obj("x", float64(r.IntN(20000)), "y", float64(r.IntN(20000))))})}}
+			pickOf(r, m.elements).id, "position", obj("x", float64(n)+0.5, "y", float64(r.IntN(20000))))})}}
 	}},
-	{"node.create_connected", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"node.create_connected", func(m *benchModel, r *rand.Rand, _ int) []wireCommand {
 		from := pickOf(r, m.elements)
 		id := ids.Encode(ids.Node, ids.New())
 		return []wireCommand{
@@ -58,26 +65,36 @@ var roundTrips = []struct {
 				"from_node_id", from.id, "to_node_id", id)},
 		}
 	}},
-	{"connection.update_condition", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"connection.update_condition", func(m *benchModel, r *rand.Rand, n int) []wireCommand {
 		v := pickOf(r, m.ints)
 		return []wireCommand{{Type: string(connection.Update), Payload: obj("id", pickOf(r, m.connections),
-			"condition", v.key+" >= "+strconv.Itoa(r.IntN(10)))}}
+			"condition", v.key+" >= "+strconv.Itoa(n))}}
 	}},
-	{"variable.set_default", func(m *benchModel, r *rand.Rand) []wireCommand {
+	{"variable.set_default", func(m *benchModel, r *rand.Rand, n int) []wireCommand {
 		return []wireCommand{{Type: string(variable.SetDefault), Payload: obj("id", pickOf(r, m.ints).id,
-			"default", r.IntN(100))}}
+			"default", n)}}
 	}},
 }
+
+// firstBatch is the n of the benchmarks' first batch, beyond every number
+// that a fixture's texts, scripts, conditions, and defaults hold, so that no
+// batch's value is one that the fixture gave.
+const firstBatch = 1_000
 
 // Verifies: NFR-PERF-07
 func BenchmarkCommandRoundTrip(b *testing.B) {
 	bs := newBenchServer(b, fixture.Large)
+	n := firstBatch
 	for _, rt := range roundTrips {
+		// go test runs a sub-benchmark's function again for each of its runs
+		// (-count), so the source is the sub-benchmark's own, and a later run
+		// edits other entities than the first did.
+		r := rand.New(rand.NewPCG(1, 0x45))
 		b.Run(rt.name, func(b *testing.B) {
-			r := rand.New(rand.NewPCG(1, 0x45))
 			var took []time.Duration
 			for b.Loop() {
-				body := commandBatch(b, rt.batch(bs.model, r)...)
+				n++
+				body := commandBatch(b, rt.batch(bs.model, r, n)...)
 				start := time.Now()
 				res := call(bs.s.main, http.MethodPost, bs.path, body, bs.header)
 				took = append(took, time.Since(start))
@@ -145,12 +162,18 @@ func newBenchServer(b *testing.B, size fixture.Size) *benchServer {
 }
 
 // handlerTransport is an http.RoundTripper that serves each request with a
-// handler, as a server of its own would.
+// handler, as a server of its own would: with the request's Content-Length,
+// which a client's request of a body of its length declares, and closing its
+// body once served, as a RoundTripper must.
 type handlerTransport struct{ h http.Handler }
 
 func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Body != nil {
+		defer r.Body.Close()
+	}
 	in := httptest.NewRequestWithContext(r.Context(), r.Method, r.URL.String(), r.Body)
 	in.Header = r.Header.Clone()
+	in.ContentLength = r.ContentLength
 	w := httptest.NewRecorder()
 	t.h.ServeHTTP(w, in)
 	return w.Result(), nil

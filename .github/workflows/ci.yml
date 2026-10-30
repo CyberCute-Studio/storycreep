@@ -264,19 +264,18 @@ jobs:
   # PRD §9.1: the server's benchmarks, of the large fixture (NFR-Q-06), and a
   # regression of more than 20% fails the build. GitHub's runners are not one
   # fixed machine, so the job measures the change and its base on the same
-  # runner, in turn, twice each, so that a drift of the machine during the job
-  # falls on both, and cmd/benchgate compares them (plan note N52). Each
-  # benchmark also checks its own target of §9.1, on the change alone. A pull
-  # request is compared with the main branch that it merges into, the first
-  # parent of the merge commit that it is checked out as, and a push with the
-  # commit that it replaced.
+  # runner, in turn, twice each, the base first in the first round and last in
+  # the second, so that a steady drift of the machine during the job falls on
+  # both alike, and cmd/benchgate compares them (plan note N52). Each benchmark
+  # also checks its own target of §9.1, on the change alone. A pull request is
+  # compared with the main branch that it merges into, the first parent of the
+  # merge commit that it is checked out as, and a push with the commit that it
+  # replaced.
   bench:
     name: Benchmarks
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      BASE: ${{ github.event_name == 'push' && github.event.before || 'HEAD^1' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -289,24 +288,47 @@ jobs:
           check-latest: true
           cache-dependency-path: server/go.sum
 
+      # A push whose replaced commit the checkout did not fetch, as after a
+      # force-push, or that has none, as one that creates the branch, is
+      # compared with the commit before its own instead.
       - name: Check out the base
-        run: git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+        shell: bash
+        env:
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          base=HEAD^1
+          if [ -n "$BEFORE" ]; then
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              base=$BEFORE
+            else
+              echo "::warning::The commit that the push replaced, $BEFORE, is not in the history, so the change is compared with the commit before it."
+            fi
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
 
       # -p 1 runs one package's benchmarks at a time, so that no two share the
-      # machine. A base whose benchmarks fail, as one that misses a target,
-      # is compared as far as it ran; the change's must pass.
+      # machine, and a package's benchmarks have at most a fifth of the job's
+      # time, so that a base that hangs leaves the change the time of its own
+      # runs. A base whose benchmarks fail, as one that misses a target, is
+      # compared as far as it ran; the change's must pass.
       - name: Run the benchmarks of the base and the change, in turn
         shell: bash
         run: |
           set -o pipefail
           bench() {
-            (cd "$1/server" && go test -run '^$' -bench . -benchtime 100x -count 3 -p 1 -timeout 50m ./...)
+            (cd "$1/server" && go test -run '^$' -bench . -benchtime 100x -count 3 -p 1 -timeout 12m ./...)
           }
-          for round in 1 2; do
+          run_base() {
             bench "$RUNNER_TEMP/base" >> "$RUNNER_TEMP/base.txt" ||
-              echo "::warning::The base's benchmarks failed in round $round, and are compared as far as they ran."
+              echo "::warning::The base's benchmarks failed in round $1, and are compared as far as they ran."
+          }
+          run_change() {
             bench "$GITHUB_WORKSPACE" | tee -a "$RUNNER_TEMP/head.txt"
-          done
+          }
+          run_base 1
+          run_change
+          run_change
+          run_base 2
 
       - name: Compare with the base
         working-directory: server

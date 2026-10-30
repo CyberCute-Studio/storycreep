@@ -203,8 +203,8 @@ func TestUUIDv7Vectors(t *testing.T) {
 		if n, err := hex.Decode(r[:], []byte(tc.Random)); err != nil || n != len(r) {
 			t.Fatalf("%s: random %q is not 10 hex bytes", tc.Note, tc.Random)
 		}
-		if got := newV7(tc.UnixMS, r).String(); got != tc.UUID {
-			t.Errorf("%s: newV7(%d, %s) = %s, want %s", tc.Note, tc.UnixMS, tc.Random, got, tc.UUID)
+		if got := NewV7(tc.UnixMS, r).String(); got != tc.UUID {
+			t.Errorf("%s: NewV7(%d, %s) = %s, want %s", tc.Note, tc.UnixMS, tc.Random, got, tc.UUID)
 		}
 	}
 }
@@ -255,8 +255,8 @@ func TestEncodingSortsLikeUUID(t *testing.T) {
 			t.Fatalf("Encode(%v) vs Encode(%v) compares %d, the UUIDs compare %d", a, b, got, want)
 		}
 	}
-	early := newV7(1_700_000_000_000, [10]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
-	late := newV7(1_700_000_000_001, [10]byte{})
+	early := NewV7(1_700_000_000_000, [10]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
+	late := NewV7(1_700_000_000_001, [10]byte{})
 	if Encode(Node, early) >= Encode(Node, late) {
 		t.Errorf("an identifier from a later millisecond sorts first")
 	}

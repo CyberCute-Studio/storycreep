@@ -4,8 +4,9 @@
 //
 // CI's benchmark job runs the benchmarks of a pull request's base and of its
 // head on one runner, in turn, several times each, so that both are measured
-// on the same hardware, whatever hardware GitHub gives the job, and a drift of
-// the machine during the job falls on both. Each run of a benchmark is a
+// on the same hardware, whatever hardware GitHub gives the job: the base, the
+// head, the head again, and the base again, so that a steady drift of the
+// machine during the job falls on both alike. Each run of a benchmark is a
 // sample of each of its metrics. A metric whose unit is a time, where lower
 // is better, ns/op or a unit that ends in -ms or -ns, as p95-ms, regresses
 // when the median of the head's samples is more than Threshold above the
@@ -13,11 +14,12 @@
 // p-value under Alpha, so that the noise of a shared runner does not fail the
 // build. Other metrics are reported, and gate nothing. A benchmark that only
 // the head has is new, and one that only the base has is gone; neither is
-// compared.
+// compared, which the report says before anything else.
 package benchgate
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -44,8 +46,11 @@ type Options struct {
 	Alpha float64
 }
 
-// Metric names a metric of a benchmark: the benchmark's name, without the
-// GOMAXPROCS suffix that go test adds, and the metric's unit.
+// Metric names a metric of a benchmark: the benchmark's name, as go test
+// prints it, and the metric's unit. The name keeps the GOMAXPROCS suffix that
+// go test adds, as -4, which the base and the head, run on one machine, have
+// alike: go test adds none when GOMAXPROCS is 1, so a name's own -<digits>,
+// as of a benchmark size-100, would read as one otherwise.
 type Metric struct {
 	Benchmark string
 	Unit      string
@@ -58,32 +63,46 @@ type Samples map[Metric][]float64
 // lineRE reads a result line of go test -bench: the benchmark's name, with
 // its GOMAXPROCS suffix, the iterations, and the metrics, each a value and
 // its unit.
-var lineRE = regexp.MustCompile(`^(Benchmark\S+?)(?:-\d+)?\s+(\d+)((?:\s+\S+\s+\S+)+)\s*$`)
+var lineRE = regexp.MustCompile(`^(Benchmark\S+)\s+(\d+)((?:\s+\S+\s+\S+)+)\s*$`)
+
+// maxLine is the longest line that Parse reads. A result line is far
+// shorter, so a longer one, as a test's log of a large body, is passed over.
+const maxLine = 64 << 10
 
 // Parse reads the output of go test -bench, of any number of runs and
 // packages, and returns the samples of each metric. A line that is not a
-// benchmark's result, as the goos and pkg lines, PASS, or a test's log, is
-// passed over.
+// benchmark's result, as the goos and pkg lines, PASS, or a test's log, of
+// any length, is passed over.
 func Parse(r io.Reader) (Samples, error) {
 	out := Samples{}
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		m := lineRE.FindStringSubmatch(sc.Text())
-		if m == nil {
-			continue
-		}
-		fields := strings.Fields(m[3])
-		for i := 0; i+1 < len(fields); i += 2 {
-			v, err := strconv.ParseFloat(fields[i], 64)
-			if err != nil {
-				return nil, fmt.Errorf("benchgate: %s: cannot read %q as a value of %s", m[1], fields[i], fields[i+1])
+	br := bufio.NewReaderSize(r, maxLine)
+	for {
+		line, err := br.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			for errors.Is(err, bufio.ErrBufferFull) {
+				_, err = br.ReadSlice('\n')
 			}
-			key := Metric{Benchmark: m[1], Unit: fields[i+1]}
-			out[key] = append(out[key], v)
+			line = nil
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		if m := lineRE.FindStringSubmatch(strings.TrimRight(string(line), "\r\n")); m != nil {
+			fields := strings.Fields(m[3])
+			for i := 0; i+1 < len(fields); i += 2 {
+				v, err := strconv.ParseFloat(fields[i], 64)
+				if err != nil {
+					return nil, fmt.Errorf("benchgate: %s: cannot read %q as a value of %s", m[1], fields[i],
+						fields[i+1])
+				}
+				key := Metric{Benchmark: m[1], Unit: fields[i+1]}
+				out[key] = append(out[key], v)
+			}
+		}
+		if err != nil {
+			return out, nil
 		}
 	}
-	return out, sc.Err()
 }
 
 // Gated reports whether a metric of the unit gates the build: a time, where
@@ -156,26 +175,29 @@ func Compare(base, head Samples, opts Options) []Result {
 }
 
 // Report writes the results as a Markdown table, for the job's summary, with
-// a line before it that says what the comparison found.
+// a line before it that says what the comparison found, and how many metrics
+// only one side has, which it could not compare.
 func Report(w io.Writer, results []Result, opts Options) error {
-	regressed := 0
+	count := map[Status]int{}
 	for _, r := range results {
-		if r.Status == Regressed {
-			regressed++
-		}
+		count[r.Status]++
 	}
 	var b strings.Builder
 	switch {
 	case len(results) == 0:
 		b.WriteString("No benchmark ran on either side.\n")
-	case regressed > 0:
-		fmt.Fprintf(&b, "%d metric(s) regressed by more than %.0f%%, at p < %g.\n", regressed, opts.Threshold*100,
-			opts.Alpha)
+	case count[Regressed] > 0:
+		fmt.Fprintf(&b, "%d metric(s) regressed by more than %.0f%%, at p < %g.", count[Regressed],
+			opts.Threshold*100, opts.Alpha)
 	default:
-		fmt.Fprintf(&b, "No metric regressed by more than %.0f%%, at p < %g.\n", opts.Threshold*100, opts.Alpha)
+		fmt.Fprintf(&b, "No metric regressed by more than %.0f%%, at p < %g.", opts.Threshold*100, opts.Alpha)
 	}
 	if len(results) > 0 {
-		b.WriteString("\n| Benchmark | Unit | Base | Head | Change | p | |\n| --- | --- | ---: | ---: | ---: | ---: | --- |\n")
+		if n := count[New] + count[Gone]; n > 0 {
+			fmt.Fprintf(&b, " %d metric(s) were not compared, since only one side has them: %d new, of the "+
+				"change alone, and %d gone, of the base alone.", n, count[New], count[Gone])
+		}
+		b.WriteString("\n\n| Benchmark | Unit | Base | Head | Change | p | |\n| --- | --- | ---: | ---: | ---: | ---: | --- |\n")
 		for _, r := range results {
 			mark := ""
 			switch {

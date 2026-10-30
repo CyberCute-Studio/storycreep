@@ -46,10 +46,10 @@ func TestMain(m *testing.M) {
 // another project (plan note N52): update them only on purpose, in a pull
 // request that says so.
 var digests = map[fixture.Size]string{
-	fixture.Small:  "1e4053aca2c18fb7b51046ae96290e382c2449dd383b0fe365ea52f3c78456f2",
-	fixture.Medium: "47d4f2d0a5c16822c837e608ee6d28a024ffca1dc26a9011ae9106d4e1698259",
-	fixture.Large:  "a69190bfaf4c20287b9d27f6ab26f78115175de46efb10ee9ea45032550d2dc5",
-	fixture.Dense:  "5e464ace3ba08a3ec5b6e31a3d922b0391c6961aacd978f992ec755bb1d12ce3",
+	fixture.Small:  "e7eadede4b7eb364339647f2eaae0bd838c37d6abf55de53ca96fd1a6b6a180e",
+	fixture.Medium: "c852d42c23cef177fbe838443e053ad7c00aab52c12676b324e8ae9a7423cb29",
+	fixture.Large:  "a7d9c691189087bc25297d524a0f9f13a19863b1679aded5a83b8d1941a6da19",
+	fixture.Dense:  "ead243cbd9e8750764513b9f4667bbc77b7910e98976714be9fbe6049d5f1aac",
 }
 
 // digest returns the SHA-256 of the fixture's batches: each command's ID,
@@ -119,9 +119,41 @@ func TestGenerateCounts(t *testing.T) {
 					t.Errorf("%d %s commands for each 100 nodes, want %d to %d", got, typ, per100[0], per100[1])
 				}
 			}
+			// A script assigns each runtime attribute, Cast's and Prop's, and
+			// a float's default is written with a fraction.
+			assigned := map[string]bool{}
+			for _, b := range f.Batches {
+				for _, c := range b {
+					var p struct {
+						Type       string          `json:"type"`
+						Default    json.RawMessage `json:"default"`
+						OnEnter    string          `json:"on_enter"`
+						OnExit     string          `json:"on_exit"`
+						OnTraverse string          `json:"on_traverse"`
+					}
+					if err := json.Unmarshal(c.Payload, &p); err != nil {
+						t.Fatalf("%s: %v", c.Type, err)
+					}
+					if c.Type == variable.Create && p.Type == "float" && !bytes.ContainsRune(p.Default, '.') {
+						t.Errorf("a float's default is %s, without a fraction", p.Default)
+					}
+					for _, m := range assignmentRE.FindAllStringSubmatch(p.OnEnter+"; "+p.OnExit+"; "+p.OnTraverse, -1) {
+						assigned[m[1]] = true
+					}
+				}
+			}
+			for _, attr := range []string{"trust", "mood", "alive", "count"} {
+				if !assigned[attr] {
+					t.Errorf("no script assigns a component's %s", attr)
+				}
+			}
 		})
 	}
 }
+
+// assignmentRE finds an assignment to a component's runtime attribute in a
+// script, as anchor3.count -= 1.
+var assignmentRE = regexp.MustCompile(`\.(trust|mood|alive|count) [-+]?= `)
 
 // idRE finds the public IDs of the entities that a fixture names: alone, as
 // a field's value, or in an expression's source, as node("nd_…"), with a
