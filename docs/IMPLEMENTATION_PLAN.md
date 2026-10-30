@@ -527,7 +527,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone F — Analysis services
 
 ### 46. Dependency index and usage queries
-**Status:** todo · **Depends on:** 45
+**Status:** done ([#55](https://github.com/CyberCute-Studio/storycreep/pull/55)) · **Depends on:** 45
 **PRD:** FR-DEP-01 (AC1, AC2, AC4 usage-list half), FR-COMP-04 (server, AC2), FR-TEXT-02 (AC1, server), FR-TEXT-03 (AC1, server)
 - `expression_ref` maintained in the command transaction, covering value references and mentions in text: a node's text, a connection's label, and a component's description. Attributes are keyed by the (component, attribute definition) pair. Package `server/internal/dependency` keeps it, from the ASTs that package expression compiles and from the texts that a derivation of the pipeline reads, and migration 00027 indexes the content that is there already (N53).
 - `GET …/variables/{vid}/usages` returns reads and writes separately, one list a request (`access`). A component usage query, `GET …/components/{cid}/usages`, of its speakers, mentions, reads, and writes (`use`). Both are cursor-paged and leave out the sites in the trash (N53).
