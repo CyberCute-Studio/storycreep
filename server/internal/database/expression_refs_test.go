@@ -125,7 +125,7 @@ func TestExpressionRefsBackfill(t *testing.T) {
 				($1, $2, $3, $6, NULL, 'on_enter', 'script', '', $10, 1, true, NULL)`,
 			[]any{ws, project, board, keeper, gate, pier,
 				ast("elara.trust += 1\ngold = tide * 2\nelara.mood = \"calm\"", expr.ContextScript),
-				ast(`signal("seen", mira.trust + gold)`+"\ntide -= 1\ngold = gold", expr.ContextScript),
+				ast(`signal("seen", mira.trust + gold)`+"\ntide -= 1\ngold %= 3", expr.ContextScript),
 				ast(`visited(node("`+enc(ids.Node, pier)+`")) && gold >= elara.trust`, expr.ContextCondition),
 				ast("", expr.ContextScript)}},
 	} {

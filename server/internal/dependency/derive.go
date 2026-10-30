@@ -107,9 +107,7 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	for i := range sites {
 		sites[i].Uses = sorted(sites[i].Uses)
 	}
-	if err := q.DeleteTextReferences(ctx, queries.DeleteTextReferencesParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: list(nodes), ConnectionIds: list(connections), ComponentIds: list(components)}); err != nil {
-		return fmt.Errorf("dependency: delete the texts' rows of the index: %w", err)
-	}
-	return insert(ctx, q, ws, project, sites)
+	return replace(ctx, q, queries.DeleteReferencesParams{WorkspaceID: ws, ProjectID: project,
+		ExpressionIds: list(nil), NodeIds: list(nodes), ConnectionIds: list(connections),
+		ComponentIds: list(components)}, sites)
 }

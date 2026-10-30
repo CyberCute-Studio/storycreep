@@ -11,19 +11,19 @@
 -- writes as it compiles the expression (dependency.IndexExpressions): each
 -- variable and each runtime attribute that it reads or writes, an
 -- assignment's target written, and read too when the assignment is one of
--- +=, -=, *=, or /=, which reads the value that it updates, and each node
--- that it names in a node reference, read. An expression that does not
+-- +=, -=, *=, /=, or %=, which reads the value that it updates, and each
+-- node that it names in a node reference, read. An expression that does not
 -- compile has no AST, and so no rows: what it names it names by its keys
 -- alone, which resolve to nothing.
 --
 -- A text's rows are what its value references and mentions name, read:
--- each variable or runtime attribute that a value reference shows, and each
--- component that a mention shows by its name, which the derivation that
--- package dependency registers with the pipeline writes once every command
--- of a batch has applied, for each node, connection, and component whose
--- text the batch may have changed. A text names what it names by its ID,
--- whatever becomes of it, so its rows stay while what it names is in the
--- trash, or gone.
+-- each variable or attribute, runtime or not, that a value reference shows,
+-- and each component that a mention shows by its name, which the derivation
+-- that package dependency registers with the pipeline writes once every
+-- command of a batch has applied, for each node, connection, and component
+-- whose text the batch may have changed. A text names what it names by its
+-- ID, whatever becomes of it, so its rows stay while what it names is in
+-- the trash, or gone, or no longer runtime.
 --
 -- An attribute is named by the pair of its component, target_id, and its
 -- definition, attribute_def_id, so that elara.trust and mira.trust, of one
@@ -70,7 +70,9 @@ CREATE TABLE expression_ref (
 	CHECK (target_kind <> 'component' OR expression_id IS NULL),
 	-- A site names a target in a way once, however often its source or its
 	-- text names it. The key is the index by which the rows of an expression
-	-- are replaced, and the cascade of its deletion finds them.
+	-- are replaced, and the cascade of its deletion finds them, and by which
+	-- a replacement of a site's rows passes over those that the index holds
+	-- already (ON CONFLICT DO NOTHING), so that it writes only what changed.
 	UNIQUE NULLS NOT DISTINCT (workspace_id, expression_id, node_id, connection_id, component_id, target_kind,
 		target_id, attribute_def_id, access)
 );

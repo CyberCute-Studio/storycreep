@@ -23,7 +23,7 @@ type variableUsagesInput struct {
 type componentUsagesInput struct {
 	ProjectID   string `path:"project_id" doc:"The project's ID"`
 	ComponentID string `path:"component_id" doc:"The component's ID"`
-	Use         string `query:"use" required:"true" enum:"speaker,mention,read,write" doc:"Which usages the list holds: the nodes whose speaker the component is, the texts that mention it, or the sites that read its runtime attributes, or those that write them"`
+	Use         string `query:"use" required:"true" enum:"speaker,mention,read,write" doc:"Which usages the list holds: the nodes whose speaker the component is, the texts that mention it, or the sites that read its attributes, or those that write them"`
 	api.PageParams
 }
 
@@ -96,9 +96,11 @@ func registerDependencies(m *api.Mux, dependencies *dependency.Service) {
 		Summary:     "List a component's usages",
 		Description: "Lists the sites of the project that use the component, as use says (PRD FR-COMP-04): the " +
 			"nodes whose speaker it is, the texts that mention it (PRD FR-TEXT-03), or the sites that read its " +
-			"runtime attributes, or those that write them, each with the attribute that it reads or writes, and " +
-			"once for each of them that it reads or writes. A site of another component's attribute of the same " +
-			"definition, as mira.trust is of elara.trust's, is no usage of the component." + usagesDoc +
+			"attributes, or those that write them, each with the attribute that it reads or writes, and once for " +
+			"each of them that it reads or writes: the scripts and the conditions that read or assign its runtime " +
+			"attributes, and the texts whose value references show its attributes, runtime or not, as one that " +
+			"is no longer runtime is. A site of another component's attribute of the same definition, as " +
+			"mira.trust is of elara.trust's, is no usage of the component." + usagesDoc +
 			projectNotFoundDoc + tokenNotFoundDoc + " A component that the project does not have, or that is in its " +
 			"trash, is answered with 404 not_found." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Components"},

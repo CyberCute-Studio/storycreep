@@ -11,51 +11,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deleteExpressionReferences = `-- name: DeleteExpressionReferences :exec
-DELETE FROM expression_ref
-WHERE workspace_id = $1 AND project_id = $2 AND expression_id = ANY($3::uuid[])
+const deleteReferences = `-- name: DeleteReferences :exec
+WITH kept AS (
+    SELECT coalesce((r.value->>'expression_id')::uuid, '00000000-0000-0000-0000-000000000000') AS expression_id,
+        coalesce((r.value->>'node_id')::uuid, '00000000-0000-0000-0000-000000000000') AS node_id,
+        coalesce((r.value->>'connection_id')::uuid, '00000000-0000-0000-0000-000000000000') AS connection_id,
+        coalesce((r.value->>'component_id')::uuid, '00000000-0000-0000-0000-000000000000') AS component_id,
+        r.value->>'target_kind' AS target_kind, (r.value->>'target_id')::uuid AS target_id,
+        coalesce((r.value->>'attribute_def_id')::uuid, '00000000-0000-0000-0000-000000000000') AS attribute_def_id,
+        r.value->>'access' AS access
+    FROM jsonb_array_elements($7::jsonb) AS r
+)
+DELETE FROM expression_ref x
+WHERE x.workspace_id = $1 AND x.project_id = $2
+    AND (x.expression_id = ANY($3::uuid[]) OR x.node_id = ANY($4::uuid[])
+        OR x.connection_id = ANY($5::uuid[]) OR x.component_id = ANY($6::uuid[]))
+    AND NOT EXISTS (
+        SELECT FROM kept k
+        WHERE k.expression_id = coalesce(x.expression_id, '00000000-0000-0000-0000-000000000000')
+            AND k.node_id = coalesce(x.node_id, '00000000-0000-0000-0000-000000000000')
+            AND k.connection_id = coalesce(x.connection_id, '00000000-0000-0000-0000-000000000000')
+            AND k.component_id = coalesce(x.component_id, '00000000-0000-0000-0000-000000000000')
+            AND k.target_kind = x.target_kind AND k.target_id = x.target_id
+            AND k.attribute_def_id = coalesce(x.attribute_def_id, '00000000-0000-0000-0000-000000000000')
+            AND k.access = x.access
+    )
 `
 
-type DeleteExpressionReferencesParams struct {
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	Ids         []pgtype.UUID
-}
-
-// DeleteExpressionReferences deletes the rows of the index of the project's
-// expressions whose IDs are among ids, which their compilation then writes
-// again.
-func (q *Queries) DeleteExpressionReferences(ctx context.Context, arg DeleteExpressionReferencesParams) error {
-	_, err := q.db.Exec(ctx, deleteExpressionReferences, arg.WorkspaceID, arg.ProjectID, arg.Ids)
-	return err
-}
-
-const deleteTextReferences = `-- name: DeleteTextReferences :exec
-DELETE FROM expression_ref
-WHERE workspace_id = $1 AND project_id = $2
-    AND (node_id = ANY($3::uuid[]) OR connection_id = ANY($4::uuid[])
-        OR component_id = ANY($5::uuid[]))
-`
-
-type DeleteTextReferencesParams struct {
+type DeleteReferencesParams struct {
 	WorkspaceID   pgtype.UUID
 	ProjectID     pgtype.UUID
+	ExpressionIds []pgtype.UUID
 	NodeIds       []pgtype.UUID
 	ConnectionIds []pgtype.UUID
 	ComponentIds  []pgtype.UUID
+	Rows          []byte
 }
 
-// DeleteTextReferences deletes the rows of the index of the texts of the
-// project's nodes whose IDs are among node_ids, connections among
-// connection_ids, and components among component_ids, which the batch then
-// writes again.
-func (q *Queries) DeleteTextReferences(ctx context.Context, arg DeleteTextReferencesParams) error {
-	_, err := q.db.Exec(ctx, deleteTextReferences,
+// DeleteReferences deletes the rows of the index of the project's sites
+// whose IDs are among expression_ids, node_ids, connection_ids, and
+// component_ids, the expressions and the texts of the nodes, the
+// connections, and the components, but those that rows lists, as
+// InsertReferences reads it: the rows that the sites no longer name, to
+// which InsertReferences then adds what they name now. A column that is
+// null is compared as the zero UUID, which no site and no target is, so
+// that the rows are compared by equalities that a hash join compares,
+// however many the batch replaces.
+func (q *Queries) DeleteReferences(ctx context.Context, arg DeleteReferencesParams) error {
+	_, err := q.db.Exec(ctx, deleteReferences,
 		arg.WorkspaceID,
 		arg.ProjectID,
+		arg.ExpressionIds,
 		arg.NodeIds,
 		arg.ConnectionIds,
 		arg.ComponentIds,
+		arg.Rows,
 	)
 	return err
 }
@@ -68,6 +78,7 @@ SELECT $1::uuid, $2::uuid, (r.value->>'expression_id')::uuid, (r.value->>'node_i
     (r.value->>'connection_id')::uuid, (r.value->>'component_id')::uuid, (r.value->>'board_id')::uuid,
     r.value->>'target_kind', (r.value->>'target_id')::uuid, (r.value->>'attribute_def_id')::uuid, r.value->>'access'
 FROM jsonb_array_elements($3::jsonb) AS r
+ON CONFLICT DO NOTHING
 `
 
 type InsertReferencesParams struct {
@@ -82,10 +93,14 @@ type InsertReferencesParams struct {
 // connection, or a component, and how the site uses it. expression_ref is a
 // tenant table, which a transaction of its workspace reads. A batch's
 // transaction replaces a site's rows, once every command of the batch has
-// applied, under the lock of the project's row.
+// applied, under the lock of the project's row: it deletes those that the
+// site no longer names (DeleteReferences), and adds those that it did not
+// name before (InsertReferences), so that a site that names what it named,
+// as a text whose edit kept its references, writes nothing.
 // InsertReferences adds the rows of the index that rows lists, a JSON array
 // of objects of each row's columns, each UUID in its text form, and a column
-// that is null left out.
+// that is null left out, but those that the index holds already, which it
+// leaves as they are.
 func (q *Queries) InsertReferences(ctx context.Context, arg InsertReferencesParams) error {
 	_, err := q.db.Exec(ctx, insertReferences, arg.WorkspaceID, arg.ProjectID, arg.Rows)
 	return err
@@ -167,8 +182,8 @@ func (q *Queries) TextReferences(ctx context.Context, arg TextReferencesParams) 
 const usages = `-- name: Usages :many
 WITH refs AS (
     SELECT workspace_id, project_id, expression_id, node_id, connection_id, component_id, board_id, target_kind, target_id, attribute_def_id, access FROM expression_ref
-    WHERE NOT $8::boolean AND workspace_id = $1 AND project_id = $2
-        AND target_id = $9 AND target_kind = $10 AND access = $11
+    WHERE NOT $3::boolean AND workspace_id = $1 AND project_id = $2
+        AND target_id = $4 AND target_kind = $5 AND access = $6
 ), sites AS (
     SELECT r.attribute_def_id, e.id AS site_id, e.board_id,
         (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
@@ -197,36 +212,42 @@ WITH refs AS (
     UNION ALL
     SELECT NULL, n.id, n.board_id, 'node_speaker', n.id, NULL, NULL, NULL
     FROM live_node n
-    WHERE $8::boolean AND n.workspace_id = $1 AND n.project_id = $2
-        AND n.speaker_component_id = $9
+    WHERE $3::boolean AND n.workspace_id = $1 AND n.project_id = $2
+        AND n.speaker_component_id = $4
+), page AS (
+    -- The page's sites, of which alone the boards' names and the nodes'
+    -- titles are read, however many sites use the target.
+    SELECT s.attribute_def_id, s.site_id, s.board_id, s.site, s.node_id, s.connection_id, s.branch_output_id, s.component_id, coalesce(s.board_id, '00000000-0000-0000-0000-000000000000') AS board_key,
+        coalesce(s.node_id, '00000000-0000-0000-0000-000000000000') AS node_key,
+        coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000') AS attribute_key
+    FROM sites s
+    WHERE (coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
+            coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
+            coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000'))
+        > ($7::uuid, $8::uuid, $9::uuid, $10::uuid)
+    ORDER BY board_key, node_key, s.site_id, attribute_key
+    LIMIT $11
 )
-SELECT s.site, s.board_id, b.name AS board_name, s.node_id, nn.title AS node_title, s.connection_id,
-    s.branch_output_id, s.component_id, s.attribute_def_id, s.site_id
-FROM sites s
-LEFT JOIN board b ON b.workspace_id = $1 AND b.project_id = $2 AND b.id = s.board_id
-LEFT JOIN node nn ON nn.workspace_id = $1 AND nn.project_id = $2 AND nn.id = s.node_id
-WHERE (coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
-        coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
-        coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000'))
-    > ($3::uuid, $4::uuid, $5::uuid, $6::uuid)
-ORDER BY coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
-    coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
-    coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000')
-LIMIT $7
+SELECT p.site, p.board_id, b.name AS board_name, p.node_id, nn.title AS node_title, p.connection_id,
+    p.branch_output_id, p.component_id, p.attribute_def_id, p.site_id
+FROM page p
+LEFT JOIN board b ON b.workspace_id = $1 AND b.project_id = $2 AND b.id = p.board_id
+LEFT JOIN node nn ON nn.workspace_id = $1 AND nn.project_id = $2 AND nn.id = p.node_id
+ORDER BY p.board_key, p.node_key, p.site_id, p.attribute_key
 `
 
 type UsagesParams struct {
 	WorkspaceID    pgtype.UUID
 	ProjectID      pgtype.UUID
+	Speaker        bool
+	TargetID       pgtype.UUID
+	TargetKind     string
+	Access         string
 	AfterBoard     pgtype.UUID
 	AfterNode      pgtype.UUID
 	AfterSite      pgtype.UUID
 	AfterAttribute pgtype.UUID
 	MaxRows        int32
-	Speaker        bool
-	TargetID       pgtype.UUID
-	TargetKind     string
-	Access         string
 }
 
 type UsagesRow struct {
@@ -260,15 +281,15 @@ func (q *Queries) Usages(ctx context.Context, arg UsagesParams) ([]UsagesRow, er
 	rows, err := q.db.Query(ctx, usages,
 		arg.WorkspaceID,
 		arg.ProjectID,
+		arg.Speaker,
+		arg.TargetID,
+		arg.TargetKind,
+		arg.Access,
 		arg.AfterBoard,
 		arg.AfterNode,
 		arg.AfterSite,
 		arg.AfterAttribute,
 		arg.MaxRows,
-		arg.Speaker,
-		arg.TargetID,
-		arg.TargetKind,
-		arg.Access,
 	)
 	if err != nil {
 		return nil, err

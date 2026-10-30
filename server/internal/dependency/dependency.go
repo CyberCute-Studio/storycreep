@@ -31,6 +31,7 @@ package dependency
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -85,26 +86,8 @@ type Use struct {
 // compare orders uses by their kinds, their targets, their attributes, and
 // their accesses, in which order a site's uses are listed.
 func compare(a, b Use) int {
-	if c := cmpString(string(a.Kind), string(b.Kind)); c != 0 {
-		return c
-	}
-	if c := bytes.Compare(a.Target[:], b.Target[:]); c != 0 {
-		return c
-	}
-	if c := bytes.Compare(a.Attribute[:], b.Attribute[:]); c != 0 {
-		return c
-	}
-	return cmpString(string(a.Access), string(b.Access))
-}
-
-func cmpString(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
+	return cmp.Or(cmp.Compare(a.Kind, b.Kind), bytes.Compare(a.Target[:], b.Target[:]),
+		bytes.Compare(a.Attribute[:], b.Attribute[:]), cmp.Compare(a.Access, b.Access))
 }
 
 // sorted returns uses sorted (compare), each once.
@@ -276,8 +259,8 @@ type Site struct {
 	Uses                                    []Use
 }
 
-// row is a row of the index, as InsertReferences reads it: each UUID in its
-// text form, and a column that is null left out.
+// row is a row of the index, as InsertReferences and DeleteReferences read
+// it: each UUID in its text form, and a column that is null left out.
 type row struct {
 	Expression string `json:"expression_id,omitempty"`
 	Node       string `json:"node_id,omitempty"`
@@ -309,18 +292,32 @@ func rows(sites []Site) []row {
 	return out
 }
 
-// insert adds the rows of the index of sites, of the project.
-func insert(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, sites []Site) error {
+// replace replaces the rows of the index of the project's sites that del
+// names by their IDs, the expressions' and the texts' of the nodes, the
+// connections, and the components, with the rows of sites, theirs: it
+// deletes the rows that the sites no longer name (DeleteReferences), and
+// adds those that they did not name before (InsertReferences), so that a
+// site that names what it named, as a text whose edit kept its references,
+// or an expression whose new AST names what the old one did, writes
+// nothing.
+func replace(ctx context.Context, q *queries.Queries, del queries.DeleteReferencesParams, sites []Site) error {
 	rs := rows(sites)
-	if len(rs) == 0 {
-		return nil
+	if rs == nil {
+		rs = []row{}
 	}
 	data, err := json.Marshal(rs)
 	if err != nil {
 		return fmt.Errorf("dependency: encode the index's rows: %w", err)
 	}
-	if err := q.InsertReferences(ctx, queries.InsertReferencesParams{WorkspaceID: ws, ProjectID: project,
-		Rows: data}); err != nil {
+	del.Rows = data
+	if err := q.DeleteReferences(ctx, del); err != nil {
+		return fmt.Errorf("dependency: delete the rows of the index that the sites no longer name: %w", err)
+	}
+	if len(rs) == 0 {
+		return nil
+	}
+	if err := q.InsertReferences(ctx, queries.InsertReferencesParams{WorkspaceID: del.WorkspaceID,
+		ProjectID: del.ProjectID, Rows: data}); err != nil {
 		return fmt.Errorf("dependency: add the index's rows: %w", err)
 	}
 	return nil
@@ -344,11 +341,8 @@ func IndexExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 		}
 		exprs[i] = nullUUID(s.Expression)
 	}
-	if err := q.DeleteExpressionReferences(ctx, queries.DeleteExpressionReferencesParams{WorkspaceID: ws,
-		ProjectID: project, Ids: exprs}); err != nil {
-		return fmt.Errorf("dependency: delete the expressions' rows of the index: %w", err)
-	}
-	return insert(ctx, q, ws, project, sites)
+	return replace(ctx, q, queries.DeleteReferencesParams{WorkspaceID: ws, ProjectID: project, ExpressionIds: exprs,
+		NodeIds: list(nil), ConnectionIds: list(nil), ComponentIds: list(nil)}, sites)
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

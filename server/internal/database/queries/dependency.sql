@@ -4,25 +4,58 @@
 -- connection, or a component, and how the site uses it. expression_ref is a
 -- tenant table, which a transaction of its workspace reads. A batch's
 -- transaction replaces a site's rows, once every command of the batch has
--- applied, under the lock of the project's row.
+-- applied, under the lock of the project's row: it deletes those that the
+-- site no longer names (DeleteReferences), and adds those that it did not
+-- name before (InsertReferences), so that a site that names what it named,
+-- as a text whose edit kept its references, writes nothing.
 
 -- name: InsertReferences :exec
 -- InsertReferences adds the rows of the index that rows lists, a JSON array
 -- of objects of each row's columns, each UUID in its text form, and a column
--- that is null left out.
+-- that is null left out, but those that the index holds already, which it
+-- leaves as they are.
 INSERT INTO expression_ref (workspace_id, project_id, expression_id, node_id, connection_id, component_id, board_id,
     target_kind, target_id, attribute_def_id, access)
 SELECT @workspace_id::uuid, @project_id::uuid, (r.value->>'expression_id')::uuid, (r.value->>'node_id')::uuid,
     (r.value->>'connection_id')::uuid, (r.value->>'component_id')::uuid, (r.value->>'board_id')::uuid,
     r.value->>'target_kind', (r.value->>'target_id')::uuid, (r.value->>'attribute_def_id')::uuid, r.value->>'access'
-FROM jsonb_array_elements(@rows::jsonb) AS r;
+FROM jsonb_array_elements(@rows::jsonb) AS r
+ON CONFLICT DO NOTHING;
 
--- name: DeleteExpressionReferences :exec
--- DeleteExpressionReferences deletes the rows of the index of the project's
--- expressions whose IDs are among ids, which their compilation then writes
--- again.
-DELETE FROM expression_ref
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND expression_id = ANY(@ids::uuid[]);
+-- name: DeleteReferences :exec
+-- DeleteReferences deletes the rows of the index of the project's sites
+-- whose IDs are among expression_ids, node_ids, connection_ids, and
+-- component_ids, the expressions and the texts of the nodes, the
+-- connections, and the components, but those that rows lists, as
+-- InsertReferences reads it: the rows that the sites no longer name, to
+-- which InsertReferences then adds what they name now. A column that is
+-- null is compared as the zero UUID, which no site and no target is, so
+-- that the rows are compared by equalities that a hash join compares,
+-- however many the batch replaces.
+WITH kept AS (
+    SELECT coalesce((r.value->>'expression_id')::uuid, '00000000-0000-0000-0000-000000000000') AS expression_id,
+        coalesce((r.value->>'node_id')::uuid, '00000000-0000-0000-0000-000000000000') AS node_id,
+        coalesce((r.value->>'connection_id')::uuid, '00000000-0000-0000-0000-000000000000') AS connection_id,
+        coalesce((r.value->>'component_id')::uuid, '00000000-0000-0000-0000-000000000000') AS component_id,
+        r.value->>'target_kind' AS target_kind, (r.value->>'target_id')::uuid AS target_id,
+        coalesce((r.value->>'attribute_def_id')::uuid, '00000000-0000-0000-0000-000000000000') AS attribute_def_id,
+        r.value->>'access' AS access
+    FROM jsonb_array_elements(@rows::jsonb) AS r
+)
+DELETE FROM expression_ref x
+WHERE x.workspace_id = @workspace_id AND x.project_id = @project_id
+    AND (x.expression_id = ANY(@expression_ids::uuid[]) OR x.node_id = ANY(@node_ids::uuid[])
+        OR x.connection_id = ANY(@connection_ids::uuid[]) OR x.component_id = ANY(@component_ids::uuid[]))
+    AND NOT EXISTS (
+        SELECT FROM kept k
+        WHERE k.expression_id = coalesce(x.expression_id, '00000000-0000-0000-0000-000000000000')
+            AND k.node_id = coalesce(x.node_id, '00000000-0000-0000-0000-000000000000')
+            AND k.connection_id = coalesce(x.connection_id, '00000000-0000-0000-0000-000000000000')
+            AND k.component_id = coalesce(x.component_id, '00000000-0000-0000-0000-000000000000')
+            AND k.target_kind = x.target_kind AND k.target_id = x.target_id
+            AND k.attribute_def_id = coalesce(x.attribute_def_id, '00000000-0000-0000-0000-000000000000')
+            AND k.access = x.access
+    );
 
 -- name: TextReferences :many
 -- TextReferences returns the value references and the mentions of the
@@ -47,16 +80,6 @@ SELECT NULL, NULL, m.id, NULL, r.inline
 FROM component m,
     jsonb_path_query(m.description, 'strict $.**?(@.type == "valueRef" || @.type == "mention")') AS r (inline)
 WHERE m.workspace_id = @workspace_id AND m.project_id = @project_id AND m.id = ANY(@component_ids::uuid[]);
-
--- name: DeleteTextReferences :exec
--- DeleteTextReferences deletes the rows of the index of the texts of the
--- project's nodes whose IDs are among node_ids, connections among
--- connection_ids, and components among component_ids, which the batch then
--- writes again.
-DELETE FROM expression_ref
-WHERE workspace_id = @workspace_id AND project_id = @project_id
-    AND (node_id = ANY(@node_ids::uuid[]) OR connection_id = ANY(@connection_ids::uuid[])
-        OR component_id = ANY(@component_ids::uuid[]));
 
 -- name: Usages :many
 -- Usages returns at most max_rows of the sites of the project that are not
@@ -107,17 +130,23 @@ WITH refs AS (
     FROM live_node n
     WHERE @speaker::boolean AND n.workspace_id = @workspace_id AND n.project_id = @project_id
         AND n.speaker_component_id = @target_id
+), page AS (
+    -- The page's sites, of which alone the boards' names and the nodes'
+    -- titles are read, however many sites use the target.
+    SELECT s.*, coalesce(s.board_id, '00000000-0000-0000-0000-000000000000') AS board_key,
+        coalesce(s.node_id, '00000000-0000-0000-0000-000000000000') AS node_key,
+        coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000') AS attribute_key
+    FROM sites s
+    WHERE (coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
+            coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
+            coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000'))
+        > (@after_board::uuid, @after_node::uuid, @after_site::uuid, @after_attribute::uuid)
+    ORDER BY board_key, node_key, s.site_id, attribute_key
+    LIMIT @max_rows
 )
-SELECT s.site, s.board_id, b.name AS board_name, s.node_id, nn.title AS node_title, s.connection_id,
-    s.branch_output_id, s.component_id, s.attribute_def_id, s.site_id
-FROM sites s
-LEFT JOIN board b ON b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = s.board_id
-LEFT JOIN node nn ON nn.workspace_id = @workspace_id AND nn.project_id = @project_id AND nn.id = s.node_id
-WHERE (coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
-        coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
-        coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000'))
-    > (@after_board::uuid, @after_node::uuid, @after_site::uuid, @after_attribute::uuid)
-ORDER BY coalesce(s.board_id, '00000000-0000-0000-0000-000000000000'),
-    coalesce(s.node_id, '00000000-0000-0000-0000-000000000000'), s.site_id,
-    coalesce(s.attribute_def_id, '00000000-0000-0000-0000-000000000000')
-LIMIT @max_rows;
+SELECT p.site, p.board_id, b.name AS board_name, p.node_id, nn.title AS node_title, p.connection_id,
+    p.branch_output_id, p.component_id, p.attribute_def_id, p.site_id
+FROM page p
+LEFT JOIN board b ON b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = p.board_id
+LEFT JOIN node nn ON nn.workspace_id = @workspace_id AND nn.project_id = @project_id AND nn.id = p.node_id
+ORDER BY p.board_key, p.node_key, p.site_id, p.attribute_key;

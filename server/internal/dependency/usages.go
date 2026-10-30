@@ -80,9 +80,11 @@ type Key struct {
 // Key returns where u is in its list.
 func (u Usage) Key() Key { return u.key }
 
-// DB runs a transaction of the application login, as *database.DB does.
+// DB runs a transaction of the application login, as *database.DB does, and
+// one that reads as of one moment (InSnapshot), which the reads run in.
 type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
 // Options configure a Service.
@@ -162,10 +164,15 @@ func (s *Service) ComponentUsages(ctx context.Context, actor commands.Actor, pro
 // projectID, after after, once the actor may read the project's content
 // (project.Service.ReadContent), and exists finds the target, which returns
 // pgx.ErrNoRows for one that the project does not have outside its trash.
+// The transaction reads as of one moment, that of its start
+// (project.Service.ReadSnapshot), and locks nothing, so that a batch that
+// commits once exists has found the target, as one that deletes it, or the
+// sites that use it, to the trash, is read whole or not at all, never the
+// target as it was with usages as the batch left them.
 func (s *Service) usages(ctx context.Context, actor commands.Actor, projectID ids.UUID, after Key, limit int,
 	params queries.UsagesParams, exists func(q *queries.Queries, ws pgtype.UUID) error) ([]Usage, error) {
 	var out []Usage
-	err := s.projects.ReadContent(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		q, ws := queries.New(tx), nullUUID(workspaceID)
 		switch err := exists(q, ws); {
 		case errors.Is(err, pgx.ErrNoRows):

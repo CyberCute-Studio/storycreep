@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency/dependencytest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -53,27 +55,29 @@ func attributeInline(component, attribute string) string {
 //     met_elara and mentions mira, whose on-enter script is elara.trust += 1
 //     and whose on-exit script is elara.mood = "calm", and the element pier,
 //     with the connection gate from keeper to pier, whose condition is
-//     met_elara == true, whose label shows elara.trust, and whose on-traverse
-//     script is gold = gold + 1;
+//     met_elara == true, whose label shows elara.trust and elara.mood, and
+//     whose on-traverse script is gold = gold + 1;
 //   - on Lighthouse, the branch lamp, whose output lit's condition is
 //     mira.trust >= 3, and which leads to the element tower, whose on-enter
 //     script is met_elara = true and gold -= 2, and whose on-exit script,
 //     met_elara = nope, does not compile;
 //   - and elara's description, which mentions mira and shows gold.
 type usageWorld struct {
-	s                                  *server
-	admin                              *pgx.Conn
-	owner                              signedIn
-	project                            string
-	harbour, lighthouse                string
-	metElara, gold                     string
-	cast, trust, mood                  string
-	elara, mira                        string
-	keeper, pier, gate, lamp, lit      string
-	tower                              string
-	keeperEnter, keeperExit            string
-	gateCondition, gateTraverse        string
-	litCondition, towerEnter, towerOut string
+	s                             *server
+	admin                         *pgx.Conn
+	owner                         signedIn
+	project                       string
+	harbour, lighthouse           string
+	metElara, gold                string
+	cast, trust, mood             string
+	elara, mira                   string
+	keeper, pier, gate, lamp, lit string
+	tower                         string
+	// expressions are the UUIDs of the expressions, by their sites and
+	// their owners' IDs, as keeper's on-enter script's is by node_on_enter
+	// and keeper's ID, which the usages' keys order the sites by
+	// (usageWorld.key).
+	expressions map[string]ids.UUID
 }
 
 // newUsageWorld returns a new usageWorld, made in one batch, of a server of
@@ -110,7 +114,8 @@ func newUsageWorld(t *testing.T) *usageWorld {
 			"position": pos}),
 		cmd("connection.create", map[string]any{"id": w.gate, "from_node_id": w.keeper, "to_node_id": w.pier,
 			"condition": "met_elara == true", "on_traverse": "gold = gold + 1",
-			"label": richText(textInline("Trust "), attributeInline(w.elara, w.trust))}),
+			"label": richText(textInline("Trust "), attributeInline(w.elara, w.trust), textInline(", mood "),
+				attributeInline(w.elara, w.mood))}),
 		cmd("node.create", map[string]any{"id": w.lamp, "board_id": w.lighthouse, "type": "branch", "title": "Lamp",
 			"position": pos}),
 		cmd("branch_output.create", map[string]any{"id": w.lit, "node_id": w.lamp, "condition": "mira.trust >= 3"}),
@@ -123,22 +128,57 @@ func newUsageWorld(t *testing.T) *usageWorld {
 		t.Fatalf("make the world: %d %s", res.status, res.body)
 	}
 	// The expressions' UUIDs, which the usages' keys order the sites by.
-	for _, e := range []struct {
-		id    *string
-		owner string
-		field string
-	}{{&w.keeperEnter, w.keeper, "on_enter"}, {&w.keeperExit, w.keeper, "on_exit"},
-		{&w.gateCondition, w.gate, "condition"}, {&w.gateTraverse, w.gate, "on_traverse"},
-		{&w.litCondition, w.lit, "condition"}, {&w.towerEnter, w.tower, "on_enter"},
-		{&w.towerOut, w.tower, "on_exit"}} {
+	w.expressions = map[string]ids.UUID{}
+	for _, e := range []struct{ site, owner, field string }{
+		{dependency.SiteNodeOnEnter, w.keeper, "on_enter"}, {dependency.SiteNodeOnExit, w.keeper, "on_exit"},
+		{dependency.SiteConnectionCondition, w.gate, "condition"},
+		{dependency.SiteConnectionOnTraverse, w.gate, "on_traverse"},
+		{dependency.SiteBranchOutputCondition, w.lit, "condition"},
+		{dependency.SiteNodeOnEnter, w.tower, "on_enter"}, {dependency.SiteNodeOnExit, w.tower, "on_exit"},
+	} {
 		var id string
 		if err := w.admin.QueryRow(context.Background(), `SELECT id::text FROM expression WHERE field = $1
 			AND $2 IN (node_id, connection_id, branch_output_id)`, e.field, uuidOf(t, e.owner)).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
-		*e.id = id
+		u, err := ids.ParseUUID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.expressions[e.site+" "+e.owner] = u
 	}
 	return w
+}
+
+// key returns where the usage u is in its list (dependency.Key), from what
+// the API shows of it and the UUIDs of the world's expressions: its board,
+// its node, its site, an expression's UUID or that of a text's or a
+// speaker's owner, and its attribute, each zero where it has none.
+func (w *usageWorld) key(t *testing.T, u dependency.Usage) dependency.Key {
+	t.Helper()
+	id := func(public string) ids.UUID {
+		if public == "" {
+			return ids.UUID{}
+		}
+		return uuidOf(t, public)
+	}
+	k := dependency.Key{Board: id(u.BoardID), Node: id(u.NodeID), Attribute: id(u.AttributeID)}
+	switch u.Site {
+	case dependency.SiteNodeText, dependency.SiteNodeSpeaker:
+		k.Site = id(u.NodeID)
+	case dependency.SiteConnectionLabel:
+		k.Site = id(u.ConnectionID)
+	case dependency.SiteComponentDescription:
+		k.Site = id(u.ComponentID)
+	default:
+		owner := cmp.Or(u.ConnectionID, u.BranchOutputID, u.NodeID)
+		e, ok := w.expressions[u.Site+" "+owner]
+		if !ok {
+			t.Fatalf("the world has no expression of the site %s of %s", u.Site, owner)
+		}
+		k.Site = e
+	}
+	return k
 }
 
 // uuidOf returns the UUID of the public ID id, of any kind.
@@ -197,17 +237,28 @@ func sites(us []dependency.Usage) []string {
 }
 
 // wantSites fails the test unless the usages are the sites want, in any
-// order, and in the order of their keys.
-func wantSites(t *testing.T, what string, got []dependency.Usage, want ...string) {
+// order, and in the order of their keys (wantSorted).
+func (w *usageWorld) wantSites(t *testing.T, what string, got []dependency.Usage, want ...string) {
 	t.Helper()
-	if !slices.IsSortedFunc(got, func(a, b dependency.Usage) int { return compareKeys(a.Key(), b.Key()) }) {
-		t.Errorf("%s are not in the order of their keys: %v", what, sites(got))
-	}
+	w.wantSorted(t, what, got)
 	have := sites(got)
 	slices.Sort(have)
 	slices.Sort(want)
 	if !slices.Equal(have, want) {
 		t.Errorf("%s are\n%q\nwant\n%q", what, have, want)
+	}
+}
+
+// wantSorted fails the test unless the usages, which a client reads of the
+// API, without their keys, are in the order of their keys, which key gives
+// of what the API shows, each after the one before it.
+func (w *usageWorld) wantSorted(t *testing.T, what string, got []dependency.Usage) {
+	t.Helper()
+	for i := 1; i < len(got); i++ {
+		if compareKeys(w.key(t, got[i-1]), w.key(t, got[i])) >= 0 {
+			t.Errorf("%s are not in the order of their keys: %v", what, sites(got))
+			return
+		}
 	}
 }
 
@@ -233,14 +284,14 @@ func TestVariableUsages(t *testing.T) {
 	t.Parallel()
 	w := newUsageWorld(t)
 	h, o, p := w.s.main, w.owner, w.project
-	wantSites(t, "met_elara's reads", usages(t, h, o, variableUsagesPath(p, w.metElara, "read"), 50),
+	w.wantSites(t, "met_elara's reads", usages(t, h, o, variableUsagesPath(p, w.metElara, "read"), 50),
 		"node_text Harbour/Keeper", "connection_condition Harbour/Keeper "+w.gate)
-	wantSites(t, "met_elara's writes", usages(t, h, o, variableUsagesPath(p, w.metElara, "write"), 50),
+	w.wantSites(t, "met_elara's writes", usages(t, h, o, variableUsagesPath(p, w.metElara, "write"), 50),
 		"node_on_enter Lighthouse/Tower")
-	wantSites(t, "gold's reads", usages(t, h, o, variableUsagesPath(p, w.gold, "read"), 50),
+	w.wantSites(t, "gold's reads", usages(t, h, o, variableUsagesPath(p, w.gold, "read"), 50),
 		"connection_on_traverse Harbour/Keeper "+w.gate, "node_on_enter Lighthouse/Tower",
 		"component_description "+w.elara)
-	wantSites(t, "gold's writes", usages(t, h, o, variableUsagesPath(p, w.gold, "write"), 50),
+	w.wantSites(t, "gold's writes", usages(t, h, o, variableUsagesPath(p, w.gold, "write"), 50),
 		"connection_on_traverse Harbour/Keeper "+w.gate, "node_on_enter Lighthouse/Tower")
 
 	for _, tt := range []struct {
@@ -299,7 +350,7 @@ func TestComponentUsagesByPair(t *testing.T) {
 		}
 	}
 	writes := usages(t, h, o, componentUsagesPath(p, w.elara, "write"), 50)
-	wantSites(t, "Elara's writes", writes, "node_on_enter Harbour/Keeper "+w.trust,
+	w.wantSites(t, "Elara's writes", writes, "node_on_enter Harbour/Keeper "+w.trust,
 		"node_on_exit Harbour/Keeper "+w.mood)
 	var trust []string
 	for _, u := range writes {
@@ -311,18 +362,42 @@ func TestComponentUsagesByPair(t *testing.T) {
 		t.Errorf("the writes of elara.trust are %v, want the on-enter script's alone, not elara.mood's", trust)
 	}
 	// The update elara.trust += 1 reads the attribute too, and the label
-	// shows it.
-	wantSites(t, "Elara's reads", usages(t, h, o, componentUsagesPath(p, w.elara, "read"), 50),
-		"node_on_enter Harbour/Keeper "+w.trust, "connection_label Harbour/Keeper "+w.gate+" "+w.trust)
-	wantSites(t, "Elara's speakers", usages(t, h, o, componentUsagesPath(p, w.elara, "speaker"), 50),
+	// shows it and elara.mood, listed once for each.
+	w.wantSites(t, "Elara's reads", usages(t, h, o, componentUsagesPath(p, w.elara, "read"), 50),
+		"node_on_enter Harbour/Keeper "+w.trust, "connection_label Harbour/Keeper "+w.gate+" "+w.trust,
+		"connection_label Harbour/Keeper "+w.gate+" "+w.mood)
+	w.wantSites(t, "Elara's speakers", usages(t, h, o, componentUsagesPath(p, w.elara, "speaker"), 50),
 		"node_speaker Harbour/Keeper")
-	wantSites(t, "Mira's reads", usages(t, h, o, componentUsagesPath(p, w.mira, "read"), 50),
+	w.wantSites(t, "Mira's reads", usages(t, h, o, componentUsagesPath(p, w.mira, "read"), 50),
 		"branch_output_condition Lighthouse/Lamp "+w.lit+" "+w.trust)
-	wantSites(t, "Mira's writes", usages(t, h, o, componentUsagesPath(p, w.mira, "write"), 50))
+	w.wantSites(t, "Mira's writes", usages(t, h, o, componentUsagesPath(p, w.mira, "write"), 50))
 	wantCode(t, "another use", call(h, http.MethodGet, componentUsagesPath(p, w.elara, "access"), nil,
 		o.header(false)), http.StatusUnprocessableEntity, api.CodeValidationFailed)
 	wantCode(t, "a component that the project lacks", call(h, http.MethodGet,
 		componentUsagesPath(p, newComponentID(), "read"), nil, o.header(false)), http.StatusNotFound, api.CodeNotFound)
+}
+
+// TestUsagesOfAttributeNoLongerRuntime checks that a text that shows a
+// component's attribute is a usage of it whether the attribute is runtime or
+// not, as a text names what it shows by its IDs, whatever becomes of it,
+// while a script that names an attribute that is no longer runtime no longer
+// compiles, and so names nothing: once elara.mood is no longer runtime, the
+// label still reads it, and the script that wrote it no longer does.
+func TestUsagesOfAttributeNoLongerRuntime(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	h, o, p := w.s.main, w.owner, w.project
+	res := call(h, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{Type: "attribute.set_runtime",
+		Payload: map[string]any{"id": w.mood, "runtime": false}}), o.header(true))
+	if res.status != http.StatusOK {
+		t.Fatalf("make mood not runtime: %d %s", res.status, res.body)
+	}
+	w.wantSites(t, "Elara's reads once mood is not runtime", usages(t, h, o,
+		componentUsagesPath(p, w.elara, "read"), 50), "node_on_enter Harbour/Keeper "+w.trust,
+		"connection_label Harbour/Keeper "+w.gate+" "+w.trust, "connection_label Harbour/Keeper "+w.gate+" "+w.mood)
+	w.wantSites(t, "Elara's writes once mood is not runtime", usages(t, h, o,
+		componentUsagesPath(p, w.elara, "write"), 50), "node_on_enter Harbour/Keeper "+w.trust)
+	wantDrift(t, w.admin, p)
 }
 
 // TestMentionUsages checks that a component's mentions are its usages: each
@@ -334,19 +409,19 @@ func TestMentionUsages(t *testing.T) {
 	t.Parallel()
 	w := newUsageWorld(t)
 	h, o, p := w.s.main, w.owner, w.project
-	wantSites(t, "Mira's mentions", usages(t, h, o, componentUsagesPath(p, w.mira, "mention"), 50),
+	w.wantSites(t, "Mira's mentions", usages(t, h, o, componentUsagesPath(p, w.mira, "mention"), 50),
 		"node_text Harbour/Keeper", "component_description "+w.elara)
-	wantSites(t, "Elara's mentions", usages(t, h, o, componentUsagesPath(p, w.elara, "mention"), 50))
+	w.wantSites(t, "Elara's mentions", usages(t, h, o, componentUsagesPath(p, w.elara, "mention"), 50))
 	res := call(h, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{Type: "connection.update",
 		Payload: map[string]any{"id": w.gate, "label": richText(mentionInline(w.elara), textInline(" waits"))}}),
 		o.header(true))
 	if res.status != http.StatusOK {
 		t.Fatalf("change the label: %d %s", res.status, res.body)
 	}
-	wantSites(t, "Elara's mentions once the label mentions her", usages(t, h, o,
+	w.wantSites(t, "Elara's mentions once the label mentions her", usages(t, h, o,
 		componentUsagesPath(p, w.elara, "mention"), 50), "connection_label Harbour/Keeper "+w.gate)
-	// The label no longer shows elara.trust.
-	wantSites(t, "Elara's reads once the label mentions her", usages(t, h, o,
+	// The label no longer shows elara.trust or elara.mood.
+	w.wantSites(t, "Elara's reads once the label mentions her", usages(t, h, o,
 		componentUsagesPath(p, w.elara, "read"), 50), "node_on_enter Harbour/Keeper "+w.trust)
 }
 
@@ -385,7 +460,7 @@ func TestTextReferenceSurvivesRename(t *testing.T) {
 	if after := text(); after != before || !strings.Contains(after, w.metElara) {
 		t.Errorf("the rename changed the text that shows the variable from %s to %s", before, after)
 	}
-	wantSites(t, "the renamed variable's reads", usages(t, h, o, variableUsagesPath(p, w.metElara, "read"), 50),
+	w.wantSites(t, "the renamed variable's reads", usages(t, h, o, variableUsagesPath(p, w.metElara, "read"), 50),
 		"node_text Harbour/Keeper")
 }
 
@@ -405,16 +480,16 @@ func TestUsagesTrash(t *testing.T) {
 		}
 	}
 	apply(wireCommand{Type: "node.delete", Payload: map[string]any{"id": w.keeper}})
-	wantSites(t, "met_elara's reads once Keeper is in the trash", usages(t, h, o,
+	w.wantSites(t, "met_elara's reads once Keeper is in the trash", usages(t, h, o,
 		variableUsagesPath(p, w.metElara, "read"), 50))
 	apply(wireCommand{Type: "board.delete", Payload: map[string]any{"id": w.lighthouse, "confirm": true}})
-	wantSites(t, "gold's writes once Keeper and Lighthouse are in the trash", usages(t, h, o,
+	w.wantSites(t, "gold's writes once Keeper and Lighthouse are in the trash", usages(t, h, o,
 		variableUsagesPath(p, w.gold, "write"), 50))
-	wantSites(t, "gold's reads once Keeper and Lighthouse are in the trash", usages(t, h, o,
+	w.wantSites(t, "gold's reads once Keeper and Lighthouse are in the trash", usages(t, h, o,
 		variableUsagesPath(p, w.gold, "read"), 50), "component_description "+w.elara)
 	apply(wireCommand{Type: "node.restore", Payload: map[string]any{"id": w.keeper}},
 		wireCommand{Type: "board.restore", Payload: map[string]any{"id": w.lighthouse}})
-	wantSites(t, "gold's writes once both are restored", usages(t, h, o, variableUsagesPath(p, w.gold, "write"), 50),
+	w.wantSites(t, "gold's writes once both are restored", usages(t, h, o, variableUsagesPath(p, w.gold, "write"), 50),
 		"connection_on_traverse Harbour/Keeper "+w.gate, "node_on_enter Lighthouse/Tower")
 	apply(wireCommand{Type: "variable.delete", Payload: map[string]any{"id": w.gold}})
 	wantCode(t, "a variable in the trash", call(h, http.MethodGet, variableUsagesPath(p, w.gold, "read"), nil,
@@ -424,7 +499,10 @@ func TestUsagesTrash(t *testing.T) {
 
 // TestUsagesPaged checks that a list of usages is read page by page, each
 // page after the last's key, and gives the same usages, in the same order,
-// whatever the pages' size.
+// that of their keys, whatever the pages' size, a page's last key and the
+// next page's first one apart by their boards, their nodes, their sites, or
+// only their attributes, as the label's reads of elara.trust and elara.mood
+// are.
 func TestUsagesPaged(t *testing.T) {
 	t.Parallel()
 	w := newUsageWorld(t)
@@ -435,11 +513,142 @@ func TestUsagesPaged(t *testing.T) {
 		if len(whole) < 2 {
 			t.Fatalf("%s lists %d usages, too few to page", path, len(whole))
 		}
+		w.wantSorted(t, path, whole)
 		if paged := usages(t, h, o, path, 1); !slices.Equal(sites(paged), sites(whole)) {
 			t.Errorf("%s, a usage a page, is %v, want %v", path, sites(paged), sites(whole))
 		}
 	}
 	wantDrift(t, w.admin, p)
+}
+
+// TestIndexKeepsUnchangedRows checks that a batch that changes a text, or the
+// source of an expression, but not what it names, leaves the rows of the
+// index of what it names as they are, rather than deleting them and adding
+// them anew, and that one that changes what a text names replaces only the
+// rows that changed: Keeper's text gains plain text, Tower's on-enter
+// script subtracts another number from gold, and the label no longer shows
+// elara.mood. A row that a batch writes again is a new version of it, of
+// another xmin, the transaction that wrote it.
+func TestIndexKeepsUnchangedRows(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	h, o, p := w.s.main, w.owner, w.project
+	// versions returns the rows of the index, each with the transaction that
+	// wrote its version.
+	versions := func() map[string]string {
+		t.Helper()
+		rows, err := w.admin.Query(context.Background(), `SELECT coalesce(expression_id, node_id, connection_id,
+				component_id)::text || ' ' || access || ' ' || target_kind || ' ' || target_id::text || ' ' ||
+				coalesce(attribute_def_id::text, ''), xmin::text
+			FROM expression_ref WHERE project_id = $1`, uuidOf(t, p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for rows.Next() {
+			var row, xmin string
+			if err := rows.Scan(&row, &xmin); err != nil {
+				t.Fatal(err)
+			}
+			out[row] = xmin
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	before := versions()
+	res := call(h, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "node.update", Payload: map[string]any{"id": w.keeper, "text": richText(
+			textInline("Met at last: "), valueInline(w.metElara), textInline(" with "), mentionInline(w.mira))}},
+		wireCommand{Type: "node.update", Payload: map[string]any{"id": w.tower, "on_enter": "met_elara = true\ngold -= 3"}},
+		wireCommand{Type: "connection.update", Payload: map[string]any{"id": w.gate,
+			"label": richText(textInline("Trust "), attributeInline(w.elara, w.trust))}}), o.header(true))
+	if res.status != http.StatusOK {
+		t.Fatalf("change the texts and the script: %d %s", res.status, res.body)
+	}
+	after := versions()
+	gone := fmt.Sprintf("%s read attribute %s %s", uuidOf(t, w.gate), uuidOf(t, w.elara), uuidOf(t, w.mood))
+	for row, xmin := range before {
+		switch again, ok := after[row]; {
+		case row == gone:
+			if ok {
+				t.Errorf("the label no longer shows elara.mood, but the index still holds %s", row)
+			}
+		case !ok:
+			t.Errorf("the batch deleted the row %s, which its site still names", row)
+		case again != xmin:
+			t.Errorf("the batch wrote the row %s again, which its site named before it", row)
+		}
+	}
+	if _, ok := before[gone]; !ok || len(after) != len(before)-1 {
+		t.Errorf("the index had %d rows, the label's read of elara.mood among them: %t, and has %d, want one fewer",
+			len(before), ok, len(after))
+	}
+	wantDrift(t, w.admin, p)
+}
+
+// TestUsagesWhileChanged checks that a list of usages reads the variable and
+// its usages as of one moment: a batch that commits once the list has found
+// the variable, before it reads the usages, and deletes both boards and the
+// variable to the trash, is not read, rather than the variable being listed
+// with none of the usages that it had, as it never was, and the read locks
+// nothing that keeps the batch from committing meanwhile.
+func TestUsagesWhileChanged(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	h, o, p := w.s.main, w.owner, w.project
+	batches := 0
+	db := beforeUsages{DB: readyDB{w.s.ready}, fn: func() {
+		batches++
+		if res := call(h, http.MethodPost, commandsPath(p), commandBatch(t,
+			wireCommand{Type: "board.delete", Payload: map[string]any{"id": w.harbour, "confirm": true}},
+			wireCommand{Type: "board.delete", Payload: map[string]any{"id": w.lighthouse, "confirm": true}},
+			wireCommand{Type: "variable.delete", Payload: map[string]any{"id": w.metElara}}),
+			o.header(true)); res.status != http.StatusOK {
+			t.Errorf("delete the boards and the variable: %d %s", res.status, res.body)
+		}
+	}}
+	*w.s.dependencies = *dependency.New(db, dependency.Options{Projects: w.s.projects})
+	w.wantSites(t, "met_elara's reads while a batch deletes it and its boards", usages(t, h, o,
+		variableUsagesPath(p, w.metElara, "read"), 50), "node_text Harbour/Keeper",
+		"connection_condition Harbour/Keeper "+w.gate)
+	if batches != 1 {
+		t.Errorf("the list read the usages %d times, want once", batches)
+	}
+	wantCode(t, "the variable once the batch has committed", call(h, http.MethodGet,
+		variableUsagesPath(p, w.metElara, "read"), nil, o.header(false)), http.StatusNotFound, api.CodeNotFound)
+}
+
+// beforeUsages is a dependency.DB whose transactions call fn before their
+// first read of the usages, once they have found what the usages are of, as
+// a batch that commits in between would.
+type beforeUsages struct {
+	dependency.DB
+	fn func()
+}
+
+func (d beforeUsages) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.DB.InTx(ctx, scope, func(tx pgx.Tx) error { return fn(&usagesTx{Tx: tx, fn: d.fn}) })
+}
+
+func (d beforeUsages) InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	return d.DB.InSnapshot(ctx, scope, func(tx pgx.Tx) error { return fn(&usagesTx{Tx: tx, fn: d.fn}) })
+}
+
+// usagesTx is the transaction of beforeUsages, which calls fn once, before
+// its first read of the usages.
+type usagesTx struct {
+	pgx.Tx
+	fn func()
+}
+
+func (tx *usagesTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if tx.fn != nil && strings.HasPrefix(sql, "-- name: Usages ") {
+		tx.fn()
+		tx.fn = nil
+	}
+	return tx.Tx.Query(ctx, sql, args...)
 }
 
 // wantDrift fails the test unless the index of what the project's content
