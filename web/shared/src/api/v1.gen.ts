@@ -1894,6 +1894,12 @@ export interface PageUnconvertible {
   next_cursor: string | null;
 }
 
+export interface PageUsage {
+  items: Array<Usage>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageVariable {
   items: Array<Variable>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2459,6 +2465,27 @@ export interface UpdateWorkspaceBody {
   name?: string;
   /** The workspace's new slug, as for POST /api/v1/workspaces, with the same errors. A slug that the workspace has already is kept, as a reserved word that a later release added to the list is. */
   slug?: string;
+}
+
+export interface Usage {
+  /** The ID of the attribute definition of the component's attribute that the site reads or writes, in a list of a component's reads or writes, of which a site may read or write several, each listed once */
+  attribute_id?: string;
+  /** The ID of the site's board. A component's description has none. */
+  board_id?: string;
+  /** The name of the site's board, which a site has exactly when it has board_id */
+  board_name?: string;
+  /** The ID of the output of a branch output's condition */
+  branch_output_id?: string;
+  /** The ID of the component of a component's description */
+  component_id?: string;
+  /** The ID of the connection of a connection's condition, on-traverse script, or label */
+  connection_id?: string;
+  /** The ID of the site's node: the node of its script, text, or speaker, the node that its connection leaves, or its output's branch. A component's description has none. */
+  node_id?: string;
+  /** The title of the site's node, which may be empty, and which a site has exactly when it has node_id */
+  node_title?: string;
+  /** What the site is: a node's on-enter or on-exit script, its text, or its speaker; a connection's condition, its on-traverse script, or its label; a branch output's condition; or a component's description */
+  site: "node_on_enter" | "node_on_exit" | "node_text" | "node_speaker" | "connection_condition" | "connection_on_traverse" | "connection_label" | "branch_output_condition" | "component_description";
 }
 
 export interface UsageBody {
@@ -3453,6 +3480,32 @@ export interface Operations {
     };
   };
   /**
+   * List a component's usages
+   *
+   * Lists the sites of the project that use the component, as use says (PRD FR-COMP-04): the nodes whose speaker it is, the texts that mention it (PRD FR-TEXT-03), or the sites that read its attributes, or those that write them, each with the attribute that it reads or writes, and once for each of them that it reads or writes: the scripts and the conditions that read or assign its runtime attributes, and the texts whose value references show its attributes, runtime or not, as one that is no longer runtime is. A site of another component's attribute of the same definition, as mira.trust is of elara.trust's, is no usage of the component. Each usage names its site and the site's board and node, by which a client opens it: a node's script, text, or speaker is of the node, a connection's condition, script, or label of the node that the connection leaves, an output's condition of its branch, and a component's description of no board and no node. The usages are those of the sites that are not in the project's trash, in the order of their boards, their nodes, and the sites themselves. An expression that does not compile uses nothing, since it names what it names by keys that resolve to nothing, and a text uses what its value references show, and the components that it mentions, by their IDs, whatever becomes of their keys and names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listComponentUsages: {
+    input: {
+      path: {
+        /** The component's ID */
+        component_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** Which usages the list holds: the nodes whose speaker the component is, the texts that mention it, or the sites that read its attributes, or those that write them */
+        use: "speaker" | "mention" | "read" | "write";
+      };
+    };
+    responses: {
+      200: PageUsage;
+    };
+  };
+  /**
    * List a project's components
    *
    * Lists the project's components that are not in its trash, of a type, or whose names or keys hold a text, if the query says so, in the order of their IDs, oldest first (PRD FR-COMP-02 AC3). Each names its type, its folder, and its place among the folder's children, from which a client builds the tree of folders of components (GET /api/v1/projects/{project_id}/folders?kind=component), but not its description or its values, which the component's own read returns. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the types component_type.*, attribute.*, and component.* create, rename, rekey, retype, move, delete, and restore them, and change their values. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -3772,6 +3825,32 @@ export interface Operations {
     };
     responses: {
       200: PageUnconvertible;
+    };
+  };
+  /**
+   * List a variable's usages
+   *
+   * Lists the sites of the project that read the variable, or those that write it, as access says (PRD FR-DEP-01): the scripts and the conditions that read it or assign it, a script that updates it, as with +=, both reading and writing it, and the texts whose value references show it, which read it. Each usage names its site and the site's board and node, by which a client opens it: a node's script, text, or speaker is of the node, a connection's condition, script, or label of the node that the connection leaves, an output's condition of its branch, and a component's description of no board and no node. The usages are those of the sites that are not in the project's trash, in the order of their boards, their nodes, and the sites themselves. An expression that does not compile uses nothing, since it names what it names by keys that resolve to nothing, and a text uses what its value references show, and the components that it mentions, by their IDs, whatever becomes of their keys and names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A variable that the project does not have, or that is in its trash, as one of a board in the trash is, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listVariableUsages: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The variable's ID */
+        variable_id: string;
+      };
+      query: {
+        /** Which usages the list holds: the sites that read the variable, or those that write it, which a script assigns */
+        access: "read" | "write";
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageUsage;
     };
   };
   /**
@@ -4297,6 +4376,7 @@ export const routes = {
   listBoardReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by" },
   listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },
   listComponentTypes: { method: "GET", path: "/api/v1/projects/{project_id}/component-types" },
+  listComponentUsages: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/usages" },
   listComponents: { method: "GET", path: "/api/v1/projects/{project_id}/components" },
   listFolders: { method: "GET", path: "/api/v1/projects/{project_id}/folders" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
@@ -4311,6 +4391,7 @@ export const routes = {
   listTrash: { method: "GET", path: "/api/v1/projects/{project_id}/trash" },
   listTrashedProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/trash/projects" },
   listUnconvertibleValues: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/conversion" },
+  listVariableUsages: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/usages" },
   listVariables: { method: "GET", path: "/api/v1/projects/{project_id}/variables" },
   listWorkspaceTokens: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   listWorkspaces: { method: "GET", path: "/api/v1/workspaces" },

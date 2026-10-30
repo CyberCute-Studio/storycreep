@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -214,9 +215,14 @@ func TestUndoOfArchivalAndDeletion(t *testing.T) {
 // the trash (plan note N45). The client then redoes them all, each by sending
 // back the undo of its undo, and the project is as the batches left it. At
 // each of these points the workspace's usage of projects, boards, and nodes
-// is what a recount finds.
+// is what a recount finds. After every batch, whether it applied or not, the
+// index of what the project's content names (package dependency) is what a
+// recomputation of it from scratch gives (FR-DEP-01 AC1): the generators'
+// texts show variables and attributes and mention components, and their
+// conditions and scripts read, assign, and update variables and attributes,
+// and read whether nodes were visited.
 //
-// Verifies: FR-EDIT-08/AC2, NFR-Q-05
+// Verifies: FR-EDIT-08/AC2, NFR-Q-05, FR-DEP-01/AC1
 func TestUndoRoundTrip(t *testing.T) {
 	// The seeds' subtests need PostgreSQL, and skip without it, so that the
 	// check of what they covered below would find nothing covered.
@@ -225,15 +231,19 @@ func TestUndoRoundTrip(t *testing.T) {
 	}
 	t.Parallel()
 	var mu sync.Mutex
-	covered := map[string]bool{}
+	covered, indexed := map[string]bool{}, map[string]bool{}
 	t.Run("seeds", func(t *testing.T) {
 		for _, seed := range []uint64{1, 2, 3} {
 			t.Run(fmt.Sprint(seed), func(t *testing.T) {
 				t.Parallel()
-				for _, typ := range undoRoundTrip(t, seed) {
-					mu.Lock()
+				types, uses := undoRoundTrip(t, seed)
+				mu.Lock()
+				defer mu.Unlock()
+				for _, typ := range types {
 					covered[typ] = true
-					mu.Unlock()
+				}
+				for _, u := range uses {
+					indexed[u] = true
 				}
 			})
 		}
@@ -246,11 +256,32 @@ func TestUndoRoundTrip(t *testing.T) {
 			t.Errorf("no batch of the property test applied a %s, whose generator never made one that applied", typ)
 		}
 	}
+	// The check of the index after every batch checked a row of each kind
+	// of use from each kind of site that holds it, at some point of some
+	// seed's batches.
+	for _, use := range indexUses {
+		if !indexed[use] {
+			t.Errorf("the index never held a row of %s after a batch, so that no check of it checked one", use)
+		}
+	}
 }
 
+// indexUses are the kinds of row of the index of what a project's content
+// names (package dependency), each the kind of its site, its access, and the
+// kind of what it names, as indexedUses lists them: a variable's and an
+// attribute's reads and writes by expressions, a node's reads by them, and a
+// variable's and an attribute's reads and a component's mentions by a node's
+// text, a connection's label, and a component's description.
+var indexUses = []string{"expression read variable", "expression write variable", "expression read attribute",
+	"expression write attribute", "expression read node", "node read variable", "node read attribute",
+	"node read component", "connection read variable", "connection read attribute", "connection read component",
+	"component read variable", "component read attribute", "component read component"}
+
 // undoRoundTrip runs the property test of undo with the seed, and returns the
-// types of command that it applied and undid.
-func undoRoundTrip(t *testing.T, seed uint64) []string {
+// types of command that it applied and undid, and the kinds of row that the
+// index of what the project names held after any of its batches
+// (indexUses).
+func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 	s, d, owner, ws := inviteServer(t, "open", nil)
 	// The test sends many more batches in a minute than a person does.
 	policy := ratelimit.DefaultPolicy()
@@ -261,8 +292,17 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID}
 	conn := d.Admin(t)
 	project := decode(t, ids.Project, p)
+	seen := map[string]bool{}
 	send := func(cmds []wireCommand) response {
-		return call(s.main, http.MethodPost, commandsPath(p), commandBatch(t, cmds...), owner.header(true))
+		res := call(s.main, http.MethodPost, commandsPath(p), commandBatch(t, cmds...), owner.header(true))
+		if drift := indexDrift(t, conn, p); len(drift) > 0 {
+			t.Fatalf("after the batch %s, answered %d, the index of what the project names is not what its "+
+				"content names: %q", undoTypes(cmds), res.status, drift)
+		}
+		for _, u := range indexedUses(t, conn, project) {
+			seen[u] = true
+		}
+		return res
 	}
 
 	// The project's content before the batches that the client undoes, made
@@ -304,7 +344,6 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 		schedule = append(schedule, round...)
 	}
 	var stack []*undoEntry
-	var applied []string
 	for _, typ := range schedule {
 		g.m = readUndoModel(t, conn, project)
 		cmds, ok := g.batch(typ)
@@ -365,7 +404,7 @@ func undoRoundTrip(t *testing.T, seed uint64) []string {
 			t.Errorf("once every batch is redone, the project has %s, which it did not have", key)
 		}
 	}
-	return applied
+	return applied, slices.Sorted(maps.Keys(seen))
 }
 
 // wantUsageCounted fails the test unless the workspace ws's usage of
@@ -419,6 +458,24 @@ func wantNamed(t *testing.T, conn *pgx.Conn, project ids.UUID, when string) {
 	if len(drift) > 0 {
 		t.Errorf("%s, the names of the project's expressions are not their refs and keys: %v", when, drift)
 	}
+}
+
+// indexedUses returns the kinds of row that the index of what the project's
+// content names holds (indexUses).
+func indexedUses(t *testing.T, conn *pgx.Conn, project ids.UUID) []string {
+	t.Helper()
+	rows, err := conn.Query(context.Background(), `SELECT DISTINCT CASE WHEN expression_id IS NOT NULL
+			THEN 'expression' WHEN node_id IS NOT NULL THEN 'node' WHEN connection_id IS NOT NULL THEN 'connection'
+			ELSE 'component' END || ' ' || access || ' ' || target_kind
+		FROM expression_ref WHERE project_id = $1`, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uses, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uses
 }
 
 // wantApplied reports whether the batch that res answers applied, and fails
@@ -669,9 +726,10 @@ type undoEntity struct {
 	live, deleted bool
 	// kind is a folder's or a branch output's, typ a node's, a variable's,
 	// or an attribute definition's, scope a variable's, board a node's, an
-	// output's, or a connection's, node an output's, key a variable's,
-	// componentType an attribute definition's or a component's, options an
-	// enum's, and runtime an attribute definition's.
+	// output's, or a connection's, node an output's, key a variable's, an
+	// attribute definition's, or a component's, componentType an attribute
+	// definition's or a component's, options an enum's, and runtime an
+	// attribute definition's.
 	kind, typ, scope, board, node, key, componentType string
 	options                                           []string
 	runtime                                           bool
@@ -725,13 +783,13 @@ func readUndoModel(t *testing.T, conn *pgx.Conn, project ids.UUID) *undoModel {
 		"ORDER BY t.id", &m.variables, func(e *undoEntity) []any { return []any{&e.typ, &e.scope, &e.key} })
 	read(ids.ComponentType, common("component_type")+" FROM component_type t WHERE t.project_id = $1 ORDER BY t.id",
 		&m.types, none)
-	read(ids.AttributeDef, common("attribute_def")+", t.type, t.component_type_id, t.enum_options, t.is_runtime "+
-		"FROM attribute_def t WHERE t.project_id = $1 ORDER BY t.id", &m.attributes, func(e *undoEntity) []any {
-		return []any{&e.typ, encoded(ids.ComponentType, &e.componentType), &e.options, &e.runtime}
+	read(ids.AttributeDef, common("attribute_def")+", t.type, t.component_type_id, t.enum_options, t.is_runtime, "+
+		"t.key FROM attribute_def t WHERE t.project_id = $1 ORDER BY t.id", &m.attributes, func(e *undoEntity) []any {
+		return []any{&e.typ, encoded(ids.ComponentType, &e.componentType), &e.options, &e.runtime, &e.key}
 	})
-	read(ids.Component, common("component")+", t.component_type_id FROM component t WHERE t.project_id = $1 "+
+	read(ids.Component, common("component")+", t.component_type_id, t.key FROM component t WHERE t.project_id = $1 "+
 		"ORDER BY t.id", &m.components, func(e *undoEntity) []any {
-		return []any{encoded(ids.ComponentType, &e.componentType)}
+		return []any{encoded(ids.ComponentType, &e.componentType), &e.key}
 	})
 	return m
 }
@@ -1105,7 +1163,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 				p["key"] = g.key()
 			}
 			if g.coin() {
-				p["description"] = paragraph(g.text())
+				p["description"] = g.richText()
 			}
 			if g.coin() {
 				p["image_asset_id"] = g.asset
@@ -1128,7 +1186,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	},
 	"component.describe": func(g *undoGen) (map[string]any, bool) {
 		return g.onLive(g.m.components, func(c undoEntity) map[string]any {
-			return obj("id", c.id, "description", paragraph(g.text()))
+			return obj("id", c.id, "description", g.richText())
 		})
 	},
 	"component.set_image": func(g *undoGen) (map[string]any, bool) {
@@ -1209,7 +1267,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 			p["from_port"] = port
 		}
 		if g.coin() {
-			p["label"] = paragraph(g.text())
+			p["label"] = g.richText()
 		}
 		if g.coin() {
 			p["condition"] = g.condition()
@@ -1225,7 +1283,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 			p := obj("id", c.id)
 			for len(p) == 1 {
 				if g.coin() {
-					p["label"] = paragraph(g.text())
+					p["label"] = g.richText()
 				}
 				if g.coin() {
 					p["condition"] = []string{"", g.condition()}[g.r.IntN(2)]
@@ -1343,26 +1401,100 @@ func (g *undoGen) port(keep func(undoEntity) bool) (undoEntity, string, bool) {
 }
 
 // condition returns the source of a random condition, which reads a random
-// variable of the model, in the trash or not, of its board or not, compared
-// with a value of a random type, so that it compiles, or does not, and may
-// compile otherwise once the variable changes, which the undo must give
-// back; or a source that does not parse.
+// variable of the model, in the trash or not, of its board or not, or a
+// random attribute of a random component, compared with a value of its type
+// half of the time, and of a random type otherwise, so that it compiles, or
+// does not, and may compile otherwise once the variable or the attribute
+// changes, which the undo must give back, and sometimes whether a random
+// node was visited too; or a source that does not parse.
 func (g *undoGen) condition() string {
-	v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true })
+	name, typ, ok := g.valueName()
 	if !ok || g.r.IntN(6) == 0 {
 		return []string{"true", "1 +"}[g.r.IntN(2)]
 	}
-	return v.key + " == " + g.literal()
+	source := name + " == " + g.literalOf(typ)
+	if g.r.IntN(3) == 0 {
+		if n, ok := g.pick(g.m.nodes, func(n undoEntity) bool { return n.typ != "jumper" || g.r.IntN(3) == 0 }); ok {
+			source += " && visited(node(\"" + n.id + "\"))"
+		}
+	}
+	return source
 }
 
 // script returns the source of a random script, which assigns a random
-// variable of the model a value of a random type, as condition reads one.
+// variable or attribute of the model a value, as condition compares one, or
+// updates it, as += does, or signals with its value.
 func (g *undoGen) script() string {
-	v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true })
+	name, typ, ok := g.valueName()
 	if !ok || g.r.IntN(6) == 0 {
 		return []string{"signal(\"done\")", "= 1"}[g.r.IntN(2)]
 	}
-	return v.key + " = " + g.literal()
+	switch g.r.IntN(4) {
+	case 0:
+		return name + " += 1"
+	case 1:
+		return "signal(\"seen\", " + name + ")"
+	}
+	return name + " = " + g.literalOf(typ)
+}
+
+// valueName returns the name of a random variable of the model, in the
+// trash or not, or of a random attribute of a random component, mostly one
+// of the component's type, and its type, with an enum's first option as its
+// type, or false if the model has neither.
+func (g *undoGen) valueName() (name, typ string, ok bool) {
+	if c, ok := g.pick(g.m.components, func(undoEntity) bool { return true }); ok && g.r.IntN(3) == 0 {
+		own := g.r.IntN(4) > 0
+		if a, ok := g.pick(g.m.attributes, func(a undoEntity) bool {
+			return !own || a.componentType == c.componentType
+		}); ok {
+			typ := a.typ
+			if typ == "enum" && len(a.options) > 0 {
+				typ = "enum:" + a.options[0]
+			}
+			return c.key + "." + a.key, typ, true
+		}
+	}
+	v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true })
+	return v.key, v.typ, ok
+}
+
+// literalOf returns, half of the time, the source of a literal of the type
+// typ, as valueName gives it, and otherwise one of a random type.
+func (g *undoGen) literalOf(typ string) string {
+	if g.coin() {
+		return g.literal()
+	}
+	switch {
+	case typ == "bool":
+		return "true"
+	case typ == "int":
+		return "1"
+	case typ == "float":
+		return "1.5"
+	case strings.HasPrefix(typ, "enum:"):
+		return strconv.Quote(strings.TrimPrefix(typ, "enum:"))
+	}
+	return "\"x\""
+}
+
+// richText returns a random rich-text document: a paragraph of text, which
+// shows, half of the time, a random variable of the model, in the trash or
+// not, or a random attribute of a random component, and mentions a random
+// component, so that the index of what the texts name changes with them.
+func (g *undoGen) richText() json.RawMessage {
+	inlines := []string{textInline(g.text())}
+	if v, ok := g.pick(g.m.variables, func(undoEntity) bool { return true }); ok && g.coin() {
+		inlines = append(inlines, valueInline(v.id))
+	}
+	c, okC := g.pick(g.m.components, func(undoEntity) bool { return true })
+	if a, ok := g.pick(g.m.attributes, func(undoEntity) bool { return true }); ok && okC && g.coin() {
+		inlines = append(inlines, attributeInline(c.id, a.id))
+	}
+	if okC && g.coin() {
+		inlines = append(inlines, mentionInline(c.id))
+	}
+	return richText(inlines...)
 }
 
 // literal returns the source of a literal of a random type.
@@ -1477,7 +1609,7 @@ func (g *undoGen) nodeFields(p map[string]any, typ string) {
 			p["kind"] = []string{"dialogue", "narration"}[g.r.IntN(2)]
 		}
 		if g.coin() {
-			p["text"] = paragraph(g.text())
+			p["text"] = g.richText()
 		}
 		if c, ok := g.pick(g.m.components, func(undoEntity) bool { return true }); ok && g.coin() {
 			p["speaker_component_id"] = c.id

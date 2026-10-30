@@ -269,7 +269,9 @@ type Derivation struct {
 	// is a command's type too.
 	Name string
 	// Touches are the kinds of entity whose revisions Derive may change, as
-	// a command's are (Spec.Touches).
+	// a command's are (Spec.Touches): none for a derivation that changes no
+	// entity's revision, as the index of what the texts name (package
+	// dependency), which is no part of what the API shows of an entity.
 	Touches []ids.Kind
 	// Derive derives what the batch's commands' changes, changed, the
 	// entities that they changed with their latest revisions, in the order of
@@ -407,8 +409,8 @@ type derivation struct {
 // RegisterDerivation registers the derivation d. It panics if d lacks a name
 // or Derive, if its name is not of its form (Derivation.Name), as one of a
 // command's type is not, whether the type is registered yet or not, if it
-// touches no kind, a kind that is not registered (RegisterEntity), or one
-// twice, or if a derivation of its name is registered already.
+// touches a kind that is not registered (RegisterEntity), or one twice, or if
+// a derivation of its name is registered already.
 func RegisterDerivation(r *Registry, d Derivation) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: the derivation %q: ", d.Name) + fmt.Sprintf(format, args...))
@@ -420,8 +422,6 @@ func RegisterDerivation(r *Registry, d Derivation) {
 		fail("a derivation's name is lowercase words joined by underscores, without the dot of a command's type")
 	case d.Derive == nil:
 		fail("a derivation needs Derive")
-	case len(d.Touches) == 0:
-		fail("a derivation touches a kind of entity at least")
 	case slices.ContainsFunc(r.derivations, func(o derivation) bool { return o.Name == d.Name }):
 		fail("a derivation of the name is registered already")
 	}

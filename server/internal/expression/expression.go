@@ -38,9 +38,12 @@
 // (IndexExpressionNames), and the expression's deletion deletes, read by an
 // index of each, so that finding them takes as long as what it finds,
 // however many things the batch changed, as a board's deletion changes 2,000
-// nodes. Until a rename rewrites the sources that name what it renames
-// (FR-VAR-03, plan item 47), a source that names a renamed key no longer
-// compiles.
+// nodes. As it compiles an expression, it also writes what the expression's
+// AST names, and whether it reads or writes it, to the index of what the
+// project's content names (package dependency, FR-DEP-01), which an
+// expression that does not compile names nothing in. Until a rename rewrites
+// the sources that name what it renames (FR-VAR-03, plan item 47), a source
+// that names a renamed key no longer compiles.
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/fixture"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -76,6 +77,43 @@ var roundTrips = []struct {
 	}},
 }
 
+// The targets of the usage queries: the p95 of a variable's (FR-DEP-01 AC2)
+// and of a component's (FR-COMP-04 AC2), server-side, for a project of
+// 5,000 nodes, which the large fixture's 10,000 exceed.
+const (
+	variableUsagesTarget  = 200 * time.Millisecond
+	componentUsagesTarget = 300 * time.Millisecond
+)
+
+// usageQueries are the requests of BenchmarkUsages: a page of the largest
+// size of each list of usages, of a variable or a component of the fixture
+// that each request picks anew, as the panel of a variable's or a
+// component's usages reads it.
+var usageQueries = []struct {
+	name   string
+	target time.Duration
+	path   func(m *benchModel, r *rand.Rand, project string) string
+}{
+	{"variable_reads", variableUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return variableUsagesPath(p, pickOf(r, m.variables), "read")
+	}},
+	{"variable_writes", variableUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return variableUsagesPath(p, pickOf(r, m.variables), "write")
+	}},
+	{"component_speakers", componentUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return componentUsagesPath(p, pickOf(r, m.components), "speaker")
+	}},
+	{"component_mentions", componentUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return componentUsagesPath(p, pickOf(r, m.components), "mention")
+	}},
+	{"component_reads", componentUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return componentUsagesPath(p, pickOf(r, m.components), "read")
+	}},
+	{"component_writes", componentUsagesTarget, func(m *benchModel, r *rand.Rand, p string) string {
+		return componentUsagesPath(p, pickOf(r, m.components), "write")
+	}},
+}
+
 // firstBatch is the n of the benchmarks' first batch, beyond every number
 // that a fixture's texts, scripts, conditions, and defaults hold, so that no
 // batch's value is one that the fixture gave.
@@ -120,13 +158,45 @@ func BenchmarkCommandRoundTrip(b *testing.B) {
 	}
 }
 
+// BenchmarkUsages times the usage queries of a variable and of a component,
+// each a page of 200 usages, the largest, as a client reads the first page
+// of each list, and checks the p95 of each against its target.
+//
+// Verifies: FR-DEP-01/AC2, FR-COMP-04/AC2
+func BenchmarkUsages(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	for _, q := range usageQueries {
+		r := rand.New(rand.NewPCG(1, 0x46))
+		b.Run(q.name, func(b *testing.B) {
+			var took []time.Duration
+			for b.Loop() {
+				b.StopTimer()
+				path := q.path(bs.model, r, bs.project) + "&limit=200"
+				b.StartTimer()
+				start := time.Now()
+				res := send(bs.s.main, http.MethodGet, path, nil, "", bs.header)
+				took = append(took, time.Since(start))
+				if res.status != http.StatusOK {
+					b.Fatalf("%s: %d %s", path, res.status, res.body)
+				}
+			}
+			p95 := percentile(took, 95)
+			b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+			if p95 >= q.target {
+				b.Errorf("the p95 of %s is %v, want under %v (FR-DEP-01 AC2, FR-COMP-04 AC2)", q.name, p95, q.target)
+			}
+		})
+	}
+}
+
 // benchServer is a server with a project of a fixture, which its owner,
 // signed in, edits.
 type benchServer struct {
-	s      *server
-	path   string
-	header http.Header
-	model  *benchModel
+	s       *server
+	project string
+	path    string
+	header  http.Header
+	model   *benchModel
 }
 
 // newBenchServer returns a server with a new project of the fixture of the
@@ -138,17 +208,21 @@ func newBenchServer(b *testing.B, size fixture.Size) *benchServer {
 		b.Skip("skipped with -short: needs PostgreSQL, which the benchmarks run in Docker")
 	}
 	s, d, owner, ws := inviteServer(b, "open", nil)
-	// The benchmarks send many more batches in a minute than a person does.
+	// The benchmarks send many more batches, and requests that read, in a
+	// minute than a person does.
 	policy := ratelimit.DefaultPolicy()
-	policy.Rates[ratelimit.Write].Limits[ratelimit.User] = 1_000_000
-	policy.Rates[ratelimit.Write].Limits[ratelimit.IP] = 1_000_000
+	for _, bucket := range []ratelimit.Bucket{ratelimit.Write, ratelimit.Read} {
+		policy.Rates[bucket].Limits[ratelimit.User] = 1_000_000
+		policy.Rates[bucket].Limits[ratelimit.IP] = 1_000_000
+	}
 	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	f, err := fixture.Generate(size, 1)
 	if err != nil {
 		b.Fatal(err)
 	}
 	p := createProject(b, s.main, owner, ws, f.Name).ID
-	bs := &benchServer{s: s, path: commandsPath(p), header: owner.header(true), model: newBenchModel(b, f)}
+	bs := &benchServer{s: s, project: p, path: commandsPath(p), header: owner.header(true),
+		model: newBenchModel(b, f)}
 	start := time.Now()
 	sender := fixture.Sender{Client: &http.Client{Transport: handlerTransport{s.main}},
 		Endpoint: "http://localhost:8080" + bs.path, Header: bs.header}
@@ -199,12 +273,15 @@ func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return w.Result(), nil
 }
 
-// benchModel is what the benchmarks' commands name of a fixture: its
-// elements, the connections that leave them, and its global int variables.
+// benchModel is what the benchmarks' commands and queries name of a
+// fixture: its elements, the connections that leave them, its global int
+// variables, and the IDs of all its variables and of its components.
 type benchModel struct {
 	elements    []benchNode
 	connections []string
 	ints        []benchVariable
+	variables   []string
+	components  []string
 }
 
 type benchNode struct{ id, board string }
@@ -238,14 +315,20 @@ func newBenchModel(b *testing.B, f *fixture.Fixture) *benchModel {
 				m.elements = append(m.elements, benchNode{id: p.ID, board: p.BoardID})
 			case c.Type == connection.Create && p.FromPort == "":
 				m.connections = append(m.connections, p.ID)
-			case c.Type == variable.Create && p.Scope == "global" && p.Type == "int":
-				m.ints = append(m.ints, benchVariable{id: p.ID, key: p.Key})
+			case c.Type == component.Create:
+				m.components = append(m.components, p.ID)
+			}
+			if c.Type == variable.Create {
+				m.variables = append(m.variables, p.ID)
+				if p.Scope == "global" && p.Type == "int" {
+					m.ints = append(m.ints, benchVariable{id: p.ID, key: p.Key})
+				}
 			}
 		}
 	}
-	if len(m.elements) == 0 || len(m.connections) == 0 || len(m.ints) == 0 {
-		b.Fatalf("the %s fixture has %d elements, %d connections that leave them, and %d global ints", f.Size,
-			len(m.elements), len(m.connections), len(m.ints))
+	if len(m.elements) == 0 || len(m.connections) == 0 || len(m.ints) == 0 || len(m.components) == 0 {
+		b.Fatalf("the %s fixture has %d elements, %d connections that leave them, %d global ints, and %d components",
+			f.Size, len(m.elements), len(m.connections), len(m.ints), len(m.components))
 	}
 	return m
 }
