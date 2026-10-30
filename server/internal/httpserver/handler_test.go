@@ -182,7 +182,7 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"GET /api/v1/projects/{project_id}/nodes/{node_id}/referenced-by",
 			"GET /api/v1/projects/{project_id}/tags",
 			"GET /api/v1/projects/{project_id}/tokens", "GET /api/v1/projects/{project_id}/trash",
-			"GET /api/v1/projects/{project_id}/variables", "GET /api/v1/projects/{project_id}/variables/{variable_id}",
+			"GET /api/v1/projects/{project_id}/validation", "GET /api/v1/projects/{project_id}/variables", "GET /api/v1/projects/{project_id}/variables/{variable_id}",
 			"GET /api/v1/projects/{project_id}/variables/{variable_id}/rename-preview",
 			"GET /api/v1/projects/{project_id}/variables/{variable_id}/usages",
 			"GET /api/v1/setup",

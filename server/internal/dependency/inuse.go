@@ -160,7 +160,7 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 			return nil, fmt.Errorf("dependency: read what the texts name: %w", err)
 		}
 		for _, r := range rows {
-			u, err := inlineUse(r.Inline)
+			u, err := InlineUse(r.Inline)
 			if err != nil {
 				return nil, err
 			}

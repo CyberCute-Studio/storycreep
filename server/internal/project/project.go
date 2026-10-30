@@ -171,6 +171,26 @@ func decodeSettings(doc []byte) settings {
 	return s
 }
 
+// EntryOf returns the entry that a project's settings, doc, as the database
+// holds them, name: the UUIDs of its board and its node, each zero where it
+// has none, as the validation reads them (package validation). It returns an
+// error for an ID that is not one of its kind, which the project's commands
+// never write.
+func EntryOf(doc []byte) (board, node ids.UUID, err error) {
+	e := decodeSettings(doc).Entry
+	if e.BoardID != "" {
+		if board, err = ids.Decode(ids.Board, e.BoardID); err != nil {
+			return ids.UUID{}, ids.UUID{}, fmt.Errorf("project: the entry's board: %w", err)
+		}
+	}
+	if e.NodeID != "" {
+		if node, err = ids.Decode(ids.Node, e.NodeID); err != nil {
+			return ids.UUID{}, ids.UUID{}, fmt.Errorf("project: the entry's node: %w", err)
+		}
+	}
+	return board, node, nil
+}
+
 // stateOf returns the state of the project p.
 func stateOf(p queries.Project) Project {
 	set := decodeSettings(p.Settings)

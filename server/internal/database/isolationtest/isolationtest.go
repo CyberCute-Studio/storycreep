@@ -254,6 +254,31 @@ var Tables = []Table{
 		return Statement{id, `INSERT INTO variable (id, workspace_id, project_id, scope, "order", key, type, ` +
 			"default_value) VALUES ($1, $2, $3, 'global', 'V', $4, 'bool', 'false')", args}, nil
 	}},
+	{Name: "validation_mute", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// An owner has one mute of a code at most, so each mute is of a code
+		// of the workspace's node, connection, output, variable, or board
+		// that has none yet, rather than of an owner of its own, which the
+		// trash's tests of the owners' views would find.
+		var owner, code string
+		if err := admin.QueryRow(ctx, `SELECT f.owner, f.code FROM (VALUES
+				(1, 'node_id', 'node_unreachable', $1::uuid), (2, 'node_id', 'node_empty', $1),
+				(3, 'node_id', 'dead_end', $1), (4, 'node_id', 'speaker_missing', $1),
+				(5, 'connection_id', 'choice_duplicate_label', $2), (6, 'connection_id', 'connection_self', $2),
+				(7, 'connection_id', 'connection_parallel', $2), (8, 'branch_output_id', 'port_unconnected', $3),
+				(9, 'variable_id', 'var_read_never_written', $4), (10, 'variable_id', 'var_written_never_read', $4),
+				(11, 'board_id', 'board_entry_missing', $5)) f (n, owner, code, id)
+			WHERE NOT EXISTS (SELECT 1 FROM validation_mute m WHERE m.code = f.code
+				AND f.id IN (m.node_id, m.connection_id, m.branch_output_id, m.variable_id, m.board_id))
+			ORDER BY f.n LIMIT 1`, w.Rows["node"], w.Rows["connection"], w.Rows["branch_output"], w.Rows["variable"],
+			w.Rows["board"]).Scan(&owner, &code); err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO validation_mute (id, workspace_id, project_id, " + owner + ", code, reason) " +
+			"VALUES ($1, $2, $3, $4, $5, 'Meant so')", []any{id, w.ID, w.Rows["project"],
+			w.Rows[map[string]string{"node_id": "node", "connection_id": "connection",
+				"branch_output_id": "branch_output", "variable_id": "variable", "board_id": "board"}[owner]], code}}, nil
+	}},
 	{Name: "component_type", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A type's key is unique within its project, which its ID makes.
 		id := ids.New()

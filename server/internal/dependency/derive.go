@@ -43,8 +43,9 @@ func Register(r *commands.Registry) {
 var SourceRewrites = []commands.Type{"variable.rename", "component.set_key"}
 
 // textNeutral are the types of command that change a node, a connection, or
-// a component, but none of their texts, those of SourceRewrites among them,
-// and the name of the derivation that compiles expressions (expression.Name,
+// a component, but none of their texts, those of SourceRewrites and the
+// mutes of the validation's findings among them (package validation), and the
+// name of the derivation that compiles expressions (expression.Name,
 // which this package cannot import, as package expression imports it), which
 // changes their owners' revisions alone. derive passes over a change that
 // these alone made, so that moving a selection of 2,000 nodes, or adding an
@@ -61,6 +62,7 @@ var textNeutral = append([]commands.Type{
 	"component.delete", "component.restore",
 	"attribute.create", "attribute.rename", "attribute.set_key", "attribute.set_default", "attribute.set_runtime",
 	"attribute.set_options", "attribute.retype", "attribute.move", "attribute.delete", "attribute.restore",
+	"validation.mute", "validation.unmute",
 }, SourceRewrites...)
 
 // derive replaces the rows of the index of the texts of the nodes, the
@@ -95,7 +97,7 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	at := map[ids.UUID]int{}
 	var sites []Site
 	for _, r := range refs {
-		u, err := inlineUse(r.Inline)
+		u, err := InlineUse(r.Inline)
 		if err != nil {
 			return err
 		}

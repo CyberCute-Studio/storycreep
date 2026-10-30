@@ -21,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
 
 // nonUndoable are the types of command that the server applies that have no
@@ -695,6 +696,16 @@ func readUndoState(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]un
 			OR EXISTS (SELECT 1 FROM live_connection l WHERE l.id = e.connection_id)
 			OR EXISTS (SELECT 1 FROM live_branch_output l WHERE l.id = e.branch_output_id)
 		FROM expression e WHERE e.project_id = $1`)
+	// A mute's own ID is made anew when it is added again, so it is read by
+	// its owner and its code. It is in the trash with its owner.
+	read("validation_mute", `SELECT coalesce(m.node_id, m.connection_id, m.branch_output_id, m.variable_id,
+			m.board_id)::text || '/' || m.code, to_jsonb(m) - 'id',
+		EXISTS (SELECT 1 FROM live_node l WHERE l.id = m.node_id)
+			OR EXISTS (SELECT 1 FROM live_connection l WHERE l.id = m.connection_id)
+			OR EXISTS (SELECT 1 FROM live_branch_output l WHERE l.id = m.branch_output_id)
+			OR EXISTS (SELECT 1 FROM live_variable l WHERE l.id = m.variable_id)
+			OR EXISTS (SELECT 1 FROM live_board l WHERE l.id = m.board_id)
+		FROM validation_mute m WHERE m.project_id = $1`)
 	// A value's own ID is made anew when it is added again.
 	read("attribute_value", `SELECT v.component_id::text || '/' || v.attribute_def_id::text, to_jsonb(v) - 'id',
 		EXISTS (SELECT 1 FROM live_component c WHERE c.id = v.component_id)
@@ -717,6 +728,10 @@ type undoModel struct {
 	types             []undoEntity
 	attributes        []undoEntity
 	components        []undoEntity
+	// mutes are the mutes of the validation's findings, each as an entity
+	// whose id is its owner's, and key its code, outside the trash with its
+	// owner.
+	mutes []undoEntity
 }
 
 // undoEntity is an entity of an undoModel, with the fields that its kind's
@@ -791,6 +806,31 @@ func readUndoModel(t *testing.T, conn *pgx.Conn, project ids.UUID) *undoModel {
 		"ORDER BY t.id", &m.components, func(e *undoEntity) []any {
 		return []any{encoded(ids.ComponentType, &e.componentType), &e.key}
 	})
+	live := map[string]bool{}
+	for _, es := range [][]undoEntity{m.nodes, m.connections, m.outputs, m.variables, m.boards} {
+		for _, e := range es {
+			live[e.id] = e.live
+		}
+	}
+	rows, err := conn.Query(ctx, `SELECT node_id, connection_id, branch_output_id, variable_id, board_id, code
+		FROM validation_mute WHERE project_id = $1 ORDER BY id`, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owners [5]*ids.UUID
+	var code string
+	if _, err := pgx.ForEachRow(rows, []any{&owners[0], &owners[1], &owners[2], &owners[3], &owners[4], &code},
+		func() error {
+			for i, kind := range []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput, ids.Variable, ids.Board} {
+				if owners[i] != nil {
+					id := ids.Encode(kind, *owners[i])
+					m.mutes = append(m.mutes, undoEntity{id: id, key: code, live: live[id]})
+				}
+			}
+			return nil
+		}); err != nil {
+		t.Fatal(err)
+	}
 	return m
 }
 
@@ -1356,6 +1396,38 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 		return p, ok
 	},
 	"branch_output.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.outputs, false) },
+
+	"validation.mute": func(g *undoGen) (map[string]any, bool) {
+		owner, code, ok := g.muteOf()
+		return obj("entity_id", owner, "code", code, "reason", "Meant so: "+g.word()), ok
+	},
+	"validation.unmute": func(g *undoGen) (map[string]any, bool) {
+		if m, ok := g.live(g.m.mutes); ok && g.r.IntN(4) != 0 {
+			return obj("entity_id", m.id, "code", m.key), true
+		}
+		owner, code, ok := g.muteOf()
+		return obj("entity_id", owner, "code", code), ok
+	},
+}
+
+// muteOf returns a random entity outside the trash that a mute may be of, a
+// node, a connection, a branch output, a variable, or a board, and a code
+// that a mute of it may silence, or false if the model has none.
+func (g *undoGen) muteOf() (owner, code string, ok bool) {
+	var owners []undoEntity
+	for _, es := range [][]undoEntity{g.m.nodes, g.m.connections, g.m.outputs, g.m.variables, g.m.boards} {
+		owners = append(owners, es...)
+	}
+	e, ok := g.live(owners)
+	if !ok {
+		return "", "", false
+	}
+	kind, _, err := ids.DecodeAny(e.id)
+	if err != nil {
+		panic(err)
+	}
+	codes := validation.Mutable(kind)
+	return e.id, string(codes[g.r.IntN(len(codes))]), true
 }
 
 // nodesOf returns the model's nodes of the type typ.
