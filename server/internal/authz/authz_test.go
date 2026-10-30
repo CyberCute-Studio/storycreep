@@ -55,6 +55,9 @@ func TestMatrix(t *testing.T) {
 		EditContent: {y, y, y, n, n},
 		// Manage variables, components, component types (P).
 		ManageVariablesAndComponents: {y, y, y, n, n},
+		// Publish a snapshot (P), whose editor's ✓ CheckPublish raises with
+		// publish_min_role.
+		PublishSnapshot: {y, y, y, n, n},
 		// Manage own API tokens narrowed to this project (P).
 		ManageOwnProjectTokens: {y, y, y, n, n},
 		// Manage own workspace-wide API tokens (W).
@@ -64,7 +67,7 @@ func TestMatrix(t *testing.T) {
 	}
 	scopes := map[Operation]Scope{ReadProject: Project, UploadAssets: Project, ChangeProjectSettings: Project,
 		ManageBoards: Project, ManageFolders: Project, EditContent: Project, ManageVariablesAndComponents: Project,
-		ManageOwnProjectTokens: Project}
+		PublishSnapshot: Project, ManageOwnProjectTokens: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]
 		if !ok {
@@ -99,9 +102,30 @@ func TestMatrix(t *testing.T) {
 	if len(want) != len(Operations()) {
 		t.Errorf("the test has %d rows, and the matrix %d operations", len(want), len(Operations()))
 	}
-	if Operation("project.publish").Known() || Allows(role.Owner, "project.publish") ||
-		!errors.Is(Check(role.Owner, "project.publish"), ErrInsufficientRole) {
+	if Operation("project.restore_draft").Known() || Allows(role.Owner, "project.restore_draft") ||
+		!errors.Is(Check(role.Owner, "project.restore_draft"), ErrInsufficientRole) {
 		t.Errorf("an operation that is not in the matrix is allowed")
+	}
+}
+
+// TestCheckPublish checks who may publish a project's snapshots, as a project
+// whose publish_min_role is editor, the default, or admin says (§5.6): an
+// editor of the former, but not of the latter, and an owner and an admin of
+// both, and nobody of a publish_min_role that is not one of them.
+func TestCheckPublish(t *testing.T) {
+	t.Parallel()
+	for _, least := range []role.Role{role.Editor, role.Admin, role.Viewer, role.None, "superuser"} {
+		for _, r := range roles {
+			allowed := Allows(r, PublishSnapshot) && r.AtLeast(least)
+			if err := CheckPublish(r, least); (err == nil) != allowed ||
+				err != nil && !errors.Is(err, ErrInsufficientRole) {
+				t.Errorf("CheckPublish(%q, %q) = %v, want allowed %v", r, least, err, allowed)
+			}
+		}
+	}
+	if CheckPublish(role.Editor, role.Admin) == nil || CheckPublish(role.Editor, role.Editor) != nil ||
+		CheckPublish(role.Admin, role.Admin) != nil || CheckPublish(role.Commenter, role.Viewer) == nil {
+		t.Error("publish_min_role does not decide whether an editor publishes")
 	}
 }
 

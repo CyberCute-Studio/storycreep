@@ -172,3 +172,78 @@ func TestUntouchingDerivationChangesNothing(t *testing.T) {
 		t.Errorf("the failed batch left %+v, want %+v", got, before)
 	}
 }
+
+// TestCarry checks that what a command's inverse keeps for its Apply
+// (Tx.Carry) reaches that Apply, and no other command's: the pipeline clears
+// it before each command.
+func TestCarry(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	_, aID := newNote()
+	var carried []any
+	r := noteRegistry()
+	for _, typ := range []Type{"note.carry", "note.peek"} {
+		Register(r, Spec[notePayload]{
+			Type: typ, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: []ids.Kind{ids.Node},
+			Inverse: func(_ context.Context, tx *Tx, p notePayload) ([]Step, error) {
+				if typ == "note.carry" {
+					tx.Carry(p.Body)
+				}
+				return nil, nil
+			},
+			Apply: func(_ context.Context, tx *Tx, _ notePayload) error {
+				carried = append(carried, tx.Carried())
+				return nil
+			},
+		})
+	}
+	p := w.pipeline(t, func(o *Options) { o.Registry = r })
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, "note.carry", notePayload{ID: aID, Body: "a"}, nil),
+		command(t, "note.peek", notePayload{ID: aID, Body: "b"}, nil),
+		command(t, "note.carry", notePayload{ID: aID, Body: "c"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []any{"a", nil, "c"}; !reflect.DeepEqual(carried, want) {
+		t.Errorf("the commands' Applies were carried %v, want %v", carried, want)
+	}
+}
+
+// keepKey is the key that TestKeep keeps under.
+type keepKey struct{}
+
+// TestKeep checks that what a command keeps for the rest of its batch
+// (Tx.Keep) reaches the inverses and the Applies of the commands after it,
+// and no other batch's.
+func TestKeep(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	_, aID := newNote()
+	var kept []any
+	r := noteRegistry()
+	Register(r, Spec[notePayload]{
+		Type: "note.keep", Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: []ids.Kind{ids.Node},
+		Inverse: func(_ context.Context, tx *Tx, p notePayload) ([]Step, error) {
+			kept = append(kept, tx.Kept(keepKey{}))
+			return nil, nil
+		},
+		Apply: func(_ context.Context, tx *Tx, p notePayload) error {
+			kept = append(kept, tx.Kept(keepKey{}))
+			tx.Keep(keepKey{}, p.Body)
+			return nil
+		},
+	})
+	p := w.pipeline(t, func(o *Options) { o.Registry = r })
+	for _, bodies := range [][]string{{"a", "b"}, {"c"}} {
+		var cmds []Command
+		for _, b := range bodies {
+			cmds = append(cmds, command(t, "note.keep", notePayload{ID: aID, Body: b}, nil))
+		}
+		if _, err := p.Apply(ctx, w.as(ownerUser), w.project, cmds); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := []any{nil, nil, "a", "a", nil, nil}; !reflect.DeepEqual(kept, want) {
+		t.Errorf("the commands' inverses and Applies found %v kept, want %v", kept, want)
+	}
+}

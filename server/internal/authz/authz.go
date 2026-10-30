@@ -87,6 +87,17 @@ const (
 	// components, component types", FR-VAR-01), which the components and
 	// their types (plan item 34) join.
 	ManageVariablesAndComponents Operation = "project.variables"
+	// PublishSnapshot is publishing a snapshot of a project (P, "Publish a
+	// snapshot", FR-SNAP-01), which an editor may do unless the project's
+	// publish_min_role is admin (FR-SNAP-01 AC3), as CheckPublish says, and
+	// which deleting a variable or a component that the project's content
+	// uses, all the same, needs as well (FR-VAR-04). Its row of the matrix,
+	// which Check and Allows read, is the editor's ✓ alone, which a
+	// project's publish_min_role raises: whatever needs it checks
+	// CheckPublish, with the project's publish_min_role, never Check alone,
+	// and no command's type has it as its capability (commands.Register
+	// refuses it), as the pipeline would check it so.
+	PublishSnapshot Operation = "project.publish"
 	// ManageOwnProjectTokens is creating, listing, and revoking one's own API
 	// tokens narrowed to a project (P, "Manage own API tokens narrowed to
 	// this project", FR-AUTH-04).
@@ -155,6 +166,7 @@ var matrix = map[Operation]rule{
 	ManageFolders:                {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	EditContent:                  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageVariablesAndComponents: {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	PublishSnapshot:              {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageOwnProjectTokens:       {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.
 	ManageOwnWorkspaceTokens: {scope: Workspace, least: role.Editor, denied: ErrInsufficientRole},
@@ -203,6 +215,21 @@ func Check(r role.Role, op Operation) error {
 		return rule.denied
 	}
 	return ErrInsufficientRole
+}
+
+// CheckPublish returns nil if the role r allows publishing a snapshot of a
+// project whose publish_min_role is least, editor or admin (PublishSnapshot,
+// FR-SNAP-01 AC3), and ErrInsufficientRole otherwise: the matrix's row, and
+// least, which raises the row's editor to admin, so that a least that is not
+// a role, or none, allows nothing.
+func CheckPublish(r, least role.Role) error {
+	if err := Check(r, PublishSnapshot); err != nil {
+		return err
+	}
+	if !r.AtLeast(least) {
+		return ErrInsufficientRole
+	}
+	return nil
 }
 
 // CheckGrant returns nil if the role r allows giving a member, or an

@@ -41,9 +41,12 @@
 // nodes. As it compiles an expression, it also writes what the expression's
 // AST names, and whether it reads or writes it, to the index of what the
 // project's content names (package dependency, FR-DEP-01), which an
-// expression that does not compile names nothing in. Until a rename rewrites
-// the sources that name what it renames (FR-VAR-03, plan item 47), a source
-// that names a renamed key no longer compiles.
+// expression that does not compile names nothing in. A rename of a
+// variable's key, or of a component's, rewrites the sources that name what it
+// renames, and those whose names its new key would take (ApplyRename,
+// FR-VAR-03), so that each names what it named; and the deletion of a
+// variable or a component finds what uses it as the batch stands (InUse),
+// which refuses it unless it is forced (FR-VAR-04).
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash
@@ -421,26 +424,29 @@ func ownerExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 	return rows, nil
 }
 
+// ownerRef returns the kind and the UUID of the owner of an expression whose
+// owner's columns are node, connection, and output, of which one alone is
+// not null, as every row that names an expression's owner has them.
+func ownerRef(node, connection, output pgtype.UUID) (ids.Kind, pgtype.UUID) {
+	switch {
+	case node.Valid:
+		return ids.Node, node
+	case connection.Valid:
+		return ids.Connection, connection
+	}
+	return ids.BranchOutput, output
+}
+
 // ownerOf returns the UUID of the expression row's owner.
 func ownerOf(row queries.Expression) ids.UUID {
-	switch {
-	case row.NodeID.Valid:
-		return row.NodeID.Bytes
-	case row.ConnectionID.Valid:
-		return row.ConnectionID.Bytes
-	}
-	return row.BranchOutputID.Bytes
+	_, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
+	return id.Bytes
 }
 
 // ownerName returns the ID of the expression row's owner, for an error.
 func ownerName(row queries.Expression) string {
-	switch {
-	case row.NodeID.Valid:
-		return ids.Encode(ids.Node, row.NodeID.Bytes)
-	case row.ConnectionID.Valid:
-		return ids.Encode(ids.Connection, row.ConnectionID.Bytes)
-	}
-	return ids.Encode(ids.BranchOutput, row.BranchOutputID.Bytes)
+	kind, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
+	return ids.Encode(kind, id.Bytes)
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

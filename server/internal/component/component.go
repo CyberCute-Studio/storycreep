@@ -59,6 +59,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -635,6 +636,43 @@ func checkTarget(to Target) input.FieldErrors {
 		return errs
 	}
 	return field("options", value.CheckOptionNames(to.Options))
+}
+
+// RenamePreview returns at most limit of the expressions of the project
+// projectID, in its trash or not, that a change of the key of its component
+// componentID to the key would rewrite (FR-COMP-02 AC2, FR-VAR-03,
+// expression.Preview): those that it would rewrite a name of the component's
+// attributes of, or, if qualified is set, those that it would qualify a name
+// of another entity of, which a component's key takes from none, in the
+// order of their keys (expression.PreviewKey), after after, or from the first
+// if after is zero. It reads the component and the expressions as of one
+// moment, that of the read's start (project.Service.ReadSnapshot). It returns
+// the errors of project.Service.Get first, ErrNotFound if the project has no
+// such component outside its trash, and the refusal that the change refuses
+// the key with (checkKey), which wraps an *ident.Error for a key that is no
+// identifier, and ErrKeyTaken for a key that another component of the
+// project has.
+func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, projectID, componentID ids.UUID,
+	key string, qualified bool, after expression.PreviewKey, limit int) ([]expression.RenameSite, error) {
+	var out []expression.RenameSite
+	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+		q, ws, project := queries.New(tx), nullUUID(workspaceID), nullUUID(projectID)
+		row, err := q.Component(ctx, queries.ComponentParams{WorkspaceID: ws, ProjectID: project,
+			ID: nullUUID(componentID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("component: read the component: %w", err)
+		}
+		c := queries.Component(row.LiveComponent)
+		if err := checkKey(ctx, componentKeyOwner(q, ws, project), "key", key, c.ID, "component"); err != nil {
+			return err
+		}
+		out, err = expression.Preview(ctx, q, ws, project, rekey(c, key), qualified, after, limit)
+		return err
+	})
+	return out, err
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

@@ -514,20 +514,9 @@ func (c *checker) variable(n *Var) (*Variable, error) {
 		}
 		return v, nil
 	}
-	var v *Variable
-	switch n.Scope {
-	case ScopeGlobal:
-		v = c.p.global(n.Key)
-	case ScopeBoard:
-		v = c.p.ofBoard(c.board, n.Key)
-	default:
-		v = c.p.ofBoard(c.board, n.Key)
-		if v == nil {
-			v = c.p.global(n.Key)
-		}
-		if v == nil && c.p.component(n.Key) != nil {
-			return nil, &Error{Code: ComponentNotValue, Range: n.Src}
-		}
+	v := c.p.lookupVariable(c.board, n.Scope, n.Key)
+	if v == nil && n.Scope == ScopeNone && c.p.component(n.Key) != nil {
+		return nil, &Error{Code: ComponentNotValue, Range: n.Src}
 	}
 	if v != nil {
 		c.resolve(n, v.Key, v.ID, "")
@@ -560,13 +549,6 @@ func written(scope Scope, keys []string) []string {
 	return names
 }
 
-// shadowed reports whether a variable of the board or a global one has the
-// key, which a bare key, and <key>.<attribute>, names rather than a
-// component of the key.
-func (c *checker) shadowed(key string) bool {
-	return c.p.ofBoard(c.board, key) != nil || c.p.global(key) != nil
-}
-
 // attribute resolves the attribute n, which is a runtime one (§5.8.3,
 // FR-COMP-03): <component>.<attribute> names the attribute of the component
 // unless a variable has the component's key, as cmp.<component>.<attribute>
@@ -591,18 +573,18 @@ func (c *checker) attribute(n *Attr) (*Attribute, error) {
 	if n.Explicit {
 		qualifier = "cmp."
 	}
-	if !n.Explicit && c.shadowed(n.ComponentKey) {
+	if !n.Explicit && c.p.shadowed(c.board, n.ComponentKey) {
 		var suggestions []string
 		if a := c.p.component(n.ComponentKey).runtime(n.AttributeKey); a != nil {
 			suggestions = []string{"cmp." + n.ComponentKey + "." + n.AttributeKey}
 		}
 		return nil, &Error{Code: VariableNotComponent, Range: n.Src, Suggestions: suggestions}
 	}
-	comp := c.p.component(n.ComponentKey)
+	comp := c.p.lookupComponent(c.board, n.Explicit, n.ComponentKey)
 	if comp == nil {
 		var candidates []string
 		for key := range c.p.components {
-			if n.Explicit || !c.shadowed(key) {
+			if n.Explicit || !c.p.shadowed(c.board, key) {
 				candidates = append(candidates, key)
 			}
 		}

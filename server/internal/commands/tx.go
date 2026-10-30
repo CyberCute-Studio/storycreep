@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"math"
 	"slices"
@@ -12,9 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -27,9 +30,13 @@ import (
 // command runs no statement through Exec that ends the transaction either,
 // as COMMIT or ROLLBACK.
 type Tx struct {
-	tx        pgx.Tx
-	pipeline  *Pipeline
-	actor     Actor
+	tx       pgx.Tx
+	pipeline *Pipeline
+	actor    Actor
+	// roles are the roles that the actor acts with, by the scopes of the
+	// operations that they authorise, which the pipeline authorised the
+	// batch's commands by (Role).
+	roles     map[authz.Scope]role.Role
 	project   ids.UUID
 	workspace ids.UUID
 	// current is the command that the pipeline applies, or nil outside a
@@ -103,6 +110,13 @@ type Tx struct {
 	// left are the names of the derivations that the batch's commands left
 	// work for (Leave).
 	left map[string]bool
+	// carried is what the inverse of the command that applies computed for
+	// its Apply (Carry), which the pipeline clears before each command's
+	// inverse and once its Apply returns.
+	carried any
+	// kept is what packages keep of the project for the rest of the batch
+	// (Keep), by their keys.
+	kept map[any]any
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -128,6 +142,21 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 // transaction.
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	return t.tx.QueryRow(ctx, sql, args...)
+}
+
+// Role returns the role that the batch's actor acts with for an operation of
+// the scope s (§5.5), which the pipeline authorised the batch's commands by
+// (Spec.Capability): their effective role on the project for a
+// project-scoped operation, and their role in its workspace for a
+// workspace-scoped one, or role.None for a scope that the pipeline did not
+// resolve, which allows nothing. A command whose payload asks for more than
+// its type's operation allows, as a deletion that overrides what uses the
+// entity, checks the actor's role for it with package authz.
+func (t *Tx) Role(s authz.Scope) role.Role {
+	if r, ok := t.roles[s]; ok {
+		return r
+	}
+	return role.None
 }
 
 // Actor returns who applies the batch.
@@ -290,6 +319,63 @@ func (t *Tx) Leave(name string) error {
 // of the name (Leave).
 func (t *Tx) Left(name string) bool {
 	return t.left[name]
+}
+
+// Carry keeps v, which a command's Inverse computed of the project, for the
+// command's Apply, which the pipeline calls next, on the project as the
+// inverse found it, so that Apply need not compute it again (Carried), as a
+// rename's inverse plans the sources that its Apply writes. The pipeline drops
+// it before the next command, and computes no inverse of a batch that cannot
+// be undone, so an Apply computes what Carried does not hold itself.
+func (t *Tx) Carry(v any) {
+	t.carried = v
+}
+
+// Carried returns what the inverse of the command that applies kept for its
+// Apply (Carry), or nil.
+func (t *Tx) Carried() any {
+	return t.carried
+}
+
+// Keep keeps v under key for the rest of the batch, for the inverses and the
+// Applies of the commands after the one that keeps it (Kept): what a package
+// read of the project that later commands would read again, as package
+// dependency keeps what each text that the batch has changed names, with the
+// revision that it read it at, so that it reads a text again only once a
+// command has changed it since (Changes). key is a value of a type of the
+// package's own, as a context's key is, so that no two packages' keys are
+// equal. What a batch keeps goes with it.
+func (t *Tx) Keep(key, v any) {
+	if t.kept == nil {
+		t.kept = map[any]any{}
+	}
+	t.kept[key] = v
+}
+
+// Kept returns what the batch keeps under key (Keep), or nil.
+func (t *Tx) Kept(key any) any {
+	return t.kept[key]
+}
+
+// Changes yields the entities that the batch has changed so far, with their
+// latest revisions, in the order of their first change, each with the types
+// of the commands that changed it, as a derivation reads them
+// (Derivation.Derive): for a command's inverse or Apply that reads what the
+// derivations write only once every command has applied, as the index of
+// what the texts name, and needs to know which of it the batch's commands
+// before it may have changed, which it reads anew. It copies nothing, so
+// that the commands of a batch that each read the changes, as 300 creations
+// of variables after 2,000 of nodes, take no more than the reading: a
+// change's By is the batch's own, which the caller reads as it is yielded,
+// and neither changes nor keeps.
+func (t *Tx) Changes() iter.Seq[Change] {
+	return func(yield func(Change) bool) {
+		for i, c := range t.changed {
+			if !yield(Change{Revision: c, By: slices.Clip(t.by[i])}) {
+				return
+			}
+		}
+	}
 }
 
 // derive runs the registry's derivations, in the order of their

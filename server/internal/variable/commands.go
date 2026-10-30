@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -28,11 +29,13 @@ const (
 	// command's, so that it can refer to the variable before the server
 	// answers. Deleting it to the trash undoes it.
 	Create commands.Type = "variable.create"
-	// Rename changes a variable's key, Describe its description, SetDefault
-	// its default, Retype its type, with a default of the new type, SetScope
-	// its scope, and SetResetOnEnter its reset_on_enter. Changing each back
-	// undoes it. Plan item 47 has Rename rewrite the expressions that name
-	// the variable too (FR-VAR-03), which none does yet.
+	// Rename changes a variable's key, and rewrites the sources of the
+	// expressions that name it, and of those whose names the new key would
+	// take, so that each names what it named (FR-VAR-03), Describe its
+	// description, SetDefault its default, Retype its type, with a default of
+	// the new type, SetScope its scope, and SetResetOnEnter its
+	// reset_on_enter. Changing each back undoes it, a rename with the sources
+	// that it rewrote as they were.
 	Rename          commands.Type = "variable.rename"
 	Describe        commands.Type = "variable.describe"
 	SetDefault      commands.Type = "variable.set_default"
@@ -42,10 +45,10 @@ const (
 	// Move moves a variable into a folder of variables, or to the top, at a
 	// place among the folder's children. Moving it back undoes it.
 	Move commands.Type = "variable.move"
-	// Delete deletes a variable to the project's trash, and Restore restores
-	// it, with the folders above it that were deleted since. Each undoes the
-	// other. Plan item 47 refuses the deletion of a variable that an
-	// expression reads or writes (FR-VAR-04), which none does yet.
+	// Delete deletes a variable to the project's trash, unless sites of the
+	// project use it, or the deletion forces it (FR-VAR-04), and Restore
+	// restores it, with the folders above it that were deleted since. Each
+	// undoes the other.
 	Delete  commands.Type = "variable.delete"
 	Restore commands.Type = "variable.restore"
 )
@@ -67,7 +70,16 @@ type createPayload struct {
 // renamePayload is Rename's payload.
 type renamePayload struct {
 	ID  string `json:"id" doc:"The variable's ID"`
-	Key string `json:"key" doc:"The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it."`
+	Key string `json:"key" doc:"The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it. The rename rewrites the source of each expression of the project, in its trash or not, that names the variable, in the shortest form that names it from the expression's board, its bare key unless a variable of the board has the key of a global one, which global.<key> names, and of each that names another variable or a component's attribute whose name the new key would take, which is then qualified, as global.<key> or cmp.<component>.<attribute>, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-VAR-03), as GET /api/v1/projects/{project_id}/variables/{variable_id}/rename-preview lists them. A rename that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written."`
+	// Sources is a pointer, so that an empty list, as the undo of a rename
+	// that rewrote nothing writes, is told from none, a rename's own.
+	Sources *[]expression.Source `json:"sources,omitempty" doc:"The sources that the undo of a rename gives back to the expressions of the owners' fields that it lists, those that the rename rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the rename of the variable from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the variable, or whose names key would take, as one that names the variable by the key that it has written since the rename, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the rename rewrites the sources as key says."`
+}
+
+// deletePayload is Delete's payload.
+type deletePayload struct {
+	ID    string `json:"id" doc:"The variable's ID"`
+	Force bool   `json:"force,omitempty" doc:"Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, but for a board's variable named by its bare key on its board where a global variable has the key, which that name then names, as a bare key does on a board that has no variable of the key, so that its expression stays valid where the global's type fits it (PRD FR-VAR-04); and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable."`
 }
 
 // describePayload is Describe's payload.
@@ -174,34 +186,42 @@ func Register(r *commands.Registry) {
 			errs = append(errs, field("description", checkDescription(p.Description))...)
 			return append(errs, optionalID(ids.Folder, "folder_id", p.FolderID)...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
-			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+		// The undo of a create deletes the variable, forcing the deletion if
+		// what the create makes of the project uses it, as an expression that
+		// named its key before it existed, so that the undo gives the project
+		// back as it was, but not if only what came later uses it, which the
+		// undo is then refused for, as a deletion is. A forced undo deletes
+		// it whatever uses it then, as any forced deletion does, and needs a
+		// role that may publish, as any does (FR-VAR-04).
+		Inverse: func(ctx context.Context, tx *commands.Tx, p createPayload) ([]commands.Step, error) {
+			var board ids.UUID
+			if p.BoardID != "" {
+				board = decoded(ids.Board, p.BoardID).Bytes
+			}
+			force, err := expression.Used(ctx, tx, expression.Subject{Kind: ids.Variable,
+				ID: decoded(ids.Variable, p.ID).Bytes, Key: p.Key, Board: board, Absent: true, Type: p.Type})
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID, Force: force}}}, nil
 		},
 		Apply: applyCreate,
 	})
 
+	// A rename rewrites the sources of the expressions of nodes, connections,
+	// and branch outputs, whose changes it reports.
+	renamed := []ids.Kind{ids.Variable, ids.Node, ids.Connection, ids.BranchOutput}
 	commands.Register(r, commands.Spec[renamePayload]{
-		Type: Rename, Capability: op, Scope: sc, Touches: variable,
-		Check: func(p renamePayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
-		Inverse: func(ctx context.Context, tx *commands.Tx, p renamePayload) ([]commands.Step, error) {
-			v, err := liveVariable(ctx, tx, p.ID)
-			if err != nil {
-				return nil, err
+		Type: Rename, Capability: op, Scope: sc, Touches: renamed, UndoField: "key",
+		Check: func(p renamePayload) input.FieldErrors {
+			errs := entityID(ids.Variable, "id", p.ID)
+			if p.Sources != nil {
+				errs = append(errs, expression.CheckSources("sources", *p.Sources)...)
 			}
-			return []commands.Step{{Type: Rename, Payload: renamePayload{ID: p.ID, Key: v.Key}}}, nil
+			return errs
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p renamePayload) error {
-			v, err := liveVariable(ctx, tx, p.ID)
-			if err != nil {
-				return err
-			}
-			q := queries.New(tx)
-			if err := checkKey(ctx, q, v.WorkspaceID, v.ProjectID, "key", p.Key, v.BoardID, v.ID); err != nil {
-				return err
-			}
-			return changed(tx, v.ID)(q.UpdateVariableKey(ctx, queries.UpdateVariableKeyParams{Key: p.Key,
-				UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
-		},
+		Inverse: inverseRename,
+		Apply:   applyRename,
 	})
 
 	commands.Register(r, commands.Spec[describePayload]{
@@ -373,9 +393,9 @@ func Register(r *commands.Registry) {
 		},
 	})
 
-	commands.Register(r, commands.Spec[idPayload]{
+	commands.Register(r, commands.Spec[deletePayload]{
 		Type: Delete, Capability: op, Scope: sc, Touches: variable,
-		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
+		Check: func(p deletePayload) input.FieldErrors { return entityID(ids.Variable, "id", p.ID) },
 		// Deleting a variable that is in the trash already does nothing, and
 		// its undo nothing either. One of a board in the trash, in the trash
 		// with it but not deleted itself, is refused, as every command but
@@ -385,27 +405,14 @@ func Register(r *commands.Registry) {
 		// first. So a board's variable is deleted on its own only before its
 		// board, and the undo of its creation waits for its board's
 		// restoration, as the undo of its rename does.
-		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p deletePayload) ([]commands.Step, error) {
 			row, err := anyVariable(ctx, tx, p.ID)
 			if err != nil || row.Variable.DeletedAt.Valid || row.BoardDeleted {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
-			row, err := anyVariable(ctx, tx, p.ID)
-			switch {
-			case err != nil:
-				return err
-			case row.Variable.DeletedAt.Valid:
-				return nil
-			case row.BoardDeleted:
-				return refuseBoardInTrash()
-			}
-			v := row.Variable
-			return changed(tx, v.ID)(queries.New(tx).TrashVariable(ctx, queries.TrashVariableParams{
-				UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
-		},
+		Apply: applyDelete,
 	})
 
 	commands.Register(r, commands.Spec[idPayload]{
@@ -429,7 +436,15 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			return append([]commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}},
+			// The undo forces the deletion if what the restore makes of the
+			// project uses the variable, as an expression that names its key,
+			// as the undo of a create does.
+			force, err := expression.Used(ctx, tx, expression.Subject{Kind: ids.Variable, ID: v.ID.Bytes, Key: v.Key,
+				Board: v.BoardID.Bytes, Absent: true, Type: v.Type})
+			if err != nil {
+				return nil, err
+			}
+			return append([]commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID, Force: force}}},
 				board.DeleteFolderSteps(deleted)...), nil
 		},
 		Apply: applyRestore,
@@ -536,6 +551,77 @@ func applyRestore(ctx context.Context, tx *commands.Tx, p idPayload) error {
 	}
 	return changed(tx, v.ID)(q.RestoreVariable(ctx, queries.RestoreVariableParams{UpdatedBy: by(tx),
 		WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
+}
+
+// applyDelete is Delete's Apply. A variable that sites of the project use,
+// as the batch's commands before it leave the project, is deleted only if the
+// deletion forces it, which the actor's role must allow, and is refused with
+// a *dependency.InUseError otherwise (expression.GuardDeletion, FR-VAR-04).
+func applyDelete(ctx context.Context, tx *commands.Tx, p deletePayload) error {
+	row, err := anyVariable(ctx, tx, p.ID)
+	switch {
+	case err != nil:
+		return err
+	case row.Variable.DeletedAt.Valid:
+		return nil
+	case row.BoardDeleted:
+		return refuseBoardInTrash()
+	}
+	v := row.Variable
+	if err := expression.GuardDeletion(ctx, tx, expression.Subject{Kind: ids.Variable, ID: v.ID.Bytes, Key: v.Key,
+		Board: v.BoardID.Bytes}, p.Force); err != nil {
+		return err
+	}
+	return changed(tx, v.ID)(queries.New(tx).TrashVariable(ctx, queries.TrashVariableParams{UpdatedBy: by(tx),
+		WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
+}
+
+// inverseRename is Rename's Inverse: a rename back to the variable's key,
+// with the sources that the rename writes as they are, which the undo gives
+// back rather than rewrite them anew, so that it gives them back exactly as
+// their authors wrote them, a name that the rename shortened, as
+// global.<key> to <key>, among them, and with those that the rename leaves
+// as they are but makes name what they did not, as one whose name names
+// nothing until the rename makes it name the variable, which the undo leaves
+// naming nothing again (expression.RenameInverse).
+func inverseRename(ctx context.Context, tx *commands.Tx, p renamePayload) ([]commands.Step, error) {
+	v, err := liveVariable(ctx, tx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	// The key is checked before the rewrites are planned, which need a key
+	// that the variable may have, as Apply checks it.
+	if err := checkKey(ctx, queries.New(tx), v.WorkspaceID, v.ProjectID, "key", p.Key, v.BoardID, v.ID); err != nil {
+		return nil, err
+	}
+	return expression.RenameInverse(ctx, tx, Rename, "key", rename(v, p.Key), p.Sources,
+		func(key string, sources []expression.Source) any {
+			return renamePayload{ID: p.ID, Key: key, Sources: &sources}
+		})
+}
+
+// applyRename is Rename's Apply: it checks the new key, before it writes
+// anything (FR-VAR-03 AC3), writes the sources that the rename writes
+// (expression.ApplyRename), and changes the key.
+func applyRename(ctx context.Context, tx *commands.Tx, p renamePayload) error {
+	v, err := liveVariable(ctx, tx, p.ID)
+	if err != nil {
+		return err
+	}
+	q := queries.New(tx)
+	if err := checkKey(ctx, q, v.WorkspaceID, v.ProjectID, "key", p.Key, v.BoardID, v.ID); err != nil {
+		return err
+	}
+	if err := expression.ApplyRename(ctx, tx, "key", rename(v, p.Key), p.Sources); err != nil {
+		return err
+	}
+	return changed(tx, v.ID)(q.UpdateVariableKey(ctx, queries.UpdateVariableKeyParams{Key: p.Key,
+		UpdatedBy: by(tx), WorkspaceID: v.WorkspaceID, ProjectID: v.ProjectID, ID: v.ID}))
+}
+
+// rename returns the rename of the variable v to the key.
+func rename(v queries.Variable, key string) expression.Rename {
+	return expression.Rename{Kind: ids.Variable, ID: v.ID.Bytes, Board: v.BoardID.Bytes, From: v.Key, To: key}
 }
 
 // setValue changes the type of the variable v to typ, and its default to

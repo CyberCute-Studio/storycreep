@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
@@ -27,6 +28,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
@@ -78,6 +80,10 @@ func newFixture(t *testing.T) *fixture {
 	board.Register(f.reg)
 	variable.Register(f.reg)
 	component.Register(f.reg)
+	// A change of a component's key rewrites the expressions of nodes,
+	// connections, and branch outputs, which their packages register.
+	node.Register(f.reg)
+	connection.Register(f.reg)
 	f.ent = entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	f.pipeline = commands.New(f.db, commands.Options{Registry: f.reg, Entitlements: f.ent})
 	f.projects = project.New(f.db, project.Options{Entitlements: f.ent, Pipeline: f.pipeline, Seed: component.Seed})

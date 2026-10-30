@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -30,6 +31,32 @@ func (f *rolesFixture) variable(t *testing.T, project string) string {
 		t.Fatal(err)
 	}
 	return ids.Encode(ids.Variable, id)
+}
+
+// usedVariable adds a global variable to the project, as the superuser, and
+// a node whose text shows it, as the workspace's owner, through the command
+// endpoint, which indexes the text's reference, and returns the variable's
+// ID.
+func (f *rolesFixture) usedVariable(t *testing.T, project string) string {
+	t.Helper()
+	v := f.variable(t, project)
+	createNode(t, f.s.main, f.as["owner"], project, f.board(t, project), "element",
+		map[string]any{"text": valueRefText(v)})
+	return v
+}
+
+// valueRefText returns a node's text, a paragraph that shows the variable
+// whose ID is v (PRD FR-TEXT-02).
+func valueRefText(v string) json.RawMessage {
+	return json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":` +
+		`{"ref":"` + v + `"}}]}]}`)
+}
+
+// renamePreviewPath returns the path of the preview of a rename of the
+// variable or the component whose path is entity to the key, whose list
+// holds the rewrites of the kind rewrite, renamed or qualified.
+func renamePreviewPath(entity, key, rewrite string) string {
+	return entity + "/rename-preview?key=" + url.QueryEscape(key) + "&rewrite=" + rewrite
 }
 
 // TestVariables checks the routes that read a project's variables, once its

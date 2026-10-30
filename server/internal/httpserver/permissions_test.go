@@ -458,6 +458,12 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodGet, variableUsagesPath(p, f.variable(t, p), "read"), nil,
 						si.header(false))
 				}},
+			{name: "preview a variable's rename", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, renamePreviewPath(variablePath(p, f.variable(t, p)), "trust",
+						"renamed"), nil, si.header(false))
+				}},
 			{name: "list a project's component types", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, componentTypesPath(f.project(t, "")), nil, si.header(false))
@@ -490,6 +496,12 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, componentUsagesPath(p, f.component(t, p, f.componentType(t, p)),
 						"speaker"), nil, si.header(false))
+				}},
+			{name: "preview a change of a component's key", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, renamePreviewPath(componentPath(p,
+						f.component(t, p, f.componentType(t, p))), "mira", "renamed"), nil, si.header(false))
 				}},
 			{name: "list a board's nodes", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
@@ -656,6 +668,23 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "folder.delete", Payload: map[string]string{"id": f.folder(t, p)}}), si.header(true))
+				}},
+		},
+	},
+	{
+		// Publishing a snapshot (plan item 76) is this row's too, and
+		// publish_min_role, which TestForcedDeletionRole checks, raises its
+		// editor's ✓.
+		row:     "Publish a snapshot",
+		op:      authz.PublishSnapshot,
+		allowed: [5]bool{true, true, true, false, false},
+		ops: []matrixOp{
+			{name: "force the deletion of a variable that the content uses", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "variable.delete", Payload: map[string]any{"id": f.usedVariable(t, p), "force": true}}),
+						si.header(true))
 				}},
 		},
 	},

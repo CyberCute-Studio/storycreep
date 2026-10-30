@@ -15,6 +15,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
@@ -564,7 +565,12 @@ func pipelineError(err error) error {
 // branch_output_connected, with the connections that leave the output as
 // details.connections and how many there are as details.connection_count, for
 // a branch output to delete that connections leave, which the command does
-// not confirm, and 422 validation_failed
+// not confirm, 409 variable_in_use and component_in_use, with how many
+// usages there are as details.usage_count, how many of each use as
+// details.counts, and the first of them as details.usages, for a variable or
+// a component to delete that sites use, which the command does not force,
+// 403 insufficient_role for a deletion that forces it, which the actor's
+// role may not, and 422 validation_failed
 // for any other value that the project's state does not take, as an ID of a
 // board that the project does not have, each with the field's problem in
 // details.errors, and with undo_too_large as details.reason for a command
@@ -577,6 +583,7 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	var key *ident.Error
 	var referenced *board.ReferencedError
 	var connected *node.ConnectedError
+	var inUse *dependency.InUseError
 	switch {
 	case errors.Is(r.Reason, commands.ErrUndoTooLarge):
 		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"reason": undoTooLarge,
@@ -601,6 +608,15 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 	case errors.As(r.Reason, &connected):
 		return &api.Error{Code: api.CodeOutputConnected, Details: map[string]any{"errors": problems,
 			"connections": connected.Connections, "connection_count": connected.Count}}
+	case errors.As(r.Reason, &inUse):
+		code := api.CodeVariableInUse
+		if inUse.Kind == ids.Component {
+			code = api.CodeComponentInUse
+		}
+		return &api.Error{Code: code, Details: map[string]any{"errors": problems, "usages": inUse.Usages,
+			"usage_count": inUse.Count, "counts": inUse.Counts}}
+	case errors.Is(r.Reason, commands.ErrInsufficientRole):
+		return &api.Error{Code: api.CodeInsufficientRole, Details: map[string]any{"errors": problems}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

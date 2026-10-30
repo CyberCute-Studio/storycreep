@@ -782,6 +782,8 @@ export interface ComponentDeleteCommand {
 
 /** The payload of a command of the type component.delete. */
 export interface ComponentDeletePayload {
+  /** Whether to delete the component even though sites of the project that are not in its trash use it, as its usage lists list them, but for its own description, which goes to the trash with it: the nodes whose speaker it is, which keep it as their speaker, in the trash, the texts that mention it or whose value references show its attributes, which then show nothing, and the expressions that read or write its attributes, which then name what no longer resolves, and are invalid, each a validation error (PRD FR-COMP-04, FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a component that sites use is not deleted: the command is answered with 409 component_in_use, which counts and lists them, as the project stands once the batch's commands before it have applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2). */
+  force?: boolean;
   /** The component's ID */
   id: string;
 }
@@ -917,8 +919,10 @@ export interface ComponentSetKeyCommand {
 export interface ComponentSetKeyPayload {
   /** The component's ID */
   id: string;
-  /** The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). */
+  /** The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the component's attributes, in the shortest form that names them from the expression's board, <component>.<attribute> unless a variable of the board or a global one has the new key, which cmp.<component>.<attribute> names past, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-COMP-02 AC2, FR-VAR-03), as GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview lists them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written. */
   key: string;
+  /** The sources that the undo of a change of the key gives back to the expressions of the owners' fields that it lists, those that the change rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the change of the component's key from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the component's attributes, as one that names them by the key that it has written since the change, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the change rewrites the sources as key says. */
+  sources?: Array<Source>;
 }
 
 export interface ComponentType {
@@ -1870,6 +1874,12 @@ export interface PageProjectBody {
   next_cursor: string | null;
 }
 
+export interface PageRenameSite {
+  items: Array<RenameSite>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageSessionBody {
   items: Array<SessionBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2141,6 +2151,46 @@ export interface RegisterWithInviteBody {
   token: string;
 }
 
+export interface RenameSite {
+  /** The ID of the site's board */
+  board_id: string;
+  /** The name of the site's board */
+  board_name: string;
+  /** The ID of the output of a branch output's condition */
+  branch_output_id?: string;
+  /** The ID of the connection of a connection's condition or on-traverse script */
+  connection_id?: string;
+  /** Whether the site is in the project's trash, with its owner, its node, or its board, which the rename rewrites all the same, so that restoring it brings back what names what it named */
+  in_trash: boolean;
+  /** The names that the rename rewrites of the list's kind, in the order of the source */
+  names: Array<RenamedName> | null;
+  /** The ID of the site's node: the node of its script, the node that its connection leaves, or its output's branch */
+  node_id: string;
+  /** The title of the site's node, which may be empty */
+  node_title: string;
+  /** The expression's source as the rename rewrites it, with every name that it rewrites, of either list */
+  rewritten: string;
+  /** What the site is: a node's on-enter or on-exit script, a connection's condition or on-traverse script, or a branch output's condition */
+  site: "node_on_enter" | "node_on_exit" | "connection_condition" | "connection_on_traverse" | "branch_output_condition";
+  /** The expression's source as it is */
+  source: string;
+  /** Whether the source rewritten has more than 16384 characters, the most that a source has: the rename is then answered with 422 validation_failed at its key, and writes nothing, until the expression is shortened or a shorter key is chosen, so that a rename of whose sites, of either list, one is too long does not apply */
+  too_long: boolean;
+}
+
+export interface RenamedName {
+  /** The offset of the character after the name's last, counted in code points from 0 */
+  end: number;
+  /** The name as the source writes it */
+  from: string;
+  /** The ID of what the name names, before the rename and after it: the renamed variable's or component's, or, for a qualified name, the other variable's or component's whose name the new key would take */
+  ref: string;
+  /** The offset of the name's first character in the source as it is, counted in code points from 0 */
+  start: number;
+  /** The name as the rename writes it */
+  to: string;
+}
+
 export interface ResetPasswordBody {
   /** The new password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password */
   new_password: string;
@@ -2355,6 +2405,15 @@ export interface SignedInBody {
   session: SessionBody;
   /** The ID of the account that is signed in */
   user_id: string;
+}
+
+export interface Source {
+  /** The owner's field that holds the expression: a node's on_enter or on_exit, a connection's condition or on_traverse, or a branch output's condition */
+  field: "on_enter" | "on_exit" | "condition" | "on_traverse";
+  /** The ID of the expression's owner: a node's, a connection's, or a branch output's */
+  owner: string;
+  /** The expression's source, of at most 16384 characters */
+  source: string;
 }
 
 export interface StatusBody {
@@ -2586,6 +2645,8 @@ export interface VariableDeleteCommand {
 
 /** The payload of a command of the type variable.delete. */
 export interface VariableDeletePayload {
+  /** Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, but for a board's variable named by its bare key on its board where a global variable has the key, which that name then names, as a bare key does on a board that has no variable of the key, so that its expression stays valid where the global's type fits it (PRD FR-VAR-04); and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable. */
+  force?: boolean;
   /** The variable's ID */
   id: string;
 }
@@ -2645,8 +2706,10 @@ export interface VariableRenameCommand {
 export interface VariableRenamePayload {
   /** The variable's ID */
   id: string;
-  /** The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it. */
+  /** The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it. The rename rewrites the source of each expression of the project, in its trash or not, that names the variable, in the shortest form that names it from the expression's board, its bare key unless a variable of the board has the key of a global one, which global.<key> names, and of each that names another variable or a component's attribute whose name the new key would take, which is then qualified, as global.<key> or cmp.<component>.<attribute>, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-VAR-03), as GET /api/v1/projects/{project_id}/variables/{variable_id}/rename-preview lists them. A rename that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written. */
   key: string;
+  /** The sources that the undo of a rename gives back to the expressions of the owners' fields that it lists, those that the rename rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the rename of the variable from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the variable, or whose names key would take, as one that names the variable by the key that it has written since the rename, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the rename rewrites the sources as key says. */
+  sources?: Array<Source>;
 }
 
 /** A command of the type variable.restore. */
@@ -3958,6 +4021,62 @@ export interface Operations {
     };
   };
   /**
+   * Preview a change of a component's key
+   *
+   * Lists the expressions that changing the component's key to the key would rewrite, as the command component.set_key rewrites them (PRD FR-COMP-02 AC2, FR-VAR-03): those whose names of the component's attributes it rewrites, or, as rewrite says, those whose names of other entities it qualifies, which a component's key takes from none, so that that list is always empty. Each site is an expression of the project, in its trash or not, which the rename rewrites alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the rename writes in its place, with every name that it rewrites, whether that source would pass the 16384 characters that a source may have, as too_long says, which the rename is refused for, with 422 validation_failed, while any site of either list is, and the names that it rewrites of the list's kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare key, unless a variable of the board has the key of a global one, which global.<key> names, and a component's attribute as <component>.<attribute>, unless a variable of the board or a global one has the component's key, which cmp.<component>.<attribute> names past, keeping the white space and the comments that the source writes between its parts, and so a qualifier that a comment follows, which it then does not drop; the other names stay as the source writes them, and so does a name that names nothing, which the rename may make name what it renames, or what its old key shadowed. The sites are in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the sources as the project stands when it applies, which another change may have changed meanwhile. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found, a key that is no identifier with 422 key_invalid, and one that another component of the project has with 409 key_taken, as the change would be. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  previewComponentRename: {
+    input: {
+      path: {
+        /** The component's ID */
+        component_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+      query: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** The component's new key, as a component.set_key command would give it, which is checked as the command checks it */
+        key: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** Which rewrites the list holds: those of the names of the component's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which a component's key takes none, so that the list is empty */
+        rewrite: "renamed" | "qualified";
+      };
+    };
+    responses: {
+      200: PageRenameSite;
+    };
+  };
+  /**
+   * Preview a variable's rename
+   *
+   * Lists the expressions that renaming the variable to the key would rewrite, as the command variable.rename rewrites them (PRD FR-VAR-03): those whose names of the variable it rewrites, or, as rewrite says, those whose names of other variables or components' attributes it qualifies, which a variable of a board renamed to the key of a global one, or a variable renamed to a component's key, would take, listed apart. Each site is an expression of the project, in its trash or not, which the rename rewrites alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the rename writes in its place, with every name that it rewrites, whether that source would pass the 16384 characters that a source may have, as too_long says, which the rename is refused for, with 422 validation_failed, while any site of either list is, and the names that it rewrites of the list's kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare key, unless a variable of the board has the key of a global one, which global.<key> names, and a component's attribute as <component>.<attribute>, unless a variable of the board or a global one has the component's key, which cmp.<component>.<attribute> names past, keeping the white space and the comments that the source writes between its parts, and so a qualifier that a comment follows, which it then does not drop; the other names stay as the source writes them, and so does a name that names nothing, which the rename may make name what it renames, or what its old key shadowed. The sites are in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the sources as the project stands when it applies, which another change may have changed meanwhile. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A variable that the project does not have, or that is in its trash, as one of a board in the trash is, is answered with 404 not_found, a key that is no identifier with 422 key_invalid, and one that another variable of the variable's scope has with 409 key_taken, as the rename would be. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  previewVariableRename: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The variable's ID */
+        variable_id: string;
+      };
+      query: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** The variable's new key, as a variable.rename command would give it, which is checked as the command checks it */
+        key: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** Which rewrites the list holds: those of the names of the variable itself, renamed, or those of the names of other variables and components' attributes that the new key would take, which the rename qualifies, qualified */
+        rewrite: "renamed" | "qualified";
+      };
+    };
+    responses: {
+      200: PageRenameSite;
+    };
+  };
+  /**
    * Register an account
    *
    * Creates an account with an email address, a display name, and a password, if the instance's signup policy lets anyone register: the policy that STORYCREEP_SIGNUP sets, or else the one that first-run setup chose. Until setup has completed, the answer is 403 setup_required, whatever the policy. Under closed the answer is 403 signup_closed, and under invite 403 invite_required, because only an invitation creates an account then; each comes whatever the request holds. An email address or a display name that its field does not allow is answered with 422 validation_failed. The password must have at least 12 characters, counted as Unicode code points once it is in NFKC, and must not be one of the 10,000 most common passwords, compared without regard to case, or the answer is 422 weak_password. Otherwise the answer is 202 without a body, whether or not the address has an account already, which then stays as it was, so that the answer does not tell whether an address has an account. On an instance that sends email, as GET /api/v1/instance says, a new account is emailed a link that verifies its address, which POST /api/v1/auth/verify-email uses, and an address that has an account already is emailed nothing. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -4398,6 +4517,8 @@ export const routes = {
   login: { method: "POST", path: "/api/v1/auth/login" },
   logout: { method: "POST", path: "/api/v1/auth/logout" },
   lookupInvite: { method: "POST", path: "/api/v1/invites/lookup" },
+  previewComponentRename: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview" },
+  previewVariableRename: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
   registerWithInvite: { method: "POST", path: "/api/v1/invites/register" },
   removeMember: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },

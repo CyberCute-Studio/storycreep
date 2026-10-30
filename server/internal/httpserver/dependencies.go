@@ -153,17 +153,32 @@ func usageCursor(cursor string) (dependency.Key, error) {
 		return dependency.Key{}, err
 	}
 	var out dependency.Key
-	for _, f := range []struct {
-		text string
-		id   *ids.UUID
-	}{{key.Board, &out.Board}, {key.Node, &out.Node}, {key.Site, &out.Site}, {key.Attribute, &out.Attribute}} {
-		id, err := ids.ParseUUID(f.text)
-		if err != nil || id.String() != f.text {
-			return dependency.Key{}, api.NewError(api.CodeInvalidCursor)
-		}
-		*f.id = id
+	if err := cursorUUIDs(cursorUUID{key.Board, &out.Board}, cursorUUID{key.Node, &out.Node},
+		cursorUUID{key.Site, &out.Site}, cursorUUID{key.Attribute, &out.Attribute}); err != nil {
+		return dependency.Key{}, err
 	}
 	return out, nil
+}
+
+// cursorUUID is a UUID of the key that a cursor holds, in its text form, and
+// where to set it.
+type cursorUUID struct {
+	text string
+	id   *ids.UUID
+}
+
+// cursorUUIDs sets each UUID of a cursor's key from its text form, or returns
+// the error of invalid_cursor for one that is not a UUID in the form that the
+// server writes, its canonical text.
+func cursorUUIDs(uuids ...cursorUUID) error {
+	for _, u := range uuids {
+		id, err := ids.ParseUUID(u.text)
+		if err != nil || id.String() != u.text {
+			return api.NewError(api.CodeInvalidCursor)
+		}
+		*u.id = id
+	}
+	return nil
 }
 
 // dependencyError returns the error that the API answers err with, an error

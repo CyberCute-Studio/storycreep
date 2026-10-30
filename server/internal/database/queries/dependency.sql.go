@@ -106,6 +106,110 @@ func (q *Queries) InsertReferences(ctx context.Context, arg InsertReferencesPara
 	return err
 }
 
+const liveTextOwners = `-- name: LiveTextOwners :many
+SELECT n.id, n.board_id::uuid AS board_id, n.id AS site_node_id FROM live_node n
+WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($3::uuid[])
+UNION ALL
+SELECT c.id, c.board_id, c.from_node_id FROM live_connection c
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = ANY($4::uuid[])
+UNION ALL
+SELECT m.id, NULL, NULL FROM live_component m
+WHERE m.workspace_id = $1 AND m.project_id = $2 AND m.id = ANY($5::uuid[])
+`
+
+type LiveTextOwnersParams struct {
+	WorkspaceID   pgtype.UUID
+	ProjectID     pgtype.UUID
+	NodeIds       []pgtype.UUID
+	ConnectionIds []pgtype.UUID
+	ComponentIds  []pgtype.UUID
+}
+
+type LiveTextOwnersRow struct {
+	ID         pgtype.UUID
+	BoardID    pgtype.UUID
+	SiteNodeID pgtype.UUID
+}
+
+// LiveTextOwners returns those of the project's nodes among node_ids,
+// connections among connection_ids, and components among component_ids that
+// are not in its trash, as a usage list shows their texts, each with its
+// board, none for a component, and the node of its site: a node's own, and
+// the node that a connection leaves.
+func (q *Queries) LiveTextOwners(ctx context.Context, arg LiveTextOwnersParams) ([]LiveTextOwnersRow, error) {
+	rows, err := q.db.Query(ctx, liveTextOwners,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.NodeIds,
+		arg.ConnectionIds,
+		arg.ComponentIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LiveTextOwnersRow
+	for rows.Next() {
+		var i LiveTextOwnersRow
+		if err := rows.Scan(&i.ID, &i.BoardID, &i.SiteNodeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const siteNames = `-- name: SiteNames :many
+SELECT b.id, b.name AS label FROM board b
+WHERE b.workspace_id = $1 AND b.project_id = $2 AND b.id = ANY($3::uuid[])
+UNION ALL
+SELECT n.id, n.title FROM node n
+WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($4::uuid[])
+`
+
+type SiteNamesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardIds    []pgtype.UUID
+	NodeIds     []pgtype.UUID
+}
+
+type SiteNamesRow struct {
+	ID    pgtype.UUID
+	Label string
+}
+
+// SiteNames returns the names of the project's boards among board_ids and the
+// titles of its nodes among node_ids, in the trash or not, by their IDs, as
+// the sites of a usage show them.
+func (q *Queries) SiteNames(ctx context.Context, arg SiteNamesParams) ([]SiteNamesRow, error) {
+	rows, err := q.db.Query(ctx, siteNames,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.BoardIds,
+		arg.NodeIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SiteNamesRow
+	for rows.Next() {
+		var i SiteNamesRow
+		if err := rows.Scan(&i.ID, &i.Label); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const textReferences = `-- name: TextReferences :many
 SELECT n.id AS node_id, NULL::uuid AS connection_id, NULL::uuid AS component_id, n.board_id::uuid AS board_id,
     r.inline::jsonb AS inline
@@ -169,6 +273,53 @@ func (q *Queries) TextReferences(ctx context.Context, arg TextReferencesParams) 
 			&i.BoardID,
 			&i.Inline,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const textReferrers = `-- name: TextReferrers :many
+SELECT DISTINCT node_id, connection_id, component_id FROM expression_ref
+WHERE workspace_id = $1 AND project_id = $2 AND target_id = $3
+    AND target_kind = ANY($4::text[]) AND expression_id IS NULL
+`
+
+type TextReferrersParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	TargetID    pgtype.UUID
+	TargetKinds []string
+}
+
+type TextReferrersRow struct {
+	NodeID       pgtype.UUID
+	ConnectionID pgtype.UUID
+	ComponentID  pgtype.UUID
+}
+
+// TextReferrers returns the texts of the project, of its nodes, connections,
+// and components, in the trash or not, whose rows of the index name the
+// target, of a kind among target_kinds, each once.
+func (q *Queries) TextReferrers(ctx context.Context, arg TextReferrersParams) ([]TextReferrersRow, error) {
+	rows, err := q.db.Query(ctx, textReferrers,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.TargetID,
+		arg.TargetKinds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TextReferrersRow
+	for rows.Next() {
+		var i TextReferrersRow
+		if err := rows.Scan(&i.NodeID, &i.ConnectionID, &i.ComponentID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

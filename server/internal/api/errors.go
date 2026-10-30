@@ -56,6 +56,8 @@ const (
 	CodeComponentTypeInUse    Code = "component_type_in_use"
 	CodeBoardReferenced       Code = "board_referenced"
 	CodeOutputConnected       Code = "branch_output_connected"
+	CodeVariableInUse         Code = "variable_in_use"
+	CodeComponentInUse        Code = "component_in_use"
 	CodeLastOwner             Code = "last_owner"
 	CodeAlreadyMember         Code = "already_member"
 	CodeInviteExists          Code = "invite_exists"
@@ -275,6 +277,34 @@ var codes = []codeSpec{
 			"how many there are. Warn of them, and send the command again with `confirm` to delete the output all " +
 			"the same: its connections then go to the trash with it, and come back with it. `details.errors` names " +
 			"the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeVariableInUse, http.StatusConflict, i18n.K("error.variable_in_use"),
+		"A `variable.delete` command names a variable that sites of the project that are not in its trash use, as " +
+			"the project stands once the batch's commands before it have applied, and does not force the deletion, " +
+			"which would leave them naming what does not resolve, so nothing of its batch is applied (PRD FR-VAR-04 " +
+			"AC1, FR-TEXT-02 AC2): the expressions that read or write the variable, and the texts whose value " +
+			"references show it. `details.usage_count` says how many usages there are, as the variable's usage lists " +
+			"count them, `details.counts` how many of each use, `read` and `write`, and `details.usages` lists the " +
+			"first 100 of them, reads first, then in the order of the usage lists, each with its `use` and the fields " +
+			"of a usage of `GET /api/v1/projects/{project_id}/variables/{variable_id}/usages`, which lists them in " +
+			"full. Show them, and send the command again with `force` to delete the variable all the same, which " +
+			"only a role that may publish the project's snapshots may: the expressions then name what does not " +
+			"resolve, and are invalid, but for a board's variable named by its bare key where a global variable has " +
+			"the key, which that name then names (PRD FR-VAR-04), and the texts show nothing. `details.errors` names " +
+			"the field, with its `location` and a `message`, as for `validation_failed`."},
+	{CodeComponentInUse, http.StatusConflict, i18n.K("error.component_in_use"),
+		"A `component.delete` command names a component that sites of the project that are not in its trash use, " +
+			"as the project stands once the batch's commands before it have applied, and does not force the " +
+			"deletion, so nothing of its batch is applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2): the nodes whose " +
+			"speaker it is, the texts that mention it, and the sites that read or write its attributes, but for its " +
+			"own description, which goes to the trash with it. `details.usage_count` says how many usages there " +
+			"are, as the component's usage lists count them, a site once for each attribute that it reads or " +
+			"writes, its own description left out, `details.counts` how many of each use, " +
+			"`speaker`, `mention`, `read`, and `write`, and `details.usages` lists the first 100 of them, in that " +
+			"order of their uses, then in the order of the usage lists, each with its `use` and the fields of a usage " +
+			"of `GET /api/v1/projects/{project_id}/components/{component_id}/usages`, which lists them in full. Show " +
+			"them, and send the command again with `force` to delete the component all the same, which only a role " +
+			"that may publish the project's snapshots may. `details.errors` names the field, with its `location` and " +
+			"a `message`, as for `validation_failed`."},
 	{CodeLastOwner, http.StatusConflict, i18n.K("error.last_owner"),
 		"The change would leave the workspace without an owner whose account is active, and a workspace keeps one " +
 			"(PRD FR-TEN-02 AC2): its last owner cannot be removed or demoted. An owner whose account's deletion is " +

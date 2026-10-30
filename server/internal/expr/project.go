@@ -343,6 +343,43 @@ func (p *Project) component(key string) *component {
 	return p.components[key]
 }
 
+// lookupVariable returns the variable that a variable's name, written with
+// the qualifier scope before the key, names at the board whose ID is board
+// (§5.8.3), or nil: global.<key> a global variable, board.<key> one of the
+// board, and a bare key the board's, or else a global one. Check resolves a
+// variable by it, and Rewrite writes a name that it resolves alike.
+func (p *Project) lookupVariable(board string, scope Scope, key string) *Variable {
+	switch scope {
+	case ScopeGlobal:
+		return p.global(key)
+	case ScopeBoard:
+		return p.ofBoard(board, key)
+	}
+	if v := p.ofBoard(board, key); v != nil {
+		return v
+	}
+	return p.global(key)
+}
+
+// lookupComponent returns the component whose attribute an attribute's name
+// names at the board whose ID is board (§5.8.3), or nil: cmp.<component>
+// names the component of the key whatever else has it, as explicit says,
+// and a bare <component> names it unless a variable of the board or a global
+// one has the key (shadowed), which the name names then, as no component.
+func (p *Project) lookupComponent(board string, explicit bool, key string) *component {
+	if !explicit && p.shadowed(board, key) {
+		return nil
+	}
+	return p.component(key)
+}
+
+// shadowed reports whether a variable of the board or a global one has the
+// key, which a bare key, and <key>.<attribute>, names rather than a component
+// of the key.
+func (p *Project) shadowed(board, key string) bool {
+	return p.ofBoard(board, key) != nil || p.global(key) != nil
+}
+
 // node returns whether the project has the node whose ID is id, and whether
 // it is a jumper.
 func (p *Project) node(id string) (jumper, ok bool) {

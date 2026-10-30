@@ -316,6 +316,19 @@ type Registry struct {
 	schemas huma.Registry
 }
 
+// checkTouches panics if a registered type of command touches a kind of
+// entity that is not registered (RegisterEntity), as New checks of the
+// registry that it makes a pipeline of.
+func (r *Registry) checkTouches() {
+	for _, typ := range slices.Sorted(maps.Keys(r.specs)) {
+		for _, k := range r.specs[typ].touches {
+			if _, ok := r.entities[k]; !ok {
+				panic(fmt.Sprintf("commands: %s: the entity %s is not registered", typ, k))
+			}
+		}
+	}
+}
+
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{specs: map[Type]*spec{}, entities: map[ids.Kind]Entity{},
@@ -467,13 +480,19 @@ type spec struct {
 // Register registers the type of command s. It panics if s is not a
 // declaration that the pipeline can apply: a Type of the wrong form or one
 // that is registered already, a Capability that is not an operation of the
-// permission matrix, a Scope that is not a scope, no Touches, a touched kind
-// that is not registered or twice, a limit that the plan file does not check
-// or twice, both Inverse and NonUndoable or neither, an UndoField without
+// permission matrix, or is authz.PublishSnapshot, whose row of the matrix a
+// project's publish_min_role raises, which the pipeline would not read, so
+// that a command that needs it checks authz.CheckPublish in its Apply, as a
+// forced deletion does, a Scope that is not a scope, no Touches, a kind
+// touched twice, a limit that the plan file does not check or twice, both Inverse and NonUndoable or neither, an UndoField without
 // Inverse or that is no field of the payload's, Trashed without Archived, no
 // Apply, or a payload that is not a struct, or that has a field with a
 // default or a type that resolves itself, or that holds a rich-text document
-// other than as a field of its own.
+// other than as a field of its own. A touched kind that is not registered
+// (RegisterEntity) is refused once the registry makes a pipeline (New), so
+// that two packages each of whose commands touch the other's kinds, as a
+// node's speaker is a component, and a change of a component's key rewrites
+// the expressions of nodes, register in either order.
 func Register[P any](r *Registry, s Spec[P]) {
 	fail := func(format string, args ...any) {
 		panic(fmt.Sprintf("commands: %s: ", s.Type) + fmt.Sprintf(format, args...))
@@ -486,6 +505,9 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("the type is registered already")
 	case !s.Capability.Known():
 		fail("%q is not an operation of the permission matrix", s.Capability)
+	case s.Capability == authz.PublishSnapshot:
+		fail("%q is held to a project's publish_min_role, which the pipeline does not read: check "+
+			"authz.CheckPublish in Apply instead", s.Capability)
 	case !s.Scope.Known():
 		fail("%q is not a scope of an API token", s.Scope)
 	case len(s.Touches) == 0:
@@ -520,9 +542,6 @@ func Register[P any](r *Registry, s Spec[P]) {
 			"richtext.Doc or a pointer to one, so that a document that Parse refuses is answered at its field", at)
 	}
 	for i, k := range s.Touches {
-		if _, ok := r.entities[k]; !ok {
-			fail("the entity %s is not registered", k)
-		}
 		if slices.Contains(s.Touches[:i], k) {
 			fail("the entity %s is touched twice", k)
 		}

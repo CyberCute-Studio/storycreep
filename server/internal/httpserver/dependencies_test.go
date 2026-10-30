@@ -427,9 +427,9 @@ func TestMentionUsages(t *testing.T) {
 
 // TestTextReferenceSurvivesRename checks that a variable's rename leaves the
 // texts that show it as they are stored, byte for byte, since they name it by
-// its ID, and that they are still its usages, while the source of a condition
-// that names it by its old key no longer compiles until it is rewritten
-// (FR-VAR-03, plan item 47), and is not.
+// its ID, and that they are still its usages, as the condition that named it
+// by its old key is too, which the rename rewrites to name it by its new one
+// (FR-VAR-03).
 //
 // Verifies: FR-TEXT-02/AC1
 func TestTextReferenceSurvivesRename(t *testing.T) {
@@ -461,7 +461,7 @@ func TestTextReferenceSurvivesRename(t *testing.T) {
 		t.Errorf("the rename changed the text that shows the variable from %s to %s", before, after)
 	}
 	w.wantSites(t, "the renamed variable's reads", usages(t, h, o, variableUsagesPath(p, w.metElara, "read"), 50),
-		"node_text Harbour/Keeper")
+		"node_text Harbour/Keeper", "connection_condition Harbour/Keeper "+w.gate)
 }
 
 // TestUsagesTrash checks that the usages leave out the sites in the
@@ -491,7 +491,7 @@ func TestUsagesTrash(t *testing.T) {
 		wireCommand{Type: "board.restore", Payload: map[string]any{"id": w.lighthouse}})
 	w.wantSites(t, "gold's writes once both are restored", usages(t, h, o, variableUsagesPath(p, w.gold, "write"), 50),
 		"connection_on_traverse Harbour/Keeper "+w.gate, "node_on_enter Lighthouse/Tower")
-	apply(wireCommand{Type: "variable.delete", Payload: map[string]any{"id": w.gold}})
+	apply(wireCommand{Type: "variable.delete", Payload: map[string]any{"id": w.gold, "force": true}})
 	wantCode(t, "a variable in the trash", call(h, http.MethodGet, variableUsagesPath(p, w.gold, "read"), nil,
 		o.header(false)), http.StatusNotFound, api.CodeNotFound)
 	wantDrift(t, w.admin, p)
