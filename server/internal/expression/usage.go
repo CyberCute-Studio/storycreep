@@ -71,7 +71,8 @@ func Used(ctx context.Context, tx *commands.Tx, s Subject) (bool, error) {
 // using returns the sites that use the subject s, as InUse says, of each
 // kind of site in turn, the cheapest to read first, speakers, texts, and
 // expressions, which it compiles, and, if first is set, none of the kinds
-// after the first that uses s, as Used needs no more.
+// after the first that uses s, and one speaker at most, as Used needs no
+// more.
 func using(ctx context.Context, tx *commands.Tx, s Subject, first bool) ([]dependency.Found, error) {
 	if s.Absent && ident.Check(s.Key) != nil {
 		return nil, nil
@@ -84,7 +85,7 @@ func using(ctx context.Context, tx *commands.Tx, s Subject, first bool) ([]depen
 			if s.Kind != ids.Component {
 				return nil, nil
 			}
-			return dependency.Speakers(ctx, q, ws, project, s.ID)
+			return dependency.Speakers(ctx, q, ws, project, s.ID, first)
 		},
 		func() ([]dependency.Found, error) { return dependency.TextsUsing(ctx, tx, s.Kind, s.ID) },
 		func() ([]dependency.Found, error) { return expressionsUsing(ctx, q, ws, project, s) },
@@ -107,19 +108,24 @@ func using(ctx context.Context, tx *commands.Tx, s Subject, first bool) ([]depen
 // project (InUse), or if the payload's field force is set, which the actor's
 // role must allow (dependency.CheckForce). It refuses the batch at force with
 // a *dependency.InUseError otherwise (FR-VAR-04 AC1, FR-COMP-04 AC1). A
-// forced deletion leaves the expressions that named s to the derivation,
-// which compiles them again, each as FR-VAR-04 says: invalid, naming what no
-// longer resolves (AC2), but for a board's variable named by its bare key on
-// its board where a global variable has the key, which that name then names
+// forced deletion asks only whether a site uses s (Used), as it lists none.
+// It leaves the expressions that named s to the derivation, which compiles
+// them again, each as FR-VAR-04 says: invalid, naming what no longer
+// resolves (AC2), but for a board's variable named by its bare key on its
+// board where a global variable has the key, which that name then names
 // (expr.Project's lookupVariable), as it did before the board's variable had
 // the key.
 func GuardDeletion(ctx context.Context, tx *commands.Tx, s Subject, force bool) error {
-	found, err := InUse(ctx, tx, s)
-	switch {
-	case err != nil || len(found) == 0:
-		return err
-	case force:
+	if force {
+		used, err := Used(ctx, tx, s)
+		if err != nil || !used {
+			return err
+		}
 		return dependency.CheckForce(ctx, tx, "force")
+	}
+	found, err := InUse(ctx, tx, s)
+	if err != nil || len(found) == 0 {
+		return err
 	}
 	refusal, err := dependency.Refusal(ctx, queries.New(tx), nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()),
 		s.Kind, found)

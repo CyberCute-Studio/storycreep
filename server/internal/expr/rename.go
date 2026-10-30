@@ -65,8 +65,10 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 	case err != nil:
 		return "", nil, err
 	}
-	runes := []rune(source)
 	names := namesOf(n)
+	// runes is the source's characters, which the ranges count, read once a
+	// name changes.
+	var runes []rune
 	var edits []Edit
 	for _, m := range names {
 		ref, written, err := shortest(m, before, after, board, renamed)
@@ -75,6 +77,9 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		}
 		if written == "" {
 			continue
+		}
+		if runes == nil {
+			runes = []rune(source)
 		}
 		r := m.Range()
 		old := string(runes[r.Start:r.End])

@@ -474,20 +474,29 @@ func RenameInverse(ctx context.Context, tx *commands.Tx, typ commands.Type, at s
 			expects += commands.ExpectedRevBytes(o)
 		}
 	}
-	p := payload(r.From, back)
-	for _, u := range []struct {
-		payload any
-		expects int
-	}{{p, 0}, {payload(r.To, redo), expects}} {
-		enc, err := json.Marshal(u.payload)
+	// fits encodes the payload of an undo, and refuses it unless it fits with
+	// the bytes revs of the revisions that the undo expects.
+	fits := func(p any, revs int) (json.RawMessage, error) {
+		enc, err := json.Marshal(p)
 		if err != nil {
 			return nil, fmt.Errorf("expression: encode the undo: %w", err)
 		}
-		if commands.LogBytes(enc)+u.expects > tx.UndoRoom() {
+		if commands.LogBytes(enc)+revs > tx.UndoRoom() {
 			return nil, commands.ErrUndoTooLarge
 		}
+		return enc, nil
 	}
-	return []commands.Step{{Type: typ, Payload: p}}, nil
+	undo, err := fits(payload(r.From, back), 0)
+	if err == nil {
+		_, err = fits(payload(r.To, redo), expects)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The step's payload is the undo's as it is encoded, a json.RawMessage,
+	// which the pipeline copies as it checks the step rather than encode the
+	// payload again.
+	return []commands.Step{{Type: typ, Payload: undo}}, nil
 }
 
 // ApplyRename writes the sources that the rename r writes, with the sources

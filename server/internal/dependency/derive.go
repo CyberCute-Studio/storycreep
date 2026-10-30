@@ -3,6 +3,7 @@ package dependency
 import (
 	"context"
 	"fmt"
+	"iter"
 	"slices"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -69,7 +70,7 @@ var textNeutral = append([]commands.Type{
 // not holds as it did.
 func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
 	var nodes, connections, components []pgtype.UUID
-	for _, c := range changedTexts(changed) {
+	for c := range changedTexts(slices.Values(changed)) {
 		switch c.Kind {
 		case ids.Node:
 			nodes = append(nodes, nullUUID(c.ID))
@@ -123,22 +124,34 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		ComponentIds: list(components)}, sites)
 }
 
-// changedTexts returns the nodes, the connections, and the components of
+// neutralTexts holds the types of textNeutral, which changedTexts looks the
+// type of each command of a change up in.
+var neutralTexts = func() map[commands.Type]bool {
+	m := make(map[commands.Type]bool, len(textNeutral))
+	for _, t := range textNeutral {
+		m[t] = true
+	}
+	return m
+}()
+
+// changedTexts yields the nodes, the connections, and the components of
 // changed whose texts the batch's commands may have changed, with their
 // latest revisions, as a derivation reads them (commands.Derivation.Derive,
 // commands.Tx.Changes): each that a command of a type that is not
 // textNeutral changed, whose rows of the index derive replaces, and which a
 // command's Apply that reads what the texts name before the batch is indexed
 // reads anew (TextsUsing), so that both read the same texts anew.
-func changedTexts(changed []commands.Change) []commands.Revision {
-	var out []commands.Revision
-	for _, c := range changed {
-		switch {
-		case c.Kind != ids.Node && c.Kind != ids.Connection && c.Kind != ids.Component,
-			!slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(textNeutral, t) }):
-			continue
+func changedTexts(changed iter.Seq[commands.Change]) iter.Seq[commands.Revision] {
+	return func(yield func(commands.Revision) bool) {
+		for c := range changed {
+			switch {
+			case c.Kind != ids.Node && c.Kind != ids.Connection && c.Kind != ids.Component,
+				!slices.ContainsFunc(c.By, func(t commands.Type) bool { return !neutralTexts[t] }):
+				continue
+			}
+			if !yield(c.Revision) {
+				return
+			}
 		}
-		out = append(out, c.Revision)
 	}
-	return out
 }

@@ -136,7 +136,7 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	var refs []textRef
 	toRead := textOwners{}
 	changed, stale := map[commands.Ref]bool{}, map[commands.Ref]bool{}
-	for _, c := range changedTexts(tx.Changes()) {
+	for c := range changedTexts(tx.Changes()) {
 		changed[c.Ref] = true
 		if r, ok := read[c.Ref]; ok && r.rev == c.Rev {
 			refs = append(refs, r.refs...)
@@ -252,13 +252,19 @@ func textOwner(node, connection, component pgtype.UUID) commands.Ref {
 // Speakers returns the nodes of the project, of the workspace ws, outside
 // its trash, whose speaker is the component, read in q's transaction, each a
 // use of it as its speaker, as the component's list of its speakers holds
-// them (Service.ComponentUsages), every one.
-func Speakers(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, component ids.UUID) ([]Found,
-	error) {
+// them (Service.ComponentUsages), with their boards' names and their titles:
+// every one, or the first alone if first is set, as a caller that asks only
+// whether one exists needs no more.
+func Speakers(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, component ids.UUID, first bool) (
+	[]Found, error) {
 	zero := zeroUUID(ids.UUID{})
+	most := int32(math.MaxInt32)
+	if first {
+		most = 1
+	}
 	rows, err := q.Usages(ctx, queries.UsagesParams{WorkspaceID: ws, ProjectID: project,
 		TargetID: nullUUID(component), Speaker: true, AfterBoard: zero, AfterNode: zero, AfterSite: zero,
-		AfterAttribute: zero, MaxRows: math.MaxInt32})
+		AfterAttribute: zero, MaxRows: most})
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the nodes whose speaker the component is: %w", err)
 	}
@@ -272,7 +278,8 @@ func Speakers(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, 
 // Refusal returns the reason of the refusal of the deletion of the variable
 // or the component, of the kind, that the usages found use (InUseError), with
 // the names of the boards and the titles of the nodes of those that it
-// lists, read in q's transaction of the project of the workspace ws.
+// lists, read in q's transaction of the project of the workspace ws, but for
+// those that a usage holds already, as a speaker does (Speakers).
 func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, kind ids.Kind, found []Found) (
 	*InUseError, error) {
 	sorted := slices.Clone(found)
@@ -293,12 +300,15 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	e.Usages = sorted[:min(len(sorted), MaxInUse)]
 	var boards, nodes []pgtype.UUID
 	for _, f := range e.Usages {
-		if f.key.Board != (ids.UUID{}) {
+		if f.key.Board != (ids.UUID{}) && f.BoardName == nil {
 			boards = append(boards, nullUUID(f.key.Board))
 		}
-		if f.key.Node != (ids.UUID{}) {
+		if f.key.Node != (ids.UUID{}) && f.NodeTitle == nil {
 			nodes = append(nodes, nullUUID(f.key.Node))
 		}
+	}
+	if len(boards) == 0 && len(nodes) == 0 {
+		return e, nil
 	}
 	labels, err := SiteLabels(ctx, q, ws, project, boards, nodes)
 	if err != nil {
@@ -306,11 +316,11 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 	}
 	for i := range e.Usages {
 		f := &e.Usages[i]
-		if f.key.Board != (ids.UUID{}) {
+		if f.key.Board != (ids.UUID{}) && f.BoardName == nil {
 			name := labels[f.key.Board]
 			f.BoardName = &name
 		}
-		if f.key.Node != (ids.UUID{}) {
+		if f.key.Node != (ids.UUID{}) && f.NodeTitle == nil {
 			title := labels[f.key.Node]
 			f.NodeTitle = &title
 		}

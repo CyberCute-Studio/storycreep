@@ -549,13 +549,6 @@ func written(scope Scope, keys []string) []string {
 	return names
 }
 
-// shadowed reports whether a variable of the board or a global one has the
-// key, which a bare key, and <key>.<attribute>, names rather than a
-// component of the key.
-func (c *checker) shadowed(key string) bool {
-	return c.p.shadowed(c.board, key)
-}
-
 // attribute resolves the attribute n, which is a runtime one (§5.8.3,
 // FR-COMP-03): <component>.<attribute> names the attribute of the component
 // unless a variable has the component's key, as cmp.<component>.<attribute>
@@ -580,7 +573,7 @@ func (c *checker) attribute(n *Attr) (*Attribute, error) {
 	if n.Explicit {
 		qualifier = "cmp."
 	}
-	if !n.Explicit && c.shadowed(n.ComponentKey) {
+	if !n.Explicit && c.p.shadowed(c.board, n.ComponentKey) {
 		var suggestions []string
 		if a := c.p.component(n.ComponentKey).runtime(n.AttributeKey); a != nil {
 			suggestions = []string{"cmp." + n.ComponentKey + "." + n.AttributeKey}
@@ -591,7 +584,7 @@ func (c *checker) attribute(n *Attr) (*Attribute, error) {
 	if comp == nil {
 		var candidates []string
 		for key := range c.p.components {
-			if n.Explicit || !c.shadowed(key) {
+			if n.Explicit || !c.p.shadowed(c.board, key) {
 				candidates = append(candidates, key)
 			}
 		}
