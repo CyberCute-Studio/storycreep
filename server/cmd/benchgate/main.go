@@ -1,0 +1,56 @@
+// Command benchgate compares the output of the server's benchmarks of a
+// change, go test -bench, with its base's, and fails on a regression (PRD
+// §9.1, plan note N52): a time metric whose median is more than 20% above the
+// base's, where a Mann-Whitney U test finds the two apart at p < 0.05.
+//
+// It writes a Markdown table of every metric to standard output, for the CI
+// job's summary, and exits with status 1 if any metric regressed, or with
+// status 2 if an output cannot be read.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/benchgate"
+)
+
+func main() {
+	base := flag.String("base", "", "the output of the base's benchmarks")
+	head := flag.String("head", "", "the output of the change's benchmarks")
+	threshold := flag.Float64("threshold", benchgate.DefaultThreshold,
+		"how much above the base's a median may be, as a fraction of it, before it regresses")
+	alpha := flag.Float64("alpha", benchgate.DefaultAlpha, "the p-value under which a difference is not noise")
+	flag.Parse()
+	if *base == "" || *head == "" {
+		fmt.Fprintln(os.Stderr, "benchgate: both -base and -head are needed")
+		os.Exit(2)
+	}
+
+	samples := make([]benchgate.Samples, 2)
+	for i, path := range []string{*base, *head} {
+		f, err := os.Open(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "benchgate:", err)
+			os.Exit(2)
+		}
+		samples[i], err = benchgate.Parse(f)
+		f.Close()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "benchgate: %s: %v\n", path, err)
+			os.Exit(2)
+		}
+	}
+	opts := benchgate.Options{Threshold: *threshold, Alpha: *alpha}
+	results := benchgate.Compare(samples[0], samples[1], opts)
+	if err := benchgate.Report(os.Stdout, results, opts); err != nil {
+		fmt.Fprintln(os.Stderr, "benchgate:", err)
+		os.Exit(2)
+	}
+	for _, r := range results {
+		if r.Status == benchgate.Regressed {
+			os.Exit(1)
+		}
+	}
+}

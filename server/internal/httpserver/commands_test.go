@@ -114,7 +114,7 @@ func withIDs(cmds []wireCommand) []wireCommand {
 }
 
 // commandBatch returns the body of a request of one batch of cmds.
-func commandBatch(t *testing.T, cmds ...wireCommand) []byte {
+func commandBatch(t testing.TB, cmds ...wireCommand) []byte {
 	t.Helper()
 	return jsonBody(t, map[string]any{"commands": withIDs(cmds)})
 }

@@ -261,6 +261,61 @@ jobs:
           STORYCREEP_TEST_IMAGE_ARCHIVE: ${{ runner.temp }}/image.tar
         run: go test -v ./internal/deploy
 
+  # PRD §9.1: the server's benchmarks, of the large fixture (NFR-Q-06), and a
+  # regression of more than 20% fails the build. GitHub's runners are not one
+  # fixed machine, so the job measures the change and its base on the same
+  # runner, in turn, twice each, so that a drift of the machine during the job
+  # falls on both, and cmd/benchgate compares them (plan note N52). Each
+  # benchmark also checks its own target of §9.1, on the change alone. A pull
+  # request is compared with the main branch that it merges into, the first
+  # parent of the merge commit that it is checked out as, and a push with the
+  # commit that it replaced.
+  bench:
+    name: Benchmarks
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE: ${{ github.event_name == 'push' && github.event.before || 'HEAD^1' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - name: Check out the base
+        run: git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+
+      # -p 1 runs one package's benchmarks at a time, so that no two share the
+      # machine. A base whose benchmarks fail, as one that misses a target,
+      # is compared as far as it ran; the change's must pass.
+      - name: Run the benchmarks of the base and the change, in turn
+        shell: bash
+        run: |
+          set -o pipefail
+          bench() {
+            (cd "$1/server" && go test -run '^$' -bench . -benchtime 100x -count 3 -p 1 -timeout 50m ./...)
+          }
+          for round in 1 2; do
+            bench "$RUNNER_TEMP/base" >> "$RUNNER_TEMP/base.txt" ||
+              echo "::warning::The base's benchmarks failed in round $round, and are compared as far as they ran."
+            bench "$GITHUB_WORKSPACE" | tee -a "$RUNNER_TEMP/head.txt"
+          done
+
+      - name: Compare with the base
+        working-directory: server
+        shell: bash
+        run: |
+          set -o pipefail
+          go run ./cmd/benchgate -base "$RUNNER_TEMP/base.txt" -head "$RUNNER_TEMP/head.txt" |
+            tee -a "$GITHUB_STEP_SUMMARY"
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

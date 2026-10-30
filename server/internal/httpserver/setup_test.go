@@ -20,7 +20,7 @@ import (
 )
 
 // setupCode returns the setup code of the database of s.
-func setupCode(t *testing.T, s *server) string {
+func setupCode(t testing.TB, s *server) string {
 	t.Helper()
 	code, err := s.setups.Code(context.Background())
 	if err != nil {
@@ -32,7 +32,7 @@ func setupCode(t *testing.T, s *server) string {
 // setupRequest returns the JSON body of a setup with the code, whose owner
 // has the address email and testPassword, with the fields of extra besides,
 // which replace the others.
-func setupRequest(t *testing.T, code, email string, extra map[string]any) []byte {
+func setupRequest(t testing.TB, code, email string, extra map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
 		"setup_code": code,
@@ -44,7 +44,7 @@ func setupRequest(t *testing.T, code, email string, extra map[string]any) []byte
 }
 
 // completedSetupFrom returns the body of an answer of 201 to a setup.
-func completedSetupFrom(t *testing.T, res response) completedSetupBody {
+func completedSetupFrom(t testing.TB, res response) completedSetupBody {
 	t.Helper()
 	var b completedSetupBody
 	if res.status != http.StatusCreated || json.Unmarshal(res.body, &b) != nil {
@@ -55,7 +55,7 @@ func completedSetupFrom(t *testing.T, res response) completedSetupBody {
 
 // completeSetup completes the setup of s with the owner email and
 // testPassword, and the fields of extra.
-func completeSetup(t *testing.T, s *server, email string, extra map[string]any) completedSetupBody {
+func completeSetup(t testing.TB, s *server, email string, extra map[string]any) completedSetupBody {
 	t.Helper()
 	return completedSetupFrom(t, send(s.main, http.MethodPost, setupPath, setupRequest(t, setupCode(t, s), email,
 		extra), "", nil))

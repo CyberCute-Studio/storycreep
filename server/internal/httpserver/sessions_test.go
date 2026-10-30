@@ -62,7 +62,7 @@ func newAccount(t *testing.T, h http.Handler, email string) {
 }
 
 // credentials returns the JSON body of a sign-in.
-func credentials(t *testing.T, email, password string) []byte {
+func credentials(t testing.TB, email, password string) []byte {
 	t.Helper()
 	b, err := json.Marshal(map[string]string{"email": email, "password": password})
 	if err != nil {
@@ -72,7 +72,7 @@ func credentials(t *testing.T, email, password string) []byte {
 }
 
 // sessionCookieOf returns the session cookie that a response sets, or nil.
-func sessionCookieOf(t *testing.T, h http.Header) *http.Cookie {
+func sessionCookieOf(t testing.TB, h http.Header) *http.Cookie {
 	t.Helper()
 	for _, v := range h.Values("Set-Cookie") {
 		ck, err := http.ParseSetCookie(v)
@@ -88,7 +88,7 @@ func sessionCookieOf(t *testing.T, h http.Header) *http.Cookie {
 
 // signedInFrom returns the session that a response of 200 started or gave a
 // new secret.
-func signedInFrom(t *testing.T, res response) signedIn {
+func signedInFrom(t testing.TB, res response) signedIn {
 	t.Helper()
 	if res.status != http.StatusOK {
 		t.Fatalf("%d %s", res.status, res.body)
@@ -104,7 +104,7 @@ func signedInFrom(t *testing.T, res response) signedIn {
 }
 
 // signIn signs in to h with email and testPassword.
-func signIn(t *testing.T, h http.Handler, email string) signedIn {
+func signIn(t testing.TB, h http.Handler, email string) signedIn {
 	t.Helper()
 	return signedInFrom(t, send(h, http.MethodPost, loginPath, credentials(t, email, testPassword), "", nil))
 }
