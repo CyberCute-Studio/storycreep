@@ -419,6 +419,102 @@ func TestRenameUndoKeepsLaterWork(t *testing.T) {
 		})
 }
 
+// TestRenameUndoOfCapture checks that the undo of a rename gives back as it
+// was an expression that the rename left as it is but made name what it did
+// not, a name of it that named nothing: one of the key that a variable or a
+// component is renamed to, and one of a component whose key the variable
+// renamed away from it had, which shadowed it. The undo leaves each naming
+// nothing again, rather than rewrite it as one written since, and its own
+// undo makes it name what the rename made it name again.
+//
+// Verifies: FR-VAR-03/AC1
+func TestRenameUndoOfCapture(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	pos := map[string]int{"x": 0, "y": 0}
+	loyal, ela, shadow := newNodeID(), newNodeID(), newVariableID()
+	w.apply(t, http.StatusOK,
+		cmd("node.create", map[string]any{"id": loyal, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "loyalty += 1"}),
+		cmd("node.create", map[string]any{"id": ela, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "ela.trust += 1"}))
+	// roundTrip applies the command, its undo, and the undo's undo, and fails
+	// the test unless the undo gives back the expressions as they were before
+	// the command, and its undo as the command left them, of which the one of
+	// the field of the owner, which named nothing, names something.
+	roundTrip := func(what string, c wireCommand, captured string) {
+		t.Helper()
+		before := expressionsOf(t, w.admin, w.project)
+		done := resultFrom(t, w.apply(t, http.StatusOK, c))
+		after := expressionsOf(t, w.admin, w.project)
+		if before[captured].Valid || !after[captured].Valid || after[captured].Source != before[captured].Source {
+			t.Fatalf("%s, the %s is %+v, and was %+v: want it left as it is, and made to compile", what, captured,
+				after[captured], before[captured])
+		}
+		undone := resultFrom(t, w.apply(t, http.StatusOK, undoCommands(done.Undo)...))
+		if got := expressionsOf(t, w.admin, w.project); !reflect.DeepEqual(got, before) {
+			t.Errorf("once %s is undone, the expressions are %v, want %v", what, got, before)
+		}
+		w.apply(t, http.StatusOK, undoCommands(undone.Undo)...)
+		if got := expressionsOf(t, w.admin, w.project); !reflect.DeepEqual(got, after) {
+			t.Errorf("once %s is redone, the expressions are %v, want %v", what, got, after)
+		}
+	}
+	roundTrip("rep's rename to loyalty", cmd("variable.rename", map[string]any{"id": w.rep, "key": "loyalty"}),
+		"on_enter of "+loyal)
+	roundTrip("elara's change of key to ela", cmd("component.set_key", map[string]any{"id": w.elara, "key": "ela"}),
+		"on_enter of "+ela)
+	// A global variable of elara's key shadows elara, whose attribute onB2's
+	// on-exit script names, until the variable is renamed away.
+	w.apply(t, http.StatusOK, cmd("variable.create", map[string]any{"id": shadow, "key": "ela", "type": "int",
+		"scope": "global"}))
+	roundTrip("the shadow's rename away from elara's key", cmd("variable.rename", map[string]any{"id": shadow,
+		"key": "umbra"}), "on_enter of "+ela)
+}
+
+// TestRenamePreviewTooLong checks that the preview of a rename marks each
+// site whose source the rename would make longer than 16,384 characters,
+// which the rename itself is then refused for, before it writes anything,
+// and no other.
+//
+// Verifies: FR-VAR-03/AC1
+func TestRenamePreviewTooLong(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	long := newNodeID()
+	head := "flag = rep >= 3 // "
+	source := head + strings.Repeat("a", expression.MaxSourceLength-len(head))
+	w.apply(t, http.StatusOK, cmd("node.create", map[string]any{"id": long, "board_id": w.a, "type": "element",
+		"position": map[string]int{"x": 0, "y": 0}, "on_enter": source}))
+	original := expressionsOf(t, w.admin, w.project)
+	tooLong := func(key string) []string {
+		t.Helper()
+		url := renamePreviewPath(variablePath(w.project, w.rep), key, "renamed") + "&limit=200"
+		res := call(w.s.main, http.MethodGet, url, nil, w.owner.header(false))
+		var page api.Page[expression.RenameSite]
+		if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil || page.NextCursor != nil {
+			t.Fatalf("GET %s: %d %s", url, res.status, res.body)
+		}
+		var out []string
+		for _, s := range page.Items {
+			if s.TooLong {
+				out = append(out, s.NodeID)
+			}
+		}
+		return out
+	}
+	if got := tooLong("reputation"); !slices.Equal(got, []string{long}) {
+		t.Errorf("the rename of rep to reputation marks %v too long, want %v", got, []string{long})
+	}
+	wantCode(t, "a rename that makes a source too long", w.apply(t, http.StatusUnprocessableEntity,
+		cmd("variable.rename", map[string]any{"id": w.rep, "key": "reputation"})), http.StatusUnprocessableEntity,
+		api.CodeValidationFailed)
+	wantSources(t, "once the rename is refused", expressionsOf(t, w.admin, w.project), original, nil)
+	if got := tooLong("rex"); len(got) != 0 {
+		t.Errorf("the rename of rep to rex marks %v too long, want none", got)
+	}
+}
+
 // TestRenamePreview checks the previews of a variable's rename and of a
 // component's change of key: each lists the expressions that the command
 // would rewrite, those of the names of what it renames apart from those that

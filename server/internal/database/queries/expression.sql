@@ -286,10 +286,14 @@ RETURNING id, rev;
 -- null. Each comes with what it is compiled from, its owner and field, the
 -- node of its site, as a usage lists it, and whether its board is in the
 -- trash, and whether its owner is outside the trash, as a usage list shows it
--- (live), in the order of their boards, their sites' nodes, and their IDs.
--- The names are read by an index of each, so that the read takes as long as
--- what it returns, and the sources that the batch has yet to compile are
--- matched to the keys before anything compiles them.
+-- (live), in the order of their boards, their sites' nodes, and their IDs,
+-- after the key after_board, after_node, after_id, which is all zero UUIDs
+-- to read from the first, as no expression's is, and at most max_rows of
+-- them, or every one if it is null, so that a page of a rename's preview
+-- reads the sources of its own expressions alone. The names are read by an
+-- index of each, so that the read takes as long as what it returns, and the
+-- sources that the batch has yet to compile are matched to the keys before
+-- anything compiles them.
 WITH found AS (
     SELECT id FROM expression
     WHERE workspace_id = @workspace_id AND project_id = @project_id AND ast IS NULL AND error IS NULL
@@ -319,8 +323,11 @@ LEFT JOIN live_connection lc ON lc.workspace_id = e.workspace_id AND lc.project_
     AND lc.id = e.connection_id
 LEFT JOIN live_branch_output lo ON lo.workspace_id = e.workspace_id AND lo.project_id = e.project_id
     AND lo.id = e.branch_output_id
-WHERE sqlc.narg(board_id)::uuid IS NULL OR e.board_id = sqlc.narg(board_id)::uuid
-ORDER BY e.board_id, site_node_id, e.id;
+WHERE (sqlc.narg(board_id)::uuid IS NULL OR e.board_id = sqlc.narg(board_id)::uuid)
+    AND (e.board_id, coalesce(e.node_id, c.from_node_id, o.node_id), e.id)
+        > (@after_board::uuid, @after_node::uuid, @after_id::uuid)
+ORDER BY e.board_id, site_node_id, e.id
+LIMIT sqlc.narg(max_rows)::bigint;
 
 -- name: SetExpressionSources :many
 -- SetExpressionSources sets the source of each of the project's expressions

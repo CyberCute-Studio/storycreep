@@ -114,8 +114,10 @@ func GuardDeletion(ctx context.Context, tx *commands.Tx, s Subject, force bool) 
 // that use the subject s as InUse says.
 func expressionsUsing(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, s Subject) (
 	[]dependency.Found, error) {
+	zero := keyUUID(ids.UUID{})
 	rows, err := q.NamingExpressions(ctx, queries.NamingExpressionsParams{WorkspaceID: ws, ProjectID: project,
-		BoardID: nullUUID(s.Board), Refs: []pgtype.UUID{nullUUID(s.ID)}, Keys: []string{s.Key}, Ids: list(nil)})
+		BoardID: nullUUID(s.Board), AfterBoard: zero, AfterNode: zero, AfterID: zero,
+		Refs: []pgtype.UUID{nullUUID(s.ID)}, Keys: []string{s.Key}, Ids: list(nil)})
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions that may use the %s: %w", s.Kind, err)
 	}

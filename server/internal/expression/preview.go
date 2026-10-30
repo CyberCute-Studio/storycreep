@@ -15,7 +15,8 @@ import (
 // preview of the rename lists it (FR-VAR-03): its site, as a usage of
 // package dependency names it, by which a client opens it, whether it is in
 // the project's trash, which the rename rewrites too, its source, the source
-// rewritten, and the names that the rename rewrites of the list's kind.
+// rewritten, whether that is too long, which refuses the rename (planWrites),
+// and the names that the rename rewrites of the list's kind.
 type RenameSite struct {
 	Site           string        `json:"site" enum:"node_on_enter,node_on_exit,connection_condition,connection_on_traverse,branch_output_condition" doc:"What the site is: a node's on-enter or on-exit script, a connection's condition or on-traverse script, or a branch output's condition"`
 	BoardID        string        `json:"board_id" doc:"The ID of the site's board"`
@@ -27,6 +28,7 @@ type RenameSite struct {
 	InTrash        bool          `json:"in_trash" doc:"Whether the site is in the project's trash, with its owner, its node, or its board, which the rename rewrites all the same, so that restoring it brings back what names what it named"`
 	Source         string        `json:"source" doc:"The expression's source as it is"`
 	Rewritten      string        `json:"rewritten" doc:"The expression's source as the rename rewrites it, with every name that it rewrites, of either list"`
+	TooLong        bool          `json:"too_long" doc:"Whether the source rewritten has more than 16384 characters, the most that a source has: the rename is then answered with 422 validation_failed at its key, and writes nothing, until the expression is shortened or a shorter key is chosen, so that a rename of whose sites, of either list, one is too long does not apply"`
 	Names          []RenamedName `json:"names" doc:"The names that the rename rewrites of the list's kind, in the order of the source"`
 	key            PreviewKey
 }
@@ -49,15 +51,21 @@ type PreviewKey struct {
 // Key returns where s is in its list.
 func (s RenameSite) Key() PreviewKey { return s.key }
 
+// previewChunk is the fewest expressions that a page of a rename's preview
+// reads at a time (planRename), so that a page of few sites, of a list that
+// few expressions are in, reads in few round trips.
+const previewChunk = 100
+
 // Preview returns at most limit of the expressions of the project, of the
 // workspace ws, in its trash or not, that the rename r rewrites, read in q's
 // transaction (planRename): those that it rewrites a name of the renamed
 // entity of, or, if qualified is set, those that it rewrites a name of
 // another entity of, which it qualifies, each with those names, in the order
 // of their keys (PreviewKey), after after, or from the first if after is zero.
-// It rewrites none of the expressions before after, nor any once it has
-// found limit, so that a page takes as long as the expressions up to its
-// end. The caller checks r's new key first, as a rename does.
+// It reads none of the expressions up to after, nor any once it has found
+// limit, but for the rest of the chunk that it read the last of them in, so
+// that a page takes as long as the expressions from its start to its end.
+// The caller checks r's new key first, as a rename does.
 func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, qualified bool,
 	after PreviewKey, limit int) ([]RenameSite, error) {
 	out := []RenameSite{}
@@ -65,7 +73,7 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		return out, nil
 	}
 	var boards, nodes []pgtype.UUID
-	err := planRename(ctx, q, ws, project, r, after, func(rw siteRewrite) bool {
+	err := planRename(ctx, q, ws, project, r, after, max(limit, previewChunk), func(rw siteRewrite) bool {
 		var names []RenamedName
 		for _, e := range rw.Edits {
 			if e.Qualified == qualified {
@@ -79,7 +87,7 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		key := PreviewKey{Board: rw.Owner.Board.Bytes, Node: rw.Node, Expression: rw.Expression}
 		site := RenameSite{Site: siteOf(rw.Owner.Kind, rw.Field), BoardID: ids.Encode(ids.Board, key.Board),
 			NodeID: ids.Encode(ids.Node, key.Node), InTrash: !rw.Live, Source: rw.Source, Rewritten: rw.Rewritten,
-			Names: names, key: key}
+			TooLong: rw.TooLong, Names: names, key: key}
 		switch rw.Owner.Kind {
 		case ids.Connection:
 			site.ConnectionID = ids.Encode(ids.Connection, rw.Owner.ID.Bytes)

@@ -724,16 +724,16 @@ const namingExpressions = `-- name: NamingExpressions :many
 WITH found AS (
     SELECT id FROM expression
     WHERE workspace_id = $1 AND project_id = $2 AND ast IS NULL AND error IS NULL
-        AND EXISTS (SELECT 1 FROM unnest($4::text[]) AS k (needle) WHERE strpos(source, k.needle) > 0)
+        AND EXISTS (SELECT 1 FROM unnest($8::text[]) AS k (needle) WHERE strpos(source, k.needle) > 0)
     UNION
     SELECT id FROM expression
-    WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($5::uuid[])
+    WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($9::uuid[])
     UNION
     SELECT expression_id FROM expression_name
-    WHERE workspace_id = $1 AND project_id = $2 AND ref = ANY($6::uuid[])
+    WHERE workspace_id = $1 AND project_id = $2 AND ref = ANY($10::uuid[])
     UNION
     SELECT expression_id FROM expression_name
-    WHERE workspace_id = $1 AND project_id = $2 AND key = ANY($4::text[])
+    WHERE workspace_id = $1 AND project_id = $2 AND key = ANY($8::text[])
 )
 SELECT e.id, e.board_id, e.field, e.context, e.source, e.node_id, e.connection_id, e.branch_output_id,
     coalesce(e.node_id, c.from_node_id, o.node_id)::uuid AS site_node_id,
@@ -750,14 +750,21 @@ LEFT JOIN live_connection lc ON lc.workspace_id = e.workspace_id AND lc.project_
     AND lc.id = e.connection_id
 LEFT JOIN live_branch_output lo ON lo.workspace_id = e.workspace_id AND lo.project_id = e.project_id
     AND lo.id = e.branch_output_id
-WHERE $3::uuid IS NULL OR e.board_id = $3::uuid
+WHERE ($3::uuid IS NULL OR e.board_id = $3::uuid)
+    AND (e.board_id, coalesce(e.node_id, c.from_node_id, o.node_id), e.id)
+        > ($4::uuid, $5::uuid, $6::uuid)
 ORDER BY e.board_id, site_node_id, e.id
+LIMIT $7::bigint
 `
 
 type NamingExpressionsParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	BoardID     pgtype.UUID
+	AfterBoard  pgtype.UUID
+	AfterNode   pgtype.UUID
+	AfterID     pgtype.UUID
+	MaxRows     pgtype.Int8
 	Keys        []string
 	Ids         []pgtype.UUID
 	Refs        []pgtype.UUID
@@ -787,15 +794,23 @@ type NamingExpressionsRow struct {
 // null. Each comes with what it is compiled from, its owner and field, the
 // node of its site, as a usage lists it, and whether its board is in the
 // trash, and whether its owner is outside the trash, as a usage list shows it
-// (live), in the order of their boards, their sites' nodes, and their IDs.
-// The names are read by an index of each, so that the read takes as long as
-// what it returns, and the sources that the batch has yet to compile are
-// matched to the keys before anything compiles them.
+// (live), in the order of their boards, their sites' nodes, and their IDs,
+// after the key after_board, after_node, after_id, which is all zero UUIDs
+// to read from the first, as no expression's is, and at most max_rows of
+// them, or every one if it is null, so that a page of a rename's preview
+// reads the sources of its own expressions alone. The names are read by an
+// index of each, so that the read takes as long as what it returns, and the
+// sources that the batch has yet to compile are matched to the keys before
+// anything compiles them.
 func (q *Queries) NamingExpressions(ctx context.Context, arg NamingExpressionsParams) ([]NamingExpressionsRow, error) {
 	rows, err := q.db.Query(ctx, namingExpressions,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.BoardID,
+		arg.AfterBoard,
+		arg.AfterNode,
+		arg.AfterID,
+		arg.MaxRows,
 		arg.Keys,
 		arg.Ids,
 		arg.Refs,

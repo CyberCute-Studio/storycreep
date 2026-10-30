@@ -57,7 +57,17 @@ var textNeutral = []commands.Type{
 // and mentions name now, which a text that changed holds, and one that did
 // not holds as it did.
 func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
-	nodes, connections, components := changedTexts(changed)
+	var nodes, connections, components []pgtype.UUID
+	for _, c := range changedTexts(changed) {
+		switch c.Kind {
+		case ids.Node:
+			nodes = append(nodes, nullUUID(c.ID))
+		case ids.Connection:
+			connections = append(connections, nullUUID(c.ID))
+		case ids.Component:
+			components = append(components, nullUUID(c.ID))
+		}
+	}
 	if len(nodes) == 0 && len(connections) == 0 && len(components) == 0 {
 		return nil
 	}
@@ -103,25 +113,21 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 }
 
 // changedTexts returns the nodes, the connections, and the components of
-// changed whose texts the batch's commands may have changed, as a derivation
-// reads them (commands.Derivation.Derive, commands.Tx.Changes): each that a
-// command of a type that is not textNeutral changed, whose rows of the index
-// derive replaces, and which a command's Apply that reads what the texts name
-// before the batch is indexed reads anew (TextsUsing), so that both read the
-// same texts anew.
-func changedTexts(changed []commands.Change) (nodes, connections, components []pgtype.UUID) {
+// changed whose texts the batch's commands may have changed, with their
+// latest revisions, as a derivation reads them (commands.Derivation.Derive,
+// commands.Tx.Changes): each that a command of a type that is not
+// textNeutral changed, whose rows of the index derive replaces, and which a
+// command's Apply that reads what the texts name before the batch is indexed
+// reads anew (TextsUsing), so that both read the same texts anew.
+func changedTexts(changed []commands.Change) []commands.Revision {
+	var out []commands.Revision
 	for _, c := range changed {
-		if !slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(textNeutral, t) }) {
+		switch {
+		case c.Kind != ids.Node && c.Kind != ids.Connection && c.Kind != ids.Component,
+			!slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(textNeutral, t) }):
 			continue
 		}
-		switch c.Kind {
-		case ids.Node:
-			nodes = append(nodes, nullUUID(c.ID))
-		case ids.Connection:
-			connections = append(connections, nullUUID(c.ID))
-		case ids.Component:
-			components = append(components, nullUUID(c.ID))
-		}
+		out = append(out, c.Revision)
 	}
-	return nodes, connections, components
+	return out
 }

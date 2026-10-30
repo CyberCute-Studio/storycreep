@@ -113,6 +113,9 @@ type Tx struct {
 	// its Apply (Carry), which the pipeline clears before each command's
 	// inverse and once its Apply returns.
 	carried any
+	// kept is what packages keep of the project for the rest of the batch
+	// (Keep), by their keys.
+	kept map[any]any
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -331,6 +334,26 @@ func (t *Tx) Carry(v any) {
 // Apply (Carry), or nil.
 func (t *Tx) Carried() any {
 	return t.carried
+}
+
+// Keep keeps v under key for the rest of the batch, for the inverses and the
+// Applies of the commands after the one that keeps it (Kept): what a package
+// read of the project that later commands would read again, as package
+// dependency keeps what each text that the batch has changed names, with the
+// revision that it read it at, so that it reads a text again only once a
+// command has changed it since (Changes). key is a value of a type of the
+// package's own, as a context's key is, so that no two packages' keys are
+// equal. What a batch keeps goes with it.
+func (t *Tx) Keep(key, v any) {
+	if t.kept == nil {
+		t.kept = map[any]any{}
+	}
+	t.kept[key] = v
+}
+
+// Kept returns what the batch keeps under key (Keep), or nil.
+func (t *Tx) Kept(key any) any {
+	return t.kept[key]
 }
 
 // Changes returns the entities that the batch has changed so far, with their

@@ -71,6 +71,24 @@ func encodeID(k ids.Kind, id ids.UUID) string {
 	return ids.Encode(k, id)
 }
 
+// textsKey is the key under which TextsUsing keeps what the texts that the
+// batch has changed name for the rest of the batch (commands.Tx.Keep), a map
+// of readText by the texts' owners.
+type textsKey struct{}
+
+// readText is what a text that the batch has changed names, as TextsUsing
+// read it: the revision that its owner had then, and its references.
+type readText struct {
+	rev  int64
+	refs []textRef
+}
+
+// textRef is a reference of a text (TextReferences), with what it names.
+type textRef struct {
+	row queries.TextReferencesRow
+	use Use
+}
+
 // TextsUsing returns the texts of the batch's project, of its nodes, its
 // connections, and its components outside its trash, that use the variable,
 // or the component, of the kind, ids.Variable or ids.Component, whose UUID is
@@ -78,13 +96,16 @@ func encodeID(k ids.Kind, id ids.UUID) string {
 // those whose rows of the index name it, and those whose texts the batch may
 // have changed so far (changedTexts, commands.Tx.Changes), which the index
 // holds as they were before the batch until its derivation indexes them
-// again, each read anew. A text reads the variable or the component's
-// attributes that its value references show, each once, and a component that
-// it mentions is a use of its own. A component's own description is no use
-// of it: it goes to the trash with the component, and leaves nothing broken
-// that names it, so that a component whose description mentions it, or shows
-// one of its attributes, is deleted as one whose description does not, by
-// the undo of its creation too.
+// again, each read anew, but once at each of its owner's revisions: what a
+// text that the batch has changed names is kept for the batch's later
+// commands (commands.Tx.Keep), so that 300 creations of variables after 2,000
+// of nodes read each node's text once, not 300 times. A text reads the
+// variable or the component's attributes that its value references show,
+// each once, and a component that it mentions is a use of its own. A
+// component's own description is no use of it: it goes to the trash with the
+// component, and leaves nothing broken that names it, so that a component
+// whose description mentions it, or shows one of its attributes, is deleted
+// as one whose description does not, by the undo of its creation too.
 func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.UUID) ([]Found, error) {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -97,54 +118,80 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the texts that name the %s: %w", kind, err)
 	}
-	nodes, connections, components := changedTexts(tx.Changes())
-	seen := map[pgtype.UUID]bool{}
-	for _, l := range [][]pgtype.UUID{nodes, connections, components} {
-		for _, id := range l {
-			seen[id] = true
+	read, _ := tx.Kept(textsKey{}).(map[commands.Ref]readText)
+	if read == nil {
+		read = map[commands.Ref]readText{}
+		tx.Keep(textsKey{}, read)
+	}
+	// The texts to read: those that the batch has changed since they were
+	// last read, and those of the index that it has not changed.
+	var refs []textRef
+	var nodes, connections, components []pgtype.UUID
+	changed, stale := map[pgtype.UUID]bool{}, map[commands.Ref]bool{}
+	add := func(kind ids.Kind, id pgtype.UUID) {
+		switch kind {
+		case ids.Node:
+			nodes = append(nodes, id)
+		case ids.Connection:
+			connections = append(connections, id)
+		case ids.Component:
+			components = append(components, id)
 		}
 	}
-	add := func(l *[]pgtype.UUID, id pgtype.UUID) {
-		if id.Valid && !seen[id] {
-			seen[id] = true
-			*l = append(*l, id)
-		}
-	}
-	for _, r := range referrers {
-		add(&nodes, r.NodeID)
-		add(&connections, r.ConnectionID)
-		add(&components, r.ComponentID)
-	}
-	if kind == ids.Component {
-		components = slices.DeleteFunc(components, func(id pgtype.UUID) bool { return id.Bytes == target })
-	}
-	if len(nodes)+len(connections)+len(components) == 0 {
-		return nil, nil
-	}
-	refs, err := q.TextReferences(ctx, queries.TextReferencesParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: list(nodes), ConnectionIds: list(connections), ComponentIds: list(components)})
-	if err != nil {
-		return nil, fmt.Errorf("dependency: read what the texts name: %w", err)
-	}
-	// The references to the target, with their uses, and the owners of their
-	// texts, of which only those outside the trash are sites.
-	type hit struct {
-		row queries.TextReferencesRow
-		use Use
-	}
-	var hits []hit
-	var hitNodes, hitConnections, hitComponents []pgtype.UUID
-	owned := map[pgtype.UUID]bool{}
-	for _, r := range refs {
-		u, err := inlineUse(r.Inline)
-		if err != nil {
-			return nil, err
-		}
-		if u.Target != target || kind == ids.Variable && u.Kind != Variable ||
-			kind == ids.Component && u.Kind == Variable {
+	for _, c := range changedTexts(tx.Changes()) {
+		changed[nullUUID(c.ID)] = true
+		if r, ok := read[c.Ref]; ok && r.rev == c.Rev {
+			refs = append(refs, r.refs...)
 			continue
 		}
-		hits = append(hits, hit{row: r, use: u})
+		stale[c.Ref] = true
+		read[c.Ref] = readText{rev: c.Rev}
+		add(c.Kind, nullUUID(c.ID))
+	}
+	for _, r := range referrers {
+		for _, o := range []struct {
+			kind ids.Kind
+			id   pgtype.UUID
+		}{{ids.Node, r.NodeID}, {ids.Connection, r.ConnectionID}, {ids.Component, r.ComponentID}} {
+			if o.id.Valid && !changed[o.id] {
+				changed[o.id] = true
+				add(o.kind, o.id)
+			}
+		}
+	}
+	if len(nodes)+len(connections)+len(components) > 0 {
+		rows, err := q.TextReferences(ctx, queries.TextReferencesParams{WorkspaceID: ws, ProjectID: project,
+			NodeIds: list(nodes), ConnectionIds: list(connections), ComponentIds: list(components)})
+		if err != nil {
+			return nil, fmt.Errorf("dependency: read what the texts name: %w", err)
+		}
+		for _, r := range rows {
+			u, err := inlineUse(r.Inline)
+			if err != nil {
+				return nil, err
+			}
+			ref := textRef{row: r, use: u}
+			if owner := textOwner(r); stale[owner] {
+				t := read[owner]
+				t.refs = append(t.refs, ref)
+				read[owner] = t
+			}
+			refs = append(refs, ref)
+		}
+	}
+	// The references to the target, but those of a component's own
+	// description, and the owners of their texts, of which only those outside
+	// the trash are sites.
+	var hits []textRef
+	var hitNodes, hitConnections, hitComponents []pgtype.UUID
+	owned := map[pgtype.UUID]bool{}
+	for _, h := range refs {
+		r, u := h.row, h.use
+		if u.Target != target || kind == ids.Variable && u.Kind != Variable ||
+			kind == ids.Component && (u.Kind == Variable || r.ComponentID.Bytes == target) {
+			continue
+		}
+		hits = append(hits, h)
 		owner, l := r.NodeID, &hitNodes
 		switch {
 		case r.ConnectionID.Valid:
@@ -206,6 +253,18 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 		}
 	}
 	return out, nil
+}
+
+// textOwner returns the owner of the text of the reference r: a node, a
+// connection, or a component.
+func textOwner(r queries.TextReferencesRow) commands.Ref {
+	switch {
+	case r.ConnectionID.Valid:
+		return commands.Ref{Kind: ids.Connection, ID: r.ConnectionID.Bytes}
+	case r.ComponentID.Valid:
+		return commands.Ref{Kind: ids.Component, ID: r.ComponentID.Bytes}
+	}
+	return commands.Ref{Kind: ids.Node, ID: r.NodeID.Bytes}
 }
 
 // Speakers returns the nodes of the project, of the workspace ws, outside

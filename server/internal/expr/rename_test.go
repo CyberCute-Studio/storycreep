@@ -142,6 +142,53 @@ func TestRewrite(t *testing.T) {
 	}
 }
 
+// TestCaptures checks that a rename captures a source exactly when a name of
+// it that names nothing before the rename names something after it, which
+// Rewrite leaves as it is (PRD FR-VAR-03): the renamed entity, by its new
+// key, or a component whose key the renamed variable had, which shadowed it.
+func TestCaptures(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, id, key, board, source string
+		// back says that the rename is the one from key back to the
+		// entity's key in renameProjects.
+		back, want bool
+	}{
+		{name: "a bare key that named nothing", id: varRep, key: "loyalty", board: boardA, source: "loyalty > 1",
+			want: true},
+		{name: "global. of a key that named nothing", id: varRep, key: "loyalty", board: boardA,
+			source: "global.loyalty > 1", want: true},
+		{name: "a name of the renamed variable, which Rewrite rewrites", id: varRep, key: "loyalty", board: boardA,
+			source: "rep > 1"},
+		{name: "a key that names nothing after either", id: varRep, key: "loyalty", board: boardA,
+			source: "fame > 1"},
+		{name: "a board's own variable of the key, which a global's new key does not take", id: varRep,
+			key: "trust", board: boardB, source: "trust > 1"},
+		{name: "a component's attribute that named nothing", id: cmpElaraR, key: "ela", board: boardA,
+			source: "ela.trust > 1", want: true},
+		{name: "a component's attribute that a variable renamed away shadowed", id: varRep, key: "mira",
+			board: boardA, source: "mira.trust > 1", back: true, want: true},
+		{name: "a component's attribute that a variable renamed to its key shadows", id: varRep, key: "mira",
+			board: boardA, source: "mira.trust > 1"},
+		{name: "a source that does not parse", id: varRep, key: "loyalty", board: boardA, source: "loyalty >"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			before, after := renameProjects(t, c.id, c.key)
+			if c.back {
+				before, after = after, before
+			}
+			got, err := Captures(c.source, ContextCondition, before, after, c.board)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Errorf("Captures(%q) = %v, want %v", c.source, got, c.want)
+			}
+		})
+	}
+}
+
 // TestRewriteKeepsAST checks that the source that a rename rewrites compiles,
 // against the project after the rename, to the AST that the source compiled
 // to before it, but for the names that the AST writes for debugging (PRD

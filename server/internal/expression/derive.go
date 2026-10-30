@@ -83,6 +83,18 @@ var neutral = []commands.Type{
 	"component_type.create", "component_type.rename", "component_type.set_key", "component_type.set_icon",
 }
 
+// rewriting are the types of command that change a node only as they rewrite
+// the sources of its expressions (ApplyRename), which the derivation compiles
+// as it does every source that a command wrote, and leave as they are its
+// type and whether it is in the trash, all that a node reference reads: a
+// variable's rename and a component's change of key, which change what the
+// project's expressions can name all the same, by the entity that they
+// rename. derive passes over a change of a node that commands of these types
+// and of neutral ones alone made, so that a rename that rewrites 500 nodes'
+// scripts does not compile again every expression that names one of those
+// nodes. TestNeutral checks that each is a registered type.
+var rewriting = []commands.Type{"variable.rename", "component.set_key"}
+
 // derive compiles the expressions of the batch's project that changed leaves
 // to compile: those whose sources its commands wrote, which have neither an
 // AST nor an error yet; those whose sources name, by their IDs or by their
@@ -95,7 +107,8 @@ var neutral = []commands.Type{
 // definition, or a type, every one that does not compile but names
 // something, whose error, or the near matches that it suggests, may change
 // with any of them; but for a change that the commands of neutral types alone
-// made, which changes none of them. An expression of a board in the trash is
+// made, which changes none of them, or, of a node, those of neutral and of
+// rewriting types alone. An expression of a board in the trash is
 // compiled as it would be once the board is restored (projects), so that a
 // board's deletion and its restoration change none of the board's own
 // expressions, which they do not compile, nor the near matches of another
@@ -109,7 +122,9 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	done := map[commands.Ref]bool{}
 	for _, c := range changed {
 		done[c.Ref] = true
-		if slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(neutral, t) }) {
+		if slices.ContainsFunc(c.By, func(t commands.Type) bool {
+			return !slices.Contains(neutral, t) && (c.Kind != ids.Node || !slices.Contains(rewriting, t))
+		}) {
 			byKind[c.Kind] = append(byKind[c.Kind], nullUUID(c.ID))
 		}
 	}
@@ -232,13 +247,7 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		if !o.Shown {
 			continue
 		}
-		kind, id := ids.BranchOutput, o.BranchOutputID
-		switch {
-		case o.NodeID.Valid:
-			kind, id = ids.Node, o.NodeID
-		case o.ConnectionID.Valid:
-			kind, id = ids.Connection, o.ConnectionID
-		}
+		kind, id := ownerRef(o.NodeID, o.ConnectionID, o.BranchOutputID)
 		ref := commands.Ref{Kind: kind, ID: id.Bytes}
 		if !done[ref] {
 			done[ref] = true
@@ -512,17 +521,27 @@ func loadNames(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
 	if len(trashed) == 0 {
 		return n, nil
 	}
+	if n.trashedVariables, err = trashedVariables(ctx, q, ws, project, trashed); err != nil {
+		return names{}, err
+	}
+	return n, nil
+}
+
+// trashedVariables returns the variables of the project's boards in the
+// trash trashed that are there with them alone, by their boards' UUIDs.
+func trashedVariables(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, trashed []pgtype.UUID) (
+	map[pgtype.UUID][]expr.Variable, error) {
 	rows, err := q.TrashedBoardVariables(ctx, queries.TrashedBoardVariablesParams{WorkspaceID: ws,
 		ProjectID: project, BoardIds: trashed})
 	if err != nil {
-		return names{}, fmt.Errorf("expression: read the variables of the boards in the trash: %w", err)
+		return nil, fmt.Errorf("expression: read the variables of the boards in the trash: %w", err)
 	}
+	out := map[pgtype.UUID][]expr.Variable{}
 	for _, v := range rows {
-		n.trashedVariables[v.BoardID] = append(n.trashedVariables[v.BoardID], expr.Variable{
-			ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key, Type: v.Type,
-			Board: ids.Encode(ids.Board, v.BoardID.Bytes)})
+		out[v.BoardID] = append(out[v.BoardID], expr.Variable{ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key,
+			Type: v.Type, Board: ids.Encode(ids.Board, v.BoardID.Bytes)})
 	}
-	return n, nil
+	return out, nil
 }
 
 // build returns the projects of the names.

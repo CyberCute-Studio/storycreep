@@ -1,7 +1,6 @@
 package expression
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,8 +31,9 @@ type Rename struct {
 // (planRename), as its preview lists it (Preview): its UUID, its owner and
 // its field, the node of its site, as a usage lists it (package dependency),
 // whether the owner is outside the project's trash, as a usage list shows it,
-// its source and the source rewritten, and the edits of its names that make
-// one of the other (expr.Edit).
+// its source and the source rewritten, the edits of its names that make one
+// of the other (expr.Edit), and whether the source rewritten is longer than
+// MaxSourceLength, which refuses the rename (planWrites).
 type siteRewrite struct {
 	Expression        ids.UUID
 	Owner             Owner
@@ -42,81 +42,116 @@ type siteRewrite struct {
 	Live              bool
 	Source, Rewritten string
 	Edits             []expr.Edit
+	TooLong           bool
 }
 
-// renaming is what a rename sees of its project (newRenaming): the
-// expressions that it may rewrite, in the order of their boards, the nodes of
-// their sites, and their UUIDs, and what they can name before the rename and
-// after it.
+// renaming is what a rename sees of its project (newRenaming): what it reads
+// the expressions that it may rewrite by (read), the renamed entity's ID, and,
+// once read has found one, what they can name before the rename and after it,
+// of the boards in the trash of those that it has read among them.
 type renaming struct {
-	rows          []queries.NamingExpressionsRow
-	before, after projects
+	q             *queries.Queries
+	params        queries.NamingExpressionsParams
+	r             Rename
 	renamed       string
+	loaded        bool
+	before, after projects
 }
 
 // newRenaming returns what the rename r sees of the project, of the workspace
-// ws, read in q's transaction, or nil for a rename that rewrites nothing, as
-// one to the key that the entity has, or one that no expression can name. The
-// expressions that it reads are those that the batch has yet to compile whose
-// sources hold r's key, or, for a variable's, its new key, those whose names
-// (expression_name) hold r's UUID or one of those keys, as only an expression
-// whose source names one of them can be rewritten, and those among listed,
-// whose sources the undo of a rename gives back (planWrites). Each is
-// compiled where it is, at its owner's board, one of a board in the trash
-// with the board's own variables (projects). It returns an error if r's
-// entity is not one of the project's, outside its trash, with r's key, or if
-// another of its scope has the new key, which the caller checks first.
-func newRenaming(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, listed []pgtype.UUID) (
-	*renaming, error) {
+// ws, read in q's transaction (read), or nil for a rename to the key that the
+// entity has, which rewrites nothing. The expressions that it reads are
+// those that the batch has yet to compile whose sources hold r's key or its
+// new key, those whose names (expression_name) hold r's UUID or one of those
+// keys, as only an expression whose source names one of them can be
+// rewritten, or be made to name the entity (expr.Captures), and those among
+// listed, whose sources the undo of a rename gives back (planWrites).
+func newRenaming(q *queries.Queries, ws, project pgtype.UUID, r Rename, listed []pgtype.UUID) *renaming {
 	if r.From == r.To {
-		return nil, nil
+		return nil
 	}
-	keys := []string{r.From}
-	if r.Kind == ids.Variable {
-		keys = append(keys, r.To)
+	return &renaming{q: q, r: r, renamed: ids.Encode(r.Kind, r.ID), params: queries.NamingExpressionsParams{
+		WorkspaceID: ws, ProjectID: project, BoardID: nullUUID(r.Board), Refs: []pgtype.UUID{nullUUID(r.ID)},
+		Keys: []string{r.From, r.To}, Ids: list(listed)}}
+}
+
+// read returns the expressions that the rename may rewrite, in the order of
+// their keys (PreviewKey), which Postgres compares by their bytes, after the
+// key after, the zero key to read from the first, and at most limit of
+// them, or every one if limit is 0, so that a preview's page reads its own
+// alone. Each is compiled where it is, at its owner's board, one of a board
+// in the trash with the board's own variables (projects), which read reads
+// once it finds one. It returns an error if the rename's entity is not one of
+// the project's, outside its trash, with its key, which the caller checks
+// first.
+func (g *renaming) read(ctx context.Context, after PreviewKey, limit int) ([]queries.NamingExpressionsRow, error) {
+	p := g.params
+	p.AfterBoard, p.AfterNode, p.AfterID = keyUUID(after.Board), keyUUID(after.Node), keyUUID(after.Expression)
+	if limit > 0 {
+		p.MaxRows = pgtype.Int8{Int64: int64(limit), Valid: true}
 	}
-	rows, err := q.NamingExpressions(ctx, queries.NamingExpressionsParams{WorkspaceID: ws, ProjectID: project,
-		BoardID: nullUUID(r.Board), Refs: []pgtype.UUID{nullUUID(r.ID)}, Keys: keys, Ids: list(listed)})
+	rows, err := g.q.NamingExpressions(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions that may name what a rename renames: %w", err)
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	// The rows come in the order of their keys, which Postgres compares by
-	// their bytes, as compareKeys does; they are sorted all the same, so that
-	// a preview may stop at the end of its page.
-	slices.SortFunc(rows, func(a, b queries.NamingExpressionsRow) int {
-		return compareKeys(rowKey(a), rowKey(b))
-	})
+	if !g.loaded {
+		before, err := loadNames(ctx, g.q, p.WorkspaceID, p.ProjectID, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		after, err := before.renamed(g.r)
+		if err != nil {
+			return nil, err
+		}
+		if g.before, err = before.build(); err != nil {
+			return nil, err
+		}
+		if g.after, err = after.build(); err != nil {
+			return nil, err
+		}
+		g.loaded = true
+	}
 	var trashed []pgtype.UUID
 	for _, row := range rows {
-		if row.BoardDeleted && !slices.Contains(trashed, row.BoardID) {
+		if _, ok := g.before.trashed[row.BoardID]; row.BoardDeleted && !ok && !slices.Contains(trashed, row.BoardID) {
 			trashed = append(trashed, row.BoardID)
 		}
 	}
-	before, err := loadNames(ctx, q, ws, project, nil, trashed)
+	if len(trashed) == 0 {
+		return rows, nil
+	}
+	// A board in the trash's own variables are the same before the rename and
+	// after it, which renames an entity outside the trash.
+	variables, err := trashedVariables(ctx, g.q, p.WorkspaceID, p.ProjectID, trashed)
 	if err != nil {
 		return nil, err
 	}
-	after, err := before.renamed(r)
-	if err != nil {
-		return nil, err
+	for _, b := range trashed {
+		board := ids.Encode(ids.Board, b.Bytes)
+		if g.before.trashed[b], err = g.before.live.With(board, variables[b], nil); err == nil {
+			g.after.trashed[b], err = g.after.live.With(board, variables[b], nil)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("expression: what the expressions of the board %s in the trash can name: %w",
+				ids.UUID(b.Bytes), err)
+		}
 	}
-	g := &renaming{rows: rows, renamed: ids.Encode(r.Kind, r.ID)}
-	if g.before, err = before.build(); err != nil {
-		return nil, err
-	}
-	if g.after, err = after.build(); err != nil {
-		return nil, err
-	}
-	return g, nil
+	return rows, nil
 }
 
 // rowKey returns where the expression row is in the lists of a rename's
 // preview (PreviewKey).
 func rowKey(row queries.NamingExpressionsRow) PreviewKey {
 	return PreviewKey{Board: row.BoardID.Bytes, Node: row.SiteNodeID.Bytes, Expression: row.ID.Bytes}
+}
+
+// keyUUID returns id as a uuid column that is never null, the zero UUID's
+// too, as a key of a list of a rename's preview holds it (NamingExpressions).
+func keyUUID(id ids.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 // rewrite returns the source of the expression row as the rename rewrites it,
@@ -151,37 +186,59 @@ func (g *renaming) restores(row queries.NamingExpressionsRow, source string) (bo
 	return forward == row.Source, nil
 }
 
+// captures reports whether the rename makes the source of the expression row,
+// which it leaves as it is, name something where a name of it named nothing
+// (expr.Captures): the renamed entity, or one whose name its old key
+// shadowed.
+func (g *renaming) captures(row queries.NamingExpressionsRow) (bool, error) {
+	captured, err := expr.Captures(row.Source, expr.Context(row.Context), g.before.of(row.BoardID),
+		g.after.of(row.BoardID), ids.Encode(ids.Board, row.BoardID.Bytes))
+	if err != nil {
+		return false, fmt.Errorf("expression: read what the rename makes the expression %s name: %w",
+			ids.UUID(row.ID.Bytes), err)
+	}
+	return captured, nil
+}
+
 // planRename calls visit with each expression of the project, of the
 // workspace ws, in its trash or not, that the rename r rewrites, read in q's
 // transaction, with its source as the rename rewrites it (renaming.rewrite),
 // in the order of their boards, the nodes of their sites, and their UUIDs
-// (PreviewKey), after the key after, until visit returns false: it rewrites
-// none of those up to after, nor any once visit has returned false. A rename
-// to the key that the entity has rewrites nothing. It returns an error as
-// newRenaming does.
+// (PreviewKey), after the key after, until visit returns false. It reads the
+// expressions chunk at a time, from after on, or all at once if chunk is 0,
+// and none once visit has returned false, so that a preview's page reads
+// those up to its end alone. A rename to the key that the entity has
+// rewrites nothing. It returns an error as renaming.read does.
 func planRename(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, after PreviewKey,
-	visit func(siteRewrite) bool) error {
-	g, err := newRenaming(ctx, q, ws, project, r, nil)
-	if err != nil || g == nil {
-		return err
+	chunk int, visit func(siteRewrite) bool) error {
+	g := newRenaming(q, ws, project, r, nil)
+	if g == nil {
+		return nil
 	}
-	for _, row := range g.rows {
-		if compareKeys(rowKey(row), after) <= 0 {
-			continue
-		}
-		source, edits, err := g.rewrite(row)
+	for {
+		rows, err := g.read(ctx, after, chunk)
 		if err != nil {
 			return err
 		}
-		if len(edits) == 0 {
-			continue
+		for _, row := range rows {
+			source, edits, err := g.rewrite(row)
+			if err != nil {
+				return err
+			}
+			if len(edits) == 0 {
+				continue
+			}
+			if !visit(siteRewrite{Expression: row.ID.Bytes, Owner: namingOwner(row), Field: Field(row.Field),
+				Node: row.SiteNodeID.Bytes, Live: row.Live, Source: row.Source, Rewritten: source, Edits: edits,
+				TooLong: CheckSource(source) != ""}) {
+				return nil
+			}
 		}
-		if !visit(siteRewrite{Expression: row.ID.Bytes, Owner: namingOwner(row), Field: Field(row.Field),
-			Node: row.SiteNodeID.Bytes, Live: row.Live, Source: row.Source, Rewritten: source, Edits: edits}) {
+		if chunk <= 0 || len(rows) < chunk {
 			return nil
 		}
+		after = rowKey(rows[len(rows)-1])
 	}
-	return nil
 }
 
 // renamed returns the names n with the key of the entity that r renames
@@ -216,13 +273,8 @@ func (n names) renamed(r Rename) (names, error) {
 
 // namingOwner returns the owner of the expression row.
 func namingOwner(row queries.NamingExpressionsRow) Owner {
-	switch {
-	case row.NodeID.Valid:
-		return Owner{Kind: ids.Node, ID: row.NodeID, Board: row.BoardID}
-	case row.ConnectionID.Valid:
-		return Owner{Kind: ids.Connection, ID: row.ConnectionID, Board: row.BoardID}
-	}
-	return Owner{Kind: ids.BranchOutput, ID: row.BranchOutputID, Board: row.BoardID}
+	kind, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
+	return Owner{Kind: kind, ID: id, Board: row.BoardID}
 }
 
 // Source is the source of an expression of a project, by its owner and its
@@ -235,9 +287,10 @@ type Source struct {
 	Source string `json:"source" maxLength:"16384" doc:"The expression's source, of at most 16384 characters"`
 }
 
-// sourceWrite is a source that a rename writes (planWrites): the
+// sourceWrite is an expression whose source a rename writes, or whose source
+// its undo gives back though the rename leaves it as it is (planWrites): the
 // expression's UUID, its owner and its field, its source as it is, and the
-// source that the rename gives it.
+// source that the rename gives it, the same for one that it leaves.
 type sourceWrite struct {
 	expression ids.UUID
 	owner      Owner
@@ -256,21 +309,35 @@ type carriedWrites struct {
 
 // planWrites returns the sources that the rename r writes, read in q's
 // transaction of the project of the workspace ws, with the sources that its
-// payload gives, the field sources, or nil for none, a rename's own:
+// payload gives, the field sources, or nil for none, a rename's own, and
+// those that its undo gives back though it leaves them as they are. These
+// are every case of an expression that the rename may rewrite (newRenaming):
 //
-//   - of each owner's field that sources lists, which CheckSources checked,
-//     the source that it lists, if the field's expression is one that the
-//     rename undone would have rewritten to the source that it has now
-//     (renaming.restores), as the undo of a rename gives back each source
-//     that the rename rewrote exactly as it was;
-//   - of each other expression that the rename rewrites (renaming.rewrite),
+//   - of an owner's field that sources lists, which CheckSources checked, and
+//     whose expression is one that the rename undone would have rewritten to
+//     the source that it has now (renaming.restores), the source that it
+//     lists, as the undo of a rename gives back each source that the rename
+//     rewrote exactly as it was. A listed source that is the expression's
+//     source as it is keeps it as it is, which leaves it naming nothing
+//     where it names the renamed entity now, as the undo of a rename leaves
+//     an expression that the rename made name the entity without rewriting
+//     it (the last case): a source that restores holds this way names no
+//     other entity once the rename applies, so a made-up one can make an
+//     expression name nothing, as a command that sets its source can, but
+//     never name what it did not;
+//   - of every other expression that the rename rewrites (renaming.rewrite),
 //     the source rewritten, as of one that names the renamed entity by its
 //     new key, written since the rename that its undo undoes, and of one that
 //     sources lists whose source has changed since that rename, as when its
 //     owner was in the trash and has been restored and edited since, which
 //     the undo leaves naming what it names, rather than write back over it;
-//   - and of an owner's field that sources lists but that has no expression
-//     now, nothing, as of one whose owner the trash has purged since.
+//   - of an owner's field that sources lists but that has no expression now,
+//     nothing, as of one whose owner the trash has purged since;
+//   - and of every other expression that the rename leaves as it is, but
+//     makes name the renamed entity, where a name of it named nothing
+//     (renaming.captures), the source as it is, which the rename does not
+//     write, but its undo lists, so that the undo leaves it naming nothing
+//     again, rather than rewrite it as one written since.
 //
 // It refuses the batch, at the payload's field at, the field of the new key,
 // if a source that the rename rewrites would have more than MaxSourceLength
@@ -291,12 +358,16 @@ func planWrites(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 			}
 		}
 	}
-	g, err := newRenaming(ctx, q, ws, project, r, listedIDs)
-	if err != nil || g == nil {
+	g := newRenaming(q, ws, project, r, listedIDs)
+	if g == nil {
+		return nil, nil
+	}
+	rows, err := g.read(ctx, PreviewKey{}, 0)
+	if err != nil {
 		return nil, err
 	}
 	var out []sourceWrite
-	for _, row := range g.rows {
+	for _, row := range rows {
 		to, ok := "", false
 		if source, isListed := listed[row.ID.Bytes]; isListed {
 			if ok, err = g.restores(row, source); err != nil {
@@ -311,16 +382,29 @@ func planWrites(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 			}
 			ok = len(edits) > 0
 			if ok && CheckSource(to) != "" {
+				o := namingOwner(row)
 				return nil, commands.Refuse(at, fmt.Sprintf("would make the %s of %s, which names what it renames, "+
 					"longer than %d characters: shorten that expression, or choose a shorter key", row.Field,
-					ids.Encode(namingOwner(row).Kind, namingOwner(row).ID.Bytes), MaxSourceLength), nil)
+					ids.Encode(o.Kind, o.ID.Bytes), MaxSourceLength), nil)
 			}
 		}
-		if !ok || to == row.Source {
-			continue
+		w := sourceWrite{expression: row.ID.Bytes, owner: namingOwner(row), field: Field(row.Field),
+			source: row.Source, to: to}
+		switch {
+		case ok && to != row.Source:
+			out = append(out, w)
+		case !ok:
+			// A source that the rename leaves as it is, which its undo gives
+			// back if the rename makes it name what it did not.
+			captured, err := g.captures(row)
+			if err != nil {
+				return nil, err
+			}
+			if captured {
+				w.to = row.Source
+				out = append(out, w)
+			}
 		}
-		out = append(out, sourceWrite{expression: row.ID.Bytes, owner: namingOwner(row), field: Field(row.Field),
-			source: row.Source, to: to})
 	}
 	return out, nil
 }
@@ -328,18 +412,23 @@ func planWrites(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 // RenameInverse returns the inverse of the rename r, of the type typ, which
 // writes the sources that its payload gives, or nil for none, a rename's own
 // (planWrites), as a command's Inverse returns it: a step of the type whose
-// payload payload makes of the sources that the rename writes, as they are,
+// payload payload makes of the sources that the rename writes, and of those
+// that it leaves as they are but makes name what they did not, as they are,
 // by their owners and fields, which the undo gives back (planWrites), in the
 // order of their boards, the nodes of their sites, and their UUIDs. It keeps
 // what it planned for the command's Apply (ApplyRename), and stops with
-// commands.ErrUndoTooLarge once the payload takes more bytes, as the
-// operation log keeps it (commands.LogBytes), than the batch's undo has room
-// for (commands.Tx.UndoRoom), which the pipeline refuses the rename for, at
-// its UndoField, rather than compute the rest of its inverse only to refuse
-// it once it reports its change. A rename that rewrites nothing still
-// changes its entity's key, so the refusal is never of a command that
-// changes nothing. It refuses the batch, at the payload's field at, as
-// planWrites does, before it measures the undo.
+// commands.ErrUndoTooLarge once the payload, or the one that the undo's own
+// undo would hold, the payload of the sources as the rename writes them,
+// takes more bytes, as the operation log keeps it (commands.LogBytes), than
+// the batch's undo has room for (commands.Tx.UndoRoom), which the pipeline
+// refuses the rename for, at its UndoField, rather than compute the rest of
+// its inverse only to refuse it once it reports its change: a rename that
+// makes its sources longer, as to a longer key, is refused rather than
+// applied with an undo that could never be undone, which, as one command, no
+// smaller batch sends apart. A rename that rewrites nothing still changes its
+// entity's key, so the refusal is never of a command that changes nothing.
+// It refuses the batch, at the payload's field at, as planWrites does, before
+// it measures the undo.
 func RenameInverse(ctx context.Context, tx *commands.Tx, typ commands.Type, at string, r Rename,
 	sources *[]Source, payload func(back []Source) any) ([]commands.Step, error) {
 	writes, err := planWrites(ctx, queries.New(tx), nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), at, r,
@@ -349,16 +438,22 @@ func RenameInverse(ctx context.Context, tx *commands.Tx, typ commands.Type, at s
 	}
 	tx.Carry(carriedWrites{r: r, sources: sources, writes: writes})
 	back := make([]Source, len(writes))
+	redo := []Source{}
 	for i, w := range writes {
 		back[i] = Source{Owner: ids.Encode(w.owner.Kind, w.owner.ID.Bytes), Field: string(w.field), Source: w.source}
+		if w.to != w.source {
+			redo = append(redo, Source{Owner: back[i].Owner, Field: back[i].Field, Source: w.to})
+		}
 	}
 	p := payload(back)
-	enc, err := json.Marshal(p)
-	if err != nil {
-		return nil, fmt.Errorf("expression: encode the undo: %w", err)
-	}
-	if commands.LogBytes(enc) > tx.UndoRoom() {
-		return nil, commands.ErrUndoTooLarge
+	for _, v := range []any{p, payload(redo)} {
+		enc, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("expression: encode the undo: %w", err)
+		}
+		if commands.LogBytes(enc) > tx.UndoRoom() {
+			return nil, commands.ErrUndoTooLarge
+		}
 	}
 	return []commands.Step{{Type: typ, Payload: p}}, nil
 }
@@ -384,9 +479,11 @@ func ApplyRename(ctx context.Context, tx *commands.Tx, at string, r Rename, sour
 			return err
 		}
 	}
-	list := make([]idSource, len(writes))
-	for i, w := range writes {
-		list[i] = idSource{ID: ids.UUID(w.expression).String(), Source: w.to}
+	var list []idSource
+	for _, w := range writes {
+		if w.to != w.source {
+			list = append(list, idSource{ID: ids.UUID(w.expression).String(), Source: w.to})
+		}
 	}
 	return writeSources(ctx, tx, list)
 }
@@ -420,13 +517,7 @@ func writeSources(ctx context.Context, tx *commands.Tx, list []idSource) error {
 	touched := map[ids.Kind][]pgtype.UUID{}
 	seen := map[pgtype.UUID]bool{}
 	for _, row := range rows {
-		kind, id := ids.BranchOutput, row.BranchOutputID
-		switch {
-		case row.NodeID.Valid:
-			kind, id = ids.Node, row.NodeID
-		case row.ConnectionID.Valid:
-			kind, id = ids.Connection, row.ConnectionID
-		}
+		kind, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
 		if !seen[id] {
 			seen[id] = true
 			touched[kind] = append(touched[kind], id)
@@ -516,17 +607,4 @@ func sourceExpressions(ctx context.Context, q *queries.Queries, ws, project pgty
 		}
 	}
 	return out, nil
-}
-
-// compareKeys orders the keys of the expressions that a rename may rewrite,
-// as its preview lists them, by their boards, their nodes, and their
-// expressions, by their bytes.
-func compareKeys(a, b PreviewKey) int {
-	if c := bytes.Compare(a.Board[:], b.Board[:]); c != 0 {
-		return c
-	}
-	if c := bytes.Compare(a.Node[:], b.Node[:]); c != 0 {
-		return c
-	}
-	return bytes.Compare(a.Expression[:], b.Expression[:])
 }

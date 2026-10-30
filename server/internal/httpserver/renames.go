@@ -48,13 +48,16 @@ type renameKey struct {
 // rename, what it lists, and how.
 const renamePreviewDoc = " Each site is an expression of the project, in its trash or not, which the rename rewrites " +
 	"alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the " +
-	"rename writes in its place, with every name that it rewrites, and the names that it rewrites of the list's " +
+	"rename writes in its place, with every name that it rewrites, whether that source would pass the 16384 " +
+	"characters that a source may have, as too_long says, which the rename is refused for, with 422 " +
+	"validation_failed, while any site of either list is, and the names that it rewrites of the list's " +
 	"kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten " +
 	"in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare " +
 	"key, unless a variable of the board has the key of a global one, which global.<key> names, and a " +
 	"component's attribute as <component>.<attribute>, unless a variable of the board or a global one has the " +
 	"component's key, which cmp.<component>.<attribute> names past; the other names stay as the source writes " +
-	"them, and so does a name that names nothing, which the rename may make name what it renames. The sites are " +
+	"them, and so does a name that names nothing, which the rename may make name what it renames, or what its old " +
+	"key shadowed. The sites are " +
 	"in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the " +
 	"sources as the project stands when it applies, which another change may have changed meanwhile."
 

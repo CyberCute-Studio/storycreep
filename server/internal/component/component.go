@@ -648,9 +648,10 @@ func checkTarget(to Target) input.FieldErrors {
 // if after is zero. It reads the component and the expressions as of one
 // moment, that of the read's start (project.Service.ReadSnapshot). It returns
 // the errors of project.Service.Get first, ErrNotFound if the project has no
-// such component outside its trash, an *ident.Error for a key that is no
-// identifier, and an error that wraps ErrKeyTaken for a key that another
-// component of the project has, as the change refuses them.
+// such component outside its trash, and the refusal that the change refuses
+// the key with (checkKey), which wraps an *ident.Error for a key that is no
+// identifier, and ErrKeyTaken for a key that another component of the
+// project has.
 func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, projectID, componentID ids.UUID,
 	key string, qualified bool, after expression.PreviewKey, limit int) ([]expression.RenameSite, error) {
 	var out []expression.RenameSite
@@ -665,15 +666,8 @@ func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, proje
 			return fmt.Errorf("component: read the component: %w", err)
 		}
 		c := queries.Component(row.LiveComponent)
-		if err := ident.Check(key); err != nil {
+		if err := checkKey(ctx, componentKeyOwner(q, ws, project), "key", key, c.ID, "component"); err != nil {
 			return err
-		}
-		owner, err := componentKeyOwner(q, ws, project)(ctx, key)
-		switch {
-		case err == nil && owner != c.ID:
-			return fmt.Errorf("component: %w", ErrKeyTaken)
-		case err != nil && !errors.Is(err, pgx.ErrNoRows):
-			return fmt.Errorf("component: read the component with the key: %w", err)
 		}
 		out, err = expression.Preview(ctx, q, ws, project, rekey(c, key), qualified, after, limit)
 		return err

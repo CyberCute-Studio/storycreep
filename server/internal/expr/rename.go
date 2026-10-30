@@ -38,7 +38,8 @@ type Edit struct {
 // after, which is qualified. The other names stay as the source writes them,
 // so that a source that the rename leaves naming what it named is the same
 // source, and so does a name that names nothing in before, which the rename
-// may make name the renamed entity. It returns the source rewritten and its
+// may make name the renamed entity, or one whose name its old key shadowed
+// (Captures). It returns the source rewritten and its
 // edits, in the order of their ranges, or the source as it is and no edits if
 // it does not parse, as a name of it names nothing, or if no name of it
 // changes.
@@ -93,6 +94,36 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		return "", nil, err
 	}
 	return rewritten, edits, nil
+}
+
+// Captures reports whether a name of the source, of the context ctx, of an
+// expression of the board whose ID is board, that names nothing in the
+// project before names something in the project after, which is before with
+// the renamed entity's key changed alone, as Rewrite takes them: a name that
+// Rewrite leaves as it is, which the rename makes name either the renamed
+// entity, by its new key, as a bare key that named no variable until a
+// variable is renamed to it, or an entity whose name the renamed entity's
+// old key shadowed, as <key>.<attribute> of a component of the key of a
+// variable renamed away from it. A source that does not parse names
+// nothing, and captures nothing.
+func Captures(source string, ctx Context, before, after *Project, board string) (bool, error) {
+	if before == nil || after == nil {
+		return false, fmt.Errorf("%w: a rename needs the project before it and after it", ErrProject)
+	}
+	n, err := Parse(source, ctx)
+	var e *Error
+	switch {
+	case errors.As(err, &e):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	for _, m := range namesOf(n) {
+		if nameRef(m, before, board) == "" && nameRef(m, after, board) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // namesOf returns the names of the AST n, its *Var and *Attr nodes, in the

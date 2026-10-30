@@ -2,7 +2,9 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -330,4 +332,46 @@ func TestUndoOfCreationForces(t *testing.T) {
 	resultFrom(t, send(wireCommand{Type: "connection.update", Payload: map[string]any{"id": w.gate,
 		"on_traverse": "later = 2"}}))
 	inUse(t, send(undoCommands(created.Undo)...), api.CodeVariableInUse)
+}
+
+// TestCreationUndoReadsChangedTexts checks that the undo of a variable's
+// creation is forced exactly when a text that the batch's commands before
+// the creation leave shows the variable, as the text stands then: a text
+// that a later command of the batch changes again, once an earlier creation
+// has read it, is read as it is at the later creation, not as the batch kept
+// it (dependency.TextsUsing).
+func TestCreationUndoReadsChangedTexts(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	shown, hidden, n := newVariableID(), newVariableID(), newNodeID()
+	text := func(inlines ...string) map[string]any {
+		return map[string]any{"id": n, "text": richText(inlines...)}
+	}
+	created := map[string]any{"id": n, "board_id": w.harbour, "type": "element", "position": map[string]int{"x": 0,
+		"y": 0}, "text": richText(valueInline(hidden))}
+	res := resultFrom(t, call(w.s.main, http.MethodPost, commandsPath(w.project), commandBatch(t,
+		wireCommand{Type: "node.create", Payload: created},
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": hidden, "key": "hidden", "type": "int",
+			"scope": "global"}},
+		wireCommand{Type: "node.update", Payload: text(textInline("Now "), valueInline(shown))},
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": shown, "key": "shown", "type": "int",
+			"scope": "global"}},
+	), w.owner.header(true)))
+	forced := map[string]bool{}
+	for _, u := range res.Undo {
+		if u.Type != "variable.delete" {
+			continue
+		}
+		var p struct {
+			ID    string `json:"id"`
+			Force bool   `json:"force"`
+		}
+		if err := json.Unmarshal(u.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		forced[p.ID] = p.Force
+	}
+	if want := map[string]bool{hidden: true, shown: true}; !maps.Equal(forced, want) {
+		t.Errorf("the undo forces the deletions %v, want %v", forced, want)
+	}
 }

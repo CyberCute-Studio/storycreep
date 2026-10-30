@@ -257,9 +257,10 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, vari
 // the expressions as of one moment, that of the read's start
 // (project.Service.ReadSnapshot). It returns the errors of
 // project.Service.Get first, ErrNotFound if the project has no such variable
-// outside its trash, an *ident.Error for a key that is no identifier, and an
-// error that wraps ErrKeyTaken for a key that another variable of the
-// variable's scope has, as the rename refuses them.
+// outside its trash, and the refusal that the rename refuses the key with
+// (checkKey), which wraps an *ident.Error for a key that is no identifier,
+// and ErrKeyTaken for a key that another variable of the variable's scope
+// has.
 func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, projectID, variableID ids.UUID,
 	key string, qualified bool, after expression.PreviewKey, limit int) ([]expression.RenameSite, error) {
 	var out []expression.RenameSite
@@ -274,16 +275,8 @@ func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, proje
 			return fmt.Errorf("variable: read the variable: %w", err)
 		}
 		v := queries.Variable(row.LiveVariable)
-		if err := ident.Check(key); err != nil {
+		if err := checkKey(ctx, q, ws, project, "key", key, v.BoardID, v.ID); err != nil {
 			return err
-		}
-		owner, err := q.VariableWithKey(ctx, queries.VariableWithKeyParams{BoardID: v.BoardID, WorkspaceID: ws,
-			ProjectID: project, Key: key})
-		switch {
-		case err == nil && owner != v.ID:
-			return fmt.Errorf("variable: %w", ErrKeyTaken)
-		case err != nil && !errors.Is(err, pgx.ErrNoRows):
-			return fmt.Errorf("variable: read the variable with the key: %w", err)
 		}
 		out, err = expression.Preview(ctx, q, ws, project, rename(v, key), qualified, after, limit)
 		return err

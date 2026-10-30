@@ -44,6 +44,8 @@ type fixture struct {
 	project     ids.UUID
 	harbour     string
 	pipeline    *commands.Pipeline
+	reg         *commands.Registry
+	ent         *entitlements.Service
 	nodes       *node.Service
 	connections *connection.Service
 }
@@ -70,6 +72,7 @@ func newFixture(t *testing.T) *fixture {
 	connection.Register(reg)
 	expression.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
+	f.reg, f.ent = reg, ent
 	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
 	projects := project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline, Seed: component.Seed})
 	f.nodes = node.New(f.db, node.Options{Projects: projects})
@@ -860,7 +863,7 @@ func TestNeutral(t *testing.T) {
 	node.Register(reg)
 	connection.Register(reg)
 	expression.Register(reg)
-	for _, typ := range expression.Neutral {
+	for _, typ := range append(slices.Clone(expression.Neutral), expression.Rewriting...) {
 		if !slices.Contains(reg.Types(), typ) {
 			t.Errorf("the derivation passes over %s, which is not a registered type of command", typ)
 		}
@@ -896,6 +899,104 @@ func TestNeutral(t *testing.T) {
 	if !slices.Equal(e.Error.Suggestions, []string{"tides"}) {
 		t.Errorf("the script's error suggests %v, want the new variable", e.Error.Suggestions)
 	}
+}
+
+// TestRenameLeavesNodeReferences checks that a rename, which rewrites the
+// scripts of the nodes that name the variable, and so changes those nodes,
+// compiles again none of the expressions that name those nodes by their IDs
+// (node references), which read nothing that the rename changes of them.
+func TestRenameLeavesNodeReferences(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	depth := f.newVariable(t, "depth", "int")
+	f.newVariable(t, "seen", "bool")
+	keeper := f.newNode(t, f.harbour, "element", payload{"on_enter": "depth += 1"})
+	watcher := f.newNode(t, f.harbour, "element",
+		payload{"on_enter": `seen = visited(node("` + keeper + `"))`})
+	// What compiling the watcher's script gave is changed behind the
+	// pipeline's back, so that whether the rename compiles it again shows.
+	f.exec(t, `UPDATE expression SET ast_version = 99 WHERE node_id = $1`, decode(t, ids.Node, watcher))
+	res := f.must(t, cmd{variable.Rename, payload{"id": depth, "key": "fathoms"}})
+	valid(t, "the renamed variable's script", f.node(t, keeper).OnEnter, "fathoms += 1")
+	if !changed(res, ids.Node, decode(t, ids.Node, keeper)) {
+		t.Errorf("the rename did not list the node whose script it rewrote: %v", res.Revisions)
+	}
+	if v := f.node(t, watcher).OnEnter.ASTVersion; v != 99 {
+		t.Errorf("the rename compiled again the script that names the rewritten node, to the version %d", v)
+	}
+}
+
+// TestRenameUndoBound checks that a rename whose undo fits the room of its
+// batch's undo, but whose undo's own undo, which holds the sources as the
+// rename writes them, would not, as a rename to a longer key, is refused at
+// its key with commands.ErrUndoTooLarge, rather than applied with an undo
+// that would be refused for good, as one command, which no smaller batches
+// send apart; and that a rename with room for both applies, and is undone
+// and redone.
+func TestRenameUndoBound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	x := f.newVariable(t, "x", "int")
+	f.newNode(t, f.harbour, "element", payload{"on_enter": strings.Repeat("x += 1\n", 20)})
+	rename := cmd{variable.Rename, payload{"id": x, "key": strings.Repeat("k", 60)}}
+	// room returns the room that the undo of res takes, its payloads as the
+	// log keeps them and the revisions that they expect.
+	room := func(res commands.Result) int {
+		n := 0
+		for _, u := range res.Undo {
+			n += commands.LogBytes(u.Payload)
+			for ref := range u.ExpectedRev {
+				n += commands.ExpectedRevBytes(ref)
+			}
+		}
+		return n
+	}
+	// undo applies the undo of res, as a client sends it.
+	undo := func(pipeline *commands.Pipeline, res commands.Result) commands.Result {
+		t.Helper()
+		batch := make([]commands.Command, len(res.Undo))
+		for i, u := range res.Undo {
+			batch[i] = commands.Command{ID: ids.New(), Type: u.Type, Payload: u.Payload, ExpectedRev: u.ExpectedRev}
+		}
+		out, err := pipeline.Apply(ctx, commands.Actor{UserID: f.owner}, f.project, batch)
+		if err != nil {
+			t.Fatalf("the undo of %v: %v", res.Undo, err)
+		}
+		return out
+	}
+	renamed := f.must(t, rename)
+	undone := undo(f.pipeline, renamed)
+	forward, back := room(renamed), room(undone)
+	if back <= forward {
+		t.Fatalf("the undo of the undo takes %d bytes, the undo %d, want more", back, forward)
+	}
+	bounded := func(n int) *commands.Pipeline {
+		return commands.New(f.db, commands.Options{Registry: f.reg, Entitlements: f.ent, MaxUndoBytes: n})
+	}
+	_, err := bounded(forward).Apply(ctx, commands.Actor{UserID: f.owner}, f.project,
+		[]commands.Command{{ID: ids.New(), Type: rename.typ, Payload: mustJSON(t, rename.payload)}})
+	var refused *commands.RefusedError
+	if !errors.As(err, &refused) || refused.Field != "key" || !errors.Is(refused.Reason, commands.ErrUndoTooLarge) {
+		t.Errorf("a rename whose undo's undo passes the bound: %v, want it refused at key for its undo", err)
+	}
+	p := bounded(back)
+	again, err := p.Apply(ctx, commands.Actor{UserID: f.owner}, f.project,
+		[]commands.Command{{ID: ids.New(), Type: rename.typ, Payload: mustJSON(t, rename.payload)}})
+	if err != nil {
+		t.Fatalf("a rename with room for its undo's undo: %v", err)
+	}
+	undo(p, undo(p, again))
+}
+
+// mustJSON returns v encoded as JSON.
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // TestScripts checks that a node's scripts are an element's or a branch's,

@@ -424,26 +424,29 @@ func ownerExpressions(ctx context.Context, q *queries.Queries, ws, project pgtyp
 	return rows, nil
 }
 
+// ownerRef returns the kind and the UUID of the owner of an expression whose
+// owner's columns are node, connection, and output, of which one alone is
+// not null, as every row that names an expression's owner has them.
+func ownerRef(node, connection, output pgtype.UUID) (ids.Kind, pgtype.UUID) {
+	switch {
+	case node.Valid:
+		return ids.Node, node
+	case connection.Valid:
+		return ids.Connection, connection
+	}
+	return ids.BranchOutput, output
+}
+
 // ownerOf returns the UUID of the expression row's owner.
 func ownerOf(row queries.Expression) ids.UUID {
-	switch {
-	case row.NodeID.Valid:
-		return row.NodeID.Bytes
-	case row.ConnectionID.Valid:
-		return row.ConnectionID.Bytes
-	}
-	return row.BranchOutputID.Bytes
+	_, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
+	return id.Bytes
 }
 
 // ownerName returns the ID of the expression row's owner, for an error.
 func ownerName(row queries.Expression) string {
-	switch {
-	case row.NodeID.Valid:
-		return ids.Encode(ids.Node, row.NodeID.Bytes)
-	case row.ConnectionID.Valid:
-		return ids.Encode(ids.Connection, row.ConnectionID.Bytes)
-	}
-	return ids.Encode(ids.BranchOutput, row.BranchOutputID.Bytes)
+	kind, id := ownerRef(row.NodeID, row.ConnectionID, row.BranchOutputID)
+	return ids.Encode(kind, id.Bytes)
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.
