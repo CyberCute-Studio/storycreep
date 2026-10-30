@@ -81,6 +81,11 @@ func TestDurability(t *testing.T) {
 			got = fsync(b, New(b))
 		}
 	})
+	// testing.Benchmark drops what a benchmark logs, its failure among it,
+	// so a server that did not start is reported from here.
+	if benchServer.err != nil {
+		t.Fatalf("the benchmarks' server did not start: %v", benchServer.err)
+	}
 	if got != "on" {
 		t.Errorf("the benchmarks' server has fsync %q, want on", got)
 	}

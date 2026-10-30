@@ -29,7 +29,9 @@ func New() UUID {
 // the top 4 bits of r[0] and the top 2 bits of r[2]. New makes one of the
 // current time and of the system's random bytes; a generator that must make
 // the same IDs again, as package fixture's of a seed, makes one of a clock and
-// a source of its own.
+// a source of its own. An ID is as hard to guess as r, so an ID that the
+// server makes of its own, which must not be guessable, is New's, never one
+// of NewV7 with bytes of another source.
 func NewV7(ms int64, r [10]byte) UUID {
 	var u UUID
 	t := uint64(ms)

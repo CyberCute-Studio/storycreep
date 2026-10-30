@@ -278,7 +278,10 @@ jobs:
     name: Benchmarks
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The job's time holds eight runs at their bound, eleven minutes each
+    # (below), 88 minutes, and the checkout, the build, and the comparison,
+    # so that runs that each keep to their bound never outlast the job.
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -309,6 +312,25 @@ jobs:
           fi
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
 
+      # The runs time the benchmarks alone. The base's and the change's tests
+      # are built here first, outside the runs' bounds, since on a cold cache,
+      # as after a change of go.sum or a release of Go, building them one
+      # package at a time takes minutes, and go test -list names the packages
+      # whose tests have a benchmark, which alone the runs start, rather than
+      # every package's test binary. A base whose tests do not all build is
+      # benchmarked where they do; the change's must build.
+      - name: Build the benchmarks of the base and the change
+        shell: bash
+        run: |
+          set -o pipefail
+          benchmarked() {
+            (cd "$1/server" && go test -list '^Benchmark' ./...) |
+              awk '/^Benchmark/ { has = 1 } $1 == "ok" || $1 == "FAIL" { if (has && $1 == "ok") print $2; has = 0 }'
+          }
+          benchmarked "$RUNNER_TEMP/base" > "$RUNNER_TEMP/base-packages.txt" ||
+            echo "::warning::The base's tests do not all build, so its benchmarks run where they do."
+          benchmarked "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/head-packages.txt"
+
       # Each run is a go test of its own, with a PostgreSQL server and a
       # fixture of its own, and is one sample of each metric of its benchmarks
       # (cmd/benchgate), and four runs of each side are the fewest that a
@@ -316,25 +338,30 @@ jobs:
       # benchmarks at a time, so that no two share the machine. A run has at
       # most ten minutes, however many packages it benchmarks, after which
       # SIGQUIT makes its test binary print every goroutine's stack and end,
-      # as go test's own -timeout does, and the base is not run again once a
-      # run of it has outlasted them, so that a base that hangs leaves the
-      # change the time of its own runs. A base whose benchmarks fail
-      # otherwise, as one that misses a target, is compared as far as it ran;
-      # the change's must pass.
+      # as go test's own -timeout does, and a minute more before it is killed,
+      # and the base is not run again once a run of it has outlasted them, so
+      # that a base that hangs leaves the change the time of its own runs. A
+      # base whose benchmarks fail otherwise, as one that misses a target, is
+      # compared as far as it ran; the change's must pass.
       - name: Run the benchmarks of the base and the change, in turn
         shell: bash
         run: |
           set -o pipefail
+          # bench runs the benchmarks of the tree $1, of the packages that the
+          # file $2 names, if it names any.
           bench() {
+            if [ ! -s "$2" ]; then
+              return 0
+            fi
             (cd "$1/server" && timeout --signal QUIT --kill-after 1m 10m \
-              go test -run '^$' -bench . -benchtime 300x -count 1 -p 1 -timeout 0 ./...)
+              go test -run '^$' -bench . -benchtime 300x -count 1 -p 1 -timeout 0 $(cat "$2"))
           }
           hung=
           run_base() {
             if [ -n "$hung" ]; then
               return
             fi
-            bench "$RUNNER_TEMP/base" >> "$RUNNER_TEMP/base.txt" || {
+            bench "$RUNNER_TEMP/base" "$RUNNER_TEMP/base-packages.txt" >> "$RUNNER_TEMP/base.txt" || {
               status=$?
               if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
                 hung=1
@@ -345,7 +372,7 @@ jobs:
             }
           }
           run_change() {
-            bench "$GITHUB_WORKSPACE" | tee -a "$RUNNER_TEMP/head.txt"
+            bench "$GITHUB_WORKSPACE" "$RUNNER_TEMP/head-packages.txt" | tee -a "$RUNNER_TEMP/head.txt"
           }
           for round in 1 2; do
             run_base $((2 * round - 1))

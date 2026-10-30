@@ -8,12 +8,13 @@
 //
 // It writes a Markdown table of every metric to standard output, for the CI
 // job's summary, warns on standard error, as a GitHub Actions annotation, of
-// each gated metric that it could not compare, one of the base that the
+// each gated metric that it could not compare: one of the base that the
 // change's output does not have, as one of a benchmark that the change
-// renamed, or one with too few runs on a side, as where the base failed in
-// some of its runs, and exits with status 1 if any metric regressed, or with
-// status 2 if an output cannot be read. A metric that only the change has, of
-// a benchmark that it adds, is in the report alone.
+// renamed, one of the change that the base's output does not have, as one of
+// a benchmark that the change adds, or one that failed in every run of the
+// base, and one with too few runs on a side, as where the base failed in
+// some of its runs. It exits with status 1 if any metric regressed, or with
+// status 2 if an output cannot be read.
 package main
 
 import (
@@ -64,6 +65,10 @@ func main() {
 		case r.Status == benchgate.Gone && benchgate.Gated(r.Unit):
 			fmt.Fprintf(os.Stderr, "::warning::%s %s (%s) is not compared: the change has no such metric.\n",
 				r.Package, r.Benchmark, r.Unit)
+		case r.Status == benchgate.New && benchgate.Gated(r.Unit):
+			fmt.Fprintf(os.Stderr, "::warning::%s %s (%s) is not compared: the base has no such metric, as of a "+
+				"benchmark that the change adds, or one that failed in every run of the base.\n", r.Package,
+				r.Benchmark, r.Unit)
 		case r.Status == benchgate.TooFew:
 			fmt.Fprintf(os.Stderr, "::warning::%s %s (%s) is not compared: the base has %d runs of it, and the "+
 				"change %d, too few for the test to find them apart.\n", r.Package, r.Benchmark, r.Unit,

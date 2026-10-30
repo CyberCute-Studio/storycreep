@@ -30,6 +30,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -67,6 +68,12 @@ func main() {
 	}
 	if *server == "" || *project == "" || *tokenFile == "" {
 		usage(fmt.Errorf("-server, -project, and -token-file are needed, unless -out is given"))
+	}
+	// A URL that names no http or https server, as localhost:8080, would
+	// otherwise fail each request, which the sender takes for a failure in
+	// transit, and sends again, for seconds, before it gives up.
+	if u, err := url.Parse(*server); err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		usage(fmt.Errorf("-server: %q is not the URL of an instance, as http://localhost:8080", *server))
 	}
 	if _, err := ids.Decode(ids.Project, *project); err != nil {
 		usage(fmt.Errorf("-project: %w", err))
@@ -126,11 +133,18 @@ func write(f *fixture.Fixture, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if old, err := filepath.Glob(filepath.Join(dir, "batch-*.json")); err != nil {
+	// The directory's entries are matched by name, rather than by a pattern
+	// of the directory's path, whose own *, ?, or [ would be read as a
+	// pattern's.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return err
-	} else if len(old) > 0 {
-		return fmt.Errorf("-out: %s holds batch files already, as %s; give a new or empty directory", dir,
-			filepath.Base(old[0]))
+	}
+	for _, e := range entries {
+		if ok, _ := filepath.Match("batch-*.json", e.Name()); ok {
+			return fmt.Errorf("-out: %s holds batch files already, as %s; give a new or empty directory", dir,
+				e.Name())
+		}
 	}
 	for i, b := range f.Batches {
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("batch-%03d.json", i+1)), fixture.Body(b),
