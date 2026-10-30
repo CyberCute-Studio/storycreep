@@ -271,12 +271,18 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 // migrations before the timeouts are set, so that only the test's slow
 // migration, which switches them off for itself, runs under them: the
 // migrations keep the session's timeouts (gooseLocker), and on a busy runner
-// a real migration can take longer than the transaction_timeout below.
+// a real migration can take longer than the transaction_timeout below. For
+// the same reason the application login is exempt from them: once it has
+// migrated, Migrate connects as that login to check it (checkAppDatabase),
+// as the server does, with the login's own settings and not under the lock,
+// and on a busy runner the check of its roles' catalog can take longer than
+// the statement_timeout below.
 func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	d := dbtest.New(t)
 	ident := pgx.Identifier{d.Name}.Sanitize()
+	app := pgx.Identifier{d.AppURL.User()}.Sanitize()
 	admin := d.Admin(t)
 	timeouts := map[string]string{
 		"lock_timeout":         "100ms",
@@ -295,6 +301,10 @@ func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 			continue
 		}
 		if _, err := admin.Exec(ctx, "ALTER DATABASE "+ident+" SET "+name+" = '"+value+"'"); err != nil {
+			t.Fatal(err)
+		}
+		// A login's setting in the database overrides the database's.
+		if _, err := admin.Exec(ctx, "ALTER ROLE "+app+" IN DATABASE "+ident+" SET "+name+" = '0'"); err != nil {
 			t.Fatal(err)
 		}
 	}
