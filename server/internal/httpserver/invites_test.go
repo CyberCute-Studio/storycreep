@@ -49,7 +49,7 @@ func call(h http.Handler, method, path string, body []byte, header http.Header) 
 // inviteServer returns a ready server with the configuration of
 // inviteEnv(policy, extra), whose first-run setup made admin@example.com the
 // owner of its first workspace, signed in, and the workspace's ID.
-func inviteServer(t *testing.T, policy string, extra map[string]string) (*server, *dbtest.Database, signedIn, string) {
+func inviteServer(t testing.TB, policy string, extra map[string]string) (*server, *dbtest.Database, signedIn, string) {
 	t.Helper()
 	s, d := pendingServer(t, inviteEnv(policy, extra))
 	setup := completeSetup(t, s, "admin@example.com", map[string]any{"signup_policy": policy})

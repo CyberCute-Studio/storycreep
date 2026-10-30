@@ -53,7 +53,7 @@ const testS3URL = "s3://test-key:test-secret@s3.example.com/storycreep"
 // database URL unless env sets them, a directory of the test's own for the
 // assets' files unless env names a storage, as an empty value does to leave
 // it unset, and, in hosted mode, an SMTP server and a bucket.
-func loadConfig(t *testing.T, env map[string]string) *config.Config {
+func loadConfig(t testing.TB, env map[string]string) *config.Config {
 	t.Helper()
 	vars := map[string]string{
 		"STORYCREEP_PUBLIC_URL":    "http://localhost:8080",

@@ -261,6 +261,134 @@ jobs:
           STORYCREEP_TEST_IMAGE_ARCHIVE: ${{ runner.temp }}/image.tar
         run: go test -v ./internal/deploy
 
+  # PRD §9.1: the server's benchmarks, of the large fixture (NFR-Q-06), and a
+  # regression of more than 20% fails the build. GitHub's runners are not one
+  # fixed machine, so the job measures the change and its base on the same
+  # runner, in turn, four times each, in the order base, change, change, base,
+  # twice, so that a steady drift of the machine during the job falls on both
+  # alike, and cmd/benchgate compares them (plan note N52). Each benchmark also
+  # checks its own target of §9.1, on the change alone. A pull request is
+  # compared with the main branch that it merges into, the first parent of the
+  # merge commit that it is checked out as, and a push with the commit that it
+  # replaced. GitHub keeps one queued run of main, so a push whose queued run
+  # a later push's replaced is compared by no run of main, the later push's
+  # being compared with the commit that it replaced, the dropped push's; the
+  # dropped push's pull request was compared with its own base.
+  bench:
+    name: Benchmarks
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # The job's time holds eight runs at their bound, eleven minutes each
+    # (below), 88 minutes, and the checkout, the build, and the comparison,
+    # so that runs that each keep to their bound never outlast the job.
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      # A push whose replaced commit the checkout did not fetch, as after a
+      # force-push, or that has none, as one that creates the branch, is
+      # compared with the commit before its own instead.
+      - name: Check out the base
+        shell: bash
+        env:
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          base=HEAD^1
+          if [ -n "$BEFORE" ]; then
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              base=$BEFORE
+            else
+              echo "::warning::The commit that the push replaced, $BEFORE, is not in the history, so the change is compared with the commit before it."
+            fi
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+
+      # The runs time the benchmarks alone. The base's and the change's tests
+      # are built here first, outside the runs' bounds, since on a cold cache,
+      # as after a change of go.sum or a release of Go, building them one
+      # package at a time takes minutes, and go test -list names the packages
+      # whose tests have a benchmark, which alone the runs start, rather than
+      # every package's test binary. A base whose tests do not all build is
+      # benchmarked where they do; the change's must build.
+      - name: Build the benchmarks of the base and the change
+        shell: bash
+        run: |
+          set -o pipefail
+          benchmarked() {
+            (cd "$1/server" && go test -list '^Benchmark' ./...) |
+              awk '/^Benchmark/ { has = 1 } $1 == "ok" || $1 == "FAIL" { if (has && $1 == "ok") print $2; has = 0 }'
+          }
+          benchmarked "$RUNNER_TEMP/base" > "$RUNNER_TEMP/base-packages.txt" ||
+            echo "::warning::The base's tests do not all build, so its benchmarks run where they do."
+          benchmarked "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/head-packages.txt"
+
+      # Each run is a go test of its own, with a PostgreSQL server and a
+      # fixture of its own, and is one sample of each metric of its benchmarks
+      # (cmd/benchgate), and four runs of each side are the fewest that a
+      # Mann-Whitney U test can find apart at p < 0.05. -p 1 runs one package's
+      # benchmarks at a time, so that no two share the machine. A run has at
+      # most ten minutes, however many packages it benchmarks, after which
+      # SIGQUIT makes its test binary print every goroutine's stack and end,
+      # as go test's own -timeout does, and a minute more before it is killed,
+      # and the base is not run again once a run of it has outlasted them, so
+      # that a base that hangs leaves the change the time of its own runs. A
+      # base whose benchmarks fail otherwise, as one that misses a target, is
+      # compared as far as it ran; the change's must pass.
+      - name: Run the benchmarks of the base and the change, in turn
+        shell: bash
+        run: |
+          set -o pipefail
+          # bench runs the benchmarks of the tree $1, of the packages that the
+          # file $2 names, if it names any.
+          bench() {
+            if [ ! -s "$2" ]; then
+              return 0
+            fi
+            (cd "$1/server" && timeout --signal QUIT --kill-after 1m 10m \
+              go test -run '^$' -bench . -benchtime 300x -count 1 -p 1 -timeout 0 $(cat "$2"))
+          }
+          hung=
+          run_base() {
+            if [ -n "$hung" ]; then
+              return
+            fi
+            bench "$RUNNER_TEMP/base" "$RUNNER_TEMP/base-packages.txt" >> "$RUNNER_TEMP/base.txt" || {
+              status=$?
+              if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+                hung=1
+                echo "::warning::The base's benchmarks outlasted their ten minutes in run $1, and are not run again."
+              else
+                echo "::warning::The base's benchmarks failed in run $1, and are compared as far as they ran."
+              fi
+            }
+          }
+          run_change() {
+            bench "$GITHUB_WORKSPACE" "$RUNNER_TEMP/head-packages.txt" | tee -a "$RUNNER_TEMP/head.txt"
+          }
+          for round in 1 2; do
+            run_base $((2 * round - 1))
+            run_change
+            run_change
+            run_base $((2 * round))
+          done
+
+      - name: Compare with the base
+        working-directory: server
+        shell: bash
+        run: |
+          set -o pipefail
+          go run ./cmd/benchgate -base "$RUNNER_TEMP/base.txt" -head "$RUNNER_TEMP/head.txt" |
+            tee -a "$GITHUB_STEP_SUMMARY"
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

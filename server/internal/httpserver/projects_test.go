@@ -27,7 +27,7 @@ func trashPath(ws string) string    { return workspacesPath + "/" + ws + "/trash
 func projectPath(id string) string { return "/api/v1/projects/" + id }
 
 // projectFrom returns the project of a response with status.
-func projectFrom(t *testing.T, res response, status int) projectBody {
+func projectFrom(t testing.TB, res response, status int) projectBody {
 	t.Helper()
 	var p projectBody
 	if res.status != status || json.Unmarshal(res.body, &p) != nil {
@@ -37,7 +37,7 @@ func projectFrom(t *testing.T, res response, status int) projectBody {
 }
 
 // createProject creates a project named name in the workspace ws, as si.
-func createProject(t *testing.T, h http.Handler, si signedIn, ws, name string) projectBody {
+func createProject(t testing.TB, h http.Handler, si signedIn, ws, name string) projectBody {
 	t.Helper()
 	return projectFrom(t, call(h, http.MethodPost, projectsPath(ws), jsonBody(t, map[string]string{"name": name}),
 		si.header(true)), http.StatusCreated)

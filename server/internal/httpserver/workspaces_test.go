@@ -56,7 +56,7 @@ func workspaceFrom(t *testing.T, res response, status int) workspaceBody {
 }
 
 // jsonBody returns v as JSON.
-func jsonBody(t *testing.T, v any) []byte {
+func jsonBody(t testing.TB, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -77,7 +77,7 @@ func newNamedAccount(t *testing.T, h http.Handler, email, name string) signedIn 
 }
 
 // decode returns the UUID of a public ID of kind.
-func decode(t *testing.T, kind ids.Kind, id string) ids.UUID {
+func decode(t testing.TB, kind ids.Kind, id string) ids.UUID {
 	t.Helper()
 	u, err := ids.Decode(kind, id)
 	if err != nil {

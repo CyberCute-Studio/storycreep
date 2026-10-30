@@ -35,7 +35,7 @@ func readyServer(t *testing.T, env map[string]string) (*server, *dbtest.Database
 
 // pendingServer is readyServer, on a database whose first-run setup is
 // pending. Its job queue enqueues the server's jobs, and runs none.
-func pendingServer(t *testing.T, env map[string]string) (*server, *dbtest.Database) {
+func pendingServer(t testing.TB, env map[string]string) (*server, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
 	s := newServer(loadConfig(t, env), slog.New(slog.DiscardHandler))

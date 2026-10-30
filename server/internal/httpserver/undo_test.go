@@ -1386,16 +1386,11 @@ func obj(kv ...any) map[string]any {
 // and the system's random source's.
 func (g *undoGen) id(kind ids.Kind) string {
 	g.ms++
-	var u ids.UUID
-	for i := range 6 {
-		u[i] = byte(g.ms >> (40 - 8*i))
+	var r [10]byte
+	for i := range r {
+		r[i] = byte(g.r.UintN(256))
 	}
-	for i := 6; i < len(u); i++ {
-		u[i] = byte(g.r.UintN(256))
-	}
-	u[6] = 0x70 | u[6]&0x0F
-	u[8] = 0x80 | u[8]&0x3F
-	return ids.Encode(kind, u)
+	return ids.Encode(kind, ids.NewV7(int64(g.ms), r))
 }
 
 // coin returns true half of the time.
