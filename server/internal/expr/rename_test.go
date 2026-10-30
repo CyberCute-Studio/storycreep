@@ -19,6 +19,9 @@ var (
 	cmpMira    = testID(ids.Component, 12)
 	atrTrustR  = testID(ids.AttributeDef, 11)
 	atrMoodR   = testID(ids.AttributeDef, 12)
+	atrNoteR   = testID(ids.AttributeDef, 13) // not runtime
+	cmpRing    = testID(ids.Component, 13)    // of another type
+	atrPowerR  = testID(ids.AttributeDef, 14) // ring's trust
 	renameVars = []Variable{
 		{ID: varRep, Key: "rep", Type: value.Int},
 		{ID: varX, Key: "x", Type: value.Int},
@@ -27,14 +30,17 @@ var (
 	renameAttrs = []Attribute{
 		{ID: atrTrustR, Key: "trust", Type: value.Int, Runtime: true},
 		{ID: atrMoodR, Key: "mood", Type: value.Enum, Runtime: true, Options: []string{"calm", "angry"}},
+		{ID: atrNoteR, Key: "note", Type: value.String},
 	}
 	renameComps = []Component{{ID: cmpElaraR, Key: "elara", Attributes: renameAttrs},
-		{ID: cmpMira, Key: "mira", Attributes: renameAttrs}}
+		{ID: cmpMira, Key: "mira", Attributes: renameAttrs},
+		{ID: cmpRing, Key: "ring", Attributes: []Attribute{{ID: atrPowerR, Key: "trust", Type: value.Int,
+			Runtime: true}}}}
 )
 
 // renameProjects returns the project of renameVars and renameComps, and the
-// project after the rename of the variable or the component whose ID is id to
-// the key.
+// project after the rename of the variable, the component, or the attribute
+// definition whose ID is id to the key.
 func renameProjects(t *testing.T, id, key string) (before, after *Project) {
 	t.Helper()
 	before, err := NewProject(renameVars, renameComps, nil)
@@ -50,6 +56,12 @@ func renameProjects(t *testing.T, id, key string) (before, after *Project) {
 	for i := range cs {
 		if cs[i].ID == id {
 			cs[i].Key = key
+		}
+		cs[i].Attributes = slices.Clone(cs[i].Attributes)
+		for j := range cs[i].Attributes {
+			if cs[i].Attributes[j].ID == id {
+				cs[i].Attributes[j].Key = key
+			}
 		}
 	}
 	if after, err = NewProject(vs, cs, nil); err != nil {
@@ -122,6 +134,20 @@ func TestRewrite(t *testing.T) {
 		{name: "board. that a comment follows stays", id: varBTrust, key: "x", board: boardB,
 			source: "x > 1 && board . // B's own\n trust > 2", want: "global.x > 1 && board . // B's own\n x > 2",
 			qualified: 1},
+		{name: "an attribute definition's rename renames it of every component of its type", id: atrTrustR,
+			key: "loyalty", board: boardA, ctx: ContextScript,
+			source: "elara.trust += mira.trust\nelara.mood = \"calm\"",
+			want:   "elara.loyalty += mira.loyalty\nelara.mood = \"calm\""},
+		{name: "an attribute of another type of the same key is not renamed", id: atrTrustR, key: "loyalty",
+			board: boardA, source: "ring.trust > elara.trust", want: "ring.trust > elara.loyalty"},
+		{name: "cmp. of an unshadowed component's attribute is written bare", id: atrTrustR, key: "loyalty",
+			board: boardA, source: "cmp.elara.trust > 1", want: "elara.loyalty > 1"},
+		{name: "a non-runtime attribute is renamed, as its name names it", id: atrNoteR, key: "remark",
+			board: boardA, source: "elara.note == \"x\"", want: "elara.remark == \"x\""},
+		{name: "an attribute that the component lacks stays", id: atrTrustR, key: "loyalty", board: boardA,
+			source: "elara.fame > elara.trust", want: "elara.fame > elara.loyalty"},
+		{name: "a comment in an attribute's name stays", id: atrTrustR, key: "loyalty", board: boardA,
+			source: "elara // who\n.trust > 1", want: "elara // who\n.loyalty > 1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -142,8 +168,8 @@ func TestRewrite(t *testing.T) {
 				if e.Qualified {
 					qualified++
 				}
-				if e.Qualified == (e.Ref == c.id) {
-					t.Errorf("the edit %+v is qualified exactly when it names the renamed entity", e)
+				if e.Qualified == (e.Ref == c.id || e.Attribute == c.id) {
+					t.Errorf("the edit %+v is qualified exactly when it names other than the renamed entity", e)
 				}
 			}
 			if qualified != c.qualified {
@@ -158,8 +184,9 @@ func TestRewrite(t *testing.T) {
 
 // TestCaptures checks that a rename captures a source exactly when a name of
 // it that names nothing before the rename names something after it, which
-// Rewrite leaves as it is (PRD FR-VAR-03): the renamed entity, by its new
-// key, or a component whose key the renamed variable had, which shadowed it.
+// Rewrite leaves as it is (PRD FR-VAR-03, FR-COMP-01 AC4): the renamed
+// entity, by its new key, or a component whose key the renamed variable had,
+// which shadowed it.
 func TestCaptures(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -185,6 +212,16 @@ func TestCaptures(t *testing.T) {
 		{name: "a component's attribute that a variable renamed to its key shadows", id: varRep, key: "mira",
 			board: boardA, source: "mira.trust > 1"},
 		{name: "a source that does not parse", id: varRep, key: "loyalty", board: boardA, source: "loyalty >"},
+		{name: "a component's attribute that named no attribute of it", id: atrTrustR, key: "loyalty",
+			board: boardA, source: "elara.loyalty > 1", want: true},
+		{name: "a name of the renamed attribute, which Rewrite rewrites", id: atrTrustR, key: "loyalty",
+			board: boardA, source: "elara.trust > 1"},
+		{name: "an attribute that names nothing after either", id: atrTrustR, key: "loyalty", board: boardA,
+			source: "elara.fame > 1"},
+		{name: "another type's attribute of the new key", id: atrTrustR, key: "power", board: boardA,
+			source: "ring.power > 1"},
+		{name: "a component's attribute that a component renamed away named", id: cmpElaraR, key: "ela",
+			board: boardA, source: "elara.trust > 1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -192,7 +229,7 @@ func TestCaptures(t *testing.T) {
 			if c.back {
 				before, after = after, before
 			}
-			got, err := Captures(c.source, ContextCondition, before, after, c.board)
+			got, err := Captures(c.source, ContextCondition, before, after, c.board, c.id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,6 +256,7 @@ func TestRewriteKeepsAST(t *testing.T) {
 		{varBTrust, "x", boardB, "x += trust\nelara.mood = \"angry\"", ContextScript},
 		{varRep, "elara", boardA, "rep > elara.trust && cmp.mira.trust < 3", ContextCondition},
 		{cmpElaraR, "rep", boardB, "elara.trust = rep\nmira.trust -= 1", ContextScript},
+		{atrTrustR, "loyalty", boardB, "elara.trust = rep\ncmp.mira.trust -= ring.trust", ContextScript},
 	} {
 		before, after := renameProjects(t, c.id, c.key)
 		want, err := Compile(c.source, c.ctx, before, c.board)

@@ -32,6 +32,15 @@ type componentRenameInput struct {
 	api.PageParams
 }
 
+type attributeRenameInput struct {
+	ProjectID       string `path:"project_id" doc:"The project's ID"`
+	ComponentTypeID string `path:"component_type_id" doc:"The ID of the attribute definition's component type"`
+	AttributeID     string `path:"attribute_id" doc:"The attribute definition's ID"`
+	Key             string `query:"key" required:"true" doc:"The definition's new key, as an attribute.set_key command would give it, which is checked as the command checks it"`
+	Rewrite         string `query:"rewrite" required:"true" enum:"renamed,qualified" doc:"Which rewrites the list holds: those of the names of the definition's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which an attribute's key takes none, so that the list is empty"`
+	api.PageParams
+}
+
 type renamePreviewOutput struct {
 	Body api.Page[expression.RenameSite]
 }
@@ -64,9 +73,10 @@ const renamePreviewDoc = " Each site is an expression of the project, in its tra
 	"sources as the project stands when it applies, which another change may have changed meanwhile."
 
 // registerRenames registers the routes that preview what renaming a
-// project's variable, or changing a component's key, rewrites (PRD FR-VAR-03,
-// FR-COMP-02 AC2), before the command that does it is sent to the command
-// endpoint (registerCommands).
+// project's variable, or changing a component's key or an attribute
+// definition's, rewrites (PRD FR-VAR-03, FR-COMP-02 AC2, FR-COMP-01 AC4),
+// before the command that does it is sent to the command endpoint
+// (registerCommands).
 func registerRenames(m *api.Mux, variables *variable.Service, components *component.Service) {
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "previewVariableRename",
@@ -132,6 +142,48 @@ func registerRenames(m *api.Mux, variables *variable.Service, components *compon
 		}
 		list, err := components.RenamePreview(ctx, actor, id, componentID, in.Key, in.Rewrite == "qualified", after,
 			in.Fetch())
+		if err != nil {
+			return nil, renameError(componentError(err))
+		}
+		return renamePage(in.PageParams, list)
+	}, api.TokenScope(scope.ProjectRead))
+
+	api.Register(m, api.ReadProject, huma.Operation{
+		OperationID: "previewAttributeRename",
+		Method:      http.MethodGet,
+		Path: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/" +
+			"rename-preview",
+		Summary: "Preview a change of an attribute definition's key",
+		Description: "Lists the expressions that changing the attribute definition's key to the key would rewrite, " +
+			"as the command attribute.set_key rewrites them (PRD FR-COMP-01 AC4, FR-VAR-03): those whose names of " +
+			"the definition's attribute of a component of its type it rewrites, those of a component in the " +
+			"project's trash whose key no other component has, in the trash or not, among them, so that restoring " +
+			"it brings back what names its attributes, or, as rewrite says, those whose names of other entities it " +
+			"qualifies, which an attribute's key takes from none, so that that list is always empty." +
+			renamePreviewDoc + projectNotFoundDoc + tokenNotFoundDoc + " A type that the project does not have, " +
+			"or a definition that the type does not have, or either in the project's trash, is answered with 404 " +
+			"not_found, a key that is no identifier with 422 key_invalid, and one that another definition of the " +
+			"type has with 409 key_taken, as the change would be." + tokenAuthDoc(scope.ProjectRead),
+		Tags: []string{"Components"},
+	}, func(ctx context.Context, in *attributeRenameInput) (*renamePreviewOutput, error) {
+		id, actor, err := projectActor(ctx, in.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		typeID, err := ids.Decode(ids.ComponentType, in.ComponentTypeID)
+		if err != nil {
+			return nil, err
+		}
+		attributeID, err := ids.Decode(ids.AttributeDef, in.AttributeID)
+		if err != nil {
+			return nil, err
+		}
+		after, err := renameCursor(in.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		list, err := components.AttributeRenamePreview(ctx, actor, id, typeID, attributeID, in.Key,
+			in.Rewrite == "qualified", after, in.Fetch())
 		if err != nil {
 			return nil, renameError(componentError(err))
 		}

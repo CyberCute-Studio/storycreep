@@ -192,6 +192,47 @@ func seqOf(t *testing.T, admin *pgx.Conn, project string) int64 {
 	return seq
 }
 
+// preview returns every site of the list of a rename's preview at path, a
+// path with its query, read as the world's owner, limit of them a page, and
+// fails the test unless each page is answered with 200.
+func (w *renameWorld) preview(t *testing.T, path string, limit int) []expression.RenameSite {
+	t.Helper()
+	var out []expression.RenameSite
+	for cursor := ""; ; {
+		url := fmt.Sprintf("%s&limit=%d", path, limit)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+		res := call(w.s.main, http.MethodGet, url, nil, w.owner.header(false))
+		var page api.Page[expression.RenameSite]
+		if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
+			t.Fatalf("GET %s: %d %s", url, res.status, res.body)
+		}
+		out = append(out, page.Items...)
+		if page.NextCursor == nil {
+			return out
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+// previewLines returns a line of each of the sites of a rename's preview,
+// with its site, its board's name, its node, its names, as each is and as it
+// becomes, and its source rewritten, sorted.
+func previewLines(sites []expression.RenameSite) []string {
+	var out []string
+	for _, s := range sites {
+		var names []string
+		for _, n := range s.Names {
+			names = append(names, fmt.Sprintf("%s->%s", n.From, n.To))
+		}
+		out = append(out, fmt.Sprintf("%s %s/%s %s: %s", s.Site, s.BoardName, s.NodeID, strings.Join(names, " "),
+			s.Rewritten))
+	}
+	slices.Sort(out)
+	return out
+}
+
 // TestRenameRewritesSources checks FR-VAR-03 AC4's fixture: renaming the
 // global variable rep to trust, the key of board B's variable, rewrites board
 // B's rep as global.trust, the other boards' as trust, and leaves board B's
@@ -546,39 +587,8 @@ func TestRenamePreview(t *testing.T) {
 	t.Parallel()
 	w := newRenameWorld(t)
 	original := expressionsOf(t, w.admin, w.project)
-	preview := func(path string, limit int) []expression.RenameSite {
-		t.Helper()
-		var out []expression.RenameSite
-		for cursor := ""; ; {
-			url := fmt.Sprintf("%s&limit=%d", path, limit)
-			if cursor != "" {
-				url += "&cursor=" + cursor
-			}
-			res := call(w.s.main, http.MethodGet, url, nil, w.owner.header(false))
-			var page api.Page[expression.RenameSite]
-			if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
-				t.Fatalf("GET %s: %d %s", url, res.status, res.body)
-			}
-			out = append(out, page.Items...)
-			if page.NextCursor == nil {
-				return out
-			}
-			cursor = *page.NextCursor
-		}
-	}
-	lines := func(sites []expression.RenameSite) []string {
-		var out []string
-		for _, s := range sites {
-			var names []string
-			for _, n := range s.Names {
-				names = append(names, fmt.Sprintf("%s->%s", n.From, n.To))
-			}
-			out = append(out, fmt.Sprintf("%s %s/%s %s: %s", s.Site, s.BoardName, s.NodeID, strings.Join(names, " "),
-				s.Rewritten))
-		}
-		slices.Sort(out)
-		return out
-	}
+	preview := func(path string, limit int) []expression.RenameSite { return w.preview(t, path, limit) }
+	lines := previewLines
 	v := variablePath(w.project, w.rep)
 	got := lines(preview(renamePreviewPath(v, "trust", "renamed"), 1))
 	want := []string{
@@ -764,4 +774,139 @@ func TestComponentKeyRefactor(t *testing.T) {
 	wantCode(t, "a key of another component", w.apply(t, http.StatusConflict, cmd("component.create",
 		map[string]any{"id": newComponentID(), "component_type_id": w.cast, "name": "Mira", "key": "trust"})),
 		http.StatusConflict, api.CodeKeyTaken)
+}
+
+// TestAttributeKeyRefactor checks that changing an attribute definition's key
+// rewrites the expressions that name its attribute of each component of its
+// type, as a variable's rename does, in the shortest form that names it,
+// cmp.<component>.<attribute> where a variable has the component's key, and
+// those of a component of the type in the trash, whose restoration then
+// brings back an expression that compiles; that it leaves as they are the
+// names of an attribute of another type of the same key; and that its undo
+// gives the sources back exactly as they were, and its redo the rewritten
+// ones (PRD FR-COMP-01 AC4).
+//
+// Verifies: FR-COMP-01/AC4
+func TestAttributeKeyRefactor(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	pos := map[string]int{"x": 0, "y": 0}
+	mira, gone, keyed, items, ring, power := newComponentID(), newComponentID(), newComponentID(),
+		newComponentTypeID(), newComponentID(), newAttributeID()
+	onMira, onKeyedA, onKeyedB, onGone := newNodeID(), newNodeID(), newNodeID(), newNodeID()
+	w.apply(t, http.StatusOK,
+		cmd("component.create", map[string]any{"id": mira, "component_type_id": w.cast, "name": "Mira"}),
+		cmd("component.create", map[string]any{"id": gone, "component_type_id": w.cast, "name": "Gone"}),
+		// The key of board B's variable, which names it on board B.
+		cmd("component.create", map[string]any{"id": keyed, "component_type_id": w.cast, "name": "Keyed",
+			"key": "trust"}),
+		cmd("component_type.create", map[string]any{"id": items, "name": "Items"}),
+		cmd("attribute.create", map[string]any{"id": power, "component_type_id": items, "name": "Trust",
+			"type": "int", "runtime": true}),
+		cmd("component.create", map[string]any{"id": ring, "component_type_id": items, "name": "Ring"}),
+		cmd("component.delete", map[string]any{"id": gone}))
+	w.apply(t, http.StatusOK,
+		cmd("node.create", map[string]any{"id": onMira, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "mira.trust = ring.trust + cmp.elara.trust"}),
+		cmd("node.create", map[string]any{"id": onKeyedA, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "flag = cmp.trust.trust > 1"}),
+		cmd("node.create", map[string]any{"id": onKeyedB, "board_id": w.b, "type": "element", "position": pos,
+			"on_enter": "flag = cmp.trust.trust > trust"}),
+		cmd("node.create", map[string]any{"id": onGone, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "gone.trust += 1"}))
+	enter := func(node string) string { return "on_enter of " + node }
+	want := map[string]string{
+		"on_exit of " + w.onB2: "elara.loyalty += rep",
+		enter(onMira):          "mira.loyalty = ring.trust + elara.loyalty",
+		enter(onKeyedA):        "flag = trust.loyalty > 1",
+		enter(onKeyedB):        "flag = cmp.trust.loyalty > trust",
+		enter(onGone):          "gone.loyalty += 1",
+	}
+	// check fails the test unless the project's expressions are those of
+	// before, with the sources of rewritten, if it is set, each compiling as
+	// it did, but for the one of the component in the trash, which compiles
+	// once gone is restored.
+	check := func(when string, before map[string]storedExpression, rewritten map[string]string, restored bool) {
+		t.Helper()
+		got := expressionsOf(t, w.admin, w.project)
+		for key, e := range before {
+			source := e.Source
+			if s, ok := rewritten[key]; ok {
+				source = s
+			}
+			valid := key != enter(onGone) || restored
+			if g := got[key]; g.Source != source || g.Valid != valid || valid && key != enter(onGone) && g.AST != e.AST {
+				t.Errorf("%s, the %s is %+v, want the source %q, valid %v, with the AST %s", when, key, g, source,
+					valid, e.AST)
+			}
+		}
+	}
+	original := expressionsOf(t, w.admin, w.project)
+	if original[enter(onGone)].Valid {
+		t.Fatalf("an expression of a component in the trash compiles: %+v", original[enter(onGone)])
+	}
+	rekeyed := resultFrom(t, w.apply(t, http.StatusOK, cmd("attribute.set_key", map[string]any{"id": w.attr,
+		"key": "loyalty"})))
+	check("once the definition's key is loyalty", original, want, false)
+	changed := expressionsOf(t, w.admin, w.project)
+	undone := resultFrom(t, w.apply(t, http.StatusOK, undoCommands(rekeyed.Undo)...))
+	if got := expressionsOf(t, w.admin, w.project); !reflect.DeepEqual(got, original) {
+		t.Errorf("once the change of the key is undone, the expressions are %v, want %v", got, original)
+	}
+	w.apply(t, http.StatusOK, undoCommands(undone.Undo)...)
+	if got := expressionsOf(t, w.admin, w.project); !reflect.DeepEqual(got, changed) {
+		t.Errorf("once the change of the key is redone, the expressions are %v, want %v", got, changed)
+	}
+	w.apply(t, http.StatusOK, cmd("component.restore", map[string]any{"id": gone}))
+	check("once gone is restored", original, want, true)
+}
+
+// TestAttributeRenamePreview checks that the preview of a change of an
+// attribute definition's key lists the expressions that the change rewrites,
+// those of a component of the type in the trash among them, with the names
+// that it rewrites, that it qualifies nothing, and that it answers a key that
+// the change refuses, or a definition that the type does not have, as the
+// change itself would (PRD FR-COMP-01 AC4).
+//
+// Verifies: FR-COMP-01/AC4
+func TestAttributeRenamePreview(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	gone, onGone, mood, items := newComponentID(), newNodeID(), newAttributeID(), newComponentTypeID()
+	w.apply(t, http.StatusOK,
+		cmd("component.create", map[string]any{"id": gone, "component_type_id": w.cast, "name": "Gone"}),
+		cmd("attribute.create", map[string]any{"id": mood, "component_type_id": w.cast, "name": "Mood",
+			"type": "int", "runtime": true}),
+		cmd("component_type.create", map[string]any{"id": items, "name": "Items"}),
+		cmd("component.delete", map[string]any{"id": gone}))
+	w.apply(t, http.StatusOK, cmd("node.create", map[string]any{"id": onGone, "board_id": w.a, "type": "element",
+		"position": map[string]int{"x": 0, "y": 0}, "on_enter": "gone.trust += gone.mood"}))
+	original := expressionsOf(t, w.admin, w.project)
+	a := attributePath(w.project, w.cast, w.attr)
+	if got, want := previewLines(w.preview(t, renamePreviewPath(a, "loyalty", "renamed"), 1)), sorted(
+		"node_on_exit B/"+w.onB2+" elara.trust->elara.loyalty: elara.loyalty += rep",
+		"node_on_enter A/"+onGone+" gone.trust->gone.loyalty: gone.loyalty += gone.mood",
+	); !slices.Equal(got, want) {
+		t.Errorf("the change of trust's key to loyalty renames %q, want %q", got, want)
+	}
+	if got := w.preview(t, renamePreviewPath(a, "loyalty", "qualified"), 10); len(got) != 0 {
+		t.Errorf("the change of trust's key to loyalty qualifies %v, want nothing", previewLines(got))
+	}
+	for _, c := range []struct {
+		path   string
+		status int
+		code   api.Code
+	}{
+		{renamePreviewPath(a, "mood", "renamed"), http.StatusConflict, api.CodeKeyTaken},
+		{renamePreviewPath(a, "x y", "renamed"), http.StatusUnprocessableEntity, api.CodeKeyInvalid},
+		{renamePreviewPath(attributePath(w.project, w.cast, newAttributeID()), "x", "renamed"),
+			http.StatusNotFound, api.CodeNotFound},
+		{renamePreviewPath(attributePath(w.project, items, w.attr), "x", "renamed"), http.StatusNotFound,
+			api.CodeNotFound},
+	} {
+		wantCode(t, c.path, call(w.s.main, http.MethodGet, c.path, nil, w.owner.header(false)), c.status, c.code)
+	}
+	if got := expressionsOf(t, w.admin, w.project); !reflect.DeepEqual(got, original) {
+		t.Errorf("after the previews, the expressions are %v, want %v", got, original)
+	}
 }

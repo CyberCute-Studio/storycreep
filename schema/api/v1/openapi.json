@@ -773,8 +773,15 @@
             "type": "string"
           },
           "key": {
-            "description": "The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3).",
+            "description": "The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the definition's attribute of a component of its type, in the shortest form that names it from the expression's board, \u003ccomponent\u003e.\u003cattribute\u003e unless a variable of the board or a global one has the component's key, which cmp.\u003ccomponent\u003e.\u003cattribute\u003e names past, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-COMP-01 AC4, FR-VAR-03), as GET /api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/rename-preview lists them. It rewrites alike the names of the attributes of a component of the type in the project's trash whose key no other component has, in the trash or not, so that restoring it brings back what names them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written.",
             "type": "string"
+          },
+          "sources": {
+            "description": "The sources that the undo of a change of the key gives back to the expressions of the owners' fields that it lists, those that the change rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the change of the definition's key from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the definition's attributes, as one that names them by the key that it has written since the change, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the change rewrites the sources as key says.",
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -6876,7 +6883,7 @@
             "type": "string"
           },
           "ref": {
-            "description": "The ID of what the name names, before the rename and after it: the renamed variable's or component's, or, for a qualified name, the other variable's or component's whose name the new key would take",
+            "description": "The ID of what the name names, before the rename and after it: the renamed variable's or component's, the component's whose attribute of the renamed definition it names, or, for a qualified name, the other variable's or component's whose name the new key would take",
             "type": "string"
           },
           "start": {
@@ -13457,6 +13464,182 @@
           }
         },
         "summary": "List the values that a retype would not convert",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/rename-preview": {
+      "get": {
+        "description": "Lists the expressions that changing the attribute definition's key to the key would rewrite, as the command attribute.set_key rewrites them (PRD FR-COMP-01 AC4, FR-VAR-03): those whose names of the definition's attribute of a component of its type it rewrites, those of a component in the project's trash whose key no other component has, in the trash or not, among them, so that restoring it brings back what names its attributes, or, as rewrite says, those whose names of other entities it qualifies, which an attribute's key takes from none, so that that list is always empty. Each site is an expression of the project, in its trash or not, which the rename rewrites alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the rename writes in its place, with every name that it rewrites, whether that source would pass the 16384 characters that a source may have, as too_long says, which the rename is refused for, with 422 validation_failed, while any site of either list is, and the names that it rewrites of the list's kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare key, unless a variable of the board has the key of a global one, which global.\u003ckey\u003e names, and a component's attribute as \u003ccomponent\u003e.\u003cattribute\u003e, unless a variable of the board or a global one has the component's key, which cmp.\u003ccomponent\u003e.\u003cattribute\u003e names past, keeping the white space and the comments that the source writes between its parts, and so a qualifier that a comment follows, which it then does not drop; the other names stay as the source writes them, and so does a name that names nothing, which the rename may make name what it renames, or what its old key shadowed. The sites are in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the sources as the project stands when it applies, which another change may have changed meanwhile. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A type that the project does not have, or a definition that the type does not have, or either in the project's trash, is answered with 404 not_found, a key that is no identifier with 422 key_invalid, and one that another definition of the type has with 409 key_taken, as the change would be. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "previewAttributeRename",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of the attribute definition's component type",
+            "in": "path",
+            "name": "component_type_id",
+            "required": true,
+            "schema": {
+              "description": "The ID of the attribute definition's component type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The attribute definition's ID",
+            "in": "path",
+            "name": "attribute_id",
+            "required": true,
+            "schema": {
+              "description": "The attribute definition's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The definition's new key, as an attribute.set_key command would give it, which is checked as the command checks it",
+            "explode": false,
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "The definition's new key, as an attribute.set_key command would give it, which is checked as the command checks it",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which rewrites the list holds: those of the names of the definition's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which an attribute's key takes none, so that the list is empty",
+            "explode": false,
+            "in": "query",
+            "name": "rewrite",
+            "required": true,
+            "schema": {
+              "description": "Which rewrites the list holds: those of the names of the definition's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which an attribute's key takes none, so that the list is empty",
+              "enum": [
+                "renamed",
+                "qualified"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageRenameSite"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Preview a change of an attribute definition's key",
         "tags": [
           "Components"
         ]

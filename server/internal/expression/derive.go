@@ -87,8 +87,9 @@ var neutral = []commands.Type{
 // the sources of its expressions (ApplyRename), which the derivation compiles
 // as it does every source that a command wrote, and leave as they are its
 // type and whether it is in the trash, all that a node reference reads: a
-// variable's rename and a component's change of key, which change what the
-// project's expressions can name all the same, by the entity that they
+// variable's rename and the change of a component's key or of an attribute
+// definition's, which change what the project's expressions can name all the
+// same, by the entity that they
 // rename. derive passes over a change of a node that commands of these types
 // and of neutral ones alone made, so that a rename that rewrites 500 nodes'
 // scripts does not compile again every expression that names one of those

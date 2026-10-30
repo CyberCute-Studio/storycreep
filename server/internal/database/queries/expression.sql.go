@@ -1193,3 +1193,51 @@ func (q *Queries) TrashedBoardVariables(ctx context.Context, arg TrashedBoardVar
 	}
 	return items, nil
 }
+
+const trashedTypeComponents = `-- name: TrashedTypeComponents :many
+SELECT id, key, component_type_id FROM component c
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.deleted_at IS NOT NULL
+    AND c.key IN (
+        SELECT t.key FROM component t
+        WHERE t.workspace_id = $1 AND t.project_id = $2
+            AND t.component_type_id = $3 AND t.deleted_at IS NOT NULL
+    )
+ORDER BY c.id
+`
+
+type TrashedTypeComponentsParams struct {
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+}
+
+type TrashedTypeComponentsRow struct {
+	ID              pgtype.UUID
+	Key             string
+	ComponentTypeID pgtype.UUID
+}
+
+// TrashedTypeComponents returns the project's components in its trash whose
+// keys a component of the type component_type_id in its trash has, those of
+// other types among them, with their types, in the order of their IDs: those
+// whose attributes' names a change of a key of one of the type's definitions
+// rewrites (package expression), of keys that no other component has.
+func (q *Queries) TrashedTypeComponents(ctx context.Context, arg TrashedTypeComponentsParams) ([]TrashedTypeComponentsRow, error) {
+	rows, err := q.db.Query(ctx, trashedTypeComponents, arg.WorkspaceID, arg.ProjectID, arg.ComponentTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrashedTypeComponentsRow
+	for rows.Next() {
+		var i TrashedTypeComponentsRow
+		if err := rows.Scan(&i.ID, &i.Key, &i.ComponentTypeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

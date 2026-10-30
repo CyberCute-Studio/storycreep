@@ -343,6 +343,21 @@ FROM (SELECT (r.value->>'id')::uuid AS id, r.value->>'source' AS source FROM jso
 WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = s.id AND e.source <> s.source
 RETURNING e.id, e.node_id, e.connection_id, e.branch_output_id;
 
+-- name: TrashedTypeComponents :many
+-- TrashedTypeComponents returns the project's components in its trash whose
+-- keys a component of the type component_type_id in its trash has, those of
+-- other types among them, with their types, in the order of their IDs: those
+-- whose attributes' names a change of a key of one of the type's definitions
+-- rewrites (package expression), of keys that no other component has.
+SELECT id, key, component_type_id FROM component c
+WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.deleted_at IS NOT NULL
+    AND c.key IN (
+        SELECT t.key FROM component t
+        WHERE t.workspace_id = @workspace_id AND t.project_id = @project_id
+            AND t.component_type_id = @component_type_id AND t.deleted_at IS NOT NULL
+    )
+ORDER BY c.id;
+
 -- name: ExpressionTypeAttributes :many
 -- ExpressionTypeAttributes returns the attribute definitions of the project's
 -- component type component_type_id that are not deleted themselves, whether
