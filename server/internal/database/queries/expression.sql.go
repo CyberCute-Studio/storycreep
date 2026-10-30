@@ -724,12 +724,16 @@ const namingExpressions = `-- name: NamingExpressions :many
 WITH found AS (
     SELECT id FROM expression
     WHERE workspace_id = $1 AND project_id = $2 AND ast IS NULL AND error IS NULL
+        AND EXISTS (SELECT 1 FROM unnest($4::text[]) AS k (needle) WHERE strpos(source, k.needle) > 0)
+    UNION
+    SELECT id FROM expression
+    WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($5::uuid[])
     UNION
     SELECT expression_id FROM expression_name
-    WHERE workspace_id = $1 AND project_id = $2 AND ref = ANY($4::uuid[])
+    WHERE workspace_id = $1 AND project_id = $2 AND ref = ANY($6::uuid[])
     UNION
     SELECT expression_id FROM expression_name
-    WHERE workspace_id = $1 AND project_id = $2 AND key = ANY($5::text[])
+    WHERE workspace_id = $1 AND project_id = $2 AND key = ANY($4::text[])
 )
 SELECT e.id, e.board_id, e.field, e.context, e.source, e.node_id, e.connection_id, e.branch_output_id,
     coalesce(e.node_id, c.from_node_id, o.node_id)::uuid AS site_node_id,
@@ -754,8 +758,9 @@ type NamingExpressionsParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	BoardID     pgtype.UUID
-	Refs        []pgtype.UUID
 	Keys        []string
+	Ids         []pgtype.UUID
+	Refs        []pgtype.UUID
 }
 
 type NamingExpressionsRow struct {
@@ -775,21 +780,25 @@ type NamingExpressionsRow struct {
 // NamingExpressions returns the project's expressions, in the trash or not,
 // that may name what a rename changes the key of, or what a deletion takes
 // away (package expression): those that name a UUID among refs or a key
-// among keys (expression_name), and those that the batch has yet to compile,
-// whose names a command's new source may hold, each once; of the board
-// board_id alone, unless it is null. Each comes with what it is compiled
-// from, its owner and field, the node of its site, as a usage lists it, and
-// whether its board is in the trash, and whether its owner is outside the
-// trash, as a usage list shows it (live), in the order of their boards,
-// their sites' nodes, and their IDs. The names are read by an index of each,
-// so that the read takes as long as what it returns.
+// among keys (expression_name), those that the batch has yet to compile,
+// whose names a command's new source may hold, of a source that holds one of
+// keys, as any source that names one does, and those among ids, which the undo
+// of a rename lists, each once; of the board board_id alone, unless it is
+// null. Each comes with what it is compiled from, its owner and field, the
+// node of its site, as a usage lists it, and whether its board is in the
+// trash, and whether its owner is outside the trash, as a usage list shows it
+// (live), in the order of their boards, their sites' nodes, and their IDs.
+// The names are read by an index of each, so that the read takes as long as
+// what it returns, and the sources that the batch has yet to compile are
+// matched to the keys before anything compiles them.
 func (q *Queries) NamingExpressions(ctx context.Context, arg NamingExpressionsParams) ([]NamingExpressionsRow, error) {
 	rows, err := q.db.Query(ctx, namingExpressions,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.BoardID,
-		arg.Refs,
 		arg.Keys,
+		arg.Ids,
+		arg.Refs,
 	)
 	if err != nil {
 		return nil, err

@@ -2654,7 +2654,7 @@
         "description": "The payload of a command of the type component.delete.",
         "properties": {
           "force": {
-            "description": "Whether to delete the component even though sites of the project that are not in its trash use it, as its usage lists list them: the nodes whose speaker it is, which keep it as their speaker, in the trash, the texts that mention it or whose value references show its attributes, which then show nothing, and the expressions that read or write its attributes, which then name what no longer resolves, and are invalid, each a validation error (PRD FR-COMP-04, FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for. Without it, a component that sites use is not deleted: the command is answered with 409 component_in_use, which counts and lists them, as the project stands once the batch's commands before it have applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2).",
+            "description": "Whether to delete the component even though sites of the project that are not in its trash use it, as its usage lists list them, but for its own description, which goes to the trash with it: the nodes whose speaker it is, which keep it as their speaker, in the trash, the texts that mention it or whose value references show its attributes, which then show nothing, and the expressions that read or write its attributes, which then name what no longer resolves, and are invalid, each a validation error (PRD FR-COMP-04, FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a component that sites use is not deleted: the command is answered with 409 component_in_use, which counts and lists them, as the project stands once the batch's commands before it have applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2).",
             "type": "boolean"
           },
           "id": {
@@ -3061,7 +3061,7 @@
             "type": "string"
           },
           "sources": {
-            "description": "The sources to give the expressions of the owners' fields that it lists, rather than rewrite those that name the component, as the undo of a change of the key gives back those that the change rewrote, exactly as they were: with it, the change rewrites nothing else. Without it, the change rewrites the sources as key says.",
+            "description": "The sources that the undo of a change of the key gives back to the expressions of the owners' fields that it lists, those that the change rewrote, exactly as they were: each to its field's expression where the change of the component's key from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as. Every other expression that names the component's attributes, as one that names them by the key that it has written since the change, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the change rewrites the sources as key says.",
             "items": {
               "$ref": "#/components/schemas/Source"
             },
@@ -8257,7 +8257,7 @@
         "description": "The payload of a command of the type variable.delete.",
         "properties": {
           "force": {
-            "description": "Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable.",
+            "description": "Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable.",
             "type": "boolean"
           },
           "id": {
@@ -8435,7 +8435,7 @@
             "type": "string"
           },
           "sources": {
-            "description": "The sources to give the expressions of the owners' fields that it lists, rather than rewrite those that name the variable, as the undo of a rename gives back those that the rename rewrote, exactly as they were: with it, the rename rewrites nothing else. Without it, the rename rewrites the sources as key says.",
+            "description": "The sources that the undo of a rename gives back to the expressions of the owners' fields that it lists, those that the rename rewrote, exactly as they were: each to its field's expression where the rename of the variable from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as. Every other expression that names the variable, or whose names key would take, as one that names the variable by the key that it has written since the rename, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the rename rewrites the sources as key says.",
             "items": {
               "$ref": "#/components/schemas/Source"
             },

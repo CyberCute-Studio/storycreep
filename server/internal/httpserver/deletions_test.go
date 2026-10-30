@@ -218,6 +218,43 @@ func TestComponentDeletionGuarded(t *testing.T) {
 	wantDrift(t, w.admin, p)
 }
 
+// TestComponentOwnDescription checks that a component's own description,
+// which goes to the trash with it, is no usage of it: a component whose
+// description mentions it and shows one of its attributes is deleted
+// unforced, and so is undone its creation (PRD FR-COMP-04).
+func TestComponentOwnDescription(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	h, o, p := w.s.main, w.owner, w.project
+	send := func(cmds ...wireCommand) response {
+		return call(h, http.MethodPost, commandsPath(p), commandBatch(t, cmds...), o.header(true))
+	}
+	create := func(id string) wireCommand {
+		return wireCommand{Type: "component.create", Payload: map[string]any{"id": id, "component_type_id": w.cast,
+			"name": "Self " + id, "description": richText(mentionInline(id), textInline(" trusts "),
+				attributeInline(id, w.trust))}}
+	}
+	deleted := func(id string) bool {
+		var trashed bool
+		if err := w.admin.QueryRow(context.Background(), "SELECT deleted_at IS NOT NULL FROM component WHERE id = $1",
+			uuidOf(t, id)).Scan(&trashed); err != nil {
+			t.Fatal(err)
+		}
+		return trashed
+	}
+	first, second := newComponentID(), newComponentID()
+	created := resultFrom(t, send(create(first)))
+	resultFrom(t, send(undoCommands(created.Undo)...))
+	if !deleted(first) {
+		t.Error("the undo of the creation of a component that its own description uses left it outside the trash")
+	}
+	resultFrom(t, send(create(second)))
+	resultFrom(t, send(wireCommand{Type: "component.delete", Payload: map[string]any{"id": second}}))
+	if !deleted(second) {
+		t.Error("the deletion of a component that its own description uses left it outside the trash")
+	}
+}
+
 // TestForcedDeletionRole checks who may force the deletion of a variable that
 // the project's content uses: a role that may publish the project's
 // snapshots (§5.6), so an editor of a project whose publish_min_role is

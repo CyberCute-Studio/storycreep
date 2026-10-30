@@ -813,6 +813,9 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 	inverses := make([][]logStep, len(cmds))
 	undoable := !slices.ContainsFunc(cmds, func(c decoded) bool { return c.spec.inverse == nil })
 	for i, c := range cmds {
+		// What a command's inverse keeps for its Apply (Tx.Carry) is the
+		// command's alone.
+		t.carried = nil
 		if undoable {
 			steps, err := c.spec.inverse(ctx, t, c.payload)
 			if err == nil {
@@ -875,7 +878,7 @@ func (p *Pipeline) applyLocked(ctx context.Context, q *queries.Queries, t *Tx, c
 			}
 		}
 		err := c.spec.apply(ctx, t, c.payload)
-		t.current, t.steps = nil, nil
+		t.current, t.steps, t.carried = nil, nil, nil
 		if errors.Is(err, ErrUndoTooLarge) {
 			// Changed stops a command that changes something as soon as the
 			// undo is past either bound.

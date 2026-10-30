@@ -43,7 +43,7 @@
 // project's content names (package dependency, FR-DEP-01), which an
 // expression that does not compile names nothing in. A rename of a
 // variable's key, or of a component's, rewrites the sources that name what it
-// renames, and those whose names its new key would take (PlanRename,
+// renames, and those whose names its new key would take (ApplyRename,
 // FR-VAR-03), so that each names what it named; and the deletion of a
 // variable or a component finds what uses it as the batch stands (InUse),
 // which refuses it unless it is forced (FR-VAR-04).

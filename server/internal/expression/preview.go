@@ -1,8 +1,6 @@
 package expression
 
 import (
-	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -43,7 +41,7 @@ type RenamedName struct {
 }
 
 // PreviewKey is where a site is in the lists of a rename's preview: its
-// board, its node, and its expression, as PlanRename orders them.
+// board, its node, and its expression, as a rename reads them (planRename).
 type PreviewKey struct {
 	Board, Node, Expression ids.UUID
 }
@@ -53,28 +51,21 @@ func (s RenameSite) Key() PreviewKey { return s.key }
 
 // Preview returns at most limit of the expressions of the project, of the
 // workspace ws, in its trash or not, that the rename r rewrites, read in q's
-// transaction (PlanRename): those that it rewrites a name of the renamed
+// transaction (planRename): those that it rewrites a name of the renamed
 // entity of, or, if qualified is set, those that it rewrites a name of
 // another entity of, which it qualifies, each with those names, in the order
 // of their keys (PreviewKey), after after, or from the first if after is zero.
-// The caller checks r's new key first, as a rename does.
+// It rewrites none of the expressions before after, nor any once it has
+// found limit, so that a page takes as long as the expressions up to its
+// end. The caller checks r's new key first, as a rename does.
 func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, qualified bool,
 	after PreviewKey, limit int) ([]RenameSite, error) {
-	rewrites, err := PlanRename(ctx, q, ws, project, r)
-	if err != nil {
-		return nil, err
-	}
-	keyOf := func(rw Rewrite) PreviewKey {
-		return PreviewKey{Board: rw.Owner.Board.Bytes, Node: rw.Node, Expression: rw.Expression}
-	}
-	slices.SortFunc(rewrites, func(a, b Rewrite) int { return compareKeys(keyOf(a), keyOf(b)) })
 	out := []RenameSite{}
+	if limit <= 0 {
+		return out, nil
+	}
 	var boards, nodes []pgtype.UUID
-	for _, rw := range rewrites {
-		key := keyOf(rw)
-		if compareKeys(key, after) <= 0 || len(out) == limit {
-			continue
-		}
+	err := planRename(ctx, q, ws, project, r, after, func(rw siteRewrite) bool {
 		var names []RenamedName
 		for _, e := range rw.Edits {
 			if e.Qualified == qualified {
@@ -83,8 +74,9 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 			}
 		}
 		if len(names) == 0 {
-			continue
+			return true
 		}
+		key := PreviewKey{Board: rw.Owner.Board.Bytes, Node: rw.Node, Expression: rw.Expression}
 		site := RenameSite{Site: siteOf(rw.Owner.Kind, rw.Field), BoardID: ids.Encode(ids.Board, key.Board),
 			NodeID: ids.Encode(ids.Node, key.Node), InTrash: !rw.Live, Source: rw.Source, Rewritten: rw.Rewritten,
 			Names: names, key: key}
@@ -96,9 +88,10 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		}
 		out = append(out, site)
 		boards, nodes = append(boards, nullUUID(key.Board)), append(nodes, nullUUID(key.Node))
-	}
-	if len(out) == 0 {
-		return out, nil
+		return len(out) < limit
+	})
+	if err != nil || len(out) == 0 {
+		return out, err
 	}
 	rows, err := q.SiteNames(ctx, queries.SiteNamesParams{WorkspaceID: ws, ProjectID: project,
 		BoardIds: slices.Compact(boards), NodeIds: nodes})
@@ -113,11 +106,4 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		out[i].BoardName, out[i].NodeTitle = labels[out[i].key.Board], labels[out[i].key.Node]
 	}
 	return out, nil
-}
-
-// compareKeys orders the keys of a preview's sites, by their boards, their
-// nodes, and their expressions, by their bytes, as PlanRename returns them.
-func compareKeys(a, b PreviewKey) int {
-	return cmp.Or(bytes.Compare(a.Board[:], b.Board[:]), bytes.Compare(a.Node[:], b.Node[:]),
-		bytes.Compare(a.Expression[:], b.Expression[:]))
 }

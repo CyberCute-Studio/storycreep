@@ -338,6 +338,87 @@ func TestRenameAcrossSites(t *testing.T) {
 	wantSources(t, "once the rename is redone", expressionsOf(t, admin, p), before, want)
 }
 
+// TestRenameUndoKeepsLaterWork checks what the undo of a rename gives back
+// once work has gone on since: exactly the source that the rename rewrote of
+// an expression whose owner was in the trash at the rename and still has what
+// the rename wrote, while one whose owner has been restored and edited since,
+// whose revision the undo cannot expect, is rewritten rather than written
+// back over, and so is one written since that names the variable by its new
+// key, which the undo would leave naming nothing; an expression that is gone
+// since is passed over; and a rename whose sources a client made up writes
+// none that does not name and do what its expression does.
+//
+// Verifies: FR-VAR-03/AC1
+func TestRenameUndoKeepsLaterWork(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	pos := map[string]int{"x": 0, "y": 0}
+	kept, edited, gone, later := newNodeID(), newNodeID(), newNodeID(), newNodeID()
+	var create, trash []wireCommand
+	for _, n := range []string{kept, edited, gone} {
+		create = append(create, cmd("node.create", map[string]any{"id": n, "board_id": w.a, "type": "element",
+			"position": pos, "on_enter": "global.rep += 1"}))
+		trash = append(trash, cmd("node.delete", map[string]any{"id": n}))
+	}
+	w.apply(t, http.StatusOK, create...)
+	w.apply(t, http.StatusOK, trash...)
+	original := expressionsOf(t, w.admin, w.project)
+
+	renamed := resultFrom(t, w.apply(t, http.StatusOK, cmd("variable.rename", map[string]any{"id": w.rep,
+		"key": "trust"})))
+	for _, n := range []string{kept, edited, gone} {
+		if got := expressionsOf(t, w.admin, w.project)["on_enter of "+n].Source; got != "trust += 1" {
+			t.Errorf("the rename rewrote the on-enter script of %s, in the trash, as %q, want %q", n, got, "trust += 1")
+		}
+	}
+	// The work since the rename: a node in the trash restored and edited, a
+	// node written that names the variable by its new key, and a node's
+	// expression purged.
+	w.apply(t, http.StatusOK,
+		cmd("node.restore", map[string]any{"id": edited}),
+		cmd("node.update", map[string]any{"id": edited, "on_enter": "trust += 5"}),
+		cmd("node.create", map[string]any{"id": later, "board_id": w.a, "type": "element", "position": pos,
+			"on_enter": "trust -= 2"}))
+	if _, err := w.admin.Exec(context.Background(), "DELETE FROM expression WHERE node_id = $1",
+		uuidOf(t, gone)); err != nil {
+		t.Fatal(err)
+	}
+
+	w.apply(t, http.StatusOK, undoCommands(renamed.Undo)...)
+	want := map[string]string{}
+	for key, e := range original {
+		want[key] = e.Source
+	}
+	delete(want, "on_enter of "+gone)
+	want["on_enter of "+edited], want["on_enter of "+later] = "rep += 5", "rep -= 2"
+	got := expressionsOf(t, w.admin, w.project)
+	if !slices.Equal(slices.Sorted(maps.Keys(got)), slices.Sorted(maps.Keys(want))) {
+		t.Fatalf("once the rename is undone, the expressions are %v, want %v", slices.Sorted(maps.Keys(got)),
+			slices.Sorted(maps.Keys(want)))
+	}
+	for key, e := range got {
+		if e.Source != want[key] || !e.Valid {
+			t.Errorf("once the rename is undone, the %s is %q (valid %v), want %q, valid", key, e.Source, e.Valid,
+				want[key])
+		}
+	}
+
+	// A rename of flag, whose sources a client made up: one that does
+	// something else than onB's on-enter script, which the rename rewrites as
+	// it would without it, and one for kept's, which does not name flag, and
+	// which the rename leaves as it is.
+	before := expressionsOf(t, w.admin, w.project)
+	w.apply(t, http.StatusOK, cmd("variable.rename", map[string]any{"id": w.flag, "key": "banner",
+		"sources": []map[string]any{{"owner": w.onB, "field": "on_enter", "source": "rep = 0"},
+			{"owner": kept, "field": "on_enter", "source": "rep = 99"}}}))
+	wantSources(t, "once flag is renamed with made-up sources", expressionsOf(t, w.admin, w.project), before,
+		map[string]string{
+			"on_enter of " + w.onA:  "banner = rep >= 3",
+			"on_enter of " + w.onB:  "banner = rep >= 3\ntrust += 1",
+			"on_enter of " + w.onB2: "banner = global.rep > trust",
+		})
+}
+
 // TestRenamePreview checks the previews of a variable's rename and of a
 // component's change of key: each lists the expressions that the command
 // would rewrite, those of the names of what it renames apart from those that

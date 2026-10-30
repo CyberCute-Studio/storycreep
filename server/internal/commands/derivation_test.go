@@ -172,3 +172,39 @@ func TestUntouchingDerivationChangesNothing(t *testing.T) {
 		t.Errorf("the failed batch left %+v, want %+v", got, before)
 	}
 }
+
+// TestCarry checks that what a command's inverse keeps for its Apply
+// (Tx.Carry) reaches that Apply, and no other command's: the pipeline clears
+// it before each command.
+func TestCarry(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	_, aID := newNote()
+	var carried []any
+	r := noteRegistry()
+	for _, typ := range []Type{"note.carry", "note.peek"} {
+		Register(r, Spec[notePayload]{
+			Type: typ, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: []ids.Kind{ids.Node},
+			Inverse: func(_ context.Context, tx *Tx, p notePayload) ([]Step, error) {
+				if typ == "note.carry" {
+					tx.Carry(p.Body)
+				}
+				return nil, nil
+			},
+			Apply: func(_ context.Context, tx *Tx, _ notePayload) error {
+				carried = append(carried, tx.Carried())
+				return nil
+			},
+		})
+	}
+	p := w.pipeline(t, func(o *Options) { o.Registry = r })
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, "note.carry", notePayload{ID: aID, Body: "a"}, nil),
+		command(t, "note.peek", notePayload{ID: aID, Body: "b"}, nil),
+		command(t, "note.carry", notePayload{ID: aID, Body: "c"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []any{"a", nil, "c"}; !reflect.DeepEqual(carried, want) {
+		t.Errorf("the commands' Applies were carried %v, want %v", carried, want)
+	}
+}

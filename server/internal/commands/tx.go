@@ -109,6 +109,10 @@ type Tx struct {
 	// left are the names of the derivations that the batch's commands left
 	// work for (Leave).
 	left map[string]bool
+	// carried is what the inverse of the command that applies computed for
+	// its Apply (Carry), which the pipeline clears before each command's
+	// inverse and once its Apply returns.
+	carried any
 }
 
 // usageCount is what the command spec adds to the workspace's usage of key
@@ -311,6 +315,22 @@ func (t *Tx) Leave(name string) error {
 // of the name (Leave).
 func (t *Tx) Left(name string) bool {
 	return t.left[name]
+}
+
+// Carry keeps v, which a command's Inverse computed of the project, for the
+// command's Apply, which the pipeline calls next, on the project as the
+// inverse found it, so that Apply need not compute it again (Carried), as a
+// rename's inverse plans the sources that its Apply writes. The pipeline drops
+// it before the next command, and computes no inverse of a batch that cannot
+// be undone, so an Apply computes what Carried does not hold itself.
+func (t *Tx) Carry(v any) {
+	t.carried = v
+}
+
+// Carried returns what the inverse of the command that applies kept for its
+// Apply (Carry), or nil.
+func (t *Tx) Carried() any {
+	return t.carried
 }
 
 // Changes returns the entities that the batch has changed so far, with their

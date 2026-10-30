@@ -75,12 +75,16 @@ func encodeID(k ids.Kind, id ids.UUID) string {
 // connections, and its components outside its trash, that use the variable,
 // or the component, of the kind, ids.Variable or ids.Component, whose UUID is
 // target, as the batch's commands before the one that calls it leave them:
-// those whose rows of the index name it, and those that the batch has
-// changed so far (commands.Tx.Changes), but for the changes that commands of
-// textNeutral types alone made, which the index holds as they were before
-// the batch until its derivation indexes them again, each read anew. A text
-// reads the variable or the component's attributes that its value references
-// show, each once, and a component that it mentions is a use of its own.
+// those whose rows of the index name it, and those whose texts the batch may
+// have changed so far (changedTexts, commands.Tx.Changes), which the index
+// holds as they were before the batch until its derivation indexes them
+// again, each read anew. A text reads the variable or the component's
+// attributes that its value references show, each once, and a component that
+// it mentions is a use of its own. A component's own description is no use
+// of it: it goes to the trash with the component, and leaves nothing broken
+// that names it, so that a component whose description mentions it, or shows
+// one of its attributes, is deleted as one whose description does not, by
+// the undo of its creation too.
 func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.UUID) ([]Found, error) {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -93,46 +97,44 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the texts that name the %s: %w", kind, err)
 	}
-	owners := map[ids.Kind][]pgtype.UUID{}
-	add := func(k ids.Kind, id pgtype.UUID) {
-		if id.Valid && !slices.Contains(owners[k], id) {
-			owners[k] = append(owners[k], id)
+	nodes, connections, components := changedTexts(tx.Changes())
+	seen := map[pgtype.UUID]bool{}
+	for _, l := range [][]pgtype.UUID{nodes, connections, components} {
+		for _, id := range l {
+			seen[id] = true
+		}
+	}
+	add := func(l *[]pgtype.UUID, id pgtype.UUID) {
+		if id.Valid && !seen[id] {
+			seen[id] = true
+			*l = append(*l, id)
 		}
 	}
 	for _, r := range referrers {
-		add(ids.Node, r.NodeID)
-		add(ids.Connection, r.ConnectionID)
-		add(ids.Component, r.ComponentID)
+		add(&nodes, r.NodeID)
+		add(&connections, r.ConnectionID)
+		add(&components, r.ComponentID)
 	}
-	for _, c := range tx.Changes() {
-		if slices.ContainsFunc(c.By, func(t commands.Type) bool { return !slices.Contains(textNeutral, t) }) {
-			add(c.Kind, nullUUID(c.ID))
-		}
+	if kind == ids.Component {
+		components = slices.DeleteFunc(components, func(id pgtype.UUID) bool { return id.Bytes == target })
 	}
-	nodes, connections, components := list(owners[ids.Node]), list(owners[ids.Connection]),
-		list(owners[ids.Component])
 	if len(nodes)+len(connections)+len(components) == 0 {
 		return nil, nil
 	}
-	live, err := q.LiveTextOwners(ctx, queries.LiveTextOwnersParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: nodes, ConnectionIds: connections, ComponentIds: components})
-	if err != nil {
-		return nil, fmt.Errorf("dependency: read the owners of the texts: %w", err)
-	}
-	if len(live) == 0 {
-		return nil, nil
-	}
-	sites := map[ids.UUID]queries.LiveTextOwnersRow{}
-	for _, l := range live {
-		sites[l.ID.Bytes] = l
-	}
 	refs, err := q.TextReferences(ctx, queries.TextReferencesParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: nodes, ConnectionIds: connections, ComponentIds: components})
+		NodeIds: list(nodes), ConnectionIds: list(connections), ComponentIds: list(components)})
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read what the texts name: %w", err)
 	}
-	var out []Found
-	seen := map[Key]map[string]bool{}
+	// The references to the target, with their uses, and the owners of their
+	// texts, of which only those outside the trash are sites.
+	type hit struct {
+		row queries.TextReferencesRow
+		use Use
+	}
+	var hits []hit
+	var hitNodes, hitConnections, hitComponents []pgtype.UUID
+	owned := map[pgtype.UUID]bool{}
 	for _, r := range refs {
 		u, err := inlineUse(r.Inline)
 		if err != nil {
@@ -142,6 +144,35 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 			kind == ids.Component && u.Kind == Variable {
 			continue
 		}
+		hits = append(hits, hit{row: r, use: u})
+		owner, l := r.NodeID, &hitNodes
+		switch {
+		case r.ConnectionID.Valid:
+			owner, l = r.ConnectionID, &hitConnections
+		case r.ComponentID.Valid:
+			owner, l = r.ComponentID, &hitComponents
+		}
+		if !owned[owner] {
+			owned[owner] = true
+			*l = append(*l, owner)
+		}
+	}
+	if len(hits) == 0 {
+		return nil, nil
+	}
+	live, err := q.LiveTextOwners(ctx, queries.LiveTextOwnersParams{WorkspaceID: ws, ProjectID: project,
+		NodeIds: list(hitNodes), ConnectionIds: list(hitConnections), ComponentIds: list(hitComponents)})
+	if err != nil {
+		return nil, fmt.Errorf("dependency: read the owners of the texts: %w", err)
+	}
+	sites := map[ids.UUID]queries.LiveTextOwnersRow{}
+	for _, l := range live {
+		sites[l.ID.Bytes] = l
+	}
+	var out []Found
+	found := map[Key]map[string]bool{}
+	for _, h := range hits {
+		r, u := h.row, h.use
 		site, owner := SiteNodeText, r.NodeID
 		switch {
 		case r.ConnectionID.Valid:
@@ -166,11 +197,11 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 		case SiteComponentDescription:
 			f.ComponentID = ids.Encode(ids.Component, owner.Bytes)
 		}
-		if seen[f.key] == nil {
-			seen[f.key] = map[string]bool{}
+		if found[f.key] == nil {
+			found[f.key] = map[string]bool{}
 		}
-		if !seen[f.key][use] {
-			seen[f.key][use] = true
+		if !found[f.key][use] {
+			found[f.key][use] = true
 			out = append(out, f)
 		}
 	}
@@ -256,7 +287,11 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 // (authz.CheckPublish, FR-VAR-04), as the project's publish_min_role says,
 // with authz.ErrInsufficientRole, which the API answers with
 // insufficient_role. A deletion that forces nothing, of what nothing uses,
-// needs only the role of its command's type.
+// needs only the role of its command's type. It reads the actor's role
+// alone: an API token needs only its command's scope, project:write, as for
+// any change of the draft, which reaches every site that the force breaks
+// already (PRD §5.6). It holds the undo of a creation or a restoration that
+// forces the deletion alike, which a batch does not tell from another.
 func CheckForce(ctx context.Context, tx *commands.Tx, at string) error {
 	least, err := project.PublishMinRole(ctx, queries.New(tx), tx.WorkspaceID(), tx.ProjectID())
 	if err != nil {

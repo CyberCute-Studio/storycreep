@@ -294,9 +294,10 @@ var codes = []codeSpec{
 		"A `component.delete` command names a component that sites of the project that are not in its trash use, " +
 			"as the project stands once the batch's commands before it have applied, and does not force the " +
 			"deletion, so nothing of its batch is applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2): the nodes whose " +
-			"speaker it is, the texts that mention it, and the sites that read or write its attributes. " +
-			"`details.usage_count` says how many usages there are, as the component's usage lists count them, a " +
-			"site once for each attribute that it reads or writes, `details.counts` how many of each use, " +
+			"speaker it is, the texts that mention it, and the sites that read or write its attributes, but for its " +
+			"own description, which goes to the trash with it. `details.usage_count` says how many usages there " +
+			"are, as the component's usage lists count them, a site once for each attribute that it reads or " +
+			"writes, its own description left out, `details.counts` how many of each use, " +
 			"`speaker`, `mention`, `read`, and `write`, and `details.usages` lists the first 100 of them, in that " +
 			"order of their uses, then in the order of the usage lists, each with its `use` and the fields of a usage " +
 			"of `GET /api/v1/projects/{project_id}/components/{component_id}/usages`, which lists them in full. Show " +

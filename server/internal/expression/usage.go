@@ -47,10 +47,12 @@ type Subject struct {
 // list them once the batch had compiled them (dependency.Uses), and the texts
 // whose value references show it or that mention the component
 // (dependency.TextsUsing), and, for a component, the nodes whose speaker it is
-// (dependency.Speakers). An expression is read only if its source names the
-// subject's key, or names it by its UUID, or the batch has yet to compile
-// it, as dependency.Usages lists the others as their compilation did; and an
-// expression that does not compile uses nothing, as the usage lists say.
+// (dependency.Speakers). An expression is read only if its names
+// (expression_name) hold the subject's key or its UUID, or the batch has yet
+// to compile it and its source holds the key, as any source that names the
+// subject does, as dependency.Usages lists the others as their compilation
+// did; and an expression that does not compile uses nothing, as the usage
+// lists say.
 func InUse(ctx context.Context, tx *commands.Tx, s Subject) ([]dependency.Found, error) {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
@@ -73,12 +75,47 @@ func InUse(ctx context.Context, tx *commands.Tx, s Subject) ([]dependency.Found,
 	return found, nil
 }
 
+// Used reports whether sites of the batch's project use the subject s
+// (InUse), as the inverse of a command that adds s to the project asks, whose
+// deletion undoes it, forced exactly then (FR-VAR-04).
+func Used(ctx context.Context, tx *commands.Tx, s Subject) (bool, error) {
+	found, err := InUse(ctx, tx, s)
+	return len(found) > 0, err
+}
+
+// GuardDeletion returns nil if the command that deletes the subject s, which
+// the project holds outside its trash, may delete it: if no site of the
+// project uses it, as the batch's commands before the command leave the
+// project (InUse), or if the payload's field force is set, which the actor's
+// role must allow (dependency.CheckForce). It refuses the batch at force with
+// a *dependency.InUseError otherwise (FR-VAR-04 AC1, FR-COMP-04 AC1). A
+// forced deletion leaves the expressions that named s to the derivation,
+// which compiles them again, invalid, as each of them names what no longer
+// resolves (FR-VAR-04 AC2).
+func GuardDeletion(ctx context.Context, tx *commands.Tx, s Subject, force bool) error {
+	found, err := InUse(ctx, tx, s)
+	switch {
+	case err != nil || len(found) == 0:
+		return err
+	case force:
+		return dependency.CheckForce(ctx, tx, "force")
+	}
+	refusal, err := dependency.Refusal(ctx, queries.New(tx), nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()),
+		s.Kind, found)
+	if err != nil {
+		return err
+	}
+	return commands.Refuse("force", fmt.Sprintf("is not set, but %d sites of the project use the %s, which its "+
+		"deletion would leave naming what does not resolve: force the deletion to delete it all the same",
+		refusal.Count, s.Kind), refusal)
+}
+
 // expressionsUsing returns the expressions of the project outside its trash
 // that use the subject s as InUse says.
 func expressionsUsing(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, s Subject) (
 	[]dependency.Found, error) {
 	rows, err := q.NamingExpressions(ctx, queries.NamingExpressionsParams{WorkspaceID: ws, ProjectID: project,
-		BoardID: nullUUID(s.Board), Refs: []pgtype.UUID{nullUUID(s.ID)}, Keys: []string{s.Key}})
+		BoardID: nullUUID(s.Board), Refs: []pgtype.UUID{nullUUID(s.ID)}, Keys: []string{s.Key}, Ids: list(nil)})
 	if err != nil {
 		return nil, fmt.Errorf("expression: read the expressions that may use the %s: %w", s.Kind, err)
 	}
