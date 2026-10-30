@@ -517,7 +517,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EXPR-02 AC1 passes (the same corpus in Go and TypeScript) and the TypeScript conformance runner is green.
 
 ### 45. Fixture generator and server benchmarks
-**Status:** todo · **Depends on:** 43
+**Status:** done ([#54](https://github.com/CyberCute-Studio/storycreep/pull/54)) · **Depends on:** 43
 **PRD:** NFR-Q-06, §9.1 (server metrics), NFR-PERF-07
 - A seeded, deterministic generator for the `small`, `medium`, `large`, and `dense` fixtures, in `server/internal/fixture`. It builds them through commands, and `cmd/fixturegen` loads one into a project of a running instance through the API, for manual testing (N52).
 - A Go benchmark suite, which CI's benchmark job runs on a pull request's base and on its head, on one runner, in turn, and which fails on a server regression of more than 20% (`cmd/benchgate`), with NFR-PERF-07's benchmark (`BenchmarkCommandRoundTrip`). Items 48, 50, 78, and 80 add the benchmarks of their targets as their features land (N52).
