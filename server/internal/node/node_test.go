@@ -753,7 +753,8 @@ func TestTrash(t *testing.T) {
 	speaking := f.newNode(t, b, node.TypeElement, payload{"speaker_component_id": elara})
 	mute := f.newNode(t, b, node.TypeElement, payload{"speaker_component_id": elara})
 	f.must(t, cmd{node.Delete, payload{"id": mute}})
-	f.must(t, cmd{component.Delete, payload{"id": elara}})
+	// The deletion is forced, since speaking's speaker is elara (FR-COMP-04).
+	f.must(t, cmd{component.Delete, payload{"id": elara, "force": true}})
 	f.exec(t, "UPDATE component SET deleted_at = now() - interval '31 days' WHERE id = $1",
 		decode(t, ids.Component, elara))
 	if _, err := trash.Purge(ctx, f.db); err != nil {

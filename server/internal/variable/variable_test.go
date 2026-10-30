@@ -19,6 +19,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
@@ -26,6 +28,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
@@ -73,6 +76,12 @@ func newFixture(t *testing.T) *fixture {
 	project.Register(reg)
 	board.Register(reg)
 	variable.Register(reg)
+	// A rename rewrites the expressions of nodes, connections, and branch
+	// outputs, which their packages register, with the components that
+	// nodes name as their speakers.
+	component.Register(reg)
+	node.Register(reg)
+	connection.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	f.pipeline = commands.New(f.db, commands.Options{Registry: reg, Entitlements: ent})
 	f.projects = project.New(f.db, project.Options{Entitlements: ent, Pipeline: f.pipeline})

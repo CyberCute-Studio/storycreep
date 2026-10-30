@@ -41,9 +41,12 @@
 // nodes. As it compiles an expression, it also writes what the expression's
 // AST names, and whether it reads or writes it, to the index of what the
 // project's content names (package dependency, FR-DEP-01), which an
-// expression that does not compile names nothing in. Until a rename rewrites
-// the sources that name what it renames (FR-VAR-03, plan item 47), a source
-// that names a renamed key no longer compiles.
+// expression that does not compile names nothing in. A rename of a
+// variable's key, or of a component's, rewrites the sources that name what it
+// renames, and those whose names its new key would take (PlanRename,
+// FR-VAR-03), so that each names what it named; and the deletion of a
+// variable or a component finds what uses it as the batch stands (InUse),
+// which refuses it unless it is forced (FR-VAR-04).
 //
 // An expression is part of its owner, whose revision every change of it
 // increments, the compiler's too, but while the owner is deleted to the trash

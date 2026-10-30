@@ -2653,6 +2653,10 @@
         "additionalProperties": false,
         "description": "The payload of a command of the type component.delete.",
         "properties": {
+          "force": {
+            "description": "Whether to delete the component even though sites of the project that are not in its trash use it, as its usage lists list them: the nodes whose speaker it is, which keep it as their speaker, in the trash, the texts that mention it or whose value references show its attributes, which then show nothing, and the expressions that read or write its attributes, which then name what no longer resolves, and are invalid, each a validation error (PRD FR-COMP-04, FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for. Without it, a component that sites use is not deleted: the command is answered with 409 component_in_use, which counts and lists them, as the project stands once the batch's commands before it have applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2).",
+            "type": "boolean"
+          },
           "id": {
             "description": "The component's ID",
             "type": "string"
@@ -3053,8 +3057,15 @@
             "type": "string"
           },
           "key": {
-            "description": "The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3).",
+            "description": "The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the component's attributes, in the shortest form that names them from the expression's board, \u003ccomponent\u003e.\u003cattribute\u003e unless a variable of the board or a global one has the new key, which cmp.\u003ccomponent\u003e.\u003cattribute\u003e names past, so that each names what it named (PRD FR-COMP-02 AC2, FR-VAR-03), as GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview lists them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written.",
             "type": "string"
+          },
+          "sources": {
+            "description": "The sources to give the expressions of the owners' fields that it lists, rather than rewrite those that name the component, as the undo of a change of the key gives back those that the change rewrote, exactly as they were: with it, the change rewrites nothing else. Without it, the change rewrites the sources as key says.",
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -5935,6 +5946,29 @@
         ],
         "type": "object"
       },
+      "PageRenameSite": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RenameSite"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageSessionBody": {
         "additionalProperties": false,
         "properties": {
@@ -6750,6 +6784,115 @@
         ],
         "type": "object"
       },
+      "RenameSite": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the site's board",
+            "type": "string"
+          },
+          "board_name": {
+            "description": "The name of the site's board",
+            "type": "string"
+          },
+          "branch_output_id": {
+            "description": "The ID of the output of a branch output's condition",
+            "type": "string"
+          },
+          "connection_id": {
+            "description": "The ID of the connection of a connection's condition or on-traverse script",
+            "type": "string"
+          },
+          "in_trash": {
+            "description": "Whether the site is in the project's trash, with its owner, its node, or its board, which the rename rewrites all the same, so that restoring it brings back what names what it named",
+            "type": "boolean"
+          },
+          "names": {
+            "description": "The names that the rename rewrites of the list's kind, in the order of the source",
+            "items": {
+              "$ref": "#/components/schemas/RenamedName"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "node_id": {
+            "description": "The ID of the site's node: the node of its script, the node that its connection leaves, or its output's branch",
+            "type": "string"
+          },
+          "node_title": {
+            "description": "The title of the site's node, which may be empty",
+            "type": "string"
+          },
+          "rewritten": {
+            "description": "The expression's source as the rename rewrites it, with every name that it rewrites, of either list",
+            "type": "string"
+          },
+          "site": {
+            "description": "What the site is: a node's on-enter or on-exit script, a connection's condition or on-traverse script, or a branch output's condition",
+            "enum": [
+              "node_on_enter",
+              "node_on_exit",
+              "connection_condition",
+              "connection_on_traverse",
+              "branch_output_condition"
+            ],
+            "type": "string"
+          },
+          "source": {
+            "description": "The expression's source as it is",
+            "type": "string"
+          }
+        },
+        "required": [
+          "site",
+          "board_id",
+          "board_name",
+          "node_id",
+          "node_title",
+          "in_trash",
+          "source",
+          "rewritten",
+          "names"
+        ],
+        "type": "object"
+      },
+      "RenamedName": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "description": "The offset of the character after the name's last, counted in code points from 0",
+            "format": "int64",
+            "type": "integer"
+          },
+          "from": {
+            "description": "The name as the source writes it",
+            "type": "string"
+          },
+          "ref": {
+            "description": "The ID of what the name names, before the rename and after it: the renamed variable's or component's, or, for a qualified name, the other variable's or component's whose name the new key would take",
+            "type": "string"
+          },
+          "start": {
+            "description": "The offset of the name's first character in the source as it is, counted in code points from 0",
+            "format": "int64",
+            "type": "integer"
+          },
+          "to": {
+            "description": "The name as the rename writes it",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "from",
+          "to",
+          "ref"
+        ],
+        "type": "object"
+      },
       "ResetPasswordBody": {
         "additionalProperties": false,
         "properties": {
@@ -7427,6 +7570,36 @@
         ],
         "type": "object"
       },
+      "Source": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "description": "The owner's field that holds the expression: a node's on_enter or on_exit, a connection's condition or on_traverse, or a branch output's condition",
+            "enum": [
+              "on_enter",
+              "on_exit",
+              "condition",
+              "on_traverse"
+            ],
+            "type": "string"
+          },
+          "owner": {
+            "description": "The ID of the expression's owner: a node's, a connection's, or a branch output's",
+            "type": "string"
+          },
+          "source": {
+            "description": "The expression's source, of at most 16384 characters",
+            "maxLength": 16384,
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "field",
+          "source"
+        ],
+        "type": "object"
+      },
       "StatusBody": {
         "additionalProperties": false,
         "properties": {
@@ -8083,6 +8256,10 @@
         "additionalProperties": false,
         "description": "The payload of a command of the type variable.delete.",
         "properties": {
+          "force": {
+            "description": "Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable.",
+            "type": "boolean"
+          },
           "id": {
             "description": "The variable's ID",
             "type": "string"
@@ -8254,8 +8431,15 @@
             "type": "string"
           },
           "key": {
-            "description": "The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it.",
+            "description": "The variable's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. The variable keeps its ID, by which expressions refer to it. The rename rewrites the source of each expression of the project, in its trash or not, that names the variable, in the shortest form that names it from the expression's board, its bare key unless a variable of the board has the key of a global one, which global.\u003ckey\u003e names, and of each that names another variable or a component's attribute whose name the new key would take, which is then qualified, as global.\u003ckey\u003e or cmp.\u003ccomponent\u003e.\u003cattribute\u003e, so that each names what it named (PRD FR-VAR-03), as GET /api/v1/projects/{project_id}/variables/{variable_id}/rename-preview lists them. A rename that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written.",
             "type": "string"
+          },
+          "sources": {
+            "description": "The sources to give the expressions of the owners' fields that it lists, rather than rewrite those that name the variable, as the undo of a rename gives back those that the rename rewrote, exactly as they were: with it, the rename rewrites nothing else. Without it, the rename rewrites the sources as key says.",
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -13539,6 +13723,173 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/components/{component_id}/rename-preview": {
+      "get": {
+        "description": "Lists the expressions that changing the component's key to the key would rewrite, as the command component.set_key rewrites them (PRD FR-COMP-02 AC2, FR-VAR-03): those whose names of the component's attributes it rewrites, or, as rewrite says, those whose names of other entities it qualifies, which a component's key takes from none, so that that list is always empty. Each site is an expression of the project, in its trash or not, which the rename rewrites alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the rename writes in its place, with every name that it rewrites, and the names that it rewrites of the list's kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare key, unless a variable of the board has the key of a global one, which global.\u003ckey\u003e names, and a component's attribute as \u003ccomponent\u003e.\u003cattribute\u003e, unless a variable of the board or a global one has the component's key, which cmp.\u003ccomponent\u003e.\u003cattribute\u003e names past; the other names stay as the source writes them, and so does a name that names nothing, which the rename may make name what it renames. The sites are in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the sources as the project stands when it applies, which another change may have changed meanwhile. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found, a key that is no identifier with 422 key_invalid, and one that another component of the project has with 409 key_taken, as the change would be. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "previewComponentRename",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component's ID",
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "description": "The component's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component's new key, as a component.set_key command would give it",
+            "explode": false,
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "The component's new key, as a component.set_key command would give it",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which rewrites the list holds: those of the names of the component's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which a component's key takes none, so that the list is empty",
+            "explode": false,
+            "in": "query",
+            "name": "rewrite",
+            "required": true,
+            "schema": {
+              "description": "Which rewrites the list holds: those of the names of the component's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which a component's key takes none, so that the list is empty",
+              "enum": [
+                "renamed",
+                "qualified"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageRenameSite"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Preview a change of a component's key",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/components/{component_id}/usages": {
       "get": {
         "description": "Lists the sites of the project that use the component, as use says (PRD FR-COMP-04): the nodes whose speaker it is, the texts that mention it (PRD FR-TEXT-03), or the sites that read its attributes, or those that write them, each with the attribute that it reads or writes, and once for each of them that it reads or writes: the scripts and the conditions that read or assign its runtime attributes, and the texts whose value references show its attributes, runtime or not, as one that is no longer runtime is. A site of another component's attribute of the same definition, as mira.trust is of elara.trust's, is no usage of the component. Each usage names its site and the site's board and node, by which a client opens it: a node's script, text, or speaker is of the node, a connection's condition, script, or label of the node that the connection leaves, an output's condition of its branch, and a component's description of no board and no node. The usages are those of the sites that are not in the project's trash, in the order of their boards, their nodes, and the sites themselves. An expression that does not compile uses nothing, since it names what it names by keys that resolve to nothing, and a text uses what its value references show, and the components that it mentions, by their IDs, whatever becomes of their keys and names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -15692,6 +16043,173 @@
           }
         },
         "summary": "Get a variable",
+        "tags": [
+          "Variables"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview": {
+      "get": {
+        "description": "Lists the expressions that renaming the variable to the key would rewrite, as the command variable.rename rewrites them (PRD FR-VAR-03): those whose names of the variable it rewrites, or, as rewrite says, those whose names of other variables or components' attributes it qualifies, which a variable of a board renamed to the key of a global one, or a variable renamed to a component's key, would take, listed apart. Each site is an expression of the project, in its trash or not, which the rename rewrites alike, as in_trash says, with its board and node, by which a client opens it, its source, the source that the rename writes in its place, with every name that it rewrites, and the names that it rewrites of the list's kind, each with where it is in the source, as it is, what it becomes, and what it names. A name is rewritten in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare key, unless a variable of the board has the key of a global one, which global.\u003ckey\u003e names, and a component's attribute as \u003ccomponent\u003e.\u003cattribute\u003e, unless a variable of the board or a global one has the component's key, which cmp.\u003ccomponent\u003e.\u003cattribute\u003e names past; the other names stay as the source writes them, and so does a name that names nothing, which the rename may make name what it renames. The sites are in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the sources as the project stands when it applies, which another change may have changed meanwhile. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A variable that the project does not have, or that is in its trash, as one of a board in the trash is, is answered with 404 not_found, a key that is no identifier with 422 key_invalid, and one that another variable of the variable's scope has with 409 key_taken, as the rename would be. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "previewVariableRename",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The variable's ID",
+            "in": "path",
+            "name": "variable_id",
+            "required": true,
+            "schema": {
+              "description": "The variable's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The variable's new key, as a variable.rename command would give it",
+            "explode": false,
+            "in": "query",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "description": "The variable's new key, as a variable.rename command would give it",
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which rewrites the list holds: those of the names of the variable itself, renamed, or those of the names of other variables and components' attributes that the new key would take, which the rename qualifies, qualified",
+            "explode": false,
+            "in": "query",
+            "name": "rewrite",
+            "required": true,
+            "schema": {
+              "description": "Which rewrites the list holds: those of the names of the variable itself, renamed, or those of the names of other variables and components' attributes that the new key would take, which the rename qualifies, qualified",
+              "enum": [
+                "renamed",
+                "qualified"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageRenameSite"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Preview a variable's rename",
         "tags": [
           "Variables"
         ]

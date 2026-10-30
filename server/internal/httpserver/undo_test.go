@@ -1049,7 +1049,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 			return p
 		})
 	},
-	"variable.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.variables, true) },
+	"variable.delete":  func(g *undoGen) (map[string]any, bool) { return g.deletion(g.m.variables) },
 	"variable.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.variables, false) },
 
 	"component_type.create": func(g *undoGen) (map[string]any, bool) {
@@ -1218,7 +1218,7 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 			return p
 		})
 	},
-	"component.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.components, true) },
+	"component.delete":  func(g *undoGen) (map[string]any, bool) { return g.deletion(g.m.components) },
 	"component.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.components, false) },
 
 	"node.create": func(g *undoGen) (map[string]any, bool) {
@@ -1670,6 +1670,18 @@ func (g *undoGen) onLive(es []undoEntity, build func(undoEntity) map[string]any)
 		return nil, false
 	}
 	return build(e), true
+}
+
+// deletion returns the payload of the deletion of a random entity of es that
+// is outside the trash, a variable or a component, half of the time forced,
+// which the content's sites that use it do not refuse (PRD FR-VAR-04), or
+// false if none is.
+func (g *undoGen) deletion(es []undoEntity) (map[string]any, bool) {
+	p, ok := g.idOf(es, true)
+	if ok && g.coin() {
+		p["force"] = true
+	}
+	return p, ok
 }
 
 // idOf returns the payload that names a random entity of es: one outside the

@@ -16,6 +16,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
@@ -32,11 +34,12 @@ const (
 	// trash undoes it.
 	Create commands.Type = "component.create"
 	// Rename changes a component's name, which leaves its key as it is
-	// (FR-COMP-02 AC2), SetKey its key, Describe its description, SetImage
-	// its image, and SetAttribute the value that it holds of one of its
-	// type's attribute definitions. Changing each back undoes it. Plan item
-	// 47 has SetKey rewrite the expressions that name the component too
-	// (FR-VAR-03), which none does yet.
+	// (FR-COMP-02 AC2), SetKey its key, and rewrites the sources of the
+	// expressions that name the component's attributes, so that each names
+	// what it named (FR-VAR-03), Describe its description, SetImage its image,
+	// and SetAttribute the value that it holds of one of its type's attribute
+	// definitions. Changing each back undoes it, a change of the key with the
+	// sources that it rewrote as they were.
 	Rename       commands.Type = "component.rename"
 	SetKey       commands.Type = "component.set_key"
 	Describe     commands.Type = "component.describe"
@@ -45,11 +48,11 @@ const (
 	// Move moves a component into a folder of components, or to the top, at
 	// a place among the folder's children. Moving it back undoes it.
 	Move commands.Type = "component.move"
-	// Delete deletes a component to the project's trash, and Restore
-	// restores it, with the folders above it and its type, if they were
-	// deleted since. Each undoes the other. Plan item 47 refuses the deletion
-	// of a component that a node, a text, or an expression uses (FR-COMP-04),
-	// which none does yet.
+	// Delete deletes a component to the project's trash, unless sites of the
+	// project use it, a node as its speaker, a text, or an expression, or the
+	// deletion forces it (FR-COMP-04, FR-EDIT-06 AC2), and Restore restores
+	// it, with the folders above it and its type, if they were deleted since.
+	// Each undoes the other.
 	Delete  commands.Type = "component.delete"
 	Restore commands.Type = "component.restore"
 )
@@ -80,7 +83,16 @@ type renamePayload struct {
 // keyPayload is SetKey's payload.
 type keyPayload struct {
 	ID  string `json:"id" doc:"The component's ID"`
-	Key string `json:"key" doc:"The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3)."`
+	Key string `json:"key" doc:"The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the component's attributes, in the shortest form that names them from the expression's board, <component>.<attribute> unless a variable of the board or a global one has the new key, which cmp.<component>.<attribute> names past, so that each names what it named (PRD FR-COMP-02 AC2, FR-VAR-03), as GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview lists them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written."`
+	// Sources is a pointer, so that an empty list, as the undo of a change
+	// that rewrote nothing writes, is told from none, a change's own.
+	Sources *[]expression.Source `json:"sources,omitempty" doc:"The sources to give the expressions of the owners' fields that it lists, rather than rewrite those that name the component, as the undo of a change of the key gives back those that the change rewrote, exactly as they were: with it, the change rewrites nothing else. Without it, the change rewrites the sources as key says."`
+}
+
+// deletePayload is Delete's payload.
+type deletePayload struct {
+	ID    string `json:"id" doc:"The component's ID"`
+	Force bool   `json:"force,omitempty" doc:"Whether to delete the component even though sites of the project that are not in its trash use it, as its usage lists list them: the nodes whose speaker it is, which keep it as their speaker, in the trash, the texts that mention it or whose value references show its attributes, which then show nothing, and the expressions that read or write its attributes, which then name what no longer resolves, and are invalid, each a validation error (PRD FR-COMP-04, FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for. Without it, a component that sites use is not deleted: the command is answered with 409 component_in_use, which counts and lists them, as the project stands once the batch's commands before it have applied (PRD FR-COMP-04 AC1, FR-EDIT-06 AC2)."`
 }
 
 // describePayload is Describe's payload.
@@ -134,8 +146,23 @@ func registerComponents(r *commands.Registry) {
 			return errs
 		},
 		CheckNew: func(p createPayload) input.FieldErrors { return field("name", checkName(p.Name)) },
-		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
-			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
+		// The undo of a create deletes the component, forcing the deletion if
+		// what the create makes of the project uses it, as an expression that
+		// named its key before it existed, so that the undo gives the project
+		// back as it was, but not if what uses it came later, which the undo
+		// is then refused for, as a deletion is (FR-COMP-04).
+		Inverse: func(ctx context.Context, tx *commands.Tx, p createPayload) ([]commands.Step, error) {
+			q := queries.New(tx)
+			key, err := createKey(ctx, q, nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), p)
+			if err != nil {
+				return nil, err
+			}
+			force, err := used(ctx, tx, expression.Subject{Kind: ids.Component, ID: decoded(ids.Component, p.ID).Bytes,
+				Key: key, Absent: true, ComponentType: decoded(ids.ComponentType, p.ComponentTypeID).Bytes})
+			if err != nil {
+				return nil, err
+			}
+			return []commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID, Force: force}}}, nil
 		},
 		Apply: applyCreate,
 	})
@@ -162,29 +189,20 @@ func registerComponents(r *commands.Registry) {
 		},
 	})
 
+	// A change of the key rewrites the sources of the expressions of nodes,
+	// connections, and branch outputs, whose changes it reports.
+	rekeyed := []ids.Kind{ids.Component, ids.Node, ids.Connection, ids.BranchOutput}
 	commands.Register(r, commands.Spec[keyPayload]{
-		Type: SetKey, Capability: op, Scope: sc, Touches: cmp,
-		Check: func(p keyPayload) input.FieldErrors { return entityID(ids.Component, "id", p.ID) },
-		Inverse: func(ctx context.Context, tx *commands.Tx, p keyPayload) ([]commands.Step, error) {
-			c, err := liveComponent(ctx, tx, p.ID)
-			if err != nil {
-				return nil, err
+		Type: SetKey, Capability: op, Scope: sc, Touches: rekeyed, UndoField: "key",
+		Check: func(p keyPayload) input.FieldErrors {
+			errs := entityID(ids.Component, "id", p.ID)
+			if p.Sources != nil {
+				errs = append(errs, expression.CheckSources("sources", *p.Sources)...)
 			}
-			return []commands.Step{{Type: SetKey, Payload: keyPayload{ID: p.ID, Key: c.Key}}}, nil
+			return errs
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p keyPayload) error {
-			c, err := liveComponent(ctx, tx, p.ID)
-			if err != nil {
-				return err
-			}
-			q := queries.New(tx)
-			if err := checkKey(ctx, componentKeyOwner(q, c.WorkspaceID, c.ProjectID), "key", p.Key, c.ID,
-				"component"); err != nil {
-				return err
-			}
-			return changed(tx, ids.Component, c.ID)(q.UpdateComponentKey(ctx, queries.UpdateComponentKeyParams{
-				Key: p.Key, UpdatedBy: by(tx), WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
-		},
+		Inverse: inverseSetKey,
+		Apply:   applySetKey,
 	})
 
 	commands.Register(r, commands.Spec[describePayload]{
@@ -321,26 +339,19 @@ func registerComponents(r *commands.Registry) {
 		},
 	})
 
-	commands.Register(r, commands.Spec[idPayload]{
+	commands.Register(r, commands.Spec[deletePayload]{
 		Type: Delete, Capability: op, Scope: sc, Touches: cmp,
-		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Component, "id", p.ID) },
+		Check: func(p deletePayload) input.FieldErrors { return entityID(ids.Component, "id", p.ID) },
 		// Deleting a component that is in the trash already does nothing, and
 		// its undo nothing either.
-		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
+		Inverse: func(ctx context.Context, tx *commands.Tx, p deletePayload) ([]commands.Step, error) {
 			c, err := anyComponent(ctx, tx, p.ID)
 			if err != nil || c.DeletedAt.Valid {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
-			c, err := anyComponent(ctx, tx, p.ID)
-			if err != nil || c.DeletedAt.Valid {
-				return err
-			}
-			return changed(tx, ids.Component, c.ID)(queries.New(tx).TrashComponent(ctx, queries.TrashComponentParams{
-				UpdatedBy: by(tx), WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
-		},
+		Apply: applyDelete,
 	})
 
 	commands.Register(r, commands.Spec[idPayload]{
@@ -362,7 +373,16 @@ func registerComponents(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			steps := append([]commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}},
+			// The undo forces the deletion if what the restore makes of the
+			// project uses the component, as a node whose speaker it is, or
+			// an expression that names its attributes, as the undo of a create
+			// does.
+			force, err := used(ctx, tx, expression.Subject{Kind: ids.Component, ID: c.ID.Bytes, Key: c.Key,
+				Absent: true, ComponentType: c.ComponentTypeID.Bytes})
+			if err != nil {
+				return nil, err
+			}
+			steps := append([]commands.Step{{Type: Delete, Payload: deletePayload{ID: p.ID, Force: force}}},
 				board.DeleteFolderSteps(deleted)...)
 			t, err := anyType(ctx, tx, "id", ids.Encode(ids.ComponentType, c.ComponentTypeID.Bytes))
 			if err != nil {
@@ -395,17 +415,15 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return err
 	}
-	key := p.Key
-	if key == "" {
-		if key, err = deriveKey(ctx, func(ctx context.Context, stem string) ([]string, error) {
-			return q.ComponentKeysFrom(ctx, queries.ComponentKeysFromParams{WorkspaceID: ws, ProjectID: project,
-				Stem: stem})
-		}, p.Name, "component"); err != nil {
-			return fmt.Errorf("component: derive the component's key: %w", err)
-		}
-	} else if err := checkKey(ctx, componentKeyOwner(q, ws, project), "key", key, pgtype.UUID{},
-		"component"); err != nil {
+	key, err := createKey(ctx, q, ws, project, p)
+	if err != nil {
 		return err
+	}
+	if p.Key != "" {
+		if err := checkKey(ctx, componentKeyOwner(q, ws, project), "key", key, pgtype.UUID{},
+			"component"); err != nil {
+			return err
+		}
 	}
 	folder, err := board.LiveFolder(ctx, q, ws, project, board.KindComponent, "folder_id", p.FolderID)
 	if err != nil {
@@ -528,6 +546,136 @@ func keyedByUUID(kind ids.Kind, name string, m map[string]value.Value) (map[ids.
 		out[u] = keyed{at: at, value: m[k]}
 	}
 	return out, nil
+}
+
+// createKey returns the key of the component that the create p creates: its
+// payload's, or the one derived from its name, which no other component of
+// the project has outside its trash (FR-COMP-02), as Create's Inverse and
+// Apply read it alike.
+func createKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, p createPayload) (string, error) {
+	if p.Key != "" {
+		return p.Key, nil
+	}
+	key, err := deriveKey(ctx, func(ctx context.Context, stem string) ([]string, error) {
+		return q.ComponentKeysFrom(ctx, queries.ComponentKeysFromParams{WorkspaceID: ws, ProjectID: project,
+			Stem: stem})
+	}, p.Name, "component")
+	if err != nil {
+		return "", fmt.Errorf("component: derive the component's key: %w", err)
+	}
+	return key, nil
+}
+
+// applyDelete is Delete's Apply. A component that sites of the project use,
+// as the batch's commands before it leave the project (expression.InUse),
+// a node as its speaker among them, is deleted only if the deletion forces
+// it, which the actor's role must allow (dependency.CheckForce), and is
+// refused with a *dependency.InUseError otherwise (FR-COMP-04 AC1, FR-EDIT-06
+// AC2).
+func applyDelete(ctx context.Context, tx *commands.Tx, p deletePayload) error {
+	c, err := anyComponent(ctx, tx, p.ID)
+	if err != nil || c.DeletedAt.Valid {
+		return err
+	}
+	found, err := expression.InUse(ctx, tx, expression.Subject{Kind: ids.Component, ID: c.ID.Bytes, Key: c.Key})
+	if err != nil {
+		return err
+	}
+	q := queries.New(tx)
+	switch {
+	case len(found) > 0 && !p.Force:
+		refusal, err := dependency.Refusal(ctx, q, c.WorkspaceID, c.ProjectID, ids.Component, found)
+		if err != nil {
+			return err
+		}
+		return commands.Refuse("force", fmt.Sprintf("is not set, but %d sites of the project use the component, "+
+			"which its deletion would leave naming what does not resolve: force the deletion to delete it all the "+
+			"same", refusal.Count), refusal)
+	case len(found) > 0:
+		if err := dependency.CheckForce(ctx, tx, "force"); err != nil {
+			return err
+		}
+	}
+	return changed(tx, ids.Component, c.ID)(q.TrashComponent(ctx, queries.TrashComponentParams{UpdatedBy: by(tx),
+		WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
+}
+
+// used reports whether sites of the batch's project use the subject s, as
+// the undo of a command that adds the subject to the project deletes it
+// (expression.InUse): forcing the deletion if it is.
+func used(ctx context.Context, tx *commands.Tx, s expression.Subject) (bool, error) {
+	found, err := expression.InUse(ctx, tx, s)
+	return len(found) > 0, err
+}
+
+// inverseSetKey is SetKey's Inverse: a change back to the component's key,
+// with the sources that the change rewrites as they are, which the undo
+// writes back rather than rewrite them anew, as a variable's rename's does
+// (package variable). It stops with commands.ErrUndoTooLarge once the sources
+// take more than the batch's undo has room for (expression.FitUndo).
+func inverseSetKey(ctx context.Context, tx *commands.Tx, p keyPayload) ([]commands.Step, error) {
+	c, err := liveComponent(ctx, tx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	q := queries.New(tx)
+	// The key is checked before the rewrites are planned, which need a key
+	// that the component may have, as Apply checks it.
+	if err := checkKey(ctx, componentKeyOwner(q, c.WorkspaceID, c.ProjectID), "key", p.Key, c.ID,
+		"component"); err != nil {
+		return nil, err
+	}
+	var back []expression.Source
+	if p.Sources != nil {
+		if back, err = expression.CurrentSources(ctx, tx, "sources", *p.Sources); err != nil {
+			return nil, err
+		}
+	} else {
+		rewrites, err := expression.PlanRename(ctx, q, c.WorkspaceID, c.ProjectID, rekey(c, p.Key))
+		if err != nil {
+			return nil, err
+		}
+		back = expression.Sources(rewrites)
+	}
+	step := keyPayload{ID: p.ID, Key: c.Key, Sources: &back}
+	if err := expression.FitUndo(tx, step); err != nil {
+		return nil, err
+	}
+	return []commands.Step{{Type: SetKey, Payload: step}}, nil
+}
+
+// applySetKey is SetKey's Apply: it checks the new key, before it writes
+// anything, rewrites the sources of the expressions that the change rewrites
+// (expression.PlanRename), or writes those that the payload gives, and
+// changes the key.
+func applySetKey(ctx context.Context, tx *commands.Tx, p keyPayload) error {
+	c, err := liveComponent(ctx, tx, p.ID)
+	if err != nil {
+		return err
+	}
+	q := queries.New(tx)
+	if err := checkKey(ctx, componentKeyOwner(q, c.WorkspaceID, c.ProjectID), "key", p.Key, c.ID,
+		"component"); err != nil {
+		return err
+	}
+	if p.Sources != nil {
+		err = expression.WriteSources(ctx, tx, "sources", *p.Sources)
+	} else {
+		var rewrites []expression.Rewrite
+		if rewrites, err = expression.PlanRename(ctx, q, c.WorkspaceID, c.ProjectID, rekey(c, p.Key)); err == nil {
+			err = expression.WriteRewrites(ctx, tx, "key", rewrites)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	return changed(tx, ids.Component, c.ID)(q.UpdateComponentKey(ctx, queries.UpdateComponentKeyParams{
+		Key: p.Key, UpdatedBy: by(tx), WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
+}
+
+// rekey returns the rename of the component c to the key.
+func rekey(c queries.Component, key string) expression.Rename {
+	return expression.Rename{Kind: ids.Component, ID: c.ID.Bytes, From: c.Key, To: key}
 }
 
 // applyRestore is Restore's Apply.

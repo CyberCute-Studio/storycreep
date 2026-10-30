@@ -12,9 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 )
 
@@ -27,9 +29,13 @@ import (
 // command runs no statement through Exec that ends the transaction either,
 // as COMMIT or ROLLBACK.
 type Tx struct {
-	tx        pgx.Tx
-	pipeline  *Pipeline
-	actor     Actor
+	tx       pgx.Tx
+	pipeline *Pipeline
+	actor    Actor
+	// roles are the roles that the actor acts with, by the scopes of the
+	// operations that they authorise, which the pipeline authorised the
+	// batch's commands by (Role).
+	roles     map[authz.Scope]role.Role
 	project   ids.UUID
 	workspace ids.UUID
 	// current is the command that the pipeline applies, or nil outside a
@@ -128,6 +134,21 @@ func (t *Tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 // transaction.
 func (t *Tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	return t.tx.QueryRow(ctx, sql, args...)
+}
+
+// Role returns the role that the batch's actor acts with for an operation of
+// the scope s (§5.5), which the pipeline authorised the batch's commands by
+// (Spec.Capability): their effective role on the project for a
+// project-scoped operation, and their role in its workspace for a
+// workspace-scoped one, or role.None for a scope that the pipeline did not
+// resolve, which allows nothing. A command whose payload asks for more than
+// its type's operation allows, as a deletion that overrides what uses the
+// entity, checks the actor's role for it with package authz.
+func (t *Tx) Role(s authz.Scope) role.Role {
+	if r, ok := t.roles[s]; ok {
+		return r
+	}
+	return role.None
 }
 
 // Actor returns who applies the batch.
@@ -292,6 +313,21 @@ func (t *Tx) Left(name string) bool {
 	return t.left[name]
 }
 
+// Changes returns the entities that the batch has changed so far, with their
+// latest revisions, in the order of their first change, each with the types
+// of the commands that changed it, as a derivation reads them
+// (Derivation.Derive): for a command's Apply that reads what the derivations
+// write only once every command has applied, as the index of what the texts
+// name, and needs to know which of it the batch's commands before it may
+// have changed, which it reads anew.
+func (t *Tx) Changes() []Change {
+	out := make([]Change, len(t.changed))
+	for i, c := range t.changed {
+		out[i] = Change{Revision: c, By: slices.Clone(t.by[i])}
+	}
+	return out
+}
+
 // derive runs the registry's derivations, in the order of their
 // registration, once every command of the batch has applied, each with what
 // the batch has changed so far, its commands and the derivations before it,
@@ -303,11 +339,7 @@ func (t *Tx) derive(ctx context.Context) error {
 		t.current, t.steps = d.spec, nil
 		clear(t.expecting)
 		clear(t.expected)
-		changed := make([]Change, len(t.changed))
-		for i, c := range t.changed {
-			changed[i] = Change{Revision: c, By: slices.Clone(t.by[i])}
-		}
-		err := d.Derive(ctx, t, changed)
+		err := d.Derive(ctx, t, t.Changes())
 		t.current = nil
 		if err != nil {
 			return fmt.Errorf("commands: the derivation %s: %w", d.Name, err)

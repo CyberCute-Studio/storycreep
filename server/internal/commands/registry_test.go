@@ -177,7 +177,6 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"no scope", func(s *Spec[notePayload]) { s.Scope = "" }},
 		{"an unknown scope", func(s *Spec[notePayload]) { s.Scope = "project:admin" }},
 		{"nothing touched", func(s *Spec[notePayload]) { s.Touches = nil }},
-		{"an unregistered entity", func(s *Spec[notePayload]) { s.Touches = []ids.Kind{ids.Board} }},
 		{"an entity twice", func(s *Spec[notePayload]) { s.Touches = []ids.Kind{ids.Node, ids.Node} }},
 		{"an inert limit", func(s *Spec[notePayload]) {
 			s.Limits = []Limit[notePayload]{{Key: "snapshot_retention"}}
@@ -210,6 +209,21 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 	}
 	if panics(func() { Register(noteRegistry(), good()) }) {
 		t.Error("Register refuses a good declaration")
+	}
+	// A kind that the command touches may be registered after it, but before
+	// the registry makes a pipeline.
+	unregistered := good()
+	unregistered.Type, unregistered.Touches = "note.elsewhere", []ids.Kind{ids.Board}
+	ents := entitlements.New(entitlements.Options{})
+	if panics(func() { Register(noteRegistry(), unregistered) }) {
+		t.Error("Register refuses a kind that is registered later")
+	}
+	if !panics(func() {
+		r := noteRegistry()
+		Register(r, unregistered)
+		New(nil, Options{Registry: r, Entitlements: ents})
+	}) {
+		t.Error("New accepts a command that touches a kind that is not registered")
 	}
 	if panics(func() {
 		s := good()

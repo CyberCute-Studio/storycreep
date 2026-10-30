@@ -143,6 +143,18 @@ type settings struct {
 	Entry          ProjectEntry `json:"entry"`
 }
 
+// PublishMinRole returns the least role that may publish the snapshots of
+// the project id of the workspace ws (FR-SNAP-01 AC3), editor unless it is
+// raised to admin, read in q's transaction, as a command of a batch of the
+// project reads it, whether or not the project is in the trash.
+func PublishMinRole(ctx context.Context, q *queries.Queries, ws, id ids.UUID) (role.Role, error) {
+	row, err := q.ProjectAny(ctx, queries.ProjectAnyParams{WorkspaceID: nullUUID(ws), ID: nullUUID(id)})
+	if err != nil {
+		return role.None, fmt.Errorf("project: read the project's settings: %w", err)
+	}
+	return role.Role(decodeSettings(row.Project.Settings).PublishMinRole), nil
+}
+
 // decodeSettings returns the settings that doc holds, with the defaults of
 // the settings that it lacks.
 func decodeSettings(doc []byte) settings {

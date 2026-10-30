@@ -274,3 +274,66 @@ RETURNING id, rev;
 UPDATE branch_output SET rev = rev + 1, updated_at = now(), updated_by = @updated_by
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
 RETURNING id, rev;
+
+-- name: NamingExpressions :many
+-- NamingExpressions returns the project's expressions, in the trash or not,
+-- that may name what a rename changes the key of, or what a deletion takes
+-- away (package expression): those that name a UUID among refs or a key
+-- among keys (expression_name), and those that the batch has yet to compile,
+-- whose names a command's new source may hold, each once; of the board
+-- board_id alone, unless it is null. Each comes with what it is compiled
+-- from, its owner and field, the node of its site, as a usage lists it, and
+-- whether its board is in the trash, and whether its owner is outside the
+-- trash, as a usage list shows it (live), in the order of their boards,
+-- their sites' nodes, and their IDs. The names are read by an index of each,
+-- so that the read takes as long as what it returns.
+WITH found AS (
+    SELECT id FROM expression
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND ast IS NULL AND error IS NULL
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND ref = ANY(@refs::uuid[])
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = @workspace_id AND project_id = @project_id AND key = ANY(@keys::text[])
+)
+SELECT e.id, e.board_id, e.field, e.context, e.source, e.node_id, e.connection_id, e.branch_output_id,
+    coalesce(e.node_id, c.from_node_id, o.node_id)::uuid AS site_node_id,
+    (b.deleted_at IS NOT NULL)::boolean AS board_deleted,
+    (coalesce(ln.id, lc.id, lo.id) IS NOT NULL)::boolean AS live
+FROM found f
+JOIN expression e ON e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = f.id
+JOIN board b ON b.workspace_id = e.workspace_id AND b.project_id = e.project_id AND b.id = e.board_id
+LEFT JOIN connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.connection_id
+LEFT JOIN branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+    AND o.id = e.branch_output_id
+LEFT JOIN live_node ln ON ln.workspace_id = e.workspace_id AND ln.project_id = e.project_id AND ln.id = e.node_id
+LEFT JOIN live_connection lc ON lc.workspace_id = e.workspace_id AND lc.project_id = e.project_id
+    AND lc.id = e.connection_id
+LEFT JOIN live_branch_output lo ON lo.workspace_id = e.workspace_id AND lo.project_id = e.project_id
+    AND lo.id = e.branch_output_id
+WHERE sqlc.narg(board_id)::uuid IS NULL OR e.board_id = sqlc.narg(board_id)::uuid
+ORDER BY e.board_id, site_node_id, e.id;
+
+-- name: SetExpressionSources :many
+-- SetExpressionSources sets the source of each of the project's expressions
+-- that rows lists, a JSON array of objects of its id and its source, which
+-- the batch has yet to compile, unless it has the source already, as
+-- SetExpressionSource does one, and returns those that it changed, with
+-- their owners.
+UPDATE expression e SET source = s.source, ast = NULL, ast_version = NULL, is_valid = false, error = NULL,
+    refs = '{}', keys = '{}', updated_at = now()
+FROM (SELECT (r.value->>'id')::uuid AS id, r.value->>'source' AS source FROM jsonb_array_elements(@rows::jsonb) AS r)
+    AS s
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.id = s.id AND e.source <> s.source
+RETURNING e.id, e.node_id, e.connection_id, e.branch_output_id;
+
+-- name: ExpressionTypeAttributes :many
+-- ExpressionTypeAttributes returns the attribute definitions of the project's
+-- component type component_type_id that are not deleted themselves, whether
+-- or not the type is in the trash, which a component of the type would have
+-- once it and the type are outside it, in their order.
+SELECT id, key, type, is_runtime, enum_options FROM attribute_def
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND component_type_id = @component_type_id
+    AND deleted_at IS NULL
+ORDER BY "order", id;

@@ -50,6 +50,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
@@ -160,6 +161,7 @@ func timeOf(t pgtype.Timestamptz) *time.Time {
 // DB runs a transaction of the application login, as *database.DB does.
 type DB interface {
 	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 }
 
 // Options configure a Service.
@@ -240,6 +242,50 @@ func (s *Service) Get(ctx context.Context, actor commands.Actor, projectID, vari
 			return fmt.Errorf("variable: read the variable: %w", err)
 		}
 		out, err = variableOf(queries.Variable(row.LiveVariable))
+		return err
+	})
+	return out, err
+}
+
+// RenamePreview returns at most limit of the expressions of the project
+// projectID, in its trash or not, that a rename of its variable variableID to
+// the key would rewrite (FR-VAR-03, expression.Preview): those that it would
+// rewrite a name of the variable of, or, if qualified is set, those that it
+// would rewrite a name of another variable or of a component's attribute of,
+// which it would qualify, in the order of their keys (expression.PreviewKey),
+// after after, or from the first if after is zero. It reads the variable and
+// the expressions as of one moment, that of the read's start
+// (project.Service.ReadSnapshot). It returns the errors of
+// project.Service.Get first, ErrNotFound if the project has no such variable
+// outside its trash, an *ident.Error for a key that is no identifier, and an
+// error that wraps ErrKeyTaken for a key that another variable of the
+// variable's scope has, as the rename refuses them.
+func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, projectID, variableID ids.UUID,
+	key string, qualified bool, after expression.PreviewKey, limit int) ([]expression.RenameSite, error) {
+	var out []expression.RenameSite
+	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+		q, ws, project := queries.New(tx), nullUUID(workspaceID), nullUUID(projectID)
+		row, err := q.Variable(ctx, queries.VariableParams{WorkspaceID: ws, ProjectID: project,
+			ID: nullUUID(variableID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrNotFound
+		case err != nil:
+			return fmt.Errorf("variable: read the variable: %w", err)
+		}
+		v := queries.Variable(row.LiveVariable)
+		if err := ident.Check(key); err != nil {
+			return err
+		}
+		owner, err := q.VariableWithKey(ctx, queries.VariableWithKeyParams{BoardID: v.BoardID, WorkspaceID: ws,
+			ProjectID: project, Key: key})
+		switch {
+		case err == nil && owner != v.ID:
+			return fmt.Errorf("variable: %w", ErrKeyTaken)
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("variable: read the variable with the key: %w", err)
+		}
+		out, err = expression.Preview(ctx, q, ws, project, rename(v, key), qualified, after, limit)
 		return err
 	})
 	return out, err

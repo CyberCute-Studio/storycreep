@@ -238,6 +238,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerNodes(s.main, s.nodes)
 	registerConnections(s.main, s.connections)
 	registerDependencies(s.main, s.dependencies)
+	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)
 	registerGrants(s.main, s.projects)

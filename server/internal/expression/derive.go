@@ -71,9 +71,9 @@ var ownerKinds = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}
 // compiles too much, never too little, until it is added here, and one of a
 // board to delete it to the trash or restore it (nameKinds). The types are
 // spelt out, rather than named by the constants of their packages, which
-// import this one, or will, as package variable's rename will rewrite the
-// sources that name the variable (plan item 47); TestNeutral checks that
-// each is a registered type.
+// import this one, as package variable's rename rewrites the sources that
+// name the variable (Rewrite); TestNeutral checks that each is a registered
+// type.
 var neutral = []commands.Type{
 	"board.create", "board.rename", "board.describe", "board.set_color", "board.set_slug", "board.move",
 	"board.set_entry_node", "node.update", "node.move",
@@ -429,79 +429,111 @@ func (ps projects) of(board pgtype.UUID) *expr.Project {
 // of which has its own.
 func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes, trashed []pgtype.UUID) (
 	projects, error) {
+	n, err := loadNames(ctx, q, ws, project, nodes, trashed)
+	if err != nil {
+		return projects{}, err
+	}
+	return n.build()
+}
+
+// names are what the project's expressions can name, as loadNames reads them
+// and build makes projects of: the variables, the components with their
+// attributes, and the nodes that the expressions to compile name, of those
+// that are not in the project's trash, and the variables and those nodes of
+// each board in the trash trashed that are there with it alone. ofType are
+// the attributes of each component type that is not in the trash, by the
+// type's UUID.
+type names struct {
+	variables        []expr.Variable
+	components       []expr.Component
+	nodes            []expr.BoardNode
+	ofType           map[ids.UUID][]expr.Attribute
+	trashed          []pgtype.UUID
+	trashedVariables map[pgtype.UUID][]expr.Variable
+	trashedNodes     map[pgtype.UUID][]expr.BoardNode
+}
+
+// loadNames returns the names of the project, whose expressions to compile
+// name the nodes, and are of the boards in the trash trashed.
+func loadNames(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes, trashed []pgtype.UUID) (
+	names, error) {
 	variables, err := q.ExpressionVariables(ctx, queries.ExpressionVariablesParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return projects{}, fmt.Errorf("expression: read the project's variables: %w", err)
+		return names{}, fmt.Errorf("expression: read the project's variables: %w", err)
 	}
-	vs := make([]expr.Variable, len(variables))
+	n := names{variables: make([]expr.Variable, len(variables)), ofType: map[ids.UUID][]expr.Attribute{},
+		trashed: trashed, trashedVariables: map[pgtype.UUID][]expr.Variable{},
+		trashedNodes: map[pgtype.UUID][]expr.BoardNode{}}
 	for i, v := range variables {
-		vs[i] = expr.Variable{ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key, Type: v.Type}
+		n.variables[i] = expr.Variable{ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key, Type: v.Type}
 		if v.BoardID.Valid {
-			vs[i].Board = ids.Encode(ids.Board, v.BoardID.Bytes)
+			n.variables[i].Board = ids.Encode(ids.Board, v.BoardID.Bytes)
 		}
 	}
 	attributes, err := q.ExpressionAttributes(ctx, queries.ExpressionAttributesParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return projects{}, fmt.Errorf("expression: read the project's attribute definitions: %w", err)
+		return names{}, fmt.Errorf("expression: read the project's attribute definitions: %w", err)
 	}
-	ofType := map[ids.UUID][]expr.Attribute{}
 	for _, a := range attributes {
-		ofType[a.ComponentTypeID.Bytes] = append(ofType[a.ComponentTypeID.Bytes], expr.Attribute{
+		n.ofType[a.ComponentTypeID.Bytes] = append(n.ofType[a.ComponentTypeID.Bytes], expr.Attribute{
 			ID: ids.Encode(ids.AttributeDef, a.ID.Bytes), Key: a.Key, Type: a.Type, Runtime: a.IsRuntime,
 			Options: a.EnumOptions})
 	}
 	components, err := q.ExpressionComponents(ctx, queries.ExpressionComponentsParams{WorkspaceID: ws,
 		ProjectID: project})
 	if err != nil {
-		return projects{}, fmt.Errorf("expression: read the project's components: %w", err)
+		return names{}, fmt.Errorf("expression: read the project's components: %w", err)
 	}
-	cs := make([]expr.Component, len(components))
+	n.components = make([]expr.Component, len(components))
 	for i, c := range components {
-		cs[i] = expr.Component{ID: ids.Encode(ids.Component, c.ID.Bytes), Key: c.Key,
-			Attributes: ofType[c.ComponentTypeID.Bytes]}
+		n.components[i] = expr.Component{ID: ids.Encode(ids.Component, c.ID.Bytes), Key: c.Key,
+			Attributes: n.ofType[c.ComponentTypeID.Bytes]}
 	}
 	// The nodes that the expressions name, those of the boards that are not
 	// in the trash, and those of each board in the trash trashed, there with
 	// it alone.
-	var ns []expr.BoardNode
-	trashedNodes := map[pgtype.UUID][]expr.BoardNode{}
 	if len(nodes) > 0 {
 		rows, err := q.ExpressionNodes(ctx, queries.ExpressionNodesParams{WorkspaceID: ws, ProjectID: project,
 			Ids: nodes, BoardIds: list(trashed)})
 		if err != nil {
-			return projects{}, fmt.Errorf("expression: read the nodes that expressions name: %w", err)
+			return names{}, fmt.Errorf("expression: read the nodes that expressions name: %w", err)
 		}
-		for _, n := range rows {
-			bn := expr.BoardNode{ID: ids.Encode(ids.Node, n.ID.Bytes), Jumper: n.Type == "jumper"}
-			if n.BoardDeleted {
-				trashedNodes[n.BoardID] = append(trashedNodes[n.BoardID], bn)
+		for _, r := range rows {
+			bn := expr.BoardNode{ID: ids.Encode(ids.Node, r.ID.Bytes), Jumper: r.Type == "jumper"}
+			if r.BoardDeleted {
+				n.trashedNodes[r.BoardID] = append(n.trashedNodes[r.BoardID], bn)
 			} else {
-				ns = append(ns, bn)
+				n.nodes = append(n.nodes, bn)
 			}
 		}
 	}
-	ps := projects{trashed: make(map[pgtype.UUID]*expr.Project, len(trashed))}
-	if ps.live, err = expr.NewProject(vs, cs, ns); err != nil {
-		return projects{}, fmt.Errorf("expression: what the project's expressions can name: %w", err)
-	}
 	if len(trashed) == 0 {
-		return ps, nil
+		return n, nil
 	}
 	rows, err := q.TrashedBoardVariables(ctx, queries.TrashedBoardVariablesParams{WorkspaceID: ws,
 		ProjectID: project, BoardIds: trashed})
 	if err != nil {
-		return projects{}, fmt.Errorf("expression: read the variables of the boards in the trash: %w", err)
+		return names{}, fmt.Errorf("expression: read the variables of the boards in the trash: %w", err)
 	}
-	trashedVariables := map[pgtype.UUID][]expr.Variable{}
 	for _, v := range rows {
-		trashedVariables[v.BoardID] = append(trashedVariables[v.BoardID], expr.Variable{
+		n.trashedVariables[v.BoardID] = append(n.trashedVariables[v.BoardID], expr.Variable{
 			ID: ids.Encode(ids.Variable, v.ID.Bytes), Key: v.Key, Type: v.Type,
 			Board: ids.Encode(ids.Board, v.BoardID.Bytes)})
 	}
-	for _, b := range trashed {
-		p, err := ps.live.With(ids.Encode(ids.Board, b.Bytes), trashedVariables[b], trashedNodes[b])
+	return n, nil
+}
+
+// build returns the projects of the names.
+func (n names) build() (projects, error) {
+	ps := projects{trashed: make(map[pgtype.UUID]*expr.Project, len(n.trashed))}
+	var err error
+	if ps.live, err = expr.NewProject(n.variables, n.components, n.nodes); err != nil {
+		return projects{}, fmt.Errorf("expression: what the project's expressions can name: %w", err)
+	}
+	for _, b := range n.trashed {
+		p, err := ps.live.With(ids.Encode(ids.Board, b.Bytes), n.trashedVariables[b], n.trashedNodes[b])
 		if err != nil {
 			return projects{}, fmt.Errorf("expression: what the expressions of the board %s in the trash can name: %w",
 				ids.UUID(b.Bytes), err)

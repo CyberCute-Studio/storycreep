@@ -150,3 +150,42 @@ FROM page p
 LEFT JOIN board b ON b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = p.board_id
 LEFT JOIN node nn ON nn.workspace_id = @workspace_id AND nn.project_id = @project_id AND nn.id = p.node_id
 ORDER BY p.board_key, p.node_key, p.site_id, p.attribute_key;
+
+-- name: TextReferrers :many
+-- TextReferrers returns the texts of the project, of its nodes, connections,
+-- and components, in the trash or not, whose rows of the index name the
+-- target, of a kind among target_kinds, each once.
+SELECT DISTINCT node_id, connection_id, component_id FROM expression_ref
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND target_id = @target_id
+    AND target_kind = ANY(@target_kinds::text[]) AND expression_id IS NULL;
+
+-- name: LiveTextOwners :many
+-- LiveTextOwners returns those of the project's nodes among node_ids,
+-- connections among connection_ids, and components among component_ids that
+-- are not in its trash, as a usage list shows their texts, each with its
+-- board, none for a component, and the node of its site: a node's own, and
+-- the node that a connection leaves.
+SELECT n.id, n.board_id::uuid AS board_id, n.id AS site_node_id FROM live_node n
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@node_ids::uuid[])
+UNION ALL
+SELECT c.id, c.board_id, c.from_node_id FROM live_connection c
+WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.id = ANY(@connection_ids::uuid[])
+UNION ALL
+SELECT m.id, NULL, NULL FROM live_component m
+WHERE m.workspace_id = @workspace_id AND m.project_id = @project_id AND m.id = ANY(@component_ids::uuid[]);
+
+-- name: SpeakerNodes :many
+-- SpeakerNodes returns the project's nodes that are not in its trash whose
+-- speaker is the component speaker_component_id, with their boards.
+SELECT id, board_id FROM live_node
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND speaker_component_id = @speaker_component_id;
+
+-- name: SiteNames :many
+-- SiteNames returns the names of the project's boards among board_ids and the
+-- titles of its nodes among node_ids, in the trash or not, by their IDs, as
+-- the sites of a usage show them.
+SELECT b.id, b.name AS label FROM board b
+WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = ANY(@board_ids::uuid[])
+UNION ALL
+SELECT n.id, n.title FROM node n
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@node_ids::uuid[]);

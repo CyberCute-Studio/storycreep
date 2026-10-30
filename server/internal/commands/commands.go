@@ -544,6 +544,7 @@ func New(db DB, opts Options) *Pipeline {
 	if reg == nil {
 		reg = NewRegistry()
 	}
+	reg.checkTouches()
 	maxUndo := opts.MaxUndoBytes
 	if maxUndo <= 0 {
 		maxUndo = DefaultMaxUndoBytes
@@ -701,9 +702,9 @@ func (p *Pipeline) apply(ctx context.Context, actor Actor, projectID ids.UUID, c
 		if locked.Deleted && !admitted(cmds, trashed, restores) {
 			return ErrNotFound
 		}
-		t := &Tx{tx: tx, pipeline: p, actor: actor, project: projectID, workspace: workspaceID, at: map[Ref]int{},
-			revs: map[Ref]int64{}, expecting: map[ids.Kind][]int{}, expected: map[Ref]struct{}{}, maxUndo: p.maxUndo,
-			maxUndoSteps: p.maxUndoSteps, usage: map[usage.Key]int64{}, trashed: locked.Deleted}
+		t := &Tx{tx: tx, pipeline: p, actor: actor, roles: roles, project: projectID, workspace: workspaceID,
+			at: map[Ref]int{}, revs: map[Ref]int64{}, expecting: map[ids.Kind][]int{}, expected: map[Ref]struct{}{},
+			maxUndo: p.maxUndo, maxUndoSteps: p.maxUndoSteps, usage: map[usage.Key]int64{}, trashed: locked.Deleted}
 		// A batch that was sent before is answered as it was, whatever has
 		// changed since, before the project's state and the workspace's limits
 		// are checked (§10.2 step 4), so that a batch that applied is never

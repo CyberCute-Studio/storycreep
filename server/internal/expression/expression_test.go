@@ -421,7 +421,8 @@ func TestRecompile(t *testing.T) {
 		"trust >= 3")
 
 	rev := f.connection(t, id).Rev
-	res := f.must(t, cmd{variable.Delete, payload{"id": trust}})
+	// The condition uses the variable, so its deletion is forced (FR-VAR-04).
+	res := f.must(t, cmd{variable.Delete, payload{"id": trust, "force": true}})
 	c := f.connection(t, id)
 	invalid(t, "a condition of a deleted variable", c.Condition, "trust >= 3", "unknown_identifier")
 	if c.Rev != rev+1 || !changed(res, ids.Connection, conn) {
@@ -436,11 +437,13 @@ func TestRecompile(t *testing.T) {
 	f.undo(t, res.Seq)
 	valid(t, "the condition once the retype is undone", f.connection(t, id).Condition, "trust >= 3")
 
-	// Until a rename rewrites the sources that name the variable (plan item
-	// 47), a source that names its old key no longer compiles.
+	// A rename rewrites the sources that name the variable (FR-VAR-03), and
+	// its undo writes them back.
 	res = f.must(t, cmd{variable.Rename, payload{"id": trust, "key": "rep"}})
-	invalid(t, "a condition of a renamed variable", f.connection(t, id).Condition, "trust >= 3",
-		"unknown_identifier")
+	valid(t, "a condition of a renamed variable", f.connection(t, id).Condition, "rep >= 3")
+	if !changed(res, ids.Connection, conn) {
+		t.Errorf("the rename did not list the connection whose condition it rewrote: %v", res.Revisions)
+	}
 	f.undo(t, res.Seq)
 	valid(t, "the condition once the rename is undone", f.connection(t, id).Condition, "trust >= 3")
 
@@ -977,6 +980,7 @@ func TestUnregistered(t *testing.T) {
 	board.Register(reg)
 	component.Register(reg)
 	node.Register(reg)
+	connection.Register(reg)
 	pipeline := commands.New(f.db, commands.Options{Registry: reg,
 		Entitlements: entitlements.New(entitlements.Options{Meter: usage.Meter{}})})
 	raw, _ := json.Marshal(payload{"id": ids.Encode(ids.Node, ids.New()), "board_id": f.harbour, "type": "element",

@@ -476,6 +476,57 @@ func (q *Queries) ExpressionNodes(ctx context.Context, arg ExpressionNodesParams
 	return items, nil
 }
 
+const expressionTypeAttributes = `-- name: ExpressionTypeAttributes :many
+SELECT id, key, type, is_runtime, enum_options FROM attribute_def
+WHERE workspace_id = $1 AND project_id = $2 AND component_type_id = $3
+    AND deleted_at IS NULL
+ORDER BY "order", id
+`
+
+type ExpressionTypeAttributesParams struct {
+	WorkspaceID     pgtype.UUID
+	ProjectID       pgtype.UUID
+	ComponentTypeID pgtype.UUID
+}
+
+type ExpressionTypeAttributesRow struct {
+	ID          pgtype.UUID
+	Key         string
+	Type        string
+	IsRuntime   bool
+	EnumOptions []string
+}
+
+// ExpressionTypeAttributes returns the attribute definitions of the project's
+// component type component_type_id that are not deleted themselves, whether
+// or not the type is in the trash, which a component of the type would have
+// once it and the type are outside it, in their order.
+func (q *Queries) ExpressionTypeAttributes(ctx context.Context, arg ExpressionTypeAttributesParams) ([]ExpressionTypeAttributesRow, error) {
+	rows, err := q.db.Query(ctx, expressionTypeAttributes, arg.WorkspaceID, arg.ProjectID, arg.ComponentTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExpressionTypeAttributesRow
+	for rows.Next() {
+		var i ExpressionTypeAttributesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Key,
+			&i.Type,
+			&i.IsRuntime,
+			&i.EnumOptions,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expressionVariables = `-- name: ExpressionVariables :many
 SELECT id, key, type, board_id FROM live_variable
 WHERE workspace_id = $1 AND project_id = $2
@@ -669,6 +720,107 @@ func (q *Queries) InsertExpression(ctx context.Context, arg InsertExpressionPara
 	return err
 }
 
+const namingExpressions = `-- name: NamingExpressions :many
+WITH found AS (
+    SELECT id FROM expression
+    WHERE workspace_id = $1 AND project_id = $2 AND ast IS NULL AND error IS NULL
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = $1 AND project_id = $2 AND ref = ANY($4::uuid[])
+    UNION
+    SELECT expression_id FROM expression_name
+    WHERE workspace_id = $1 AND project_id = $2 AND key = ANY($5::text[])
+)
+SELECT e.id, e.board_id, e.field, e.context, e.source, e.node_id, e.connection_id, e.branch_output_id,
+    coalesce(e.node_id, c.from_node_id, o.node_id)::uuid AS site_node_id,
+    (b.deleted_at IS NOT NULL)::boolean AS board_deleted,
+    (coalesce(ln.id, lc.id, lo.id) IS NOT NULL)::boolean AS live
+FROM found f
+JOIN expression e ON e.workspace_id = $1 AND e.project_id = $2 AND e.id = f.id
+JOIN board b ON b.workspace_id = e.workspace_id AND b.project_id = e.project_id AND b.id = e.board_id
+LEFT JOIN connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.connection_id
+LEFT JOIN branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+    AND o.id = e.branch_output_id
+LEFT JOIN live_node ln ON ln.workspace_id = e.workspace_id AND ln.project_id = e.project_id AND ln.id = e.node_id
+LEFT JOIN live_connection lc ON lc.workspace_id = e.workspace_id AND lc.project_id = e.project_id
+    AND lc.id = e.connection_id
+LEFT JOIN live_branch_output lo ON lo.workspace_id = e.workspace_id AND lo.project_id = e.project_id
+    AND lo.id = e.branch_output_id
+WHERE $3::uuid IS NULL OR e.board_id = $3::uuid
+ORDER BY e.board_id, site_node_id, e.id
+`
+
+type NamingExpressionsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	BoardID     pgtype.UUID
+	Refs        []pgtype.UUID
+	Keys        []string
+}
+
+type NamingExpressionsRow struct {
+	ID             pgtype.UUID
+	BoardID        pgtype.UUID
+	Field          string
+	Context        string
+	Source         string
+	NodeID         pgtype.UUID
+	ConnectionID   pgtype.UUID
+	BranchOutputID pgtype.UUID
+	SiteNodeID     pgtype.UUID
+	BoardDeleted   bool
+	Live           bool
+}
+
+// NamingExpressions returns the project's expressions, in the trash or not,
+// that may name what a rename changes the key of, or what a deletion takes
+// away (package expression): those that name a UUID among refs or a key
+// among keys (expression_name), and those that the batch has yet to compile,
+// whose names a command's new source may hold, each once; of the board
+// board_id alone, unless it is null. Each comes with what it is compiled
+// from, its owner and field, the node of its site, as a usage lists it, and
+// whether its board is in the trash, and whether its owner is outside the
+// trash, as a usage list shows it (live), in the order of their boards,
+// their sites' nodes, and their IDs. The names are read by an index of each,
+// so that the read takes as long as what it returns.
+func (q *Queries) NamingExpressions(ctx context.Context, arg NamingExpressionsParams) ([]NamingExpressionsRow, error) {
+	rows, err := q.db.Query(ctx, namingExpressions,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.BoardID,
+		arg.Refs,
+		arg.Keys,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NamingExpressionsRow
+	for rows.Next() {
+		var i NamingExpressionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BoardID,
+			&i.Field,
+			&i.Context,
+			&i.Source,
+			&i.NodeID,
+			&i.ConnectionID,
+			&i.BranchOutputID,
+			&i.SiteNodeID,
+			&i.BoardDeleted,
+			&i.Live,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const ownerExpressions = `-- name: OwnerExpressions :many
 
 SELECT id, workspace_id, project_id, board_id, node_id, connection_id, branch_output_id, field, context, source, ast, ast_version, is_valid, error, refs, keys, created_at, updated_at FROM expression
@@ -770,6 +922,58 @@ func (q *Queries) SetExpressionSource(ctx context.Context, arg SetExpressionSour
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setExpressionSources = `-- name: SetExpressionSources :many
+UPDATE expression e SET source = s.source, ast = NULL, ast_version = NULL, is_valid = false, error = NULL,
+    refs = '{}', keys = '{}', updated_at = now()
+FROM (SELECT (r.value->>'id')::uuid AS id, r.value->>'source' AS source FROM jsonb_array_elements($3::jsonb) AS r)
+    AS s
+WHERE e.workspace_id = $1 AND e.project_id = $2 AND e.id = s.id AND e.source <> s.source
+RETURNING e.id, e.node_id, e.connection_id, e.branch_output_id
+`
+
+type SetExpressionSourcesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Rows        []byte
+}
+
+type SetExpressionSourcesRow struct {
+	ID             pgtype.UUID
+	NodeID         pgtype.UUID
+	ConnectionID   pgtype.UUID
+	BranchOutputID pgtype.UUID
+}
+
+// SetExpressionSources sets the source of each of the project's expressions
+// that rows lists, a JSON array of objects of its id and its source, which
+// the batch has yet to compile, unless it has the source already, as
+// SetExpressionSource does one, and returns those that it changed, with
+// their owners.
+func (q *Queries) SetExpressionSources(ctx context.Context, arg SetExpressionSourcesParams) ([]SetExpressionSourcesRow, error) {
+	rows, err := q.db.Query(ctx, setExpressionSources, arg.WorkspaceID, arg.ProjectID, arg.Rows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SetExpressionSourcesRow
+	for rows.Next() {
+		var i SetExpressionSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.NodeID,
+			&i.ConnectionID,
+			&i.BranchOutputID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const touchBranchOutputs = `-- name: TouchBranchOutputs :many
