@@ -19,6 +19,10 @@ type Edit struct {
 	// Ref is the ID of the entity that the name names: a variable's, or the
 	// component's of an attribute.
 	Ref string
+	// Attribute is the ID of the attribute definition that an attribute's
+	// name names, "" for a variable's name, and for one of an attribute that
+	// its component does not have.
+	Attribute string
 	// Qualified says that the name names another entity than the renamed one,
 	// whose name the renamed one's new key would take from it, as a bare key
 	// that a variable of the board renamed to a global's key would name, and
@@ -29,12 +33,14 @@ type Edit struct {
 
 // Rewrite returns the source, of the context ctx, of an expression of the
 // board whose ID is board, or of none for "", rewritten for the rename of the
-// key of the entity whose ID is renamed, a variable or a component, from the
+// key of the entity whose ID is renamed, a variable, a component, or an
+// attribute definition, which the components of its type share, from the
 // project before to the project after, which is before with that key changed
-// alone (PRD FR-VAR-03): each name that names the renamed entity at the
-// board in before, a variable's or an attribute's of the component, is
-// written as the shortest name that names it there in after, as Shortest
-// says, and each name that names another entity in before, but would name
+// alone (PRD FR-VAR-03, FR-COMP-01 AC4): each name that names the renamed
+// entity at the board in before, a variable's, an attribute's of the
+// component, or the definition's attribute of any component, is written as
+// the shortest name that names it there in after, as shortest says, and each
+// name that names another entity in before, but would name
 // another or none in after, as a bare key that the new key of a variable of
 // the board takes from a global variable, or <key>.<attribute> that it takes
 // from a component, is written as the shortest name that names its entity in
@@ -70,12 +76,13 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 	// name changes.
 	var runes []rune
 	var edits []Edit
-	for _, m := range names {
-		ref, written, err := shortest(m, before, after, board, renamed)
+	edited := make([]bool, len(names))
+	for i, m := range names {
+		s, err := shortest(m, before, after, board, renamed)
 		if err != nil {
 			return "", nil, err
 		}
-		if written == "" {
+		if s.written == "" {
 			continue
 		}
 		if runes == nil {
@@ -83,11 +90,14 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		}
 		r := m.Range()
 		old := string(runes[r.Start:r.End])
-		if written = respell(old, written); old == written {
+		written := respell(old, s.written)
+		if old == written {
 			continue
 		}
 		// The edits come in the order of the names, that of their ranges.
-		edits = append(edits, Edit{Range: r, Old: old, New: written, Ref: ref, Qualified: ref != renamed})
+		edits = append(edits, Edit{Range: r, Old: old, New: written, Ref: s.ref, Attribute: s.attribute,
+			Qualified: !s.own})
+		edited[i] = true
 	}
 	if len(edits) == 0 {
 		return source, nil, nil
@@ -99,7 +109,7 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		at = ed.Range.End
 	}
 	rewritten := string(append(out, runes[at:]...))
-	if err := sameNames(names, rewritten, ctx, before, after, board); err != nil {
+	if err := sameNames(names, edited, rewritten, ctx, before, after, board); err != nil {
 		return "", nil, err
 	}
 	return rewritten, edits, nil
@@ -175,16 +185,17 @@ func nameParts(name string) (parts, gaps []string) {
 }
 
 // Captures reports whether a name of the source, of the context ctx, of an
-// expression of the board whose ID is board, that names nothing in the
-// project before names something in the project after, which is before with
-// the renamed entity's key changed alone, as Rewrite takes them: a name that
-// Rewrite leaves as it is, which the rename makes name either the renamed
-// entity, by its new key, as a bare key that named no variable until a
-// variable is renamed to it, or an entity whose name the renamed entity's
-// old key shadowed, as <key>.<attribute> of a component of the key of a
-// variable renamed away from it. A source that does not parse names
-// nothing, and captures nothing.
-func Captures(source string, ctx Context, before, after *Project, board string) (bool, error) {
+// expression of the board whose ID is board, that Rewrite leaves as it is
+// for the rename of the entity whose ID is renamed, from the project before
+// to the project after, as Rewrite takes them, names in after what it did not
+// name in before: a name that named nothing, which the rename makes name
+// either the renamed entity, by its new key, as a bare key that named no
+// variable until a variable is renamed to it, or <component>.<key> that named
+// no attribute until the definition of one of the component's is renamed to
+// it, or an entity whose name the renamed entity's old key shadowed, as
+// <key>.<attribute> of a component of the key of a variable renamed away
+// from it. A source that does not parse names nothing, and captures nothing.
+func Captures(source string, ctx Context, before, after *Project, board, renamed string) (bool, error) {
 	if before == nil || after == nil {
 		return false, fmt.Errorf("%w: a rename needs the project before it and after it", ErrProject)
 	}
@@ -197,7 +208,17 @@ func Captures(source string, ctx Context, before, after *Project, board string) 
 		return false, err
 	}
 	for _, m := range namesOf(n) {
-		if nameRef(m, before, board) == "" && nameRef(m, after, board) != "" {
+		s, err := shortest(m, before, after, board, renamed)
+		if err != nil {
+			return false, err
+		}
+		// A name that Rewrite writes anew names in after what it named in
+		// before; one that it leaves names the same, unless it named nothing.
+		if s.written != "" {
+			continue
+		}
+		was, _ := nameRef(m, before, board)
+		if now, _ := nameRef(m, after, board); was != now {
 			return true, nil
 		}
 	}
@@ -218,48 +239,75 @@ func namesOf(n Node) []Node {
 	return out
 }
 
-// shortest returns the ID of the entity that the name m, a *Var or an *Attr,
-// names at the board in before, and the name that Rewrite writes it as, the
-// shortest that names it in after, if m names the renamed entity, or names
-// another that it would not name in after; and "" for a name that Rewrite
-// leaves as it is.
-func shortest(m Node, before, after *Project, board, renamed string) (ref, written string, err error) {
+// spelling is how Rewrite writes a name (shortest): the ID of the entity that
+// it names, a variable's or an attribute's component's, and of an attribute's
+// definition, "" for a variable's name and for an attribute that its
+// component does not have, the name that Rewrite writes it as, "" for one
+// that it leaves as it is, and whether the name names the renamed entity:
+// the variable, the component, or the definition.
+type spelling struct {
+	ref, attribute, written string
+	own                     bool
+}
+
+// shortest returns how Rewrite writes the name m, a *Var or an *Attr, which
+// names an entity at the board in before: as the shortest name that names it
+// in after, if m names the renamed entity, a variable, a component, or an
+// attribute definition, of which it writes the new key, or names another
+// that it would not name in after; and as it is otherwise, written "".
+func shortest(m Node, before, after *Project, board, renamed string) (spelling, error) {
 	switch m := m.(type) {
 	case *Var:
 		v := before.lookupVariable(board, m.Scope, m.Key)
 		if v == nil {
-			return "", "", nil
+			return spelling{}, nil
 		}
 		to := after.variable(v.ID)
 		if to == nil {
-			return "", "", fmt.Errorf("%w: the project after the rename lacks the variable %s", ErrProject, v.ID)
+			return spelling{}, fmt.Errorf("%w: the project after the rename lacks the variable %s", ErrProject, v.ID)
 		}
 		if v.ID != renamed && after.lookupVariable(board, m.Scope, m.Key) == to {
-			return "", "", nil
+			return spelling{}, nil
 		}
-		return v.ID, after.variableName(board, to), nil
+		return spelling{ref: v.ID, written: after.variableName(board, to), own: v.ID == renamed}, nil
 	case *Attr:
 		c := before.lookupComponent(board, m.Explicit, m.ComponentKey)
 		if c == nil {
-			return "", "", nil
+			return spelling{}, nil
 		}
 		to := after.componentIDs[c.ID]
 		if to == nil {
-			return "", "", fmt.Errorf("%w: the project after the rename lacks the component %s", ErrProject, c.ID)
+			return spelling{}, fmt.Errorf("%w: the project after the rename lacks the component %s", ErrProject, c.ID)
 		}
-		if c.ID != renamed && after.lookupComponent(board, m.Explicit, m.ComponentKey) == to {
-			return "", "", nil
+		s := spelling{ref: c.ID, own: c.ID == renamed}
+		key := m.AttributeKey
+		if a := c.attributes[m.AttributeKey]; a != nil {
+			s.attribute = a.ID
+			if a.ID == renamed {
+				b := to.byID[a.ID]
+				if b == nil {
+					return spelling{}, fmt.Errorf("%w: the component %s lacks the attribute definition %s after the "+
+						"rename", ErrProject, c.ID, a.ID)
+				}
+				key, s.own = b.Key, true
+			}
 		}
-		return c.ID, after.attributeName(board, to.Key, m.AttributeKey), nil
+		if !s.own && after.lookupComponent(board, m.Explicit, m.ComponentKey) == to {
+			return spelling{}, nil
+		}
+		s.written = after.attributeName(board, to.Key, key)
+		return s, nil
 	}
-	return "", "", nil
+	return spelling{}, nil
 }
 
 // sameNames returns an error unless the source rewritten, of the context ctx,
 // parses, and its names name in after what the names of the source, names,
 // named in before at the board: each the same entity, or, for one that named
-// nothing, which Rewrite left as it is, anything.
-func sameNames(names []Node, rewritten string, ctx Context, before, after *Project, board string) error {
+// no entity, which Rewrite left as it is, as edited says, anything, as a name
+// that a rename captures (Captures).
+func sameNames(names []Node, edited []bool, rewritten string, ctx Context, before, after *Project,
+	board string) error {
 	n, err := Parse(rewritten, ctx)
 	if err != nil {
 		return fmt.Errorf("expr: the source that a rename rewrote does not parse: %w", err)
@@ -269,29 +317,35 @@ func sameNames(names []Node, rewritten string, ctx Context, before, after *Proje
 		return fmt.Errorf("expr: the source that a rename rewrote has %d names, where it had %d", len(got), len(names))
 	}
 	for i, m := range names {
-		was, now := nameRef(m, before, board), nameRef(got[i], after, board)
-		if was != "" && was != now {
+		was, full := nameRef(m, before, board)
+		now, _ := nameRef(got[i], after, board)
+		if was != "" && was != now && (edited[i] || full) {
 			return fmt.Errorf("expr: a rename rewrote a name of %s as one of %q", was, now)
 		}
 	}
 	return nil
 }
 
-// nameRef returns the ID of the entity that the name m names at the board
-// in p, with an attribute's key after a component's ID, or "" if it names
-// none.
-func nameRef(m Node, p *Project, board string) string {
+// nameRef returns what the name m names at the board in p, and whether it
+// names an entity, full: a variable's ID; an attribute's component's ID and,
+// after a slash, its definition's; the component's ID and, after a dot, the
+// attribute's key, of a name of a component that has no attribute of the
+// key, which names no entity; or "" for a name that names nothing.
+func nameRef(m Node, p *Project, board string) (ref string, full bool) {
 	switch m := m.(type) {
 	case *Var:
 		if v := p.lookupVariable(board, m.Scope, m.Key); v != nil {
-			return v.ID
+			return v.ID, true
 		}
 	case *Attr:
 		if c := p.lookupComponent(board, m.Explicit, m.ComponentKey); c != nil {
-			return c.ID + "." + m.AttributeKey
+			if a := c.attributes[m.AttributeKey]; a != nil {
+				return c.ID + "/" + a.ID, true
+			}
+			return c.ID + "." + m.AttributeKey, false
 		}
 	}
-	return ""
+	return "", false
 }
 
 // variableName returns the shortest name that names the variable v at the

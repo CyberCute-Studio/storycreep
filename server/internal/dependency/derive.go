@@ -32,15 +32,16 @@ func Register(r *commands.Registry) {
 // SourceRewrites are the types of command that change nodes, connections,
 // and branch outputs only as they rewrite the sources of their expressions,
 // and change nothing else of them, as package expression's ApplyRename
-// does: a variable's rename and a component's change of key, which change
-// their own entity's key besides (PRD FR-VAR-03). They change none of the
+// does: a variable's rename and the change of a component's key or of an
+// attribute definition's, which change their own entity's key besides (PRD
+// FR-VAR-03, FR-COMP-01 AC4). They change none of the
 // texts, so textNeutral holds them, and package expression's derivation,
 // which compiles the sources that they write, passes over their changes of
 // nodes, which change nothing that a node reference reads (its rewriting,
 // which is this list, as that package imports this one): a type that
 // rewrites sources so joins both derivations' lists here. TestTextNeutral
 // checks that each is a registered type.
-var SourceRewrites = []commands.Type{"variable.rename", "component.set_key"}
+var SourceRewrites = []commands.Type{"variable.rename", "component.set_key", "attribute.set_key"}
 
 // textNeutral are the types of command that change a node, a connection, or
 // a component, but none of their texts, those of SourceRewrites among them,
@@ -59,7 +60,7 @@ var textNeutral = append([]commands.Type{
 	"connection.reconnect", "connection.reorder", "connection.delete", "connection.restore",
 	"component.rename", "component.set_image", "component.set_attribute", "component.move",
 	"component.delete", "component.restore",
-	"attribute.create", "attribute.rename", "attribute.set_key", "attribute.set_default", "attribute.set_runtime",
+	"attribute.create", "attribute.rename", "attribute.set_default", "attribute.set_runtime",
 	"attribute.set_options", "attribute.retype", "attribute.move", "attribute.delete", "attribute.restore",
 }, SourceRewrites...)
 

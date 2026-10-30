@@ -675,6 +675,50 @@ func (s *Service) RenamePreview(ctx context.Context, actor commands.Actor, proje
 	return out, err
 }
 
+// AttributeRenamePreview returns at most limit of the expressions of the
+// project, in its trash or not, that changing the key of the attribute
+// definition attributeID of the component type typeID to the key would
+// rewrite (FR-COMP-01 AC4, FR-VAR-03, expression.Preview): those that it
+// would rewrite a name of the definition's attributes of, or, if qualified is
+// set, those that it would qualify a name of another entity of, which an
+// attribute's key takes from none, in the order of their keys
+// (expression.PreviewKey), after after, or from the first if after is zero.
+// It reads the definition and the expressions as of one moment, that of the
+// read's start (project.Service.ReadSnapshot). It returns the errors of
+// project.Service.Get first, ErrTypeNotFound if the type is in the project's
+// trash, ErrAttributeNotFound if the type has no such definition outside the
+// trash, and the refusal that the change refuses the key with (checkKey),
+// which wraps an *ident.Error for a key that is no identifier, and
+// ErrKeyTaken for a key that another definition of the type has.
+func (s *Service) AttributeRenamePreview(ctx context.Context, actor commands.Actor, projectID, typeID,
+	attributeID ids.UUID, key string, qualified bool, after expression.PreviewKey, limit int) (
+	[]expression.RenameSite, error) {
+	var out []expression.RenameSite
+	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
+		q, ws, project := queries.New(tx), nullUUID(workspaceID), nullUUID(projectID)
+		row, err := q.AttributeDefAny(ctx, queries.AttributeDefAnyParams{WorkspaceID: ws, ProjectID: project,
+			ID: nullUUID(attributeID)})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows) || err == nil && row.AttributeDef.ComponentTypeID.Bytes != typeID:
+			return ErrAttributeNotFound
+		case err != nil:
+			return fmt.Errorf("component: read the attribute definition: %w", err)
+		case row.TypeDeleted:
+			return ErrTypeNotFound
+		case row.AttributeDef.DeletedAt.Valid:
+			return ErrAttributeNotFound
+		}
+		a := row.AttributeDef
+		if err := checkKey(ctx, attributeKeyOwner(q, ws, project, a.ComponentTypeID), "key", key, a.ID,
+			"attribute definition of the type"); err != nil {
+			return err
+		}
+		out, err = expression.Preview(ctx, q, ws, project, rekeyAttribute(a, key), qualified, after, limit)
+		return err
+	})
+	return out, err
+}
+
 // nullUUID returns id as a uuid column, null if id is zero.
 func nullUUID(id ids.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}

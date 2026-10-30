@@ -15,11 +15,12 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 )
 
-// Rename is a change of the key of a variable or a component of a project,
-// by which its expressions name it (PRD FR-VAR-03, FR-COMP-02 AC2): Kind is
-// ids.Variable or ids.Component, ID the entity's UUID, Board the board of a
-// board's variable, zero for a global variable and a component, and From and
-// To its key and its new key.
+// Rename is a change of the key of a variable, a component, or an attribute
+// definition of a project, by which its expressions name it (PRD FR-VAR-03,
+// FR-COMP-02 AC2, FR-COMP-01 AC4): Kind is ids.Variable, ids.Component, or
+// ids.AttributeDef, ID the entity's UUID, Board the board of a board's
+// variable, zero for a global variable, a component, and a definition, and
+// From and To its key and its new key.
 type Rename struct {
 	Kind     ids.Kind
 	ID       ids.UUID
@@ -81,9 +82,11 @@ func newRenaming(q *queries.Queries, ws, project pgtype.UUID, r Rename, listed [
 // them, or every one if limit is 0, so that a preview's page reads its own
 // alone. Each is compiled where it is, at its owner's board, one of a board
 // in the trash with the board's own variables (projects), which read reads
-// once it finds one. It returns an error if the rename's entity is not one of
-// the project's, outside its trash, with its key, which the caller checks
-// first.
+// once it finds one, and, for an attribute definition's rename, with the
+// components of its type in the trash whose names a restoration gives back
+// (withTrashedComponents). It returns an error if the rename's entity is not
+// one of the project's, outside its trash, with its key, which the caller
+// checks first.
 func (g *renaming) read(ctx context.Context, after PreviewKey, limit int) ([]queries.NamingExpressionsRow, error) {
 	p := g.params
 	p.AfterBoard, p.AfterNode, p.AfterID = keyUUID(after.Board), keyUUID(after.Node), keyUUID(after.Expression)
@@ -101,6 +104,11 @@ func (g *renaming) read(ctx context.Context, after PreviewKey, limit int) ([]que
 		before, err := loadNames(ctx, g.q, p.WorkspaceID, p.ProjectID, nil, nil)
 		if err != nil {
 			return nil, err
+		}
+		if g.r.Kind == ids.AttributeDef {
+			if before, err = before.withTrashedComponents(ctx, g.q, p.WorkspaceID, p.ProjectID, g.r.ID); err != nil {
+				return nil, err
+			}
 		}
 		after, err := before.renamed(g.r)
 		if err != nil {
@@ -192,7 +200,7 @@ func (g *renaming) restores(row queries.NamingExpressionsRow, source string) (bo
 // shadowed.
 func (g *renaming) captures(row queries.NamingExpressionsRow) (bool, error) {
 	captured, err := expr.Captures(row.Source, expr.Context(row.Context), g.before.of(row.BoardID),
-		g.after.of(row.BoardID), ids.Encode(ids.Board, row.BoardID.Bytes))
+		g.after.of(row.BoardID), ids.Encode(ids.Board, row.BoardID.Bytes), g.renamed)
 	if err != nil {
 		return false, fmt.Errorf("expression: read what the rename makes the expression %s name: %w",
 			ids.UUID(row.ID.Bytes), err)
@@ -247,8 +255,9 @@ func planRename(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 }
 
 // renamed returns the names n with the key of the entity that r renames
-// changed to r's new key, or an error if n lacks the entity, as the project
-// lacks it outside its trash with r's key.
+// changed to r's new key, an attribute definition's of each component of its
+// type, or an error if n lacks the entity, as the project lacks it outside its
+// trash with r's key.
 func (n names) renamed(r Rename) (names, error) {
 	out := n
 	id := ids.Encode(r.Kind, r.ID)
@@ -268,10 +277,80 @@ func (n names) renamed(r Rename) (names, error) {
 				out.components[i].Key, found = r.To, true
 			}
 		}
+	case ids.AttributeDef:
+		// The components of a type share its definitions' list (loadNames),
+		// which each gets a copy of here, of the definition renamed.
+		match := func(a expr.Attribute) bool { return a.ID == id && a.Key == r.From }
+		rekeyed := func(attributes []expr.Attribute) []expr.Attribute {
+			i := slices.IndexFunc(attributes, match)
+			if i < 0 {
+				return attributes
+			}
+			attributes = slices.Clone(attributes)
+			attributes[i].Key = r.To
+			return attributes
+		}
+		out.ofType = make(map[ids.UUID][]expr.Attribute, len(n.ofType))
+		for t, attributes := range n.ofType {
+			found = found || slices.ContainsFunc(attributes, match)
+			out.ofType[t] = rekeyed(attributes)
+		}
+		out.components = slices.Clone(n.components)
+		for i, c := range out.components {
+			out.components[i].Attributes = rekeyed(c.Attributes)
+		}
 	}
 	if !found {
 		return names{}, fmt.Errorf("expression: the project has no %s %s of the key %s outside its trash to rename",
 			r.Kind, id, r.From)
+	}
+	return out, nil
+}
+
+// withTrashedComponents returns the names n with the components in the
+// project's trash, of the workspace ws, read in q's transaction, of the type
+// of the attribute definition whose UUID is attribute, which n holds outside
+// the trash, each with the type's definitions, as the definition's rename
+// sees them (PRD FR-COMP-01 AC4): each whose key no other component of the
+// project has, in the trash or not, which a name of the key names once it is
+// restored, as a restoration is refused while another component has the
+// key. So the rename rewrites the names of their attributes too, as it does
+// the expressions in the trash, and restoring one brings back what names its
+// attributes. A component of a key that two of them have, or one outside the
+// trash, is left out, which a name of the key may not name once restored.
+func (n names) withTrashedComponents(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
+	attribute ids.UUID) (names, error) {
+	id := ids.Encode(ids.AttributeDef, attribute)
+	var typeID ids.UUID
+	found := false
+	for t, attributes := range n.ofType {
+		if slices.ContainsFunc(attributes, func(a expr.Attribute) bool { return a.ID == id }) {
+			typeID, found = t, true
+			break
+		}
+	}
+	if !found {
+		return n, nil
+	}
+	rows, err := q.TrashedTypeComponents(ctx, queries.TrashedTypeComponentsParams{WorkspaceID: ws,
+		ProjectID: project, ComponentTypeID: nullUUID(typeID)})
+	if err != nil {
+		return names{}, fmt.Errorf("expression: read the components in the trash of the definition's type: %w", err)
+	}
+	keys := map[string]int{}
+	for _, c := range n.components {
+		keys[c.Key]++
+	}
+	for _, r := range rows {
+		keys[r.Key]++
+	}
+	out := n
+	out.components = slices.Clone(n.components)
+	for _, r := range rows {
+		if r.ComponentTypeID.Bytes == typeID && keys[r.Key] == 1 {
+			out.components = append(out.components, expr.Component{ID: ids.Encode(ids.Component, r.ID.Bytes),
+				Key: r.Key, Attributes: n.ofType[typeID]})
+		}
 	}
 	return out, nil
 }

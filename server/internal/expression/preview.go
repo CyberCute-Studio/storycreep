@@ -39,7 +39,7 @@ type RenamedName struct {
 	End   int    `json:"end" doc:"The offset of the character after the name's last, counted in code points from 0"`
 	From  string `json:"from" doc:"The name as the source writes it"`
 	To    string `json:"to" doc:"The name as the rename writes it"`
-	Ref   string `json:"ref" doc:"The ID of what the name names, before the rename and after it: the renamed variable's or component's, or, for a qualified name, the other variable's or component's whose name the new key would take"`
+	Ref   string `json:"ref" doc:"The ID of what the name names, before the rename and after it: the renamed variable's or component's, the component's whose attribute of the renamed definition it names, or, for a qualified name, the other variable's or component's whose name the new key would take"`
 }
 
 // PreviewKey is where a site is in the lists of a rename's preview: its
@@ -65,13 +65,14 @@ const previewChunk = 100
 // of their keys (PreviewKey), after after, or from the first if after is zero.
 // It reads none of the expressions up to after, nor any once it has found
 // limit, but for the rest of the read that it found the last of them in
-// (planRename). The list that a component's change of key qualifies is
-// empty, since a component's key takes no other entity's name, and is read
-// as such. The caller checks r's new key first, as a rename does.
+// (planRename). The list that a change of a component's key, or of an
+// attribute definition's, qualifies is empty, since neither key takes
+// another entity's name, and is read as such. The caller checks r's new key
+// first, as a rename does.
 func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, qualified bool,
 	after PreviewKey, limit int) ([]RenameSite, error) {
 	out := []RenameSite{}
-	if limit <= 0 || qualified && r.Kind == ids.Component {
+	if limit <= 0 || qualified && r.Kind != ids.Variable {
 		return out, nil
 	}
 	var boards, nodes []pgtype.UUID

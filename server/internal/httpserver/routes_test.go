@@ -74,8 +74,9 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components/{component_id}/usages"}: scope.ProjectRead,
 	// So are the previews of what renaming them rewrites, which their
 	// commands rewrite.
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview"}:   scope.ProjectRead,
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview"}:                                       scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview"}:                                     scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/rename-preview"}: scope.ProjectRead,
 	// So is its trash, from which its commands restore what it holds.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
 }

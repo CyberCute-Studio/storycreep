@@ -503,6 +503,13 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodGet, renamePreviewPath(componentPath(p,
 						f.component(t, p, f.componentType(t, p))), "mira", "renamed"), nil, si.header(false))
 				}},
+			{name: "preview a change of an attribute definition's key", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					ct := f.componentType(t, p)
+					return call(f.s.main, http.MethodGet, renamePreviewPath(attributePath(p, ct, f.attribute(t, p, ct)),
+						"loyalty", "renamed"), nil, si.header(false))
+				}},
 			{name: "list a board's nodes", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					p := f.project(t, "")

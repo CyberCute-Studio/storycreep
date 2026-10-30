@@ -16,9 +16,10 @@ import (
 
 func componentTypesPath(project string) string   { return projectPath(project) + "/component-types" }
 func componentTypePath(project, t string) string { return componentTypesPath(project) + "/" + t }
-func conversionPath(project, t, a string) string {
-	return componentTypePath(project, t) + "/attributes/" + a + "/conversion"
+func attributePath(project, t, a string) string {
+	return componentTypePath(project, t) + "/attributes/" + a
 }
+func conversionPath(project, t, a string) string     { return attributePath(project, t, a) + "/conversion" }
 func componentsPath(project string) string           { return projectPath(project) + "/components" }
 func componentPath(project, c string) string         { return componentsPath(project) + "/" + c }
 func newComponentTypeID() string                     { return ids.Encode(ids.ComponentType, ids.New()) }

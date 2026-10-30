@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
@@ -33,9 +34,12 @@ const (
 	// undoes it.
 	CreateAttribute commands.Type = "attribute.create"
 	// RenameAttribute changes a definition's name, SetAttributeKey its key,
+	// and rewrites the sources of the expressions that name its attributes,
+	// as a variable's rename does (PRD FR-COMP-01 AC4, FR-VAR-03),
 	// SetAttributeDefault its default, which leaves the values that its
 	// components hold as they are, and SetAttributeRuntime whether it is part
-	// of the game's state. Changing each back undoes it.
+	// of the game's state. Changing each back undoes it, the key with the
+	// sources as they were.
 	RenameAttribute     commands.Type = "attribute.rename"
 	SetAttributeKey     commands.Type = "attribute.set_key"
 	SetAttributeDefault commands.Type = "attribute.set_default"
@@ -80,7 +84,10 @@ type renameAttributePayload struct {
 // attributeKeyPayload is SetAttributeKey's payload.
 type attributeKeyPayload struct {
 	ID  string `json:"id" doc:"The attribute definition's ID"`
-	Key string `json:"key" doc:"The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3)."`
+	Key string `json:"key" doc:"The definition's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. The definition keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the definition's attribute of a component of its type, in the shortest form that names it from the expression's board, <component>.<attribute> unless a variable of the board or a global one has the component's key, which cmp.<component>.<attribute> names past, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-COMP-01 AC4, FR-VAR-03), as GET /api/v1/projects/{project_id}/component-types/{component_type_id}/attributes/{attribute_id}/rename-preview lists them. It rewrites alike the names of the attributes of a component of the type in the project's trash whose key no other component has, in the trash or not, so that restoring it brings back what names them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written."`
+	// Sources is a pointer, so that an empty list, as the undo of a change
+	// that rewrote nothing writes, is told from none, a change's own.
+	Sources *[]expression.Source `json:"sources,omitempty" doc:"The sources that the undo of a change of the key gives back to the expressions of the owners' fields that it lists, those that the change rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the change of the definition's key from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the definition's attributes, as one that names them by the key that it has written since the change, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the change rewrites the sources as key says."`
 }
 
 // attributeDefaultPayload is SetAttributeDefault's payload.
@@ -188,29 +195,20 @@ func registerAttributes(r *commands.Registry) {
 		},
 	})
 
+	// A change of the key rewrites the sources of the expressions of nodes,
+	// connections, and branch outputs, whose changes it reports.
+	rekeyed := []ids.Kind{ids.AttributeDef, ids.Node, ids.Connection, ids.BranchOutput}
 	commands.Register(r, commands.Spec[attributeKeyPayload]{
-		Type: SetAttributeKey, Capability: op, Scope: sc, Touches: atr,
-		Check: func(p attributeKeyPayload) input.FieldErrors { return entityID(ids.AttributeDef, "id", p.ID) },
-		Inverse: func(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) ([]commands.Step, error) {
-			a, err := liveAttribute(ctx, tx, p.ID)
-			if err != nil {
-				return nil, err
+		Type: SetAttributeKey, Capability: op, Scope: sc, Touches: rekeyed, UndoField: "key",
+		Check: func(p attributeKeyPayload) input.FieldErrors {
+			errs := entityID(ids.AttributeDef, "id", p.ID)
+			if p.Sources != nil {
+				errs = append(errs, expression.CheckSources("sources", *p.Sources)...)
 			}
-			return []commands.Step{{Type: SetAttributeKey, Payload: attributeKeyPayload{ID: p.ID, Key: a.Key}}}, nil
+			return errs
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) error {
-			a, err := liveAttribute(ctx, tx, p.ID)
-			if err != nil {
-				return err
-			}
-			q := queries.New(tx)
-			if err := checkKey(ctx, attributeKeyOwner(q, a.WorkspaceID, a.ProjectID, a.ComponentTypeID), "key",
-				p.Key, a.ID, "attribute definition of the type"); err != nil {
-				return err
-			}
-			return changed(tx, ids.AttributeDef, a.ID)(q.UpdateAttributeDefKey(ctx, queries.UpdateAttributeDefKeyParams{
-				Key: p.Key, UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
-		},
+		Inverse: inverseSetAttributeKey,
+		Apply:   applySetAttributeKey,
 	})
 
 	commands.Register(r, commands.Spec[attributeDefaultPayload]{
@@ -1009,6 +1007,53 @@ func liveAttribute(ctx context.Context, tx *commands.Tx, id string) (queries.Att
 		return queries.AttributeDef{}, refuseTypeInTrash()
 	}
 	return row.AttributeDef, nil
+}
+
+// inverseSetAttributeKey is SetAttributeKey's Inverse: a change back to the
+// definition's key, with the sources that the change writes as they are, and
+// those that it leaves as they are but makes name what they did not, which
+// the undo gives back rather than rewrite them anew, as a variable's rename's
+// does (expression.RenameInverse).
+func inverseSetAttributeKey(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) ([]commands.Step, error) {
+	a, err := liveAttribute(ctx, tx, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	// The key is checked before the rewrites are planned, which need a key
+	// that the definition may have, as Apply checks it.
+	if err := checkKey(ctx, attributeKeyOwner(queries.New(tx), a.WorkspaceID, a.ProjectID, a.ComponentTypeID),
+		"key", p.Key, a.ID, "attribute definition of the type"); err != nil {
+		return nil, err
+	}
+	return expression.RenameInverse(ctx, tx, SetAttributeKey, "key", rekeyAttribute(a, p.Key), p.Sources,
+		func(key string, sources []expression.Source) any {
+			return attributeKeyPayload{ID: p.ID, Key: key, Sources: &sources}
+		})
+}
+
+// applySetAttributeKey is SetAttributeKey's Apply: it checks the new key,
+// before it writes anything, writes the sources that the change writes
+// (expression.ApplyRename), and changes the key (PRD FR-COMP-01 AC4).
+func applySetAttributeKey(ctx context.Context, tx *commands.Tx, p attributeKeyPayload) error {
+	a, err := liveAttribute(ctx, tx, p.ID)
+	if err != nil {
+		return err
+	}
+	q := queries.New(tx)
+	if err := checkKey(ctx, attributeKeyOwner(q, a.WorkspaceID, a.ProjectID, a.ComponentTypeID), "key", p.Key,
+		a.ID, "attribute definition of the type"); err != nil {
+		return err
+	}
+	if err := expression.ApplyRename(ctx, tx, "key", rekeyAttribute(a, p.Key), p.Sources); err != nil {
+		return err
+	}
+	return changed(tx, ids.AttributeDef, a.ID)(q.UpdateAttributeDefKey(ctx, queries.UpdateAttributeDefKeyParams{
+		Key: p.Key, UpdatedBy: by(tx), WorkspaceID: a.WorkspaceID, ProjectID: a.ProjectID, ID: a.ID}))
+}
+
+// rekeyAttribute returns the rename of the attribute definition a to the key.
+func rekeyAttribute(a queries.AttributeDef, key string) expression.Rename {
+	return expression.Rename{Kind: ids.AttributeDef, ID: a.ID.Bytes, From: a.Key, To: key}
 }
 
 // refuseTypeInTrash returns the refusal of a command that would change an
