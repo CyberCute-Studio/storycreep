@@ -6027,6 +6027,29 @@
         ],
         "type": "object"
       },
+      "PageUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Usage"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageVariable": {
         "additionalProperties": false,
         "properties": {
@@ -7703,6 +7726,62 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "Usage": {
+        "additionalProperties": false,
+        "properties": {
+          "attribute_id": {
+            "description": "The ID of the attribute definition of the component's attribute that the site reads or writes, in a list of a component's reads or writes, of which a site may read or write several, each listed once",
+            "type": "string"
+          },
+          "board_id": {
+            "description": "The ID of the site's board. A component's description has none.",
+            "type": "string"
+          },
+          "board_name": {
+            "description": "The name of the site's board, which a site has exactly when it has board_id",
+            "type": "string"
+          },
+          "branch_output_id": {
+            "description": "The ID of the output of a branch output's condition",
+            "type": "string"
+          },
+          "component_id": {
+            "description": "The ID of the component of a component's description",
+            "type": "string"
+          },
+          "connection_id": {
+            "description": "The ID of the connection of a connection's condition, on-traverse script, or label",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the site's node: the node of its script, text, or speaker, the node that its connection leaves, or its output's branch. A component's description has none.",
+            "type": "string"
+          },
+          "node_title": {
+            "description": "The title of the site's node, which may be empty, and which a site has exactly when it has node_id",
+            "type": "string"
+          },
+          "site": {
+            "description": "What the site is: a node's on-enter or on-exit script, its text, or its speaker; a connection's condition, its on-traverse script, or its label; a branch output's condition; or a component's description",
+            "enum": [
+              "node_on_enter",
+              "node_on_exit",
+              "node_text",
+              "node_speaker",
+              "connection_condition",
+              "connection_on_traverse",
+              "connection_label",
+              "branch_output_condition",
+              "component_description"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "site"
+        ],
         "type": "object"
       },
       "UsageBody": {
@@ -13460,6 +13539,163 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/components/{component_id}/usages": {
+      "get": {
+        "description": "Lists the sites of the project that use the component, as use says (PRD FR-COMP-04): the nodes whose speaker it is, the texts that mention it (PRD FR-TEXT-03), or the sites that read its runtime attributes, or those that write them, each with the attribute that it reads or writes, and once for each of them that it reads or writes. A site of another component's attribute of the same definition, as mira.trust is of elara.trust's, is no usage of the component. Each usage names its site and the site's board and node, by which a client opens it: a node's script, text, or speaker is of the node, a connection's condition, script, or label of the node that the connection leaves, an output's condition of its branch, and a component's description of no board and no node. The usages are those of the sites that are not in the project's trash, in the order of their boards, their nodes, and the sites themselves. An expression that does not compile uses nothing, since it names what it names by keys that resolve to nothing, and a text uses what its value references show, and the components that it mentions, by their IDs, whatever becomes of their keys and names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A component that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listComponentUsages",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The component's ID",
+            "in": "path",
+            "name": "component_id",
+            "required": true,
+            "schema": {
+              "description": "The component's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which usages the list holds: the nodes whose speaker the component is, the texts that mention it, or the sites that read its runtime attributes, or those that write them",
+            "explode": false,
+            "in": "query",
+            "name": "use",
+            "required": true,
+            "schema": {
+              "description": "Which usages the list holds: the nodes whose speaker the component is, the texts that mention it, or the sites that read its runtime attributes, or those that write them",
+              "enum": [
+                "speaker",
+                "mention",
+                "read",
+                "write"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageUsage"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a component's usages",
+        "tags": [
+          "Components"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/connections/{connection_id}": {
       "get": {
         "description": "Returns a connection of the project, with its label. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type connection.* create, relabel, reconnect, reorder, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A connection that the project does not have, or that is in its trash, itself or with one of its nodes or its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -15456,6 +15692,161 @@
           }
         },
         "summary": "Get a variable",
+        "tags": [
+          "Variables"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/variables/{variable_id}/usages": {
+      "get": {
+        "description": "Lists the sites of the project that read the variable, or those that write it, as access says (PRD FR-DEP-01): the scripts and the conditions that read it or assign it, a script that updates it, as with +=, both reading and writing it, and the texts whose value references show it, which read it. Each usage names its site and the site's board and node, by which a client opens it: a node's script, text, or speaker is of the node, a connection's condition, script, or label of the node that the connection leaves, an output's condition of its branch, and a component's description of no board and no node. The usages are those of the sites that are not in the project's trash, in the order of their boards, their nodes, and the sites themselves. An expression that does not compile uses nothing, since it names what it names by keys that resolve to nothing, and a text uses what its value references show, and the components that it mentions, by their IDs, whatever becomes of their keys and names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A variable that the project does not have, or that is in its trash, as one of a board in the trash is, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listVariableUsages",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The variable's ID",
+            "in": "path",
+            "name": "variable_id",
+            "required": true,
+            "schema": {
+              "description": "The variable's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which usages the list holds: the sites that read the variable, or those that write it, which a script assigns",
+            "explode": false,
+            "in": "query",
+            "name": "access",
+            "required": true,
+            "schema": {
+              "description": "Which usages the list holds: the sites that read the variable, or those that write it, which a script assigns",
+              "enum": [
+                "read",
+                "write"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageUsage"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a variable's usages",
         "tags": [
           "Variables"
         ]

@@ -26,6 +26,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency/dependencytest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/fixture"
@@ -321,6 +323,7 @@ func newProject(t *testing.T, name string) loaded {
 	node.Register(reg)
 	connection.Register(reg)
 	expression.Register(reg)
+	dependency.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	pipeline := commands.New(db, commands.Options{Registry: reg, Entitlements: ent})
 	projects := project.New(db, project.Options{Entitlements: ent, Pipeline: pipeline, Seed: component.Seed})
@@ -336,7 +339,10 @@ func newProject(t *testing.T, name string) loaded {
 }
 
 // wantSpec fails the test unless the project holds what the spec counts,
-// outside the trash, and every expression of it compiles.
+// outside the trash, every expression of it compiles, and the index of what
+// its content names (package dependency) holds what its expressions and its
+// texts name, and is what a recomputation of it from scratch gives
+// (FR-DEP-01 AC1).
 func (l loaded) wantSpec(t *testing.T, spec fixture.Spec) {
 	t.Helper()
 	for table, want := range map[string]int{"live_board": spec.Boards, "live_node": spec.Nodes,
@@ -361,6 +367,22 @@ func (l loaded) wantSpec(t *testing.T, spec fixture.Spec) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+	var expressions, texts int
+	if err := l.admin.QueryRow(context.Background(), `SELECT count(*) FILTER (WHERE expression_id IS NOT NULL),
+		count(*) FILTER (WHERE expression_id IS NULL) FROM expression_ref WHERE project_id = $1`,
+		l.project).Scan(&expressions, &texts); err != nil {
+		t.Fatal(err)
+	}
+	if expressions == 0 || texts == 0 {
+		t.Errorf("the index holds %d rows of expressions and %d of texts, want some of each", expressions, texts)
+	}
+	drift, err := dependencytest.Drift(context.Background(), l.admin, l.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) > 0 {
+		t.Errorf("the index of what the project names is not what its content names: %q", drift[:min(len(drift), 10)])
 	}
 }
 

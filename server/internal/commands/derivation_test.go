@@ -111,7 +111,7 @@ func TestDerivation(t *testing.T) {
 
 // TestRegisterDerivationRefusesBadOnes checks that a derivation is registered
 // only with a name of its form, which no command's type has, its Derive, and
-// kinds that are registered, each once, and once.
+// kinds that are registered, each once, or none, and once.
 func TestRegisterDerivationRefusesBadOnes(t *testing.T) {
 	derive := func(context.Context, *Tx, []Change) error { return nil }
 	good := func() Derivation {
@@ -125,7 +125,6 @@ func TestRegisterDerivationRefusesBadOnes(t *testing.T) {
 		{"the name of a command's type", func(d *Derivation) { d.Name = string(noteUpdate) }},
 		{"a name of the wrong form", func(d *Derivation) { d.Name = "Note_Index" }},
 		{"no Derive", func(d *Derivation) { d.Derive = nil }},
-		{"nothing touched", func(d *Derivation) { d.Touches = nil }},
 		{"an unregistered entity", func(d *Derivation) { d.Touches = []ids.Kind{ids.Board} }},
 		{"an entity twice", func(d *Derivation) { d.Touches = []ids.Kind{ids.Node, ids.Node} }},
 	} {
@@ -143,5 +142,33 @@ func TestRegisterDerivationRefusesBadOnes(t *testing.T) {
 	}
 	if !panics(func() { RegisterDerivation(r, good()) }) {
 		t.Error("RegisterDerivation registers a derivation twice")
+	}
+	untouching := good()
+	untouching.Name, untouching.Touches = "note_text", nil
+	if panics(func() { RegisterDerivation(r, untouching) }) {
+		t.Error("RegisterDerivation refuses a derivation that touches nothing")
+	}
+}
+
+// TestUntouchingDerivationChangesNothing checks that a derivation that touches
+// no kind of entity is refused a report of a change (Tx.Changed), which
+// fails its batch, so that it changes no entity's revision.
+func TestUntouchingDerivationChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	a, aID := newNote()
+	r := noteRegistry()
+	RegisterDerivation(r, Derivation{Name: "note_text", Derive: func(ctx context.Context, tx *Tx, changed []Change) error {
+		return tx.Changed(ids.Node, a, changed[0].Rev+1)
+	}})
+	p := w.pipeline(t, func(o *Options) { o.Registry = r })
+	before := w.written(t)
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{
+		command(t, noteCreate, notePayload{ID: aID, Body: "a"}, nil)}); err == nil ||
+		!strings.Contains(err.Error(), "does not touch") {
+		t.Errorf("a derivation that touches nothing reported a change: %v", err)
+	}
+	if got := w.written(t); got != before {
+		t.Errorf("the failed batch left %+v, want %+v", got, before)
 	}
 }

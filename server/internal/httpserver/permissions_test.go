@@ -452,6 +452,12 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, variablePath(p, f.variable(t, p)), nil, si.header(false))
 				}},
+			{name: "list a variable's usages", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, variableUsagesPath(p, f.variable(t, p), "read"), nil,
+						si.header(false))
+				}},
 			{name: "list a project's component types", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, componentTypesPath(f.project(t, "")), nil, si.header(false))
@@ -478,6 +484,12 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, componentPath(p, f.component(t, p, f.componentType(t, p))), nil,
 						si.header(false))
+				}},
+			{name: "list a component's usages", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, componentUsagesPath(p, f.component(t, p, f.componentType(t, p)),
+						"speaker"), nil, si.header(false))
 				}},
 			{name: "list a board's nodes", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {

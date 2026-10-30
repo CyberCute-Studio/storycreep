@@ -12,6 +12,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
@@ -169,7 +170,9 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		}
 	}
 	compiled := make([]compiledRow, len(rows))
+	at := make(map[ids.UUID]int, len(rows))
 	for i, row := range rows {
+		at[row.ID.Bytes] = i
 		c, err := parsed[i].compile(ps.of(row.BoardID), ids.Encode(ids.Board, row.BoardID.Bytes))
 		if err != nil {
 			return fmt.Errorf("expression: compile the expression %s: %w", ids.UUID(row.ID.Bytes), err)
@@ -185,6 +188,20 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		Rows: data})
 	if err != nil {
 		return fmt.Errorf("expression: store what the expressions compile to: %w", err)
+	}
+	// What the expressions whose compilations changed, as the API shows them,
+	// name is indexed as their ASTs now name it (package dependency), which
+	// is what it was for the others, whose ASTs are as they were.
+	var sites []dependency.Site
+	for _, o := range owners {
+		if o.Shown {
+			i := at[o.ID.Bytes]
+			sites = append(sites, dependency.Site{Expression: o.ID.Bytes, Board: rows[i].BoardID.Bytes,
+				Uses: compiled[i].uses})
+		}
+	}
+	if err := dependency.IndexExpressions(ctx, q, ws, project, sites); err != nil {
+		return err
 	}
 	// The names of the expressions whose refs or keys changed, or that had
 	// yet to compile, are written as their refs and keys now are, by which
@@ -530,7 +547,9 @@ func parseSource(source string, ctx expr.Context) parse {
 
 // compiledRow is what compiling an expression's source gives, as
 // CompileExpressions reads it: its AST and the AST's version, or its error,
-// and the UUIDs and the keys that it names.
+// and the UUIDs and the keys that it names; and what its AST names, with how
+// it uses it, which the index of what the content names holds (package
+// dependency), and of which one that does not compile names nothing.
 type compiledRow struct {
 	ID         string          `json:"id"`
 	AST        json.RawMessage `json:"ast"`
@@ -538,6 +557,7 @@ type compiledRow struct {
 	Error      *expr.Error     `json:"error"`
 	Refs       []string        `json:"refs"`
 	Keys       []string        `json:"keys"`
+	uses       []dependency.Use
 }
 
 // compile checks the parsed source against the project p at the board, and
@@ -572,6 +592,9 @@ func (s parse) compile(p *expr.Project, board string) (compiledRow, error) {
 			}
 		})
 		if out.AST, err = expr.Encode(s.ast); err != nil {
+			return out, err
+		}
+		if out.uses, err = dependency.Uses(s.ast); err != nil {
 			return out, err
 		}
 		v := expr.VersionOf(s.ast)

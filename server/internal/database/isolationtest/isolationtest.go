@@ -235,6 +235,16 @@ var Tables = []Table{
 			"ref) VALUES ($1, $2, $3, $4, $5)", []any{w.ID, w.Rows["project"], w.Rows["expression"], w.Rows["board"],
 			ref}}, nil
 	}},
+	{Name: "expression_ref", ID: "target_id", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement,
+		error) {
+		// A row of the index of the workspace's expression, of a variable of
+		// its own, as many as the harness adds. The expression names none, as
+		// compiling it would index, but the harness reads the rows alone.
+		target := ids.New()
+		return Statement{target, "INSERT INTO expression_ref (workspace_id, project_id, expression_id, board_id, " +
+			"target_kind, target_id, access) VALUES ($1, $2, $3, $4, 'variable', $5, 'read')", []any{w.ID,
+			w.Rows["project"], w.Rows["expression"], w.Rows["board"], target}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it
