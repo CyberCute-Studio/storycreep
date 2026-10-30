@@ -3,6 +3,7 @@ package fixture
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -111,6 +112,10 @@ func TestSendRefused(t *testing.T) {
 	err := s.Send(context.Background(), f)
 	if err == nil || !strings.Contains(err.Error(), "batch 2 of 2: answered with 422: "+refusal[:maxShown]+"…") {
 		t.Errorf("Send = %v, want the refusal of batch 2, cut short", err)
+	}
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.Status != http.StatusUnprocessableEntity {
+		t.Errorf("Send = %#v, want a *RefusedError of 422", err)
 	}
 	if len(*bodies) != 2 || len(*waits) != 0 {
 		t.Errorf("sent %d requests and waited %v, want 2 and no wait", len(*bodies), *waits)

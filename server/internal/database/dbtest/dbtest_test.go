@@ -63,3 +63,35 @@ func TestDatabasesAreSeparate(t *testing.T) {
 		t.Errorf("the empty database reuses the name %s", e.Name)
 	}
 }
+
+// TestDurability checks that the tests' server does not keep what it
+// commits, which makes them faster, and that the benchmarks', which a
+// benchmark run together with them gets, does, so that the server's
+// benchmarks time what a commit costs (PRD §9.1).
+func TestDurability(t *testing.T) {
+	if got := fsync(t, New(t)); got != "off" {
+		t.Errorf("the tests' server has fsync %s, want off", got)
+	}
+	var got string
+	testing.Benchmark(func(b *testing.B) {
+		// testing.Benchmark calls the function again, with a larger b.N,
+		// until it takes a second, which one that returns at once never
+		// does.
+		if got == "" {
+			got = fsync(b, New(b))
+		}
+	})
+	if got != "on" {
+		t.Errorf("the benchmarks' server has fsync %q, want on", got)
+	}
+}
+
+// fsync returns the setting of fsync of the server of the database d.
+func fsync(t testing.TB, d *Database) string {
+	t.Helper()
+	var v string
+	if err := d.Admin(t).QueryRow(context.Background(), "SHOW fsync").Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}

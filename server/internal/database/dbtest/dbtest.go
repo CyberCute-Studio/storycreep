@@ -1,8 +1,8 @@
 // Package dbtest gives tests a real PostgreSQL database (PRD NFR-Q-01).
-// testcontainers starts one PostgreSQL container per test binary, the
-// embedded migrations are applied once to a template database, and New gives
-// each test its own copy of the template, which is dropped when the test
-// ends.
+// testcontainers starts one PostgreSQL container per test binary, and one
+// more for its benchmarks (see below), the embedded migrations are applied
+// once to a template database, and New gives each test its own copy of the
+// template, which is dropped when the test ends.
 //
 // The tests that use it need Docker. With go test -short they are skipped,
 // which is how CI runs the suite on the runners that cannot run Linux
@@ -15,10 +15,12 @@
 // when they are done.
 //
 // The server of tests does not keep what it commits, which they do not need,
-// and which makes them faster. The server of a test binary that runs
-// benchmarks, go test -bench, does, as a production server does, so that the
-// server's benchmarks (PRD §9.1) time what a commit costs, the flush of its
-// WAL among it.
+// and which makes them faster. Benchmarks have a server of their own, which
+// a test binary starts once a benchmark first asks for a database, and which
+// does, as a production server does, so that the server's benchmarks (PRD
+// §9.1) time what a commit costs, the flush of its WAL among it, and a test
+// run together with them, as by go test -bench without -run, is as fast as
+// ever.
 //
 // Two environment variables configure it. Only tests import this package, so
 // it is not part of the server, which reads its configuration only through
@@ -37,7 +39,6 @@ package dbtest
 import (
 	"context"
 	"crypto/rand"
-	"flag"
 	"fmt"
 	"io/fs"
 	"net"
@@ -81,7 +82,7 @@ const (
 	template   = "storycreep_template"
 )
 
-// Database is a database of the test's own in the shared server.
+// Database is a database of the test's own in a shared server.
 type Database struct {
 	// Name is the database's name.
 	Name string
@@ -123,9 +124,10 @@ func Empty(t testing.TB) *Database {
 // empty file. pgx fills in from them, and from the user's password file, what
 // a database URL leaves out, so a developer's settings would otherwise change
 // what the tests parse and connect with, or fail them. After the tests, it
-// stops the PostgreSQL server if they started it. testcontainers' reaper
-// would remove the container when the test binary exits, but it does not run
-// where it is disabled, as it often is with Podman.
+// stops the PostgreSQL servers that they, or the benchmarks, started.
+// testcontainers' reaper would remove the containers when the test binary
+// exits, but it does not run where it is disabled, as it often is with
+// Podman.
 func Run(m *testing.M) int {
 	for _, kv := range os.Environ() {
 		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "PG") {
@@ -134,7 +136,10 @@ func Run(m *testing.M) int {
 	}
 	os.Setenv("PGPASSFILE", os.DevNull)
 	code := m.Run()
-	if s := shared.srv; s != nil {
+	for _, s := range []*server{testServer.srv, benchServer.srv} {
+		if s == nil {
+			continue
+		}
 		if err := s.stop(); err != nil {
 			fmt.Fprintf(os.Stderr, "dbtest: stop PostgreSQL: %v\n", err)
 		}
@@ -277,20 +282,30 @@ type server struct {
 	n        atomic.Int64
 }
 
-var shared struct {
+// lazyServer is a server that is started on first use.
+type lazyServer struct {
 	once sync.Once
 	srv  *server
 	err  error
 }
 
-// start returns the shared server, starting it on first use.
+// The test binary's servers: the tests', and the benchmarks', which keeps
+// what it commits (see the package doc).
+var testServer, benchServer lazyServer
+
+// start returns the server of t, the benchmarks' if t is a benchmark, and the
+// tests' otherwise, starting it on first use.
 func start(t testing.TB) *server {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipped with -short: needs PostgreSQL, which the tests run in Docker")
 	}
+	shared, durable := &testServer, false
+	if _, ok := t.(*testing.B); ok {
+		shared, durable = &benchServer, true
+	}
 	shared.once.Do(func() {
-		shared.srv, shared.err = startServer(context.Background())
+		shared.srv, shared.err = startServer(context.Background(), durable)
 	})
 	if shared.err != nil {
 		t.Fatal(shared.err)
@@ -298,11 +313,12 @@ func start(t testing.TB) *server {
 	return shared.srv
 }
 
-func startServer(ctx context.Context) (_ *server, err error) {
+// startServer starts a server, which keeps what it commits if durable.
+func startServer(ctx context.Context, durable bool) (_ *server, err error) {
 	s := &server{adminPassword: rand.Text(), appPassword: rand.Text(), maintenancePassword: rand.Text()}
 	// Every test's pool has connections of its own.
 	cmd := []string{"postgres", "-c", "max_connections=500"}
-	if !benchmarking() {
+	if !durable {
 		// Durability is not needed for a test server.
 		cmd = append(cmd, "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off")
 	}
@@ -346,13 +362,6 @@ func startServer(ctx context.Context) (_ *server, err error) {
 		return nil, fmt.Errorf("build the template database: %w", err)
 	}
 	return s, nil
-}
-
-// benchmarking reports whether the test binary runs benchmarks, as go test
-// -bench runs it, whose server keeps what it commits (see the package doc).
-func benchmarking() bool {
-	f := flag.Lookup("test.bench")
-	return f != nil && f.Value.String() != ""
 }
 
 // stop closes the superuser's pool and removes the container.

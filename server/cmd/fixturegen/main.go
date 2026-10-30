@@ -9,13 +9,15 @@
 //
 //	go run ./cmd/fixturegen -size medium -server http://localhost:8080 -project prj_… -token-file token.txt
 //
-// The same size and seed always give the same project, with the same IDs, so
-// a project of an instance takes a seed that no other project of it was given
-// (-seed, 1 by default). A load that stopped part way resumes where it
+// The same seed always gives the same IDs, whatever the size, so a project of
+// an instance takes a seed that no other project of it was given, of any
+// size (-seed, 1 by default). A load that stopped part way resumes where it
 // stopped when it is run again with the same flags.
 //
 // With -out, it writes each batch's request body to a file of the directory,
-// batch-001.json and on, and loads nothing.
+// batch-001.json and on, and loads nothing. It writes into no directory that
+// holds batch files already, whose batches beyond the fixture's would be
+// left among them.
 //
 // It exits with status 1 if the fixture does not load, and with status 2 if
 // a flag is wrong.
@@ -24,6 +26,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -39,7 +42,7 @@ import (
 
 func main() {
 	size := flag.String("size", "", "the fixture: small, medium, large, or dense")
-	seed := flag.Uint64("seed", 1, "the seed, which no other project of the instance was loaded with")
+	seed := flag.Uint64("seed", 1, "the seed, which no other project of the instance was loaded with, of any size")
 	server := flag.String("server", "", "the instance's public URL, as http://localhost:8080")
 	project := flag.String("project", "", "the ID of the new, empty project, prj_…, to load the fixture into")
 	tokenFile := flag.String("token-file", "", "a file whose first line is an API token with the project:write scope")
@@ -86,6 +89,11 @@ func main() {
 	}
 	if err := sender.Send(ctx, f); err != nil {
 		fmt.Fprintln(os.Stderr)
+		var refused *fixture.RefusedError
+		if errors.As(err, &refused) && refused.Status == http.StatusUnprocessableEntity {
+			err = fmt.Errorf("%w\nA fixture's IDs are its seed's: if another project of the instance was loaded "+
+				"with seed %d, of any size, load this one with another -seed", err, *seed)
+		}
 		fail(err)
 	}
 	fmt.Fprintf(os.Stderr, "\nfixturegen: loaded the %s fixture, seed %d, into %s in %v\n", s, *seed, *project,
@@ -112,10 +120,17 @@ func readToken(path string) (string, error) {
 	return token, nil
 }
 
-// write writes each batch's request body to a file of the directory dir.
+// write writes each batch's request body to a file of the directory dir,
+// which holds no batch files yet.
 func write(f *fixture.Fixture, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	if old, err := filepath.Glob(filepath.Join(dir, "batch-*.json")); err != nil {
+		return err
+	} else if len(old) > 0 {
+		return fmt.Errorf("-out: %s holds batch files already, as %s; give a new or empty directory", dir,
+			filepath.Base(old[0]))
 	}
 	for i, b := range f.Batches {
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("batch-%03d.json", i+1)), fixture.Body(b),

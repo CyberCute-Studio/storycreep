@@ -43,6 +43,18 @@ const (
 // maxShown is the most of an answer's body that an error holds.
 const maxShown = 2048
 
+// RefusedError is a batch that the server answered with a status that
+// sending it again would not change, as 422 of a batch whose commands it
+// refused, as one that creates an entity whose ID another project of the
+// instance took, being of the same seed.
+type RefusedError struct {
+	Status int
+	// Answer is the answer's body, or its first maxShown bytes.
+	Answer string
+}
+
+func (e *RefusedError) Error() string { return fmt.Sprintf("answered with %d: %s", e.Status, e.Answer) }
+
 // Send sends the fixture's batches, one a request, in order, and stops at the
 // first that does not apply. Sending a batch again is safe: its commands'
 // IDs make it idempotent (FR-API-03), so a batch that applied is answered as
@@ -89,7 +101,7 @@ func (s *Sender) send(ctx context.Context, body []byte) error {
 			}
 			limited++
 		case status != http.StatusOK:
-			return fmt.Errorf("answered with %d: %s", status, shown(answer))
+			return &RefusedError{Status: status, Answer: shown(answer)}
 		default:
 			var result struct {
 				Status string `json:"status"`

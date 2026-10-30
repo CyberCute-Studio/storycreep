@@ -13,10 +13,10 @@
 // the IDs of its expressions and of its default component types, and the
 // times and authors of its rows.
 //
-// Since the IDs are the seed's, a fixture builds one project of an instance:
-// its entities' IDs, which no other entity of the instance may have (§5.2),
-// are taken once it applies. Another project of the same instance takes
-// another seed. A batch sent again, as after an interrupted upload, is
+// Since the IDs are the seed's, whatever the size, a fixture builds one
+// project of an instance: its entities' IDs, which no other entity of the
+// instance may have (§5.2), are taken once it applies. Another project of the
+// same instance, of any size, takes another seed. A batch sent again, as after an interrupted upload, is
 // answered as already applied, by its commands' IDs (FR-API-03), so an
 // upload that stopped part way resumes where it stopped (Send).
 //

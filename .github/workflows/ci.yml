@@ -264,13 +264,16 @@ jobs:
   # PRD §9.1: the server's benchmarks, of the large fixture (NFR-Q-06), and a
   # regression of more than 20% fails the build. GitHub's runners are not one
   # fixed machine, so the job measures the change and its base on the same
-  # runner, in turn, twice each, the base first in the first round and last in
-  # the second, so that a steady drift of the machine during the job falls on
-  # both alike, and cmd/benchgate compares them (plan note N52). Each benchmark
-  # also checks its own target of §9.1, on the change alone. A pull request is
+  # runner, in turn, four times each, in the order base, change, change, base,
+  # twice, so that a steady drift of the machine during the job falls on both
+  # alike, and cmd/benchgate compares them (plan note N52). Each benchmark also
+  # checks its own target of §9.1, on the change alone. A pull request is
   # compared with the main branch that it merges into, the first parent of the
   # merge commit that it is checked out as, and a push with the commit that it
-  # replaced.
+  # replaced. GitHub keeps one queued run of main, so a push whose queued run
+  # a later push's replaced is compared by no run of main, the later push's
+  # being compared with the commit that it replaced, the dropped push's; the
+  # dropped push's pull request was compared with its own base.
   bench:
     name: Benchmarks
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -306,29 +309,50 @@ jobs:
           fi
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
 
-      # -p 1 runs one package's benchmarks at a time, so that no two share the
-      # machine, and a package's benchmarks have at most a fifth of the job's
-      # time, so that a base that hangs leaves the change the time of its own
-      # runs. A base whose benchmarks fail, as one that misses a target, is
-      # compared as far as it ran; the change's must pass.
+      # Each run is a go test of its own, with a PostgreSQL server and a
+      # fixture of its own, and is one sample of each metric of its benchmarks
+      # (cmd/benchgate), and four runs of each side are the fewest that a
+      # Mann-Whitney U test can find apart at p < 0.05. -p 1 runs one package's
+      # benchmarks at a time, so that no two share the machine. A run has at
+      # most ten minutes, however many packages it benchmarks, after which
+      # SIGQUIT makes its test binary print every goroutine's stack and end,
+      # as go test's own -timeout does, and the base is not run again once a
+      # run of it has outlasted them, so that a base that hangs leaves the
+      # change the time of its own runs. A base whose benchmarks fail
+      # otherwise, as one that misses a target, is compared as far as it ran;
+      # the change's must pass.
       - name: Run the benchmarks of the base and the change, in turn
         shell: bash
         run: |
           set -o pipefail
           bench() {
-            (cd "$1/server" && go test -run '^$' -bench . -benchtime 100x -count 3 -p 1 -timeout 12m ./...)
+            (cd "$1/server" && timeout --signal QUIT --kill-after 1m 10m \
+              go test -run '^$' -bench . -benchtime 300x -count 1 -p 1 -timeout 0 ./...)
           }
+          hung=
           run_base() {
-            bench "$RUNNER_TEMP/base" >> "$RUNNER_TEMP/base.txt" ||
-              echo "::warning::The base's benchmarks failed in round $1, and are compared as far as they ran."
+            if [ -n "$hung" ]; then
+              return
+            fi
+            bench "$RUNNER_TEMP/base" >> "$RUNNER_TEMP/base.txt" || {
+              status=$?
+              if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+                hung=1
+                echo "::warning::The base's benchmarks outlasted their ten minutes in run $1, and are not run again."
+              else
+                echo "::warning::The base's benchmarks failed in run $1, and are compared as far as they ran."
+              fi
+            }
           }
           run_change() {
             bench "$GITHUB_WORKSPACE" | tee -a "$RUNNER_TEMP/head.txt"
           }
-          run_base 1
-          run_change
-          run_change
-          run_base 2
+          for round in 1 2; do
+            run_base $((2 * round - 1))
+            run_change
+            run_change
+            run_base $((2 * round))
+          done
 
       - name: Compare with the base
         working-directory: server

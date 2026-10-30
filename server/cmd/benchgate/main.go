@@ -3,13 +3,17 @@
 // §9.1, plan note N52): a time metric whose median is more than 20% above the
 // base's, where a Mann-Whitney U test finds the two apart at p < 0.05.
 //
+// Each output is of any number of runs, a go test each, and each run is one
+// sample of each metric of its benchmarks (package benchgate).
+//
 // It writes a Markdown table of every metric to standard output, for the CI
 // job's summary, warns on standard error, as a GitHub Actions annotation, of
-// each gated metric of the base that the change's output does not have,
-// which it could not compare, as one of a benchmark that the change renamed,
-// and exits with status 1 if any metric regressed, or with status 2 if an
-// output cannot be read. A metric that only the change has, of a benchmark
-// that it adds, is in the report alone.
+// each gated metric that it could not compare, one of the base that the
+// change's output does not have, as one of a benchmark that the change
+// renamed, or one with too few runs on a side, as where the base failed in
+// some of its runs, and exits with status 1 if any metric regressed, or with
+// status 2 if an output cannot be read. A metric that only the change has, of
+// a benchmark that it adds, is in the report alone.
 package main
 
 import (
@@ -58,8 +62,12 @@ func main() {
 		case r.Status == benchgate.Regressed:
 			regressed = true
 		case r.Status == benchgate.Gone && benchgate.Gated(r.Unit):
-			fmt.Fprintf(os.Stderr, "::warning::%s (%s) is not compared: the change has no such metric.\n",
-				r.Benchmark, r.Unit)
+			fmt.Fprintf(os.Stderr, "::warning::%s %s (%s) is not compared: the change has no such metric.\n",
+				r.Package, r.Benchmark, r.Unit)
+		case r.Status == benchgate.TooFew:
+			fmt.Fprintf(os.Stderr, "::warning::%s %s (%s) is not compared: the base has %d runs of it, and the "+
+				"change %d, too few for the test to find them apart.\n", r.Package, r.Benchmark, r.Unit,
+				len(samples[0][r.Metric]), len(samples[1][r.Metric]))
 		}
 	}
 	if regressed {

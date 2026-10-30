@@ -93,10 +93,19 @@ func BenchmarkCommandRoundTrip(b *testing.B) {
 		b.Run(rt.name, func(b *testing.B) {
 			var took []time.Duration
 			for b.Loop() {
+				// The batch is made with the timer stopped, so that ns/op,
+				// which the build is gated on too, times the round trip
+				// alone, as p95-ms does.
+				b.StopTimer()
 				n++
 				body := commandBatch(b, rt.batch(bs.model, r, n)...)
+				b.StartTimer()
+				// The owner edits from one address, as a person does, and
+				// as the fixture was sent from, so that the rate limiter
+				// counts each batch in the rows that it counted the
+				// others in.
 				start := time.Now()
-				res := call(bs.s.main, http.MethodPost, bs.path, body, bs.header)
+				res := send(bs.s.main, http.MethodPost, bs.path, body, "", bs.header)
 				took = append(took, time.Since(start))
 				if res.status != http.StatusOK {
 					b.Fatalf("%s: %d %s", rt.name, res.status, res.body)
@@ -150,13 +159,24 @@ func newBenchServer(b *testing.B, size fixture.Size) *benchServer {
 	// The fixture's tests load every size but large, which only the
 	// benchmarks do, so they check here that its expressions compile, as
 	// the tests do of the others'.
+	ctx, admin := context.Background(), d.Admin(b)
 	var invalid int
-	if err := d.Admin(b).QueryRow(context.Background(), `SELECT count(*) FROM expression
-		WHERE project_id = $1 AND NOT is_valid`, decode(b, ids.Project, p)).Scan(&invalid); err != nil {
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM expression WHERE project_id = $1 AND NOT is_valid`,
+		decode(b, ids.Project, p)).Scan(&invalid); err != nil {
 		b.Fatal(err)
 	}
 	if invalid > 0 {
 		b.Fatalf("%d expressions of the %s fixture do not compile", invalid, size)
+	}
+	// The load leaves the autovacuum and the autoanalyze of what it wrote,
+	// and a checkpoint of it, to come, which would land in the timed batches
+	// of some runs and not of others, so the benchmarks start from a database
+	// that is vacuumed, analyzed, and checkpointed, as a project that has
+	// been edited a while is.
+	for _, stmt := range []string{"VACUUM (ANALYZE)", "CHECKPOINT"} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			b.Fatalf("%s: %v", stmt, err)
+		}
 	}
 	return bs
 }

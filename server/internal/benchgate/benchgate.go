@@ -3,22 +3,30 @@
 // note N52).
 //
 // CI's benchmark job runs the benchmarks of a pull request's base and of its
-// head on one runner, in turn, several times each, so that both are measured
-// on the same hardware, whatever hardware GitHub gives the job: the base, the
-// head, the head again, and the base again, so that a steady drift of the
-// machine during the job falls on both alike. Each run of a benchmark is a
-// sample of each of its metrics. A metric whose unit is a time, where lower
-// is better, ns/op or a unit that ends in -ms or -ns, as p95-ms, regresses
-// when the median of the head's samples is more than Threshold above the
-// base's, and a Mann-Whitney U test finds the two sets of samples apart, at a
-// p-value under Alpha, so that the noise of a shared runner does not fail the
-// build. Other metrics are reported, and gate nothing. A benchmark that only
-// the head has is new, and one that only the base has is gone; neither is
-// compared, which the report says before anything else.
+// head on one runner, in turn, four times each, so that both are measured on
+// the same hardware, whatever hardware GitHub gives the job: the base, the
+// head, the head again, and the base again, twice, so that a steady drift of
+// the machine during the job falls on both alike. Each run is a go test of
+// its own, with a database server and a fixture of its own, and is one
+// sample of each metric of its benchmarks: the median of the run's values of
+// it, where the run ran a benchmark more than once (-count), since what makes
+// a run fast or slow, as the state that its fixture's load left the database
+// in, is the same for each of its counts, which are no samples apart. A
+// metric whose unit is a time, where lower is better, ns/op or a unit that
+// ends in -ms or -ns, as p95-ms, regresses when the median of the head's
+// samples is more than Threshold above the base's, and a Mann-Whitney U test
+// finds the two sets of samples apart, at a p-value under Alpha, so that the
+// noise of a shared runner seldom fails the build. Other metrics are
+// reported, and gate nothing. A benchmark that only the head has is new, and
+// one that only the base has is gone, and a time metric of so few runs on a
+// side that the test could find no two sets of them apart, as of a base that
+// failed in some of its runs, has too few; none of them is compared, which
+// the report says before anything else.
 package benchgate
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -46,18 +54,21 @@ type Options struct {
 	Alpha float64
 }
 
-// Metric names a metric of a benchmark: the benchmark's name, as go test
-// prints it, and the metric's unit. The name keeps the GOMAXPROCS suffix that
-// go test adds, as -4, which the base and the head, run on one machine, have
-// alike: go test adds none when GOMAXPROCS is 1, so a name's own -<digits>,
-// as of a benchmark size-100, would read as one otherwise.
+// Metric names a metric of a benchmark: the benchmark's package, as the pkg
+// line of go test's output names it, so that benchmarks of one name in two
+// packages are two metrics, the benchmark's name, as go test prints it, and
+// the metric's unit. The name keeps the GOMAXPROCS suffix that go test adds,
+// as -4, which the base and the head, run on one machine, have alike: go test
+// adds none when GOMAXPROCS is 1, so a name's own -<digits>, as of a
+// benchmark size-100, would read as one otherwise.
 type Metric struct {
+	Package   string
 	Benchmark string
 	Unit      string
 }
 
-// Samples are the values of each metric, one per run of its benchmark, in
-// the order that the runs printed them.
+// Samples are the values of each metric, one per run of its package's
+// benchmarks, in the order of the runs.
 type Samples map[Metric][]float64
 
 // lineRE reads a result line of go test -bench: the benchmark's name, with
@@ -70,11 +81,22 @@ var lineRE = regexp.MustCompile(`^(Benchmark\S+)\s+(\d+)((?:\s+\S+\s+\S+)+)\s*$`
 const maxLine = 64 << 10
 
 // Parse reads the output of go test -bench, of any number of runs and
-// packages, and returns the samples of each metric. A line that is not a
-// benchmark's result, as the goos and pkg lines, PASS, or a test's log, of
-// any length, is passed over.
+// packages, and returns the samples of each metric: one of each run, the
+// median of the run's values of it. A package's run begins at its pkg line,
+// which go test prints once before the package's first result; the results
+// before any pkg line are of one run, of no package. A line that is neither a
+// pkg line nor a benchmark's result, as the goos line, PASS, or a test's log,
+// of any length, is passed over.
 func Parse(r io.Reader) (Samples, error) {
 	out := Samples{}
+	pkg, run := "", map[Metric][]float64{}
+	// end adds the run's sample of each of its metrics to out.
+	end := func() {
+		for k, vs := range run {
+			out[k] = append(out[k], median(vs))
+		}
+		clear(run)
+	}
 	br := bufio.NewReaderSize(r, maxLine)
 	for {
 		line, err := br.ReadSlice('\n')
@@ -87,7 +109,11 @@ func Parse(r io.Reader) (Samples, error) {
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, err
 		}
-		if m := lineRE.FindStringSubmatch(strings.TrimRight(string(line), "\r\n")); m != nil {
+		text := strings.TrimRight(string(line), "\r\n")
+		if name, ok := strings.CutPrefix(text, "pkg: "); ok {
+			end()
+			pkg = strings.TrimSpace(name)
+		} else if m := lineRE.FindStringSubmatch(text); m != nil {
 			fields := strings.Fields(m[3])
 			for i := 0; i+1 < len(fields); i += 2 {
 				v, err := strconv.ParseFloat(fields[i], 64)
@@ -95,11 +121,12 @@ func Parse(r io.Reader) (Samples, error) {
 					return nil, fmt.Errorf("benchgate: %s: cannot read %q as a value of %s", m[1], fields[i],
 						fields[i+1])
 				}
-				key := Metric{Benchmark: m[1], Unit: fields[i+1]}
-				out[key] = append(out[key], v)
+				key := Metric{Package: pkg, Benchmark: m[1], Unit: fields[i+1]}
+				run[key] = append(run[key], v)
 			}
 		}
 		if err != nil {
+			end()
 			return out, nil
 		}
 	}
@@ -123,6 +150,10 @@ const (
 	New Status = "new"
 	// Gone is a metric that only the base has.
 	Gone Status = "gone"
+	// TooFew is a time metric of so few samples on a side, as of a base that
+	// failed in some of its runs, that the test could find no two sets of
+	// them apart at a p-value under Alpha, whatever their values.
+	TooFew Status = "too few runs"
 )
 
 // Result is the comparison of a metric of the head with the base's.
@@ -133,8 +164,9 @@ type Result struct {
 	// side without samples.
 	Base, Head float64
 	// Change is how much the head's median is above the base's, as a
-	// fraction of it, which is negative for an improvement, or NaN when
-	// either side has no samples.
+	// fraction of it, which is negative for an improvement, 0 where both
+	// medians are 0, and +Inf where the base's alone is 0, or NaN when either
+	// side has no samples.
 	Change float64
 	// P is the p-value of the Mann-Whitney U test of the two sets of samples,
 	// or NaN when either side has no samples.
@@ -142,7 +174,7 @@ type Result struct {
 }
 
 // Compare compares each metric of the head with the base's, and returns the
-// results, ordered by benchmark and unit.
+// results, ordered by package, benchmark, and unit.
 func Compare(base, head Samples, opts Options) []Result {
 	keys := slices.Collect(maps.Keys(head))
 	for k := range base {
@@ -151,7 +183,8 @@ func Compare(base, head Samples, opts Options) []Result {
 		}
 	}
 	slices.SortFunc(keys, func(a, b Metric) int {
-		return strings.Compare(a.Benchmark+"\x00"+a.Unit, b.Benchmark+"\x00"+b.Unit)
+		return cmp.Or(strings.Compare(a.Package, b.Package), strings.Compare(a.Benchmark, b.Benchmark),
+			strings.Compare(a.Unit, b.Unit))
 	})
 	out := make([]Result, 0, len(keys))
 	for _, k := range keys {
@@ -163,9 +196,20 @@ func Compare(base, head Samples, opts Options) []Result {
 		case len(h) == 0:
 			r.Status = Gone
 		default:
-			r.Change = r.Head/r.Base - 1
+			// Two medians of 0 are no change, and the division makes the
+			// change of a base's median alone of 0 +Inf.
+			r.Change = 0
+			if r.Base != 0 || r.Head != 0 {
+				r.Change = r.Head/r.Base - 1
+			}
 			r.P = mannWhitney(b, h)
-			if Gated(k.Unit) && r.Change > opts.Threshold && r.P < opts.Alpha {
+			switch {
+			case !Gated(k.Unit):
+			case exactP(len(b), len(h), 0) >= opts.Alpha:
+				// Even every sample of one side above every sample of the
+				// other would be no difference at p < Alpha.
+				r.Status = TooFew
+			case r.Change > opts.Threshold && r.P < opts.Alpha:
 				r.Status = Regressed
 			}
 		}
@@ -175,8 +219,9 @@ func Compare(base, head Samples, opts Options) []Result {
 }
 
 // Report writes the results as a Markdown table, for the job's summary, with
-// a line before it that says what the comparison found, and how many metrics
-// only one side has, which it could not compare.
+// a line before it that says what the comparison found, how many metrics
+// only one side has, and how many time metrics have too few runs, which it
+// could not compare.
 func Report(w io.Writer, results []Result, opts Options) error {
 	count := map[Status]int{}
 	for _, r := range results {
@@ -197,7 +242,12 @@ func Report(w io.Writer, results []Result, opts Options) error {
 			fmt.Fprintf(&b, " %d metric(s) were not compared, since only one side has them: %d new, of the "+
 				"change alone, and %d gone, of the base alone.", n, count[New], count[Gone])
 		}
-		b.WriteString("\n\n| Benchmark | Unit | Base | Head | Change | p | |\n| --- | --- | ---: | ---: | ---: | ---: | --- |\n")
+		if n := count[TooFew]; n > 0 {
+			fmt.Fprintf(&b, " %d time metric(s) were not compared, since a side has too few runs of them for "+
+				"the test to find a difference at p < %g.", n, opts.Alpha)
+		}
+		b.WriteString("\n\n| Package | Benchmark | Unit | Base | Head | Change | p | |\n" +
+			"| --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n")
 		for _, r := range results {
 			mark := ""
 			switch {
@@ -208,8 +258,8 @@ func Report(w io.Writer, results []Result, opts Options) error {
 			case !Gated(r.Unit):
 				mark = "not gated"
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", r.Benchmark, r.Unit, number(r.Base),
-				number(r.Head), percent(r.Change), pValue(r.P), mark)
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s |\n", r.Package, r.Benchmark, r.Unit,
+				number(r.Base), number(r.Head), percent(r.Change), pValue(r.P), mark)
 		}
 	}
 	_, err := io.WriteString(w, b.String())
@@ -267,12 +317,13 @@ func mannWhitney(a, b []float64) float64 {
 	for _, v := range b {
 		all = append(all, value{v, false})
 	}
-	slices.SortFunc(all, func(x, y value) int { return cmpFloat(x.v, y.v) })
+	slices.SortFunc(all, func(x, y value) int { return cmp.Compare(x.v, y.v) })
 	// The rank sum of a, with each run of tied values given their mean rank,
 	// and the sum of t³ − t over the runs, for the correction.
 	rankA, ties := 0.0, 0.0
 	for i := 0; i < len(all); {
-		j := i
+		// A run is at least its first value, even a NaN, which equals none.
+		j := i + 1
 		for j < len(all) && all[j].v == all[i].v {
 			j++
 		}
@@ -343,14 +394,4 @@ func exactP(m, n, u int) float64 {
 		tail += counts[i]
 	}
 	return math.Min(1, 2*tail/total)
-}
-
-func cmpFloat(a, b float64) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
 }
