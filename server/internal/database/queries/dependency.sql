@@ -174,12 +174,6 @@ UNION ALL
 SELECT m.id, NULL, NULL FROM live_component m
 WHERE m.workspace_id = @workspace_id AND m.project_id = @project_id AND m.id = ANY(@component_ids::uuid[]);
 
--- name: SpeakerNodes :many
--- SpeakerNodes returns the project's nodes that are not in its trash whose
--- speaker is the component speaker_component_id, with their boards.
-SELECT id, board_id FROM live_node
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND speaker_component_id = @speaker_component_id;
-
 -- name: SiteNames :many
 -- SiteNames returns the names of the project's boards among board_ids and the
 -- titles of its nodes among node_ids, in the trash or not, by their IDs, as

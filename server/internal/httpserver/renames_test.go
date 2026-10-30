@@ -613,14 +613,42 @@ func TestRenamePreview(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Errorf("the change of elara's key to flag renames %q, want %q", got, want)
 	}
+	// A refused key is answered as the rename answers it, with the rule that
+	// it breaks, but at the query's key, which a client maps to its field.
+	for _, c := range []struct {
+		path, reason string
+		status       int
+		code         api.Code
+	}{
+		{renamePreviewPath(v, "x y", "renamed"), "format", http.StatusUnprocessableEntity, api.CodeKeyInvalid},
+		{renamePreviewPath(v, strings.Repeat("k", 65), "renamed"), "format", http.StatusUnprocessableEntity,
+			api.CodeKeyInvalid},
+		{renamePreviewPath(v, "flag", "renamed"), "", http.StatusConflict, api.CodeKeyTaken},
+		{renamePreviewPath(c, "global", "renamed"), "reserved", http.StatusUnprocessableEntity, api.CodeKeyInvalid},
+	} {
+		res := call(w.s.main, http.MethodGet, c.path, nil, w.owner.header(false))
+		wantCode(t, c.path, res, c.status, c.code)
+		var env struct {
+			Error struct {
+				Details struct {
+					Reason string        `json:"reason"`
+					Errors []api.Problem `json:"errors"`
+				} `json:"details"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(res.body, &env); err != nil {
+			t.Fatalf("%s: %v: %s", c.path, err, res.body)
+		}
+		if d := env.Error.Details; d.Reason != c.reason || len(d.Errors) != 1 || d.Errors[0].Location != "query.key" ||
+			d.Errors[0].Message == "" {
+			t.Errorf("%s: %s, want the reason %q at query.key", c.path, res.body, c.reason)
+		}
+	}
 	for _, c := range []struct {
 		path   string
 		status int
 		code   api.Code
 	}{
-		{renamePreviewPath(v, "x y", "renamed"), http.StatusUnprocessableEntity, api.CodeKeyInvalid},
-		{renamePreviewPath(v, "flag", "renamed"), http.StatusConflict, api.CodeKeyTaken},
-		{renamePreviewPath(c, "global", "renamed"), http.StatusUnprocessableEntity, api.CodeKeyInvalid},
 		{renamePreviewPath(variablePath(w.project, newVariableID()), "x", "renamed"), http.StatusNotFound,
 			api.CodeNotFound},
 		{renamePreviewPath(v, "x", "both"), http.StatusUnprocessableEntity, api.CodeValidationFailed},
@@ -628,6 +656,67 @@ func TestRenamePreview(t *testing.T) {
 		wantCode(t, c.path, call(w.s.main, http.MethodGet, c.path, nil, w.owner.header(false)), c.status, c.code)
 	}
 	wantSources(t, "after the previews", expressionsOf(t, w.admin, w.project), original, nil)
+}
+
+// TestRenamePreviewOfFewSites checks that a list of a rename's preview whose
+// sites are few among more expressions that may name what it renames than
+// one read of them holds, as the names that the rename qualifies are, lists
+// every one of its sites, each once, in their order, page by page.
+//
+// Verifies: FR-VAR-03/AC4
+func TestRenamePreviewOfFewSites(t *testing.T) {
+	t.Parallel()
+	w := newRenameWorld(t)
+	// Board B's trust renamed to rep, the key of a global, qualifies the
+	// names of the global on board B: onB's, onB2's on-exit script's, and
+	// those of three of 230 more nodes, each of which names trust.
+	want := map[string]bool{w.onB: true, w.onB2: true}
+	var nodes []wireCommand
+	for i := range 230 {
+		id, script := newNodeID(), "trust += 1"
+		if i == 7 || i == 120 || i == 229 {
+			script, want[id] = "trust += rep", true
+		}
+		nodes = append(nodes, cmd("node.create", map[string]any{"id": id, "board_id": w.b, "type": "element",
+			"position": map[string]int{"x": 0, "y": 0}, "on_enter": script}))
+	}
+	w.apply(t, http.StatusOK, nodes...)
+	for _, limit := range []int{2, 100} {
+		var got []expression.RenameSite
+		for cursor := ""; ; {
+			url := fmt.Sprintf("%s&limit=%d", renamePreviewPath(variablePath(w.project, w.trust), "rep",
+				"qualified"), limit)
+			if cursor != "" {
+				url += "&cursor=" + cursor
+			}
+			res := call(w.s.main, http.MethodGet, url, nil, w.owner.header(false))
+			var page api.Page[expression.RenameSite]
+			if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
+				t.Fatalf("GET %s: %d %s", url, res.status, res.body)
+			}
+			got = append(got, page.Items...)
+			if page.NextCursor == nil {
+				break
+			}
+			cursor = *page.NextCursor
+		}
+		seen := map[string]bool{}
+		for i, s := range got {
+			if !want[s.NodeID] || seen[s.NodeID] {
+				t.Errorf("at the limit %d, the site %d is %s's %s, which is not one of the list's, or listed again",
+					limit, i, s.NodeID, s.Site)
+			}
+			seen[s.NodeID] = true
+			if before, at := uuidOf(t, got[max(i-1, 0)].NodeID), uuidOf(t, s.NodeID); i > 0 &&
+				slices.Compare(before[:], at[:]) >= 0 {
+				t.Errorf("at the limit %d, the site %d, of %s, comes after that of %s", limit, i, s.NodeID,
+					got[i-1].NodeID)
+			}
+		}
+		if len(seen) != len(want) {
+			t.Errorf("at the limit %d, the list holds %d sites, want %d", limit, len(seen), len(want))
+		}
+	}
 }
 
 // sorted returns the lines, sorted.

@@ -205,9 +205,14 @@ func (g *renaming) captures(row queries.NamingExpressionsRow) (bool, error) {
 // transaction, with its source as the rename rewrites it (renaming.rewrite),
 // in the order of their boards, the nodes of their sites, and their UUIDs
 // (PreviewKey), after the key after, until visit returns false. It reads the
-// expressions chunk at a time, from after on, or all at once if chunk is 0,
-// and none once visit has returned false, so that a preview's page reads
-// those up to its end alone. A rename to the key that the entity has
+// expressions from after on, chunk of them, and twice as many at each read
+// after, or all at once if chunk is 0, and none once visit has returned
+// false, so that a preview's page reads those up to its end alone, but for
+// the rest of the read that it ends in. Each read costs what every
+// expression that may name the entity costs (NamingExpressions), however few
+// it returns, so that the reads double: a page whose sites are few among
+// many expressions, as those that a rename qualifies are, takes a few reads,
+// not one for each chunk of them. A rename to the key that the entity has
 // rewrites nothing. It returns an error as renaming.read does.
 func planRename(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, after PreviewKey,
 	chunk int, visit func(siteRewrite) bool) error {
@@ -237,7 +242,7 @@ func planRename(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 		if chunk <= 0 || len(rows) < chunk {
 			return nil
 		}
-		after = rowKey(rows[len(rows)-1])
+		after, chunk = rowKey(rows[len(rows)-1]), 2*chunk
 	}
 }
 
@@ -590,12 +595,11 @@ func CheckSources(at string, sources []Source) input.FieldErrors {
 // whose ID is id, a node's, a connection's, or a branch output's, and
 // whether it is one.
 func sourceOwner(id string) (ids.Kind, ids.UUID, bool) {
-	for _, kind := range ownerKinds {
-		if u, err := ids.Decode(kind, id); err == nil {
-			return kind, u, true
-		}
+	kind, u, err := ids.DecodeAny(id)
+	if err != nil || !slices.Contains(ownerKinds, kind) {
+		return 0, ids.UUID{}, false
 	}
-	return 0, ids.UUID{}, false
+	return kind, u, true
 }
 
 // sourceExpressions returns the UUIDs of the project's expressions, in its
@@ -608,25 +612,26 @@ func sourceExpressions(ctx context.Context, q *queries.Queries, ws, project pgty
 		owner ids.UUID
 		field string
 	}
-	owners := map[ids.Kind][]pgtype.UUID{}
+	out := map[int]ids.UUID{}
+	if len(sources) == 0 {
+		return out, nil
+	}
+	params := queries.OwnerExpressionsParams{WorkspaceID: ws, ProjectID: project, NodeIds: []pgtype.UUID{},
+		ConnectionIds: []pgtype.UUID{}, OutputIds: []pgtype.UUID{}}
+	byKind := map[ids.Kind]*[]pgtype.UUID{ids.Node: &params.NodeIds, ids.Connection: &params.ConnectionIds,
+		ids.BranchOutput: &params.OutputIds}
 	for _, s := range sources {
 		kind, u, _ := sourceOwner(s.Owner)
-		owners[kind] = append(owners[kind], nullUUID(u))
+		*byKind[kind] = append(*byKind[kind], nullUUID(u))
+	}
+	rows, err := q.OwnerExpressions(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("expression: read the expressions of the sources' owners: %w", err)
 	}
 	stored := map[ownerField]ids.UUID{}
-	for _, kind := range ownerKinds {
-		if len(owners[kind]) == 0 {
-			continue
-		}
-		rows, err := ownerExpressions(ctx, q, ws, project, kind, owners[kind])
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			stored[ownerField{ownerOf(row), row.Field}] = row.ID.Bytes
-		}
+	for _, row := range rows {
+		stored[ownerField{ownerOf(row), row.Field}] = row.ID.Bytes
 	}
-	out := map[int]ids.UUID{}
 	for i, s := range sources {
 		_, u, _ := sourceOwner(s.Owner)
 		if id, ok := stored[ownerField{u, s.Field}]; ok {

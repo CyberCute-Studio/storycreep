@@ -799,9 +799,10 @@ type NamingExpressionsRow struct {
 // to read from the first, as no expression's is, and at most max_rows of
 // them, or every one if it is null, so that a page of a rename's preview
 // reads the sources of its own expressions alone. The names are read by an
-// index of each, so that the read takes as long as what it returns, and the
-// sources that the batch has yet to compile are matched to the keys before
-// anything compiles them.
+// index of each, so that the read takes as long as the expressions that name
+// what it looks for, which it orders before it returns those after the key,
+// however few, and the sources that the batch has yet to compile are matched
+// to the keys before anything compiles them.
 func (q *Queries) NamingExpressions(ctx context.Context, arg NamingExpressionsParams) ([]NamingExpressionsRow, error) {
 	rows, err := q.db.Query(ctx, namingExpressions,
 		arg.WorkspaceID,

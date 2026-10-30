@@ -52,8 +52,9 @@ type PreviewKey struct {
 func (s RenameSite) Key() PreviewKey { return s.key }
 
 // previewChunk is the fewest expressions that a page of a rename's preview
-// reads at a time (planRename), so that a page of few sites, of a list that
-// few expressions are in, reads in few round trips.
+// reads at its first read, and twice as many at each after (planRename), so
+// that a page of few sites, of a list that few expressions are in, reads in
+// few round trips.
 const previewChunk = 100
 
 // Preview returns at most limit of the expressions of the project, of the
@@ -63,13 +64,14 @@ const previewChunk = 100
 // another entity of, which it qualifies, each with those names, in the order
 // of their keys (PreviewKey), after after, or from the first if after is zero.
 // It reads none of the expressions up to after, nor any once it has found
-// limit, but for the rest of the chunk that it read the last of them in, so
-// that a page takes as long as the expressions from its start to its end.
-// The caller checks r's new key first, as a rename does.
+// limit, but for the rest of the read that it found the last of them in
+// (planRename). The list that a component's change of key qualifies is
+// empty, since a component's key takes no other entity's name, and is read
+// as such. The caller checks r's new key first, as a rename does.
 func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r Rename, qualified bool,
 	after PreviewKey, limit int) ([]RenameSite, error) {
 	out := []RenameSite{}
-	if limit <= 0 {
+	if limit <= 0 || qualified && r.Kind == ids.Component {
 		return out, nil
 	}
 	var boards, nodes []pgtype.UUID

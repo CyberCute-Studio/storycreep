@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,18 +58,11 @@ var uses = []string{string(UseSpeaker), string(UseMention), string(UseRead), str
 // expression, which reads or writes the attribute definition attribute, zero
 // for a variable, as package expression finds it.
 func ExpressionUsage(site string, board, node, connection, output, expression, attribute ids.UUID) Usage {
-	return Usage{Site: site, BoardID: encodeID(ids.Board, board), NodeID: encodeID(ids.Node, node),
-		ConnectionID: encodeID(ids.Connection, connection), BranchOutputID: encodeID(ids.BranchOutput, output),
-		AttributeID: encodeID(ids.AttributeDef, attribute),
-		key:         Key{Board: board, Node: node, Site: expression, Attribute: attribute}}
-}
-
-// encodeID returns the public ID of the kind of id, or "" for zero.
-func encodeID(k ids.Kind, id ids.UUID) string {
-	if id == (ids.UUID{}) {
-		return ""
-	}
-	return ids.Encode(k, id)
+	return Usage{Site: site, BoardID: encode(ids.Board, nullUUID(board)), NodeID: encode(ids.Node, nullUUID(node)),
+		ConnectionID:   encode(ids.Connection, nullUUID(connection)),
+		BranchOutputID: encode(ids.BranchOutput, nullUUID(output)),
+		AttributeID:    encode(ids.AttributeDef, nullUUID(attribute)),
+		key:            Key{Board: board, Node: node, Site: expression, Attribute: attribute}}
 }
 
 // textsKey is the key under which TextsUsing keeps what the texts that the
@@ -88,6 +82,20 @@ type textRef struct {
 	row queries.TextReferencesRow
 	use Use
 }
+
+// textOwners are owners of texts, a node, a connection, or a component, by
+// their kinds, each listed once.
+type textOwners map[ids.Kind][]pgtype.UUID
+
+// add lists the owner o.
+func (t textOwners) add(o commands.Ref) {
+	t[o.Kind] = append(t[o.Kind], nullUUID(o.ID))
+}
+
+// textSites are the types of the sites of the texts of each kind of owner,
+// as a usage list names them (Usage.Site).
+var textSites = map[ids.Kind]string{ids.Node: SiteNodeText, ids.Connection: SiteConnectionLabel,
+	ids.Component: SiteComponentDescription}
 
 // TextsUsing returns the texts of the batch's project, of its nodes, its
 // connections, and its components outside its trash, that use the variable,
@@ -126,42 +134,28 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	// The texts to read: those that the batch has changed since they were
 	// last read, and those of the index that it has not changed.
 	var refs []textRef
-	var nodes, connections, components []pgtype.UUID
-	changed, stale := map[pgtype.UUID]bool{}, map[commands.Ref]bool{}
-	add := func(kind ids.Kind, id pgtype.UUID) {
-		switch kind {
-		case ids.Node:
-			nodes = append(nodes, id)
-		case ids.Connection:
-			connections = append(connections, id)
-		case ids.Component:
-			components = append(components, id)
-		}
-	}
+	toRead := textOwners{}
+	changed, stale := map[commands.Ref]bool{}, map[commands.Ref]bool{}
 	for _, c := range changedTexts(tx.Changes()) {
-		changed[nullUUID(c.ID)] = true
+		changed[c.Ref] = true
 		if r, ok := read[c.Ref]; ok && r.rev == c.Rev {
 			refs = append(refs, r.refs...)
 			continue
 		}
 		stale[c.Ref] = true
 		read[c.Ref] = readText{rev: c.Rev}
-		add(c.Kind, nullUUID(c.ID))
+		toRead.add(c.Ref)
 	}
 	for _, r := range referrers {
-		for _, o := range []struct {
-			kind ids.Kind
-			id   pgtype.UUID
-		}{{ids.Node, r.NodeID}, {ids.Connection, r.ConnectionID}, {ids.Component, r.ComponentID}} {
-			if o.id.Valid && !changed[o.id] {
-				changed[o.id] = true
-				add(o.kind, o.id)
-			}
+		if o := textOwner(r.NodeID, r.ConnectionID, r.ComponentID); !changed[o] {
+			changed[o] = true
+			toRead.add(o)
 		}
 	}
-	if len(nodes)+len(connections)+len(components) > 0 {
+	if len(toRead) > 0 {
 		rows, err := q.TextReferences(ctx, queries.TextReferencesParams{WorkspaceID: ws, ProjectID: project,
-			NodeIds: list(nodes), ConnectionIds: list(connections), ComponentIds: list(components)})
+			NodeIds: list(toRead[ids.Node]), ConnectionIds: list(toRead[ids.Connection]),
+			ComponentIds: list(toRead[ids.Component])})
 		if err != nil {
 			return nil, fmt.Errorf("dependency: read what the texts name: %w", err)
 		}
@@ -171,7 +165,7 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 				return nil, err
 			}
 			ref := textRef{row: r, use: u}
-			if owner := textOwner(r); stale[owner] {
+			if owner := textOwner(r.NodeID, r.ConnectionID, r.ComponentID); stale[owner] {
 				t := read[owner]
 				t.refs = append(t.refs, ref)
 				read[owner] = t
@@ -183,8 +177,7 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	// description, and the owners of their texts, of which only those outside
 	// the trash are sites.
 	var hits []textRef
-	var hitNodes, hitConnections, hitComponents []pgtype.UUID
-	owned := map[pgtype.UUID]bool{}
+	hitOwners, owned := textOwners{}, map[commands.Ref]bool{}
 	for _, h := range refs {
 		r, u := h.row, h.use
 		if u.Target != target || kind == ids.Variable && u.Kind != Variable ||
@@ -192,23 +185,17 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 			continue
 		}
 		hits = append(hits, h)
-		owner, l := r.NodeID, &hitNodes
-		switch {
-		case r.ConnectionID.Valid:
-			owner, l = r.ConnectionID, &hitConnections
-		case r.ComponentID.Valid:
-			owner, l = r.ComponentID, &hitComponents
-		}
-		if !owned[owner] {
+		if owner := textOwner(r.NodeID, r.ConnectionID, r.ComponentID); !owned[owner] {
 			owned[owner] = true
-			*l = append(*l, owner)
+			hitOwners.add(owner)
 		}
 	}
 	if len(hits) == 0 {
 		return nil, nil
 	}
 	live, err := q.LiveTextOwners(ctx, queries.LiveTextOwnersParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: list(hitNodes), ConnectionIds: list(hitConnections), ComponentIds: list(hitComponents)})
+		NodeIds: list(hitOwners[ids.Node]), ConnectionIds: list(hitOwners[ids.Connection]),
+		ComponentIds: list(hitOwners[ids.Component])})
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the owners of the texts: %w", err)
 	}
@@ -220,14 +207,8 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	found := map[Key]map[string]bool{}
 	for _, h := range hits {
 		r, u := h.row, h.use
-		site, owner := SiteNodeText, r.NodeID
-		switch {
-		case r.ConnectionID.Valid:
-			site, owner = SiteConnectionLabel, r.ConnectionID
-		case r.ComponentID.Valid:
-			site, owner = SiteComponentDescription, r.ComponentID
-		}
-		l, ok := sites[owner.Bytes]
+		owner := textOwner(r.NodeID, r.ConnectionID, r.ComponentID)
+		l, ok := sites[owner.ID]
 		if !ok {
 			continue
 		}
@@ -235,14 +216,14 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 		if u.Kind == Component {
 			use = string(UseMention)
 		}
-		f := Found{Use: use, Usage: Usage{Site: site, BoardID: encode(ids.Board, l.BoardID),
-			NodeID: encode(ids.Node, l.SiteNodeID), AttributeID: encodeID(ids.AttributeDef, u.Attribute),
-			key: Key{Board: l.BoardID.Bytes, Node: l.SiteNodeID.Bytes, Site: owner.Bytes, Attribute: u.Attribute}}}
-		switch site {
-		case SiteConnectionLabel:
-			f.ConnectionID = ids.Encode(ids.Connection, owner.Bytes)
-		case SiteComponentDescription:
-			f.ComponentID = ids.Encode(ids.Component, owner.Bytes)
+		f := Found{Use: use, Usage: Usage{Site: textSites[owner.Kind], BoardID: encode(ids.Board, l.BoardID),
+			NodeID: encode(ids.Node, l.SiteNodeID), AttributeID: encode(ids.AttributeDef, nullUUID(u.Attribute)),
+			key: Key{Board: l.BoardID.Bytes, Node: l.SiteNodeID.Bytes, Site: owner.ID, Attribute: u.Attribute}}}
+		switch owner.Kind {
+		case ids.Connection:
+			f.ConnectionID = ids.Encode(ids.Connection, owner.ID)
+		case ids.Component:
+			f.ComponentID = ids.Encode(ids.Component, owner.ID)
 		}
 		if found[f.key] == nil {
 			found[f.key] = map[string]bool{}
@@ -255,33 +236,35 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	return out, nil
 }
 
-// textOwner returns the owner of the text of the reference r: a node, a
-// connection, or a component.
-func textOwner(r queries.TextReferencesRow) commands.Ref {
+// textOwner returns the owner of a text, as a row of the index of its
+// references holds it, one of node, connection, and component alone: a node,
+// a connection, or a component.
+func textOwner(node, connection, component pgtype.UUID) commands.Ref {
 	switch {
-	case r.ConnectionID.Valid:
-		return commands.Ref{Kind: ids.Connection, ID: r.ConnectionID.Bytes}
-	case r.ComponentID.Valid:
-		return commands.Ref{Kind: ids.Component, ID: r.ComponentID.Bytes}
+	case connection.Valid:
+		return commands.Ref{Kind: ids.Connection, ID: connection.Bytes}
+	case component.Valid:
+		return commands.Ref{Kind: ids.Component, ID: component.Bytes}
 	}
-	return commands.Ref{Kind: ids.Node, ID: r.NodeID.Bytes}
+	return commands.Ref{Kind: ids.Node, ID: node.Bytes}
 }
 
 // Speakers returns the nodes of the project, of the workspace ws, outside
 // its trash, whose speaker is the component, read in q's transaction, each a
-// use of it as its speaker.
+// use of it as its speaker, as the component's list of its speakers holds
+// them (Service.ComponentUsages), every one.
 func Speakers(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, component ids.UUID) ([]Found,
 	error) {
-	rows, err := q.SpeakerNodes(ctx, queries.SpeakerNodesParams{WorkspaceID: ws, ProjectID: project,
-		SpeakerComponentID: nullUUID(component)})
+	zero := zeroUUID(ids.UUID{})
+	rows, err := q.Usages(ctx, queries.UsagesParams{WorkspaceID: ws, ProjectID: project,
+		TargetID: nullUUID(component), Speaker: true, AfterBoard: zero, AfterNode: zero, AfterSite: zero,
+		AfterAttribute: zero, MaxRows: math.MaxInt32})
 	if err != nil {
 		return nil, fmt.Errorf("dependency: read the nodes whose speaker the component is: %w", err)
 	}
 	out := make([]Found, len(rows))
 	for i, r := range rows {
-		out[i] = Found{Use: string(UseSpeaker), Usage: Usage{Site: SiteNodeSpeaker,
-			BoardID: encode(ids.Board, r.BoardID), NodeID: encode(ids.Node, r.ID),
-			key: Key{Board: r.BoardID.Bytes, Node: r.ID.Bytes, Site: r.ID.Bytes}}}
+		out[i] = Found{Use: string(UseSpeaker), Usage: usageOf(r)}
 	}
 	return out, nil
 }

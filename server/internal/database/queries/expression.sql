@@ -291,9 +291,10 @@ RETURNING id, rev;
 -- to read from the first, as no expression's is, and at most max_rows of
 -- them, or every one if it is null, so that a page of a rename's preview
 -- reads the sources of its own expressions alone. The names are read by an
--- index of each, so that the read takes as long as what it returns, and the
--- sources that the batch has yet to compile are matched to the keys before
--- anything compiles them.
+-- index of each, so that the read takes as long as the expressions that name
+-- what it looks for, which it orders before it returns those after the key,
+-- however few, and the sources that the batch has yet to compile are matched
+-- to the keys before anything compiles them.
 WITH found AS (
     SELECT id FROM expression
     WHERE workspace_id = @workspace_id AND project_id = @project_id AND ast IS NULL AND error IS NULL

@@ -82,7 +82,7 @@ type renamePayload struct {
 // keyPayload is SetKey's payload.
 type keyPayload struct {
 	ID  string `json:"id" doc:"The component's ID"`
-	Key string `json:"key" doc:"The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the component's attributes, in the shortest form that names them from the expression's board, <component>.<attribute> unless a variable of the board or a global one has the new key, which cmp.<component>.<attribute> names past, so that each names what it named (PRD FR-COMP-02 AC2, FR-VAR-03), as GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview lists them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written."`
+	Key string `json:"key" doc:"The component's new key: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. The component keeps its ID, by which saved games record its values (PRD FR-COMP-03 AC3). The change rewrites the source of each expression of the project, in its trash or not, that names the component's attributes, in the shortest form that names them from the expression's board, <component>.<attribute> unless a variable of the board or a global one has the new key, which cmp.<component>.<attribute> names past, so that each names what it named, each name keeping the white space and the comments between its parts, and so a qualifier that a comment follows (PRD FR-COMP-02 AC2, FR-VAR-03), as GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview lists them. A change that would make a source longer than 16384 characters is answered with 422 validation_failed, before anything is written."`
 	// Sources is a pointer, so that an empty list, as the undo of a change
 	// that rewrote nothing writes, is told from none, a change's own.
 	Sources *[]expression.Source `json:"sources,omitempty" doc:"The sources that the undo of a change of the key gives back to the expressions of the owners' fields that it lists, those that the change rewrote, and those that it left as they were but made name what a name of theirs did not, exactly as they were: each to its field's expression where the change of the component's key from key back to the key that it has would rewrite that source to the expression's as it is, which it then names and does exactly as, so that a source that is the expression's as it is keeps the expression as it is, which may then name nothing where it names something now, but never anything that it does not. Every other expression that names the component's attributes, as one that names them by the key that it has written since the change, and one that it lists whose source has changed since, is rewritten as key says, as without it, and an owner's field that it lists that has no expression is passed over. Without it, the change rewrites the sources as key says."`
@@ -158,6 +158,7 @@ func registerComponents(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
+			tx.Carry(createdKey(key))
 			force, err := expression.Used(ctx, tx, expression.Subject{Kind: ids.Component,
 				ID: decoded(ids.Component, p.ID).Bytes, Key: key, Absent: true,
 				ComponentType: decoded(ids.ComponentType, p.ComponentTypeID).Bytes})
@@ -417,9 +418,12 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return err
 	}
-	key, err := createKey(ctx, q, ws, project, p)
-	if err != nil {
-		return err
+	derived, carried := tx.Carried().(createdKey)
+	key := string(derived)
+	if !carried {
+		if key, err = createKey(ctx, q, ws, project, p); err != nil {
+			return err
+		}
 	}
 	if p.Key != "" {
 		if err := checkKey(ctx, componentKeyOwner(q, ws, project), "key", key, pgtype.UUID{},
@@ -567,6 +571,11 @@ func createKey(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
 	}
 	return key, nil
 }
+
+// createdKey is the key of the component that a create creates, which its
+// inverse derives for its Apply (commands.Tx.Carry), so that a create without
+// a key derives it once.
+type createdKey string
 
 // applyDelete is Delete's Apply. A component that sites of the project use,
 // as the batch's commands before it leave the project, a node as its speaker

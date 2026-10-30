@@ -41,13 +41,13 @@ type Subject struct {
 
 // InUse returns the sites of the batch's project outside its trash that use
 // the subject, as the batch's commands before the one that calls it leave the
-// project (FR-VAR-04, FR-COMP-04): the expressions that, compiled at their
-// owners' boards against the project as it stands, compile and read or write
-// the subject, a variable or a component's attribute, as the usage lists would
-// list them once the batch had compiled them (dependency.Uses), and the texts
-// whose value references show it or that mention the component
-// (dependency.TextsUsing), and, for a component, the nodes whose speaker it is
-// (dependency.Speakers). An expression is read only if its names
+// project (FR-VAR-04, FR-COMP-04): for a component, the nodes whose speaker
+// it is (dependency.Speakers), the texts whose value references show it or
+// that mention the component (dependency.TextsUsing), and the expressions
+// that, compiled at their owners' boards against the project as it stands,
+// compile and read or write the subject, a variable or a component's
+// attribute, as the usage lists would list them once the batch had compiled
+// them (dependency.Uses). An expression is read only if its names
 // (expression_name) hold the subject's key or its UUID, or the batch has yet
 // to compile it and its source holds the key, as any source that names the
 // subject does, as dependency.Usages lists the others as their compilation
@@ -56,36 +56,49 @@ type Subject struct {
 // that would add it refuses, is used by nothing, before anything is read: the
 // empty key is in every source.
 func InUse(ctx context.Context, tx *commands.Tx, s Subject) ([]dependency.Found, error) {
+	return using(ctx, tx, s, false)
+}
+
+// Used reports whether sites of the batch's project use the subject s
+// (InUse), as the inverse of a command that adds s to the project asks, whose
+// deletion undoes it, forced exactly then (FR-VAR-04). It reads no more once
+// a kind of site uses s (using).
+func Used(ctx context.Context, tx *commands.Tx, s Subject) (bool, error) {
+	found, err := using(ctx, tx, s, true)
+	return len(found) > 0, err
+}
+
+// using returns the sites that use the subject s, as InUse says, of each
+// kind of site in turn, the cheapest to read first, speakers, texts, and
+// expressions, which it compiles, and, if first is set, none of the kinds
+// after the first that uses s, as Used needs no more.
+func using(ctx context.Context, tx *commands.Tx, s Subject, first bool) ([]dependency.Found, error) {
 	if s.Absent && ident.Check(s.Key) != nil {
 		return nil, nil
 	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
-	found, err := expressionsUsing(ctx, q, ws, project, s)
-	if err != nil {
-		return nil, err
-	}
-	texts, err := dependency.TextsUsing(ctx, tx, s.Kind, s.ID)
-	if err != nil {
-		return nil, err
-	}
-	found = append(found, texts...)
-	if s.Kind == ids.Component {
-		speakers, err := dependency.Speakers(ctx, q, ws, project, s.ID)
+	var found []dependency.Found
+	for _, read := range []func() ([]dependency.Found, error){
+		func() ([]dependency.Found, error) {
+			if s.Kind != ids.Component {
+				return nil, nil
+			}
+			return dependency.Speakers(ctx, q, ws, project, s.ID)
+		},
+		func() ([]dependency.Found, error) { return dependency.TextsUsing(ctx, tx, s.Kind, s.ID) },
+		func() ([]dependency.Found, error) { return expressionsUsing(ctx, q, ws, project, s) },
+	} {
+		if first && len(found) > 0 {
+			break
+		}
+		sites, err := read()
 		if err != nil {
 			return nil, err
 		}
-		found = append(found, speakers...)
+		found = append(found, sites...)
 	}
 	return found, nil
-}
-
-// Used reports whether sites of the batch's project use the subject s
-// (InUse), as the inverse of a command that adds s to the project asks, whose
-// deletion undoes it, forced exactly then (FR-VAR-04).
-func Used(ctx context.Context, tx *commands.Tx, s Subject) (bool, error) {
-	found, err := InUse(ctx, tx, s)
-	return len(found) > 0, err
 }
 
 // GuardDeletion returns nil if the command that deletes the subject s, which

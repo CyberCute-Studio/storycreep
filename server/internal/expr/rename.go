@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
 )
 
 // Edit is a change of one name of a source that a rename of an entity's key
@@ -39,10 +42,11 @@ type Edit struct {
 // so that a source that the rename leaves naming what it named is the same
 // source, and so does a name that names nothing in before, which the rename
 // may make name the renamed entity, or one whose name its old key shadowed
-// (Captures). It returns the source rewritten and its
-// edits, in the order of their ranges, or the source as it is and no edits if
-// it does not parse, as a name of it names nothing, or if no name of it
-// changes.
+// (Captures). A name that the source writes with white space or comments
+// between its parts keeps them, as respell says, so that a rename loses no
+// comment. It returns the source rewritten and its edits, in the order of
+// their ranges, or the source as it is and no edits if it does not parse, as
+// a name of it names nothing, or if no name of it changes.
 //
 // It returns an error, the caller's mistake or its own, never the source's,
 // if before or after lacks the renamed entity or another that a name names,
@@ -74,15 +78,15 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		}
 		r := m.Range()
 		old := string(runes[r.Start:r.End])
-		if old == written {
+		if written = respell(old, written); old == written {
 			continue
 		}
+		// The edits come in the order of the names, that of their ranges.
 		edits = append(edits, Edit{Range: r, Old: old, New: written, Ref: ref, Qualified: ref != renamed})
 	}
 	if len(edits) == 0 {
 		return source, nil, nil
 	}
-	slices.SortFunc(edits, func(a, b Edit) int { return a.Range.Start - b.Range.Start })
 	out := make([]rune, 0, len(runes))
 	at := 0
 	for _, ed := range edits {
@@ -94,6 +98,75 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 		return "", nil, err
 	}
 	return rewritten, edits, nil
+}
+
+// respell returns the name written, the parts of a name joined by dots, as
+// Rewrite writes it in place of old, the name as a source writes it, which
+// may have white space and comments between its parts, around each dot,
+// that a part of the source written on several lines holds: each part of old
+// gives way to a part of written, with what follows it up to the next part
+// as it is. A name written with more parts than old, as global.trust of rep,
+// or cmp.x.trust of elara.trust, has its first parts in place of old's first
+// part, and one with fewer, as trust of global.rep, or ela.trust of
+// cmp.elara.trust, drops old's first parts, the qualifiers that it no longer
+// needs, global., board., or cmp., with what follows each, unless that holds
+// a comment, which the name keeps then with its qualifier, as global.trust,
+// which names what trust names, so that a rename loses no comment. A name
+// written without white space, as most are, is written as written.
+func respell(old, written string) string {
+	if !strings.ContainsAny(old, " \t\r\n/") {
+		return written
+	}
+	parts, gaps := nameParts(old)
+	to := strings.Split(written, ".")
+	if drop := len(parts) - len(to); drop > 0 {
+		if slices.ContainsFunc(gaps[:drop], func(g string) bool { return strings.Contains(g, "//") }) {
+			to = append(slices.Clone(parts[:drop]), to...)
+		} else {
+			gaps = gaps[drop:]
+		}
+	}
+	// to has as many parts as old has left, or more, which go first.
+	first := len(to) - len(gaps)
+	var b strings.Builder
+	b.WriteString(strings.Join(to[:first], "."))
+	for i, g := range gaps {
+		b.WriteString(g)
+		b.WriteString(to[first+i])
+	}
+	return b.String()
+}
+
+// nameParts returns the parts of the name, as a source writes it, its
+// identifiers, and what is between each part and the next, a dot with the
+// white space and the comments around it, of which a comment runs to the
+// line break that ends it, before the next part, and may hold dots and
+// words of its own.
+func nameParts(name string) (parts, gaps []string) {
+	after := 0
+	for i := 0; i < len(name); {
+		switch {
+		case strings.HasPrefix(name[i:], "//"):
+			if end := strings.IndexAny(name[i:], "\r\n"); end >= 0 {
+				i += end
+			} else {
+				i = len(name)
+			}
+		case ident.IsPart(name[i]):
+			end := i
+			for end < len(name) && ident.IsPart(name[end]) {
+				end++
+			}
+			if len(parts) > 0 {
+				gaps = append(gaps, name[after:i])
+			}
+			parts = append(parts, name[i:end])
+			i, after = end, end
+		default:
+			i++
+		}
+	}
+	return parts, gaps
 }
 
 // Captures reports whether a name of the source, of the context ctx, of an

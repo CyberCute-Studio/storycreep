@@ -108,6 +108,20 @@ func TestRewrite(t *testing.T) {
 			source: "mira.trust > elara.trust", want: "mira.trust > ela.trust"},
 		{name: "a rename that changes no name changes nothing", id: varX, key: "y", board: boardA,
 			source: "rep > 1", want: "rep > 1"},
+		{name: "white space between a name's parts stays", id: cmpElaraR, key: "ela", board: boardA,
+			source: "elara . trust > 1", want: "ela . trust > 1"},
+		{name: "a comment between a name's parts stays", id: cmpElaraR, key: "x", board: boardA,
+			source: "elara. // the first.cast\n trust > 1", want: "cmp.x. // the first.cast\n trust > 1"},
+		{name: "a qualifier that the name drops goes with the white space after it", id: varRep, key: "trust",
+			board: boardA, ctx: ContextScript, source: "x = global\n  .rep + 1", want: "x = trust + 1"},
+		{name: "a qualifier that a comment follows stays", id: varRep, key: "trust", board: boardA,
+			ctx: ContextScript, source: "x = global // the shop's\n  .rep + 1",
+			want: "x = global // the shop's\n  .trust + 1"},
+		{name: "cmp. that a comment follows stays", id: cmpElaraR, key: "ela", board: boardA,
+			source: "cmp // elara.trust\n.elara.trust > 1", want: "cmp // elara.trust\n.ela.trust > 1"},
+		{name: "board. that a comment follows stays", id: varBTrust, key: "x", board: boardB,
+			source: "x > 1 && board . // B's own\n trust > 2", want: "global.x > 1 && board . // B's own\n x > 2",
+			qualified: 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

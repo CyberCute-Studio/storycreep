@@ -210,44 +210,6 @@ func (q *Queries) SiteNames(ctx context.Context, arg SiteNamesParams) ([]SiteNam
 	return items, nil
 }
 
-const speakerNodes = `-- name: SpeakerNodes :many
-SELECT id, board_id FROM live_node
-WHERE workspace_id = $1 AND project_id = $2 AND speaker_component_id = $3
-`
-
-type SpeakerNodesParams struct {
-	WorkspaceID        pgtype.UUID
-	ProjectID          pgtype.UUID
-	SpeakerComponentID pgtype.UUID
-}
-
-type SpeakerNodesRow struct {
-	ID      pgtype.UUID
-	BoardID pgtype.UUID
-}
-
-// SpeakerNodes returns the project's nodes that are not in its trash whose
-// speaker is the component speaker_component_id, with their boards.
-func (q *Queries) SpeakerNodes(ctx context.Context, arg SpeakerNodesParams) ([]SpeakerNodesRow, error) {
-	rows, err := q.db.Query(ctx, speakerNodes, arg.WorkspaceID, arg.ProjectID, arg.SpeakerComponentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SpeakerNodesRow
-	for rows.Next() {
-		var i SpeakerNodesRow
-		if err := rows.Scan(&i.ID, &i.BoardID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const textReferences = `-- name: TextReferences :many
 SELECT n.id AS node_id, NULL::uuid AS connection_id, NULL::uuid AS component_id, n.board_id::uuid AS board_id,
     r.inline::jsonb AS inline

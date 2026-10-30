@@ -19,7 +19,7 @@ import (
 type variableRenameInput struct {
 	ProjectID  string `path:"project_id" doc:"The project's ID"`
 	VariableID string `path:"variable_id" doc:"The variable's ID"`
-	Key        string `query:"key" required:"true" maxLength:"64" doc:"The variable's new key, as a variable.rename command would give it"`
+	Key        string `query:"key" required:"true" doc:"The variable's new key, as a variable.rename command would give it, which is checked as the command checks it"`
 	Rewrite    string `query:"rewrite" required:"true" enum:"renamed,qualified" doc:"Which rewrites the list holds: those of the names of the variable itself, renamed, or those of the names of other variables and components' attributes that the new key would take, which the rename qualifies, qualified"`
 	api.PageParams
 }
@@ -27,7 +27,7 @@ type variableRenameInput struct {
 type componentRenameInput struct {
 	ProjectID   string `path:"project_id" doc:"The project's ID"`
 	ComponentID string `path:"component_id" doc:"The component's ID"`
-	Key         string `query:"key" required:"true" maxLength:"64" doc:"The component's new key, as a component.set_key command would give it"`
+	Key         string `query:"key" required:"true" doc:"The component's new key, as a component.set_key command would give it, which is checked as the command checks it"`
 	Rewrite     string `query:"rewrite" required:"true" enum:"renamed,qualified" doc:"Which rewrites the list holds: those of the names of the component's attributes, renamed, or those of the names of other entities that the new key would take, qualified, of which a component's key takes none, so that the list is empty"`
 	api.PageParams
 }
@@ -55,7 +55,9 @@ const renamePreviewDoc = " Each site is an expression of the project, in its tra
 	"in the shortest form that names what it named from the expression's board (PRD FR-VAR-03): a variable's bare " +
 	"key, unless a variable of the board has the key of a global one, which global.<key> names, and a " +
 	"component's attribute as <component>.<attribute>, unless a variable of the board or a global one has the " +
-	"component's key, which cmp.<component>.<attribute> names past; the other names stay as the source writes " +
+	"component's key, which cmp.<component>.<attribute> names past, keeping the white space and the comments " +
+	"that the source writes between its parts, and so a qualifier that a comment follows, which it then does " +
+	"not drop; the other names stay as the source writes " +
 	"them, and so does a name that names nothing, which the rename may make name what it renames, or what its old " +
 	"key shadowed. The sites are " +
 	"in the order of their boards, their nodes, and the expressions themselves. The rename itself rewrites the " +
@@ -174,7 +176,11 @@ func renameCursor(cursor string) (expression.PreviewKey, error) {
 // preview found it, once its entity's error mapper has mapped its own: 422
 // key_invalid for a key that is no identifier, with the rule that it breaks
 // as details.reason, and 409 key_taken for one that another entity of the
-// scope has, each at the query's key, as the rename itself answers them.
+// scope has, each at the query's key, as the rename itself answers them. The
+// previews refuse the key with commands.Refuse outside any batch, which no
+// pipeline makes a *commands.RefusedError of, so the entity's mapper, which
+// answers a batch's refusal at the body (pipelineError), passes it on to be
+// answered here.
 func renameError(err error) error {
 	problems := []api.Problem{{Location: "query.key", Message: err.Error()}}
 	var key *ident.Error
