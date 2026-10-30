@@ -543,7 +543,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-VAR-03 AC1–AC4, FR-VAR-04 AC1–AC2, FR-COMP-04 AC1, FR-EDIT-06 AC2, FR-COMP-02 AC2 (renaming the display name keeps the key; a key change is a refactor with FR-VAR-03 semantics), and the blocking half of FR-TEXT-02 AC2 (deleting a variable referenced only from text returns 409) pass. The dangling-reference half lands in item 48.
 
 ### 47a. Safe attribute-key rename
-**Status:** todo · **Depends on:** 47
+**Status:** done ([#57](https://github.com/CyberCute-Studio/storycreep/pull/57)) · **Depends on:** 47
 **PRD:** FR-COMP-01 (AC4), FR-VAR-03 (attribute keys)
 - `attribute.set_key` becomes the refactor that `variable.rename` and `component.set_key` are (item 47, N54): it rewrites every expression that names the definition's attribute of a component of its type, in the shortest form that names it, with the same exact undo (`sources`), and joins `dependency.SourceRewrites` (N55).
 - It rewrites alike the names of the attributes of a component of the type in the trash whose key no other component has, so that restoring the component brings back what names them (N55).
