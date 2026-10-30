@@ -174,6 +174,7 @@ func TestRegisterRefusesBadSpecs(t *testing.T) {
 		{"a registered type", func(s *Spec[notePayload]) { s.Type = noteCreate }},
 		{"no capability", func(s *Spec[notePayload]) { s.Capability = "" }},
 		{"an unknown capability", func(s *Spec[notePayload]) { s.Capability = "project.everything" }},
+		{"the publishing capability", func(s *Spec[notePayload]) { s.Capability = authz.PublishSnapshot }},
 		{"no scope", func(s *Spec[notePayload]) { s.Scope = "" }},
 		{"an unknown scope", func(s *Spec[notePayload]) { s.Scope = "project:admin" }},
 		{"nothing touched", func(s *Spec[notePayload]) { s.Touches = nil }},

@@ -603,7 +603,9 @@ func inverseSetKey(ctx context.Context, tx *commands.Tx, p keyPayload) ([]comman
 		return nil, err
 	}
 	return expression.RenameInverse(ctx, tx, SetKey, "key", rekey(c, p.Key), p.Sources,
-		func(back []expression.Source) any { return keyPayload{ID: p.ID, Key: c.Key, Sources: &back} })
+		func(key string, sources []expression.Source) any {
+			return keyPayload{ID: p.ID, Key: key, Sources: &sources}
+		})
 }
 
 // applySetKey is SetKey's Apply: it checks the new key, before it writes

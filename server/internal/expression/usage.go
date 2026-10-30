@@ -52,8 +52,13 @@ type Subject struct {
 // to compile it and its source holds the key, as any source that names the
 // subject does, as dependency.Usages lists the others as their compilation
 // did; and an expression that does not compile uses nothing, as the usage
-// lists say.
+// lists say. An absent subject whose key is no identifier, which the command
+// that would add it refuses, is used by nothing, before anything is read: the
+// empty key is in every source.
 func InUse(ctx context.Context, tx *commands.Tx, s Subject) ([]dependency.Found, error) {
+	if s.Absent && ident.Check(s.Key) != nil {
+		return nil, nil
+	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	found, err := expressionsUsing(ctx, q, ws, project, s)
@@ -90,8 +95,11 @@ func Used(ctx context.Context, tx *commands.Tx, s Subject) (bool, error) {
 // role must allow (dependency.CheckForce). It refuses the batch at force with
 // a *dependency.InUseError otherwise (FR-VAR-04 AC1, FR-COMP-04 AC1). A
 // forced deletion leaves the expressions that named s to the derivation,
-// which compiles them again, invalid, as each of them names what no longer
-// resolves (FR-VAR-04 AC2).
+// which compiles them again, each as FR-VAR-04 says: invalid, naming what no
+// longer resolves (AC2), but for a board's variable named by its bare key on
+// its board where a global variable has the key, which that name then names
+// (expr.Project's lookupVariable), as it did before the board's variable had
+// the key.
 func GuardDeletion(ctx context.Context, tx *commands.Tx, s Subject, force bool) error {
 	found, err := InUse(ctx, tx, s)
 	switch {
@@ -171,14 +179,11 @@ func expressionsUsing(ctx context.Context, q *queries.Queries, ws, project pgtyp
 	return out, nil
 }
 
-// with adds the absent subject s to the names n, and reports whether it did:
-// not for a subject whose key is no identifier, or whose ID, or whose key in
-// its scope, another variable or component of n has, which the command that
+// with adds the absent subject s, whose key InUse checked, to the names n,
+// and reports whether it did: not for a subject whose ID, or whose key in its
+// scope, another variable or component of n has, which the command that
 // would add it refuses.
 func (n *names) with(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, s Subject) (bool, error) {
-	if ident.Check(s.Key) != nil {
-		return false, nil
-	}
 	id := ids.Encode(s.Kind, s.ID)
 	switch s.Kind {
 	case ids.Variable:
@@ -214,14 +219,18 @@ func (n *names) with(ctx context.Context, q *queries.Queries, ws, project pgtype
 	return true, nil
 }
 
-// siteOf returns the type of the site of an expression of the field of an
-// owner of the kind, as a usage list names it (dependency.Usage.Site).
+// sites are the types of the sites of the expressions of each field of each
+// kind of owner (fields), as a usage list names them (dependency.Usage.Site).
+var sites = map[ids.Kind]map[Field]string{
+	ids.Node: {OnEnter: dependency.SiteNodeOnEnter, OnExit: dependency.SiteNodeOnExit},
+	ids.Connection: {Condition: dependency.SiteConnectionCondition,
+		OnTraverse: dependency.SiteConnectionOnTraverse},
+	ids.BranchOutput: {Condition: dependency.SiteBranchOutputCondition},
+}
+
+// siteOf returns the type of the site of an expression of the field f of an
+// owner of the kind (sites), a field of the kind's that a row of the project
+// holds.
 func siteOf(kind ids.Kind, f Field) string {
-	switch kind {
-	case ids.Node:
-		return "node_" + string(f)
-	case ids.Connection:
-		return "connection_" + string(f)
-	}
-	return dependency.SiteBranchOutputCondition
+	return sites[kind][f]
 }

@@ -506,12 +506,32 @@ func TestRenamePreviewTooLong(t *testing.T) {
 	if got := tooLong("reputation"); !slices.Equal(got, []string{long}) {
 		t.Errorf("the rename of rep to reputation marks %v too long, want %v", got, []string{long})
 	}
-	wantCode(t, "a rename that makes a source too long", w.apply(t, http.StatusUnprocessableEntity,
-		cmd("variable.rename", map[string]any{"id": w.rep, "key": "reputation"})), http.StatusUnprocessableEntity,
-		api.CodeValidationFailed)
+	// refused returns the message of the refusal of the rename of rep to
+	// reputation.
+	refused := func() string {
+		t.Helper()
+		res := w.apply(t, http.StatusUnprocessableEntity, cmd("variable.rename", map[string]any{"id": w.rep,
+			"key": "reputation"}))
+		wantCode(t, "a rename that makes a source too long", res, http.StatusUnprocessableEntity,
+			api.CodeValidationFailed)
+		errs, _ := res.details(t)["errors"].([]any)
+		if len(errs) != 1 {
+			t.Fatalf("the refusal's errors are %v, want one", errs)
+		}
+		return fmt.Sprint(errs[0].(map[string]any)["message"])
+	}
+	if msg := refused(); !strings.Contains(msg, "shorten that expression") {
+		t.Errorf("the refusal says %q, want it to tell to shorten the expression", msg)
+	}
 	wantSources(t, "once the rename is refused", expressionsOf(t, w.admin, w.project), original, nil)
 	if got := tooLong("rex"); len(got) != 0 {
 		t.Errorf("the rename of rep to rex marks %v too long, want none", got)
+	}
+	// In the trash, the expression, which the rename rewrites too, still
+	// refuses it, and the refusal says that it is shortened once restored.
+	w.apply(t, http.StatusOK, cmd("node.delete", map[string]any{"id": long}))
+	if msg := refused(); !strings.Contains(msg, "in the project's trash") || !strings.Contains(msg, "restore it") {
+		t.Errorf("the refusal for an expression in the trash says %q, want it to tell to restore it", msg)
 	}
 }
 

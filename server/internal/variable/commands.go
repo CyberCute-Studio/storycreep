@@ -79,7 +79,7 @@ type renamePayload struct {
 // deletePayload is Delete's payload.
 type deletePayload struct {
 	ID    string `json:"id" doc:"The variable's ID"`
-	Force bool   `json:"force,omitempty" doc:"Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable."`
+	Force bool   `json:"force,omitempty" doc:"Whether to delete the variable even though sites of the project that are not in its trash use it, as its usage lists list them: the expressions that read it or write it, which then name what no longer resolves, and are invalid, each a validation error, but for a board's variable named by its bare key on its board where a global variable has the key, which that name then names, as a bare key does on a board that has no variable of the key, so that its expression stays valid where the global's type fits it (PRD FR-VAR-04); and the texts whose value references show it, which then show nothing (PRD FR-VAR-04 AC2). Only a role that may publish the project's snapshots may force a deletion, which a role that may not is answered with 403 insufficient_role for; an API token needs project:write for it, as for any deletion, and not snapshot:write. Without it, a variable that sites use is not deleted: the command is answered with 409 variable_in_use, which lists them, as the project stands once the batch's commands before it have applied, so that a batch that first changes the last of them deletes the variable."`
 }
 
 // describePayload is Describe's payload.
@@ -595,7 +595,9 @@ func inverseRename(ctx context.Context, tx *commands.Tx, p renamePayload) ([]com
 		return nil, err
 	}
 	return expression.RenameInverse(ctx, tx, Rename, "key", rename(v, p.Key), p.Sources,
-		func(back []expression.Source) any { return renamePayload{ID: p.ID, Key: v.Key, Sources: &back} })
+		func(key string, sources []expression.Source) any {
+			return renamePayload{ID: p.ID, Key: key, Sources: &sources}
+		})
 }
 
 // applyRename is Rename's Apply: it checks the new key, before it writes

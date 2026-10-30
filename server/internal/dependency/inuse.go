@@ -317,14 +317,9 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 			nodes = append(nodes, nullUUID(f.key.Node))
 		}
 	}
-	rows, err := q.SiteNames(ctx, queries.SiteNamesParams{WorkspaceID: ws, ProjectID: project, BoardIds: list(boards),
-		NodeIds: list(nodes)})
+	labels, err := SiteLabels(ctx, q, ws, project, boards, nodes)
 	if err != nil {
-		return nil, fmt.Errorf("dependency: read the names of the usages' boards and nodes: %w", err)
-	}
-	labels := map[ids.UUID]string{}
-	for _, r := range rows {
-		labels[r.ID.Bytes] = r.Label
+		return nil, err
 	}
 	for i := range e.Usages {
 		f := &e.Usages[i]
@@ -338,6 +333,24 @@ func Refusal(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, k
 		}
 	}
 	return e, nil
+}
+
+// SiteLabels returns the names of the project's boards among boards and the
+// titles of its nodes among nodes, in its trash or not, by their UUIDs, read
+// in q's transaction of the project of the workspace ws, as the sites of a
+// usage, and those of a rename's preview, show them.
+func SiteLabels(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, boards, nodes []pgtype.UUID) (
+	map[ids.UUID]string, error) {
+	rows, err := q.SiteNames(ctx, queries.SiteNamesParams{WorkspaceID: ws, ProjectID: project, BoardIds: list(boards),
+		NodeIds: list(nodes)})
+	if err != nil {
+		return nil, fmt.Errorf("dependency: read the names of the sites' boards and nodes: %w", err)
+	}
+	labels := make(map[ids.UUID]string, len(rows))
+	for _, r := range rows {
+		labels[r.ID.Bytes] = r.Label
+	}
+	return labels, nil
 }
 
 // CheckForce refuses the batch, at the payload's field at, the field that

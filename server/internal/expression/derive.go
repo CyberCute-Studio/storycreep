@@ -92,8 +92,9 @@ var neutral = []commands.Type{
 // rename. derive passes over a change of a node that commands of these types
 // and of neutral ones alone made, so that a rename that rewrites 500 nodes'
 // scripts does not compile again every expression that names one of those
-// nodes. TestNeutral checks that each is a registered type.
-var rewriting = []commands.Type{"variable.rename", "component.set_key"}
+// nodes. They are package dependency's list, whose derivation passes over
+// them too, so that one list says it for both (dependency.SourceRewrites).
+var rewriting = dependency.SourceRewrites
 
 // derive compiles the expressions of the batch's project that changed leaves
 // to compile: those whose sources its commands wrote, which have neither an

@@ -287,9 +287,10 @@ var codes = []codeSpec{
 			"first 100 of them, reads first, then in the order of the usage lists, each with its `use` and the fields " +
 			"of a usage of `GET /api/v1/projects/{project_id}/variables/{variable_id}/usages`, which lists them in " +
 			"full. Show them, and send the command again with `force` to delete the variable all the same, which " +
-			"only a role that may publish the project's snapshots may: the expressions are then invalid, and the " +
-			"texts show nothing. `details.errors` names the field, with its `location` and a `message`, as for " +
-			"`validation_failed`."},
+			"only a role that may publish the project's snapshots may: the expressions then name what does not " +
+			"resolve, and are invalid, but for a board's variable named by its bare key where a global variable has " +
+			"the key, which that name then names (PRD FR-VAR-04), and the texts show nothing. `details.errors` names " +
+			"the field, with its `location` and a `message`, as for `validation_failed`."},
 	{CodeComponentInUse, http.StatusConflict, i18n.K("error.component_in_use"),
 		"A `component.delete` command names a component that sites of the project that are not in its trash use, " +
 			"as the project stands once the batch's commands before it have applied, and does not force the " +

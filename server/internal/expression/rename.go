@@ -383,9 +383,17 @@ func planWrites(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 			ok = len(edits) > 0
 			if ok && CheckSource(to) != "" {
 				o := namingOwner(row)
+				// An expression in the trash, which the rename rewrites too, so
+				// that its restoration brings back what names the entity, is
+				// shortened once it is restored.
+				fix := "shorten that expression"
+				if !row.Live {
+					fix = "that expression is in the project's trash, which the rename rewrites too: restore it to " +
+						"shorten it"
+				}
 				return nil, commands.Refuse(at, fmt.Sprintf("would make the %s of %s, which names what it renames, "+
-					"longer than %d characters: shorten that expression, or choose a shorter key", row.Field,
-					ids.Encode(o.Kind, o.ID.Bytes), MaxSourceLength), nil)
+					"longer than %d characters: %s, or choose a shorter key", row.Field, ids.Encode(o.Kind, o.ID.Bytes),
+					MaxSourceLength, fix), nil)
 			}
 		}
 		w := sourceWrite{expression: row.ID.Bytes, owner: namingOwner(row), field: Field(row.Field),
@@ -412,25 +420,33 @@ func planWrites(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID
 // RenameInverse returns the inverse of the rename r, of the type typ, which
 // writes the sources that its payload gives, or nil for none, a rename's own
 // (planWrites), as a command's Inverse returns it: a step of the type whose
-// payload payload makes of the sources that the rename writes, and of those
-// that it leaves as they are but makes name what they did not, as they are,
-// by their owners and fields, which the undo gives back (planWrites), in the
-// order of their boards, the nodes of their sites, and their UUIDs. It keeps
-// what it planned for the command's Apply (ApplyRename), and stops with
-// commands.ErrUndoTooLarge once the payload, or the one that the undo's own
-// undo would hold, the payload of the sources as the rename writes them,
-// takes more bytes, as the operation log keeps it (commands.LogBytes), than
-// the batch's undo has room for (commands.Tx.UndoRoom), which the pipeline
-// refuses the rename for, at its UndoField, rather than compute the rest of
-// its inverse only to refuse it once it reports its change: a rename that
-// makes its sources longer, as to a longer key, is refused rather than
-// applied with an undo that could never be undone, which, as one command, no
-// smaller batch sends apart. A rename that rewrites nothing still changes its
-// entity's key, so the refusal is never of a command that changes nothing.
-// It refuses the batch, at the payload's field at, as planWrites does, before
-// it measures the undo.
+// payload payload makes of r's key and of the sources that the rename writes,
+// and of those that it leaves as they are but makes name what they did not,
+// as they are, by their owners and fields, which the undo gives back
+// (planWrites), in the order of their boards, the nodes of their sites, and
+// their UUIDs. It keeps what it planned for the command's Apply
+// (ApplyRename), and stops with commands.ErrUndoTooLarge once the batch's
+// undo has no room (commands.Tx.UndoRoom) for either of two undos, which the
+// pipeline refuses the rename for, at its UndoField, rather than compute the
+// rest of its inverse only to refuse it once it reports its change:
+//
+//   - the undo, its payload as the operation log keeps it (commands.LogBytes),
+//     whose revisions the pipeline counts as the rename reports its changes;
+//   - and the undo's own undo, which renames to r's new key again: its
+//     payload, of the sources as the rename writes them, and the revisions
+//     that it expects (commands.ExpectedRevBytes), of the entity and of each
+//     owner whose source the undo writes back, counted whether or not that
+//     owner is in the trash itself, which the undo does not touch, so that it
+//     is never less than the undo's undo takes.
+//
+// So a rename that makes its sources longer, as to a longer key, is refused
+// rather than applied with an undo that could never be undone, which, as one
+// command, no smaller batch sends apart. A rename that rewrites nothing still
+// changes its entity's key, so the refusal is never of a command that changes
+// nothing. It refuses the batch, at the payload's field at, as planWrites
+// does, before it measures the undo.
 func RenameInverse(ctx context.Context, tx *commands.Tx, typ commands.Type, at string, r Rename,
-	sources *[]Source, payload func(back []Source) any) ([]commands.Step, error) {
+	sources *[]Source, payload func(key string, sources []Source) any) ([]commands.Step, error) {
 	writes, err := planWrites(ctx, queries.New(tx), nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID()), at, r,
 		sources)
 	if err != nil {
@@ -439,19 +455,30 @@ func RenameInverse(ctx context.Context, tx *commands.Tx, typ commands.Type, at s
 	tx.Carry(carriedWrites{r: r, sources: sources, writes: writes})
 	back := make([]Source, len(writes))
 	redo := []Source{}
+	// expects is what the revisions that the undo's own undo expects take.
+	expects := commands.ExpectedRevBytes(commands.Ref{Kind: r.Kind, ID: r.ID})
+	owners := map[commands.Ref]bool{}
 	for i, w := range writes {
 		back[i] = Source{Owner: ids.Encode(w.owner.Kind, w.owner.ID.Bytes), Field: string(w.field), Source: w.source}
-		if w.to != w.source {
-			redo = append(redo, Source{Owner: back[i].Owner, Field: back[i].Field, Source: w.to})
+		if w.to == w.source {
+			continue
+		}
+		redo = append(redo, Source{Owner: back[i].Owner, Field: back[i].Field, Source: w.to})
+		if o := (commands.Ref{Kind: w.owner.Kind, ID: w.owner.ID.Bytes}); !owners[o] {
+			owners[o] = true
+			expects += commands.ExpectedRevBytes(o)
 		}
 	}
-	p := payload(back)
-	for _, v := range []any{p, payload(redo)} {
-		enc, err := json.Marshal(v)
+	p := payload(r.From, back)
+	for _, u := range []struct {
+		payload any
+		expects int
+	}{{p, 0}, {payload(r.To, redo), expects}} {
+		enc, err := json.Marshal(u.payload)
 		if err != nil {
 			return nil, fmt.Errorf("expression: encode the undo: %w", err)
 		}
-		if commands.LogBytes(enc) > tx.UndoRoom() {
+		if commands.LogBytes(enc)+u.expects > tx.UndoRoom() {
 			return nil, commands.ErrUndoTooLarge
 		}
 	}

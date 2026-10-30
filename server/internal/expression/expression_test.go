@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -845,6 +846,31 @@ func (f *fixture) stored(t *testing.T, id string) *expression.Expression {
 	return &e
 }
 
+// TestSites checks that each field of each kind of owner of an expression
+// has the type of its site, as a usage list names it, and no other field
+// has one.
+func TestSites(t *testing.T) {
+	t.Parallel()
+	known := []string{dependency.SiteNodeOnEnter, dependency.SiteNodeOnExit, dependency.SiteConnectionCondition,
+		dependency.SiteConnectionOnTraverse, dependency.SiteBranchOutputCondition}
+	n := 0
+	for kind, fs := range expression.OwnerFields {
+		for _, f := range fs {
+			if site := expression.Sites[kind][f]; !slices.Contains(known, site) {
+				t.Errorf("the %s of a %s has the site %q", f, kind, site)
+			}
+		}
+		n += len(fs)
+		if len(expression.Sites[kind]) != len(fs) {
+			t.Errorf("a %s has sites %v, and the fields %v", kind, expression.Sites[kind], fs)
+		}
+	}
+	if n != len(known) || len(expression.Sites) != len(expression.OwnerFields) {
+		t.Errorf("the owners' %d fields have sites of %d kinds of owner, want each of %d sites", n,
+			len(expression.Sites), len(known))
+	}
+}
+
 // TestNeutral checks that each type of command that the derivation passes
 // over is a registered type, that each type of a board's command is one of
 // them, or the board's deletion or restoration, which the derivation reads
@@ -928,18 +954,35 @@ func TestRenameLeavesNodeReferences(t *testing.T) {
 
 // TestRenameUndoBound checks that a rename whose undo fits the room of its
 // batch's undo, but whose undo's own undo, which holds the sources as the
-// rename writes them, would not, as a rename to a longer key, is refused at
-// its key with commands.ErrUndoTooLarge, rather than applied with an undo
-// that would be refused for good, as one command, which no smaller batches
-// send apart; and that a rename with room for both applies, and is undone
-// and redone.
+// rename writes them, the new key, and the revisions of the owners whose
+// sources the undo writes back, would not, as a rename to a longer key, is
+// refused at its key with commands.ErrUndoTooLarge, rather than applied with
+// an undo that would be refused for good, as one command, which no smaller
+// batches send apart; and that a rename with room for both applies, and is
+// undone and redone. One rename makes one source much longer, and the other
+// makes each of several a character longer, less than the revision that the
+// undo's undo expects of its owner, as the undo expects it too.
 func TestRenameUndoBound(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 	f := newFixture(t)
 	x := f.newVariable(t, "x", "int")
 	f.newNode(t, f.harbour, "element", payload{"on_enter": strings.Repeat("x += 1\n", 20)})
-	rename := cmd{variable.Rename, payload{"id": x, "key": strings.Repeat("k", 60)}}
+	t.Run("one source much longer", func(t *testing.T) {
+		renameUndoBound(t, f, cmd{variable.Rename, payload{"id": x, "key": strings.Repeat("k", 60)}})
+	})
+	y := f.newVariable(t, "y", "int")
+	for range 3 {
+		f.newNode(t, f.harbour, "element", payload{"on_enter": "y += 1"})
+	}
+	t.Run("several sources a character longer", func(t *testing.T) {
+		renameUndoBound(t, f, cmd{variable.Rename, payload{"id": y, "key": "yy"}})
+	})
+}
+
+// renameUndoBound checks the rename of TestRenameUndoBound in f's project.
+func renameUndoBound(t *testing.T, f *fixture, rename cmd) {
+	t.Helper()
+	ctx := context.Background()
 	// room returns the room that the undo of res takes, its payloads as the
 	// log keeps them and the revisions that they expect.
 	room := func(res commands.Result) int {

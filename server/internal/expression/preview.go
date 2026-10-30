@@ -2,12 +2,12 @@ package expression
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -101,14 +101,9 @@ func Preview(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 	if err != nil || len(out) == 0 {
 		return out, err
 	}
-	rows, err := q.SiteNames(ctx, queries.SiteNamesParams{WorkspaceID: ws, ProjectID: project,
-		BoardIds: slices.Compact(boards), NodeIds: nodes})
+	labels, err := dependency.SiteLabels(ctx, q, ws, project, slices.Compact(boards), nodes)
 	if err != nil {
-		return nil, fmt.Errorf("expression: read the names of the sites' boards and nodes: %w", err)
-	}
-	labels := map[ids.UUID]string{}
-	for _, row := range rows {
-		labels[row.ID.Bytes] = row.Label
+		return nil, err
 	}
 	for i := range out {
 		out[i].BoardName, out[i].NodeTitle = labels[out[i].key.Board], labels[out[i].key.Node]

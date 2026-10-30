@@ -163,15 +163,9 @@ func renameCursor(cursor string) (expression.PreviewKey, error) {
 		return expression.PreviewKey{}, err
 	}
 	var out expression.PreviewKey
-	for _, f := range []struct {
-		text string
-		id   *ids.UUID
-	}{{key.Board, &out.Board}, {key.Node, &out.Node}, {key.Expression, &out.Expression}} {
-		id, err := ids.ParseUUID(f.text)
-		if err != nil || id.String() != f.text {
-			return expression.PreviewKey{}, api.NewError(api.CodeInvalidCursor)
-		}
-		*f.id = id
+	if err := cursorUUIDs(cursorUUID{key.Board, &out.Board}, cursorUUID{key.Node, &out.Node},
+		cursorUUID{key.Expression, &out.Expression}); err != nil {
+		return expression.PreviewKey{}, err
 	}
 	return out, nil
 }

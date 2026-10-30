@@ -480,9 +480,11 @@ type spec struct {
 // Register registers the type of command s. It panics if s is not a
 // declaration that the pipeline can apply: a Type of the wrong form or one
 // that is registered already, a Capability that is not an operation of the
-// permission matrix, a Scope that is not a scope, no Touches, a kind touched
-// twice, a limit that the plan file does not check
-// or twice, both Inverse and NonUndoable or neither, an UndoField without
+// permission matrix, or is authz.PublishSnapshot, whose row of the matrix a
+// project's publish_min_role raises, which the pipeline would not read, so
+// that a command that needs it checks authz.CheckPublish in its Apply, as a
+// forced deletion does, a Scope that is not a scope, no Touches, a kind
+// touched twice, a limit that the plan file does not check or twice, both Inverse and NonUndoable or neither, an UndoField without
 // Inverse or that is no field of the payload's, Trashed without Archived, no
 // Apply, or a payload that is not a struct, or that has a field with a
 // default or a type that resolves itself, or that holds a rich-text document
@@ -503,6 +505,9 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("the type is registered already")
 	case !s.Capability.Known():
 		fail("%q is not an operation of the permission matrix", s.Capability)
+	case s.Capability == authz.PublishSnapshot:
+		fail("%q is held to a project's publish_min_role, which the pipeline does not read: check "+
+			"authz.CheckPublish in Apply instead", s.Capability)
 	case !s.Scope.Known():
 		fail("%q is not a scope of an API token", s.Scope)
 	case len(s.Touches) == 0:

@@ -160,6 +160,51 @@ func TestVariableDeletionGuarded(t *testing.T) {
 	wantDrift(t, w.admin, p)
 }
 
+// TestForcedDeletionOfShadow checks what a forced deletion of a board's
+// variable whose key a global variable has leaves of the expressions that use
+// it, as FR-VAR-04 says: one that names it by its bare key then names the
+// global, as a bare key names a global where its board has no variable of the
+// key (§5.8.3), and is valid, its type fitting, while one that names it as
+// board.<key> names nothing, and is invalid.
+//
+// Verifies: FR-VAR-04/AC2
+func TestForcedDeletionOfShadow(t *testing.T) {
+	t.Parallel()
+	w := newUsageWorld(t)
+	send := func(cmds ...wireCommand) response {
+		return call(w.s.main, http.MethodPost, commandsPath(w.project), commandBatch(t, cmds...), w.owner.header(true))
+	}
+	global, shadow := newVariableID(), newVariableID()
+	resultFrom(t, send(
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": global, "key": "hp", "type": "int",
+			"scope": "global"}},
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": shadow, "key": "hp", "type": "int",
+			"scope": "board", "board_id": w.harbour}},
+		wireCommand{Type: "node.update", Payload: map[string]any{"id": w.pier, "on_enter": "hp -= 1",
+			"on_exit": "board.hp -= 1"}}))
+	del := func(force bool) wireCommand {
+		return wireCommand{Type: "variable.delete", Payload: map[string]any{"id": shadow, "force": force}}
+	}
+	if count, counts, _ := inUse(t, send(del(false)), api.CodeVariableInUse); count != 4 || counts["read"] != 2 ||
+		counts["write"] != 2 {
+		t.Errorf("the shadow's deletion is refused with %d usages, %v, want a read and a write of each of Pier's "+
+			"two scripts", count, counts)
+	}
+	resultFrom(t, send(del(true)))
+	var names bool
+	if err := w.admin.QueryRow(context.Background(), `SELECT is_valid AND refs = ARRAY[$2::uuid] FROM expression
+		WHERE field = 'on_enter' AND node_id = $1`, uuidOf(t, w.pier), uuidOf(t, global)).Scan(&names); err != nil {
+		t.Fatal(err)
+	}
+	if !names {
+		t.Error("once the shadow is deleted, Pier's on-enter script, hp -= 1, does not name the global hp")
+	}
+	if valid, code := w.expressionValid(t, w.pier, "on_exit"); valid || code != "unknown_identifier" {
+		t.Errorf("once the shadow is deleted, Pier's on-exit script, board.hp -= 1, is valid %v, with the error %q, "+
+			"want invalid, unknown_identifier", valid, code)
+	}
+}
+
 // TestComponentDeletionGuarded checks that a component that sites of the
 // project use, a node as its speaker among them, is not deleted unless its
 // deletion is forced: the deletion is refused with 409 component_in_use,
