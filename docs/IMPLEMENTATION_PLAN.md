@@ -509,7 +509,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-04 AC3 and FR-EDIT-03 AC4 (save-and-mark half) pass, and stored ASTs reference variables and components by ID. FR-EXPR-03 AC2 and FR-EDIT-04 AC2 are checked against published bytes in item 76.
 
 ### 44. TypeScript expression and flow engine
-**Status:** todo · **Depends on:** 42
+**Status:** done ([#53](https://github.com/CyberCute-Studio/storycreep/pull/53)) · **Depends on:** 42
 **PRD:** FR-EXPR-02 (AC1), FR-EXPR-04 (AC1, TypeScript), FR-PLAY-06 (TypeScript side), §5.8.9
 - A `/web/shared` package with the lexer, parser, type checker, evaluator, and flow engine. It uses the same Unicode tables and code-point string semantics (no UTF-16 `.length`, no `Math.round`).
 - Vitest runs the expression corpus and the conformance suite.

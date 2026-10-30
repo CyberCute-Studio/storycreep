@@ -2,7 +2,7 @@
 
 Scenarios of a narrative's flow that every runtime of Storycreep's published format runs, so that the Go reference runtime, play mode's TypeScript engine, and the Godot addon's GDScript runtime give the same node sequence, text, choices, signals, and state for the same inputs (PRD §8.6, FR-PLAY-06). A third-party runtime that passes every scenario conforms.
 
-The Go package `server/internal/flow` is the reference runtime, and runs every scenario (`TestConformance`); the TypeScript engine (plan item 44) and the GDScript runtime (item 103) run them too. PRD §5.8.5 is the contract of the flow, and §5.8.3–§5.8.9 of its expressions; this README describes the files, what a scenario observes, and how a runner compares it.
+The Go package `server/internal/flow` is the reference runtime, and runs every scenario (`TestConformance`); play mode's TypeScript engine, `@storycreep/shared/flow` in [`web/shared/src/flow`](../../web/shared/src/flow), runs them too (`conformance.test.ts`, which `pnpm test` runs), and so will the GDScript runtime (item 103). PRD §5.8.5 is the contract of the flow, and §5.8.3–§5.8.9 of its expressions; this README describes the files, what a scenario observes, and how a runner compares it.
 
 ## The files
 

@@ -8,6 +8,7 @@ import {
   ID_PREFIXES,
   IdDecodeError,
   type IdKind,
+  isCanonicalId,
   newId,
   newUuid,
   parseUuid,
@@ -91,6 +92,8 @@ describe("the shared vectors", () => {
       expect(decodeId(kind, id)).toStrictEqual(bytes);
       expect(decodeAnyId(id)).toStrictEqual({ kind, uuid: bytes });
       expect(encodeId(kind, bytes)).toBe(canonical);
+      expect(isCanonicalId(kind, id)).toBe(id === canonical);
+      expect(isCanonicalId(kind, canonical)).toBe(true);
     },
   );
 
@@ -98,6 +101,7 @@ describe("the shared vectors", () => {
   it.each(vectors.decode_errors)(
     "reject $id as $kind: $error ($note)",
     ({ kind, id, error, got }) => {
+      expect(isCanonicalId(kind, id)).toBe(false);
       const err = catchDecodeError(() => decodeId(kind, id));
       expect({
         reason: err.reason,
