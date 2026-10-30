@@ -3,10 +3,14 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -15,13 +19,19 @@ import (
 func validationPath(project string) string { return projectPath(project) + "/validation" }
 
 // validationReport returns the report of the project's validation, as the
-// signed-in user reads it.
+// signed-in user reads it, which names the language of its messages, English,
+// in Content-Language, and says that they depend on the request's
+// Accept-Language.
 func validationReport(t *testing.T, h http.Handler, si signedIn, project string) validation.Report {
 	t.Helper()
 	res := call(h, http.MethodGet, validationPath(project), nil, si.header(false))
 	var r validation.Report
 	if res.status != http.StatusOK || json.Unmarshal(res.body, &r) != nil {
 		t.Fatalf("validate %s: %d %s", project, res.status, res.body)
+	}
+	if lang, vary := res.header.Get("Content-Language"), strings.Join(res.header.Values("Vary"), ", "); lang != "en" ||
+		!strings.Contains(vary, "Accept-Language") {
+		t.Errorf("the report's Content-Language is %q, and its Vary %q, want en, and Accept-Language", lang, vary)
 	}
 	return r
 }
@@ -376,6 +386,64 @@ func TestValidationMute(t *testing.T) {
 			owner.header(true))
 		if got := problems(t, res); !slices.Contains(got, tt.at) {
 			t.Errorf("a mute of %s is refused at %v, want %s", tt.name, got, tt.at)
+		}
+	}
+}
+
+// TestValidationMuteCodes checks that the database's check of a mute's code
+// (migration 00028) takes exactly the codes that a mute of its owner's kind
+// may silence (validation.Mutable), of each kind of owner
+// (validation.MuteOwners) and each code of the rules, so that the rules'
+// table and the migration name the same codes.
+func TestValidationMuteCodes(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	h := s.main
+	p := createProject(t, h, owner, ws, "Harbour").ID
+	board, start, br, conn := newBoardID(), newNodeID(), newNodeID(), newConnectionID()
+	out, gold := ids.Encode(ids.BranchOutput, ids.New()), ids.Encode(ids.Variable, ids.New())
+	pos := map[string]int{"x": 0, "y": 0}
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": board, "name": "Harbour"}),
+		cmd("variable.create", map[string]any{"id": gold, "key": "gold", "type": "int", "scope": "global"}),
+		cmd("node.create", map[string]any{"id": start, "board_id": board, "type": "element", "kind": "narration",
+			"position": pos}),
+		cmd("node.create", map[string]any{"id": br, "board_id": board, "type": "branch", "position": pos}),
+		cmd("connection.create", map[string]any{"id": conn, "from_node_id": start, "to_node_id": br}),
+		cmd("branch_output.create", map[string]any{"id": out, "node_id": br, "condition": "true"}),
+	)
+	// The column of each kind of owner, and the owner of that kind.
+	owners := map[ids.Kind]struct{ column, id string }{
+		ids.Node: {"node_id", start}, ids.Connection: {"connection_id", conn},
+		ids.BranchOutput: {"branch_output_id", out}, ids.Variable: {"variable_id", gold},
+		ids.Board: {"board_id", board},
+	}
+	ctx := context.Background()
+	admin := d.Admin(t)
+	w, project := decode(t, ids.Workspace, ws), decode(t, ids.Project, p)
+	for _, kind := range validation.MuteOwners {
+		o, ok := owners[kind]
+		if !ok {
+			t.Fatalf("the test has no %s to mute", kind)
+		}
+		for _, rule := range validation.Rules() {
+			want := slices.Contains(validation.Mutable(kind), rule.Code)
+			// Each mute in a transaction of its own, which is rolled back,
+			// so that none is of a code that the owner has a mute of.
+			tx, err := admin.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tx.Exec(ctx, "INSERT INTO validation_mute (workspace_id, project_id, "+o.column+
+				", code, reason) VALUES ($1, $2, $3, $4, 'Meant so')", w, project, decode(t, kind, o.id),
+				string(rule.Code))
+			if rollback := tx.Rollback(ctx); rollback != nil {
+				t.Fatal(rollback)
+			}
+			var pg *pgconn.PgError
+			if refused := errors.As(err, &pg) && pg.Code == "23514"; refused != !want || want && err != nil {
+				t.Errorf("a mute of %s on a %s: %v, want it taken: %t", rule.Code, kind, err, want)
+			}
 		}
 	}
 }

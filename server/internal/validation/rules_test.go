@@ -1,7 +1,9 @@
 package validation
 
 import (
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
@@ -444,8 +446,10 @@ func TestReachability(t *testing.T) {
 }
 
 // TestMutable checks that a mute may silence exactly the warnings and the
-// infos about each kind of entity, and that the database's check of a mute's
-// code names the same codes (migration 00028).
+// infos about each kind of entity, and that MuteOwners are the kinds that a
+// warning or an info is about. httpserver's TestValidationMuteCodes checks
+// that the database's check of a mute's code takes the same codes (migration
+// 00028), and TestCodeEnums that the API's schemas list them.
 func TestMutable(t *testing.T) {
 	want := map[ids.Kind][]Code{
 		ids.Node:         {NodeUnreachable, NodeEmpty, DeadEnd, SpeakerMissing},
@@ -466,6 +470,36 @@ func TestMutable(t *testing.T) {
 	for _, r := range Rules() {
 		if r.Mutable() != (r.Severity != Error) {
 			t.Errorf("%s is mutable %v, with its severity %s", r.Code, r.Mutable(), r.Severity)
+		}
+	}
+}
+
+// TestCodeEnums checks that the enum tags of the API's schemas list the
+// rules' codes, in the order of the rules: a finding's code every code, and
+// the code of validation.mute's and validation.unmute's payloads those that
+// a mute may silence, of any kind of entity (Mutable).
+func TestCodeEnums(t *testing.T) {
+	var all, mutable []string
+	for _, r := range Rules() {
+		all = append(all, string(r.Code))
+		if r.Mutable() {
+			mutable = append(mutable, string(r.Code))
+		}
+	}
+	for _, tt := range []struct {
+		schema reflect.Type
+		want   []string
+	}{
+		{reflect.TypeFor[Finding](), all},
+		{reflect.TypeFor[mutePayload](), mutable},
+		{reflect.TypeFor[unmutePayload](), mutable},
+	} {
+		f, ok := tt.schema.FieldByName("Code")
+		if !ok {
+			t.Fatalf("%s has no field Code", tt.schema)
+		}
+		if got := strings.Split(f.Tag.Get("enum"), ","); !slices.Equal(got, tt.want) {
+			t.Errorf("the enum of %s's code is %q, want %q", tt.schema, got, tt.want)
 		}
 	}
 }

@@ -16201,6 +16201,12 @@
             },
             "description": "OK",
             "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the report's messages, as a BCP 47 tag, such as en: the request's locale, or English for a message that its catalog lacks, the languages listed when they are several",
+                  "type": "string"
+                }
+              },
               "RateLimit-Limit": {
                 "schema": {
                   "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
@@ -16220,6 +16226,12 @@
                   "description": "How many seconds until the current window ends, and the limit is whole again",
                   "format": "int64",
                   "type": "integer"
+                }
+              },
+              "Vary": {
+                "schema": {
+                  "description": "Accept-Language, as the report's messages are in the language that it chose",
+                  "type": "string"
                 }
               }
             }

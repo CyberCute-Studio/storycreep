@@ -119,12 +119,6 @@ func Rules() []Rule {
 	return slices.Clone(rules)
 }
 
-// RuleOf returns the rule of the code c, and whether there is one.
-func RuleOf(c Code) (Rule, bool) {
-	r, ok := byCode[c]
-	return r, ok
-}
-
 // Mutable returns the codes that a mute of an entity of the kind may
 // silence, in the order of the rules: those of the warnings and the infos
 // about the kind, none for a kind that no warning or info is about.

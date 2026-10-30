@@ -83,22 +83,29 @@ func TestExclusive(t *testing.T) {
 		{"trust < 2 or trust > 8", "trust >= 3 and trust <= 7", true},
 		{"trust < 2 or trust > 8", "trust == 5 or trust == 9", false},
 		{"(met and left)", "not (met and left)", true},
+		// A disjunction is the negation of the other condition, or of a term
+		// of its conjunction, though neither of its terms is exclusive with
+		// it alone.
+		{"met or left", "not (met or left)", true},
+		{"met or left", "trust > 3 and not (met or left)", true},
+		{"met or left", "trust < 2 or not (met or left)", false},
 	} {
 		a, b := compile(tt.a), compile(tt.b)
-		if got := exclusive(a, b); got != tt.exclusive {
+		if got := newProver().exclusive(a, b); got != tt.exclusive {
 			t.Errorf("exclusive(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.exclusive)
 		}
-		if got := exclusive(b, a); got != tt.exclusive {
+		if got := newProver().exclusive(b, a); got != tt.exclusive {
 			t.Errorf("exclusive(%q, %q) = %v, want %v", tt.b, tt.a, got, tt.exclusive)
 		}
 	}
 }
 
-// TestExclusiveBounded checks that a proof that needs more than its steps
-// proves nothing, so that two large conditions cost a bounded time, and may
-// then overlap: two disjunctions of 120 terms each, every term of one
+// TestExclusiveBounded checks that a proof that needs more than its prover's
+// steps proves nothing, so that two large conditions cost a bounded time, and
+// may then overlap: two disjunctions of 120 terms each, every term of one
 // exclusive with every term of the other, are exclusive, but proving it
-// compares 14,400 pairs of terms.
+// compares 14,400 pairs of terms. A prover's proofs share its steps, so that
+// once one has spent them, the next proves nothing either.
 func TestExclusiveBounded(t *testing.T) {
 	p, err := expr.NewProject([]expr.Variable{{ID: ids.Encode(ids.Variable, ids.New()), Key: "trust",
 		Type: "int"}}, nil, nil)
@@ -124,11 +131,15 @@ func TestExclusiveBounded(t *testing.T) {
 		}
 		return c
 	}
-	b := disjunction(1000, 120)
-	if exclusive(disjunction(0, 120), b) {
+	one, many, b := disjunction(0, 1), disjunction(0, 120), disjunction(1000, 120)
+	spent := newProver()
+	if spent.exclusive(many, b) {
 		t.Error("a proof of 14,400 pairs of terms proves the disjunctions exclusive")
 	}
-	if !exclusive(disjunction(0, 1), b) {
+	if spent.exclusive(one, b) {
+		t.Error("a prover whose steps a proof has spent proves one term exclusive with a disjunction of 120 others")
+	}
+	if !newProver().exclusive(one, b) {
 		t.Error("one term is not proved exclusive with a disjunction of 120 others")
 	}
 }

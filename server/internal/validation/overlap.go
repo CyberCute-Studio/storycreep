@@ -7,36 +7,44 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
-// maxSteps bounds the work of one proof of exclusive, the nodes that it
-// compares, so that two large conditions cost a bounded time; a proof that
-// needs more proves nothing, and the conditions may then overlap.
+// maxSteps bounds the work of a prover, the nodes that its proofs compare,
+// so that the choices of one element cost a bounded time, however many of
+// them share a label and however large their conditions are; a proof that
+// needs more than the steps left proves nothing, and the conditions may then
+// overlap.
 const maxSteps = 10_000
 
+// prover proves conditions exclusive within its steps, which its proofs
+// share: the rule of duplicate choices proves the pairs of one element's
+// choices with one prover.
+type prover struct {
+	steps int
+}
+
+// newProver returns a prover of maxSteps.
+func newProver() *prover {
+	return &prover{steps: maxSteps}
+}
+
 // exclusive reports whether the conditions a and b never hold together, as
-// far as a few patterns prove it (FR-DEP-03, plan note N55), each a
-// condition's AST, or nil for none, which always holds. They are exclusive
-// when one is the literal false; when one is the negation of the other, as c
-// and not c; when they compare the same operand with literals of values that
-// no value meets both comparisons of, as x == 1 and x == 2, x < 3 and x >= 3,
-// or x > 5 and x < 2, with numbers compared as real numbers; when they
-// compare the same two operands with complementary operators, as x < y and
-// x >= y; when one is a conjunction one of whose terms is exclusive with the
-// other; and when one is a disjunction both of whose terms are. Two
-// conditions that the patterns do not prove exclusive may overlap. The
-// conditions are pure, so that an operand is the same value in both, and an
-// operand that a runtime error makes its type's zero value is a value all
-// the same.
-func exclusive(a, b expr.Node) bool {
+// far as a few patterns prove it within p's steps (FR-DEP-03, plan note
+// N55), each a condition's AST, or nil for none, which always holds. They are
+// exclusive when one is the literal false; when one is the negation of the
+// other, as c and not c; when they compare the same operand with literals of
+// values that no value meets both comparisons of, as x == 1 and x == 2,
+// x < 3 and x >= 3, or x > 5 and x < 2, with numbers compared as real
+// numbers; when they compare the same two operands with complementary
+// operators, as x < y and x >= y; when one is a conjunction one of whose
+// terms is exclusive with the other; and when one is a disjunction both of
+// whose terms are. Two conditions that the patterns do not prove exclusive
+// may overlap. The conditions are pure, so that an operand is the same value
+// in both, and an operand that a runtime error makes its type's zero value is
+// a value all the same.
+func (p *prover) exclusive(a, b expr.Node) bool {
 	if a == nil || b == nil {
 		return a != nil && never(a) || b != nil && never(b)
 	}
-	p := &prover{steps: maxSteps}
-	return p.exclusive(a, b)
-}
-
-// prover proves conditions exclusive within its steps.
-type prover struct {
-	steps int
+	return p.prove(a, b)
 }
 
 // spend takes a step, and reports whether there was one left.
@@ -45,9 +53,12 @@ func (p *prover) spend() bool {
 	return p.steps >= 0
 }
 
-// exclusive reports whether a and b never hold together (the package's
-// exclusive), within p's steps.
-func (p *prover) exclusive(a, b expr.Node) bool {
+// prove reports whether the conditions a and b, neither of them none, never
+// hold together (exclusive), within p's steps. Each pattern is tried of the
+// conditions whole, a disjunction's among them, so that a disjunction whose
+// terms are not each exclusive with the other condition may still be its
+// negation, or a term of its conjunction.
+func (p *prover) prove(a, b expr.Node) bool {
 	if !p.spend() {
 		return false
 	}
@@ -57,9 +68,11 @@ func (p *prover) exclusive(a, b expr.Node) bool {
 	if x, ok := a.(*expr.Binary); ok {
 		switch x.Op {
 		case expr.OpOr:
-			return p.exclusive(x.Left, b) && p.exclusive(x.Right, b)
+			if p.prove(x.Left, b) && p.prove(x.Right, b) {
+				return true
+			}
 		case expr.OpAnd:
-			if p.exclusive(x.Left, b) || p.exclusive(x.Right, b) {
+			if p.prove(x.Left, b) || p.prove(x.Right, b) {
 				return true
 			}
 		}
@@ -67,9 +80,11 @@ func (p *prover) exclusive(a, b expr.Node) bool {
 	if y, ok := b.(*expr.Binary); ok {
 		switch y.Op {
 		case expr.OpOr:
-			return p.exclusive(a, y.Left) && p.exclusive(a, y.Right)
+			if p.prove(a, y.Left) && p.prove(a, y.Right) {
+				return true
+			}
 		case expr.OpAnd:
-			if p.exclusive(a, y.Left) || p.exclusive(a, y.Right) {
+			if p.prove(a, y.Left) || p.prove(a, y.Right) {
 				return true
 			}
 		}

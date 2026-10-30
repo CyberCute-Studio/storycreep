@@ -50,6 +50,9 @@ type checker struct {
 	// zero UUID for a global one, and boards the model's boards.
 	variables map[ids.UUID]ids.UUID
 	boards    map[ids.UUID]bool
+	// entries are the entry nodes of the boards whose entry node is a node
+	// outside the trash, by the boards' IDs.
+	entries map[ids.UUID]ids.UUID
 }
 
 // condition is a connection's condition: its AST, if it compiles.
@@ -63,7 +66,8 @@ func newChecker(m *model) *checker {
 	c := &checker{m: m, nodes: map[ids.UUID]*node{}, outputs: map[ids.UUID]*output{},
 		outputsOf: map[ids.UUID]int{}, connections: map[ids.UUID]*connection{}, from: map[ids.UUID][]*connection{},
 		choices: map[ids.UUID][]*connection{}, fromOutput: map[ids.UUID]int{}, into: map[ids.UUID]int{},
-		conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{}, boards: map[ids.UUID]bool{}}
+		conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{}, boards: map[ids.UUID]bool{},
+		entries: map[ids.UUID]ids.UUID{}}
 	for i := range m.nodes {
 		c.nodes[m.nodes[i].id] = &m.nodes[i]
 	}
@@ -93,6 +97,9 @@ func newChecker(m *model) *checker {
 	}
 	for _, b := range m.boards {
 		c.boards[b.id] = true
+		if c.liveNode(b.entry) {
+			c.entries[b.id] = b.entry
+		}
 	}
 	return c
 }
@@ -301,13 +308,12 @@ func (c *checker) findReachability() {
 			queue = append(queue, id)
 		}
 	}
-	entries := c.entries()
 	for _, n := range c.m.nodes {
-		if entries[n.board] == (ids.UUID{}) && c.into[n.id] == 0 {
+		if c.entries[n.board] == (ids.UUID{}) && c.into[n.id] == 0 {
 			reach(n.id)
 		}
 	}
-	for _, e := range entries {
+	for _, e := range c.entries {
 		reach(e)
 	}
 	reach(c.m.entry.node)
@@ -326,18 +332,6 @@ func (c *checker) findReachability() {
 			c.add(finding{code: NodeUnreachable, entity: ref{ids.Node, n.id}})
 		}
 	}
-}
-
-// entries returns the entry node of each board of the model whose entry node
-// is a node outside the trash, by the board's ID.
-func (c *checker) entries() map[ids.UUID]ids.UUID {
-	out := map[ids.UUID]ids.UUID{}
-	for _, b := range c.m.boards {
-		if c.liveNode(b.entry) {
-			out[b.id] = b.entry
-		}
-	}
-	return out
 }
 
 // findElements finds the elements without text that no connection leaves
@@ -365,9 +359,12 @@ func (c *checker) findElements() {
 		if n.ending {
 			continue
 		}
+		// One prover for the element's choices, so that however many share
+		// a label, the element costs a bounded time (maxSteps).
+		p := newProver()
 		for j, b := range out {
 			for _, a := range out[:j] {
-				if a.label == b.label && c.overlap(a.id, b.id) {
+				if a.label == b.label && c.overlap(p, a.id, b.id) {
 					c.add(finding{code: ChoiceDuplicateLabel, entity: ref{ids.Connection, b.id},
 						target: ref{ids.Connection, a.id}})
 					break
@@ -378,10 +375,11 @@ func (c *checker) findElements() {
 }
 
 // overlap reports whether the conditions of the connections a and b may both
-// hold: unless one of them never holds, or exclusive proves that they never
-// hold together. A connection without a condition always may, and one whose
-// condition does not compile, as far as the validation knows, may too.
-func (c *checker) overlap(a, b ids.UUID) bool {
+// hold: unless one of them never holds, or p proves that they never hold
+// together (prover.exclusive). A connection without a condition always may,
+// and one whose condition does not compile, as far as the validation knows,
+// may too.
+func (c *checker) overlap(p *prover, a, b ids.UUID) bool {
 	ca, aok := c.conditions[a]
 	cb, bok := c.conditions[b]
 	if aok && !ca.valid || bok && !cb.valid {
@@ -394,7 +392,7 @@ func (c *checker) overlap(a, b ids.UUID) bool {
 	if bok {
 		y = cb.ast
 	}
-	return !exclusive(x, y)
+	return !p.exclusive(x, y)
 }
 
 // findConnections finds the connections that enter the node that they leave
@@ -422,7 +420,6 @@ func (c *checker) findConnections() {
 // findBoards finds the boards without an entry node outside the trash that
 // have more than one root (board_entry_missing).
 func (c *checker) findBoards() {
-	entries := c.entries()
 	roots := map[ids.UUID]int{}
 	for _, n := range c.m.nodes {
 		if c.into[n.id] == 0 {
@@ -430,7 +427,7 @@ func (c *checker) findBoards() {
 		}
 	}
 	for _, b := range c.m.boards {
-		if entries[b.id] == (ids.UUID{}) && roots[b.id] > 1 {
+		if c.entries[b.id] == (ids.UUID{}) && roots[b.id] > 1 {
 			c.add(finding{code: BoardEntryMissing, entity: ref{ids.Board, b.id}, args: i18n.Args{"roots": roots[b.id]}})
 		}
 	}

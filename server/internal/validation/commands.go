@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -129,10 +130,10 @@ func Register(r *commands.Registry) {
 // about the owner's kind.
 func checkMute(entity, code string) input.FieldErrors {
 	kind, _, err := ids.DecodeAny(entity)
-	if err != nil || !slicesContains(MuteOwners, kind) {
+	if err != nil || !slices.Contains(MuteOwners, kind) {
 		return field("entity_id", "is not the ID of a node, a connection, a branch output, a variable, or a board")
 	}
-	if !slicesContains(Mutable(kind), Code(code)) {
+	if !slices.Contains(Mutable(kind), Code(code)) {
 		return field("code", fmt.Sprintf("is not a warning or an info about a %s", kind))
 	}
 	return nil
@@ -207,14 +208,4 @@ func field(name, msg string) input.FieldErrors {
 		return nil
 	}
 	return input.FieldErrors{{Field: name, Message: msg}}
-}
-
-// slicesContains reports whether s holds v.
-func slicesContains[T comparable](s []T, v T) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

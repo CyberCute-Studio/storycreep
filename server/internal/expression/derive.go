@@ -64,18 +64,18 @@ var ownerKinds = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput}
 // components yet, and its name, its key, which no expression names, and its
 // icon; and a mute of the validation's findings and its unmute, which change
 // their owner, a node, a variable, or a board among them, as a part of it
-// that no expression reads (package validation). derive passes over a change that commands of these types alone made,
-// so that a board's rename, or a variable's description, does not compile
-// again every expression that names what it holds, or names it, nor every one
-// that does not compile; it still compiles the sources that such a command
-// wrote, as a node's update does its scripts. A type that is not here is
-// taken to change what expressions can name, so that a new type of command
-// compiles too much, never too little, until it is added here, and one of a
-// board to delete it to the trash or restore it (nameKinds). The types are
-// spelt out, rather than named by the constants of their packages, which
-// import this one, as package variable's rename rewrites the sources that
-// name the variable (Rewrite); TestNeutral checks that each is a registered
-// type.
+// that no expression reads (package validation). derive passes over a change
+// that commands of these types alone made, so that a board's rename, or a
+// variable's description, does not compile again every expression that names
+// what it holds, or names it, nor every one that does not compile; it still
+// compiles the sources that such a command wrote, as a node's update does its
+// scripts. A type that is not here is taken to change what expressions can
+// name, so that a new type of command compiles too much, never too little,
+// until it is added here, and one of a board to delete it to the trash or
+// restore it (nameKinds). The types are spelt out, rather than named by the
+// constants of their packages, which import this one, as package variable's
+// rename rewrites the sources that name the variable (Rewrite); TestNeutral
+// checks that each is a registered type.
 var neutral = []commands.Type{
 	"board.create", "board.rename", "board.describe", "board.set_color", "board.set_slug", "board.move",
 	"board.set_entry_node", "node.update", "node.move",

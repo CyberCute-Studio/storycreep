@@ -91,7 +91,8 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		m.connections = append(m.connections, connection{id: c.ID.Bytes, board: c.BoardID.Bytes,
 			from: c.FromNodeID.Bytes, output: c.FromOutputID.Bytes, to: c.ToNodeID.Bytes, label: string(c.Label)})
 	}
-	if err := d.loadExpressions(ctx, q, w, p, live); err != nil {
+	at, err := d.loadExpressions(ctx, q, w, p, live)
+	if err != nil {
 		return nil, err
 	}
 	components, err := q.ValidationComponents(ctx, queries.ValidationComponentsParams{WorkspaceID: w, ProjectID: p})
@@ -110,7 +111,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	for _, a := range attributes {
 		m.attributes[a.Bytes] = true
 	}
-	if err := d.loadTexts(ctx, q, w, p, live); err != nil {
+	if err := d.loadTexts(ctx, q, w, p, live, at); err != nil {
 		return nil, err
 	}
 	mutes, err := q.ValidationMutes(ctx, queries.ValidationMutesParams{WorkspaceID: w, ProjectID: p})
@@ -126,13 +127,14 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 
 // loadExpressions reads the expressions of the owners that live holds, the
 // nodes, the connections, and the outputs that are not in the trash, and the
-// variables, each with whether such an expression reads it, or writes it.
+// variables, each with whether such an expression reads it, or writes it. It
+// returns the places of the variables among the model's, by their IDs.
 func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pgtype.UUID,
-	live map[ids.UUID]bool) error {
+	live map[ids.UUID]bool) (map[ids.UUID]int, error) {
 	m := d.model
 	rows, err := q.ValidationExpressions(ctx, queries.ValidationExpressionsParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
-		return fmt.Errorf("validation: read the expressions: %w", err)
+		return nil, fmt.Errorf("validation: read the expressions: %w", err)
 	}
 	// The expressions of owners outside the trash, which are sites of the
 	// variables' usages.
@@ -154,14 +156,15 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 		e := expression{owner: owner, field: r.Field, valid: r.IsValid, errorCode: r.ErrorCode}
 		if r.IsValid && r.ConditionAst != nil {
 			if e.condition, err = expr.Decode(r.ConditionAst, expr.ContextCondition); err != nil {
-				return fmt.Errorf("validation: read the condition of %s: %w", ids.Encode(ids.Connection, owner.id), err)
+				return nil, fmt.Errorf("validation: read the condition of %s: %w",
+					ids.Encode(ids.Connection, owner.id), err)
 			}
 		}
 		m.expressions = append(m.expressions, e)
 	}
 	vars, err := q.ValidationVariables(ctx, queries.ValidationVariablesParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
-		return fmt.Errorf("validation: read the variables: %w", err)
+		return nil, fmt.Errorf("validation: read the variables: %w", err)
 	}
 	at := make(map[ids.UUID]int, len(vars))
 	for i, v := range vars {
@@ -170,7 +173,7 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 	}
 	uses, err := q.ValidationVariableUses(ctx, queries.ValidationVariableUsesParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
-		return fmt.Errorf("validation: read what the expressions read and write: %w", err)
+		return nil, fmt.Errorf("validation: read what the expressions read and write: %w", err)
 	}
 	for _, u := range uses {
 		i, ok := at[u.TargetID.Bytes]
@@ -183,18 +186,15 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 			m.variables[i].read = true
 		}
 	}
-	return nil
+	return at, nil
 }
 
 // loadTexts reads what the texts of the nodes, the connections, and the
 // components that live holds refer to, each of which reads the variables
-// that its value references show.
-func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.UUID, live map[ids.UUID]bool) error {
+// that its value references show, whose places among the model's at holds.
+func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.UUID, live map[ids.UUID]bool,
+	at map[ids.UUID]int) error {
 	m := d.model
-	at := make(map[ids.UUID]int, len(m.variables))
-	for i, v := range m.variables {
-		at[v.id] = i
-	}
 	rows, err := q.ValidationTextReferences(ctx, queries.ValidationTextReferencesParams{WorkspaceID: w,
 		ProjectID: p})
 	if err != nil {

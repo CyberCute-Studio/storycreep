@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -67,7 +68,6 @@ type Mute struct {
 // Result is a validation of a project: its findings, in the order of a
 // report, and its mutes, of the draft as of its operation sequence.
 type Result struct {
-	project  ids.UUID
 	seq      int64
 	findings []finding
 	mutes    map[muteKey]mute
@@ -90,44 +90,47 @@ func Run(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Result, error
 		}
 	}
 	slices.SortFunc(found, compare)
-	return &Result{project: projectID, seq: d.seq, findings: found, mutes: d.mutes}, nil
+	return &Result{seq: d.seq, findings: found, mutes: d.mutes}, nil
 }
 
-// compare orders findings as a report lists them: by their severities, the
-// order of their rules, their boards, their nodes, their entities, their
-// fields, and what they name.
+// compare orders findings as a report lists them: by their severities and
+// the order of their rules (order), their boards, their nodes, their
+// entities, their fields, and what they name.
 func compare(a, b finding) int {
-	ra, rb := byCode[a.code], byCode[b.code]
-	return cmp.Or(cmp.Compare(ra.Severity.rank(), rb.Severity.rank()), cmp.Compare(index(a.code), index(b.code)),
+	return cmp.Or(cmp.Compare(order[a.code], order[b.code]),
 		bytes.Compare(a.board[:], b.board[:]), bytes.Compare(a.node[:], b.node[:]),
 		bytes.Compare(a.entity.id[:], b.entity.id[:]), cmp.Compare(a.field, b.field),
 		bytes.Compare(a.target.id[:], b.target.id[:]), bytes.Compare(a.attribute[:], b.attribute[:]))
 }
 
-// index returns the place of the code's rule among the rules.
-func index(c Code) int {
-	return slices.IndexFunc(rules, func(r Rule) bool { return r.Code == c })
-}
-
-// Errors returns how many errors r holds, which block publishing.
-func (r *Result) Errors() int {
-	n := 0
-	for _, f := range r.findings {
-		if byCode[f.code].Severity == Error {
-			n++
-		}
+// order holds the place of each code's findings in a report, by the code:
+// its rule's severity's place among the severities, and then its rule's
+// among the rules.
+var order = func() map[Code]int {
+	m := make(map[Code]int, len(rules))
+	for i, r := range rules {
+		m[r.Code] = r.Severity.rank()*len(rules) + i
 	}
-	return n
-}
+	return m
+}()
 
-// Report returns r as the API shows it, its messages in l's locale.
-func (r *Result) Report(l *i18n.Localizer) Report {
+// Report returns r as the API shows it, its messages in l's locale, and the
+// languages that they are in, as a response's Content-Language names them:
+// l's locale, or the source locale for a message that its catalog lacks
+// (i18n.Localizer.Localize), each once, in the order of the messages, or l's
+// locale alone for a report without a finding.
+func (r *Result) Report(l *i18n.Localizer) (Report, string) {
 	out := Report{Seq: r.seq, Findings: []Finding{}, Muted: []Finding{}}
+	var languages []string
 	for _, f := range r.findings {
 		rule := byCode[f.code]
-		api := Finding{Code: f.code, Severity: rule.Severity, Message: l.Format(i18n.Message{Key: rule.message,
-			Args: f.args}), EntityType: f.entity.kind.String(), EntityID: ids.Encode(f.entity.kind, f.entity.id),
-			Field: f.field, BoardID: encode(ids.Board, f.board), NodeID: encode(ids.Node, f.node)}
+		message, locale := l.Localize(i18n.Message{Key: rule.message, Args: f.args})
+		if language := locale.String(); !slices.Contains(languages, language) {
+			languages = append(languages, language)
+		}
+		api := Finding{Code: f.code, Severity: rule.Severity, Message: message, EntityType: f.entity.kind.String(),
+			EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
+			NodeID: encode(ids.Node, f.node)}
 		if f.target != (ref{}) {
 			api.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
 			if f.attribute != (ids.UUID{}) {
@@ -150,7 +153,10 @@ func (r *Result) Report(l *i18n.Localizer) Report {
 			out.Counts.Infos++
 		}
 	}
-	return out
+	if len(languages) == 0 {
+		languages = []string{l.Locale().String()}
+	}
+	return out, strings.Join(languages, ", ")
 }
 
 // encode returns the public ID of the kind of id, or "" for the zero UUID.
@@ -193,18 +199,21 @@ func New(db DB, opts Options) *Service {
 // Report returns the validation report of the draft of the project
 // projectID, once the actor may read the project's content
 // (project.Service.ReadSnapshot), with its messages in the locale of ctx's
-// localizer (i18n.FromContext). It reads the draft as of one moment, so that
-// a batch that commits meanwhile is in the report whole or not at all. It
-// returns the errors of project.Service.Get, as project.ErrNotFound.
-func (s *Service) Report(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Report, error) {
+// localizer (i18n.FromContext), and the languages that they are in, as a
+// response's Content-Language names them (Result.Report). It reads the draft
+// as of one moment, so that a batch that commits meanwhile is in the report
+// whole or not at all. It returns the errors of project.Service.Get, as
+// project.ErrNotFound.
+func (s *Service) Report(ctx context.Context, actor commands.Actor, projectID ids.UUID) (Report, string, error) {
 	var out Report
+	var languages string
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, ws ids.UUID) error {
 		r, err := Run(ctx, tx, ws, projectID)
 		if err != nil {
 			return err
 		}
-		out = r.Report(i18n.FromContext(ctx))
+		out, languages = r.Report(i18n.FromContext(ctx))
 		return nil
 	})
-	return out, err
+	return out, languages, err
 }

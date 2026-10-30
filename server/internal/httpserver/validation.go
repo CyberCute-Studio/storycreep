@@ -16,7 +16,11 @@ type validationInput struct {
 }
 
 type validationOutput struct {
-	Body validation.Report
+	// ContentLanguage and Vary name the language of the report's messages,
+	// as those of an error's envelope are named (api.ErrorBodyOf).
+	ContentLanguage string   `header:"Content-Language" doc:"The language of the report's messages, as a BCP 47 tag, such as en: the request's locale, or English for a message that its catalog lacks, the languages listed when they are several"`
+	Vary            []string `header:"Vary" doc:"Accept-Language, as the report's messages are in the language that it chose"`
+	Body            validation.Report
 }
 
 // registerValidation registers the route that validates a project's draft
@@ -44,10 +48,10 @@ func registerValidation(m *api.Mux, validations *validation.Service) {
 		if err != nil {
 			return nil, err
 		}
-		report, err := validations.Report(ctx, actor, id)
+		report, languages, err := validations.Report(ctx, actor, id)
 		if err != nil {
 			return nil, projectError(err)
 		}
-		return &validationOutput{Body: report}, nil
+		return &validationOutput{ContentLanguage: languages, Vary: []string{"Accept-Language"}, Body: report}, nil
 	}, api.TokenScope(scope.ProjectRead))
 }
