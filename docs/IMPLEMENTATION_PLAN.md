@@ -535,7 +535,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DEP-01 AC1 and AC2, the usage-list half of FR-DEP-01 AC4 (Elara's list has no site from board B, and `elara.mood` is not a usage of `elara.trust`), and FR-COMP-04 AC2 pass. The no-edge half of AC4 lands with the graph in item 49.
 
 ### 47. Safe rename and guarded deletion
-**Status:** todo · **Depends on:** 46
+**Status:** done ([#56](https://github.com/CyberCute-Studio/storycreep/pull/56)) · **Depends on:** 46
 **PRD:** FR-VAR-03, FR-VAR-04, FR-COMP-02 (AC2), FR-COMP-04 (AC1), FR-EDIT-06 (AC2), FR-TEXT-02 (AC2)
 - Variable and component-key rename as one atomic command, which `variable.rename` (item 33) and `component.set_key` (item 34) become (N41). Source is rewritten from the AST using the shortest form that re-resolves to the same ID: package `expression` plans and writes the rewrites (`RenameInverse`, `ApplyRename`), `expr.Rewrite` writes the names, and the undo writes back the exact sources (`sources`). A preview endpoint lists the qualified rewrites separately: `GET …/variables/{vid}/rename-preview` and `GET …/components/{cid}/rename-preview`, one list a request (`rewrite`), cursor-paged (N54).
 - A used variable or component cannot be deleted (409 `variable_in_use` or `component_in_use` with usage details), as the batch stands when the deletion applies (`expression.InUse`, `GuardDeletion`). Forced deletion (`force`) is allowed for roles that can publish (`authz.PublishSnapshot`); it marks expressions invalid (N54).
