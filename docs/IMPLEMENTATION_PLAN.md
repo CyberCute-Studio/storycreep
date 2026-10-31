@@ -559,7 +559,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-DEP-02 AC2 and AC5 pass, and the FR-DEP-01 AC4 fixture produces no A→B edge. AC1 needs the sample project and lands in item 85.
 
 ### 50. Project search
-**Status:** todo · **Depends on:** 45
+**Status:** done ([#61](https://github.com/CyberCute-Studio/storycreep/pull/61)) · **Depends on:** 45
 **PRD:** FR-PROJ-03 (server), NFR-PERF-09
 - PostgreSQL full-text search with `unaccent`, in package `server/internal/search`: a document of each node, connection, variable, and component (`search_entry`, migration 00029), written in the command transaction by a derivation of the pipeline, plus a maintenance job (`search_reindex`) that writes the documents that are missing (N57).
 - `GET …/search?q=…`, cursor-paged, in the order of how well the results match, with a type filter, highlighted titles and snippets, and permission-respecting results. Comments are indexed in item 74 (N57).
