@@ -487,6 +487,90 @@ func TestClipboardAcrossProjects(t *testing.T) {
 	}
 }
 
+// TestClipboardResolvesEachComponent checks that a paste resolves the
+// attribute definition that two components of one type share for each of
+// them apart, where one resolves and the other does not, so that the report
+// lists no definition that the one that resolves has, and its text's value
+// reference names its definition; that an expression's attribute is written
+// with the key of the definition that it resolves to, which a rename since
+// the copy changed; that a speaker in the trash where it was copied, which
+// the clipboard does not declare, is kept where the project has it, and
+// listed where it does not; and that a component that resolves to none is
+// listed with its own type, whose key changed since the copy.
+func TestClipboardResolvesEachComponent(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	mira, ghost, pair := newComponentID(), newComponentID(), newNodeID()
+	w.apply(t,
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": mira, "component_type_id": w.character,
+			"name": "Mira", "key": "mira"}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": ghost, "component_type_id": w.character,
+			"name": "Ghost", "key": "ghost"}},
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": pair, "board_id": w.harbour,
+			"type": "element", "title": "Pair", "position": map[string]any{"x": 0, "y": 400},
+			"speaker_component_id": ghost, "text": richText(attributeInline(w.elara, w.fear),
+				attributeInline(mira, w.fear)), "on_enter": "elara.fear += 1"}})
+	w.apply(t, wireCommand{Type: "component.delete", Payload: map[string]any{"id": ghost, "force": true}})
+	c := w.copy(t, pair)
+	// Elara comes before Mira, so that Mira's definition, which resolves to
+	// none in Lantern, would take the place of Elara's if they shared one.
+	if len(c.Components) != 2 || c.Components[0].ID != w.elara || c.Components[1].ID != mira ||
+		len(c.Components[0].Attributes) != 1 || len(c.Components[1].Attributes) != 1 {
+		t.Fatalf("the clipboard's components are %+v", c.Components)
+	}
+
+	// Renamed since the copy, the definition gives the pasted script its key,
+	// and the speaker in the trash is kept, as the project has it.
+	w.apply(t, wireCommand{Type: "attribute.set_key", Payload: map[string]any{"id": w.fear, "key": "dread"}})
+	if r := w.resolve(t, w.project, w.harbour, c); len(r.Components) != 0 || len(r.Attributes) != 0 ||
+		len(r.Speakers) != 0 {
+		t.Errorf("the report of a paste onto Harbour is %+v", r)
+	}
+	cmd, newIDs := paste(w.harbour, c, 0, 0)
+	w.apply(t, cmd)
+	if pasted := w.pastedNode(t, w.project, newIDs[pair]); pasted.OnEnter == nil ||
+		pasted.OnEnter.Source != "elara.dread += 1" || !pasted.OnEnter.IsValid || pasted.SpeakerComponentID != ghost {
+		t.Errorf("Pair pasted onto Harbour is %+v, entering with %+v", pasted, pasted.OnEnter)
+	}
+
+	// In Lantern, Elara resolves, with her fear, and Mira and the speaker do
+	// not.
+	other := createProject(t, w.s.main, w.owner, w.ws, "Lantern").ID
+	board := createBoard(t, w.s.main, w.owner, other, "Shore")
+	hero, fear, elara := ids.Encode(ids.ComponentType, ids.New()), ids.Encode(ids.AttributeDef, ids.New()),
+		newComponentID()
+	w.applyTo(t, other,
+		wireCommand{Type: "component_type.create", Payload: map[string]any{"id": hero, "name": "Hero",
+			"key": "hero"}},
+		wireCommand{Type: "attribute.create", Payload: map[string]any{"id": fear, "component_type_id": hero,
+			"name": "Fear", "key": "fear", "type": "int", "runtime": true}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": elara, "component_type_id": hero,
+			"name": "Elara", "key": "elara"}})
+	if r := w.resolve(t, other, board, c); len(r.Components) != 1 || r.Components[0].Component.ID != mira ||
+		r.Components[0].ComponentTypeID != hero || len(r.Attributes) != 0 ||
+		!slices.Equal(r.Speakers, []string{ghost}) {
+		t.Errorf("the report of a paste into Lantern is %+v", r)
+	}
+	cmd, newIDs = paste(board, c, 0, 0)
+	w.applyTo(t, other, cmd)
+	pasted := w.pastedNode(t, other, newIDs[pair])
+	text := textJSON(t, pasted.Text)
+	if pasted.SpeakerComponentID != "" || pasted.OnEnter == nil || pasted.OnEnter.Source != "elara.fear += 1" ||
+		!pasted.OnEnter.IsValid || !strings.Contains(text, elara) || !strings.Contains(text, fear) ||
+		strings.Contains(text, w.elara) || !strings.Contains(text, mira) {
+		t.Errorf("Pair pasted into Lantern is %+v, with the text %s", pasted, text)
+	}
+
+	// Mira, once in the trash, resolves to none, and is listed with her own
+	// type, whose key is no longer the one that the clipboard declares.
+	w.apply(t, wireCommand{Type: "component.delete", Payload: map[string]any{"id": mira, "force": true}},
+		wireCommand{Type: "component_type.set_key", Payload: map[string]any{"id": w.character, "key": "person"}})
+	if r := w.resolve(t, w.project, w.harbour, c); len(r.Components) != 1 || r.Components[0].Component.ID != mira ||
+		r.Components[0].ComponentTypeID != w.character {
+		t.Errorf("the report of a paste onto Harbour once Mira is in the trash is %+v", r)
+	}
+}
+
 // TestClipboardPasteRefused checks that a paste is refused, and changes
 // nothing, for a clipboard of a newer version, for new IDs that lack one of
 // its entities or name one twice, for a board in the trash, and for an offset

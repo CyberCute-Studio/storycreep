@@ -449,19 +449,36 @@ func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UU
 	return n.build()
 }
 
+// LiveNames is what Live reads of a project: the Project that the expressions
+// of its boards that are not in the trash can name, and the variables and the
+// components that it holds, each in the order of their IDs, each component
+// with the attribute definitions of its type, in their order, which the
+// components of a type share, and which the caller does not change.
+type LiveNames struct {
+	Project    *expr.Project
+	Variables  []expr.Variable
+	Components []expr.Component
+}
+
 // Live returns what the expressions of the project's boards that are not in
 // the trash can name, of the project's variables, components, and nodes that
 // are not in the trash, those of its nodes among nodes alone, which its
-// expressions name, as the derivation reads them (§5.8.3), as package
-// clipboard reads what a copied expression names and what a pasted one is to
-// name. It reads with q, in a transaction of the workspace ws.
-func Live(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) (*expr.Project,
+// expressions name, as the derivation reads them (§5.8.3), with the variables
+// and the components that it is made of, as package clipboard reads what a
+// copied expression names and what a pasted one is to name, and resolves a
+// clipboard's declarations by them, without reading them again. It reads with
+// q, in a transaction of the workspace ws.
+func Live(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) (LiveNames,
 	error) {
-	ps, err := loadProjects(ctx, q, ws, project, nodes, nil)
+	n, err := loadNames(ctx, q, ws, project, nodes, nil)
 	if err != nil {
-		return nil, err
+		return LiveNames{}, err
 	}
-	return ps.live, nil
+	ps, err := n.build()
+	if err != nil {
+		return LiveNames{}, err
+	}
+	return LiveNames{Project: ps.live, Variables: n.variables, Components: n.components}, nil
 }
 
 // names are what the project's expressions can name, as loadNames reads them

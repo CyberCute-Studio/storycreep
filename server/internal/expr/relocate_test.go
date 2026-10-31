@@ -98,6 +98,31 @@ func TestRelocate(t *testing.T) {
 			}
 		})
 	}
+	// An attribute's name takes the key of the definition that moves gives
+	// it, as one renamed since the copy has, and else keeps its own.
+	faith := slices.Clone(renameAttrs)
+	faith[0].Key = "faith"
+	renamed, err := NewProject(relocateTos, []Component{{ID: cmpVera, Key: "vera", Attributes: faith}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attributes := Moves{Components: map[string]string{cmpElaraR: cmpVera},
+		Attributes: map[string]string{AttributeRef(cmpElaraR, atrTrustR): atrTrustR}}
+	if got, err := Relocate("elara.trust > 1 && elara.mood == \"calm\"", ContextCondition, from, boardB, renamed,
+		boardD, attributes); err != nil || got != "vera.faith > 1 && vera.mood == \"calm\"" {
+		t.Errorf("Relocate of an attribute renamed since = %q, %v, want vera.faith and vera.mood", got, err)
+	}
+	// <key>.<attribute> that a variable of the key names, as no component,
+	// where it was copied stays as it is, rather than name the component.
+	shadow, err := NewProject([]Variable{{ID: varRep, Key: "elara", Type: value.Int}}, renameComps, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowed := Moves{Variables: map[string]string{varRep: ""}, Components: map[string]string{cmpElaraR: cmpVera}}
+	if got, err := Relocate("elara.trust > 1", ContextCondition, shadow, boardB, to, boardD, shadowed); err != nil ||
+		got != "elara.trust > 1" {
+		t.Errorf("Relocate of a variable's <key>.<attribute> = %q, %v, want it as it is", got, err)
+	}
 	// An entity that moves gives, but the project that the paste goes to
 	// lacks, is the caller's mistake.
 	if _, err := Relocate("rep > 1", ContextCondition, from, boardB, to, boardC,
@@ -107,6 +132,11 @@ func TestRelocate(t *testing.T) {
 	if _, err := Relocate("rep > 1", ContextCondition, from, boardB, to, boardD,
 		Moves{Variables: map[string]string{varRep: varCX}}); err == nil {
 		t.Error("a move to a variable of another board is not an error")
+	}
+	lacking := Moves{Components: map[string]string{cmpElaraR: cmpVera},
+		Attributes: map[string]string{AttributeRef(cmpElaraR, atrTrustR): testID(ids.AttributeDef, 99)}}
+	if _, err := Relocate("elara.trust > 1", ContextCondition, from, boardB, to, boardD, lacking); err == nil {
+		t.Error("a move to an attribute definition that the component lacks is not an error")
 	}
 }
 
@@ -128,5 +158,16 @@ func TestNamesOf(t *testing.T) {
 	}
 	if got, err := Names("trust >", ContextCondition, from, boardB); err != nil || got != nil {
 		t.Errorf("Names of a source that does not parse = %v, %v", got, err)
+	}
+	// <key>.<attribute> whose key a variable has names the variable, as no
+	// component, and cmp.<key>.<attribute> the component.
+	shadow, err := NewProject([]Variable{{ID: varRep, Key: "elara", Type: value.Int}}, renameComps, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = Names("elara.trust > 1 && cmp.elara.trust > 1", ContextCondition, shadow, boardB)
+	want = []Named{{Variable: varRep}, {Component: cmpElaraR, Attribute: atrTrustR, AttributeKey: "trust"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("Names of a shadowed component's attribute = %+v, %v, want %+v", got, err, want)
 	}
 }

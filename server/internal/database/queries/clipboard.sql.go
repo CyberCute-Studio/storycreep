@@ -104,6 +104,77 @@ func (q *Queries) ClipboardComponents(ctx context.Context, arg ClipboardComponen
 	return items, nil
 }
 
+const clipboardCovers = `-- name: ClipboardCovers :many
+SELECT id FROM asset
+WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+ORDER BY id
+`
+
+type ClipboardCoversParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+// ClipboardCovers returns the IDs of the project's assets whose IDs are among
+// ids, in their order: the covers of a clipboard's elements that the project
+// has, which a paste keeps, as node.create takes a cover of the project's.
+func (q *Queries) ClipboardCovers(ctx context.Context, arg ClipboardCoversParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, clipboardCovers, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const clipboardSpeakers = `-- name: ClipboardSpeakers :many
+SELECT id FROM component
+WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+ORDER BY id
+`
+
+type ClipboardSpeakersParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+// ClipboardSpeakers returns the IDs of the project's components, in its trash
+// or not, whose IDs are among ids, in their order: the speakers of a
+// clipboard's elements that the project has, which a paste keeps where they
+// resolve to nothing, as node.create takes a speaker of either.
+func (q *Queries) ClipboardSpeakers(ctx context.Context, arg ClipboardSpeakersParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, clipboardSpeakers, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clipboardVariables = `-- name: ClipboardVariables :many
 SELECT id, key, scope, board_id, type, default_value, description, reset_on_enter FROM live_variable
 WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])

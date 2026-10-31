@@ -46,15 +46,17 @@ func New(db project.SnapshotDB, opts Options) *Service {
 }
 
 // Copy returns the clipboard of the nodes of the project projectID whose IDs
-// are nodeIDs, as the API writes them, at most MaxNodes, each once, of one
-// board, which are not in the trash, themselves or with their board (PRD
-// FR-EDIT-07): the nodes, in the order of their IDs, with their outputs that
-// are not in the trash, the connections between them that are not either,
-// in the order of their ports and of each port's choices, and a declaration
-// of each variable, component, and attribute definition that is not in the
-// trash that their texts, expressions, and speakers name, read as of one
-// moment. It returns the errors of project.Service.Get first, then the
-// problems of nodeIDs, as an input.FieldErrors at node_ids[i].
+// are nodeIDs, as the API writes them, at least one and at most MaxNodes,
+// each once, of one board, which are not in the trash, themselves or with
+// their board (PRD FR-EDIT-07): the nodes, in the order of their IDs, with
+// their outputs that are not in the trash, the connections between them that
+// are not either, in the order of their ports and of each port's choices, and
+// a declaration of each variable, component, and attribute definition that is
+// not in the trash that their texts, expressions, and speakers name, read as
+// of one moment. It returns the errors of project.Service.Get first, then the
+// problems of nodeIDs, as an input.FieldErrors at node_ids[i], or at node_ids
+// for a selection whose clipboard would pass a clipboard's bounds (MaxBytes
+// and the others), which a paste could not take.
 func (s *Service) Copy(ctx context.Context, actor commands.Actor, projectID ids.UUID, nodeIDs []string) (Clipboard,
 	error) {
 	var out Clipboard
@@ -69,7 +71,11 @@ func (s *Service) Copy(ctx context.Context, actor commands.Actor, projectID ids.
 // copyNodes is Copy's read, by q, in a transaction of the workspace ws.
 func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, nodeIDs []string) (Clipboard,
 	error) {
-	if len(nodeIDs) > MaxNodes {
+	switch {
+	case len(nodeIDs) == 0:
+		return Clipboard{}, input.FieldErrors{{Field: "node_ids", Message: "holds no node, where a clipboard " +
+			"holds at least one"}}
+	case len(nodeIDs) > MaxNodes:
 		return Clipboard{}, input.FieldErrors{{Field: "node_ids", Message: fmt.Sprintf("holds more than %d nodes",
 			MaxNodes)}}
 	}
@@ -141,7 +147,57 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 	if err := declare(ctx, q, ws, projectID, &c); err != nil {
 		return Clipboard{}, err
 	}
+	place := func(j int) int {
+		u, _ := ids.Decode(ids.Node, c.Nodes[j].ID)
+		return at[u]
+	}
+	if problems := c.bounds(place); len(problems) > 0 {
+		return Clipboard{}, problems
+	}
 	return c, nil
+}
+
+// bounds returns what of the copy c passes a clipboard's bounds, which its
+// schema says too, so that a paste would refuse it, each at node_ids, or at
+// node_ids[i] of a branch of more outputs than a clipboard holds of one,
+// c.Nodes[j], whose place in node_ids is place(j): more connections between
+// its nodes, more variables or components declared, or more attribute
+// definitions declared of one component, than a clipboard holds, or more than
+// MaxBytes bytes of JSON.
+func (c Clipboard) bounds(place func(j int) int) input.FieldErrors {
+	var errs input.FieldErrors
+	add := func(at, msg string) { errs = append(errs, input.FieldError{Field: at, Message: msg}) }
+	for j, n := range c.Nodes {
+		if len(n.Outputs) > MaxOutputs {
+			add(fmt.Sprintf("node_ids[%d]", place(j)), fmt.Sprintf("is a branch of %d outputs, more than the %d "+
+				"that a clipboard holds of one", len(n.Outputs), MaxOutputs))
+		}
+	}
+	for _, b := range []struct {
+		what   string
+		n, max int
+	}{{"connections between them", len(c.Connections), MaxConnections},
+		{"variables that their content names", len(c.Variables), MaxVariables},
+		{"components that their content names", len(c.Components), MaxComponents}} {
+		if b.n > b.max {
+			add("node_ids", fmt.Sprintf("are nodes of %d %s, more than the %d that a clipboard holds", b.n, b.what,
+				b.max))
+		}
+	}
+	for _, k := range c.Components {
+		if len(k.Attributes) > MaxAttributes {
+			add("node_ids", fmt.Sprintf("are nodes whose content names %d attributes of the component %s, more "+
+				"than the %d that a clipboard holds of one", len(k.Attributes), k.Key, MaxAttributes))
+		}
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	if data, err := json.Marshal(c); err == nil && len(data) > MaxBytes {
+		add("node_ids", fmt.Sprintf("are nodes whose clipboard is %d bytes of JSON, more than the %d that a "+
+			"paste takes: copy fewer of them", len(data), MaxBytes))
+	}
+	return errs
 }
 
 // clipboardNode returns the node n as a clipboard holds it.
@@ -159,7 +215,8 @@ func clipboardNode(n node.Node) (ClipboardNode, error) {
 		}
 	}
 	for _, o := range n.Outputs {
-		out.Outputs = append(out.Outputs, ClipboardOutput{ID: o.ID, Else: o.Kind == "else", Condition: sourceOf(o.Condition)})
+		out.Outputs = append(out.Outputs, ClipboardOutput{ID: o.ID, Else: o.Kind == "else",
+			Condition: sourceOf(o.Condition)})
 	}
 	return out, nil
 }
@@ -190,12 +247,12 @@ func sourceOf(e *expression.Expression) string {
 // components, and the attribute definitions of the project, not in its trash,
 // that its texts, its expressions' names at its board, and its speakers name.
 func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, c *Clipboard) error {
-	names, err := expression.Live(ctx, q, ws, projectID, nil)
+	live, err := expression.Live(ctx, q, ws, projectID, nil)
 	if err != nil {
 		return err
 	}
 	variables, components := map[string]bool{}, map[string]bool{}
-	attributes := map[string]bool{} // an attribute definition's ID, after its component's and a slash
+	attributes := map[string]bool{} // by their components' IDs and their own (expr.AttributeRef)
 	use := func(variable, component, attribute string) {
 		switch {
 		case variable != "":
@@ -203,12 +260,12 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 		case component != "":
 			components[component] = true
 			if attribute != "" {
-				attributes[component+"/"+attribute] = true
+				attributes[expr.AttributeRef(component, attribute)] = true
 			}
 		}
 	}
 	if err := c.eachSource(func(_ string, source string, ctx expr.Context) error {
-		named, err := expr.Names(source, ctx, names, c.BoardID)
+		named, err := expr.Names(source, ctx, live.Project, c.BoardID)
 		for _, n := range named {
 			use(n.Variable, n.Component, n.Attribute)
 		}
@@ -232,7 +289,7 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 		if err != nil {
 			return fmt.Errorf("clipboard: a text of the project: %w", err)
 		}
-		inlines(doc, func(in richtext.Inline) {
+		for in := range doc.Inlines() {
 			switch in := in.(type) {
 			case *richtext.Mention:
 				use("", in.Component, "")
@@ -243,12 +300,12 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 					use("", in.Ref, in.Attribute)
 				}
 			}
-		})
+		}
 	}
 	if c.Variables, err = declareVariables(ctx, q, ws, projectID, variables); err != nil {
 		return err
 	}
-	c.Components, err = declareComponents(ctx, q, ws, projectID, components, attributes)
+	c.Components, err = declareComponents(ctx, q, ws, projectID, live.Components, components, attributes)
 	return err
 }
 
@@ -300,10 +357,12 @@ func declareVariables(ctx context.Context, q *queries.Queries, ws, projectID pgt
 
 // declareComponents returns the declarations of the project's components,
 // not in its trash, whose IDs are keys of used, in the order of their IDs,
-// each with the attribute definitions of its type, not in the trash, whose
-// IDs are keys of attributes after its ID and a slash, in their order.
-func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, used,
-	attributes map[string]bool) ([]ClipboardComponent, error) {
+// each with the attribute definitions of its type, not in the trash, as live,
+// the project's components that are not in its trash, holds them, whose IDs,
+// with the component's, are keys of attributes (expr.AttributeRef), in their
+// order.
+func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, live []expr.Component,
+	used, attributes map[string]bool) ([]ClipboardComponent, error) {
 	out := []ClipboardComponent{}
 	list := uuidsOf(ids.Component, used)
 	if len(list) == 0 {
@@ -314,21 +373,21 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 	if err != nil {
 		return nil, fmt.Errorf("clipboard: read the components: %w", err)
 	}
-	defs, err := q.ExpressionAttributes(ctx, queries.ExpressionAttributesParams{WorkspaceID: ws,
-		ProjectID: projectID})
-	if err != nil {
-		return nil, fmt.Errorf("clipboard: read the attribute definitions: %w", err)
+	definitions := make(map[string][]expr.Attribute, len(list))
+	for _, k := range live {
+		if used[k.ID] {
+			definitions[k.ID] = k.Attributes
+		}
 	}
 	for _, r := range rows {
 		k := ClipboardComponent{ID: ids.Encode(ids.Component, r.ID.Bytes), Key: r.Key, Name: r.Name,
 			Type: ClipboardComponentType{ID: ids.Encode(ids.ComponentType, r.TypeID.Bytes), Key: r.TypeKey,
 				Name: r.TypeName},
 			Attributes: []ClipboardAttribute{}}
-		for _, a := range defs {
-			id := ids.Encode(ids.AttributeDef, a.ID.Bytes)
-			if a.ComponentTypeID == r.TypeID && attributes[k.ID+"/"+id] {
-				k.Attributes = append(k.Attributes, ClipboardAttribute{ID: id, Key: a.Key, Type: a.Type, Runtime: a.IsRuntime,
-					Options: a.EnumOptions})
+		for _, a := range definitions[k.ID] {
+			if attributes[expr.AttributeRef(k.ID, a.ID)] {
+				k.Attributes = append(k.Attributes, ClipboardAttribute{ID: a.ID, Key: a.Key, Type: a.Type,
+					Runtime: a.Runtime, Options: a.Options})
 			}
 		}
 		out = append(out, k)
@@ -348,7 +407,7 @@ func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID i
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		problems := checkID(ids.Board, "board_id", boardID)
 		for _, e := range Check(c) {
-			e.Field = trimField("clipboard." + e.Field)
+			e.Field = clipboardField(e.Field)
 			problems = append(problems, e)
 		}
 		if len(problems) > 0 {
@@ -372,13 +431,4 @@ func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID i
 		return err
 	})
 	return out, err
-}
-
-// trimField returns the field at without a dot at its end, which a problem of
-// the whole of what it is under leaves.
-func trimField(at string) string {
-	if len(at) > 0 && at[len(at)-1] == '.' {
-		return at[:len(at)-1]
-	}
-	return at
 }

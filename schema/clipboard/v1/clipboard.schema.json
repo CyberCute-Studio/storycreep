@@ -287,7 +287,7 @@
           "description": "The node's width and height, if it has a size of its own"
         },
         "speaker_component_id": {
-          "description": "The ID of an element's speaker, a component that the clipboard declares, if it has one. Another type has none.",
+          "description": "The ID of an element's speaker, if it has one: a component that the clipboard declares, or one that it does not, as one in the trash of the project that it was copied from, which a paste keeps where the project that it pastes into has it, in its trash or not. Another type has none.",
           "type": "string"
         },
         "tags": {

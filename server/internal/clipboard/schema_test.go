@@ -11,7 +11,11 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
 var update = flag.Bool("update", false, "rewrite the clipboard's JSON Schema from its Go types")
@@ -46,6 +50,50 @@ func TestSchemaFile(t *testing.T) {
 	}
 	if !strings.Contains(SchemaID, "/v1/") || !strings.HasSuffix(SchemaID, SchemaPath) || Version != 1 {
 		t.Errorf("the schema's $id %s does not name the version %d at %s", SchemaID, Version, SchemaPath)
+	}
+}
+
+// TestSchemaBounds checks that the bounds that the clipboard's schema says,
+// which its types' tags give, are those that Copy holds a copy to, and those
+// of what a node, a variable, and a component take where they are created, so
+// that neither drifts from the other.
+func TestSchemaBounds(t *testing.T) {
+	var doc struct {
+		Defs map[string]struct {
+			Properties map[string]struct {
+				MaxItems  int `json:"maxItems"`
+				MaxLength int `json:"maxLength"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(Schema(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []struct {
+		def, property string
+		want          int
+	}{
+		{"Clipboard", "nodes", MaxNodes},
+		{"Clipboard", "connections", MaxConnections},
+		{"Clipboard", "variables", MaxVariables},
+		{"Clipboard", "components", MaxComponents},
+		{"ClipboardNode", "outputs", MaxOutputs},
+		{"ClipboardNode", "tags", node.MaxTags},
+		{"ClipboardComponent", "attributes", MaxAttributes},
+		{"ClipboardNode", "title", node.MaxTitleLength},
+		{"ClipboardNode", "on_enter", expression.MaxSourceLength},
+		{"ClipboardNode", "on_exit", expression.MaxSourceLength},
+		{"ClipboardOutput", "condition", expression.MaxSourceLength},
+		{"ClipboardConnection", "condition", expression.MaxSourceLength},
+		{"ClipboardConnection", "on_traverse", expression.MaxSourceLength},
+		{"ClipboardVariable", "description", variable.MaxDescriptionLength},
+		{"ClipboardComponent", "name", component.MaxNameLength},
+		{"ClipboardComponentType", "name", component.MaxNameLength},
+	} {
+		p := doc.Defs[b.def].Properties[b.property]
+		if got := max(p.MaxItems, p.MaxLength); got != b.want {
+			t.Errorf("the schema bounds %s.%s at %d, want %d", b.def, b.property, got, b.want)
+		}
 	}
 }
 

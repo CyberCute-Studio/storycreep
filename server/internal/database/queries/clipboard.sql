@@ -24,3 +24,20 @@ ORDER BY c.id;
 SELECT id, key FROM live_component_type
 WHERE workspace_id = @workspace_id AND project_id = @project_id
 ORDER BY id;
+
+-- name: ClipboardSpeakers :many
+-- ClipboardSpeakers returns the IDs of the project's components, in its trash
+-- or not, whose IDs are among ids, in their order: the speakers of a
+-- clipboard's elements that the project has, which a paste keeps where they
+-- resolve to nothing, as node.create takes a speaker of either.
+SELECT id FROM component
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[])
+ORDER BY id;
+
+-- name: ClipboardCovers :many
+-- ClipboardCovers returns the IDs of the project's assets whose IDs are among
+-- ids, in their order: the covers of a clipboard's elements that the project
+-- has, which a paste keeps, as node.create takes a cover of the project's.
+SELECT id FROM asset
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[])
+ORDER BY id;

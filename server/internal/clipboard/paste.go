@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -71,7 +70,7 @@ func checkPaste(p pastePayload) input.FieldErrors {
 	errs := checkID(ids.Board, "board_id", p.BoardID)
 	errs = append(errs, node.CheckPosition("offset", p.Offset)...)
 	for _, e := range Check(p.Clipboard) {
-		e.Field = strings.TrimSuffix("clipboard."+e.Field, ".")
+		e.Field = clipboardField(e.Field)
 		errs = append(errs, e)
 	}
 	if len(errs) > 0 {
@@ -204,17 +203,18 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 // plan is how a paste writes what it pastes of a clipboard at a board: what
 // the clipboard's declarations resolve to there, and the moves of the
 // expressions' names, the projects that they are read in, the new IDs, the
-// nodes outside the clipboard that the board's project has, and the covers
-// that are its assets.
+// nodes outside the clipboard and the speakers that the board's project has,
+// and the covers that are its assets.
 type plan struct {
-	d       *destination
-	r       resolution
-	from    *expr.Project
-	fromAt  string
-	moves   expr.Moves
-	ids     map[string]string
-	targets map[string]bool
-	covers  map[string]bool
+	d        *destination
+	r        resolution
+	from     *expr.Project
+	fromAt   string
+	moves    expr.Moves
+	ids      map[string]string
+	targets  map[string]bool
+	speakers map[string]bool
+	covers   map[string]bool
 }
 
 // plan returns the plan of a paste of the clipboard c, with the new IDs ids,
@@ -230,8 +230,12 @@ func (d *destination) plan(ctx context.Context, q *queries.Queries, c Clipboard,
 	for _, n := range c.Nodes {
 		nodes[canonical(ids.Node, n.ID)] = canonical(ids.Node, newIDs[n.ID])
 	}
-	pl.moves = expr.Moves{Variables: pl.r.variables, Components: pl.r.components, Nodes: nodes}
+	pl.moves = expr.Moves{Variables: pl.r.variables, Components: pl.r.components, Attributes: pl.r.attributes,
+		Nodes: nodes}
 	if pl.targets, err = d.targets(ctx, q, c); err != nil {
+		return nil, err
+	}
+	if pl.speakers, err = d.speakers(ctx, q, c); err != nil {
 		return nil, err
 	}
 	if pl.covers, err = d.covers(ctx, q, c); err != nil {
@@ -284,9 +288,16 @@ func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.Nod
 		}
 		p["text"] = json.RawMessage(text)
 	}
-	if n.SpeakerComponentID != "" {
-		set("speaker_component_id", pl.r.components[canonical(ids.Component, n.SpeakerComponentID)],
-			pl.r.components[canonical(ids.Component, n.SpeakerComponentID)] != "")
+	// A speaker that resolves to nothing, or that the clipboard does not
+	// declare, as one in the trash where it was copied, is kept where the
+	// project has it, in its trash or not, as a text's reference is.
+	if id := canonical(ids.Component, n.SpeakerComponentID); id != "" {
+		switch to := pl.r.components[id]; {
+		case to != "":
+			p["speaker_component_id"] = to
+		case pl.speakers[id]:
+			p["speaker_component_id"] = id
+		}
 	}
 	if id := n.CoverAssetID; id != "" {
 		set("cover_asset_id", id, pl.covers[canonical(ids.Asset, id)])
@@ -375,7 +386,7 @@ func (pl *plan) text(t Text) (Text, error) {
 	if err != nil {
 		return nil, fmt.Errorf("clipboard: a text that Check took: %w", err)
 	}
-	inlines(doc, func(in richtext.Inline) {
+	for in := range doc.Inlines() {
 		switch in := in.(type) {
 		case *richtext.Mention:
 			if to := pl.r.components[in.Component]; to != "" {
@@ -386,14 +397,14 @@ func (pl *plan) text(t Text) (Text, error) {
 				if to := pl.r.variables[in.Ref]; to != "" {
 					in.Ref = to
 				}
-				return
+				continue
 			}
-			to, attribute := pl.r.components[in.Ref], pl.r.attributes[in.Attribute]
+			to, attribute := pl.r.components[in.Ref], pl.r.attributes[expr.AttributeRef(in.Ref, in.Attribute)]
 			if to != "" && attribute != "" {
 				in.Ref, in.Attribute = to, attribute
 			}
 		}
-	})
+	}
 	return textOf(*doc)
 }
 

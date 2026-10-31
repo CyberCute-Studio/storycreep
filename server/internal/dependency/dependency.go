@@ -168,33 +168,20 @@ func Uses(n expr.Node) ([]Use, error) {
 func TextUses(doc richtext.Doc) ([]Use, error) {
 	var uses []Use
 	var err error
-	var blocks func([]richtext.Block)
-	blocks = func(bs []richtext.Block) {
-		for _, b := range bs {
-			switch b := b.(type) {
-			case *richtext.Paragraph:
-				for _, in := range b.Inlines {
-					var u Use
-					var e error
-					switch in := in.(type) {
-					case *richtext.Mention:
-						u, e = textUse("mention", in.Component, "")
-					case *richtext.Value:
-						u, e = textUse("valueRef", in.Ref, in.Attribute)
-					default:
-						continue
-					}
-					err = errors.Join(err, e)
-					uses = append(uses, u)
-				}
-			case *richtext.List:
-				for _, item := range b.Items {
-					blocks(item.Blocks)
-				}
-			}
+	for in := range doc.Inlines() {
+		var u Use
+		var e error
+		switch in := in.(type) {
+		case *richtext.Mention:
+			u, e = textUse("mention", in.Component, "")
+		case *richtext.Value:
+			u, e = textUse("valueRef", in.Ref, in.Attribute)
+		default:
+			continue
 		}
+		err = errors.Join(err, e)
+		uses = append(uses, u)
 	}
-	blocks(doc.Blocks)
 	if err != nil {
 		return nil, err
 	}

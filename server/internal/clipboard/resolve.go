@@ -19,8 +19,9 @@ import (
 // resolves to it.
 type ClipboardReport struct {
 	Variables  []ClipboardVariable `json:"variables" nullable:"false" doc:"The variables that the clipboard declares that resolve to none at the board: neither the same variable, global or of the board, nor one of its key and scope, a global one or one of the board. Each is as the clipboard declares it, which a variable.create of the board's project, of the board for a board's variable, takes, with an ID of its own."`
-	Components []MissingComponent  `json:"components" nullable:"false" doc:"The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type of the key of its type's, if it has one, which a component.create takes"`
+	Components []MissingComponent  `json:"components" nullable:"false" doc:"The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type that a component.create in its place may take: the same type as its own, or else the one of its type's key, if the project has one"`
 	Attributes []MissingAttribute  `json:"attributes" nullable:"false" doc:"The attribute definitions that the clipboard declares of a component that resolves, which the type of the component that it resolves to does not have, neither the same definition nor one of its key, each with that component"`
+	Speakers   []string            `json:"speakers" nullable:"false" doc:"The speakers of the clipboard's elements that it does not declare, as it declares no component that was in the trash where it was copied, that the board's project does not have, in its trash or not, each once: the elements are pasted without them. A speaker that the clipboard declares that resolves to none, which components lists, is pasted as it is where the project has it, in its trash or not, and else left out too."`
 	Nodes      []string            `json:"nodes" nullable:"false" doc:"The nodes outside the clipboard that its jumpers target or its expressions name by node references, each once, that the board's project does not have, in its trash or not, or not on the board that a target names: a jumper whose target this lists is pasted without one, and a node reference names nothing"`
 	Assets     []string            `json:"assets" nullable:"false" doc:"The cover images of the clipboard's elements that are not the board's project's assets, as those of another project are not, each once: the elements are pasted without them"`
 }
@@ -29,7 +30,7 @@ type ClipboardReport struct {
 // (ClipboardReport).
 type MissingComponent struct {
 	Component       ClipboardComponent `json:"component" doc:"The component, as the clipboard declares it"`
-	ComponentTypeID string             `json:"component_type_id,omitempty" doc:"The ID of the project's component type, not in its trash, of the key of the component's type, which a component created in its place may be of, if the project has one"`
+	ComponentTypeID string             `json:"component_type_id,omitempty" doc:"The ID of the project's component type, not in its trash, which a component created in its place may be of: the component's own type, and else the one of the key of the component's type, if the project has one"`
 }
 
 // MissingAttribute is an attribute definition of a component of a clipboard
@@ -52,15 +53,14 @@ type destination struct {
 	globals, ofBoard map[string]string
 	reach            map[string]bool
 	// components are the IDs of the project's components by their keys, and
-	// typeOf each component's type's, by its ID.
-	components map[string]string
-	typeOf     map[string]string
-	// attributes are the IDs of each type's attribute definitions, by the
-	// type's ID and then their keys, and attributeType each definition's
-	// type's, by its ID. types are the types' IDs, by their keys.
-	attributes    map[string]map[string]string
-	attributeType map[string]string
-	types         map[string]string
+	// definitions the attribute definitions of each component's type, which
+	// the components of the type share, by the component's ID.
+	components  map[string]string
+	definitions map[string][]expr.Attribute
+	// types are the IDs of the project's component types by their keys, and
+	// typeIDs those IDs.
+	types   map[string]string
+	typeIDs map[string]bool
 }
 
 // loadDestination returns the board board of the project, of the workspace
@@ -70,45 +70,23 @@ type destination struct {
 func loadDestination(ctx context.Context, q *queries.Queries, ws, project, board pgtype.UUID) (*destination, error) {
 	d := &destination{ws: ws, project: project, board: board, boardID: ids.Encode(ids.Board, board.Bytes),
 		globals: map[string]string{}, ofBoard: map[string]string{}, reach: map[string]bool{},
-		components: map[string]string{}, typeOf: map[string]string{}, attributes: map[string]map[string]string{},
-		attributeType: map[string]string{}, types: map[string]string{}}
-	var err error
-	if d.names, err = expression.Live(ctx, q, ws, project, nil); err != nil {
+		components: map[string]string{}, definitions: map[string][]expr.Attribute{}, types: map[string]string{},
+		typeIDs: map[string]bool{}}
+	live, err := expression.Live(ctx, q, ws, project, nil)
+	if err != nil {
 		return nil, err
 	}
-	variables, err := q.ExpressionVariables(ctx, queries.ExpressionVariablesParams{WorkspaceID: ws, ProjectID: project})
-	if err != nil {
-		return nil, fmt.Errorf("clipboard: read the project's variables: %w", err)
-	}
-	for _, v := range variables {
-		id := ids.Encode(ids.Variable, v.ID.Bytes)
-		switch {
-		case !v.BoardID.Valid:
-			d.globals[v.Key], d.reach[id] = id, true
-		case v.BoardID == board:
-			d.ofBoard[v.Key], d.reach[id] = id, true
+	d.names = live.Project
+	for _, v := range live.Variables {
+		switch v.Board {
+		case "":
+			d.globals[v.Key], d.reach[v.ID] = v.ID, true
+		case d.boardID:
+			d.ofBoard[v.Key], d.reach[v.ID] = v.ID, true
 		}
 	}
-	components, err := q.ExpressionComponents(ctx, queries.ExpressionComponentsParams{WorkspaceID: ws,
-		ProjectID: project})
-	if err != nil {
-		return nil, fmt.Errorf("clipboard: read the project's components: %w", err)
-	}
-	for _, c := range components {
-		id := ids.Encode(ids.Component, c.ID.Bytes)
-		d.components[c.Key], d.typeOf[id] = id, ids.Encode(ids.ComponentType, c.ComponentTypeID.Bytes)
-	}
-	attributes, err := q.ExpressionAttributes(ctx, queries.ExpressionAttributesParams{WorkspaceID: ws,
-		ProjectID: project})
-	if err != nil {
-		return nil, fmt.Errorf("clipboard: read the project's attribute definitions: %w", err)
-	}
-	for _, a := range attributes {
-		id, typ := ids.Encode(ids.AttributeDef, a.ID.Bytes), ids.Encode(ids.ComponentType, a.ComponentTypeID.Bytes)
-		if d.attributes[typ] == nil {
-			d.attributes[typ] = map[string]string{}
-		}
-		d.attributes[typ][a.Key], d.attributeType[id] = id, typ
+	for _, c := range live.Components {
+		d.components[c.Key], d.definitions[c.ID] = c.ID, c.Attributes
 	}
 	types, err := q.ClipboardComponentTypes(ctx, queries.ClipboardComponentTypesParams{WorkspaceID: ws,
 		ProjectID: project})
@@ -116,15 +94,20 @@ func loadDestination(ctx context.Context, q *queries.Queries, ws, project, board
 		return nil, fmt.Errorf("clipboard: read the project's component types: %w", err)
 	}
 	for _, t := range types {
-		d.types[t.Key] = ids.Encode(ids.ComponentType, t.ID.Bytes)
+		id := ids.Encode(ids.ComponentType, t.ID.Bytes)
+		d.types[t.Key], d.typeIDs[id] = id, true
 	}
 	return d, nil
 }
 
-// resolution is what a clipboard's declarations resolve to at a board, each
-// by its ID in the clipboard, in its canonical spelling: the ID of the
-// variable, the component, or the attribute definition, of the board's
-// project, or "" for none.
+// resolution is what a clipboard's declarations resolve to at a board: the
+// ID of the variable, the component, or the attribute definition, of the
+// board's project, or "" for none, of each variable and component by its ID
+// in the clipboard, and of each attribute definition by the IDs of the
+// clipboard's component that declares it and of itself (expr.AttributeRef),
+// each in its canonical spelling, since the components of a type share its
+// definitions, but may resolve to components of different types, or one to
+// none.
 type resolution struct {
 	variables, components, attributes map[string]string
 }
@@ -135,8 +118,9 @@ type resolution struct {
 // a global one or one of the board; a component, the same component, and else
 // the one of its key; and an attribute definition of a component that
 // resolves, the same definition where it is of the type of the component that
-// it resolves to, and else the one of its key of that type. Each that is in
-// the project's trash is no entity that it resolves to.
+// it resolves to, and else the one of its key of that type, of each component
+// that declares it apart. Each that is in the project's trash is no entity
+// that it resolves to.
 func (d *destination) resolve(c Clipboard) resolution {
 	r := resolution{variables: map[string]string{}, components: map[string]string{},
 		attributes: map[string]string{}}
@@ -154,51 +138,89 @@ func (d *destination) resolve(c Clipboard) resolution {
 	for _, k := range c.Components {
 		id := canonical(ids.Component, k.ID)
 		to := id
-		if _, ok := d.typeOf[id]; !ok {
+		if _, ok := d.definitions[id]; !ok {
 			to = d.components[k.Key]
 		}
 		r.components[id] = to
-		typ := d.typeOf[to]
+		// A component that resolves to none has no definitions here.
+		definitions := d.definitions[to]
 		for _, a := range k.Attributes {
 			aid := canonical(ids.AttributeDef, a.ID)
-			switch {
-			case to == "":
-				r.attributes[aid] = ""
-			case d.attributeType[aid] == typ:
-				r.attributes[aid] = aid
-			default:
-				r.attributes[aid] = d.attributes[typ][a.Key]
-			}
+			r.attributes[expr.AttributeRef(id, aid)] = definitionOf(definitions, aid, a.Key)
 		}
 	}
 	return r
 }
 
+// definitionOf returns the ID of the attribute definition, among definitions,
+// those of a component's type, that a declared definition whose ID is id and
+// whose key is key resolves to: the same definition, and else the one of its
+// key, or "" for none.
+func definitionOf(definitions []expr.Attribute, id, key string) string {
+	byKey := ""
+	for _, a := range definitions {
+		switch {
+		case a.ID == id:
+			return id
+		case a.Key == key:
+			byKey = a.ID
+		}
+	}
+	return byKey
+}
+
+// typeOf returns the ID of the project's component type, not in its trash,
+// that a component created in the place of one of the type typ, as a
+// clipboard declares it, may be of: the same type, and else the one of its
+// key, or "" for none.
+func (d *destination) typeOf(typ ClipboardComponentType) string {
+	if id := canonical(ids.ComponentType, typ.ID); d.typeIDs[id] {
+		return id
+	}
+	return d.types[typ.Key]
+}
+
 // report returns what of the clipboard c's declarations resolves to nothing
-// as r says, with the nodes that its jumpers target, or that its
-// expressions name, outside it, that the board's project lacks, and the
-// covers that are not its assets (ClipboardReport), as targets and covers read
-// them.
+// as r says, with the speakers that it does not declare, the nodes that its
+// jumpers target, or that its expressions name, outside it, that the board's
+// project lacks, and the covers that are not its assets (ClipboardReport), as
+// speakers, targets, and covers read them.
 func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboard, r resolution) (ClipboardReport,
 	error) {
 	out := ClipboardReport{Variables: []ClipboardVariable{}, Components: []MissingComponent{},
-		Attributes: []MissingAttribute{}, Nodes: []string{}, Assets: []string{}}
+		Attributes: []MissingAttribute{}, Speakers: []string{}, Nodes: []string{}, Assets: []string{}}
 	for _, v := range c.Variables {
 		if r.variables[canonical(ids.Variable, v.ID)] == "" {
 			out.Variables = append(out.Variables, v)
 		}
 	}
 	for _, k := range c.Components {
-		to := r.components[canonical(ids.Component, k.ID)]
+		id := canonical(ids.Component, k.ID)
+		to := r.components[id]
 		if to == "" {
-			out.Components = append(out.Components, MissingComponent{Component: k,
-				ComponentTypeID: d.types[k.Type.Key]})
+			out.Components = append(out.Components, MissingComponent{Component: k, ComponentTypeID: d.typeOf(k.Type)})
 			continue
 		}
 		for _, a := range k.Attributes {
-			if r.attributes[canonical(ids.AttributeDef, a.ID)] == "" {
+			if r.attributes[expr.AttributeRef(id, canonical(ids.AttributeDef, a.ID))] == "" {
 				out.Attributes = append(out.Attributes, MissingAttribute{ComponentID: to, Attribute: a})
 			}
+		}
+	}
+	speakers, err := d.speakers(ctx, q, c)
+	if err != nil {
+		return ClipboardReport{}, err
+	}
+	listed := map[string]bool{}
+	for _, n := range c.Nodes {
+		id := n.SpeakerComponentID
+		if id == "" {
+			continue
+		}
+		if _, declared := r.components[canonical(ids.Component, id)]; !declared &&
+			!speakers[canonical(ids.Component, id)] && !listed[id] {
+			listed[id] = true
+			out.Speakers = append(out.Speakers, id)
 		}
 	}
 	targets, err := d.targets(ctx, q, c)
@@ -209,7 +231,6 @@ func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboar
 	if err != nil {
 		return ClipboardReport{}, err
 	}
-	listed := map[string]bool{}
 	for _, n := range append(c.outsideTargets(), refs...) {
 		if !targets[n.key()] && !listed[n.id] {
 			listed[n.id] = true
@@ -350,31 +371,67 @@ func (d *destination) targets(ctx context.Context, q *queries.Queries, c Clipboa
 }
 
 // covers returns which of the covers of the clipboard c's elements are the
-// board's project's assets, by their IDs, in their canonical spelling.
+// board's project's assets, by their IDs, in their canonical spelling, as
+// node.create takes them, read in one query.
 func (d *destination) covers(ctx context.Context, q *queries.Queries, c Clipboard) (map[string]bool, error) {
-	out := map[string]bool{}
+	of := make([]string, 0, len(c.Nodes))
 	for _, n := range c.Nodes {
-		if n.CoverAssetID == "" {
-			continue
-		}
-		u, err := ids.Decode(ids.Asset, n.CoverAssetID)
+		of = append(of, n.CoverAssetID)
+	}
+	return held(ids.Asset, of, func(list []pgtype.UUID) ([]pgtype.UUID, error) {
+		rows, err := q.ClipboardCovers(ctx, queries.ClipboardCoversParams{WorkspaceID: d.ws, ProjectID: d.project,
+			Ids: list})
 		if err != nil {
+			return nil, fmt.Errorf("clipboard: read the covers: %w", err)
+		}
+		return rows, nil
+	})
+}
+
+// speakers returns which of the speakers of the clipboard c's elements are
+// the board's project's components, in its trash or not, by their IDs, in
+// their canonical spelling, as node.create takes them, read in one query.
+func (d *destination) speakers(ctx context.Context, q *queries.Queries, c Clipboard) (map[string]bool, error) {
+	of := make([]string, 0, len(c.Nodes))
+	for _, n := range c.Nodes {
+		of = append(of, n.SpeakerComponentID)
+	}
+	return held(ids.Component, of, func(list []pgtype.UUID) ([]pgtype.UUID, error) {
+		rows, err := q.ClipboardSpeakers(ctx, queries.ClipboardSpeakersParams{WorkspaceID: d.ws,
+			ProjectID: d.project, Ids: list})
+		if err != nil {
+			return nil, fmt.Errorf("clipboard: read the speakers: %w", err)
+		}
+		return rows, nil
+	})
+}
+
+// held returns which of the IDs of, of the kind, read returns the UUIDs of,
+// by their IDs in their canonical spelling, each of which it reads once,
+// leaving out "" and an ID that is not one of the kind, and reading nothing
+// for none.
+func held(kind ids.Kind, of []string, read func(list []pgtype.UUID) ([]pgtype.UUID, error)) (map[string]bool,
+	error) {
+	var list []pgtype.UUID
+	seen := map[ids.UUID]bool{}
+	for _, id := range of {
+		u, err := ids.Decode(kind, id)
+		if id == "" || err != nil || seen[u] {
 			continue
 		}
-		id := ids.Encode(ids.Asset, u)
-		if _, seen := out[id]; seen {
-			continue
-		}
-		_, err = q.Asset(ctx, queries.AssetParams{WorkspaceID: d.ws, ProjectID: d.project,
-			ID: pgtype.UUID{Bytes: u, Valid: true}})
-		switch {
-		case err == nil:
-			out[id] = true
-		case isNoRows(err):
-			out[id] = false
-		default:
-			return nil, fmt.Errorf("clipboard: read a cover: %w", err)
-		}
+		seen[u] = true
+		list = append(list, uuidOf(u))
+	}
+	out := map[string]bool{}
+	if len(list) == 0 {
+		return out, nil
+	}
+	rows, err := read(list)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range rows {
+		out[ids.Encode(kind, u.Bytes)] = true
 	}
 	return out, nil
 }

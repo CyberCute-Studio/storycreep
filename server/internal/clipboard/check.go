@@ -11,6 +11,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
 // The node types, as package node names them.
@@ -115,7 +116,8 @@ func Check(c Clipboard) input.FieldErrors {
 		if _, problem := v.Default.Of(v.Type); problem != "" {
 			add(at+".default", problem)
 		}
-		if problem := input.CheckTrimmedText(v.Description, maxDescription); v.Description != "" && problem != "" {
+		if problem := input.CheckTrimmedText(v.Description, variable.MaxDescriptionLength); v.Description != "" &&
+			problem != "" {
 			add(at+".description", problem)
 		}
 	}
@@ -148,10 +150,6 @@ func Check(c Clipboard) input.FieldErrors {
 	}
 	return errs
 }
-
-// maxDescription is the most characters of a variable's description, as
-// variable.create takes it.
-const maxDescription = 2000
 
 // checkNode returns what is wrong with the node n of a clipboard, at at, but
 // for its outputs' IDs: a field that its type does not have, its text, its
@@ -281,23 +279,9 @@ func canonical(kind ids.Kind, id string) string {
 	return ids.Encode(kind, u)
 }
 
-// inlines calls f with each inline node of the document doc, in its order,
-// those of its lists' items among them.
-func inlines(doc *richtext.Doc, f func(richtext.Inline)) {
-	var blocks func([]richtext.Block)
-	blocks = func(bs []richtext.Block) {
-		for _, b := range bs {
-			switch b := b.(type) {
-			case *richtext.Paragraph:
-				for _, in := range b.Inlines {
-					f(in)
-				}
-			case *richtext.List:
-				for _, item := range b.Items {
-					blocks(item.Blocks)
-				}
-			}
-		}
-	}
-	blocks(doc.Blocks)
+// clipboardField returns the field of a payload, or of a request's body, that
+// holds a clipboard at clipboard, of the clipboard's field f, as Check names
+// it: clipboard.<f>, or clipboard itself for "", the whole clipboard.
+func clipboardField(f string) string {
+	return strings.TrimSuffix("clipboard."+f, ".")
 }

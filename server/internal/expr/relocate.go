@@ -9,7 +9,9 @@ import (
 // Named is what a name of a source names (Names): a variable, a component's
 // attribute, or a node.
 type Named struct {
-	// Variable is the ID of the variable that a variable's name names.
+	// Variable is the ID of the variable that a variable's name names, or
+	// that <key>.<attribute> names, as no component, where a variable of the
+	// board or a global one has the key (§5.8.3).
 	Variable string
 	// Component is the ID of the component whose attribute an attribute's
 	// name names, Attribute the ID of its attribute definition, or "" for an
@@ -25,9 +27,13 @@ type Named struct {
 // expression of the board whose ID is board, or of none for "", name in the
 // project p (§5.8.3), in the order of the source: each variable's name that
 // names a variable, each attribute's name whose component's name names a
-// component, and each node reference, as package clipboard declares what a
-// copied expression names. A name that names nothing is left out, and a
-// source that does not parse names nothing.
+// component, each <key>.<attribute> whose key a variable of the board or a
+// global one has, which names that variable, as no component, and each node
+// reference, as package clipboard declares what a copied expression names, so
+// that a paste reads each name as it was read where it was copied, and keeps
+// <key>.<attribute> of such a variable from naming a component of the key. A
+// name that names nothing is left out, and a source that does not parse names
+// nothing.
 func Names(source string, ctx Context, p *Project, board string) ([]Named, error) {
 	if p == nil {
 		return nil, fmt.Errorf("%w: names need a project", ErrProject)
@@ -48,12 +54,20 @@ func Names(source string, ctx Context, p *Project, board string) ([]Named, error
 				out = append(out, Named{Variable: v.ID})
 			}
 		case *Attr:
-			if c := p.lookupComponent(board, m.Explicit, m.ComponentKey); c != nil {
+			c := p.lookupComponent(board, m.Explicit, m.ComponentKey)
+			switch {
+			case c != nil:
 				named := Named{Component: c.ID, AttributeKey: m.AttributeKey}
 				if a := c.attributes[m.AttributeKey]; a != nil {
 					named.Attribute = a.ID
 				}
 				out = append(out, named)
+			case !m.Explicit:
+				// A variable that has the key names the name, as no
+				// component, where it shadows one (lookupComponent).
+				if v := p.lookupVariable(board, ScopeNone, m.ComponentKey); v != nil {
+					out = append(out, Named{Variable: v.ID})
+				}
 			}
 		case *NodeRef:
 			out = append(out, Named{Node: m.Ref})
@@ -65,12 +79,26 @@ func Names(source string, ctx Context, p *Project, board string) ([]Named, error
 // Moves says what the names of a source that Relocate moves name where it
 // moves to: the ID of each variable and of each component that a name names
 // where the source is, by that entity's ID, of the entity that the name is to
-// name where the source goes, or "" for none, and the ID of each node that a
-// node reference names, of the node that it is to name instead. An entity
-// that Moves leaves out is one of none, and a node that it leaves out one
-// that the reference names still.
+// name where the source goes, or "" for none; the ID of each attribute
+// definition that a name of a component's attribute names where the source
+// is, by the IDs of its component and of itself there (AttributeRef), of the
+// definition of the component that Components gives whose key the name is to
+// write, or "" for none, which keeps the key that the name writes; and the ID
+// of each node that a node reference names, of the node that it is to name
+// instead. An entity that Moves leaves out is one of none, and a node that it
+// leaves out one that the reference names still.
 type Moves struct {
-	Variables, Components, Nodes map[string]string
+	Variables, Components, Attributes, Nodes map[string]string
+}
+
+// AttributeRef returns the key of Moves.Attributes of the attribute definition
+// whose ID is definition of the component whose ID is component, each in its
+// canonical spelling: the two joined by a slash, as package clipboard keys
+// what each component's attribute definitions resolve to, since the
+// components of a type share its definitions, but may resolve to components
+// of different types.
+func AttributeRef(component, definition string) string {
+	return component + "/" + definition
 }
 
 // Relocate returns the source, of the context ctx, of an expression of the
@@ -79,7 +107,9 @@ type Moves struct {
 // it (PRD FR-EDIT-07): each name that names an entity in from at fromBoard,
 // a variable or a component's attribute, is written as the shortest name that
 // names the entity that moves gives it in to at toBoard, as Rewrite writes a
-// renamed entity's, or, where moves gives it none, explicitly, as global.<key>
+// renamed entity's, an attribute's with the key of the definition that moves
+// gives it, which may have been renamed since, or else with the key that the
+// name writes, or, where moves gives it none, explicitly, as global.<key>
 // or board.<key> of a variable, as it is global or of a board, and as
 // cmp.<component>.<attribute> of an attribute, so that it names an entity of
 // that key alone, once to has one, and never one of another scope or kind
@@ -109,11 +139,7 @@ func Relocate(source string, ctx Context, from *Project, fromBoard string, to *P
 	}
 	names := relocated(n)
 	var runes []rune
-	type edit struct {
-		r       Range
-		written string
-	}
-	var edits []edit
+	var edits []Edit
 	// want is what each name of the rewritten source names in to, by its
 	// index, as the names of the source are written, "" for a name that
 	// names nothing in from, which is left as it is and may name anything.
@@ -136,19 +162,13 @@ func Relocate(source string, ctx Context, from *Project, fromBoard string, to *P
 			written = respell(old, written)
 		}
 		if old != written {
-			edits = append(edits, edit{r: r, written: written})
+			edits = append(edits, Edit{Range: r, Old: old, New: written})
 		}
 	}
 	if len(edits) == 0 {
 		return source, nil
 	}
-	out := make([]rune, 0, len(runes))
-	at := 0
-	for _, ed := range edits {
-		out = append(append(out, runes[at:ed.r.Start]...), []rune(ed.written)...)
-		at = ed.r.End
-	}
-	rewritten := string(append(out, runes[at:]...))
+	rewritten := splice(runes, edits)
 	got, err := Parse(rewritten, ctx)
 	if err != nil {
 		return "", fmt.Errorf("expr: the source that a paste rewrote does not parse: %w", err)
@@ -212,7 +232,18 @@ func moved(m Node, from *Project, fromBoard string, to *Project, toBoard string,
 			return "", "", fmt.Errorf("%w: the project that a paste goes to lacks the component %s", ErrProject,
 				target)
 		}
-		return to.attributeName(toBoard, t.Key, m.AttributeKey), t.ID + "." + m.AttributeKey, nil
+		key := m.AttributeKey
+		if a := c.attributes[m.AttributeKey]; a != nil {
+			if def := moves.Attributes[AttributeRef(c.ID, a.ID)]; def != "" {
+				d := t.byID[def]
+				if d == nil {
+					return "", "", fmt.Errorf("%w: the component %s that a paste goes to lacks the attribute "+
+						"definition %s", ErrProject, target, def)
+				}
+				key = d.Key
+			}
+		}
+		return to.attributeName(toBoard, t.Key, key), t.ID + "." + key, nil
 	case *NodeRef:
 		target, ok := moves.Nodes[m.Ref]
 		if !ok || target == "" {

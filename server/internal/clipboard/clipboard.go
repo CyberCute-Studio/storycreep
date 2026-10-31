@@ -21,8 +21,11 @@
 // resolve to by the shortest name that names it at the board, and what
 // resolves to nothing explicitly, as global.<key>, board.<key>, or
 // cmp.<component>.<attribute>, so that it names nothing of another scope or
-// kind meanwhile (expr.Relocate); a speaker, a jumper's target, and a cover
-// that resolve to nothing are left out.
+// kind meanwhile (expr.Relocate); a speaker that resolves to nothing, or that
+// the clipboard does not declare, as one in the trash where it was copied,
+// and a jumper's target outside the clipboard are kept where the project has
+// them, in its trash or not, as node.create takes them, and are left out
+// where it lacks them, and so is a cover that is not its asset.
 package clipboard
 
 import (
@@ -48,7 +51,13 @@ const Version = 1
 
 // The bounds of a clipboard: the most nodes, outputs of a branch, connections,
 // variables, components, and attribute definitions of a component that it
-// holds, which its schema says too.
+// holds, which its schema says too (TestSchemaBounds), and the most bytes of
+// its JSON, as encoding/json writes it, that Copy answers with, 4 MiB, so
+// that the report's request, and a paste's batch, with its new IDs and the
+// commands that create what the report lists, fit in a request's body of at
+// most 5 MiB (api.DefaultMaxBodyBytes), with a mebibyte for the rest, as a
+// batch's undo does (commands.DefaultMaxUndoBytes). Copy refuses a selection
+// whose clipboard would pass one of them, which a paste could not take.
 const (
 	MaxNodes       = 1000
 	MaxOutputs     = 1000
@@ -56,6 +65,7 @@ const (
 	MaxVariables   = 10_000
 	MaxComponents  = 10_000
 	MaxAttributes  = 1000
+	MaxBytes       = 4 << 20
 )
 
 // Clipboard is a selection of the nodes of a board, as copied (PRD
@@ -80,7 +90,7 @@ type ClipboardNode struct {
 	Kind               string            `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's kind. Another type has none."`
 	Title              string            `json:"title,omitempty" maxLength:"200" doc:"The node's title, if it has one, as node.create takes it"`
 	Text               Text              `json:"text,omitempty" doc:"An element's text, a rich-text document (PRD FR-TEXT-01), whose value references and mentions name variables and components that the clipboard declares, or else name what a paste keeps as it is. Another type has none."`
-	SpeakerComponentID string            `json:"speaker_component_id,omitempty" doc:"The ID of an element's speaker, a component that the clipboard declares, if it has one. Another type has none."`
+	SpeakerComponentID string            `json:"speaker_component_id,omitempty" doc:"The ID of an element's speaker, if it has one: a component that the clipboard declares, or one that it does not, as one in the trash of the project that it was copied from, which a paste keeps where the project that it pastes into has it, in its trash or not. Another type has none."`
 	CoverAssetID       string            `json:"cover_asset_id,omitempty" doc:"The ID of an element's cover image, an asset of the project that it was copied from, which a paste into another project leaves out, if it has one. Another type has none."`
 	Color              string            `json:"color,omitempty" enum:"none,red,orange,yellow,green,teal,blue,purple,pink,gray" doc:"The node's colour. Without it, none."`
 	Tags               []string          `json:"tags,omitempty" maxItems:"32" doc:"The node's tags, as node.create takes them"`
