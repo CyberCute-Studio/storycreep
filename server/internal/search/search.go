@@ -12,7 +12,8 @@
 // changed the document of, in the batch's transaction, so that the index is
 // always what the content holds, as a recomputation from scratch gives
 // (searchtest.Drift). The job that RegisterJobs registers writes the
-// documents of the entities that have none of the current Version: the
+// documents of the entities that have none of the current Version, or of a
+// newer one, which a newer server wrote while a rolling upgrade ran: the
 // content that is there already when migration 00029 applies, and every
 // document again once a version of the server changes what a document holds.
 // A search reads the documents of the entities that are not in the trash
@@ -91,7 +92,9 @@ func IsKind(k Kind) bool { return idKind(k) != 0 }
 // replaces a version's replicas with the next one's, a replica of the older
 // version writes the documents of what its batches change of its own
 // version, and deletes the project's state that the newer one recorded
-// (queries.UpsertSearchEntries), so that the newer job writes them again.
+// (queries.UpsertSearchEntries), so that the newer job writes them again,
+// while the older job leaves alone the documents and the states of a newer
+// version (queries.ProjectsToIndex, queries.UnindexedSearchEntities).
 const Version = 1
 
 // MaxQueryLength is how many characters a search's query has at most.
@@ -178,13 +181,14 @@ func New(db project.DB, opts Options) *Service {
 // that holds a word that starts with each of its words, as the search
 // configuration reads them, lowercased and without their diacritics, so that
 // "ela tru" matches "Elara trusts", and a query without a word matches
-// nothing. A match in a title ranks above one in a body (ts_rank, of the
-// weights of migration 00029, of each of the query's words alone, as
-// queries.Search says, so that it does for a query of several words too). It
-// returns the errors of project.Service.Get first, as project.ErrNotFound,
-// so that what a query holds is checked only for an actor who may read the
-// project, and then input.FieldErrors at q for a query that CheckQuery
-// refuses. The route's schema refuses a query longer
+// nothing. A match in a title ranks above one in a body: a result whose
+// title matches more of the query's words ranks above one whose title
+// matches fewer, and ts_rank, of the weights of migration 00029 and of each
+// of the query's words alone, orders those whose titles match as many, as
+// queries.Search says. It returns the errors of project.Service.Get first,
+// as project.ErrNotFound, so that what a query holds is checked only for an
+// actor who may read the project, and then input.FieldErrors at q for a
+// query that CheckQuery refuses. The route's schema refuses a query longer
 // than MaxQueryLength before, as it refuses any parameter that breaks it,
 // whoever sends it, which tells nothing of the project.
 func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID ids.UUID, query string, kind Kind,
@@ -209,8 +213,8 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 			return nil
 		}
 		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
-			WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID), Kind: string(kind),
-			After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
+			TitleWords: TitleQueries(lexemes), WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID),
+			Kind: string(kind), After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
 			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("search: read the results: %w", err)
@@ -295,14 +299,34 @@ func PrefixQuery(lexemes []string) string { return prefixQuery(lexemes, " & ") }
 // matches, and marks the matches in them (queries.Search).
 func AnyPrefixQuery(lexemes []string) string { return prefixQuery(lexemes, " | ") }
 
+// TitleQueries returns the text of a tsquery of each of lexemes, as
+// PrefixQuery writes it, with A after it, which matches a document whose
+// title holds a word that starts with it, the words of weight A (migration
+// 00029), by which a search counts how many of a query's words a document's
+// title matches (queries.Search).
+func TitleQueries(lexemes []string) []string {
+	out := make([]string, len(lexemes))
+	for i, l := range lexemes {
+		out[i] = prefixTerm(l) + "A"
+	}
+	return out
+}
+
 // prefixQuery returns the text of the tsquery of lexemes, each as
 // PrefixQuery writes it, joined by op.
 func prefixQuery(lexemes []string, op string) string {
 	terms := make([]string, len(lexemes))
 	for i, l := range lexemes {
-		terms[i] = "'" + strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(l) + "':*"
+		terms[i] = prefixTerm(l)
 	}
 	return strings.Join(terms, op)
+}
+
+// prefixTerm returns the text of the operand of a tsquery that matches a
+// word that starts with lexeme: lexeme quoted, as a tsquery's text quotes a
+// word, with :* after it.
+func prefixTerm(lexeme string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(lexeme) + "':*"
 }
 
 // nullUUID returns id as a uuid column, null for zero.

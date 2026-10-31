@@ -1,6 +1,15 @@
 package search
 
-import "github.com/CyberCute-Studio/storycreep/server/internal/commands"
+import (
+	"context"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/sweep"
+)
+
+// Work runs the job of the index once, as its worker does, for as long as
+// more reports that the run has time left (work).
+func Work(ctx context.Context, db sweep.DB, more func() bool) error { return work(ctx, db, more) }
 
 // SetReindexRows sets how many documents the job of the index writes in a
 // transaction at most, until the test ends.

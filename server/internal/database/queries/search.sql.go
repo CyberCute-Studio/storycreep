@@ -212,7 +212,7 @@ type NodeSearchSourcesRow struct {
 // lowercase hexadecimal of the body's UTF-8, rather than the body itself,
 // and its version, and UpsertSearchEntries, for the documents that differ),
 // and the job of the index those of the entities that have none of the
-// current version, under the same lock (ProjectsToIndex,
+// current version or a newer one, under the same lock (ProjectsToIndex,
 // LockProjectToIndex, UnindexedSearchEntities, SetSearchState). search_entry
 // and search_state are tenant tables, which a transaction of their workspace
 // reads.
@@ -251,7 +251,7 @@ const projectsToIndex = `-- name: ProjectsToIndex :many
 SELECT p.id FROM project p
 WHERE p.workspace_id = $1 AND NOT EXISTS (
     SELECT 1 FROM search_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
-        AND s.version = $2
+        AND s.version >= $2
 )
 ORDER BY p.id
 `
@@ -262,8 +262,10 @@ type ProjectsToIndexParams struct {
 }
 
 // ProjectsToIndex returns the workspace's projects whose documents the job
-// of the index has not written whole of the version, in the order of their
-// IDs.
+// of the index has not written whole of the version, or of a newer one, in
+// the order of their IDs: an older version's job, which a replica runs while
+// a rolling upgrade replaces it, passes over the projects that a newer one
+// has indexed, rather than writing their documents again of its own.
 func (q *Queries) ProjectsToIndex(ctx context.Context, arg ProjectsToIndexParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, projectsToIndex, arg.WorkspaceID, arg.Version)
 	if err != nil {
@@ -286,38 +288,44 @@ func (q *Queries) ProjectsToIndex(ctx context.Context, arg ProjectsToIndexParams
 
 const search = `-- name: Search :many
 WITH hits AS (
-    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, ts_rank(e.vector, $1::tsquery) AS rank
+    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, e.vector
     FROM search_entry e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.entity_id
     WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'node'
         AND $4::text IN ('', 'node') AND e.vector @@ $5::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, ts_rank(e.vector, $1::tsquery)
+    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, e.vector
     FROM search_entry e
     JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
         AND c.id = e.entity_id
     WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'connection'
         AND $4::text IN ('', 'connection') AND e.vector @@ $5::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, ts_rank(e.vector, $1::tsquery)
+    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, e.vector
     FROM search_entry e
     JOIN live_variable v ON v.workspace_id = e.workspace_id AND v.project_id = e.project_id AND v.id = e.entity_id
     WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'variable'
         AND $4::text IN ('', 'variable') AND e.vector @@ $5::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, ts_rank(e.vector, $1::tsquery)
+    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, e.vector
     FROM search_entry e
     JOIN live_component m ON m.workspace_id = e.workspace_id AND m.project_id = e.project_id
         AND m.id = e.entity_id
     WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'component'
         AND $4::text IN ('', 'component') AND e.vector @@ $5::tsquery
+), ranked AS (
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id,
+        ((SELECT count(*) FROM unnest($6::text[]) AS t (word) WHERE h.vector @@ t.word::tsquery)
+            + r.rank / (1 + r.rank))::real AS rank
+    FROM hits h
+    CROSS JOIN LATERAL (SELECT ts_rank(h.vector, $1::tsquery)::float8 AS rank) AS r
 ), page AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.rank
-    FROM hits h
-    WHERE NOT $6::boolean OR h.rank < $7::real OR h.rank = $7::real
-        AND (h.kind > $8::text OR h.kind = $8::text AND h.entity_id > $9::uuid)
+    FROM ranked h
+    WHERE NOT $7::boolean OR h.rank < $8::real OR h.rank = $8::real
+        AND (h.kind > $9::text OR h.kind = $9::text AND h.entity_id > $10::uuid)
     ORDER BY h.rank DESC, h.kind, h.entity_id
-    LIMIT $10
+    LIMIT $11
 )
 SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title, p.rank,
     ts_headline('public.storycreep_search'::regconfig, e.title, $1::tsquery,
@@ -338,6 +346,7 @@ type SearchParams struct {
 	ProjectID   pgtype.UUID
 	Kind        string
 	Query       interface{}
+	TitleWords  []string
 	After       bool
 	AfterRank   float32
 	AfterKind   string
@@ -362,9 +371,15 @@ type SearchRow struct {
 // every kind for the empty kind, in the order of their ranks, highest first,
 // their kinds, and their entities' UUIDs: the first, unless after is set, or
 // else those after the rank after_rank, the kind after_kind, and the UUID
-// after_id. A rank is ts_rank's of words, the OR of query's words, which
-// adds up how well each of them matches, a word of a title above one of a
-// body, rather than of query, whose AND ts_rank ranks by how near its words
+// after_id. A rank is how many of title_words, a tsquery of each of query's
+// words that matches a word of weight A alone, a word of the title, the
+// document matches, plus ts_rank's of words, the OR of query's words, r, as
+// r / (1 + r), which is below 1: so a document whose title matches more of
+// the words ranks above one whose title matches fewer, however many words of
+// its body start with one of them, each of which ts_rank adds up, as storm,
+// storms, and stormy of a body would rank it above a title of Storm, and
+// ts_rank orders those whose titles match as many. ts_rank reads the OR of
+// the words rather than query, whose AND ts_rank ranks by how near its words
 // are to each other alone, which would rank a document whose title holds one
 // of them and whose body holds another a hundred words on close to nothing.
 // Each comes with its board, a node's, a connection's, or a variable's of a
@@ -386,6 +401,7 @@ func (q *Queries) Search(ctx context.Context, arg SearchParams) ([]SearchRow, er
 		arg.ProjectID,
 		arg.Kind,
 		arg.Query,
+		arg.TitleWords,
 		arg.After,
 		arg.AfterRank,
 		arg.AfterKind,
@@ -457,28 +473,28 @@ SELECT 'node'::text AS kind, n.id
 FROM node n
 WHERE n.workspace_id = $2 AND n.project_id = $3 AND NOT EXISTS (
     SELECT 1 FROM search_entry e WHERE e.workspace_id = n.workspace_id AND e.project_id = n.project_id
-        AND e.kind = 'node' AND e.entity_id = n.id AND e.version = $4
+        AND e.kind = 'node' AND e.entity_id = n.id AND e.version >= $4
 )
 UNION ALL
 SELECT 'connection', c.id
 FROM connection c
 WHERE c.workspace_id = $2 AND c.project_id = $3 AND NOT EXISTS (
     SELECT 1 FROM search_entry e WHERE e.workspace_id = c.workspace_id AND e.project_id = c.project_id
-        AND e.kind = 'connection' AND e.entity_id = c.id AND e.version = $4
+        AND e.kind = 'connection' AND e.entity_id = c.id AND e.version >= $4
 )
 UNION ALL
 SELECT 'variable', v.id
 FROM variable v
 WHERE v.workspace_id = $2 AND v.project_id = $3 AND NOT EXISTS (
     SELECT 1 FROM search_entry e WHERE e.workspace_id = v.workspace_id AND e.project_id = v.project_id
-        AND e.kind = 'variable' AND e.entity_id = v.id AND e.version = $4
+        AND e.kind = 'variable' AND e.entity_id = v.id AND e.version >= $4
 )
 UNION ALL
 SELECT 'component', m.id
 FROM component m
 WHERE m.workspace_id = $2 AND m.project_id = $3 AND NOT EXISTS (
     SELECT 1 FROM search_entry e WHERE e.workspace_id = m.workspace_id AND e.project_id = m.project_id
-        AND e.kind = 'component' AND e.entity_id = m.id AND e.version = $4
+        AND e.kind = 'component' AND e.entity_id = m.id AND e.version >= $4
 )
 LIMIT $1
 `
@@ -497,7 +513,8 @@ type UnindexedSearchEntitiesRow struct {
 
 // UnindexedSearchEntities returns at most max_rows of the project's nodes,
 // connections, variables, and components, in the trash or not, that have no
-// document of the version, each with its kind.
+// document of the version, or of a newer one, which an older version's job
+// leaves as it is, each with its kind.
 func (q *Queries) UnindexedSearchEntities(ctx context.Context, arg UnindexedSearchEntitiesParams) ([]UnindexedSearchEntitiesRow, error) {
 	rows, err := q.db.Query(ctx, unindexedSearchEntities,
 		arg.MaxRows,
@@ -534,8 +551,6 @@ FROM (SELECT unnest($4::text[]) AS kind, unnest($5::uuid[]) AS entity_id, unnest
     unnest($7::text[]) AS body) AS d
 ON CONFLICT (workspace_id, project_id, kind, entity_id) DO UPDATE
 SET title = excluded.title, body = excluded.body, version = excluded.version
-WHERE (search_entry.title, search_entry.body, search_entry.version)
-    IS DISTINCT FROM (excluded.title, excluded.body, excluded.version)
 `
 
 type UpsertSearchEntriesParams struct {
@@ -550,9 +565,11 @@ type UpsertSearchEntriesParams struct {
 
 // UpsertSearchEntries writes the documents of the project's entities that
 // kinds, entity_ids, titles, and bodies list, one of each for each, of the
-// version, but leaves as it is a document that holds them already, so that
-// an edit that changes nothing that a document holds, as an edit of a
-// node's script, rewrites none. The arrays are of one length, so their
+// version, over those that the index holds of them. Its caller passes only
+// the documents that differ from what the index holds, as it read them under
+// the project's lock (NodeSearchSources and the other kinds'), so that an
+// edit that changes nothing that a document holds, as an edit of a node's
+// script, rewrites none. The arrays are of one length, so their
 // unnest calls, which PostgreSQL runs side by side, pair each entity with
 // its kind, title, and body. It also deletes the project's state
 // (search_state) where a newer version of the server recorded it: an older

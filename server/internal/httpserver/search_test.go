@@ -205,7 +205,8 @@ func newSearchWorld(t *testing.T) *searchWorld {
 // node, connection, variable, and component whose title or body holds a word
 // that starts with the query's, and none in the trash, each with its kind,
 // its board, its node, and its title and snippet with the matches marked
-// (AC2), the matches in titles before those in bodies; the filter by kind;
+// (AC2), the matches in titles before those in bodies, however many words
+// of a body match; the filter by kind;
 // the pages of a list, which list what one page lists, in its order; and
 // the documents as later batches leave them.
 //
@@ -360,6 +361,28 @@ func TestSearch(t *testing.T) {
 	}
 	if got := marked(resultOf(t, ranked.Items, far).Snippet); !strings.HasSuffix(got, "calm calm [storm]") {
 		t.Errorf("the snippet of %s is %q, want the end of its body, with storm marked", far, got)
+	}
+
+	// A title that matches more of the query's words ranks above one that
+	// matches fewer, and a match in a title above one in a body, however many
+	// of the body's words start with a word of the query, each of which
+	// ts_rank adds up, as storm, storms, and stormy.
+	squall, gale := newNodeID(), newNodeID()
+	sendBatch(t, h, w.owner, w.project,
+		cmd("node.create", map[string]any{"id": squall, "board_id": w.harbour, "type": "element",
+			"title": "Storm lantern", "position": pos}),
+		cmd("node.create", map[string]any{"id": gale, "board_id": w.harbour, "type": "element",
+			"text": paragraph("The storm came, the storms rolled in, and the stormy lantern swung."), "position": pos}),
+	)
+	if got := searchIDs(t, h, w.owner, w.project, "storm", 50); len(got) != 5 || got[0] != squall {
+		t.Errorf("the search for storm lists %v, want 5 results, %s, whose title matches, first", got, squall)
+	}
+	got = searchIDs(t, h, w.owner, w.project, "lantern storm", 50)
+	if len(got) != 5 || got[0] != squall || !slices.Contains(got[1:3], w.lamp) || !slices.Contains(got[1:3], far) ||
+		!slices.Equal(got[3:], []string{gale, near}) {
+		t.Errorf("the search for lantern storm lists %v, want %s, whose title matches both words, then %s and %s, "+
+			"whose titles match one, then %s and %s, whose bodies match both, in the order of ts_rank", got, squall,
+			w.lamp, far, gale, near)
 	}
 }
 

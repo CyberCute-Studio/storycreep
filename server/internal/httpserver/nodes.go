@@ -228,11 +228,7 @@ func nodeError(err error) error {
 	case errors.Is(err, node.ErrNotFound), errors.Is(err, board.ErrNotFound):
 		return api.NewError(api.CodeNotFound)
 	case errors.As(err, &fields):
-		problems := make([]api.Problem, len(fields))
-		for i, f := range fields {
-			problems[i] = api.Problem{Location: "query." + f.Field, Message: f.Message}
-		}
-		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
+		return queryFieldErrors(fields)
 	}
 	return projectError(err)
 }

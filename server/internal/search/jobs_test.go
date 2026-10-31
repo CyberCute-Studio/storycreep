@@ -3,10 +3,13 @@ package search_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
@@ -144,10 +147,12 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // content that has none, in transactions of a bounded number of documents,
 // and records the project's state, after which its runs write nothing; it
 // passes over a project whose lock a batch holds, until a later run; it
-// writes again the documents that a migration marks; and it comes back to a
-// project whose state a newer version recorded once an older version's batch
-// writes a document of it. It changes how many documents a transaction
-// writes, so it runs alone.
+// writes again the documents that a migration marks; a run that stops once
+// its time runs out while it writes documents has the job run again soon; it
+// leaves alone the documents and the state of a newer version; and it comes
+// back to a project whose state a newer version recorded once an older
+// version's batch writes a document of it. It changes how many documents a
+// transaction writes, so it runs alone.
 func TestReindex(t *testing.T) {
 	ctx := context.Background()
 	u := newUnindexed(t)
@@ -200,6 +205,55 @@ func TestReindex(t *testing.T) {
 		t.Errorf("Reindex of marked documents wrote %d, %v, want %d", n, err, entities)
 	}
 	u.wantIndexed(t)
+
+	// A run of the job that stops once its time runs out while it writes
+	// documents has the job run again soon, without counting an attempt
+	// (jobs.Snooze); one that writes none, or that has the time to write
+	// them all, does not.
+	if _, err := u.admin.Exec(ctx, `UPDATE search_entry SET version = 0 WHERE project_id = $1`,
+		u.project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.admin.Exec(ctx, `DELETE FROM search_state WHERE project_id = $1`, u.project); err != nil {
+		t.Fatal(err)
+	}
+	if err := search.Work(ctx, u.db, func() bool { return false }); err != nil {
+		t.Errorf("a run without the time to write a document returned %v, want nil", err)
+	}
+	untilWritten := func() bool {
+		return u.count(t, "SELECT count(*) FROM search_entry WHERE project_id = $1 AND version > 0") == 0
+	}
+	if err := search.Work(ctx, u.db, untilWritten); !errors.As(err, new(*river.JobSnoozeError)) {
+		t.Errorf("a run whose time ran out once it wrote a transaction's documents returned %v, want a snooze", err)
+	}
+	if err := search.Work(ctx, u.db, func() bool { return true }); err != nil {
+		t.Errorf("a run with the time to write the rest returned %v, want nil", err)
+	}
+	u.wantIndexed(t)
+
+	// The documents and the state of a newer version, which a newer server
+	// writes while a rolling upgrade replaces this one, are this version's
+	// job's to leave alone, rather than to write again of its own.
+	for _, s := range []string{`UPDATE search_entry SET version = version + 1 WHERE project_id = $1`,
+		`UPDATE search_state SET version = version + 1 WHERE project_id = $1`} {
+		if _, err := u.admin.Exec(ctx, s, u.project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {
+		t.Errorf("Reindex of a newer version's documents wrote %d, %v, want none", n, err)
+	}
+	if got := u.count(t, fmt.Sprintf(`SELECT (SELECT count(*) FROM search_entry WHERE project_id = $1
+		AND version = %[1]d) + (SELECT count(*) FROM search_state WHERE project_id = $1 AND version = %[1]d)`,
+		search.Version+1)); got != entities+1 {
+		t.Errorf("after Reindex, %d documents and states are of the newer version, want all %d", got, entities+1)
+	}
+	for _, s := range []string{`UPDATE search_entry SET version = version - 1 WHERE project_id = $1`,
+		`UPDATE search_state SET version = version - 1 WHERE project_id = $1`} {
+		if _, err := u.admin.Exec(ctx, s, u.project); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// A batch of a version of the server older than the one that recorded
 	// the project's state, as a replica that a rolling upgrade has yet to

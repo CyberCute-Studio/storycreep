@@ -290,10 +290,18 @@ func slugInvalidError(slug *workspace.SlugError, location string) *api.Error {
 
 // fieldErrors returns the error that the API answers fields of a request's
 // body with.
-func fieldErrors(fields input.FieldErrors) *api.Error {
+func fieldErrors(fields input.FieldErrors) *api.Error { return fieldErrorsIn("body", fields) }
+
+// queryFieldErrors returns the error that the API answers fields of a
+// request's query with, each a parameter of the query.
+func queryFieldErrors(fields input.FieldErrors) *api.Error { return fieldErrorsIn("query", fields) }
+
+// fieldErrorsIn returns the error that the API answers fields of the part
+// in of a request with, each at in and the field's name.
+func fieldErrorsIn(in string, fields input.FieldErrors) *api.Error {
 	problems := make([]api.Problem, len(fields))
 	for i, f := range fields {
-		problems[i] = api.Problem{Location: "body." + f.Field, Message: f.Message}
+		problems[i] = api.Problem{Location: in + "." + f.Field, Message: f.Message}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

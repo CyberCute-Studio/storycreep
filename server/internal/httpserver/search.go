@@ -109,11 +109,7 @@ func searchCursor(cursor string) (search.Key, error) {
 func searchError(err error) error {
 	var fields input.FieldErrors
 	if errors.As(err, &fields) {
-		problems := make([]api.Problem, len(fields))
-		for i, f := range fields {
-			problems[i] = api.Problem{Location: "query." + f.Field, Message: f.Message}
-		}
-		return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
+		return queryFieldErrors(fields)
 	}
 	return projectError(err)
 }
