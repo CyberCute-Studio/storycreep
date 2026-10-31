@@ -1225,6 +1225,19 @@ export interface ConnectionUpdatePayload {
   on_traverse?: string;
 }
 
+export interface Contribution {
+  /** The ID of the definition of the attribute of a contribution to an edge of the kind attribute, which is the component's attribute of that definition */
+  attribute_id?: string;
+  /** The ID of the component of the attribute of a contribution to an edge of the kind attribute */
+  component_id?: string;
+  /** The end of the contribution on the board that the edge leaves: the site that writes the variable or the attribute, the jumper, or the node visited */
+  from: End;
+  /** The end of the contribution on the board that the edge enters: the site that reads the variable or the attribute, the jumper's target, or the expression that reads whether the node was visited */
+  to: End;
+  /** The ID of the variable of a contribution to an edge of the kind variable */
+  variable_id?: string;
+}
+
 export interface Counts {
   /** How many errors the report holds, which block publishing (PRD FR-DEP-04). No error is ever muted. */
   errors: number;
@@ -1291,6 +1304,30 @@ export interface CreatedAPITokenBody {
   user_id: string;
   /** The ID of the workspace that the token belongs to, and acts in alone */
   workspace_id: string;
+}
+
+export interface Edge {
+  /** How many contributions the edge has that the filters keep, which its list of contributions lists: of variable and attribute, the triples of the variable or the attribute, a site that writes it, and a site that reads it; of jumper, the jumpers; and of visit, the pairs of the node visited and the expression that reads it */
+  contributions: number;
+  /** The ID of the board that the edge leaves, which the board that it enters depends on */
+  from_board_id: string;
+  /** What the edge's contributions are: of variable, a variable that a site of the board that it leaves writes and a site of the board that it enters reads; of attribute, a component's attribute, so; of jumper, a jumper of the one whose target is a node of the other; of visit, a node of the one that an expression of the other reads whether it was visited, by visited() or visits() */
+  kind: "variable" | "attribute" | "jumper" | "visit";
+  /** The ID of the board that the edge enters, another */
+  to_board_id: string;
+}
+
+export interface End {
+  /** The ID of the output of a branch output's condition */
+  branch_output_id?: string;
+  /** The ID of the connection of a connection's condition, on-traverse script, or label */
+  connection_id?: string;
+  /** The ID of the end's node: the node itself, the node of its script or its text, the node that its connection leaves, or its output's branch */
+  node_id: string;
+  /** The title of the end's node, which may be empty */
+  node_title: string;
+  /** What the end is: a node itself, a jumper, its target, or the node visited; a node's on-enter or on-exit script, or its text; a connection's condition, its on-traverse script, or its label; or a branch output's condition */
+  site: "node" | "node_on_enter" | "node_on_exit" | "node_text" | "connection_condition" | "connection_on_traverse" | "connection_label" | "branch_output_condition";
 }
 
 export interface EntityRevisionBody {
@@ -1486,6 +1523,26 @@ export interface GrantBody {
   updated_at: string;
   /** The ID of the member's account */
   user_id: string;
+}
+
+export interface Graph {
+  /** The project's boards that are not in its trash, the graph's nodes, every one whether an edge leaves it or enters it or not, in the order of their IDs */
+  boards: Array<GraphBoard>;
+  /** The edges that the filters keep, in the order of the IDs of the boards that they leave, then of those that they enter, and then of their kinds, as the enum of kind lists them. No edge joins a board to itself. */
+  edges: Array<Edge>;
+  /** The project's operation sequence as of the draft that the graph was read of, the seq of the last batch that it holds */
+  seq: number;
+}
+
+export interface GraphBoard {
+  /** The board's ID */
+  id: string;
+  /** How many other boards the board depends on: those that an edge that the filters keep leaves for it, each once, whatever the kinds of the edges */
+  inbound: number;
+  /** The board's name */
+  name: string;
+  /** How many other boards depend on the board: those that an edge that the filters keep enters from it, each once, whatever the kinds of the edges */
+  outbound: number;
 }
 
 export interface InstanceBody {
@@ -1865,6 +1922,12 @@ export interface PageComponentType {
 
 export interface PageConnection {
   items: Array<Connection>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageContribution {
+  items: Array<Contribution>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -3336,6 +3399,34 @@ export interface Operations {
       200: Connection;
     };
   };
+  /**
+   * Get the dependencies between a project's boards
+   *
+   * Returns the graph of the dependencies between the project's boards (PRD FR-DEP-02), as of one moment: its boards that are not in its trash, each with how many other boards it depends on and how many depend on it, which its badge shows, whatever the kinds of the edges between them, and its edges, each from the board that another depends on to that other board, with its kind and how many contributions it has, which GET /api/v1/projects/{project_id}/dependencies/{from_board_id}/{to_board_id} lists. An edge of the kind variable or attribute leaves a board that writes a variable, or a component's attribute, for another board that reads it; one of the kind jumper leaves a board that has a jumper for another that its target is on; and one of the kind visit leaves a board for another one of whose expressions reads whether a node of the first was visited, by visited() or visits(), as playing the first changes what the other allows. A component's attribute is the pair of the component and its definition, so that a board that writes elara.trust and another that reads mira.trust have no edge between them. The edges are those of the sites, the nodes, and the boards that are not in the project's trash, and none joins a board to itself, as a dependency within a board is none between boards. Each filter keeps the contributions that it names, and so the edges that have any, and filters that name nothing in common keep nothing; a filter by an ID that the project does not have keeps nothing either. The badges count the edges that the filters keep, and each edge the contributions that they keep, and every board is listed whatever they keep. The graph is one document, which the server computes anew for each request, rather than a list of pages, so that its boards, its edges, and their counts are all of one state of the draft, which its seq names. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getDependencyGraph: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The ID of an attribute's definition: only the contributions of the attributes of that definition, of any component, are kept, and so only the edges of the kind attribute that they contribute to */
+        attribute_id?: string;
+        /** The ID of a board: only the edges that leave it or enter it are kept, and every board is still listed */
+        board_id?: string;
+        /** The ID of a component: only the contributions of its attributes are kept, and so only the edges of the kind attribute that they contribute to */
+        component_id?: string;
+        /** A kind of edge: only the edges of that kind are kept. Without it, those of every kind. */
+        kind?: "variable" | "attribute" | "jumper" | "visit";
+        /** The ID of a variable: only its contributions are kept, and so only the edges of the kind variable that it contributes to */
+        variable_id?: string;
+      };
+    };
+    responses: {
+      200: Graph;
+    };
+  };
   /** Report that the process is alive */
   getHealth: {
     input: Record<string, never>;
@@ -3695,6 +3786,40 @@ export interface Operations {
     };
     responses: {
       200: PageSummary;
+    };
+  };
+  /**
+   * List the contributions to an edge between two boards
+   *
+   * Lists the contributions to the edge of the kind from the board from_board_id to the board to_board_id, which the filters keep, as the graph of GET /api/v1/projects/{project_id}/dependencies counts them (PRD FR-DEP-02 AC2): of variable and attribute, the triples of a variable, or a component's attribute, a site of the board that the edge leaves that writes it, and a site of the board that it enters that reads it, each such pair of sites once; of jumper, the jumpers of the one whose targets are nodes of the other, each with its target; and of visit, the pairs of a node of the one and an expression of the other that reads whether it was visited. Each end of a contribution names its site, or the node itself, and its node, by which a client opens it, as a usage does: a node's script or text is of the node, a connection's condition, script, or label of the node that the connection leaves, and an output's condition of its branch. The contributions are in the order of their variables, or their components and their attributes' definitions, or the nodes visited, and then of the nodes and the sites of their ends, the one on the board that the edge leaves first, and a jumper's in the order of the jumpers. An edge of the kind variable or attribute leaves a board that writes a variable, or a component's attribute, for another board that reads it; one of the kind jumper leaves a board that has a jumper for another that its target is on; and one of the kind visit leaves a board for another one of whose expressions reads whether a node of the first was visited, by visited() or visits(), as playing the first changes what the other allows. A component's attribute is the pair of the component and its definition, so that a board that writes elara.trust and another that reads mira.trust have no edge between them. The edges are those of the sites, the nodes, and the boards that are not in the project's trash, and none joins a board to itself, as a dependency within a board is none between boards. Each filter keeps the contributions that it names, and so the edges that have any, and filters that name nothing in common keep nothing; a filter by an ID that the project does not have keeps nothing either. The list of a board to itself is empty. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listDependencyContributions: {
+    input: {
+      path: {
+        /** The ID of the board that the edge leaves, which the other depends on */
+        from_board_id: string;
+        /** The project's ID */
+        project_id: string;
+        /** The ID of the board that the edge enters */
+        to_board_id: string;
+      };
+      query: {
+        /** The ID of an attribute's definition: only the contributions of the attributes of that definition, of any component, are listed, which only an edge of the kind attribute has */
+        attribute_id?: string;
+        /** The ID of a component: only the contributions of its attributes are listed, which only an edge of the kind attribute has */
+        component_id?: string;
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** The edge's kind, whose contributions the list holds */
+        kind: "variable" | "attribute" | "jumper" | "visit";
+        /** How many items the page holds at most */
+        limit?: number;
+        /** The ID of a variable: only its contributions are listed, which only an edge of the kind variable has */
+        variable_id?: string;
+      };
+    };
+    responses: {
+      200: PageContribution;
     };
   };
   /**
@@ -4595,6 +4720,7 @@ export const routes = {
   getComponent: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}" },
   getComponentType: { method: "GET", path: "/api/v1/projects/{project_id}/component-types/{component_type_id}" },
   getConnection: { method: "GET", path: "/api/v1/projects/{project_id}/connections/{connection_id}" },
+  getDependencyGraph: { method: "GET", path: "/api/v1/projects/{project_id}/dependencies" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
@@ -4616,6 +4742,7 @@ export const routes = {
   listComponentTypes: { method: "GET", path: "/api/v1/projects/{project_id}/component-types" },
   listComponentUsages: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/usages" },
   listComponents: { method: "GET", path: "/api/v1/projects/{project_id}/components" },
+  listDependencyContributions: { method: "GET", path: "/api/v1/projects/{project_id}/dependencies/{from_board_id}/{to_board_id}" },
   listFolders: { method: "GET", path: "/api/v1/projects/{project_id}/folders" },
   listInvites: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/invites" },
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
