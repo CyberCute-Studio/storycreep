@@ -189,6 +189,49 @@ func BenchmarkUsages(b *testing.B) {
 	}
 }
 
+// validationTarget is NFR-PERF-10's target, the validation of the large
+// fixture's project, server-side, which is FR-DEP-03 AC2's of a project of
+// 5,000 nodes, the large fixture's half.
+const validationTarget = 3 * time.Second
+
+// BenchmarkValidation times the validation of the large fixture's project,
+// as a client reads its report, and checks the p95 against its target.
+//
+// Verifies: NFR-PERF-10, FR-DEP-03/AC2
+func BenchmarkValidation(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	path := validationPath(bs.project)
+	var took []time.Duration
+	var last response
+	for b.Loop() {
+		start := time.Now()
+		last = send(bs.s.main, http.MethodGet, path, nil, "", bs.header)
+		took = append(took, time.Since(start))
+		if last.status != http.StatusOK {
+			b.Fatalf("%s: %d %s", path, last.status, last.body)
+		}
+	}
+	var report struct {
+		Counts   map[string]int `json:"counts"`
+		Findings []struct {
+			Code string `json:"code"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(last.body, &report); err != nil {
+		b.Fatal(err)
+	}
+	codes := map[string]int{}
+	for _, f := range report.Findings {
+		codes[f.Code]++
+	}
+	b.Logf("the report is %d bytes, of %v, by code %v", len(last.body), report.Counts, codes)
+	p95 := percentile(took, 95)
+	b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+	if p95 >= validationTarget {
+		b.Errorf("the p95 of the validation is %v, want under %v (NFR-PERF-10, FR-DEP-03 AC2)", p95, validationTarget)
+	}
+}
+
 // benchServer is a server with a project of a fixture, which its owner,
 // signed in, edits.
 type benchServer struct {

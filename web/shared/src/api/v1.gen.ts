@@ -633,7 +633,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -1225,6 +1225,17 @@ export interface ConnectionUpdatePayload {
   on_traverse?: string;
 }
 
+export interface Counts {
+  /** How many errors the report holds, which block publishing (PRD FR-DEP-04). No error is ever muted. */
+  errors: number;
+  /** How many infos the report holds that are not muted */
+  infos: number;
+  /** How many findings the report holds that are muted, warnings and infos */
+  muted: number;
+  /** How many warnings the report holds that are not muted */
+  warnings: number;
+}
+
 export interface CreateInviteBody {
   /** The email address to invite, which the account that accepts the invitation must have, in any case. Without it, the invitation is a link invitation, which whoever holds its link may accept, with any account. */
   email?: string;
@@ -1315,6 +1326,29 @@ export interface Expression {
   is_valid: boolean;
   /** The expression's source, as its author wrote it (PRD §5.8) */
   source: string;
+}
+
+export interface Finding {
+  /** The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none. */
+  board_id?: string;
+  /** The code of the rule that found it (PRD FR-DEP-03) */
+  code: "expr_invalid" | "ref_dangling" | "jumper_broken" | "jumper_invalid" | "branch_no_outputs" | "port_unconnected" | "var_read_never_written" | "var_written_never_read" | "node_unreachable" | "node_empty" | "choice_duplicate_label" | "dead_end" | "speaker_missing" | "board_entry_missing" | "connection_self" | "connection_parallel";
+  /** The ID of the entity that the finding is about, by which a client opens its editor, and which a mute names */
+  entity_id: string;
+  /** The type of the entity that the finding is about: an expression's or a text's owner, what holds a dangling reference, or what the rule is about */
+  entity_type: "project" | "board" | "node" | "branch_output" | "connection" | "variable" | "component";
+  /** The field of the entity that the finding is about, if it is about one: the expression of expr_invalid; the text, the speaker, the board's entry node, or the project's entry of ref_dangling; or a jumper's target */
+  field?: "on_enter" | "on_exit" | "condition" | "on_traverse" | "text" | "label" | "description" | "speaker_component_id" | "entry_node_id" | "entry" | "target";
+  /** What is wrong, in the request's locale */
+  message: string;
+  /** The finding's mute, which a muted finding has, and no other */
+  mute?: Mute;
+  /** The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch */
+  node_id?: string;
+  /** The rule's severity: an error blocks publishing, a warning needs an acknowledgement to publish, and an info neither */
+  severity: "error" | "warning" | "info";
+  /** What else the finding names: what a dangling reference refers to, a jumper's target, or the earlier connection that a choice or a connection repeats */
+  target?: Target;
 }
 
 export interface Folder {
@@ -1565,6 +1599,15 @@ export interface MembershipBody {
 export interface MeteredUsageBody {
   /** How much the workspace uses */
   used: number;
+}
+
+export interface Mute {
+  /** When it was muted last, with its reason */
+  muted_at: string;
+  /** The ID of the user who muted it last, with its reason, whom it no longer names once their account is deleted */
+  muted_by?: string;
+  /** Why the finding is muted, as its author wrote it */
+  reason: string;
 }
 
 export interface Node {
@@ -2191,6 +2234,17 @@ export interface RenamedName {
   to: string;
 }
 
+export interface Report {
+  /** How many findings the report holds of each severity, of those that are not muted, and how many are muted */
+  counts: Counts;
+  /** The findings that are not muted: the errors, then the warnings, then the infos, each severity's in the order of the rules' codes, as PRD FR-DEP-03 lists them, and each code's in the order of their boards, their nodes, their entities, their fields, and what they name */
+  findings: Array<Finding>;
+  /** The findings that are muted, each with its mute, in the order of findings. Only a warning or an info is ever muted. */
+  muted: Array<Finding>;
+  /** The project's operation sequence as of the draft that the report validated, the seq of the last batch that it holds, which publishing names as the state that its author validated (PRD FR-DEP-04) */
+  seq: number;
+}
+
 export interface ResetPasswordBody {
   /** The new password: at least 12 characters, and not one of the most common passwords, or the answer is weak_password */
   new_password: string;
@@ -2460,6 +2514,15 @@ export interface TagsBody {
   items: Array<Tag>;
 }
 
+export interface Target {
+  /** The ID of an attribute's definition */
+  attribute_id?: string;
+  /** Its ID: an attribute's is its component's */
+  id: string;
+  /** The type of what the finding names: an attribute is a component's, by the component and the attribute's definition */
+  type: "board" | "node" | "connection" | "variable" | "component" | "attribute";
+}
+
 export interface TrashItemBody {
   /** When the entity was deleted to the trash */
   deleted_at: string;
@@ -2562,6 +2625,46 @@ export interface UsageBody {
   snapshots: MeteredUsageBody;
   /** The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together. */
   storage_bytes: LimitUsageBody;
+}
+
+/** A command of the type validation.mute. */
+export interface ValidationMuteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ValidationMutePayload;
+  /** The command's type. */
+  type: "validation.mute";
+}
+
+/** The payload of a command of the type validation.mute. */
+export interface ValidationMutePayload {
+  /** The code that the mute silences on its owner, a warning's or an info's about the owner's type, as PRD FR-DEP-03 lists them: node_unreachable, node_empty, dead_end, or speaker_missing of a node; choice_duplicate_label, connection_self, or connection_parallel of a connection; port_unconnected of a branch output; var_read_never_written or var_written_never_read of a variable; or board_entry_missing of a board. An error is never muted. */
+  code: "port_unconnected" | "var_read_never_written" | "var_written_never_read" | "node_unreachable" | "node_empty" | "choice_duplicate_label" | "dead_end" | "speaker_missing" | "board_entry_missing" | "connection_self" | "connection_parallel";
+  /** The ID of the entity whose finding the mute silences, its owner: a node, a connection, a branch output, a variable, or a board of the project, not in its trash */
+  entity_id: string;
+  /** Why the finding is muted, of 1 to 500 characters, not all of them blank, without white space around it, with its line breaks written as line feeds, and without control characters among it but line feeds and tabs */
+  reason: string;
+}
+
+/** A command of the type validation.unmute. */
+export interface ValidationUnmuteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ValidationUnmutePayload;
+  /** The command's type. */
+  type: "validation.unmute";
+}
+
+/** The payload of a command of the type validation.unmute. */
+export interface ValidationUnmutePayload {
+  /** The code that the mute silences on its owner, as validation.mute names it. Unmuting a code that the owner has no mute of changes nothing. */
+  code: "port_unconnected" | "var_read_never_written" | "var_written_never_read" | "node_unreachable" | "node_empty" | "choice_duplicate_label" | "dead_end" | "speaker_missing" | "board_entry_missing" | "connection_self" | "connection_parallel";
+  /** The ID of the mute's owner: a node, a connection, a branch output, a variable, or a board of the project, not in its trash */
+  entity_id: string;
 }
 
 export interface Variable {
@@ -4441,6 +4544,22 @@ export interface Operations {
     };
   };
   /**
+   * Validate a project
+   *
+   * Validates the project's draft, as of one moment, and answers with its report (PRD FR-DEP-03): every finding of the rules, each with its code, its severity, a message in the request's locale, and the entity that it is about, with its board and its node, by which a client opens its editor (AC3). An error blocks publishing (PRD FR-DEP-04), a warning needs an acknowledgement to publish, and an info neither. A warning or an info may be muted on its entity, with a reason, by the commands validation.mute and validation.unmute, and a muted finding is listed apart, in muted, with its mute (AC4); an error is never muted. The report is one document, which the server computes anew for each request, rather than a list of pages, so that its findings are all of one state of the draft, which its seq names, as publishing stores it. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  validateProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Report;
+    };
+  };
+  /**
    * Verify an email address with a link
    *
    * Records that the email address of the account of a link that verifies it is verified, and uses the link, which works once, and only while the address is still the account's. Where the instance requires a verified address before a workspace can be created, as hosted mode does, it also gives the account its personal workspace, if it has had none; should that fail, the answer is still 204, because the address is verified, and the account's next sign-in gives the workspace. A token that does not exist, of another kind of link, or of an account that can no longer use it, is answered with 400 token_invalid, a link that has been used with 400 token_used, and one that has expired with 400 token_expired. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -4538,5 +4657,6 @@ export const routes = {
   updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
   uploadAsset: { method: "POST", path: "/api/v1/projects/{project_id}/assets" },
+  validateProject: { method: "GET", path: "/api/v1/projects/{project_id}/validation" },
   verifyEmail: { method: "POST", path: "/api/v1/auth/verify-email" },
 } as const satisfies Record<keyof Operations, { method: string; path: string; blob?: true }>;

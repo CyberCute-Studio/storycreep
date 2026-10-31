@@ -224,10 +224,10 @@ func textUse(typ, ref, attribute string) (Use, error) {
 	return u, nil
 }
 
-// inlineUse returns the use of a text's inline node, a mention or a value
+// InlineUse returns the use of a text's inline node, a mention or a value
 // reference, as its JSON, which TextReferences reads of the stored text,
-// holds it.
-func inlineUse(raw []byte) (Use, error) {
+// holds it, as package validation reads the texts too.
+func InlineUse(raw []byte) (Use, error) {
 	var in struct {
 		Type  string `json:"type"`
 		Attrs struct {

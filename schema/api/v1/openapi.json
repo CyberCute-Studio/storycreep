@@ -2159,6 +2159,12 @@
             "$ref": "#/components/schemas/ProjectUpdateSettingsCommand"
           },
           {
+            "$ref": "#/components/schemas/ValidationMuteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/ValidationUnmuteCommand"
+          },
+          {
             "$ref": "#/components/schemas/VariableCreateCommand"
           },
           {
@@ -3967,6 +3973,38 @@
         ],
         "type": "object"
       },
+      "Counts": {
+        "additionalProperties": false,
+        "properties": {
+          "errors": {
+            "description": "How many errors the report holds, which block publishing (PRD FR-DEP-04). No error is ever muted.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "infos": {
+            "description": "How many infos the report holds that are not muted",
+            "format": "int64",
+            "type": "integer"
+          },
+          "muted": {
+            "description": "How many findings the report holds that are muted, warnings and infos",
+            "format": "int64",
+            "type": "integer"
+          },
+          "warnings": {
+            "description": "How many warnings the report holds that are not muted",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "errors",
+          "warnings",
+          "infos",
+          "muted"
+        ],
+        "type": "object"
+      },
       "CreateInviteBody": {
         "additionalProperties": false,
         "properties": {
@@ -4230,6 +4268,104 @@
         "required": [
           "source",
           "is_valid"
+        ],
+        "type": "object"
+      },
+      "Finding": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none.",
+            "type": "string"
+          },
+          "code": {
+            "description": "The code of the rule that found it (PRD FR-DEP-03)",
+            "enum": [
+              "expr_invalid",
+              "ref_dangling",
+              "jumper_broken",
+              "jumper_invalid",
+              "branch_no_outputs",
+              "port_unconnected",
+              "var_read_never_written",
+              "var_written_never_read",
+              "node_unreachable",
+              "node_empty",
+              "choice_duplicate_label",
+              "dead_end",
+              "speaker_missing",
+              "board_entry_missing",
+              "connection_self",
+              "connection_parallel"
+            ],
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "The ID of the entity that the finding is about, by which a client opens its editor, and which a mute names",
+            "type": "string"
+          },
+          "entity_type": {
+            "description": "The type of the entity that the finding is about: an expression's or a text's owner, what holds a dangling reference, or what the rule is about",
+            "enum": [
+              "project",
+              "board",
+              "node",
+              "branch_output",
+              "connection",
+              "variable",
+              "component"
+            ],
+            "type": "string"
+          },
+          "field": {
+            "description": "The field of the entity that the finding is about, if it is about one: the expression of expr_invalid; the text, the speaker, the board's entry node, or the project's entry of ref_dangling; or a jumper's target",
+            "enum": [
+              "on_enter",
+              "on_exit",
+              "condition",
+              "on_traverse",
+              "text",
+              "label",
+              "description",
+              "speaker_component_id",
+              "entry_node_id",
+              "entry",
+              "target"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "description": "What is wrong, in the request's locale",
+            "type": "string"
+          },
+          "mute": {
+            "$ref": "#/components/schemas/Mute",
+            "description": "The finding's mute, which a muted finding has, and no other"
+          },
+          "node_id": {
+            "description": "The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch",
+            "type": "string"
+          },
+          "severity": {
+            "description": "The rule's severity: an error blocks publishing, a warning needs an acknowledgement to publish, and an info neither",
+            "enum": [
+              "error",
+              "warning",
+              "info"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Target",
+            "description": "What else the finding names: what a dangling reference refers to, a jumper's target, or the earlier connection that a choice or a connection repeats"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message",
+          "entity_type",
+          "entity_id"
         ],
         "type": "object"
       },
@@ -4973,6 +5109,29 @@
         },
         "required": [
           "used"
+        ],
+        "type": "object"
+      },
+      "Mute": {
+        "additionalProperties": false,
+        "properties": {
+          "muted_at": {
+            "description": "When it was muted last, with its reason",
+            "format": "date-time",
+            "type": "string"
+          },
+          "muted_by": {
+            "description": "The ID of the user who muted it last, with its reason, whom it no longer names once their account is deleted",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the finding is muted, as its author wrote it",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "muted_at"
         ],
         "type": "object"
       },
@@ -6898,6 +7057,41 @@
         ],
         "type": "object"
       },
+      "Report": {
+        "additionalProperties": false,
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/Counts",
+            "description": "How many findings the report holds of each severity, of those that are not muted, and how many are muted"
+          },
+          "findings": {
+            "description": "The findings that are not muted: the errors, then the warnings, then the infos, each severity's in the order of the rules' codes, as PRD FR-DEP-03 lists them, and each code's in the order of their boards, their nodes, their entities, their fields, and what they name",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "type": "array"
+          },
+          "muted": {
+            "description": "The findings that are muted, each with its mute, in the order of findings. Only a warning or an info is ever muted.",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "description": "The project's operation sequence as of the draft that the report validated, the seq of the last batch that it holds, which publishing names as the state that its author validated (PRD FR-DEP-04)",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "counts",
+          "findings",
+          "muted"
+        ],
+        "type": "object"
+      },
       "ResetPasswordBody": {
         "additionalProperties": false,
         "properties": {
@@ -7726,6 +7920,36 @@
         ],
         "type": "object"
       },
+      "Target": {
+        "additionalProperties": false,
+        "properties": {
+          "attribute_id": {
+            "description": "The ID of an attribute's definition",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its ID: an attribute's is its component's",
+            "type": "string"
+          },
+          "type": {
+            "description": "The type of what the finding names: an attribute is a component's, by the component and the attribute's definition",
+            "enum": [
+              "board",
+              "node",
+              "connection",
+              "variable",
+              "component",
+              "attribute"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "type": "object"
+      },
       "TrashItemBody": {
         "additionalProperties": false,
         "properties": {
@@ -8002,6 +8226,149 @@
           "storage_bytes",
           "snapshots",
           "api_requests"
+        ],
+        "type": "object"
+      },
+      "ValidationMuteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type validation.mute.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ValidationMutePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "validation.mute"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ValidationMutePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type validation.mute.",
+        "properties": {
+          "code": {
+            "description": "The code that the mute silences on its owner, a warning's or an info's about the owner's type, as PRD FR-DEP-03 lists them: node_unreachable, node_empty, dead_end, or speaker_missing of a node; choice_duplicate_label, connection_self, or connection_parallel of a connection; port_unconnected of a branch output; var_read_never_written or var_written_never_read of a variable; or board_entry_missing of a board. An error is never muted.",
+            "enum": [
+              "port_unconnected",
+              "var_read_never_written",
+              "var_written_never_read",
+              "node_unreachable",
+              "node_empty",
+              "choice_duplicate_label",
+              "dead_end",
+              "speaker_missing",
+              "board_entry_missing",
+              "connection_self",
+              "connection_parallel"
+            ],
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "The ID of the entity whose finding the mute silences, its owner: a node, a connection, a branch output, a variable, or a board of the project, not in its trash",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the finding is muted, of 1 to 500 characters, not all of them blank, without white space around it, with its line breaks written as line feeds, and without control characters among it but line feeds and tabs",
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "code",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ValidationUnmuteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type validation.unmute.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ValidationUnmutePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "validation.unmute"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ValidationUnmutePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type validation.unmute.",
+        "properties": {
+          "code": {
+            "description": "The code that the mute silences on its owner, as validation.mute names it. Unmuting a code that the owner has no mute of changes nothing.",
+            "enum": [
+              "port_unconnected",
+              "var_read_never_written",
+              "var_written_never_read",
+              "node_unreachable",
+              "node_empty",
+              "choice_duplicate_label",
+              "dead_end",
+              "speaker_missing",
+              "board_entry_missing",
+              "connection_self",
+              "connection_parallel"
+            ],
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "The ID of the mute's owner: a node, a connection, a branch output, a variable, or a board of the project, not in its trash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "code"
         ],
         "type": "object"
       },
@@ -15804,6 +16171,123 @@
         "summary": "Unarchive a project",
         "tags": [
           "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/validation": {
+      "get": {
+        "description": "Validates the project's draft, as of one moment, and answers with its report (PRD FR-DEP-03): every finding of the rules, each with its code, its severity, a message in the request's locale, and the entity that it is about, with its board and its node, by which a client opens its editor (AC3). An error blocks publishing (PRD FR-DEP-04), a warning needs an acknowledgement to publish, and an info neither. A warning or an info may be muted on its entity, with a reason, by the commands validation.mute and validation.unmute, and a muted finding is listed apart, in muted, with its mute (AC4); an error is never muted. The report is one document, which the server computes anew for each request, rather than a list of pages, so that its findings are all of one state of the draft, which its seq names, as publishing stores it. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "validateProject",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the report's messages, as a BCP 47 tag, such as en: the request's locale, or English for a message that its catalog lacks, the languages listed when they are several",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "Vary": {
+                "schema": {
+                  "description": "Accept-Language, as the report's messages are in the language that it chose",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Validate a project",
+        "tags": [
+          "Validation"
         ]
       }
     },

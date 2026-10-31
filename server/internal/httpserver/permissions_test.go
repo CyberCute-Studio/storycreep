@@ -443,6 +443,10 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, projectTrashPath(f.project(t, "")), nil, si.header(false))
 				}},
+			{name: "validate a project", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, validationPath(f.project(t, "")), nil, si.header(false))
+				}},
 			{name: "list a project's variables", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, variablesPath(f.project(t, "")), nil, si.header(false))
@@ -648,6 +652,20 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "connection.restore", Payload: map[string]string{"id": f.deletedConnection(t, p)}}),
 						si.header(true))
+				}},
+			{name: "mute a finding of the validation", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "validation.mute", Payload: map[string]string{"entity_id": f.node(t, p), "code": "dead_end",
+							"reason": "The scene ends here"}}), si.header(true))
+				}},
+			{name: "unmute a finding of the validation", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "validation.unmute", Payload: map[string]string{"entity_id": f.node(t, p),
+							"code": "dead_end"}}), si.header(true))
 				}},
 		},
 	},

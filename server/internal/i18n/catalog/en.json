@@ -84,5 +84,21 @@
   "error.weak_password": "The password is too weak.",
   "error.weak_password.common": "The password is one of the most common passwords.",
   "error.weak_password.too_short": "The password must have at least {min} characters.",
-  "error.wrong_password": "The current password is wrong."
+  "error.wrong_password": "The current password is wrong.",
+  "validation.board_entry_missing": "This board has no entry node, and {roots, plural, other {# nodes}} where the flow could start, which no connection enters. Mark one as its entry.",
+  "validation.branch_no_outputs": "This branch has no outputs, so the flow always ends here.",
+  "validation.choice_duplicate_label": "An earlier choice of this node has the same label, and their conditions may both hold, so the player sees the same choice twice.",
+  "validation.connection_parallel": "An earlier connection leaves the same port for the same node.",
+  "validation.connection_self": "This connection leads back to the node that it leaves.",
+  "validation.dead_end": "No connection leaves this element, and it is not marked as an ending, so the flow stops here.",
+  "validation.expr_invalid": "This expression does not compile ({error}), so it is kept but does nothing until it is fixed.",
+  "validation.jumper_broken": "{reason, select, none {This jumper has no target.} other {This jumper's target was deleted.}}",
+  "validation.jumper_invalid": "{reason, select, target {This jumper leads to another jumper, which a jumper may not.} other {Connections leave this jumper, which a jumper may not have.}}",
+  "validation.node_empty": "This element has no text, and no connection leaves it.",
+  "validation.node_unreachable": "The flow never reaches this node from the entry of any board, whatever the conditions.",
+  "validation.port_unconnected": "No connection leaves this output, so the flow ends here when the branch picks it.",
+  "validation.ref_dangling": "{reason, select, scope {This shows a variable of another board, which only that board can read.} runtime {This shows a component's attribute that is not runtime, which the game's state does not hold.} other {This refers to {target, select, variable {a variable} attribute {a component's attribute} component {a component} node {a node} board {a board} other {something}} that was deleted, or that does not exist.}}",
+  "validation.speaker_missing": "This line of dialogue has no speaker.",
+  "validation.var_read_never_written": "The variable {key} is read, but nothing assigns it, so it always holds its default.",
+  "validation.var_written_never_read": "The variable {key} is assigned, but nothing reads it."
 }

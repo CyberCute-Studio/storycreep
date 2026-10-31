@@ -78,6 +78,8 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview"}: scope.ProjectRead,
 	// So is its trash, from which its commands restore what it holds.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
+	// So is its validation, whose findings its commands mute.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/validation"}: scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

@@ -26,6 +26,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
@@ -889,6 +890,7 @@ func TestNeutral(t *testing.T) {
 	node.Register(reg)
 	connection.Register(reg)
 	expression.Register(reg)
+	validation.Register(reg)
 	for _, typ := range append(slices.Clone(expression.Neutral), expression.Rewriting...) {
 		if !slices.Contains(reg.Types(), typ) {
 			t.Errorf("the derivation passes over %s, which is not a registered type of command", typ)

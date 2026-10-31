@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
@@ -213,6 +214,7 @@ func TestTextNeutral(t *testing.T) {
 	connection.Register(r)
 	expression.Register(r)
 	dependency.Register(r)
+	validation.Register(r)
 	types := r.Types()
 	for _, typ := range dependency.TextNeutral() {
 		if !slices.Contains(types, typ) && typ != commands.Type(expression.Name) {
