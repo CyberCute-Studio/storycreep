@@ -551,7 +551,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** each rule has a positive and a negative fixture, validation of `large` takes under 3 s, which a benchmark of item 45's suite reports (NFR-PERF-10), a jumper left dangling by a board deletion is a validation error (FR-PROJ-02 AC2), and a dangling value reference in text, seeded directly in the database, is a validation error (FR-TEXT-02 AC2).
 
 ### 49. Cross-board dependency graph API
-**Status:** todo · **Depends on:** 46
+**Status:** done ([#59](https://github.com/CyberCute-Studio/storycreep/pull/59)) · **Depends on:** 46
 **PRD:** FR-DEP-02 (server: AC2, AC5), FR-DEP-01 (AC4 no-edge half)
 - Edges of four kinds, variable, attribute, jumper, and `visit`, of the content outside the trash and none from a board to itself, read of the index and the jumpers by package `server/internal/dependency` (`Graph`, `Contributions`), with each board's inbound and outbound counts (N56).
 - `GET …/dependencies`, which answers with one document of the boards, the edges, and the project's `seq`, not a paged list, and `GET …/dependencies/{from_board_id}/{to_board_id}?kind=…`, an edge's contributing triples, jumpers, and pairs, cursor-paged. Filters by kind, board, variable, component, and attribute definition (N56).
