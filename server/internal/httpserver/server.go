@@ -45,6 +45,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
@@ -402,6 +403,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	usage.RegisterJobs(r)
 	project.RegisterJobs(r)
 	trash.RegisterJobs(r)
+	search.RegisterJobs(r)
 	commands.RegisterJobs(r)
 	s.assets.RegisterJobs(r)
 	return r

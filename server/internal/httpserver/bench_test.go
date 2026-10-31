@@ -232,6 +232,68 @@ func BenchmarkValidation(b *testing.B) {
 	}
 }
 
+// searchTarget is NFR-PERF-09's target, the p95 of a project search's first
+// page, server-side, on large, which is FR-PROJ-03 AC1's of a project of
+// 5,000 nodes, the large fixture's half.
+const searchTarget = 300 * time.Millisecond
+
+// searchQueries are the queries of BenchmarkSearch, each the first page of
+// its results, of the default size, as a client reads it: a word that most
+// of the fixture's texts hold, which ranks the most documents; the start of
+// several of its words; two words that many texts hold both of; a noun of
+// its titles and keys; a cast member's name, which few documents hold; and a
+// word of every kind's, filtered to nodes.
+var searchQueries = []struct{ name, q, kind string }{
+	{"common_word", "the", ""},
+	{"prefix", "lan", ""},
+	{"two_words", "storm harbour", ""},
+	{"noun", "compass", ""},
+	{"name", "elara", ""},
+	{"nodes", "lantern", "node"},
+}
+
+// BenchmarkSearch times the searches of the large fixture's project, each
+// the first page of its results, and checks the p95 of each against
+// NFR-PERF-09's target.
+//
+// Verifies: NFR-PERF-09, FR-PROJ-03/AC1
+func BenchmarkSearch(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	for _, q := range searchQueries {
+		b.Run(q.name, func(b *testing.B) {
+			var params []string
+			if q.kind != "" {
+				params = []string{"type", q.kind}
+			}
+			path := searchPath(bs.project, q.q, params...)
+			var took []time.Duration
+			var last response
+			for b.Loop() {
+				start := time.Now()
+				last = send(bs.s.main, http.MethodGet, path, nil, "", bs.header)
+				took = append(took, time.Since(start))
+				if last.status != http.StatusOK {
+					b.Fatalf("%s: %d %s", path, last.status, last.body)
+				}
+			}
+			var page struct {
+				Items []json.RawMessage `json:"items"`
+			}
+			if err := json.Unmarshal(last.body, &page); err != nil {
+				b.Fatal(err)
+			}
+			if len(page.Items) == 0 {
+				b.Errorf("the search for %q finds nothing in the fixture, so it times no ranking", q.q)
+			}
+			p95 := percentile(took, 95)
+			b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+			if p95 >= searchTarget {
+				b.Errorf("NFR-PERF-09: the p95 of the search for %q is %v, want under %v", q.q, p95, searchTarget)
+			}
+		})
+	}
+}
+
 // benchServer is a server with a project of a fixture, which its owner,
 // signed in, edits.
 type benchServer struct {

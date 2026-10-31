@@ -447,6 +447,10 @@ var permissionMatrix = []struct {
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, validationPath(f.project(t, "")), nil, si.header(false))
 				}},
+			{name: "search a project", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, searchPath(f.project(t, ""), "harbour"), nil, si.header(false))
+				}},
 			{name: "list a project's variables", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, variablesPath(f.project(t, "")), nil, si.header(false))

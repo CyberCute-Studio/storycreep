@@ -321,6 +321,32 @@ var Tables = []Table{
 			"attribute_def_id, value) VALUES ($1, $2, $3, $4, $5, '3')", []any{id, w.ID, w.Rows["project"], component,
 			w.Rows["attribute_def"]}}, nil
 	}},
+	{Name: "search_entry", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// An entity has one document, so each is of a global variable of its
+		// own, which it adds first, whose key its ID makes unique.
+		id := ids.New()
+		if _, err := admin.Exec(ctx, `INSERT INTO variable (id, workspace_id, project_id, scope, "order", key, type, `+
+			"default_value) VALUES ($1, $2, $3, 'global', 'V', $4, 'bool', 'false')", id, w.ID, w.Rows["project"],
+			"doc_"+strings.ReplaceAll(id.String(), "-", "")); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO search_entry (id, workspace_id, project_id, kind, entity_id, title, body, " +
+			"version) VALUES ($1, $2, $3, 'variable', $4, 'met_harbour', 'Whether the harbour was met', 1)",
+			[]any{row, w.ID, w.Rows["project"], id}}, nil
+	}},
+	{Name: "search_state", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A project has one state, so each is of a project of its own, which
+		// it adds first.
+		id := ids.New()
+		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", id,
+			w.ID); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO search_state (id, workspace_id, project_id, version) VALUES ($1, $2, $3, 1)",
+			[]any{row, w.ID, id}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

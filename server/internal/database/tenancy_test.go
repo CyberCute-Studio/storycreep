@@ -510,6 +510,35 @@ func TestTenancyMigrationNeedsCitextInPublic(t *testing.T) {
 	}
 }
 
+// TestSearchMigrationNeedsUnaccentInPublic checks that the migration of
+// project search refuses a database that has the unaccent extension in a
+// schema other than public, where the search configuration would not find
+// its dictionary, with an error that says how to move the extension, and
+// that it applies once the extension is moved.
+func TestSearchMigrationNeedsUnaccentInPublic(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	admin := d.Admin(t)
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA extensions; CREATE EXTENSION unaccent WITH SCHEMA extensions"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+	var merr *database.MigrationError
+	if !errors.As(err, &merr) || merr.Name != "00029_search.sql" ||
+		!strings.Contains(err.Error(), "the unaccent extension in the schema extensions") ||
+		!strings.Contains(err.Error(), "ALTER EXTENSION unaccent SET SCHEMA public") {
+		t.Fatalf("Migrate returned %v, want the search migration to refuse unaccent outside public, and say how "+
+			"to move it", err)
+	}
+	if _, err := admin.Exec(ctx, "ALTER EXTENSION unaccent SET SCHEMA public"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{}); err != nil {
+		t.Errorf("Migrate after the extension moved to public: %v", err)
+	}
+}
+
 // bootstrapFunction is a SECURITY DEFINER function as the catalog describes
 // it.
 type bootstrapFunction struct {
