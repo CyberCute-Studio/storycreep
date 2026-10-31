@@ -530,8 +530,9 @@ func TestDependencyContributionsPaged(t *testing.T) {
 		return cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection, id), "from_node_id": from,
 			"to_node_id": to, "label": richText(textInline("Trust "), attributeInline(elara, trust))})
 	}
-	d.AllowSharedUUIDs(t, "connection")
+	restore := d.AllowSharedUUIDs(t, "connection")
 	sendBatch(t, h, owner, p, label(uuidOf(t, r2), r2, r1), label(condition, r1, gate))
+	restore()
 	counts := map[string]int64{}
 	for _, e := range graphOf(t, h, owner, p, "").Edges {
 		if e.FromBoardID == a && e.ToBoardID == b {
@@ -772,7 +773,7 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	boards := newBoardIDs(2)
 	a, b := boards[0], boards[1]
 	names := map[string]string{a: "A", b: "B"}
-	d.AllowSharedUUIDs(t, "node", "connection")
+	restore := d.AllowSharedUUIDs(t, "node", "connection")
 	coins, writer, reader, after := newVariableID(), newNodeID(), newNodeID(), newNodeID()
 	// The connection's UUID is that of reader, the node that it leaves.
 	label := ids.Encode(ids.Connection, uuidOf(t, reader))
@@ -808,6 +809,7 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 		cmd("node.create", map[string]any{"id": twin, "board_id": b, "type": "element", "position": pos}),
 		cmd("node.delete", map[string]any{"id": writer}),
 	)
+	restore()
 	wantGraph(t, "the graph with writer in the trash", names, graphOf(t, h, owner, p, ""), []string{},
 		[]string{"A in 0 out 0", "B in 0 out 0"})
 	if got := contributions(t, h, owner, contributionsPath(p, a, b, "variable"), 50); len(got) != 0 {

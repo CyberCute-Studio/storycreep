@@ -247,7 +247,7 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	}
 	err = q.InsertFolder(ctx, queries.InsertFolderParams{ID: id, WorkspaceID: ws, ProjectID: project, Kind: p.Kind,
 		ParentID: parent, Name: p.Name, SortKey: order, CreatedBy: by(tx)})
-	if database.IDTaken(err, "folder") {
+	if database.IDTaken(err) {
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

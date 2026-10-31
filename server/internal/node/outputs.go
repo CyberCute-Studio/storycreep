@@ -439,7 +439,7 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 		}
 	}
 	err = q.InsertBranchOutput(ctx, params)
-	if database.IDTaken(err, "branch_output") {
+	if database.IDTaken(err) {
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

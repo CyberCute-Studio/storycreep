@@ -125,12 +125,21 @@ $$;
 -- from the table of the kind of its trigger's argument, but those that
 -- another kind holds, as one of two entities that held a UUID before this
 -- migration does. The rows of a deletion's cascades are among those of its
--- statement, so that a statement fires each table's trigger once.
+-- statement, so that a statement fires each table's trigger once. It looks
+-- each UUID up by entity_id's primary key, however many rows the statement
+-- deleted: a session keeps the plan of the function's statement, and the
+-- planner reads the size of old_rows as the session first runs it, and
+-- again only once an analysis of entity_id has it plan anew, so a join of
+-- old_rows would keep the plan made for the first statement's rows,
+-- which, after a purge of thousands, as of a project or a board, is
+-- a hash join that reads the whole of entity_id, or of the workspace's part
+-- of it, for each later statement of the session that deletes a row, as
+-- the trash's purge does while it holds its project's lock.
 -- +goose StatementBegin
 CREATE FUNCTION entity_id_delete() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-	DELETE FROM public.entity_id e USING old_rows o WHERE e.id = o.id AND e.kind = TG_ARGV[0];
+	DELETE FROM public.entity_id e WHERE e.id = ANY (ARRAY(SELECT o.id FROM old_rows o)) AND e.kind = TG_ARGV[0];
 	RETURN NULL;
 END
 $$;

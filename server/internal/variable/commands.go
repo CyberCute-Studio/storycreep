@@ -488,7 +488,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
-	if database.IDTaken(err, "variable") {
+	if database.IDTaken(err) {
 		// The ID is a variable's of a workspace or project whose rows this
 		// transaction does not see, or an entity's of another kind of the
 		// content, of any workspace or project.

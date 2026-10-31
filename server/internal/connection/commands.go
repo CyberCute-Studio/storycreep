@@ -495,7 +495,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	err = q.InsertConnection(ctx, queries.InsertConnectionParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		BoardID: from.BoardID, FromNodeID: from.ID, FromOutputID: output, ToNodeID: to.ID, SortKey: order, Label: doc,
 		CreatedBy: by(tx)})
-	if database.IDTaken(err, "connection") {
+	if database.IDTaken(err) {
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

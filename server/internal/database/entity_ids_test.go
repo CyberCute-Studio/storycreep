@@ -44,18 +44,22 @@ var notEntityIDTables = map[string]string{
 // notEntityIDTables lists with why: each of entityIDTables has the two
 // triggers that add the UUIDs of the rows that a statement inserts and
 // delete those of the rows that it deletes, of its kind, which is a kind
-// that the table's check takes, and a table of a project that is in neither
+// that the table's check takes, and a primary key named <table>_pkey, by
+// which database.IDTaken finds the table of a violation; and a table of a
+// project, plain or partitioned, with an id that a unique index holds,
+// alone or with other columns, whatever the primary key, that is in neither
 // list fails the test, so that a new table of content joins one of them.
 func TestEntityIDTables(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	admin := dbtest.New(t).Admin(t)
 	rows, err := admin.Query(ctx, `SELECT c.relname::text FROM pg_class c
-		WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
+		WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p') AND NOT c.relispartition
 			AND EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'project_id'
 				AND NOT a.attisdropped)
-			AND EXISTS (SELECT FROM pg_constraint k JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'id'
-				WHERE k.conrelid = c.oid AND k.contype = 'p' AND k.conkey = ARRAY[a.attnum])
+			AND EXISTS (SELECT FROM pg_index i JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'id'
+					AND NOT a.attisdropped
+				WHERE i.indrelid = c.oid AND i.indisunique AND a.attnum = ANY (i.indkey::smallint[]))
 		ORDER BY 1`)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +120,28 @@ func TestEntityIDTables(t *testing.T) {
 	if !slices.Equal(kinds, entityIDTables) {
 		t.Errorf("entity_id's check takes the kinds %q, want %q", kinds, entityIDTables)
 	}
+	// database.IDTaken finds the table of a violation by the name of its
+	// primary key, which PostgreSQL gives as <table>_pkey, but which a table
+	// that a migration renames keeps from its old name.
+	keyed := append([]string{"entity_id"}, entityIDTables...)
+	rows, err = admin.Query(ctx, `SELECT c.relname::text || ': ' || k.conname::text
+		FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid
+		WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY ($1::text[]) AND k.contype = 'p'
+		ORDER BY 1`, keyed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+		t.Fatal(err)
+	}
+	want = nil
+	for _, table := range keyed {
+		want = append(want, table+": "+table+"_pkey")
+	}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the primary keys of entity_id and the content's tables are %q, want %q", got, want)
+	}
 }
 
 // TestEntityIDsBackfill upgrades a database whose content's UUIDs entity_id
@@ -124,10 +150,11 @@ func TestEntityIDTables(t *testing.T) {
 // migration adds the UUID of each entity, of its kind, and the folder's of
 // the two that share one, whose kind it adds first, rather than fail; that
 // the insert of an entity of another kind of a UUID that it holds fails
-// then, on entity_id_pkey, whatever the workspace; that deleting an entity
-// frees its UUID, but deleting the component type does not free the one that
-// it shares with the folder; and that deleting the project deletes them
-// all.
+// then, on entity_id_pkey, whatever the workspace, as one of its own kind
+// fails on its table's primary key, both of which database.IDTaken reports,
+// though not a violation of another key; that deleting an entity frees its
+// UUID, but deleting the component type does not free the one that it
+// shares with the folder; and that deleting the project deletes them all.
 func TestEntityIDsBackfill(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -197,20 +224,29 @@ func TestEntityIDsBackfill(t *testing.T) {
 		t.Errorf("the backfill holds %q, want %q", got, want)
 	}
 
-	// An entity of another kind may hold none of them, in any workspace.
+	// An entity of another kind may hold none of them, in any workspace, nor
+	// one of the same kind, whose table's own key refuses it first, either of
+	// which database.IDTaken reports, from the error alone.
 	for _, c := range []struct {
-		what, sql string
-		args      []any
+		what, sql, key string
+		args           []any
 	}{
 		{"a board of the node's UUID", `INSERT INTO board (id, workspace_id, project_id, "order", name, slug)
-			VALUES ($1, $2, $3, 'W', 'Pier', 'pier')`, []any{keeper, ws, project}},
+			VALUES ($1, $2, $3, 'W', 'Pier', 'pier')`, "entity_id_pkey", []any{keeper, ws, project}},
 		{"another workspace's variable of the expression's UUID", `INSERT INTO variable (id, workspace_id,
 			project_id, scope, "order", key, type, default_value) VALUES ($1, $2, $3, 'global', 'V', 'seen', 'bool',
-			'false')`, []any{script, other, otherProject}},
+			'false')`, "entity_id_pkey", []any{script, other, otherProject}},
+		{"another workspace's board of the board's UUID", `INSERT INTO board (id, workspace_id, project_id, "order",
+			name, slug) VALUES ($1, $2, $3, 'V', 'Lamp', 'lamp')`, "board_pkey", []any{board, other, otherProject}},
 	} {
-		if err := exec(c.sql, c.args...); !database.UniqueViolation(err, "entity_id_pkey") {
-			t.Errorf("%s: %v, want a violation of entity_id_pkey", c.what, err)
+		if err := exec(c.sql, c.args...); !database.UniqueViolation(err, c.key) || !database.IDTaken(err) {
+			t.Errorf("%s: %v, want a violation of %s, which database.IDTaken reports", c.what, err, c.key)
 		}
+	}
+	// A key of the table that is not its primary key is no ID.
+	if err := exec(`INSERT INTO board (id, workspace_id, project_id, "order", name, slug)
+		VALUES ($1, $2, $3, 'W', 'Quay', 'harbour')`, ids.New(), ws, project); err == nil || database.IDTaken(err) {
+		t.Errorf("a board of another board's slug: %v, want a violation that database.IDTaken does not report", err)
 	}
 	// Deleting the node frees its UUID, which a board then takes; deleting
 	// the component type that shares the folder's UUID leaves it held.
@@ -326,5 +362,94 @@ func TestEntityIDsMigrationWaits(t *testing.T) {
 	if want := []string{"board " + board.String(), "folder " + folder.String(), "node " + node.String()}; !slices.Equal(
 		got, want) {
 		t.Errorf("entity_id holds %q, want %q", got, want)
+	}
+}
+
+// TestEntityIDsDeleteLooksUp checks that the trigger that deletes the UUIDs
+// of the rows that a statement deletes looks each up by entity_id's primary
+// key, in a session of the application that deleted thousands of rows of
+// the table at once before, as the purge of a project or of a board does:
+// the session keeps the plan of the trigger's statement, made for the size
+// of the first statement's rows, so that a join of those rows would read the
+// whole of entity_id for each later statement, however few rows it deleted
+// (migration 00029).
+func TestEntityIDsDeleteLooksUp(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	admin := d.Admin(t)
+	ws, project, last := ids.New(), ids.New(), ids.New()
+	for _, c := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', 'harbour', 'unlimited')`,
+			[]any{ws}},
+		{`INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')`, []any{project, ws}},
+		// The UUIDs of the rest of the content, as of a few large projects.
+		{`INSERT INTO entity_id (id, workspace_id, project_id, kind)
+			SELECT gen_random_uuid(), $1, $2, 'node' FROM generate_series(1, 30000)`, []any{ws, project}},
+		{`INSERT INTO folder (id, workspace_id, project_id, kind, name, "order")
+			SELECT gen_random_uuid(), $1, $2, 'board', 'Act', 'V' FROM generate_series(1, 10000)`,
+			[]any{ws, project}},
+		{`INSERT INTO folder (id, workspace_id, project_id, kind, name, "order")
+			VALUES ($1, $2, $3, 'board', 'Act', 'V')`, []any{last, ws, project}},
+		// No analysis between the two deletions makes the session plan the
+		// trigger's statement anew; the folders' lets the cascades of their
+		// deletion, which find each folder's children, read them by their
+		// index.
+		{`ALTER TABLE entity_id SET (autovacuum_enabled = false)`, nil},
+		{`ANALYZE entity_id, folder`, nil},
+	} {
+		if _, err := admin.Exec(ctx, c.sql, c.args...); err != nil {
+			t.Fatalf("%s: %v", c.sql, err)
+		}
+	}
+	session := dbtest.Connect(t, d.AppURL)
+	if _, err := session.Exec(ctx, `SELECT set_config('app.workspace_id', $1, false)`, ws.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Exec(ctx, `DELETE FROM folder WHERE workspace_id = $1 AND project_id = $2 AND id <> $3`, ws,
+		project, last); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := session.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// What the session has read of entity_id, by scanning it, which reads
+	// every row, and by its indexes, as a join of the deleted rows by the
+	// workspace's index reads the workspace's, which counts what the
+	// statements before have read too, unless the session has reported them
+	// since, but not within a transaction.
+	reads := func() (scans, read, fetched int64) {
+		t.Helper()
+		if err := tx.QueryRow(ctx, `SELECT seq_scan, seq_tup_read, idx_tup_fetch FROM pg_stat_xact_user_tables
+			WHERE relid = 'public.entity_id'::regclass`).Scan(&scans, &read, &fetched); err != nil {
+			t.Fatal(err)
+		}
+		return scans, read, fetched
+	}
+	scans, read, fetched := reads()
+	if _, err := tx.Exec(ctx, `DELETE FROM folder WHERE workspace_id = $1 AND project_id = $2 AND id = $3`, ws,
+		project, last); err != nil {
+		t.Fatal(err)
+	}
+	scansAfter, readAfter, fetchedAfter := reads()
+	if scans, read, fetched = scansAfter-scans, readAfter-read, fetchedAfter-fetched; scans != 0 || read != 0 ||
+		fetched > 1 {
+		t.Errorf("deleting a folder after 10,000 scanned entity_id %d times, reading %d rows, and fetched %d rows "+
+			"by its indexes, want its UUID's row alone, by the primary key", scans, read, fetched)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var left int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM entity_id WHERE kind = 'folder'`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Errorf("with the folders deleted, entity_id holds %d of their UUIDs", left)
 	}
 }

@@ -476,7 +476,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	}
 	err = q.InsertBoard(ctx, queries.InsertBoardParams{ID: id, WorkspaceID: ws, ProjectID: project, FolderID: folder,
 		SortKey: order, Name: p.Name, Slug: s, Description: p.Description, Color: color, CreatedBy: by(tx)})
-	if database.IDTaken(err, "board") {
+	if database.IDTaken(err) {
 		// The ID is a board's of a workspace or project whose rows this
 		// transaction does not see, or an entity's of another kind of the
 		// content, of any workspace or project.

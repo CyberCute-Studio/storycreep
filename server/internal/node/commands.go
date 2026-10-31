@@ -648,7 +648,7 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		}
 	}
 	err = q.InsertNode(ctx, params)
-	if database.IDTaken(err, "node") {
+	if database.IDTaken(err) {
 		return commands.RefuseTakenID()
 	}
 	if err != nil {
@@ -692,7 +692,7 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 	n, err := q.DuplicateNode(ctx, queries.DuplicateNodeParams{ID: id, X: x, Y: y, CreatedBy: by(tx),
 		WorkspaceID: ws, ProjectID: project, SourceID: source.ID})
 	switch {
-	case database.IDTaken(err, "node"):
+	case database.IDTaken(err):
 		return commands.RefuseTakenID()
 	case err != nil:
 		return fmt.Errorf("node: duplicate the node: %w", err)

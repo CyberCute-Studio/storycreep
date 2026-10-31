@@ -486,7 +486,7 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttribut
 	err = q.InsertAttributeDef(ctx, queries.InsertAttributeDefParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		ComponentTypeID: t.ID, SortKey: order, Key: key, Name: p.Name, Type: p.Type, EnumOptions: options,
 		DefaultValue: def.JSON(), IsRuntime: p.Runtime, CreatedBy: by(tx)})
-	if database.IDTaken(err, "attribute_def") {
+	if database.IDTaken(err) {
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

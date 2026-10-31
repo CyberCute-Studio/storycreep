@@ -190,9 +190,10 @@ func (d *Database) MarkSetUp(t testing.TB) {
 // until the function that it returns switches them on again, so that the
 // content that the test makes in between may hold one UUID in rows of
 // different kinds, as a database whose clients gave such IDs before the
-// migration may, which the commands refuse since (PRD §5.2). A test that has
-// no more content to make with the triggers on may leave them off, since the
-// database is its own.
+// migration may, which the commands refuse since (PRD §5.2). The test calls
+// it once it has made that content, so that the content that it makes after
+// adds its UUIDs, as the commands' does; the test's end calls it if the test
+// did not.
 func (d *Database) AllowSharedUUIDs(t testing.TB, tables ...string) (restore func()) {
 	t.Helper()
 	admin := d.Admin(t)
@@ -206,7 +207,16 @@ func (d *Database) AllowSharedUUIDs(t testing.TB, tables ...string) (restore fun
 		}
 	}
 	set("DISABLE")
-	return func() { set("ENABLE") }
+	restored := false
+	restore = func() {
+		t.Helper()
+		if !restored {
+			restored = true
+			set("ENABLE")
+		}
+	}
+	t.Cleanup(restore)
+	return restore
 }
 
 // Connect returns a connection to the database at url, closed when the test
