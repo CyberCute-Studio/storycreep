@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -28,7 +29,8 @@ type world struct {
 
 // newWorld returns a clean world.
 func newWorld() *world {
-	w := &world{m: &model{components: map[ids.UUID]bool{}, attributes: map[ids.UUID]bool{}}}
+	w := &world{m: &model{project: ids.New(), components: map[ids.UUID]ids.UUID{},
+		attributes: map[ids.UUID]ids.UUID{}}}
 	w.main = w.board()
 	w.start = w.element(w.main)
 	w.end = w.element(w.main, func(n *node) { n.ending = true })
@@ -289,7 +291,7 @@ var ruleCases = map[Code]ruleCase{
 		},
 		negative: func(w *world) {
 			speaker := ids.New()
-			w.m.components[speaker] = true
+			w.m.components[speaker] = ids.New()
 			n := w.element(w.main, func(n *node) { n.kind, n.speaker, n.ending = "dialogue", speaker, true })
 			w.connect(w.start, n)
 		},
@@ -364,18 +366,40 @@ func TestRules(t *testing.T) {
 	}
 }
 
+// TestCompared checks which connections' conditions the read of the draft
+// decodes, as those that the rule of duplicate choices may compare: the
+// choices of an element that share their label with another of its choices,
+// and not a choice of another label, a choice of another element of the same
+// label, or a connection of a branch's output.
+func TestCompared(t *testing.T) {
+	w := newWorld()
+	other := w.element(w.main, func(n *node) { n.ending = true })
+	first := w.connectBy(w.start, ids.UUID{}, w.end, `{"label": "Go"}`)
+	second := w.connectBy(w.start, ids.UUID{}, other, `{"label": "Go"}`)
+	w.connectBy(w.start, ids.UUID{}, w.end, `{"label": "Stay"}`)
+	w.connectBy(other, ids.UUID{}, w.end, `{"label": "Go"}`)
+	b := w.node(w.main, branch)
+	w.connectBy(b, w.output(b), w.end, `{"label": "Go"}`)
+	w.connectBy(b, w.output(b), w.end, `{"label": "Go"}`)
+	got := compared(w.m.connections)
+	if want := map[ids.UUID]bool{first: true, second: true}; !maps.Equal(got, want) {
+		t.Errorf("the compared connections are %v, want %v", got, want)
+	}
+}
+
 // TestDanglingReferences checks that a reference to what is not outside the
-// trash is found once for each thing that each field refers to, of a text, a
-// speaker, a board's entry node, and the project's entry, and that one to
-// what is there is not.
+// trash, or to an attribute that its component's type does not define, is
+// found once for each thing that each field refers to, of a text, a speaker,
+// a board's entry node, and the project's entry, and that one to what is
+// there is not.
 //
 // Verifies: FR-DEP-03/AC1, FR-TEXT-02/AC2
 func TestDanglingReferences(t *testing.T) {
 	w := newWorld()
-	gone, there := ids.New(), ids.New()
-	w.m.components[there] = true
-	attribute := ids.New()
-	w.m.attributes[attribute] = true
+	gone, there, typ := ids.New(), ids.New(), ids.New()
+	w.m.components[there] = typ
+	attribute, foreign := ids.New(), ids.New()
+	w.m.attributes[attribute], w.m.attributes[foreign] = typ, ids.New()
 	text := func(owner ref, kind dependency.Kind, target, attribute ids.UUID) {
 		w.m.texts = append(w.m.texts, textRef{owner: owner, use: dependency.Use{Kind: kind, Target: target,
 			Attribute: attribute, Access: dependency.Read}})
@@ -387,8 +411,10 @@ func TestDanglingReferences(t *testing.T) {
 	text(ref{ids.Node, w.start}, dependency.Variable, gone, ids.UUID{})
 	text(ref{ids.Node, w.start}, dependency.Component, there, ids.UUID{})
 	// The label shows an attribute of a component that is there whose
-	// definition is not, and one whose component is not.
+	// definition is not, one whose definition is another type's, and one
+	// whose component is not.
 	text(ref{ids.Connection, label}, dependency.Attribute, there, ids.New())
+	text(ref{ids.Connection, label}, dependency.Attribute, there, foreign)
 	text(ref{ids.Connection, label}, dependency.Attribute, gone, attribute)
 	text(ref{ids.Connection, label}, dependency.Attribute, there, attribute)
 	// A component's description mentions a deleted component.
@@ -407,8 +433,9 @@ func TestDanglingReferences(t *testing.T) {
 	}
 	slices.Sort(got)
 	want := []string{"board.entry_node_id→node", "component.description→component",
-		"connection.label→component+attribute", "connection.label→component+attribute", "node.speaker_component_id→component",
-		"node.text→variable", "project.entry→board"}
+		"connection.label→component+attribute", "connection.label→component+attribute",
+		"connection.label→component+attribute", "node.speaker_component_id→component", "node.text→variable",
+		"project.entry→board"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the dangling references are %q, want %q", got, want)
 	}
@@ -463,7 +490,7 @@ func TestMutable(t *testing.T) {
 		if !slices.Equal(got, want[kind]) {
 			t.Errorf("a mute of a %s may silence %v, want %v", kind, got, want[kind])
 		}
-		if len(got) > 0 != slices.Contains(MuteOwners, kind) {
+		if len(got) > 0 != slices.Contains(MuteOwners(), kind) {
 			t.Errorf("MuteOwners and Mutable disagree on %s", kind)
 		}
 	}

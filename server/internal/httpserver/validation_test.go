@@ -12,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 )
@@ -421,7 +423,7 @@ func TestValidationMuteCodes(t *testing.T) {
 	ctx := context.Background()
 	admin := d.Admin(t)
 	w, project := decode(t, ids.Workspace, ws), decode(t, ids.Project, p)
-	for _, kind := range validation.MuteOwners {
+	for _, kind := range validation.MuteOwners() {
 		o, ok := owners[kind]
 		if !ok {
 			t.Fatalf("the test has no %s to mute", kind)
@@ -448,10 +450,12 @@ func TestValidationMuteCodes(t *testing.T) {
 	}
 }
 
-// TestValidationDanglingText checks that a text's value reference to a
-// variable that the project does not have, which no command writes and which
-// is seeded in the database, is a validation error of the text, though the
-// index of what the texts name does not hold it.
+// TestValidationDanglingText checks that a text's value references to a
+// variable that the project does not have, which no command writes, and to an
+// attribute of a component that the component's type does not define, another
+// type's, each seeded in the database, are validation errors of the text,
+// though the index of what the texts name does not hold them, and that one
+// to an attribute that the component's type defines is not.
 //
 // Verifies: FR-TEXT-02/AC2
 func TestValidationDanglingText(t *testing.T) {
@@ -459,23 +463,42 @@ func TestValidationDanglingText(t *testing.T) {
 	s, d, owner, ws := inviteServer(t, "open", nil)
 	h := s.main
 	p := createProject(t, h, owner, ws, "Harbour").ID
-	board, start := newBoardID(), newNodeID()
+	var types api.Page[component.ComponentType]
+	if res := call(h, http.MethodGet, componentTypesPath(p), nil, owner.header(false)); res.status != http.StatusOK ||
+		json.Unmarshal(res.body, &types) != nil || len(types.Items) < 2 {
+		t.Fatalf("list the types: %d %s", res.status, res.body)
+	}
+	character, item := types.Items[0].ID, types.Items[1].ID
+	board, start, elara, trust, weight := newBoardID(), newNodeID(), newComponentID(), newAttributeID(),
+		newAttributeID()
 	sendBatch(t, h, owner, p,
 		cmd("board.create", map[string]any{"id": board, "name": "Harbour"}),
 		cmd("node.create", map[string]any{"id": start, "board_id": board, "type": "element", "kind": "narration",
 			"text": paragraph("Hello"), "is_ending": true, "position": map[string]int{"x": 0, "y": 0}}),
 		cmd("board.set_entry_node", map[string]any{"id": board, "node_id": start}),
+		cmd("component.create", map[string]any{"id": elara, "component_type_id": character, "name": "Elara"}),
+		cmd("attribute.create", map[string]any{"id": trust, "component_type_id": character, "name": "Trust",
+			"type": "int", "default": 3, "runtime": true}),
+		cmd("attribute.create", map[string]any{"id": weight, "component_type_id": item, "name": "Weight",
+			"type": "int", "default": 1, "runtime": true}),
 	)
 	missing := ids.Encode(ids.Variable, ids.New())
 	if _, err := d.Admin(t).Exec(context.Background(), "UPDATE node SET text = $1 WHERE id = $2",
-		string(richText(textInline("Gold: "), valueInline(missing))), decode(t, ids.Node, start)); err != nil {
+		string(richText(textInline("Gold: "), valueInline(missing), attributeInline(elara, trust),
+			attributeInline(elara, weight))), decode(t, ids.Node, start)); err != nil {
 		t.Fatal(err)
 	}
 	r := validationReport(t, h, owner, p)
-	want := []string{"ref_dangling node:start.text → variable:missing"}
-	if got := findingLines(r.Findings, map[string]string{start: "start", missing: "missing"}); !slices.Equal(got,
-		want) || r.Counts.Errors != 1 {
+	want := []string{"ref_dangling node:start.text → attribute:elara",
+		"ref_dangling node:start.text → variable:missing"}
+	names := map[string]string{start: "start", missing: "missing", elara: "elara"}
+	if got := findingLines(r.Findings, names); !slices.Equal(got, want) || r.Counts.Errors != 2 {
 		t.Errorf("the findings are %q, with %d errors, want %q", got, r.Counts.Errors, want)
+	}
+	for _, f := range r.Findings {
+		if f.Target != nil && f.Target.Type == "attribute" && f.Target.AttributeID != weight {
+			t.Errorf("the dangling attribute is %s, want %s", f.Target.AttributeID, weight)
+		}
 	}
 }
 

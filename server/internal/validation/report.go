@@ -84,11 +84,6 @@ func Run(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Result, error
 		return nil, err
 	}
 	found := check(d.model)
-	for i := range found {
-		if found[i].entity.kind == ids.Project {
-			found[i].entity.id = projectID
-		}
-	}
 	slices.SortFunc(found, compare)
 	return &Result{seq: d.seq, findings: found, mutes: d.mutes}, nil
 }

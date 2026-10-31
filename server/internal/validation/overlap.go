@@ -29,17 +29,17 @@ func newProver() *prover {
 // exclusive reports whether the conditions a and b never hold together, as
 // far as a few patterns prove it within p's steps (FR-DEP-03, plan note
 // N55), each a condition's AST, or nil for none, which always holds. They are
-// exclusive when one is the literal false; when one is the negation of the
-// other, as c and not c; when they compare the same operand with literals of
-// values that no value meets both comparisons of, as x == 1 and x == 2,
-// x < 3 and x >= 3, or x > 5 and x < 2, with numbers compared as real
-// numbers; when they compare the same two operands with complementary
-// operators, as x < y and x >= y; when one is a conjunction one of whose
-// terms is exclusive with the other; and when one is a disjunction both of
-// whose terms are. Two conditions that the patterns do not prove exclusive
-// may overlap. The conditions are pure, so that an operand is the same value
-// in both, and an operand that a runtime error makes its type's zero value is
-// a value all the same.
+// exclusive when one is the literal false, which needs no step; when one is
+// the negation of the other, as c and not c; when they compare the same
+// operand with literals, or negative numbers, of values that no value meets
+// both comparisons of, as x == 1 and x == 2, x < 3 and x >= 3, or x > 5 and
+// x < -2, with numbers compared as real numbers; when they compare the same
+// two operands with complementary operators, as x < y and x >= y; when one
+// is a conjunction one of whose terms is exclusive with the other; and when
+// one is a disjunction both of whose terms are. Two conditions that the
+// patterns do not prove exclusive may overlap. The conditions are pure, so
+// that an operand is the same value in both, and an operand that a runtime
+// error makes its type's zero value is a value all the same.
 func (p *prover) exclusive(a, b expr.Node) bool {
 	if a == nil || b == nil {
 		return a != nil && never(a) || b != nil && never(b)
@@ -57,13 +57,15 @@ func (p *prover) spend() bool {
 // hold together (exclusive), within p's steps. Each pattern is tried of the
 // conditions whole, a disjunction's among them, so that a disjunction whose
 // terms are not each exclusive with the other condition may still be its
-// negation, or a term of its conjunction.
+// negation, or a term of its conjunction. A condition that is false is
+// exclusive with any other at no step's cost, so that it is proved so once
+// the steps are spent too.
 func (p *prover) prove(a, b expr.Node) bool {
-	if !p.spend() {
-		return false
-	}
 	if never(a) || never(b) {
 		return true
+	}
+	if !p.spend() {
+		return false
 	}
 	if x, ok := a.(*expr.Binary); ok {
 		switch x.Op {
@@ -156,15 +158,37 @@ func (p *prover) comparisons(a, b expr.Node) bool {
 
 // literalSide returns a comparison c as its other operand, its operator as
 // it reads with the operand first, and its literal, if one of its operands
-// is a literal, or a nil literal.
+// is a literal or a negative number (literal), or a nil literal.
 func literalSide(c *expr.Binary) (expr.Node, expr.BinaryOp, *expr.Lit) {
-	if l, ok := c.Right.(*expr.Lit); ok {
+	if l := literal(c.Right); l != nil {
 		return c.Left, c.Op, l
 	}
-	if l, ok := c.Left.(*expr.Lit); ok {
+	if l := literal(c.Left); l != nil {
 		return c.Right, flipped[c.Op], l
 	}
 	return nil, "", nil
+}
+
+// literal returns n as a literal: n itself, if it is one, or, if it is a
+// negative number, the unary - of a number's literal (§5.8.1), the literal
+// of its value; otherwise nil.
+func literal(n expr.Node) *expr.Lit {
+	switch x := n.(type) {
+	case *expr.Lit:
+		return x
+	case *expr.Unary:
+		l, ok := x.Operand.(*expr.Lit)
+		if !ok || x.Op != expr.OpNeg {
+			return nil
+		}
+		switch l.Type {
+		case value.Int:
+			return &expr.Lit{Type: value.Int, Int: -l.Int}
+		case value.Float:
+			return &expr.Lit{Type: value.Float, Float: -l.Float}
+		}
+	}
+	return nil
 }
 
 // disjoint reports whether no value v meets both v op1 l1 and v op2 l2: of

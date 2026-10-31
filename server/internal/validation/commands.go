@@ -61,7 +61,7 @@ type unmutePayload struct {
 func Register(r *commands.Registry) {
 	sc := scope.ProjectWrite
 	commands.Register(r, commands.Spec[mutePayload]{
-		Type: MuteFinding, Capability: authz.EditContent, Scope: sc, Touches: MuteOwners,
+		Type: MuteFinding, Capability: authz.EditContent, Scope: sc, Touches: MuteOwners(),
 		Check: func(p mutePayload) input.FieldErrors {
 			return checkMute(p.EntityID, p.Code)
 		},
@@ -101,7 +101,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[unmutePayload]{
-		Type: UnmuteFinding, Capability: authz.EditContent, Scope: sc, Touches: MuteOwners,
+		Type: UnmuteFinding, Capability: authz.EditContent, Scope: sc, Touches: MuteOwners(),
 		Check: func(p unmutePayload) input.FieldErrors {
 			return checkMute(p.EntityID, p.Code)
 		},
@@ -130,7 +130,7 @@ func Register(r *commands.Registry) {
 // about the owner's kind.
 func checkMute(entity, code string) input.FieldErrors {
 	kind, _, err := ids.DecodeAny(entity)
-	if err != nil || !slices.Contains(MuteOwners, kind) {
+	if err != nil || !slices.Contains(MuteOwners(), kind) {
 		return field("entity_id", "is not the ID of a node, a connection, a branch output, a variable, or a board")
 	}
 	if !slices.Contains(Mutable(kind), Code(code)) {
@@ -196,9 +196,11 @@ func touch(ctx context.Context, tx *commands.Tx, kind ids.Kind, owner pgtype.UUI
 	return tx.Changed(kind, owner.Bytes, rev)
 }
 
-// by returns the user who applies the batch, as a uuid column.
+// by returns the user who applies the batch, as a uuid column, null for
+// none, as the other packages write it.
 func by(tx *commands.Tx) pgtype.UUID {
-	return pgUUID(tx.Actor().UserID)
+	id := tx.Actor().UserID
+	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}
 }
 
 // field returns the problem msg of the payload's field name, or none if msg

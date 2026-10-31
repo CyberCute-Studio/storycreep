@@ -22,9 +22,8 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 -- each with what the rules read of it, an element's text only as whether it
 -- is empty: one empty paragraph, as the editor's empty document is, which
 -- has no segments (package richtext).
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_board_id,
-    target_node_id, coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean
-        AS text_empty
+SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
+    coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean AS text_empty
 FROM live_node WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
 -- name: ValidationOutputs :many
@@ -86,13 +85,14 @@ SELECT id, key, board_id FROM live_variable WHERE workspace_id = @workspace_id A
 
 -- name: ValidationComponents :many
 -- ValidationComponents returns the IDs of the project's components that are
--- not in its trash.
-SELECT id FROM live_component WHERE workspace_id = @workspace_id AND project_id = @project_id;
+-- not in its trash, each with its type.
+SELECT id, component_type_id FROM live_component WHERE workspace_id = @workspace_id AND project_id = @project_id;
 
 -- name: ValidationAttributeDefs :many
 -- ValidationAttributeDefs returns the IDs of the project's attribute
--- definitions that are not in its trash.
-SELECT id FROM live_attribute_def WHERE workspace_id = @workspace_id AND project_id = @project_id;
+-- definitions that are not in its trash, each with the type that defines
+-- it, whose components alone have it.
+SELECT id, component_type_id FROM live_attribute_def WHERE workspace_id = @workspace_id AND project_id = @project_id;
 
 -- name: ValidationMutes :many
 -- ValidationMutes returns the project's mutes, those of owners in the trash

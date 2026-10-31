@@ -12,8 +12,9 @@ import (
 // project's entry and its texts refer to, which may be in the trash, or
 // gone.
 type model struct {
-	// entry is the project's entry, its board and its node, each zero where
-	// it has none.
+	// project is the project's ID, and entry its entry, its board and its
+	// node, each zero where it has none.
+	project     ids.UUID
 	entry       struct{ board, node ids.UUID }
 	boards      []board
 	nodes       []node
@@ -27,8 +28,9 @@ type model struct {
 	// components that are not in the trash refer to.
 	texts []textRef
 	// components and attributes are the components and the attribute
-	// definitions that are not in the trash.
-	components, attributes map[ids.UUID]bool
+	// definitions that are not in the trash, each with its component type,
+	// so that an attribute of a component is one that its type defines.
+	components, attributes map[ids.UUID]ids.UUID
 }
 
 // The types of node.
@@ -48,13 +50,12 @@ type board struct {
 // ending, and whether its text is empty, and a jumper's target, zero for
 // none.
 type node struct {
-	id, board   ids.UUID
-	typ, kind   string
-	speaker     ids.UUID
-	ending      bool
-	textEmpty   bool
-	targetBoard ids.UUID
-	targetNode  ids.UUID
+	id, board  ids.UUID
+	typ, kind  string
+	speaker    ids.UUID
+	ending     bool
+	textEmpty  bool
+	targetNode ids.UUID
 }
 
 // output is a branch's output.
@@ -90,9 +91,10 @@ const (
 )
 
 // expression is an expression of an owner that is not in the trash: whether
-// it compiles, the code of its error if it does not, and, for a connection's
-// condition that compiles, its AST, which the rule of duplicate choices
-// reads.
+// it compiles, the code of its error if it does not, and, for the condition
+// that compiles of a choice that shares its label with another choice of its
+// element, its AST, which the rule of duplicate choices reads, of those
+// choices alone.
 type expression struct {
 	owner     ref
 	field     string

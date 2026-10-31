@@ -7,6 +7,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // TestExclusive checks which pairs of conditions the rule of duplicate
@@ -70,6 +71,17 @@ func TestExclusive(t *testing.T) {
 		{"trust >= 3", "trust <= 3", false},
 		{"trust > 3", "trust <= 3", true},
 		{"mood > 0.5", "mood < 0.5", true},
+		// A negative number, the unary - of a literal, as the literal of its
+		// value, but no other negation.
+		{"trust == -1", "trust == -2", true},
+		{"trust == -1", "trust == 1", true},
+		{"trust < -5", "trust > 0", true},
+		{"-5 > trust", "trust >= 0", true},
+		{"mood <= -0.5", "mood > 0.5", true},
+		{"trust > -5", "trust < -2", false},
+		{"trust == -0", "trust == 0", false},
+		{"-trust == 1", "-trust == 2", true},
+		{"-trust == 1", "trust == 1", false},
 		{"name == \"Elara\"", "name == \"Mira\"", true},
 		{"name == \"Elara\"", "name != \"Elara\"", true},
 		{"name < \"b\"", "name > \"c\"", false},
@@ -105,7 +117,8 @@ func TestExclusive(t *testing.T) {
 // may then overlap: two disjunctions of 120 terms each, every term of one
 // exclusive with every term of the other, are exclusive, but proving it
 // compares 14,400 pairs of terms. A prover's proofs share its steps, so that
-// once one has spent them, the next proves nothing either.
+// once one has spent them, the next proves nothing either, but that a
+// condition that is false, which needs no step, is exclusive with any.
 func TestExclusiveBounded(t *testing.T) {
 	p, err := expr.NewProject([]expr.Variable{{ID: ids.Encode(ids.Variable, ids.New()), Key: "trust",
 		Type: "int"}}, nil, nil)
@@ -138,6 +151,10 @@ func TestExclusiveBounded(t *testing.T) {
 	}
 	if spent.exclusive(one, b) {
 		t.Error("a prover whose steps a proof has spent proves one term exclusive with a disjunction of 120 others")
+	}
+	falsity := &expr.Lit{Type: value.Bool}
+	if !spent.exclusive(falsity, b) || !spent.exclusive(b, falsity) {
+		t.Error("a prover whose steps a proof has spent does not prove false exclusive with a disjunction")
 	}
 	if !newProver().exclusive(one, b) {
 		t.Error("one term is not proved exclusive with a disjunction of 120 others")

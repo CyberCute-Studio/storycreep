@@ -182,7 +182,7 @@ func (q *Queries) UpsertValidationMute(ctx context.Context, arg UpsertValidation
 }
 
 const validationAttributeDefs = `-- name: ValidationAttributeDefs :many
-SELECT id FROM live_attribute_def WHERE workspace_id = $1 AND project_id = $2
+SELECT id, component_type_id FROM live_attribute_def WHERE workspace_id = $1 AND project_id = $2
 `
 
 type ValidationAttributeDefsParams struct {
@@ -190,21 +190,27 @@ type ValidationAttributeDefsParams struct {
 	ProjectID   pgtype.UUID
 }
 
+type ValidationAttributeDefsRow struct {
+	ID              pgtype.UUID
+	ComponentTypeID pgtype.UUID
+}
+
 // ValidationAttributeDefs returns the IDs of the project's attribute
-// definitions that are not in its trash.
-func (q *Queries) ValidationAttributeDefs(ctx context.Context, arg ValidationAttributeDefsParams) ([]pgtype.UUID, error) {
+// definitions that are not in its trash, each with the type that defines
+// it, whose components alone have it.
+func (q *Queries) ValidationAttributeDefs(ctx context.Context, arg ValidationAttributeDefsParams) ([]ValidationAttributeDefsRow, error) {
 	rows, err := q.db.Query(ctx, validationAttributeDefs, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []pgtype.UUID
+	var items []ValidationAttributeDefsRow
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ValidationAttributeDefsRow
+		if err := rows.Scan(&i.ID, &i.ComponentTypeID); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -250,7 +256,7 @@ func (q *Queries) ValidationBoards(ctx context.Context, arg ValidationBoardsPara
 }
 
 const validationComponents = `-- name: ValidationComponents :many
-SELECT id FROM live_component WHERE workspace_id = $1 AND project_id = $2
+SELECT id, component_type_id FROM live_component WHERE workspace_id = $1 AND project_id = $2
 `
 
 type ValidationComponentsParams struct {
@@ -258,21 +264,26 @@ type ValidationComponentsParams struct {
 	ProjectID   pgtype.UUID
 }
 
+type ValidationComponentsRow struct {
+	ID              pgtype.UUID
+	ComponentTypeID pgtype.UUID
+}
+
 // ValidationComponents returns the IDs of the project's components that are
-// not in its trash.
-func (q *Queries) ValidationComponents(ctx context.Context, arg ValidationComponentsParams) ([]pgtype.UUID, error) {
+// not in its trash, each with its type.
+func (q *Queries) ValidationComponents(ctx context.Context, arg ValidationComponentsParams) ([]ValidationComponentsRow, error) {
 	rows, err := q.db.Query(ctx, validationComponents, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []pgtype.UUID
+	var items []ValidationComponentsRow
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i ValidationComponentsRow
+		if err := rows.Scan(&i.ID, &i.ComponentTypeID); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -462,9 +473,8 @@ func (q *Queries) ValidationMutes(ctx context.Context, arg ValidationMutesParams
 }
 
 const validationNodes = `-- name: ValidationNodes :many
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_board_id,
-    target_node_id, coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean
-        AS text_empty
+SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
+    coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean AS text_empty
 FROM live_node WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
 `
 
@@ -480,7 +490,6 @@ type ValidationNodesRow struct {
 	Kind               string
 	SpeakerComponentID pgtype.UUID
 	IsEnding           bool
-	TargetBoardID      pgtype.UUID
 	TargetNodeID       pgtype.UUID
 	TextEmpty          bool
 }
@@ -505,7 +514,6 @@ func (q *Queries) ValidationNodes(ctx context.Context, arg ValidationNodesParams
 			&i.Kind,
 			&i.SpeakerComponentID,
 			&i.IsEnding,
-			&i.TargetBoardID,
 			&i.TargetNodeID,
 			&i.TextEmpty,
 		); err != nil {

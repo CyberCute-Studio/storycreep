@@ -42,6 +42,9 @@ type checker struct {
 	choices     map[ids.UUID][]*connection
 	fromOutput  map[ids.UUID]int
 	into        map[ids.UUID]int
+	// roots are the roots of each board, the nodes that no connection
+	// enters, by the boards' IDs.
+	roots map[ids.UUID][]ids.UUID
 	// conditions are the conditions of the connections, by their IDs: the
 	// AST of one that compiles, or nil, with valid false, for one that does
 	// not. A connection without a condition has none here.
@@ -66,8 +69,8 @@ func newChecker(m *model) *checker {
 	c := &checker{m: m, nodes: map[ids.UUID]*node{}, outputs: map[ids.UUID]*output{},
 		outputsOf: map[ids.UUID]int{}, connections: map[ids.UUID]*connection{}, from: map[ids.UUID][]*connection{},
 		choices: map[ids.UUID][]*connection{}, fromOutput: map[ids.UUID]int{}, into: map[ids.UUID]int{},
-		conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{}, boards: map[ids.UUID]bool{},
-		entries: map[ids.UUID]ids.UUID{}}
+		roots: map[ids.UUID][]ids.UUID{}, conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{},
+		boards: map[ids.UUID]bool{}, entries: map[ids.UUID]ids.UUID{}}
 	for i := range m.nodes {
 		c.nodes[m.nodes[i].id] = &m.nodes[i]
 	}
@@ -86,6 +89,11 @@ func newChecker(m *model) *checker {
 			c.fromOutput[cn.output]++
 		}
 		c.into[cn.to]++
+	}
+	for _, n := range m.nodes {
+		if c.into[n.id] == 0 {
+			c.roots[n.board] = append(c.roots[n.board], n.id)
+		}
 	}
 	for _, e := range m.expressions {
 		if e.owner.kind == ids.Connection && e.field == fieldCondition {
@@ -154,7 +162,8 @@ func (c *checker) findExpressions() {
 }
 
 // findReferences finds what refers to what is not a part of the project
-// outside its trash (ref_dangling), once for each thing that each field
+// outside its trash, or to an attribute of a component that the component's
+// type does not define (ref_dangling), once for each thing that each field
 // refers to: a text's value references and mentions, an element's speaker, a
 // board's entry node, and the project's entry, its board and its node. A
 // jumper's target is jumper_broken's.
@@ -169,10 +178,12 @@ func (c *checker) findReferences() {
 			_, live = c.variables[t.use.Target]
 		case dependency.Attribute:
 			f.target, f.attribute = ref{ids.Component, t.use.Target}, t.use.Attribute
-			live = c.m.components[t.use.Target] && c.m.attributes[t.use.Attribute]
+			typ, component := c.m.components[t.use.Target]
+			of, attribute := c.m.attributes[t.use.Attribute]
+			live = component && attribute && of == typ
 		case dependency.Component:
 			f.target = ref{ids.Component, t.use.Target}
-			live = c.m.components[t.use.Target]
+			_, live = c.m.components[t.use.Target]
 		default:
 			continue
 		}
@@ -181,7 +192,7 @@ func (c *checker) findReferences() {
 		}
 	}
 	for _, n := range c.m.nodes {
-		if n.typ == element && n.speaker != (ids.UUID{}) && !c.m.components[n.speaker] {
+		if _, live := c.m.components[n.speaker]; n.typ == element && n.speaker != (ids.UUID{}) && !live {
 			c.dangling(finding{code: RefDangling, entity: ref{ids.Node, n.id}, field: fieldSpeaker,
 				target: ref{ids.Component, n.speaker}}, seen)
 		}
@@ -192,7 +203,7 @@ func (c *checker) findReferences() {
 				target: ref{ids.Node, b.entry}}, seen)
 		}
 	}
-	project := ref{kind: ids.Project}
+	project := ref{ids.Project, c.m.project}
 	if e := c.m.entry.board; e != (ids.UUID{}) && !c.boards[e] {
 		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Board, e}}, seen)
 	}
@@ -308,9 +319,11 @@ func (c *checker) findReachability() {
 			queue = append(queue, id)
 		}
 	}
-	for _, n := range c.m.nodes {
-		if c.entries[n.board] == (ids.UUID{}) && c.into[n.id] == 0 {
-			reach(n.id)
+	for _, b := range c.m.boards {
+		if c.entries[b.id] == (ids.UUID{}) {
+			for _, root := range c.roots[b.id] {
+				reach(root)
+			}
 		}
 	}
 	for _, e := range c.entries {
@@ -420,15 +433,9 @@ func (c *checker) findConnections() {
 // findBoards finds the boards without an entry node outside the trash that
 // have more than one root (board_entry_missing).
 func (c *checker) findBoards() {
-	roots := map[ids.UUID]int{}
-	for _, n := range c.m.nodes {
-		if c.into[n.id] == 0 {
-			roots[n.board]++
-		}
-	}
 	for _, b := range c.m.boards {
-		if c.entries[b.id] == (ids.UUID{}) && roots[b.id] > 1 {
-			c.add(finding{code: BoardEntryMissing, entity: ref{ids.Board, b.id}, args: i18n.Args{"roots": roots[b.id]}})
+		if roots := len(c.roots[b.id]); c.entries[b.id] == (ids.UUID{}) && roots > 1 {
+			c.add(finding{code: BoardEntryMissing, entity: ref{ids.Board, b.id}, args: i18n.Args{"roots": roots}})
 		}
 	}
 }

@@ -132,6 +132,15 @@ func Mutable(kind ids.Kind) []Code {
 	return out
 }
 
-// MuteOwners are the kinds of entity that a mute may be of: those that a
-// warning or an info is about.
-var MuteOwners = []ids.Kind{ids.Node, ids.Connection, ids.BranchOutput, ids.Variable, ids.Board}
+// MuteOwners returns the kinds of entity that a mute may be of: those that a
+// warning or an info is about, each once, in the order of the first rule
+// about it, so that a rule about a new kind makes it one.
+func MuteOwners() []ids.Kind {
+	var out []ids.Kind
+	for _, r := range rules {
+		if r.Mutable() && !slices.Contains(out, r.Entity) {
+			out = append(out, r.Entity)
+		}
+	}
+	return out
+}

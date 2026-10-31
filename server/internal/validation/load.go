@@ -44,8 +44,8 @@ type mute struct {
 func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error) {
 	q := queries.New(tx)
 	w, p := pgUUID(ws), pgUUID(projectID)
-	d := &draft{model: &model{components: map[ids.UUID]bool{}, attributes: map[ids.UUID]bool{}},
-		mutes: map[muteKey]mute{}}
+	d := &draft{model: &model{project: projectID, components: map[ids.UUID]ids.UUID{},
+		attributes: map[ids.UUID]ids.UUID{}}, mutes: map[muteKey]mute{}}
 	m := d.model
 	proj, err := q.ValidationProject(ctx, queries.ValidationProjectParams{WorkspaceID: w, ID: p})
 	if err != nil {
@@ -71,7 +71,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		live[n.ID.Bytes] = true
 		m.nodes = append(m.nodes, node{id: n.ID.Bytes, board: n.BoardID.Bytes, typ: n.Type, kind: n.Kind,
 			speaker: n.SpeakerComponentID.Bytes, ending: n.IsEnding, textEmpty: n.TextEmpty,
-			targetBoard: n.TargetBoardID.Bytes, targetNode: n.TargetNodeID.Bytes})
+			targetNode: n.TargetNodeID.Bytes})
 	}
 	outputs, err := q.ValidationOutputs(ctx, queries.ValidationOutputsParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
@@ -91,7 +91,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		m.connections = append(m.connections, connection{id: c.ID.Bytes, board: c.BoardID.Bytes,
 			from: c.FromNodeID.Bytes, output: c.FromOutputID.Bytes, to: c.ToNodeID.Bytes, label: string(c.Label)})
 	}
-	at, err := d.loadExpressions(ctx, q, w, p, live)
+	at, err := d.loadExpressions(ctx, q, w, p, live, compared(m.connections))
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +100,8 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the components: %w", err)
 	}
 	for _, c := range components {
-		m.components[c.Bytes] = true
-		live[c.Bytes] = true
+		m.components[c.ID.Bytes] = c.ComponentTypeID.Bytes
+		live[c.ID.Bytes] = true
 	}
 	attributes, err := q.ValidationAttributeDefs(ctx, queries.ValidationAttributeDefsParams{WorkspaceID: w,
 		ProjectID: p})
@@ -109,7 +109,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the attribute definitions: %w", err)
 	}
 	for _, a := range attributes {
-		m.attributes[a.Bytes] = true
+		m.attributes[a.ID.Bytes] = a.ComponentTypeID.Bytes
 	}
 	if err := d.loadTexts(ctx, q, w, p, live, at); err != nil {
 		return nil, err
@@ -125,12 +125,37 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	return d, nil
 }
 
+// compared returns the connections whose conditions the rule of duplicate
+// choices may compare: the choices of an element, which leave it by its out,
+// each of which shares its label with another choice of the element. The
+// conditions of the others are never compared, so they are not decoded.
+func compared(connections []connection) map[ids.UUID]bool {
+	type choice struct {
+		from  ids.UUID
+		label string
+	}
+	labels := map[choice]int{}
+	for _, c := range connections {
+		if c.output == (ids.UUID{}) {
+			labels[choice{c.from, c.label}]++
+		}
+	}
+	out := map[ids.UUID]bool{}
+	for _, c := range connections {
+		if c.output == (ids.UUID{}) && labels[choice{c.from, c.label}] > 1 {
+			out[c.id] = true
+		}
+	}
+	return out
+}
+
 // loadExpressions reads the expressions of the owners that live holds, the
-// nodes, the connections, and the outputs that are not in the trash, and the
+// nodes, the connections, and the outputs that are not in the trash, the AST
+// of the condition of each connection that compared holds, and the
 // variables, each with whether such an expression reads it, or writes it. It
 // returns the places of the variables among the model's, by their IDs.
 func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pgtype.UUID,
-	live map[ids.UUID]bool) (map[ids.UUID]int, error) {
+	live, compared map[ids.UUID]bool) (map[ids.UUID]int, error) {
 	m := d.model
 	rows, err := q.ValidationExpressions(ctx, queries.ValidationExpressionsParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
@@ -154,7 +179,7 @@ func (d *draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 		}
 		sites[r.ID.Bytes] = true
 		e := expression{owner: owner, field: r.Field, valid: r.IsValid, errorCode: r.ErrorCode}
-		if r.IsValid && r.ConditionAst != nil {
+		if r.IsValid && r.ConditionAst != nil && compared[owner.id] {
 			if e.condition, err = expr.Decode(r.ConditionAst, expr.ContextCondition); err != nil {
 				return nil, fmt.Errorf("validation: read the condition of %s: %w",
 					ids.Encode(ids.Connection, owner.id), err)

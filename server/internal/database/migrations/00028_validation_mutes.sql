@@ -14,8 +14,11 @@
 -- rev it increments, and a mute is in the trash with its owner, and deleted
 -- with it by the cascade of its foreign key, by the owner's purge.
 -- The key by which a mute is of a variable of its project, as a board,
--- a node, a connection, and an output have theirs.
+-- a node, a connection, and an output have theirs. It replaces the index of
+-- a project's variables by their IDs, which its own index serves as that one
+-- did.
 ALTER TABLE variable ADD CONSTRAINT variable_workspace_id_project_id_id_key UNIQUE (workspace_id, project_id, id);
+DROP INDEX variable_project;
 
 CREATE TABLE validation_mute (
 	id uuid PRIMARY KEY DEFAULT uuid_v7(),
