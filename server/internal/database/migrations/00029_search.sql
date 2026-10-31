@@ -32,9 +32,10 @@ $$;
 CREATE EXTENSION IF NOT EXISTS unaccent WITH SCHEMA public;
 
 -- The configuration that the documents and the queries are read with: the
--- simple configuration, which lowercases each word and keeps it whole, since
--- a project's text may be of any language and PostgreSQL has no stemmer for
--- many, Czech among them, with the words that may hold letters other than
+-- simple configuration, which lowercases each word, by the database's
+-- locale, as lower() does, and keeps it whole, since a project's text may be
+-- of any language and PostgreSQL has no stemmer for many, Czech among them,
+-- with the words that may hold letters other than
 -- ASCII's passed through unaccent first, so that "Žluťoučký" is read as
 -- "zlutoucky" (FR-PROJ-03 AC4). A query matches the start of a word (package
 -- search), which finds most of a word's inflections without a stemmer.

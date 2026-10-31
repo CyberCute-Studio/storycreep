@@ -115,35 +115,98 @@ func (s *selection) empty() bool {
 
 // index writes the document of each entity of sel of the project projectID
 // of the workspace workspaceID, in the trash or not, of the current Version,
-// as the project's rows hold them now, but for those that hold it already,
-// and returns how many entities it found.
+// as the project's rows hold them now, but for those that the index holds
+// already, and returns how many entities it found. It reads each kind that
+// sel holds with a query of its own, each with the entities' documents as the
+// index holds them, so that a batch that changes nothing that a document
+// holds, as an edit of a node's script, writes nothing, and a batch of one
+// kind reads no other.
 func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.UUID, sel selection) (int, error) {
 	ws, project := nullUUID(workspaceID), nullUUID(projectID)
-	rows, err := q.SearchSources(ctx, queries.SearchSourcesParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: list(sel.nodes), ConnectionIds: list(sel.connections), VariableIds: list(sel.variables),
-		ComponentIds: list(sel.components), AttributeIds: list(sel.attributes)})
-	if err != nil {
-		return 0, fmt.Errorf("search: read what the documents are made of: %w", err)
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
 	p := queries.UpsertSearchEntriesParams{WorkspaceID: ws, ProjectID: project, Version: Version}
-	for _, r := range rows {
-		d, err := NewDocument(Source{Kind: Kind(r.Kind), ID: r.ID.Bytes, Title: r.Title, Doc: r.Doc, Key: r.Key,
-			Description: r.Description, Values: r.AttributeValues})
+	found := 0
+	// add counts the entity of s, and adds its document to p, unless the
+	// index holds it already, of the current version.
+	add := func(s Source, title, body pgtype.Text, version pgtype.Int4) error {
+		found++
+		d, err := NewDocument(s)
 		if err != nil {
-			return 0, err
+			return err
+		}
+		if title.Valid && title.String == d.Title && body.String == d.Body && version.Int32 == Version {
+			return nil
 		}
 		p.Kinds = append(p.Kinds, string(d.Kind))
-		p.EntityIds = append(p.EntityIds, r.ID)
+		p.EntityIds = append(p.EntityIds, pgtype.UUID{Bytes: d.ID, Valid: true})
 		p.Titles = append(p.Titles, d.Title)
 		p.Bodies = append(p.Bodies, d.Body)
+		return nil
+	}
+	read := func(kind Kind, err error) error {
+		if err != nil {
+			return fmt.Errorf("search: read what the documents of the %ss are made of: %w", kind, err)
+		}
+		return nil
+	}
+	if len(sel.nodes) > 0 {
+		rows, err := q.NodeSearchSources(ctx, queries.NodeSearchSourcesParams{WorkspaceID: ws, ProjectID: project,
+			Ids: sel.nodes})
+		if err := read(Node, err); err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if err := add(Source{Kind: Node, ID: r.ID.Bytes, Title: r.Title, Doc: r.Doc}, r.EntryTitle, r.EntryBody,
+				r.EntryVersion); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if len(sel.connections) > 0 {
+		rows, err := q.ConnectionSearchSources(ctx, queries.ConnectionSearchSourcesParams{WorkspaceID: ws,
+			ProjectID: project, Ids: sel.connections})
+		if err := read(Connection, err); err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if err := add(Source{Kind: Connection, ID: r.ID.Bytes, Doc: r.Doc}, r.EntryTitle, r.EntryBody,
+				r.EntryVersion); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if len(sel.variables) > 0 {
+		rows, err := q.VariableSearchSources(ctx, queries.VariableSearchSourcesParams{WorkspaceID: ws,
+			ProjectID: project, Ids: sel.variables})
+		if err := read(Variable, err); err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if err := add(Source{Kind: Variable, ID: r.ID.Bytes, Title: r.Key, Description: r.Description},
+				r.EntryTitle, r.EntryBody, r.EntryVersion); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if len(sel.components) > 0 || len(sel.attributes) > 0 {
+		rows, err := q.ComponentSearchSources(ctx, queries.ComponentSearchSourcesParams{WorkspaceID: ws,
+			ProjectID: project, Ids: list(sel.components), AttributeIds: list(sel.attributes)})
+		if err := read(Component, err); err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if err := add(Source{Kind: Component, ID: r.ID.Bytes, Title: r.Name, Key: r.Key, Doc: r.Doc,
+				Values: r.AttributeValues}, r.EntryTitle, r.EntryBody, r.EntryVersion); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if len(p.Kinds) == 0 {
+		return found, nil
 	}
 	if err := q.UpsertSearchEntries(ctx, p); err != nil {
 		return 0, fmt.Errorf("search: write the documents: %w", err)
 	}
-	return len(rows), nil
+	return found, nil
 }
 
 // list returns l, or an empty list for nil, which a query reads as an array

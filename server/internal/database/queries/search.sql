@@ -3,38 +3,58 @@
 -- trash or not, which a search reads of the entities that are not. A
 -- batch's transaction writes the documents of the entities that it changed,
 -- once every command of the batch has applied, under the lock of the
--- project's row (SearchSources, UpsertSearchEntries), and the job of the
+-- project's row (NodeSearchSources and the other kinds', which read each
+-- entity's document with it, and UpsertSearchEntries, for the documents that
+-- differ), and the job of the
 -- index those of the entities that have none of the current version, under
 -- the same lock (ProjectsToIndex, LockProjectToIndex,
 -- UnindexedSearchEntities, SetSearchState). search_entry and search_state
 -- are tenant tables, which a transaction of their workspace reads.
 
--- name: SearchSources :many
--- SearchSources returns what the documents of the project's entities are
--- made of (search.Source), in the trash or not: of each node whose ID is
--- among node_ids, its title and its text, which a branch and a jumper have
--- none of; of each connection among connection_ids, its label; of each
--- variable among variable_ids, its key and its description; and of each
--- component among component_ids, or of a type that a definition among
--- attribute_ids is of, its name, its key, its description, and its values of
--- the definitions of text that are not deleted themselves, as strings, in
--- the order of the definitions' IDs: those of the types string, text, and
--- enum, whatever becomes of their types' place in the trash, which only a
--- type whose components are all there has.
-SELECT 'node'::text AS kind, n.id, n.title, n.text AS doc, ''::text AS key, ''::text AS description,
-    '{}'::text[] AS attribute_values
+-- name: NodeSearchSources :many
+-- NodeSearchSources returns what the documents of the project's nodes whose
+-- IDs are among ids are made of (search.Source), in the trash or not, their
+-- titles and their texts, which a branch and a jumper have none of, with
+-- each node's document as the index holds it, or none.
+SELECT n.id, n.title, n.text AS doc, e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
 FROM node n
-WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@node_ids::uuid[])
-UNION ALL
-SELECT 'connection', c.id, '', c.label, '', '', '{}'
+LEFT JOIN search_entry e ON e.workspace_id = n.workspace_id AND e.project_id = n.project_id AND e.kind = 'node'
+    AND e.entity_id = n.id
+WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@ids::uuid[]);
+
+-- name: ConnectionSearchSources :many
+-- ConnectionSearchSources returns what the documents of the project's
+-- connections whose IDs are among ids are made of, in the trash or not,
+-- their labels, with each connection's document as the index holds it, or
+-- none.
+SELECT c.id, c.label AS doc, e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
 FROM connection c
-WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.id = ANY(@connection_ids::uuid[])
-UNION ALL
-SELECT 'variable', v.id, v.key COLLATE "default", NULL, '', v.description, '{}'
+LEFT JOIN search_entry e ON e.workspace_id = c.workspace_id AND e.project_id = c.project_id
+    AND e.kind = 'connection' AND e.entity_id = c.id
+WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.id = ANY(@ids::uuid[]);
+
+-- name: VariableSearchSources :many
+-- VariableSearchSources returns what the documents of the project's
+-- variables whose IDs are among ids are made of, in the trash or not, their
+-- keys and their descriptions, with each variable's document as the index
+-- holds it, or none.
+SELECT v.id, v.key::text AS key, v.description, e.title AS entry_title, e.body AS entry_body,
+    e.version AS entry_version
 FROM variable v
-WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.id = ANY(@variable_ids::uuid[])
-UNION ALL
-SELECT 'component', m.id, m.name, m.description, m.key COLLATE "default", '',
+LEFT JOIN search_entry e ON e.workspace_id = v.workspace_id AND e.project_id = v.project_id
+    AND e.kind = 'variable' AND e.entity_id = v.id
+WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.id = ANY(@ids::uuid[]);
+
+-- name: ComponentSearchSources :many
+-- ComponentSearchSources returns what the documents of the project's
+-- components whose IDs are among ids, or of a type that a definition among
+-- attribute_ids is of, are made of, in the trash or not: their names, their
+-- keys, their descriptions, and their values of the definitions of text that
+-- are not deleted themselves, as strings, in the order of the definitions'
+-- IDs, those of the types string, text, and enum, whatever becomes of their
+-- types' place in the trash, which only a type whose components are all
+-- there has; with each component's document as the index holds it, or none.
+SELECT m.id, m.name, m.key::text AS key, m.description AS doc,
     ARRAY(
         SELECT a.value #>> '{}'
         FROM attribute_value a
@@ -43,10 +63,13 @@ SELECT 'component', m.id, m.name, m.description, m.key COLLATE "default", '',
         WHERE a.workspace_id = m.workspace_id AND a.project_id = m.project_id AND a.component_id = m.id
             AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum') AND jsonb_typeof(a.value) = 'string'
         ORDER BY d.id
-    )
+    )::text[] AS attribute_values,
+    e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
 FROM component m
+LEFT JOIN search_entry e ON e.workspace_id = m.workspace_id AND e.project_id = m.project_id
+    AND e.kind = 'component' AND e.entity_id = m.id
 WHERE m.workspace_id = @workspace_id AND m.project_id = @project_id AND (
-    m.id = ANY(@component_ids::uuid[])
+    m.id = ANY(@ids::uuid[])
     OR m.component_type_id IN (
         SELECT d.component_type_id FROM attribute_def d
         WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id = ANY(@attribute_ids::uuid[])

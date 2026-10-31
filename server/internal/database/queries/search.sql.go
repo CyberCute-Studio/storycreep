@@ -11,6 +11,142 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const componentSearchSources = `-- name: ComponentSearchSources :many
+SELECT m.id, m.name, m.key::text AS key, m.description AS doc,
+    ARRAY(
+        SELECT a.value #>> '{}'
+        FROM attribute_value a
+        JOIN attribute_def d ON d.workspace_id = a.workspace_id AND d.project_id = a.project_id
+            AND d.id = a.attribute_def_id
+        WHERE a.workspace_id = m.workspace_id AND a.project_id = m.project_id AND a.component_id = m.id
+            AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum') AND jsonb_typeof(a.value) = 'string'
+        ORDER BY d.id
+    )::text[] AS attribute_values,
+    e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
+FROM component m
+LEFT JOIN search_entry e ON e.workspace_id = m.workspace_id AND e.project_id = m.project_id
+    AND e.kind = 'component' AND e.entity_id = m.id
+WHERE m.workspace_id = $1 AND m.project_id = $2 AND (
+    m.id = ANY($3::uuid[])
+    OR m.component_type_id IN (
+        SELECT d.component_type_id FROM attribute_def d
+        WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id = ANY($4::uuid[])
+    )
+)
+`
+
+type ComponentSearchSourcesParams struct {
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	Ids          []pgtype.UUID
+	AttributeIds []pgtype.UUID
+}
+
+type ComponentSearchSourcesRow struct {
+	ID              pgtype.UUID
+	Name            string
+	Key             string
+	Doc             []byte
+	AttributeValues []string
+	EntryTitle      pgtype.Text
+	EntryBody       pgtype.Text
+	EntryVersion    pgtype.Int4
+}
+
+// ComponentSearchSources returns what the documents of the project's
+// components whose IDs are among ids, or of a type that a definition among
+// attribute_ids is of, are made of, in the trash or not: their names, their
+// keys, their descriptions, and their values of the definitions of text that
+// are not deleted themselves, as strings, in the order of the definitions'
+// IDs, those of the types string, text, and enum, whatever becomes of their
+// types' place in the trash, which only a type whose components are all
+// there has; with each component's document as the index holds it, or none.
+func (q *Queries) ComponentSearchSources(ctx context.Context, arg ComponentSearchSourcesParams) ([]ComponentSearchSourcesRow, error) {
+	rows, err := q.db.Query(ctx, componentSearchSources,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Ids,
+		arg.AttributeIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ComponentSearchSourcesRow
+	for rows.Next() {
+		var i ComponentSearchSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Key,
+			&i.Doc,
+			&i.AttributeValues,
+			&i.EntryTitle,
+			&i.EntryBody,
+			&i.EntryVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const connectionSearchSources = `-- name: ConnectionSearchSources :many
+SELECT c.id, c.label AS doc, e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
+FROM connection c
+LEFT JOIN search_entry e ON e.workspace_id = c.workspace_id AND e.project_id = c.project_id
+    AND e.kind = 'connection' AND e.entity_id = c.id
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = ANY($3::uuid[])
+`
+
+type ConnectionSearchSourcesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type ConnectionSearchSourcesRow struct {
+	ID           pgtype.UUID
+	Doc          []byte
+	EntryTitle   pgtype.Text
+	EntryBody    pgtype.Text
+	EntryVersion pgtype.Int4
+}
+
+// ConnectionSearchSources returns what the documents of the project's
+// connections whose IDs are among ids are made of, in the trash or not,
+// their labels, with each connection's document as the index holds it, or
+// none.
+func (q *Queries) ConnectionSearchSources(ctx context.Context, arg ConnectionSearchSourcesParams) ([]ConnectionSearchSourcesRow, error) {
+	rows, err := q.db.Query(ctx, connectionSearchSources, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionSearchSourcesRow
+	for rows.Next() {
+		var i ConnectionSearchSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Doc,
+			&i.EntryTitle,
+			&i.EntryBody,
+			&i.EntryVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockProjectToIndex = `-- name: LockProjectToIndex :one
 SELECT id FROM project
 WHERE workspace_id = $1 AND id = $2 AND (hard_delete_after IS NULL OR hard_delete_after > now())
@@ -34,6 +170,73 @@ func (q *Queries) LockProjectToIndex(ctx context.Context, arg LockProjectToIndex
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const nodeSearchSources = `-- name: NodeSearchSources :many
+
+SELECT n.id, n.title, n.text AS doc, e.title AS entry_title, e.body AS entry_body, e.version AS entry_version
+FROM node n
+LEFT JOIN search_entry e ON e.workspace_id = n.workspace_id AND e.project_id = n.project_id AND e.kind = 'node'
+    AND e.entity_id = n.id
+WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($3::uuid[])
+`
+
+type NodeSearchSourcesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type NodeSearchSourcesRow struct {
+	ID           pgtype.UUID
+	Title        string
+	Doc          []byte
+	EntryTitle   pgtype.Text
+	EntryBody    pgtype.Text
+	EntryVersion pgtype.Int4
+}
+
+// Project search (package search, PRD FR-PROJ-03, plan note N57): a document
+// of each node, connection, variable, and component of a project, in the
+// trash or not, which a search reads of the entities that are not. A
+// batch's transaction writes the documents of the entities that it changed,
+// once every command of the batch has applied, under the lock of the
+// project's row (NodeSearchSources and the other kinds', which read each
+// entity's document with it, and UpsertSearchEntries, for the documents that
+// differ), and the job of the
+// index those of the entities that have none of the current version, under
+// the same lock (ProjectsToIndex, LockProjectToIndex,
+// UnindexedSearchEntities, SetSearchState). search_entry and search_state
+// are tenant tables, which a transaction of their workspace reads.
+// NodeSearchSources returns what the documents of the project's nodes whose
+// IDs are among ids are made of (search.Source), in the trash or not, their
+// titles and their texts, which a branch and a jumper have none of, with
+// each node's document as the index holds it, or none.
+func (q *Queries) NodeSearchSources(ctx context.Context, arg NodeSearchSourcesParams) ([]NodeSearchSourcesRow, error) {
+	rows, err := q.db.Query(ctx, nodeSearchSources, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeSearchSourcesRow
+	for rows.Next() {
+		var i NodeSearchSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Doc,
+			&i.EntryTitle,
+			&i.EntryBody,
+			&i.EntryVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const projectsToIndex = `-- name: ProjectsToIndex :many
@@ -215,118 +418,6 @@ func (q *Queries) SearchLexemes(ctx context.Context, query string) ([]string, er
 	return lexemes, err
 }
 
-const searchSources = `-- name: SearchSources :many
-
-SELECT 'node'::text AS kind, n.id, n.title, n.text AS doc, ''::text AS key, ''::text AS description,
-    '{}'::text[] AS attribute_values
-FROM node n
-WHERE n.workspace_id = $1 AND n.project_id = $2 AND n.id = ANY($3::uuid[])
-UNION ALL
-SELECT 'connection', c.id, '', c.label, '', '', '{}'
-FROM connection c
-WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = ANY($4::uuid[])
-UNION ALL
-SELECT 'variable', v.id, v.key COLLATE "default", NULL, '', v.description, '{}'
-FROM variable v
-WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.id = ANY($5::uuid[])
-UNION ALL
-SELECT 'component', m.id, m.name, m.description, m.key COLLATE "default", '',
-    ARRAY(
-        SELECT a.value #>> '{}'
-        FROM attribute_value a
-        JOIN attribute_def d ON d.workspace_id = a.workspace_id AND d.project_id = a.project_id
-            AND d.id = a.attribute_def_id
-        WHERE a.workspace_id = m.workspace_id AND a.project_id = m.project_id AND a.component_id = m.id
-            AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum') AND jsonb_typeof(a.value) = 'string'
-        ORDER BY d.id
-    )
-FROM component m
-WHERE m.workspace_id = $1 AND m.project_id = $2 AND (
-    m.id = ANY($6::uuid[])
-    OR m.component_type_id IN (
-        SELECT d.component_type_id FROM attribute_def d
-        WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id = ANY($7::uuid[])
-    )
-)
-`
-
-type SearchSourcesParams struct {
-	WorkspaceID   pgtype.UUID
-	ProjectID     pgtype.UUID
-	NodeIds       []pgtype.UUID
-	ConnectionIds []pgtype.UUID
-	VariableIds   []pgtype.UUID
-	ComponentIds  []pgtype.UUID
-	AttributeIds  []pgtype.UUID
-}
-
-type SearchSourcesRow struct {
-	Kind            string
-	ID              pgtype.UUID
-	Title           string
-	Doc             []byte
-	Key             string
-	Description     string
-	AttributeValues []string
-}
-
-// Project search (package search, PRD FR-PROJ-03, plan note N57): a document
-// of each node, connection, variable, and component of a project, in the
-// trash or not, which a search reads of the entities that are not. A
-// batch's transaction writes the documents of the entities that it changed,
-// once every command of the batch has applied, under the lock of the
-// project's row (SearchSources, UpsertSearchEntries), and the job of the
-// index those of the entities that have none of the current version, under
-// the same lock (ProjectsToIndex, LockProjectToIndex,
-// UnindexedSearchEntities, SetSearchState). search_entry and search_state
-// are tenant tables, which a transaction of their workspace reads.
-// SearchSources returns what the documents of the project's entities are
-// made of (search.Source), in the trash or not: of each node whose ID is
-// among node_ids, its title and its text, which a branch and a jumper have
-// none of; of each connection among connection_ids, its label; of each
-// variable among variable_ids, its key and its description; and of each
-// component among component_ids, or of a type that a definition among
-// attribute_ids is of, its name, its key, its description, and its values of
-// the definitions of text that are not deleted themselves, as strings, in
-// the order of the definitions' IDs: those of the types string, text, and
-// enum, whatever becomes of their types' place in the trash, which only a
-// type whose components are all there has.
-func (q *Queries) SearchSources(ctx context.Context, arg SearchSourcesParams) ([]SearchSourcesRow, error) {
-	rows, err := q.db.Query(ctx, searchSources,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.NodeIds,
-		arg.ConnectionIds,
-		arg.VariableIds,
-		arg.ComponentIds,
-		arg.AttributeIds,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []SearchSourcesRow
-	for rows.Next() {
-		var i SearchSourcesRow
-		if err := rows.Scan(
-			&i.Kind,
-			&i.ID,
-			&i.Title,
-			&i.Doc,
-			&i.Key,
-			&i.Description,
-			&i.AttributeValues,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const setSearchState = `-- name: SetSearchState :exec
 INSERT INTO search_state (workspace_id, project_id, version) VALUES ($1, $2, $3)
 ON CONFLICT (workspace_id, project_id) DO UPDATE SET version = excluded.version
@@ -455,4 +546,59 @@ func (q *Queries) UpsertSearchEntries(ctx context.Context, arg UpsertSearchEntri
 		arg.Bodies,
 	)
 	return err
+}
+
+const variableSearchSources = `-- name: VariableSearchSources :many
+SELECT v.id, v.key::text AS key, v.description, e.title AS entry_title, e.body AS entry_body,
+    e.version AS entry_version
+FROM variable v
+LEFT JOIN search_entry e ON e.workspace_id = v.workspace_id AND e.project_id = v.project_id
+    AND e.kind = 'variable' AND e.entity_id = v.id
+WHERE v.workspace_id = $1 AND v.project_id = $2 AND v.id = ANY($3::uuid[])
+`
+
+type VariableSearchSourcesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type VariableSearchSourcesRow struct {
+	ID           pgtype.UUID
+	Key          string
+	Description  string
+	EntryTitle   pgtype.Text
+	EntryBody    pgtype.Text
+	EntryVersion pgtype.Int4
+}
+
+// VariableSearchSources returns what the documents of the project's
+// variables whose IDs are among ids are made of, in the trash or not, their
+// keys and their descriptions, with each variable's document as the index
+// holds it, or none.
+func (q *Queries) VariableSearchSources(ctx context.Context, arg VariableSearchSourcesParams) ([]VariableSearchSourcesRow, error) {
+	rows, err := q.db.Query(ctx, variableSearchSources, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []VariableSearchSourcesRow
+	for rows.Next() {
+		var i VariableSearchSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Key,
+			&i.Description,
+			&i.EntryTitle,
+			&i.EntryBody,
+			&i.EntryVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

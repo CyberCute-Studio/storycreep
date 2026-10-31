@@ -24,9 +24,9 @@ const (
 )
 
 // Source is what the document of an entity is made of, as its rows hold it
-// (queries.SearchSources): a node's title and text, a connection's label, a
-// variable's key and description, and a component's name, key, description,
-// and values of text.
+// (queries.NodeSearchSources and the other kinds'): a node's title and text,
+// a connection's label, a variable's key and description, and a component's
+// name, key, description, and values of text.
 type Source struct {
 	Kind Kind
 	ID   ids.UUID
