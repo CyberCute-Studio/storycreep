@@ -1,6 +1,7 @@
 package search_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/riverqueue/river"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/audit"
@@ -19,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/entitlements"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
@@ -39,13 +42,16 @@ func TestMain(m *testing.M) {
 
 // unindexed is a project whose content a pipeline without the derivation of
 // the documents made, as content that was there before migration 00029,
-// with its owner, and a pipeline of the commands with the derivation.
+// with its owner, the projects' service, which creates others of the
+// workspace through that pipeline, and a pipeline of the commands with the
+// derivation.
 type unindexed struct {
 	db        *database.DB
 	admin     *pgx.Conn
 	workspace ids.UUID
 	project   ids.UUID
 	owner     ids.UUID
+	projects  *project.Service
 	indexed   *commands.Pipeline
 }
 
@@ -103,7 +109,7 @@ func newUnindexed(t *testing.T) unindexed {
 	if err := f.Apply(ctx, pipeline, commands.Actor{UserID: owner}, projectID); err != nil {
 		t.Fatal(err)
 	}
-	return unindexed{db: db, admin: admin, workspace: ws, project: projectID, owner: owner,
+	return unindexed{db: db, admin: admin, workspace: ws, project: projectID, owner: owner, projects: projects,
 		indexed: commands.New(db, commands.Options{Registry: registry(true), Entitlements: ent})}
 }
 
@@ -148,11 +154,14 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // and records the project's state, after which its runs write nothing; it
 // passes over a project whose lock a batch holds, until a later run; it
 // writes again the documents that a migration marks; a run that stops once
-// its time runs out while it writes documents has the job run again soon; it
-// leaves alone the documents and the state of a newer version; and it comes
-// back to a project whose state a newer version recorded once an older
-// version's batch writes a document of it. It changes how many documents a
-// transaction writes, so it runs alone.
+// its time runs out while it writes documents, or records projects, has the
+// job run again soon, even if another project's index failed, whose error a
+// run that reaches every project returns; it leaves alone the documents and
+// the state of a newer version, even as it records its own; it comes back to
+// a project whose state a newer version recorded once an older version's
+// batch writes a document of it; and it lists no project whose time in the
+// trash has passed. It changes how many documents a transaction writes, so
+// it runs alone.
 func TestReindex(t *testing.T) {
 	ctx := context.Background()
 	u := newUnindexed(t)
@@ -231,6 +240,72 @@ func TestReindex(t *testing.T) {
 	}
 	u.wantIndexed(t)
 
+	// So does a run whose time runs out once it has recorded that a project
+	// lacks no document, having written none, as of a project whose
+	// documents the derivation wrote, which has no state until the job
+	// records it.
+	states := func(projectID ids.UUID) int {
+		var n int
+		if err := u.admin.QueryRow(ctx, "SELECT count(*) FROM search_state WHERE project_id = $1",
+			projectID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if _, err := u.admin.Exec(ctx, `DELETE FROM search_state WHERE project_id = $1`, u.project); err != nil {
+		t.Fatal(err)
+	}
+	if err := search.Work(ctx, u.db, func() bool { return states(u.project) == 0 }); !errors.As(err,
+		new(*river.JobSnoozeError)) {
+		t.Errorf("a run whose time ran out once it recorded a project returned %v, want a snooze", err)
+	}
+	u.wantIndexed(t)
+
+	// And so does a run whose time runs out once it has indexed a project,
+	// though the index of another failed, as of a stored text that
+	// richtext.Parse refuses, which no command stores; the first run that has
+	// the time to reach every project returns the failure.
+	var nodeID ids.UUID
+	var text []byte
+	if err := u.admin.QueryRow(ctx, `SELECT id, text FROM node WHERE project_id = $1 AND text IS NOT NULL
+		ORDER BY id LIMIT 1`, u.project).Scan(&nodeID, &text); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`UPDATE node SET text = '{"type": "not-a-doc"}' WHERE id = $1`,
+		`UPDATE search_entry SET version = 0 WHERE node_id = $1`,
+		`DELETE FROM search_state WHERE project_id = (SELECT project_id FROM node WHERE id = $1)`} {
+		if _, err := u.admin.Exec(ctx, s, nodeID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created, err := u.projects.Create(ctx, u.owner, u.workspace, project.Settings{Name: "Empty"}, audit.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := ids.Decode(ids.Project, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Compare(other[:], u.project[:]) <= 0 {
+		t.Fatal("the new project's UUID sorts before the first's, which the job must reach first")
+	}
+	if err := search.Work(ctx, u.db, func() bool { return states(other) == 0 }); !errors.As(err,
+		new(*river.JobSnoozeError)) {
+		t.Errorf("a run whose time ran out once it indexed a project, after another's index failed, returned %v, "+
+			"want a snooze", err)
+	}
+	if err := search.Work(ctx, u.db, func() bool { return true }); err == nil ||
+		errors.As(err, new(*river.JobSnoozeError)) {
+		t.Errorf("a run with the time to reach a project whose index fails returned %v, want its error", err)
+	}
+	if _, err := u.admin.Exec(ctx, `UPDATE node SET text = $2 WHERE id = $1`, nodeID, text); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := search.Reindex(ctx, u.db); err != nil || n != 1 {
+		t.Errorf("Reindex once the text is mended wrote %d documents, %v, want its node's", n, err)
+	}
+	u.wantIndexed(t)
+
 	// The documents and the state of a newer version, which a newer server
 	// writes while a rolling upgrade replaces this one, are this version's
 	// job's to leave alone, rather than to write again of its own.
@@ -243,10 +318,18 @@ func TestReindex(t *testing.T) {
 	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {
 		t.Errorf("Reindex of a newer version's documents wrote %d, %v, want none", n, err)
 	}
+	// This version's job, which found the project before the newer one
+	// recorded it, keeps the newer state as it records its own.
+	ws := pgtype.UUID{Bytes: u.workspace, Valid: true}
+	if err := queries.New(u.admin).SetSearchState(ctx, queries.SetSearchStateParams{WorkspaceID: ws,
+		ProjectID: pgtype.UUID{Bytes: u.project, Valid: true}, Version: search.Version}); err != nil {
+		t.Fatal(err)
+	}
 	if got := u.count(t, fmt.Sprintf(`SELECT (SELECT count(*) FROM search_entry WHERE project_id = $1
 		AND version = %[1]d) + (SELECT count(*) FROM search_state WHERE project_id = $1 AND version = %[1]d)`,
 		search.Version+1)); got != entities+1 {
-		t.Errorf("after Reindex, %d documents and states are of the newer version, want all %d", got, entities+1)
+		t.Errorf("after Reindex and this version's record, %d documents and states are of the newer version, "+
+			"want all %d", got, entities+1)
 	}
 	for _, s := range []string{`UPDATE search_entry SET version = version - 1 WHERE project_id = $1`,
 		`UPDATE search_state SET version = version - 1 WHERE project_id = $1`} {
@@ -296,5 +379,9 @@ func TestReindex(t *testing.T) {
 	}
 	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {
 		t.Errorf("Reindex of a project past its time in the trash wrote %d, %v, want none", n, err)
+	}
+	if listed, err := queries.New(u.admin).ProjectsToIndex(ctx, queries.ProjectsToIndexParams{WorkspaceID: ws,
+		Version: search.Version}); err != nil || len(listed) != 0 {
+		t.Errorf("the projects to index are %v, %v, want none, not the one past its time in the trash", listed, err)
 	}
 }

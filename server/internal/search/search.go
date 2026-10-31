@@ -94,7 +94,8 @@ func IsKind(k Kind) bool { return idKind(k) != 0 }
 // version, and deletes the project's state that the newer one recorded
 // (queries.UpsertSearchEntries), so that the newer job writes them again,
 // while the older job leaves alone the documents and the states of a newer
-// version (queries.ProjectsToIndex, queries.UnindexedSearchEntities).
+// version (queries.ProjectsToIndex, queries.UnindexedSearchEntities,
+// queries.SetSearchState).
 const Version = 1
 
 // MaxQueryLength is how many characters a search's query has at most.

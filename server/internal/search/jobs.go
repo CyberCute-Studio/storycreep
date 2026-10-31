@@ -36,12 +36,12 @@ type reindex struct{}
 func (reindex) Kind() string { return "search_reindex" }
 
 // reindexPause is how long the job of the index waits before it runs again
-// after a run that stopped once its time ran out while it wrote documents.
+// after a run that stopped once its time ran out while it indexed projects.
 const reindexPause = time.Second
 
 // RegisterJobs registers the job of the index in r, which runs as the server
 // starts and then every hour, and again right away, after reindexPause, while
-// its runs stop once their time runs out while they write documents (work),
+// its runs stop once their time runs out while they index projects (work),
 // so that the documents of content that predates them, or of an older
 // Version, are written by one run after another, rather than a run's worth
 // of them, sweep.Budget's, an hour.
@@ -55,16 +55,36 @@ func RegisterJobs(r *jobs.Registry) {
 // work runs the job of the index once, as Reindex does, for as long as more
 // reports that the run has time left, and returns an error of jobs.Snooze,
 // which runs the job again after reindexPause without counting the attempt,
-// if more reports that the time has run out once it has written documents,
-// as there are likely more to write; or else the run's errors. A run that
-// writes no document, as one of an instance whose projects are all indexed,
-// waits for the job's next period, however long it takes.
+// if more reports that the time has run out once the run has written
+// documents, or recorded projects that lack none, as there are likely more
+// to index; or else the run's errors. It snoozes so even if the index of
+// some project failed, whose errors would otherwise have the job attempted
+// again only after the retries' growing waits, and discarded after its last
+// attempt, while the other projects' documents wait: such a project, which
+// has no state recorded, fails again in each later run, and the first that
+// has the time to reach every project returns its errors. A run that
+// neither writes a document nor records a project, as one of an instance
+// whose projects are all indexed, waits for the job's next period, however
+// long it takes.
 func work(ctx context.Context, db sweep.DB, more func() bool) error {
-	n, err := reindexWithin(ctx, db, more)
-	if err == nil && n > 0 && !more() {
+	done, err := reindexWithin(ctx, db, more)
+	if (done.written > 0 || done.recorded > 0) && !more() {
 		return jobs.Snooze(reindexPause)
 	}
 	return err
+}
+
+// progress is what a run of the job of the index did: how many documents it
+// wrote, and of how many projects it recorded that they lack none
+// (search_state).
+type progress struct {
+	written, recorded int64
+}
+
+// add adds what another part of the run did to p.
+func (p *progress) add(q progress) {
+	p.written += q.written
+	p.recorded += q.recorded
 }
 
 // Reindex writes the document of each node, connection, variable, and
@@ -78,33 +98,35 @@ func work(ctx context.Context, db sweep.DB, more func() bool) error {
 // which it locks as a batch of the project's commands does, so that no
 // batch changes an entity whose document it writes meanwhile, and which
 // writes reindexRows documents at most. It skips a project whose lock a
-// transaction holds, as a batch does, which its next run indexes, goes on
+// transaction holds, as a batch does, which its next run indexes, and one
+// whose time in the trash has passed, which the purge deletes, goes on
 // past a project whose index fails, and returns the errors of all of them,
 // and stops once it has run for sweep.Budget, which leaves the projects that
 // it does not reach for its next run. So it is safe to repeat. It returns
 // how many documents it wrote.
 func Reindex(ctx context.Context, db sweep.DB) (int64, error) {
-	return reindexWithin(ctx, db, sweep.Within(sweep.Budget))
+	done, err := reindexWithin(ctx, db, sweep.Within(sweep.Budget))
+	return done.written, err
 }
 
 // reindexWithin is Reindex, for as long as more reports that the run has
-// time left.
-func reindexWithin(ctx context.Context, db sweep.DB, more func() bool) (int64, error) {
-	var written int64
+// time left, and returns what it did.
+func reindexWithin(ctx context.Context, db sweep.DB, more func() bool) (progress, error) {
+	var done progress
 	err := sweep.Workspaces(ctx, db, more, func(workspaceID ids.UUID) error {
-		n, err := reindexWorkspace(ctx, db, more, workspaceID)
-		written += n
+		p, err := reindexWorkspace(ctx, db, more, workspaceID)
+		done.add(p)
 		return err
 	})
-	return written, err
+	return done, err
 }
 
 // reindexWorkspace indexes, as Reindex does, each project of the workspace
 // workspaceID that it has not indexed whole of the current Version, for as
-// long as more reports that the run has time left, and returns how many
-// documents it wrote. It goes on past a project whose index fails, and
-// returns the errors of all of them, but stops at once when ctx ends.
-func reindexWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspaceID ids.UUID) (int64, error) {
+// long as more reports that the run has time left, and returns what it did.
+// It goes on past a project whose index fails, and returns the errors of all
+// of them, but stops at once when ctx ends.
+func reindexWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspaceID ids.UUID) (progress, error) {
 	var projects []pgtype.UUID
 	err := db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 		var err error
@@ -113,40 +135,42 @@ func reindexWorkspace(ctx context.Context, db sweep.DB, more func() bool, worksp
 		return err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("search: find the projects of workspace %s to index: %w", workspaceID, err)
+		return progress{}, fmt.Errorf("search: find the projects of workspace %s to index: %w", workspaceID, err)
 	}
-	var written int64
+	var done progress
 	var errs []error
 	for _, p := range projects {
 		for more() {
 			if err := ctx.Err(); err != nil {
-				return written, errors.Join(append(errs, err)...)
+				return done, errors.Join(append(errs, err)...)
 			}
-			n, done, err := reindexProject(ctx, db, workspaceID, p.Bytes)
+			n, recorded, last, err := reindexProject(ctx, db, workspaceID, p.Bytes)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("search: index project %s: %w", ids.UUID(p.Bytes), err))
 				break
 			}
-			written += int64(n)
-			if done {
+			done.written += int64(n)
+			if recorded {
+				done.recorded++
+			}
+			if last {
 				break
 			}
 		}
 	}
-	return written, errors.Join(errs...)
+	return done, errors.Join(errs...)
 }
 
 // reindexProject writes, in a transaction of the workspace, at most
 // reindexRows of the documents that the project's entities lack of the
 // current Version, or records that the project lacks none, and returns how
-// many it wrote, and whether the project needs no further transaction:
-// because it lacked none, or a transaction holds its lock, which a later run
-// waits out, or it is gone.
-func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids.UUID) (int, bool, error) {
-	var n int
-	var done bool
-	err := db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
-		n, done = 0, false
+// many it wrote, whether it recorded that, and whether the project needs no
+// further transaction: because it lacked none, or a transaction holds its
+// lock, which a later run waits out, or it is gone.
+func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids.UUID) (n int, recorded,
+	done bool, err error) {
+	err = db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		n, recorded, done = 0, false, false
 		q := queries.New(tx)
 		ws, project := nullUUID(workspaceID), nullUUID(projectID)
 		_, err := q.LockProjectToIndex(ctx, queries.LockProjectToIndexParams{WorkspaceID: ws, ID: project})
@@ -163,11 +187,11 @@ func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids
 			return fmt.Errorf("find the entities without a document: %w", err)
 		}
 		if len(stale) == 0 {
-			done = true
 			if err := q.SetSearchState(ctx, queries.SetSearchStateParams{WorkspaceID: ws, ProjectID: project,
 				Version: Version}); err != nil {
 				return fmt.Errorf("record the project's index: %w", err)
 			}
+			recorded, done = true, true
 			return nil
 		}
 		var sel selection
@@ -186,7 +210,7 @@ func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids
 		return nil
 	})
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
-	return n, done, nil
+	return n, recorded, done, nil
 }

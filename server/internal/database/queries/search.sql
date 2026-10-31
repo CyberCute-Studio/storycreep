@@ -124,7 +124,8 @@ SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, @que
 -- their kinds, and their entities' UUIDs: the first, unless after is set, or
 -- else those after the rank after_rank, the kind after_kind, and the UUID
 -- after_id. A rank is how many of title_words, a tsquery of each of query's
--- words that matches a word of weight A alone, a word of the title, the
+-- words that matches a word of weight A alone, a word of the title, which
+-- the statement reads as tsqueries once rather than for each document, the
 -- document matches, plus ts_rank's of words, the OR of query's words, r, as
 -- r / (1 + r), which is below 1: so a document whose title matches more of
 -- the words ranks above one whose title matches fewer, however many words of
@@ -172,9 +173,11 @@ WITH hits AS (
         AND m.id = e.entity_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'component'
         AND @kind::text IN ('', 'component') AND e.vector @@ @query::tsquery
+), title_words AS MATERIALIZED (
+    SELECT t.word::tsquery AS query FROM unnest(@title_words::text[]) AS t (word)
 ), ranked AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id,
-        ((SELECT count(*) FROM unnest(@title_words::text[]) AS t (word) WHERE h.vector @@ t.word::tsquery)
+        ((SELECT count(*) FROM title_words t WHERE h.vector @@ t.query)
             + r.rank / (1 + r.rank))::real AS rank
     FROM hits h
     CROSS JOIN LATERAL (SELECT ts_rank(h.vector, @words::tsquery)::float8 AS rank) AS r
@@ -203,12 +206,15 @@ ORDER BY p.rank DESC, p.kind, p.entity_id;
 -- of the index has not written whole of the version, or of a newer one, in
 -- the order of their IDs: an older version's job, which a replica runs while
 -- a rolling upgrade replaces it, passes over the projects that a newer one
--- has indexed, rather than writing their documents again of its own.
+-- has indexed, rather than writing their documents again of its own. It
+-- leaves out a project whose time in the workspace's trash has passed, which
+-- the purge of projects deletes, as LockProjectToIndex does.
 SELECT p.id FROM project p
-WHERE p.workspace_id = @workspace_id AND NOT EXISTS (
-    SELECT 1 FROM search_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
-        AND s.version >= @version
-)
+WHERE p.workspace_id = @workspace_id AND (p.hard_delete_after IS NULL OR p.hard_delete_after > now())
+    AND NOT EXISTS (
+        SELECT 1 FROM search_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
+            AND s.version >= @version
+    )
 ORDER BY p.id;
 
 -- name: LockProjectToIndex :one
@@ -259,6 +265,11 @@ LIMIT @max_rows;
 
 -- name: SetSearchState :exec
 -- SetSearchState records that the job of the index has written the document
--- of every entity of the project of the version.
+-- of every entity of the project of the version, but keeps the state of a
+-- newer version, which an older version's job, which found the project
+-- before a newer one recorded it, finds once it takes the project's lock:
+-- a project whose state a newer version recorded has documents of that
+-- version or a newer one alone, as a batch that writes one of an older
+-- version deletes the state (UpsertSearchEntries).
 INSERT INTO search_state (workspace_id, project_id, version) VALUES (@workspace_id, @project_id, @version)
-ON CONFLICT (workspace_id, project_id) DO UPDATE SET version = excluded.version;
+ON CONFLICT (workspace_id, project_id) DO UPDATE SET version = greatest(search_state.version, excluded.version);
