@@ -543,7 +543,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-VAR-03 AC1–AC4, FR-VAR-04 AC1–AC2, FR-COMP-04 AC1, FR-EDIT-06 AC2, FR-COMP-02 AC2 (renaming the display name keeps the key; a key change is a refactor with FR-VAR-03 semantics), and the blocking half of FR-TEXT-02 AC2 (deleting a variable referenced only from text returns 409) pass. The dangling-reference half lands in item 48.
 
 ### 48. Validation engine
-**Status:** todo · **Depends on:** 46
+**Status:** done ([#58](https://github.com/CyberCute-Studio/storycreep/pull/58)) · **Depends on:** 46
 **PRD:** FR-DEP-03 (server: AC1, AC2, AC4), FR-PROJ-02 (AC2, validation half), FR-TEXT-02 (AC2, dangling half), FR-EDIT-03 (validation flags), NFR-PERF-10
 - Every rule code in the FR-DEP-03 table, with severity, message, and an entity address, in package `server/internal/validation`: rules that are pure functions of one read of the draft as of one moment (`validation.Run`, which publishing runs in its build's transaction), and `GET …/validation`, which answers with one report, not a paged list, and the project's `seq` (N55).
 - Muting per entity with a recorded reason: one warning's or info's code on one entity, by the commands `validation.mute` and `validation.unmute`, a mute being a part of its entity (`validation_mute`, migration 00028). Muted findings are listed separately (N55).
