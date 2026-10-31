@@ -220,3 +220,15 @@ JOIN node t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id A
 WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.from_output_id = ANY(@ids::uuid[])
     AND c.deleted_at IS NULL AND t.deleted_at IS NOT NULL
 ORDER BY c.id;
+
+-- name: ConnectionsAmong :many
+-- ConnectionsAmong returns the connections of the project that are not in
+-- the trash both of whose nodes are among node_ids, in the order of the ports
+-- that they leave, and of the choices of each port: by the IDs of the nodes
+-- that they leave, then of the outputs, out before them, then by their
+-- orders and their IDs.
+SELECT sqlc.embed(live_connection)
+FROM live_connection
+WHERE workspace_id = @workspace_id AND project_id = @project_id
+    AND from_node_id = ANY(@node_ids::uuid[]) AND to_node_id = ANY(@node_ids::uuid[])
+ORDER BY from_node_id, from_output_id NULLS FIRST, "order", id;

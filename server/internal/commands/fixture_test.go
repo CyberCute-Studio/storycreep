@@ -98,6 +98,12 @@ const (
 	// notePublish changes nothing, and needs snapshot:write rather than
 	// project:write of an API token, as publishing a snapshot would.
 	notePublish Type = "note.publish"
+	// noteCompose applies, as a part of itself (Tx.ApplyPart), a command of
+	// the type that its payload names, with the note and the body of its
+	// payload, at the fields of its payload's part, and is undone as
+	// noteUpdate is. noteReject refuses its batch at its payload's body.
+	noteCompose Type = "note.compose"
+	noteReject  Type = "note.reject"
 )
 
 // errRefused is noteFail's refusal.
@@ -112,6 +118,20 @@ type notePayload struct {
 // noteIDPayload is the payload of a command that names only a note.
 type noteIDPayload struct {
 	ID string `json:"id"`
+}
+
+// composePayload is noteCompose's payload: the part's type, and its
+// payload's note and body, which the part's schema holds to its bounds, as
+// the command's does not.
+type composePayload struct {
+	Part string      `json:"part"`
+	With composeWith `json:"with"`
+}
+
+// composeWith is the payload of noteCompose's part.
+type composeWith struct {
+	ID   string `json:"id"`
+	Body string `json:"body"`
 }
 
 // misreportPayload is noteMisreport's payload.
@@ -400,6 +420,28 @@ func noteRegistry() *Registry {
 		Type: noteUntrash, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
 		NonUndoable: true, Archived: true, Trashed: true, Restores: true,
 		Apply: func(context.Context, *Tx, noteIDPayload) error { return nil },
+	})
+	Register(r, Spec[composePayload]{
+		Type: noteCompose, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		Inverse: func(ctx context.Context, tx *Tx, p composePayload) ([]Step, error) {
+			s, err := readNote(ctx, tx, noteUUID(p.With.ID))
+			if err != nil {
+				return nil, err
+			}
+			return []Step{{Type: noteUpdate, Payload: notePayload{ID: p.With.ID, Body: s.Body}}}, nil
+		},
+		Apply: func(ctx context.Context, tx *Tx, p composePayload) error {
+			return tx.ApplyPart(ctx, Type(p.Part), p.With, func(field string) string {
+				return strings.TrimSuffix("with."+field, ".")
+			})
+		},
+	})
+	Register(r, Spec[notePayload]{
+		Type: noteReject, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
+		NonUndoable: true,
+		Apply: func(context.Context, *Tx, notePayload) error {
+			return Refuse("body", "is rejected", errRefused)
+		},
 	})
 	return r
 }

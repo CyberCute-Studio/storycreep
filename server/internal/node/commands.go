@@ -47,6 +47,14 @@ const (
 	// (package connection).
 	Delete  commands.Type = "node.delete"
 	Restore commands.Type = "node.restore"
+	// DeleteMany deletes nodes, as many as a selection holds, to the trash
+	// as one command, as node.delete deletes one, and RestoreMany restores
+	// them, as node.restore restores one. Each undoes the other. A paste's
+	// undo is one (package clipboard), so that it expects each node that the
+	// paste created once, where a node.delete of each would expect every one
+	// of them in each of its steps.
+	DeleteMany  commands.Type = "node.delete_many"
+	RestoreMany commands.Type = "node.restore_many"
 	// SetBoardEntry changes the entry node of a board, the node where the
 	// flow starts when it enters the board without one, as by the project's
 	// entry. Changing it back undoes it.
@@ -113,6 +121,11 @@ type duplicatePayload struct {
 // ID.
 type idPayload struct {
 	ID string `json:"id" doc:"The node's ID"`
+}
+
+// manyPayload is the payload of DeleteMany and RestoreMany.
+type manyPayload struct {
+	IDs []string `json:"ids" minItems:"1" maxItems:"10000" nullable:"false" doc:"The IDs of the nodes, each once, at most 10000, of any of the project's boards"`
 }
 
 // entryPayload is SetBoardEntry's payload.
@@ -320,83 +333,54 @@ func Register(r *commands.Registry) {
 		Type: Delete, Capability: op, Scope: sc, Touches: node,
 		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Node, "id", p.ID) },
 		// Deleting a node that is in the trash already does nothing, and its
-		// undo nothing either. One of a board in the trash, in the trash with
-		// it but not deleted itself, is refused, as every command but its
-		// board's restoration refuses it, because its undo, a restore, would
-		// be refused until the board is restored, as a board's variable's is
-		// (package variable).
+		// undo nothing either (deletes).
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
-			row, err := anyNode(ctx, tx, "id", p.ID)
-			if err != nil || row.Node.DeletedAt.Valid || row.BoardDeleted {
+			if ok, err := deletes(ctx, tx, "id", p.ID); err != nil || !ok {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Restore, Payload: idPayload{ID: p.ID}}}, nil
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
-			row, err := anyNode(ctx, tx, "id", p.ID)
-			switch {
-			case err != nil:
-				return err
-			case row.Node.DeletedAt.Valid:
-				return nil
-			case row.BoardDeleted:
-				return refuseBoardInTrash("id")
-			}
-			n := row.Node
-			rev, err := queries.New(tx).TrashNode(ctx, queries.TrashNodeParams{UpdatedBy: by(tx),
-				WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err := changed(tx, n.ID)(rev, err); err != nil {
-				return err
-			}
-			return tx.AddUsage(usage.Nodes, -1)
-		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error { return deleteNode(ctx, tx, "id", p.ID) },
 	})
 
 	commands.Register(r, commands.Spec[idPayload]{
 		Type: Restore, Capability: op, Scope: sc, Touches: node,
 		Check: func(p idPayload) input.FieldErrors { return entityID(ids.Node, "id", p.ID) },
 		// Restoring a node that is not in the trash does nothing, and its undo
-		// nothing either. A node of a board in the trash, which is in the
-		// trash with it, deleted on its own or not, is refused, since it comes
-		// back only with its board, so the inverse of its restore, which Apply
-		// refuses, reads nothing more.
+		// nothing either (restores).
 		Inverse: func(ctx context.Context, tx *commands.Tx, p idPayload) ([]commands.Step, error) {
-			row, err := anyNode(ctx, tx, "id", p.ID)
-			if err != nil || !row.Node.DeletedAt.Valid || row.BoardDeleted {
+			if ok, err := restores(ctx, tx, "id", p.ID); err != nil || !ok {
 				return []commands.Step{}, err
 			}
 			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
 		},
 		Apply: func(ctx context.Context, tx *commands.Tx, p idPayload) error {
-			row, err := anyNode(ctx, tx, "id", p.ID)
-			switch {
-			case err != nil:
-				return err
-			case row.BoardDeleted:
-				return commands.Refuse("id", "is a node of a board in the project's trash, which comes back only with "+
-					"its board: restore the board first", nil)
-			case !row.Node.DeletedAt.Valid:
-				return nil
-			}
-			n := row.Node
-			rev, err := queries.New(tx).RestoreNode(ctx, queries.RestoreNodeParams{UpdatedBy: by(tx),
-				WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err := changed(tx, n.ID)(rev, err); err != nil {
-				return err
-			}
-			// Its connections whose other node is not in the trash come back
-			// with it, and the batch's answer lists the others (package
-			// connection, FR-PROJ-06 AC1).
-			if err := tx.Restored(ids.Node, n.ID.Bytes); err != nil {
-				return err
-			}
-			return tx.AddUsage(usage.Nodes, 1)
+			return restoreNode(ctx, tx, "id", p.ID)
+		},
+	})
+
+	// node.delete_many and node.restore_many do what node.delete and
+	// node.restore do to each node of their payload, in its order, and the
+	// inverse of each does the other to those that it changes.
+	commands.Register(r, commands.Spec[manyPayload]{
+		Type: DeleteMany, Capability: op, Scope: sc, Touches: node,
+		Check: checkMany,
+		Inverse: func(ctx context.Context, tx *commands.Tx, p manyPayload) ([]commands.Step, error) {
+			return manyInverse(ctx, tx, p, deletes, RestoreMany)
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p manyPayload) error {
+			return applyMany(ctx, tx, p, deleteNode)
+		},
+	})
+
+	commands.Register(r, commands.Spec[manyPayload]{
+		Type: RestoreMany, Capability: op, Scope: sc, Touches: node,
+		Check: checkMany,
+		Inverse: func(ctx context.Context, tx *commands.Tx, p manyPayload) ([]commands.Step, error) {
+			return manyInverse(ctx, tx, p, restores, DeleteMany)
+		},
+		Apply: func(ctx context.Context, tx *commands.Tx, p manyPayload) error {
+			return applyMany(ctx, tx, p, restoreNode)
 		},
 	})
 
@@ -511,6 +495,149 @@ func checkMove(p movePayload) input.FieldErrors {
 		errs = append(errs, checkPosition(at+".position", place.Position)...)
 	}
 	return errs
+}
+
+// checkMany returns what is wrong with the payload p of DeleteMany or
+// RestoreMany that its schema cannot say: each node's ID, which is no other
+// node's of the payload, once it has checked that p names at most MaxMany
+// nodes, as its schema says too.
+func checkMany(p manyPayload) input.FieldErrors {
+	if len(p.IDs) > MaxMany {
+		return field("ids", fmt.Sprintf("holds more than %d nodes", MaxMany))
+	}
+	var errs input.FieldErrors
+	first := make(map[ids.UUID]int, len(p.IDs))
+	for i, id := range p.IDs {
+		at := fmt.Sprintf("ids[%d]", i)
+		u, err := ids.Decode(ids.Node, id)
+		if err != nil {
+			errs = append(errs, input.FieldError{Field: at, Message: fmt.Sprintf("is not a node's ID: %v", err)})
+		} else if j, dup := first[u]; dup {
+			errs = append(errs, input.FieldError{Field: at, Message: fmt.Sprintf("is the ID of ids[%d] too, "+
+				"which the command names once", j)})
+		} else {
+			first[u] = i
+		}
+	}
+	return errs
+}
+
+// deletes reports whether deleting the node id, at the payload's field at,
+// deletes it (deleteNode): whether it is a node of the project that is not
+// in the trash, deleted itself or with its board, so that the inverse of a
+// deletion that does nothing does nothing either. One of a board in the trash
+// is refused by the deletion, so the inverse reads nothing more of it. It
+// refuses the batch, at at, if the project has no such node.
+func deletes(ctx context.Context, tx *commands.Tx, at, id string) (bool, error) {
+	row, err := anyNode(ctx, tx, at, id)
+	return err == nil && !row.Node.DeletedAt.Valid && !row.BoardDeleted, err
+}
+
+// restores reports whether restoring the node id, at the payload's field at,
+// restores it (restoreNode): whether it is a node of the project that is in
+// the trash, deleted itself, of a board that is not, since a node of a board
+// in the trash comes back only with its board, which the restoration refuses,
+// so the inverse reads nothing more of it. It refuses the batch, at at, if
+// the project has no such node.
+func restores(ctx context.Context, tx *commands.Tx, at, id string) (bool, error) {
+	row, err := anyNode(ctx, tx, at, id)
+	return err == nil && row.Node.DeletedAt.Valid && !row.BoardDeleted, err
+}
+
+// deleteNode deletes the node id of the batch's project, at the payload's
+// field at, to the trash, as node.delete does: a node in the trash already
+// stays as it is, and one of a board in the trash, in the trash with it but
+// not deleted itself, is refused, as every command but its board's
+// restoration refuses it, because its undo, a restore, would be refused until
+// the board is restored, as a board's variable's is (package variable).
+func deleteNode(ctx context.Context, tx *commands.Tx, at, id string) error {
+	row, err := anyNode(ctx, tx, at, id)
+	switch {
+	case err != nil:
+		return err
+	case row.Node.DeletedAt.Valid:
+		return nil
+	case row.BoardDeleted:
+		return refuseBoardInTrash(at)
+	}
+	n := row.Node
+	rev, err := queries.New(tx).TrashNode(ctx, queries.TrashNodeParams{UpdatedBy: by(tx),
+		WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err := changed(tx, n.ID)(rev, err); err != nil {
+		return err
+	}
+	return tx.AddUsage(usage.Nodes, -1)
+}
+
+// restoreNode restores the node id of the batch's project, at the payload's
+// field at, from the trash, as node.restore does: a node that is not in the
+// trash stays as it is, and one of a board in the trash, which is in the
+// trash with it, deleted on its own or not, is refused, since it comes back
+// only with its board. Its connections whose other node is not in the trash
+// come back with it, and the batch's answer lists the others (package
+// connection, FR-PROJ-06 AC1).
+func restoreNode(ctx context.Context, tx *commands.Tx, at, id string) error {
+	row, err := anyNode(ctx, tx, at, id)
+	switch {
+	case err != nil:
+		return err
+	case row.BoardDeleted:
+		return commands.Refuse(at, "is a node of a board in the project's trash, which comes back only with its "+
+			"board: restore the board first", nil)
+	case !row.Node.DeletedAt.Valid:
+		return nil
+	}
+	n := row.Node
+	rev, err := queries.New(tx).RestoreNode(ctx, queries.RestoreNodeParams{UpdatedBy: by(tx),
+		WorkspaceID: n.WorkspaceID, ProjectID: n.ProjectID, ID: n.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err := changed(tx, n.ID)(rev, err); err != nil {
+		return err
+	}
+	if err := tx.Restored(ids.Node, n.ID.Bytes); err != nil {
+		return err
+	}
+	return tx.AddUsage(usage.Nodes, 1)
+}
+
+// manyInverse returns the inverse of the command of DeleteMany or RestoreMany
+// whose payload is p: a step of the type back of the nodes of p that the
+// command changes, as changes reports of each, in p's order, or no step if it
+// changes none.
+func manyInverse(ctx context.Context, tx *commands.Tx, p manyPayload,
+	changes func(ctx context.Context, tx *commands.Tx, at, id string) (bool, error), back commands.Type) (
+	[]commands.Step, error) {
+	var nodes []string
+	for i, id := range p.IDs {
+		ok, err := changes(ctx, tx, fmt.Sprintf("ids[%d]", i), id)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			nodes = append(nodes, id)
+		}
+	}
+	if len(nodes) == 0 {
+		return []commands.Step{}, nil
+	}
+	return []commands.Step{{Type: back, Payload: manyPayload{IDs: nodes}}}, nil
+}
+
+// applyMany applies one to each node of the payload p of DeleteMany or
+// RestoreMany, at its place in p, in p's order.
+func applyMany(ctx context.Context, tx *commands.Tx, p manyPayload,
+	one func(ctx context.Context, tx *commands.Tx, at, id string) error) error {
+	for i, id := range p.IDs {
+		if err := one(ctx, tx, fmt.Sprintf("ids[%d]", i), id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkTarget returns the problems of a jumper's target at the field at:

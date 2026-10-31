@@ -620,6 +620,188 @@ export interface ChangeRoleBody {
   role: "owner" | "admin" | "editor" | "commenter" | "viewer" | "guest";
 }
 
+export interface Clipboard {
+  /** The ID of the board that the nodes were copied from, whose variables are those of the board scope that the clipboard declares, and at which its expressions' names were read */
+  board_id: string;
+  /** The components that the nodes' and the connections' texts and expressions name, and the elements' speakers, each once, as they were where they were copied, by which a paste resolves them */
+  components: Array<ClipboardComponent>;
+  /** The connections between the nodes, those that leave one of them and enter one of them, at most 10000, in the order of the ports that they leave, by their nodes and then their outputs, out first, and of each port's choices (PRD FR-EDIT-03 AC1), which a paste keeps */
+  connections: Array<ClipboardConnection>;
+  /** What the JSON is, a Storycreep clipboard: always storycreep.clipboard */
+  format: "storycreep.clipboard";
+  /** The nodes, at most 1000, each once, in the order of their IDs */
+  nodes: Array<ClipboardNode>;
+  /** The ID of the project that the nodes were copied from */
+  project_id: string;
+  /** The variables that the nodes' and the connections' texts and expressions name, each once, as they were where they were copied, by which a paste resolves them */
+  variables: Array<ClipboardVariable>;
+  /** The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed. */
+  version: number;
+}
+
+export interface ClipboardAttribute {
+  /** The attribute definition's ID where it was copied */
+  id: string;
+  /** The attribute definition's key, an identifier of the expression language (PRD §5.8.1) */
+  key: string;
+  /** An enum's options */
+  options?: Array<string> | null;
+  /** Whether the attribute is runtime, which expressions read and write (PRD FR-COMP-03) */
+  runtime?: boolean;
+  /** The attribute's type (PRD FR-COMP-01) */
+  type: "bool" | "int" | "float" | "string" | "text" | "enum";
+}
+
+export interface ClipboardComponent {
+  /** The attribute definitions of the component's type that the content names of the component, each once */
+  attributes: Array<ClipboardAttribute>;
+  /** The component's ID where it was copied */
+  id: string;
+  /** The component's key, an identifier of the expression language (PRD §5.8.1) */
+  key: string;
+  /** The component's name */
+  name: string;
+  /** The component's type */
+  type: ClipboardComponentType;
+}
+
+export interface ClipboardComponentType {
+  /** The component type's ID where it was copied */
+  id: string;
+  /** The component type's key, by which a paste finds the type of the key, in which a component in the component's place may be created */
+  key: string;
+  /** The component type's name */
+  name: string;
+}
+
+export interface ClipboardConnection {
+  /** The connection's condition's source, if it has one */
+  condition?: string;
+  /** The ID of the node of the clipboard that the connection leaves, an element or a branch */
+  from_node_id: string;
+  /** The port that the connection leaves: out, an element's, or the ID of an output of the branch that it leaves, which a branch's connection has. Without it, out. */
+  from_port?: string;
+  /** The connection's ID where it was copied, which the paste's ids give a new one */
+  id: string;
+  /** The connection's label, a rich-text document (PRD FR-TEXT-01), as a node's text is. Without it, an empty paragraph. */
+  label?: RichTextDoc;
+  /** The connection's on-traverse script's source, if it has one */
+  on_traverse?: string;
+  /** The ID of the node of the clipboard that the connection enters */
+  to_node_id: string;
+}
+
+export interface ClipboardCopyInputBody {
+  /** The IDs of the nodes to copy, at most 1000, each once, of one board of the project, none of them in its trash, itself or with its board */
+  node_ids: Array<string>;
+}
+
+export interface ClipboardNode {
+  /** The node's colour. Without it, none. */
+  color?: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
+  /** The ID of an element's cover image, an asset of the project that it was copied from, which a paste into another project leaves out, if it has one. Another type has none. */
+  cover_asset_id?: string;
+  /** The node's ID where it was copied, by which the clipboard's connections, jumpers' targets, and node references name it, and the paste's ids give it a new one */
+  id: string;
+  /** Whether the flow ends at the element. Another type may not. */
+  is_ending?: boolean;
+  /** An element's kind. Another type has none. */
+  kind?: "dialogue" | "narration";
+  /** An element's or a branch's on-enter script's source, if it has one. A jumper has none. */
+  on_enter?: string;
+  /** An element's or a branch's on-exit script's source, if it has one. A jumper has none. */
+  on_exit?: string;
+  /** A branch's outputs, at most 1000, in their order: its conditional outputs, the first its if, and its else after them, if it has one (PRD FR-EDIT-04). Another type has none. */
+  outputs?: Array<ClipboardOutput> | null;
+  /** Where the node was on its board's canvas, which a paste moves by its offset, so that the pasted nodes keep their places relative to each other (PRD FR-EDIT-07 AC2) */
+  position: NodePosition;
+  /** The node's width and height, if it has a size of its own */
+  size?: NodeSize;
+  /** The ID of an element's speaker, a component that the clipboard declares, if it has one. Another type has none. */
+  speaker_component_id?: string;
+  /** The node's tags, as node.create takes them */
+  tags?: Array<string> | null;
+  /** A jumper's target, if it has one: a node of the clipboard, or another of the project that it was copied from. Another type has none. */
+  target?: NodeTarget;
+  /** An element's text, a rich-text document (PRD FR-TEXT-01), whose value references and mentions name variables and components that the clipboard declares, or else name what a paste keeps as it is. Another type has none. */
+  text?: RichTextDoc;
+  /** The node's title, if it has one, as node.create takes it */
+  title?: string;
+  /** The node's type: an element, a branch, or a jumper (PRD §5.8.5) */
+  type: "element" | "branch" | "jumper";
+}
+
+export interface ClipboardOutput {
+  /** A conditional output's condition's source. An else has none. */
+  condition?: string;
+  /** Whether the output is the branch's else, which comes after its conditional outputs, and has no condition */
+  else?: boolean;
+  /** The output's ID where it was copied, by which the connections that leave it name it as their from_port, and the paste's ids give it a new one */
+  id: string;
+}
+
+/** A command of the type clipboard.paste. */
+export interface ClipboardPasteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: ClipboardPastePayload;
+  /** The command's type. */
+  type: "clipboard.paste";
+}
+
+/** The payload of a command of the type clipboard.paste. */
+export interface ClipboardPastePayload {
+  /** The ID of the board that the clipboard is pasted onto, which is not in the project's trash */
+  board_id: string;
+  /** The clipboard (PRD FR-EDIT-07 AC3), as POST /api/v1/projects/{project_id}/clipboard/copy answers with it, of this project or of another of the workspace's, which a server answers with 422 validation_failed where it is not one that it reads */
+  clipboard: Clipboard;
+  /** The new ID of each node, output, and connection of the clipboard, by its ID in the clipboard: an ID of the same kind, of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2), as nd_, bo_, and cn_ IDs that a node.create, a branch_output.create, and a connection.create would take, each once */
+  ids: Record<string, string>;
+  /** What is added to each pasted node's position, as the clipboard holds it, so that the nodes keep their places relative to each other (PRD FR-EDIT-07 AC2): {"x": 0, "y": 0} pastes them where they were copied from. A node whose position is then beyond the bounds of a position is answered with 422 validation_failed at its position. */
+  offset: NodePosition;
+}
+
+export interface ClipboardReport {
+  /** The cover images of the clipboard's elements that are not the board's project's assets, as those of another project are not, each once: the elements are pasted without them */
+  assets: Array<string>;
+  /** The attribute definitions that the clipboard declares of a component that resolves, which the type of the component that it resolves to does not have, neither the same definition nor one of its key, each with that component */
+  attributes: Array<MissingAttribute>;
+  /** The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type of the key of its type's, if it has one, which a component.create takes */
+  components: Array<MissingComponent>;
+  /** The nodes outside the clipboard that its jumpers target or its expressions name by node references, each once, that the board's project does not have, in its trash or not, or not on the board that a target names: a jumper whose target this lists is pasted without one, and a node reference names nothing */
+  nodes: Array<string>;
+  /** The variables that the clipboard declares that resolve to none at the board: neither the same variable, global or of the board, nor one of its key and scope, a global one or one of the board. Each is as the clipboard declares it, which a variable.create of the board's project, of the board for a board's variable, takes, with an ID of its own. */
+  variables: Array<ClipboardVariable>;
+}
+
+export interface ClipboardResolveInputBody {
+  /** The ID of the board that the clipboard would be pasted onto, a board of the project that is not in its trash */
+  board_id: string;
+  /** The clipboard (PRD FR-EDIT-07 AC3), as POST /api/v1/projects/{project_id}/clipboard/copy answers with it, of this project or of another of the workspace's */
+  clipboard: Clipboard;
+}
+
+export interface ClipboardVariable {
+  /** The ID of the board whose variable it is, a board's: the clipboard's own, whose expressions read it, or another, whose variable a text names. A global variable has none. */
+  board_id?: string;
+  /** The variable's default, a value of its type, as variable.create takes it. Without it, the type's zero value. */
+  default?: boolean | number | string;
+  /** The variable's description, if it has one */
+  description?: string;
+  /** The variable's ID where it was copied */
+  id: string;
+  /** The variable's key, an identifier of the expression language (PRD §5.8.1) */
+  key: string;
+  /** Whether a board's variable is reset to its default each time the flow enters its board */
+  reset_on_enter?: boolean;
+  /** Whether the variable is global or of a board (PRD FR-VAR-02) */
+  scope: "global" | "board";
+  /** The variable's type */
+  type: "bool" | "int" | "float" | "string";
+}
+
 /** A batch of commands, which applies whole, in one transaction, or not at all. */
 export interface CommandBatchBody {
   /** The batch's commands, in the order to apply them: at least one, and at most 1000. Every command_id of the batch is its own. */
@@ -633,7 +815,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ClipboardPasteCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDeleteManyCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeRestoreManyCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -1658,6 +1840,20 @@ export interface MeteredUsageBody {
   used: number;
 }
 
+export interface MissingAttribute {
+  /** The attribute definition, as the clipboard declares it */
+  attribute: ClipboardAttribute;
+  /** The ID of the project's component that the clipboard's component resolves to */
+  component_id: string;
+}
+
+export interface MissingComponent {
+  /** The component, as the clipboard declares it */
+  component: ClipboardComponent;
+  /** The ID of the project's component type, not in its trash, of the key of the component's type, which a component created in its place may be of, if the project has one */
+  component_type_id?: string;
+}
+
 export interface Mute {
   /** When it was muted last, with its reason */
   muted_at: string;
@@ -1772,6 +1968,23 @@ export interface NodeDeleteCommand {
   type: "node.delete";
 }
 
+/** A command of the type node.delete_many. */
+export interface NodeDeleteManyCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeDeleteManyPayload;
+  /** The command's type. */
+  type: "node.delete_many";
+}
+
+/** The payload of a command of the type node.delete_many. */
+export interface NodeDeleteManyPayload {
+  /** The IDs of the nodes, each once, at most 10000, of any of the project's boards */
+  ids: Array<string>;
+}
+
 /** The payload of a command of the type node.delete. */
 export interface NodeDeletePayload {
   /** The node's ID */
@@ -1839,6 +2052,23 @@ export interface NodeRestoreCommand {
   payload: NodeRestorePayload;
   /** The command's type. */
   type: "node.restore";
+}
+
+/** A command of the type node.restore_many. */
+export interface NodeRestoreManyCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: NodeRestoreManyPayload;
+  /** The command's type. */
+  type: "node.restore_many";
+}
+
+/** The payload of a command of the type node.restore_many. */
+export interface NodeRestoreManyPayload {
+  /** The IDs of the nodes, each once, at most 10000, of any of the project's boards */
+  ids: Array<string>;
 }
 
 /** The payload of a command of the type node.restore. */
@@ -3173,6 +3403,23 @@ export interface Operations {
     };
   };
   /**
+   * Copy nodes as a clipboard
+   *
+   * Answers with the clipboard of the nodes, a documented JSON structure of a version of its own (PRD FR-EDIT-07 AC3, schema/clipboard): the nodes, with a branch's outputs, the connections between them, in the order of their ports and of each port's choices, and a declaration of each variable, component, and attribute definition, not in the project's trash, that their texts, expressions, and speakers name, by which the command clipboard.paste resolves them where it pastes the clipboard, onto a board of this project or of another of the workspace's. It reads, and changes nothing. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or has in its trash, or of another board than the others, is answered with 422 validation_failed at its place in body.node_ids, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  copyNodes: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      body: ClipboardCopyInputBody;
+    };
+    responses: {
+      200: Clipboard;
+    };
+  };
+  /**
    * Invite someone to a workspace
    *
    * Invites an email address, or, without one, whoever holds the invitation's link, to join a workspace with a role, for 14 days. Only an owner invites someone as owner, and an admin is answered with 403 owner_required. Only an owner or an admin of the workspace may, and anyone else with a role in it is answered with 403 insufficient_role. A workspace that does not exist, or in which the signed-in user's role is none, as it is for a user who is not a member or is a guest, is answered with 404 not_found, so that the answer does not tell whether it exists. An address that belongs to a member of the workspace is answered with 409 already_member, and one that has an open invitation of the workspace already, expired or not, with 409 invite_exists. On an instance that sends email, as GET /api/v1/instance says, an invitation to an address is emailed, with a link that lasts its 14 days from when the email is sent, and the answer holds no link. A workspace emails an address one invitation in 10 minutes at most, so the email of an invitation made sooner after the workspace last emailed the address, as after revoking an invitation that was emailed and inviting the address again, is sent once those 10 minutes have passed. The instance also emails a mailbox 10 invitations at most in each clock hour (UTC), from all workspaces together, counting the addresses that differ only in a +tag, as jo+work@example.com and jo@example.com, in how their domain is written, as in full-width letters, or, at Gmail, in dots, as one. The email of an invitation over that limit is not sent, and the invitation stays without a link, its sent_at empty; send it anew later. An email counts once, in the hour that the instance first tries to send it, so that one sent again after a failure, as while the SMTP server is down, counts nothing more. On an instance that sends no email, and for a link invitation on every instance, the answer's url is the link, which the signed-in user gives the person invited; the server keeps no copy of it. The email names the instance and the role, but neither the workspace nor who invites, which the page that the link opens shows instead (POST /api/v1/invites/lookup). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Signing in, registering, changing a password, completing first-run setup, asking for a link that resets a password or verifies an email address, using one, an instance admin's taking one as text, inviting someone to a workspace, sending an invitation anew, reading, accepting, or registering with an invitation's link, and making, listing, or revoking an API token share a rate limit of 20 requests a minute for each IP address. Registering, with an invitation or without, and asking for a link that resets a password also share one of 10 a minute for each email address, so that each counts against the other for the same address, and changing a password, asking for a link that verifies the signed-in account's email address, an instance admin's taking a link as text, inviting someone, sending an invitation anew, accepting one, and making, listing, or revoking an API token share one of 10 a minute for each account. No request made with an API token counts against these, so that the requests of a token, which count against its owner's account too, cannot keep the owner from finding and revoking it, after which no limit counts them. The RateLimit headers say how much of the limit of the IP address, or of the account, is left, and a request over a limit is answered with 429 rate_limited, whose details.reason is rate, whose RateLimit headers report the limit that it is over, that of the email address included, and whose Retry-After header says how many seconds to wait.
@@ -4471,6 +4718,23 @@ export interface Operations {
     };
   };
   /**
+   * Report what a paste would not resolve
+   *
+   * Answers with what of the clipboard a paste onto the board, by the command clipboard.paste, would resolve to nothing, as the project is now (PRD FR-EDIT-07 AC1): the variables and the components that it declares, as it declares them, with what creating one in their place takes, the attribute definitions that the components that it resolves to lack, the nodes outside it that its jumpers target or its expressions name that the project lacks, and the cover images that are not the project's. A client may create the variables and the components in the batch of the paste, before it, so that the paste resolves to them. A paste resolves a variable to the same variable, where the board reaches it, global or of the board, and else to the one of its key and scope, a global one or one of the board; a component to the same component, and else to the one of its key; and an attribute definition to the same one, of the type of the component that its component resolves to, and else to the one of its key of that type; none of them in the project's trash. It reads, and changes nothing. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or has in its trash, is answered with 422 validation_failed at body.board_id, and a clipboard that the server does not read, as one of a newer version, at its field of body.clipboard, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  resolveClipboard: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      body: ClipboardResolveInputBody;
+    };
+    responses: {
+      200: ClipboardReport;
+    };
+  };
+  /**
    * Restore a project from the trash
    *
    * Restores a project from its workspace's trash, as it was when it was deleted, within 30 days of its deletion; after that, it is answered with 404 not_found. A project that is not in the trash stays as it is. A restored project that is not archived counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, or on which the signed-in user's role is none, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -4765,6 +5029,7 @@ export const routes = {
   changeMemberRole: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
   completeSetup: { method: "POST", path: "/api/v1/setup" },
+  copyNodes: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/copy" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
@@ -4831,6 +5096,7 @@ export const routes = {
   requestPasswordReset: { method: "POST", path: "/api/v1/auth/password-reset" },
   resendInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}/resend" },
   resetPassword: { method: "POST", path: "/api/v1/auth/password-reset/confirm" },
+  resolveClipboard: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/resolve" },
   restoreProject: { method: "POST", path: "/api/v1/projects/{project_id}/restore" },
   revokeInvite: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/invites/{invite_id}" },
   revokeOtherSessions: { method: "DELETE", path: "/api/v1/auth/sessions" },

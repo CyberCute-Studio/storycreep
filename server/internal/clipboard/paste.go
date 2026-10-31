@@ -1,0 +1,393 @@
+package clipboard
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
+)
+
+// Paste pastes a clipboard onto a board of the batch's project (PRD
+// FR-EDIT-07): it creates its nodes, their outputs, and the connections
+// between them, with the IDs that the client makes, as node.create,
+// branch_output.create, and connection.create do (commands.Tx.ApplyPart),
+// with what they refer to resolved at the board (package doc). Deleting the
+// nodes that it created to the trash, with their outputs and connections, as
+// one node.delete_many, undoes it.
+const Paste commands.Type = "clipboard.paste"
+
+// pastePayload is Paste's payload.
+type pastePayload struct {
+	BoardID   string            `json:"board_id" doc:"The ID of the board that the clipboard is pasted onto, which is not in the project's trash"`
+	Offset    node.NodePosition `json:"offset" doc:"What is added to each pasted node's position, as the clipboard holds it, so that the nodes keep their places relative to each other (PRD FR-EDIT-07 AC2): {\"x\": 0, \"y\": 0} pastes them where they were copied from. A node whose position is then beyond the bounds of a position is answered with 422 validation_failed at its position."`
+	Clipboard Clipboard         `json:"clipboard" doc:"The clipboard (PRD FR-EDIT-07 AC3), as POST /api/v1/projects/{project_id}/clipboard/copy answers with it, of this project or of another of the workspace's, which a server answers with 422 validation_failed where it is not one that it reads"`
+	IDs       map[string]string `json:"ids" doc:"The new ID of each node, output, and connection of the clipboard, by its ID in the clipboard: an ID of the same kind, of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2), as nd_, bo_, and cn_ IDs that a node.create, a branch_output.create, and a connection.create would take, each once"`
+}
+
+// Register registers in r the type of command that pastes a clipboard. It
+// needs the role "Edit nodes, connections, text, expressions" (§5.6), as the
+// commands of what it creates do, and project:write of an API token. r has
+// node.create, branch_output.create, connection.create, and
+// node.delete_many registered once the registry makes a pipeline
+// (node.Register, connection.Register).
+func Register(r *commands.Registry) {
+	commands.Register(r, commands.Spec[pastePayload]{
+		Type: Paste, Capability: authz.EditContent, Scope: scope.ProjectWrite,
+		Touches: []ids.Kind{ids.Node, ids.Board, ids.Component, ids.BranchOutput, ids.Connection},
+		Check:   checkPaste,
+		Inverse: func(_ context.Context, _ *commands.Tx, p pastePayload) ([]commands.Step, error) {
+			nodes := make([]string, len(p.Clipboard.Nodes))
+			for i, n := range p.Clipboard.Nodes {
+				nodes[i] = p.IDs[n.ID]
+			}
+			return []commands.Step{{Type: node.DeleteMany, Payload: map[string]any{"ids": nodes}}}, nil
+		},
+		Apply: applyPaste,
+	})
+}
+
+// checkPaste returns what is wrong with Paste's payload p that its schema
+// cannot say: its board's ID, its offset, its clipboard (Check), at
+// clipboard, and its new IDs, which are one of each node, output, and
+// connection of the clipboard, of their kinds, of UUIDv7s, and no two alike.
+func checkPaste(p pastePayload) input.FieldErrors {
+	errs := checkID(ids.Board, "board_id", p.BoardID)
+	errs = append(errs, node.CheckPosition("offset", p.Offset)...)
+	for _, e := range Check(p.Clipboard) {
+		e.Field = strings.TrimSuffix("clipboard."+e.Field, ".")
+		errs = append(errs, e)
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	want := map[string]ids.Kind{}
+	var order []string
+	for _, n := range p.Clipboard.Nodes {
+		want[n.ID] = ids.Node
+		order = append(order, n.ID)
+		for _, o := range n.Outputs {
+			want[o.ID] = ids.BranchOutput
+			order = append(order, o.ID)
+		}
+	}
+	for _, c := range p.Clipboard.Connections {
+		want[c.ID] = ids.Connection
+		order = append(order, c.ID)
+	}
+	first := map[ids.UUID]string{}
+	for _, old := range order {
+		at := "ids." + old
+		id, ok := p.IDs[old]
+		if !ok {
+			errs = append(errs, input.FieldError{Field: "ids", Message: "lacks the new ID of " + old})
+			continue
+		}
+		u, err := ids.Decode(want[old], id)
+		switch {
+		case err != nil:
+			errs = append(errs, input.FieldError{Field: at, Message: fmt.Sprintf("is not a %s's ID: %v", want[old],
+				err)})
+		case !u.IsV7():
+			errs = append(errs, input.FieldError{Field: at, Message: "is not the ID of a UUIDv7, which the ID of " +
+				"every entity is"})
+		default:
+			if other, dup := first[u]; dup {
+				errs = append(errs, input.FieldError{Field: at, Message: "is the new ID of " + other + " too"})
+			}
+			first[u] = old
+		}
+	}
+	for _, old := range slices.Sorted(mapsKeys(p.IDs)) {
+		if _, ok := want[old]; !ok {
+			errs = append(errs, input.FieldError{Field: "ids." + old, Message: "is the new ID of nothing that the " +
+				"clipboard holds: its key is no ID of its nodes, outputs, or connections"})
+		}
+	}
+	return errs
+}
+
+// mapsKeys yields the keys of m.
+func mapsKeys(m map[string]string) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		for k := range m {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
+
+// applyPaste is Paste's Apply.
+func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
+	q := queries.New(tx)
+	ws, project := uuidOf(tx.WorkspaceID()), uuidOf(tx.ProjectID())
+	b, _ := ids.Decode(ids.Board, p.BoardID)
+	board := uuidOf(b)
+	if _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project, ID: board}); isNoRows(err) {
+		return commands.Refuse("board_id", "is not a board of the project, or is one in its trash", nil)
+	} else if err != nil {
+		return fmt.Errorf("clipboard: read the board: %w", err)
+	}
+	c := p.Clipboard
+	d, err := loadDestination(ctx, q, ws, project, board)
+	if err != nil {
+		return err
+	}
+	pl, err := d.plan(ctx, q, c, p.IDs)
+	if err != nil {
+		return err
+	}
+	for i, n := range c.Nodes {
+		at := fmt.Sprintf("clipboard.nodes[%d]", i)
+		payload, err := pl.node(at, n, p.BoardID, p.Offset)
+		if err != nil {
+			return err
+		}
+		if err := tx.ApplyPart(ctx, node.Create, payload, pl.fields(at, n.ID)); err != nil {
+			return err
+		}
+	}
+	for i, n := range c.Nodes {
+		for j, o := range n.Outputs {
+			at := fmt.Sprintf("clipboard.nodes[%d].outputs[%d]", i, j)
+			payload := map[string]any{"id": p.IDs[o.ID], "node_id": p.IDs[n.ID]}
+			if o.Else {
+				payload["else"] = true
+			} else if payload["condition"], err = pl.source(o.Condition, expr.ContextCondition); err != nil {
+				return err
+			}
+			fields := pl.fields(at, o.ID)
+			if err := tx.ApplyPart(ctx, node.CreateOutput, payload, func(f string) string {
+				if f == "node_id" {
+					return fmt.Sprintf("clipboard.nodes[%d].id", i)
+				}
+				return fields(f)
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	for i, cn := range c.Connections {
+		at := fmt.Sprintf("clipboard.connections[%d]", i)
+		payload, err := pl.connection(at, cn)
+		if err != nil {
+			return err
+		}
+		if err := tx.ApplyPart(ctx, connection.Create, payload, pl.fields(at, cn.ID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// plan is how a paste writes what it pastes of a clipboard at a board: what
+// the clipboard's declarations resolve to there, and the moves of the
+// expressions' names, the projects that they are read in, the new IDs, the
+// nodes outside the clipboard that the board's project has, and the covers
+// that are its assets.
+type plan struct {
+	d       *destination
+	r       resolution
+	from    *expr.Project
+	fromAt  string
+	moves   expr.Moves
+	ids     map[string]string
+	targets map[string]bool
+	covers  map[string]bool
+}
+
+// plan returns the plan of a paste of the clipboard c, with the new IDs ids,
+// at the board d.
+func (d *destination) plan(ctx context.Context, q *queries.Queries, c Clipboard, newIDs map[string]string) (*plan,
+	error) {
+	from, err := c.names()
+	if err != nil {
+		return nil, fmt.Errorf("clipboard: %w", err)
+	}
+	pl := &plan{d: d, r: d.resolve(c), from: from, fromAt: canonical(ids.Board, c.BoardID), ids: newIDs}
+	nodes := map[string]string{}
+	for _, n := range c.Nodes {
+		nodes[canonical(ids.Node, n.ID)] = canonical(ids.Node, newIDs[n.ID])
+	}
+	pl.moves = expr.Moves{Variables: pl.r.variables, Components: pl.r.components, Nodes: nodes}
+	if pl.targets, err = d.targets(ctx, q, c); err != nil {
+		return nil, err
+	}
+	if pl.covers, err = d.covers(ctx, q, c); err != nil {
+		return nil, err
+	}
+	return pl, nil
+}
+
+// fields returns the field of the paste's payload that each field of the
+// payload of the part that creates the clipboard's entity old, at at, comes
+// from: its id from its new ID's, at ids, and every other from the entity's
+// own field of the same name, which is where the part's problem is.
+func (pl *plan) fields(at, old string) func(string) string {
+	return func(f string) string {
+		switch {
+		case f == "id":
+			return "ids." + old
+		case f == "board_id":
+			return "board_id"
+		case f == "":
+			return at
+		}
+		return at + "." + f
+	}
+}
+
+// node returns the payload of the node.create of the clipboard's node n, at
+// at, onto the board boardID, its position moved by offset.
+func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.NodePosition) (map[string]any, error) {
+	position, errs := node.Shifted(n.Position, offset)
+	if len(errs) > 0 {
+		return nil, commands.Refuse(at+".position."+errs[0].Field, errs[0].Message, nil)
+	}
+	p := map[string]any{"id": pl.ids[n.ID], "board_id": boardID, "type": n.Type, "position": position}
+	set := func(field string, v any, ok bool) {
+		if ok {
+			p[field] = v
+		}
+	}
+	set("kind", n.Kind, n.Kind != "")
+	set("title", n.Title, n.Title != "")
+	set("color", n.Color, n.Color != "")
+	set("tags", n.Tags, len(n.Tags) > 0)
+	set("size", n.Size, n.Size != nil)
+	set("is_ending", true, n.IsEnding)
+	if len(n.Text) > 0 {
+		text, err := pl.text(n.Text)
+		if err != nil {
+			return nil, err
+		}
+		p["text"] = json.RawMessage(text)
+	}
+	if n.SpeakerComponentID != "" {
+		set("speaker_component_id", pl.r.components[canonical(ids.Component, n.SpeakerComponentID)],
+			pl.r.components[canonical(ids.Component, n.SpeakerComponentID)] != "")
+	}
+	if id := n.CoverAssetID; id != "" {
+		set("cover_asset_id", id, pl.covers[canonical(ids.Asset, id)])
+	}
+	if t := n.Target; t != nil && t.NodeID != "" {
+		if to, ok := pl.moves.Nodes[canonical(ids.Node, t.NodeID)]; ok {
+			p["target"] = map[string]string{"board_id": boardID, "node_id": to}
+		} else if pl.targets[outside{id: t.NodeID, board: t.BoardID}.key()] {
+			p["target"] = map[string]string{"board_id": t.BoardID, "node_id": t.NodeID}
+		}
+	}
+	for _, s := range []struct {
+		field, source string
+	}{{"on_enter", n.OnEnter}, {"on_exit", n.OnExit}} {
+		if s.source == "" {
+			continue
+		}
+		source, err := pl.source(s.source, expr.ContextScript)
+		if err != nil {
+			return nil, err
+		}
+		p[s.field] = source
+	}
+	return p, nil
+}
+
+// connection returns the payload of the connection.create of the
+// clipboard's connection c, at at.
+func (pl *plan) connection(at string, c ClipboardConnection) (map[string]any, error) {
+	p := map[string]any{"id": pl.ids[c.ID], "from_node_id": pl.ids[c.FromNodeID], "to_node_id": pl.ids[c.ToNodeID]}
+	switch c.FromPort {
+	case "", portOut:
+	default:
+		p["from_port"] = pl.ids[c.FromPort]
+	}
+	if len(c.Label) > 0 {
+		label, err := pl.text(c.Label)
+		if err != nil {
+			return nil, err
+		}
+		p["label"] = json.RawMessage(label)
+	}
+	for _, s := range []struct {
+		field, source string
+		ctx           expr.Context
+	}{{"condition", c.Condition, expr.ContextCondition}, {"on_traverse", c.OnTraverse, expr.ContextScript}} {
+		if s.source == "" {
+			continue
+		}
+		source, err := pl.source(s.source, s.ctx)
+		if err != nil {
+			return nil, err
+		}
+		p[s.field] = source
+	}
+	return p, nil
+}
+
+// source returns the source of an expression of the clipboard, of the
+// context ctx, as it is pasted: with each name that names one of its
+// declarations naming what that resolves to, and each node reference to one
+// of its nodes the node's copy (expr.Relocate).
+func (pl *plan) source(source string, ctx expr.Context) (string, error) {
+	out, err := expr.Relocate(source, ctx, pl.from, pl.fromAt, pl.d.names, pl.d.boardID, pl.moves)
+	if err != nil {
+		return "", fmt.Errorf("clipboard: %w", err)
+	}
+	return out, nil
+}
+
+// text returns the text t of the clipboard, which Check took, as it is
+// pasted: with each value reference and mention of one of its declarations
+// naming what that resolves to, and the others as they are.
+func (pl *plan) text(t Text) (Text, error) {
+	doc, err := richtext.Parse(t)
+	if err != nil {
+		return nil, fmt.Errorf("clipboard: a text that Check took: %w", err)
+	}
+	inlines(doc, func(in richtext.Inline) {
+		switch in := in.(type) {
+		case *richtext.Mention:
+			if to := pl.r.components[in.Component]; to != "" {
+				in.Component = to
+			}
+		case *richtext.Value:
+			if in.Attribute == "" {
+				if to := pl.r.variables[in.Ref]; to != "" {
+					in.Ref = to
+				}
+				return
+			}
+			to, attribute := pl.r.components[in.Ref], pl.r.attributes[in.Attribute]
+			if to != "" && attribute != "" {
+				in.Ref, in.Attribute = to, attribute
+			}
+		}
+	})
+	return textOf(*doc)
+}
+
+// uuidOf returns id as a uuid column.
+func uuidOf(id ids.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+// isNoRows reports whether err is a read's of no row.
+func isNoRows(err error) bool {
+	return errors.Is(err, pgx.ErrNoRows)
+}

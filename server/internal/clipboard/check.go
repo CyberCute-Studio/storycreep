@@ -1,0 +1,303 @@
+package clipboard
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+)
+
+// The node types, as package node names them.
+const (
+	typeElement = node.TypeElement
+	typeBranch  = node.TypeBranch
+	typeJumper  = node.TypeJumper
+)
+
+// portOut is the port of an element, which a connection that names none
+// leaves.
+const portOut = "out"
+
+// Check returns what is wrong with the clipboard c that its schema cannot
+// say, each problem at its field, as nodes[2].text, once its schema has taken
+// it: a newer version than Version; an ID of the wrong kind, or one that two
+// of its entities of a kind share; a field that its node's type does not
+// have; a text that is no document that Parse takes, at where in it the value
+// that is wrong is; a position beyond the bounds; a branch's outputs out of
+// their order, or an else that the branch has no conditional output for; a
+// connection between nodes that it does not hold, out of a jumper, or out of
+// a port that its node does not have; a key that is no identifier, a scope
+// without its board, or a default of another type than its variable's; and
+// declarations that no project could have, as two attributes of one
+// definition that say different things of it (expr.ErrProject). The
+// variables and components that the content names, and the nodes that its
+// jumpers target, need not be declared, nor held: a paste keeps or leaves
+// out what they name as it is (package doc).
+func Check(c Clipboard) input.FieldErrors {
+	var errs input.FieldErrors
+	add := func(at, msg string) { errs = append(errs, input.FieldError{Field: at, Message: msg}) }
+	if c.Version > Version {
+		add("version", fmt.Sprintf("is %d, a version of the clipboard newer than the one that this server reads, %d",
+			c.Version, Version))
+		return errs
+	}
+	errs = append(errs, checkID(ids.Project, "project_id", c.ProjectID)...)
+	errs = append(errs, checkID(ids.Board, "board_id", c.BoardID)...)
+	seen := map[ids.UUID]string{}
+	unique := func(kind ids.Kind, at, id string) bool {
+		u, err := ids.Decode(kind, id)
+		if err != nil {
+			add(at, fmt.Sprintf("is not a %s's ID: %v", kind, err))
+			return false
+		}
+		if first, dup := seen[u]; dup {
+			add(at, "is the ID of "+first+" too")
+			return false
+		}
+		seen[u] = at
+		return true
+	}
+	nodes := map[string]ClipboardNode{}
+	outputs := map[string]string{} // an output's ID, by the node's that it is of
+	for i, n := range c.Nodes {
+		at := fmt.Sprintf("nodes[%d]", i)
+		if unique(ids.Node, at+".id", n.ID) {
+			nodes[n.ID] = n
+		}
+		errs = append(errs, checkNode(at, n)...)
+		for j, o := range n.Outputs {
+			oat := fmt.Sprintf("%s.outputs[%d]", at, j)
+			if unique(ids.BranchOutput, oat+".id", o.ID) {
+				outputs[o.ID] = n.ID
+			}
+		}
+	}
+	for i, cn := range c.Connections {
+		at := fmt.Sprintf("connections[%d]", i)
+		unique(ids.Connection, at+".id", cn.ID)
+		from, ok := nodes[cn.FromNodeID]
+		switch {
+		case !ok:
+			add(at+".from_node_id", "is not the ID of a node of the clipboard")
+		case from.Type == typeJumper:
+			add(at+".from_node_id", "is a jumper's, which has no connections out (PRD §5.8.5)")
+		case from.Type == typeBranch && outputs[cn.FromPort] != cn.FromNodeID:
+			add(at+".from_port", "is not the ID of an output of the branch that the connection leaves, as a "+
+				"branch's connection's port is")
+		case from.Type == typeElement && cn.FromPort != "" && cn.FromPort != portOut:
+			add(at+".from_port", "is not out, an element's one port")
+		}
+		if _, ok := nodes[cn.ToNodeID]; !ok {
+			add(at+".to_node_id", "is not the ID of a node of the clipboard")
+		}
+		errs = append(errs, checkText(at+".label", cn.Label)...)
+	}
+	for i, v := range c.Variables {
+		at := fmt.Sprintf("variables[%d]", i)
+		unique(ids.Variable, at+".id", v.ID)
+		errs = append(errs, checkKey(at+".key", v.Key)...)
+		switch {
+		case v.Scope == "board" && v.BoardID == "":
+			add(at+".board_id", "is missing, which a board's variable has")
+		case v.Scope == "board":
+			errs = append(errs, checkID(ids.Board, at+".board_id", v.BoardID)...)
+		case v.BoardID != "":
+			add(at+".board_id", "is set on a global variable, which has no board")
+		case v.ResetOnEnter:
+			add(at+".reset_on_enter", "is set on a global variable, which only a board's variable may be")
+		}
+		if _, problem := v.Default.Of(v.Type); problem != "" {
+			add(at+".default", problem)
+		}
+		if problem := input.CheckTrimmedText(v.Description, maxDescription); v.Description != "" && problem != "" {
+			add(at+".description", problem)
+		}
+	}
+	for i, k := range c.Components {
+		at := fmt.Sprintf("components[%d]", i)
+		unique(ids.Component, at+".id", k.ID)
+		errs = append(errs, checkKey(at+".key", k.Key)...)
+		errs = append(errs, checkID(ids.ComponentType, at+".type.id", k.Type.ID)...)
+		errs = append(errs, checkKey(at+".type.key", k.Type.Key)...)
+		// The attribute definitions of a type are shared by its components,
+		// so one may be declared of several components, which say the same
+		// of it (expr.NewProject), but of one component once.
+		mine := map[string]bool{}
+		for j, a := range k.Attributes {
+			aat := fmt.Sprintf("%s.attributes[%d]", at, j)
+			if _, err := ids.Decode(ids.AttributeDef, a.ID); err != nil {
+				add(aat+".id", fmt.Sprintf("is not an attribute definition's ID: %v", err))
+			} else if mine[a.ID] {
+				add(aat+".id", "is the ID of another attribute definition of the component too")
+			}
+			mine[a.ID] = true
+			errs = append(errs, checkKey(aat+".key", a.Key)...)
+		}
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	if _, err := c.names(); err != nil {
+		add("", "declares what no project has: "+strings.TrimPrefix(err.Error(), "expr: "))
+	}
+	return errs
+}
+
+// maxDescription is the most characters of a variable's description, as
+// variable.create takes it.
+const maxDescription = 2000
+
+// checkNode returns what is wrong with the node n of a clipboard, at at, but
+// for its outputs' IDs: a field that its type does not have, its text, its
+// IDs, its position, and the order of a branch's outputs.
+func checkNode(at string, n ClipboardNode) input.FieldErrors {
+	var errs input.FieldErrors
+	add := func(field, msg string) { errs = append(errs, input.FieldError{Field: at + "." + field, Message: msg}) }
+	misplaced := func(field string, set bool, types ...string) {
+		for _, t := range types {
+			if n.Type == t {
+				return
+			}
+		}
+		if set {
+			add(field, fmt.Sprintf("is set on a node of the type %s, which has none", n.Type))
+		}
+	}
+	misplaced("kind", n.Kind != "", typeElement)
+	misplaced("text", len(n.Text) > 0, typeElement)
+	misplaced("speaker_component_id", n.SpeakerComponentID != "", typeElement)
+	misplaced("cover_asset_id", n.CoverAssetID != "", typeElement)
+	misplaced("is_ending", n.IsEnding, typeElement)
+	misplaced("target", n.Target != nil, typeJumper)
+	misplaced("on_enter", n.OnEnter != "", typeElement, typeBranch)
+	misplaced("on_exit", n.OnExit != "", typeElement, typeBranch)
+	misplaced("outputs", len(n.Outputs) > 0, typeBranch)
+	errs = append(errs, checkText(at+".text", n.Text)...)
+	errs = append(errs, optionalID(ids.Component, at+".speaker_component_id", n.SpeakerComponentID)...)
+	errs = append(errs, optionalID(ids.Asset, at+".cover_asset_id", n.CoverAssetID)...)
+	errs = append(errs, node.CheckPosition(at+".position", n.Position)...)
+	if t := n.Target; t != nil && (t.BoardID != "" || t.NodeID != "") {
+		errs = append(errs, checkID(ids.Board, at+".target.board_id", t.BoardID)...)
+		errs = append(errs, checkID(ids.Node, at+".target.node_id", t.NodeID)...)
+	}
+	for j, o := range n.Outputs {
+		oat := fmt.Sprintf("outputs[%d]", j)
+		switch {
+		case o.Else && j != len(n.Outputs)-1:
+			add(oat+".else", "is set on an output before the branch's last, but a branch's else comes after its "+
+				"conditional outputs")
+		case o.Else && j == 0:
+			add(oat+".else", "is set on the branch's first output, but a branch has an else only while it has a "+
+				"conditional output, which its else comes after")
+		case o.Else && o.Condition != "":
+			add(oat+".condition", "is set on an else, which has none")
+		}
+	}
+	return errs
+}
+
+// checkText returns what is wrong with the text t at at: a document that
+// richtext.Parse does not take, at where in it the value that is wrong is.
+func checkText(at string, t Text) input.FieldErrors {
+	if len(t) == 0 {
+		return nil
+	}
+	if _, err := richtext.Parse(t); err != nil {
+		var doc *richtext.Error
+		if errors.As(err, &doc) {
+			at += doc.Location()
+		}
+		return input.FieldErrors{{Field: at, Message: err.Error()}}
+	}
+	return nil
+}
+
+// checkKey returns what is wrong with the key at at: a key that is no
+// identifier of the expression language (PRD §5.8.1).
+func checkKey(at, key string) input.FieldErrors {
+	if err := ident.Check(key); err != nil {
+		return input.FieldErrors{{Field: at, Message: err.Error()}}
+	}
+	return nil
+}
+
+// checkID returns what is wrong with the ID id of the kind at at.
+func checkID(kind ids.Kind, at, id string) input.FieldErrors {
+	if _, err := ids.Decode(kind, id); err != nil {
+		return input.FieldErrors{{Field: at, Message: fmt.Sprintf("is not a %s's ID: %v", kind, err)}}
+	}
+	return nil
+}
+
+// optionalID returns what is wrong with the ID id of the kind at at as
+// checkID does, unless it is "", for none.
+func optionalID(kind ids.Kind, at, id string) input.FieldErrors {
+	if id == "" {
+		return nil
+	}
+	return checkID(kind, at, id)
+}
+
+// names returns what the expressions of the clipboard's board could name
+// where it was copied, of what it declares: its variables, each of its board,
+// and its components, each with its attribute definitions, by which a paste
+// reads the names of its expressions (expr.Relocate). An attribute of a
+// component's type that the clipboard does not declare of it is not there,
+// and a name of it names the component's attribute of its key wherever it is
+// pasted, as cmp.<component>.<attribute> would.
+func (c Clipboard) names() (*expr.Project, error) {
+	variables := make([]expr.Variable, len(c.Variables))
+	for i, v := range c.Variables {
+		variables[i] = expr.Variable{ID: canonical(ids.Variable, v.ID), Key: v.Key, Type: v.Type}
+		if v.Scope == "board" {
+			variables[i].Board = canonical(ids.Board, v.BoardID)
+		}
+	}
+	components := make([]expr.Component, len(c.Components))
+	for i, k := range c.Components {
+		components[i] = expr.Component{ID: canonical(ids.Component, k.ID), Key: k.Key,
+			Attributes: make([]expr.Attribute, len(k.Attributes))}
+		for j, a := range k.Attributes {
+			components[i].Attributes[j] = expr.Attribute{ID: canonical(ids.AttributeDef, a.ID), Key: a.Key,
+				Type: a.Type, Runtime: a.Runtime, Options: a.Options}
+		}
+	}
+	return expr.NewProject(variables, components, nil)
+}
+
+// canonical returns the ID id of the kind in its canonical spelling, as
+// ids.Encode writes it, or id itself if it is not one, which Check refuses.
+func canonical(kind ids.Kind, id string) string {
+	u, err := ids.Decode(kind, id)
+	if err != nil {
+		return id
+	}
+	return ids.Encode(kind, u)
+}
+
+// inlines calls f with each inline node of the document doc, in its order,
+// those of its lists' items among them.
+func inlines(doc *richtext.Doc, f func(richtext.Inline)) {
+	var blocks func([]richtext.Block)
+	blocks = func(bs []richtext.Block) {
+		for _, b := range bs {
+			switch b := b.(type) {
+			case *richtext.Paragraph:
+				for _, in := range b.Inlines {
+					f(in)
+				}
+			case *richtext.List:
+				for _, item := range b.Items {
+					blocks(item.Blocks)
+				}
+			}
+		}
+	}
+	blocks(doc.Blocks)
+}

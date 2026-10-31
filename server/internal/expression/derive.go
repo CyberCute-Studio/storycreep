@@ -449,6 +449,21 @@ func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UU
 	return n.build()
 }
 
+// Live returns what the expressions of the project's boards that are not in
+// the trash can name, of the project's variables, components, and nodes that
+// are not in the trash, those of its nodes among nodes alone, which its
+// expressions name, as the derivation reads them (§5.8.3), as package
+// clipboard reads what a copied expression names and what a pasted one is to
+// name. It reads with q, in a transaction of the workspace ws.
+func Live(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) (*expr.Project,
+	error) {
+	ps, err := loadProjects(ctx, q, ws, project, nodes, nil)
+	if err != nil {
+		return nil, err
+	}
+	return ps.live, nil
+}
+
 // names are what the project's expressions can name, as loadNames reads them
 // and build makes projects of: the variables, the components with their
 // attributes, and the nodes that the expressions to compile name, of those

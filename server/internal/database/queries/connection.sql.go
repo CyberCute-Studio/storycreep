@@ -290,6 +290,65 @@ func (q *Queries) ConnectionRevs(ctx context.Context, arg ConnectionRevsParams) 
 	return items, nil
 }
 
+const connectionsAmong = `-- name: ConnectionsAmong :many
+SELECT live_connection.id, live_connection.workspace_id, live_connection.project_id, live_connection.board_id, live_connection.from_node_id, live_connection.to_node_id, live_connection."order", live_connection.label, live_connection.rev, live_connection.deleted_at, live_connection.created_by, live_connection.updated_by, live_connection.created_at, live_connection.updated_at, live_connection.from_output_id
+FROM live_connection
+WHERE workspace_id = $1 AND project_id = $2
+    AND from_node_id = ANY($3::uuid[]) AND to_node_id = ANY($3::uuid[])
+ORDER BY from_node_id, from_output_id NULLS FIRST, "order", id
+`
+
+type ConnectionsAmongParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	NodeIds     []pgtype.UUID
+}
+
+type ConnectionsAmongRow struct {
+	LiveConnection LiveConnection
+}
+
+// ConnectionsAmong returns the connections of the project that are not in
+// the trash both of whose nodes are among node_ids, in the order of the ports
+// that they leave, and of the choices of each port: by the IDs of the nodes
+// that they leave, then of the outputs, out before them, then by their
+// orders and their IDs.
+func (q *Queries) ConnectionsAmong(ctx context.Context, arg ConnectionsAmongParams) ([]ConnectionsAmongRow, error) {
+	rows, err := q.db.Query(ctx, connectionsAmong, arg.WorkspaceID, arg.ProjectID, arg.NodeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionsAmongRow
+	for rows.Next() {
+		var i ConnectionsAmongRow
+		if err := rows.Scan(
+			&i.LiveConnection.ID,
+			&i.LiveConnection.WorkspaceID,
+			&i.LiveConnection.ProjectID,
+			&i.LiveConnection.BoardID,
+			&i.LiveConnection.FromNodeID,
+			&i.LiveConnection.ToNodeID,
+			&i.LiveConnection.Order,
+			&i.LiveConnection.Label,
+			&i.LiveConnection.Rev,
+			&i.LiveConnection.DeletedAt,
+			&i.LiveConnection.CreatedBy,
+			&i.LiveConnection.UpdatedBy,
+			&i.LiveConnection.CreatedAt,
+			&i.LiveConnection.UpdatedAt,
+			&i.LiveConnection.FromOutputID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const connectionsByID = `-- name: ConnectionsByID :many
 SELECT connection.id, connection.workspace_id, connection.project_id, connection.board_id, connection.from_node_id, connection.to_node_id, connection."order", connection.label, connection.rev, connection.deleted_at, connection.created_by, connection.updated_by, connection.created_at, connection.updated_at, connection.from_output_id, LEAST(f.deleted_at, t.deleted_at, o.deleted_at, b.deleted_at)::timestamptz
     AS ends_deleted_at

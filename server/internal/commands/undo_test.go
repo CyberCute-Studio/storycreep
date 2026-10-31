@@ -465,7 +465,7 @@ func TestExpectedRevBytes(t *testing.T) {
 // (package httpserver) reads of the server's registry.
 func TestUndoable(t *testing.T) {
 	r := noteRegistry()
-	if got, want := r.Undoable(), []Type{noteBadInverse, noteCreate, noteUpdate}; !slices.Equal(got, want) {
+	if got, want := r.Undoable(), []Type{noteBadInverse, noteCompose, noteCreate, noteUpdate}; !slices.Equal(got, want) {
 		t.Errorf("Undoable() = %v, want %v", got, want)
 	}
 }
