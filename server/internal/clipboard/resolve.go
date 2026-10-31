@@ -12,8 +12,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
-// ClipboardReport is what a clipboard's content names that resolves to nothing at a
-// board that it would be pasted onto (PRD FR-EDIT-07 AC1): each as the
+// ClipboardReport is what a clipboard's content names that resolves to nothing
+// at a board that it would be pasted onto (PRD FR-EDIT-07 AC1): each as the
 // clipboard declares it, with what creating one in its place takes, which a
 // client may create in the batch of the paste, before it, so that the paste
 // resolves to it.
@@ -177,11 +177,12 @@ func (d *destination) resolve(c Clipboard) resolution {
 // report returns what of the clipboard c's declarations resolves to nothing
 // as r says, with the nodes that its jumpers target, or that its
 // expressions name, outside it, that the board's project lacks, and the
-// covers that are not its assets (ClipboardReport), as nodesOutside and missingAssets
-// read them.
-func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboard, r resolution) (ClipboardReport, error) {
-	out := ClipboardReport{Variables: []ClipboardVariable{}, Components: []MissingComponent{}, Attributes: []MissingAttribute{},
-		Nodes: []string{}, Assets: []string{}}
+// covers that are not its assets (ClipboardReport), as targets and covers read
+// them.
+func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboard, r resolution) (ClipboardReport,
+	error) {
+	out := ClipboardReport{Variables: []ClipboardVariable{}, Components: []MissingComponent{},
+		Attributes: []MissingAttribute{}, Nodes: []string{}, Assets: []string{}}
 	for _, v := range c.Variables {
 		if r.variables[canonical(ids.Variable, v.ID)] == "" {
 			out.Variables = append(out.Variables, v)

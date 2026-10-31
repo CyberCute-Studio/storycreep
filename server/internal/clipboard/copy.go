@@ -83,9 +83,10 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 			problems = append(problems, input.FieldError{Field: fmt.Sprintf("node_ids[%d]", i),
 				Message: fmt.Sprintf("is not a node's ID: %v", err)})
 			continue
-		case slices.Contains(list, uuidOf(u)):
+		}
+		if j, dup := at[u]; dup {
 			problems = append(problems, input.FieldError{Field: fmt.Sprintf("node_ids[%d]", i),
-				Message: fmt.Sprintf("is the ID of node_ids[%d] too", at[u])})
+				Message: fmt.Sprintf("is the ID of node_ids[%d] too", j)})
 			continue
 		}
 		at[u] = i
@@ -124,8 +125,9 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 		return Clipboard{}, err
 	}
 	c := Clipboard{Format: Format, Version: Version, ProjectID: ids.Encode(ids.Project, projectID.Bytes),
-		BoardID: nodes[0].BoardID, Nodes: make([]ClipboardNode, len(nodes)), Connections: make([]ClipboardConnection, len(connections)),
-		Variables: []ClipboardVariable{}, Components: []ClipboardComponent{}}
+		BoardID: nodes[0].BoardID, Nodes: make([]ClipboardNode, len(nodes)),
+		Connections: make([]ClipboardConnection, len(connections)), Variables: []ClipboardVariable{},
+		Components: []ClipboardComponent{}}
 	for i, n := range nodes {
 		if c.Nodes[i], err = clipboardNode(n); err != nil {
 			return Clipboard{}, err
@@ -168,8 +170,8 @@ func clipboardConnection(c connection.Connection) (ClipboardConnection, error) {
 	if err != nil {
 		return ClipboardConnection{}, err
 	}
-	out := ClipboardConnection{ID: c.ID, FromNodeID: c.FromNodeID, FromPort: c.FromPort, ToNodeID: c.ToNodeID, Label: label,
-		Condition: sourceOf(c.Condition), OnTraverse: sourceOf(c.OnTraverse)}
+	out := ClipboardConnection{ID: c.ID, FromNodeID: c.FromNodeID, FromPort: c.FromPort, ToNodeID: c.ToNodeID,
+		Label: label, Condition: sourceOf(c.Condition), OnTraverse: sourceOf(c.OnTraverse)}
 	if out.FromPort == portOut {
 		out.FromPort = ""
 	}
@@ -319,7 +321,8 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 	}
 	for _, r := range rows {
 		k := ClipboardComponent{ID: ids.Encode(ids.Component, r.ID.Bytes), Key: r.Key, Name: r.Name,
-			Type:       ClipboardComponentType{ID: ids.Encode(ids.ComponentType, r.TypeID.Bytes), Key: r.TypeKey, Name: r.TypeName},
+			Type: ClipboardComponentType{ID: ids.Encode(ids.ComponentType, r.TypeID.Bytes), Key: r.TypeKey,
+				Name: r.TypeName},
 			Attributes: []ClipboardAttribute{}}
 		for _, a := range defs {
 			id := ids.Encode(ids.AttributeDef, a.ID.Bytes)
@@ -334,11 +337,11 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 }
 
 // Resolve returns what of the clipboard c resolves to nothing at the board
-// boardID of the project projectID (ClipboardReport), as a paste of it there would
-// resolve it, read as of one moment. It returns the errors of
-// project.Service.Get first, then the problems of c (Check), each at
-// clipboard and its field, and of boardID, at board_id, as an
-// input.FieldErrors: one that is no board of the project, or one in its trash.
+// boardID of the project projectID (ClipboardReport), as a paste of it there
+// would resolve it, read as of one moment. It returns the errors of
+// project.Service.Get first, then the problems of c (Check), each at clipboard
+// and its field, and of boardID, at board_id, as an input.FieldErrors: one that
+// is no board of the project, or one in its trash.
 func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID ids.UUID, boardID string,
 	c Clipboard) (ClipboardReport, error) {
 	var out ClipboardReport

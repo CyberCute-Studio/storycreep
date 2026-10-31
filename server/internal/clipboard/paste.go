@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -113,24 +114,13 @@ func checkPaste(p pastePayload) input.FieldErrors {
 			first[u] = old
 		}
 	}
-	for _, old := range slices.Sorted(mapsKeys(p.IDs)) {
+	for _, old := range slices.Sorted(maps.Keys(p.IDs)) {
 		if _, ok := want[old]; !ok {
 			errs = append(errs, input.FieldError{Field: "ids." + old, Message: "is the new ID of nothing that the " +
 				"clipboard holds: its key is no ID of its nodes, outputs, or connections"})
 		}
 	}
 	return errs
-}
-
-// mapsKeys yields the keys of m.
-func mapsKeys(m map[string]string) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for k := range m {
-			if !yield(k) {
-				return
-			}
-		}
-	}
 }
 
 // applyPaste is Paste's Apply.

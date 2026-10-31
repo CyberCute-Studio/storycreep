@@ -9,7 +9,7 @@ import (
 
 // SchemaID is the $id of the clipboard's JSON Schema, which names its
 // version (Version).
-const SchemaID = "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/clipboard/v1/clipboard.schema.json"
+const SchemaID = "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/" + SchemaPath
 
 // SchemaPath is where the repository holds the clipboard's JSON Schema, from
 // its root.

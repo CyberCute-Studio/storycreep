@@ -72,8 +72,8 @@ type Clipboard struct {
 	Components  []ClipboardComponent  `json:"components" maxItems:"10000" nullable:"false" doc:"The components that the nodes' and the connections' texts and expressions name, and the elements' speakers, each once, as they were where they were copied, by which a paste resolves them"`
 }
 
-// ClipboardNode is a node of a clipboard, with every field of it but its board, and
-// a branch's outputs, as node.create creates one, but for its outputs.
+// ClipboardNode is a node of a clipboard, with every field of it but its board,
+// and a branch's outputs, as node.create creates one, but for its outputs.
 type ClipboardNode struct {
 	ID                 string            `json:"id" doc:"The node's ID where it was copied, by which the clipboard's connections, jumpers' targets, and node references name it, and the paste's ids give it a new one"`
 	Type               string            `json:"type" enum:"element,branch,jumper" doc:"The node's type: an element, a branch, or a jumper (PRD §5.8.5)"`
@@ -111,9 +111,9 @@ type ClipboardConnection struct {
 	OnTraverse string `json:"on_traverse,omitempty" maxLength:"16384" doc:"The connection's on-traverse script's source, if it has one"`
 }
 
-// ClipboardVariable is a variable that a clipboard's content names, as it was where it
-// was copied: what a paste resolves it by, and what creating one in its
-// place takes (variable.create).
+// ClipboardVariable is a variable that a clipboard's content names, as it was
+// where it was copied: what a paste resolves it by, and what creating one in
+// its place takes (variable.create).
 type ClipboardVariable struct {
 	ID           string      `json:"id" doc:"The variable's ID where it was copied"`
 	Key          string      `json:"key" doc:"The variable's key, an identifier of the expression language (PRD §5.8.1)"`
@@ -125,9 +125,9 @@ type ClipboardVariable struct {
 	ResetOnEnter bool        `json:"reset_on_enter,omitempty" doc:"Whether a board's variable is reset to its default each time the flow enters its board"`
 }
 
-// ClipboardComponent is a component that a clipboard's content names, as it was where
-// it was copied, with the attribute definitions of its type that the content
-// names.
+// ClipboardComponent is a component that a clipboard's content names, as it was
+// where it was copied, with the attribute definitions of its type that the
+// content names.
 type ClipboardComponent struct {
 	ID         string                 `json:"id" doc:"The component's ID where it was copied"`
 	Key        string                 `json:"key" doc:"The component's key, an identifier of the expression language (PRD §5.8.1)"`
