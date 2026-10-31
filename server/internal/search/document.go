@@ -46,7 +46,11 @@ type Source struct {
 	Description string
 	// Values are a component's values of the definitions of text that are
 	// not deleted themselves, of the types string, text, and enum, in the
-	// order of the definitions' IDs.
+	// order of the definitions' IDs, or as many of them as start within
+	// their first MaxBodyLength characters, each cut there, as
+	// queries.ComponentSearchSources reads them, which make the same
+	// document, since a body holds them after the key and the description,
+	// and is cut there too.
 	Values []string
 }
 

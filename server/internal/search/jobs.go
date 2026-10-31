@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
@@ -29,6 +30,15 @@ const reindexInterval = time.Hour
 // project lacks. A test makes it smaller, to write a fixture's documents in
 // several transactions.
 var reindexRows int32 = 1000
+
+// reindexLockWait is how long the job waits for a project's lock at most, as
+// a batch of the project's commands holds it while it applies, which takes
+// far less, so that the job writes the documents of a project that its users
+// edit, rather than passing over it until its next period, an hour later; it
+// passes over a project whose lock a transaction holds for longer, as one
+// that runs on and on would hold it. A test makes it shorter, to pass over a
+// project whose lock it holds.
+var reindexLockWait = 5 * time.Second
 
 // reindex is the job of the index (FR-JOBS-01's search index maintenance,
 // FR-PROJ-03).
@@ -109,8 +119,9 @@ func (p *progress) add(q progress) {
 // the workspace (§5.4), as package sweep runs them, each of one project,
 // which it locks as a batch of the project's commands does, so that no
 // batch changes an entity whose document it writes meanwhile, and which
-// writes reindexRows documents at most. It skips a project whose lock a
-// transaction holds, as a batch does, which its next run indexes, and one
+// writes reindexRows documents at most. It waits for a project's lock while
+// a batch holds it, for reindexLockWait at most, and skips a project whose
+// lock a transaction holds for longer, which its next run indexes, and one
 // whose time in the trash has passed, which the purge deletes, goes on
 // past a project whose index fails, and returns the errors of all of them,
 // and stops once it has run for sweep.Budget, which leaves the projects that
@@ -178,18 +189,24 @@ func reindexWorkspace(ctx context.Context, db sweep.DB, more func() bool, worksp
 // current Version, or records that the project lacks none, and returns how
 // many it wrote, whether it recorded that, and whether the project needs no
 // further transaction: because it lacked none, or a transaction holds its
-// lock, which a later run waits out, or it is gone.
+// lock for longer than reindexLockWait, which a later run waits out, or it
+// is gone.
 func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids.UUID) (n int, recorded,
 	done bool, err error) {
 	err = db.InTx(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 		n, recorded, done = 0, false, false
 		q := queries.New(tx)
 		ws, project := nullUUID(workspaceID), nullUUID(projectID)
+		if err := q.SetIndexLockWait(ctx, int32(reindexLockWait.Milliseconds())); err != nil {
+			return fmt.Errorf("bound the wait for the project's lock: %w", err)
+		}
 		_, err := q.LockProjectToIndex(ctx, queries.LockProjectToIndexParams{WorkspaceID: ws, ID: project})
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			done = true
 			return nil
+		case lockNotAvailable(err):
+			return errLocked
 		case err != nil:
 			return fmt.Errorf("lock the project: %w", err)
 		}
@@ -221,8 +238,23 @@ func reindexProject(ctx context.Context, db sweep.DB, workspaceID, projectID ids
 		}
 		return nil
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, errLocked):
+		return 0, false, true, nil
+	case err != nil:
 		return 0, false, false, err
 	}
 	return n, recorded, done, nil
+}
+
+// errLocked is what reindexProject's transaction ends with when a
+// transaction holds the project's lock for longer than reindexLockWait.
+var errLocked = errors.New("search: a transaction holds the project's lock")
+
+// lockNotAvailable reports whether err is PostgreSQL's lock_not_available,
+// which a statement that waited for a lock for lock_timeout fails with
+// (queries.SetIndexLockWait).
+func lockNotAvailable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -154,7 +155,8 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // TestReindex checks the job of the index: it writes the documents of
 // content that has none, in transactions of a bounded number of documents,
 // and records the project's state, after which its runs write nothing; it
-// passes over a project whose lock a batch holds, until a later run; it
+// passes over a project whose lock a transaction holds for longer than it
+// waits, until a later run, and waits out a batch that holds it for less; it
 // writes again the documents that a migration marks; a run that stops once
 // its time runs out while it writes documents, or records projects, has the
 // job run again soon, even if another project's index failed, which it warns
@@ -163,7 +165,8 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // its own; it comes back to a project whose state a newer version recorded
 // once an older version's batch writes a document of it; and it lists no
 // project whose time in the trash has passed. It changes how many documents
-// a transaction writes, so it runs alone.
+// a transaction writes, and how long the job waits for a lock, so it runs
+// alone.
 func TestReindex(t *testing.T) {
 	ctx := context.Background()
 	u := newUnindexed(t)
@@ -176,7 +179,8 @@ func TestReindex(t *testing.T) {
 		t.Fatalf("the project has %d documents before the job runs, want none", got)
 	}
 
-	// A batch holds the project's lock: the job passes over the project.
+	// A transaction holds the project's lock for longer than the job waits
+	// for it: the job passes over the project.
 	lock, err := u.admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -184,19 +188,30 @@ func TestReindex(t *testing.T) {
 	if _, err := lock.Exec(ctx, "SELECT 1 FROM project WHERE id = $1 FOR NO KEY UPDATE", u.project); err != nil {
 		t.Fatal(err)
 	}
+	search.SetReindexLockWait(t, 100*time.Millisecond)
 	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {
-		t.Errorf("Reindex while a batch holds the lock wrote %d documents, %v, want none", n, err)
-	}
-	if err := lock.Rollback(ctx); err != nil {
-		t.Fatal(err)
+		t.Errorf("Reindex while a transaction holds the lock for long wrote %d documents, %v, want none", n, err)
 	}
 
+	// A batch holds it for less, as one that applies does: the job waits it
+	// out, and writes the project's documents, rather than passing over the
+	// project until its next period.
+	search.SetReindexLockWait(t, time.Minute)
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		released <- lock.Rollback(ctx)
+	}()
 	n, err := search.Reindex(ctx, u.db)
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != int64(entities) {
-		t.Errorf("Reindex wrote %d documents, want one of each of the %d entities", n, entities)
+		t.Errorf("Reindex wrote %d documents, want one of each of the %d entities, past the batch that held "+
+			"the lock", n, entities)
 	}
 	u.wantIndexed(t)
 	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {

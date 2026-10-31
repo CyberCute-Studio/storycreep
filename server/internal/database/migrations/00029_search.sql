@@ -96,8 +96,15 @@ CREATE TABLE search_entry (
 	FOREIGN KEY (workspace_id, project_id, component_id) REFERENCES component (workspace_id, project_id, id)
 		ON DELETE CASCADE
 );
--- The words of the documents, which a search looks its query's words up in.
-CREATE INDEX search_entry_vector ON search_entry USING gin (vector);
+-- A search reads the documents of a project's kind by the unique index
+-- above, and matches each one's vector, as no index of the vectors can serve
+-- it: the application's role reads search_entry through row-level security,
+-- which the table forces, and PostgreSQL looks a condition up in an index
+-- before the policy's only if the condition's operator is leakproof, which
+-- @@ is not, so a GIN index of the vectors would cost every write of a
+-- document and serve no search. A search's cost follows its project's size,
+-- which BenchmarkSearch holds under NFR-PERF-09's target on the large
+-- fixture.
 -- The cascades of the entities' purges.
 CREATE INDEX search_entry_node ON search_entry (workspace_id, project_id, node_id) WHERE node_id IS NOT NULL;
 CREATE INDEX search_entry_connection ON search_entry (workspace_id, project_id, connection_id)

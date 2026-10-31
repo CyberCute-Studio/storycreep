@@ -338,8 +338,12 @@ func prefixQuery(lexemes []string, op string) string {
 // word that starts with lexeme: lexeme quoted, as a tsquery's text quotes a
 // word, with :* after it.
 func prefixTerm(lexeme string) string {
-	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(lexeme) + "':*"
+	return "'" + quoteTerm.Replace(lexeme) + "':*"
 }
+
+// quoteTerm escapes a word as a tsquery's text quotes it, each backslash and
+// each apostrophe doubled (prefixTerm).
+var quoteTerm = strings.NewReplacer(`\`, `\\`, `'`, `''`)
 
 // nullUUID returns id as a uuid column, null for zero.
 func nullUUID(id ids.UUID) pgtype.UUID {

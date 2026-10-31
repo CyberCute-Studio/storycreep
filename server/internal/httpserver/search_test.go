@@ -14,8 +14,10 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search/searchtest"
@@ -210,9 +212,10 @@ func newSearchWorld(t *testing.T) *searchWorld {
 // (AC2), the matches in titles before those in bodies, however many words
 // of a body match; the filter by kind;
 // the pages of a list, which list what one page lists, in its order; the
-// documents as later batches leave them; and a body whose match lies past
-// what its snippet is taken from, which is found, with its start as its
-// snippet.
+// documents as later batches leave them; a body whose match lies past what
+// its snippet is taken from, which is found, with its start as its snippet;
+// and a component's values, which a batch reads as far as its body holds
+// them.
 //
 // Verifies: FR-PROJ-03/AC2
 func TestSearch(t *testing.T) {
@@ -403,6 +406,50 @@ func TestSearch(t *testing.T) {
 	}
 	if got, want := marked(wrecked.Items[0].Snippet), strings.TrimSpace(strings.Repeat("calm ", 15)); got != want {
 		t.Errorf("the snippet of %s is %q, want the first 15 words of its body, without a mark", long, got)
+	}
+
+	// A batch reads a component's values as far as its body holds them: a
+	// value that starts past the first search.MaxBodyLength characters of
+	// them is not read, nor found, and the document is what a recomputation
+	// of it from every value gives.
+	lore := ids.Encode(ids.AttributeDef, ids.New())
+	notes := strings.Repeat("calm ", search.MaxBodyLength/len("calm ")-1) + "calm"
+	sendBatch(t, h, w.owner, w.project,
+		cmd("attribute.create", map[string]any{"id": lore, "component_type_id": w.prop, "name": "Lore",
+			"type": "text"}),
+		cmd("component.set_attribute", map[string]any{"id": w.elara, "attribute_id": w.notes, "value": notes}),
+		cmd("component.set_attribute", map[string]any{"id": w.elara, "attribute_id": lore, "value": "reef"}),
+	)
+	if got := searchIDs(t, h, w.owner, w.project, "reef", 50); len(got) != 0 {
+		t.Errorf("the search for reef, a value past the end of its component's body, finds %v", got)
+	}
+	if drift := searchDrift(t, w.admin, w.project); len(drift) > 0 {
+		t.Errorf("the documents are not what the content holds: %q", drift[:min(len(drift), 5)])
+	}
+	projectID := decode(t, ids.Project, w.project)
+	var workspaceID ids.UUID
+	if err := w.admin.QueryRow(context.Background(), "SELECT workspace_id FROM project WHERE id = $1",
+		projectID).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := queries.New(w.admin).ComponentSearchSources(context.Background(),
+		queries.ComponentSearchSourcesParams{MaxBodyLength: search.MaxBodyLength,
+			WorkspaceID: pgtype.UUID{Bytes: workspaceID, Valid: true}, ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+			Ids: []pgtype.UUID{{Bytes: decode(t, ids.Component, w.elara), Valid: true}}, AttributeIds: []pgtype.UUID{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || !slices.Equal(sources[0].AttributeValues, []string{"Brass and glass", notes}) {
+		var lengths [][]int
+		for _, s := range sources {
+			var l []int
+			for _, v := range s.AttributeValues {
+				l = append(l, len(v))
+			}
+			lengths = append(lengths, l)
+		}
+		t.Errorf("the component's values read for its document are of the lengths %v, want its material's and its "+
+			"notes', of %d and %d characters, and not its lore's", lengths, len("Brass and glass"), len(notes))
 	}
 }
 

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/sweep"
@@ -24,6 +25,14 @@ func SetReindexRows(t interface{ Cleanup(func()) }, n int32) {
 	old := reindexRows
 	reindexRows = n
 	t.Cleanup(func() { reindexRows = old })
+}
+
+// SetReindexLockWait sets how long the job of the index waits for a
+// project's lock at most, until the test ends.
+func SetReindexLockWait(t interface{ Cleanup(func()) }, d time.Duration) {
+	old := reindexLockWait
+	reindexLockWait = d
+	t.Cleanup(func() { reindexLockWait = old })
 }
 
 // Neutral returns the types of command that the derivation passes over

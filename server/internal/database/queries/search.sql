@@ -9,9 +9,9 @@
 -- and its version, and UpsertSearchEntries, for the documents that differ),
 -- and the job of the index those of the entities that have none of the
 -- current version or a newer one, under the same lock (ProjectsToIndex,
--- LockProjectToIndex, UnindexedSearchEntities, SetSearchState). search_entry
--- and search_state are tenant tables, which a transaction of their workspace
--- reads.
+-- SetIndexLockWait, LockProjectToIndex, UnindexedSearchEntities,
+-- SetSearchState). search_entry and search_state are tenant tables, which a
+-- transaction of their workspace reads.
 
 -- name: NodeSearchSources :many
 -- NodeSearchSources returns what the documents of the project's nodes whose
@@ -61,15 +61,27 @@ WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id AND v.id = A
 -- IDs, those of the types string, text, and enum, whatever becomes of their
 -- types' place in the trash, which only a type whose components are all
 -- there has; with each component's document as the index holds it, or none.
+-- Of the values, it returns those that start within the first
+-- max_body_length characters of them all, one after another, each cut after
+-- max_body_length characters, since a body, which holds them after the
+-- component's key and description, is cut there (search.MaxBodyLength): so
+-- that a batch reads no more of a component's values, which may hold a
+-- hundred values of text of 100,000 characters each, than its document holds.
 SELECT m.id, m.name, m.key::text AS key, m.description AS doc,
     ARRAY(
-        SELECT a.value #>> '{}'
-        FROM attribute_value a
-        JOIN attribute_def d ON d.workspace_id = a.workspace_id AND d.project_id = a.project_id
-            AND d.id = a.attribute_def_id
-        WHERE a.workspace_id = m.workspace_id AND a.project_id = m.project_id AND a.component_id = m.id
-            AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum') AND jsonb_typeof(a.value) = 'string'
-        ORDER BY d.id
+        SELECT left(v.value, @max_body_length::integer)
+        FROM (
+            SELECT d.id, a.value #>> '{}' AS value,
+                coalesce(sum(length(a.value #>> '{}')) OVER (ORDER BY d.id ROWS BETWEEN UNBOUNDED PRECEDING
+                    AND 1 PRECEDING), 0) AS before
+            FROM attribute_value a
+            JOIN attribute_def d ON d.workspace_id = a.workspace_id AND d.project_id = a.project_id
+                AND d.id = a.attribute_def_id
+            WHERE a.workspace_id = m.workspace_id AND a.project_id = m.project_id AND a.component_id = m.id
+                AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum') AND jsonb_typeof(a.value) = 'string'
+        ) AS v
+        WHERE v.before < @max_body_length::integer
+        ORDER BY v.id
     )::text[] AS attribute_values,
     e.title AS entry_title,
     coalesce(encode(sha256(convert_to(e.body, 'UTF8')), 'hex'), '')::text AS entry_body_sha256,
@@ -135,6 +147,12 @@ SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, @que
 -- the words rather than query, whose AND ts_rank ranks by how near its words
 -- are to each other alone, which would rank a document whose title holds one
 -- of them and whose body holds another a hundred words on close to nothing.
+-- A document's rank reads its vector twice, rather than once for each word
+-- of the query: ts_filter takes the words of its title, of weight A, which
+-- the tsqueries of title_words match, and ts_rank ranks it, each once, in a
+-- subquery that OFFSET 0 keeps PostgreSQL from folding into the expression
+-- that reads its columns, which would compute them again where it names
+-- them.
 -- Each comes with its board, a node's, a connection's, or a variable's of a
 -- board, with the board's name, its node, a node itself or the node that a
 -- connection leaves, with the node's title, and its title and its body as
@@ -182,10 +200,11 @@ WITH hits AS (
     SELECT t.word::tsquery AS query FROM unnest(@title_words::text[]) AS t (word)
 ), ranked AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id,
-        ((SELECT count(*) FROM title_words t WHERE h.vector @@ t.query)
-            + r.rank / (1 + r.rank))::real AS rank
+        ((SELECT count(*) FROM title_words t WHERE r.title @@ t.query) + r.rank / (1 + r.rank))::real AS rank
     FROM hits h
-    CROSS JOIN LATERAL (SELECT ts_rank(h.vector, @words::tsquery)::float8 AS rank) AS r
+    CROSS JOIN LATERAL (
+        SELECT ts_filter(h.vector, '{a}') AS title, ts_rank(h.vector, @words::tsquery)::float8 AS rank OFFSET 0
+    ) AS r
 ), page AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.rank
     FROM ranked h
@@ -222,17 +241,29 @@ WHERE p.workspace_id = @workspace_id AND (p.hard_delete_after IS NULL OR p.hard_
     )
 ORDER BY p.id;
 
+-- name: SetIndexLockWait :exec
+-- SetIndexLockWait has the transaction's statements wait for a lock for
+-- milliseconds at most (lock_timeout), as SET LOCAL does, after which the
+-- statement that waits fails with lock_not_available, so that the job of the
+-- index waits out a batch that holds its project's lock (LockProjectToIndex)
+-- for no longer than that.
+SELECT set_config('lock_timeout', (@milliseconds::integer)::text, true);
+
 -- name: LockProjectToIndex :one
 -- LockProjectToIndex locks the project's row as a batch of its commands
 -- does (LockProjectSeq), so that the job of the index writes no document
 -- that a batch changes the entity of meanwhile, and returns its ID, or no row
--- if the workspace has no such project, its time in the workspace's trash has
--- passed, which the purge of projects deletes it for, or a transaction holds
--- the lock, as a batch does while it applies, which a later run of the job
--- waits out.
+-- if the workspace has no such project, or its time in the workspace's trash
+-- has passed, which the purge of projects deletes it for. A transaction that
+-- holds the lock, as a batch does while it applies, it waits for
+-- (SetIndexLockWait bounds the wait), rather than passing over the project:
+-- a batch that waited for the job's last transaction of a project holds the
+-- lock as the job's next one starts, so a job that passed over a locked
+-- project would write one transaction's documents of a project that its
+-- users edit, and leave the rest for its next period, an hour later.
 SELECT id FROM project
 WHERE workspace_id = @workspace_id AND id = @id AND (hard_delete_after IS NULL OR hard_delete_after > now())
-FOR NO KEY UPDATE SKIP LOCKED;
+FOR NO KEY UPDATE;
 
 -- name: UnindexedSearchEntities :many
 -- UnindexedSearchEntities returns at most max_rows of the project's nodes,

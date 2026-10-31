@@ -212,7 +212,8 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 	}
 	if len(sel.components) > 0 || len(sel.attributes) > 0 {
 		rows, err := q.ComponentSearchSources(ctx, queries.ComponentSearchSourcesParams{WorkspaceID: ws,
-			ProjectID: project, Ids: list(sel.components), AttributeIds: list(sel.attributes)})
+			ProjectID: project, Ids: list(sel.components), AttributeIds: list(sel.attributes),
+			MaxBodyLength: MaxBodyLength})
 		if err := read(Component, err); err != nil {
 			return 0, err
 		}
