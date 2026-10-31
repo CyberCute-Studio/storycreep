@@ -2,10 +2,12 @@ package database_test
 
 import (
 	"context"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -80,7 +82,7 @@ func TestEntityIDTables(t *testing.T) {
 				"not", table)
 		}
 	}
-	for _, table := range append(slices.Clone(entityIDTables), mapKeys(notEntityIDTables)...) {
+	for _, table := range append(slices.Clone(entityIDTables), slices.Sorted(maps.Keys(notEntityIDTables))...) {
 		if !slices.Contains(tables, table) {
 			t.Errorf("%s is listed, but is no table of a project whose rows have IDs", table)
 		}
@@ -116,24 +118,16 @@ func TestEntityIDTables(t *testing.T) {
 	}
 }
 
-// mapKeys returns the keys of m, in order.
-func mapKeys(m map[string]string) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
-}
-
 // TestEntityIDsBackfill upgrades a database whose content's UUIDs entity_id
 // does not hold yet, as the migrations before it left it, with a folder and
 // a component type that a client gave one UUID, and checks that the
-// migration adds the UUID of each entity, of its kind, and one of the two
-// that share one, rather than fail; that the insert of an entity of another
-// kind of a UUID that it holds fails then, on entity_id_pkey, whatever the
-// workspace; that deleting an entity frees its UUID, but not the one that it
-// shares with another kind's; and that deleting the project deletes them all.
+// migration adds the UUID of each entity, of its kind, and the folder's of
+// the two that share one, whose kind it adds first, rather than fail; that
+// the insert of an entity of another kind of a UUID that it holds fails
+// then, on entity_id_pkey, whatever the workspace; that deleting an entity
+// frees its UUID, but deleting the component type does not free the one that
+// it shares with the folder; and that deleting the project deletes them
+// all.
 func TestEntityIDsBackfill(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -196,18 +190,11 @@ func TestEntityIDsBackfill(t *testing.T) {
 	if err := admin.QueryRow(ctx, `SELECT id FROM expression`).Scan(&script); err != nil {
 		t.Fatal(err)
 	}
-	got := held()
-	want := []string{"board " + board.String(), "component_type " + cast.String(), "expression " + script.String(),
-		"node " + keeper.String()}
-	// One of the folder and the component type that share a UUID holds it.
-	shared := slices.IndexFunc(got, func(s string) bool { return strings.HasSuffix(s, " "+folder.String()) })
-	if shared < 0 || got[shared] != "folder "+folder.String() && got[shared] != "component_type "+folder.String() {
-		t.Errorf("the backfill holds %q, want the shared UUID of the folder or the component type", got)
-	} else {
-		got = slices.Delete(got, shared, shared+1)
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("the backfill holds %q, and the shared UUID, want %q", got, want)
+	// The folder holds the UUID that it shares with a component type.
+	if got, want := held(), []string{"board " + board.String(), "component_type " + cast.String(),
+		"expression " + script.String(), "folder " + folder.String(), "node " + keeper.String()}; !slices.Equal(got,
+		want) {
+		t.Errorf("the backfill holds %q, want %q", got, want)
 	}
 
 	// An entity of another kind may hold none of them, in any workspace.
@@ -226,7 +213,7 @@ func TestEntityIDsBackfill(t *testing.T) {
 		}
 	}
 	// Deleting the node frees its UUID, which a board then takes; deleting
-	// the shared UUID's other holder leaves it held.
+	// the component type that shares the folder's UUID leaves it held.
 	if err := exec(`DELETE FROM node WHERE id = $1`, keeper); err != nil {
 		t.Fatal(err)
 	}
@@ -234,15 +221,11 @@ func TestEntityIDsBackfill(t *testing.T) {
 		VALUES ($1, $2, $3, 'W', 'Pier', 'pier')`, keeper, ws, project); err != nil {
 		t.Errorf("a board of a deleted node's UUID: %v", err)
 	}
-	holder := strings.Fields(held()[slices.IndexFunc(held(), func(s string) bool {
-		return strings.HasSuffix(s, " "+folder.String())
-	})])[0]
-	notHolder := map[string]string{"folder": "component_type", "component_type": "folder"}[holder]
-	if err := exec(`DELETE FROM `+pgx.Identifier{notHolder}.Sanitize()+` WHERE id = $1`, folder); err != nil {
+	if err := exec(`DELETE FROM component_type WHERE id = $1`, folder); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(held(), holder+" "+folder.String()) {
-		t.Errorf("deleting the %s that did not hold the shared UUID deleted the %s's", notHolder, holder)
+	if !slices.Contains(held(), "folder "+folder.String()) {
+		t.Error("deleting the component type that shares the folder's UUID deleted the folder's")
 	}
 	// Deleting the project deletes them all.
 	if err := exec(`DELETE FROM project WHERE id = $1`, project); err != nil {
@@ -250,5 +233,98 @@ func TestEntityIDsBackfill(t *testing.T) {
 	}
 	if got := held(); len(got) != 0 {
 		t.Errorf("with its project deleted, entity_id holds %q", got)
+	}
+}
+
+// TestEntityIDsMigrationWaits migrates a database while a batch of commands
+// of another instance of the server applies, as one may during an upgrade
+// (PRD FR-ADMIN-04): the batch has locked its project's row, as every batch
+// does first (LockProjectSeq), and created a node when the migration starts,
+// and then creates a folder, whose table the migration locks before the
+// node's, and sets the project's seq. The migration waits for the batch,
+// rather than lock what the batch writes next, which would deadlock the two
+// and fail one of them, and then adds the UUIDs that the batch added.
+func TestEntityIDsMigrationWaits(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.Empty(t)
+	if _, err := database.Migrate(ctx, d.AdminURL, d.AppURL,
+		database.MigrateOptions{Migrations: migrationsBefore(t, "00029")}); err != nil {
+		t.Fatal(err)
+	}
+	admin := d.Admin(t)
+	ws, project, board, node, folder := ids.New(), ids.New(), ids.New(), ids.New(), ids.New()
+	for _, c := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO workspace (id, name, slug, plan_key) VALUES ($1, 'Harbour', 'harbour', 'unlimited')`,
+			[]any{ws}},
+		{`INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')`, []any{project, ws}},
+		{`INSERT INTO board (id, workspace_id, project_id, "order", name, slug)
+			VALUES ($1, $2, $3, 'V', 'Harbour', 'harbour')`, []any{board, ws, project}},
+	} {
+		if _, err := admin.Exec(ctx, c.sql, c.args...); err != nil {
+			t.Fatalf("%s: %v", c.sql, err)
+		}
+	}
+	batch, err := d.Admin(t).Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A failed step ends the batch, so that the migration goes on.
+	defer func() { _ = batch.Rollback(ctx) }()
+	step := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := batch.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("the batch: %s: %v", sql, err)
+		}
+	}
+	step(`SELECT seq FROM project WHERE workspace_id = $1 AND id = $2 FOR NO KEY UPDATE`, ws, project)
+	step(`INSERT INTO node (id, workspace_id, project_id, board_id, type, kind, text, x, y)
+		VALUES ($1, $2, $3, $4, 'element', 'dialogue', '{"type": "doc", "content": [{"type": "paragraph"}]}', 0, 0)`,
+		node, ws, project, board)
+	migrated := make(chan error, 1)
+	go func() {
+		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{})
+		migrated <- err
+	}()
+	// The migration waits for a lock of a table that the batch holds.
+	deadline := time.Now().Add(time.Minute)
+	for waiting := false; !waiting; {
+		select {
+		case err := <-migrated:
+			t.Fatalf("the migration ended without waiting for the batch: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the migration did not wait for the batch")
+		}
+		if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_locks WHERE NOT granted
+			AND locktype = 'relation' AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))`).
+			Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step(`INSERT INTO folder (id, workspace_id, project_id, kind, name, "order")
+		VALUES ($1, $2, $3, 'board', 'Act 1', 'V')`, folder, ws, project)
+	step(`UPDATE project SET seq = 1 WHERE workspace_id = $1 AND id = $2`, ws, project)
+	if err := batch.Commit(ctx); err != nil {
+		t.Fatalf("the batch: %v", err)
+	}
+	if err := <-migrated; err != nil {
+		t.Fatalf("the migration: %v", err)
+	}
+	rows, err := admin.Query(ctx, `SELECT kind || ' ' || id::text FROM entity_id ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"board " + board.String(), "folder " + folder.String(), "node " + node.String()}; !slices.Equal(
+		got, want) {
+		t.Errorf("entity_id holds %q, want %q", got, want)
 	}
 }

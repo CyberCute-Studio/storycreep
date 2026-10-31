@@ -18,6 +18,34 @@
 -- An entity in the trash keeps its UUID. The rows hold no content, and are
 -- derived from the content's tables, so the authoring format carries none of
 -- them: an import inserts the content, whose triggers add its UUIDs.
+
+-- Another instance of the server may serve while this one migrates (PRD
+-- FR-ADMIN-04), so no session changes the content's tables from here until
+-- the migration commits: a row that one committed after the backfill's
+-- snapshot, and before its table's trigger, would hold no UUID here, and a
+-- row that one purged then would keep its UUID held for good. The locks are
+-- taken in the order in which those sessions take theirs, so that none of
+-- them holds a lock that this one waits for while it waits for one that this
+-- one holds, which would deadlock the two and fail one of them. First the
+-- workspaces', in the mode that CREATE TABLE takes below of a table that its
+-- foreign keys refer to, which waits for a workspace's insert or update, and
+-- lets the sessions that lock a workspace's row or check a foreign key go
+-- on. Then the projects', in EXCLUSIVE mode, which waits for each session
+-- that has locked a project's row, as a batch of commands and the trash's
+-- purge do before they change the content (LockProjectSeq,
+-- LockProjectToPurge), or written one, as a project's creation does before
+-- it seeds its content, and its purge before the cascade deletes it, and
+-- keeps new ones from starting. Only then the content's, in the mode that
+-- CREATE TRIGGER takes below, which no session that changes the content
+-- holds by then. A table of the content locked before the projects' would
+-- wait for a batch that had written it, which would then wait for this one
+-- to set its project's seq, or to write a table locked before it, as a batch
+-- that creates a node and then a folder does.
+LOCK TABLE workspace IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE project IN EXCLUSIVE MODE;
+LOCK TABLE folder, board, node, branch_output, connection, variable, component_type, attribute_def, component,
+	expression IN SHARE ROW EXCLUSIVE MODE;
+
 CREATE TABLE entity_id (
 	id uuid PRIMARY KEY,
 	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,
@@ -48,34 +76,35 @@ CREATE POLICY workspace_isolation ON entity_id TO storycreep_app
 GRANT SELECT, INSERT, DELETE ON entity_id TO storycreep_app;
 GRANT SELECT ON entity_id TO storycreep_maintenance;
 
--- Another instance of the server may serve while this one migrates (PRD
--- FR-ADMIN-04), so no session changes the content's tables from here until
--- the migration commits: a row that one committed after the backfill's
--- snapshot, and before its table's trigger, would hold no UUID here, and a
--- row that one purged then would keep its UUID held for good. SHARE ROW
--- EXCLUSIVE is the mode that CREATE TRIGGER takes below.
-LOCK TABLE folder, board, node, branch_output, connection, variable, component_type, attribute_def, component,
-	expression IN SHARE ROW EXCLUSIVE MODE;
-
--- The UUIDs of the content that the migrations before this one left. Two
--- entities of different kinds that hold one UUID already, which nothing
--- refused until now, keep it: one of them holds it here, and the other is
--- left as it is, so that the migration applies to every database. Deleting
--- the other leaves the UUID held, but deleting the one that holds it frees
--- it, though the other has it still, since no row here names the other. Only
--- a database that a client gave such IDs on purpose has any.
+-- The UUIDs of the content that the migrations before this one left, a kind
+-- at a time. Two entities of different kinds that hold one UUID already,
+-- which nothing refused until now, keep it: the one whose kind comes first
+-- here holds it, and the other is left as it is, so that the migration
+-- applies to every database. Deleting the other leaves the UUID held, but
+-- deleting the one that holds it frees it, though the other has it still,
+-- since no row here names the other. Only a database that a client gave such
+-- IDs on purpose has any, and the others are the rows of the content whose
+-- UUIDs this table holds of another kind.
 INSERT INTO entity_id (id, workspace_id, project_id, kind)
-	SELECT id, workspace_id, project_id, 'folder' FROM folder
-	UNION ALL SELECT id, workspace_id, project_id, 'board' FROM board
-	UNION ALL SELECT id, workspace_id, project_id, 'node' FROM node
-	UNION ALL SELECT id, workspace_id, project_id, 'branch_output' FROM branch_output
-	UNION ALL SELECT id, workspace_id, project_id, 'connection' FROM connection
-	UNION ALL SELECT id, workspace_id, project_id, 'variable' FROM variable
-	UNION ALL SELECT id, workspace_id, project_id, 'component_type' FROM component_type
-	UNION ALL SELECT id, workspace_id, project_id, 'attribute_def' FROM attribute_def
-	UNION ALL SELECT id, workspace_id, project_id, 'component' FROM component
-	UNION ALL SELECT id, workspace_id, project_id, 'expression' FROM expression
-ON CONFLICT DO NOTHING;
+	SELECT id, workspace_id, project_id, 'folder' FROM folder ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'board' FROM board ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'node' FROM node ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'branch_output' FROM branch_output ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'connection' FROM connection ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'variable' FROM variable ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'component_type' FROM component_type ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'attribute_def' FROM attribute_def ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'component' FROM component ON CONFLICT DO NOTHING;
+INSERT INTO entity_id (id, workspace_id, project_id, kind)
+	SELECT id, workspace_id, project_id, 'expression' FROM expression ON CONFLICT DO NOTHING;
 
 -- entity_id_insert adds the UUIDs of the rows that a statement inserted into
 -- the table of the kind of its trigger's argument, once per statement, as a
