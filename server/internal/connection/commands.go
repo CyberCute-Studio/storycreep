@@ -693,25 +693,18 @@ func liveNode(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, 
 // checkNewConnection refuses the batch, at id, if the project has a
 // connection whose UUID is id, the ID of a connection that a command creates,
 // before anything else is checked, as a node's create does; the insert
-// refuses the ID of any other entity, of any kind, that the transaction does
-// not see (commands.RefuseTakenID).
+// refuses the ID of a connection that the transaction does not see, and that
+// of an entity of another kind of the content, whether it sees it or not,
+// once the rest is checked (commands.RefuseTakenID).
 func checkNewConnection(ctx context.Context, q *queries.Queries, ws, project, id pgtype.UUID) error {
 	_, err := q.ConnectionAny(ctx, queries.ConnectionAnyParams{WorkspaceID: ws, ProjectID: project, ID: id})
 	switch {
 	case err == nil:
-		return refuseTakenID()
+		return commands.Refuse("id", "is the ID of a connection that exists already", nil)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("connection: read the connection: %w", err)
 	}
 	return nil
-}
-
-// refuseTakenID returns the refusal, at id, of a command that creates a
-// connection with the ID of one of the project's that exists already, which
-// the transaction sees; the insert refuses the ID of any other entity
-// (commands.RefuseTakenID).
-func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a connection that exists already", nil)
 }
 
 // anyConnection returns the connection of the batch's project whose ID is id,

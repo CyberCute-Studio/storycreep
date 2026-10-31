@@ -460,8 +460,9 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// anything else is checked, so that a create sent again with a new command
 	// ID, as an offline client's keep-mine sends it (FR-OFF-04), is refused for
 	// its ID rather than for the key that its variable has taken; the insert
-	// below refuses the ID of any other entity, of any kind, that this
-	// transaction does not see.
+	// below refuses the ID of a variable that this transaction does not see,
+	// and that of an entity of another kind of the content, whether it sees it
+	// or not, once the rest is checked.
 	if _, err := q.VariableAny(ctx, queries.VariableAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
 		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -488,8 +489,9 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
 	if database.IDTaken(err, "variable") {
-		// The ID is another entity's, of any kind of the content, of any
-		// workspace or project, whose rows this transaction does not see.
+		// The ID is a variable's of a workspace or project whose rows this
+		// transaction does not see, or an entity's of another kind of the
+		// content, of any workspace or project.
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

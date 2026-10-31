@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -15,7 +16,8 @@ import (
 // kind, the UUID of an expression, which the server makes, among them, of
 // the same project, of a project of another workspace, whose rows the
 // batch's transaction does not see, or of the same batch; and that a UUID is
-// free again once its entity is purged.
+// free again once its entity is purged, whether on its own or by the cascade
+// of its board's purge, which the application's role makes.
 func TestContentIDsAcrossKinds(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
@@ -40,7 +42,8 @@ func TestContentIDsAcrossKinds(t *testing.T) {
 			"type": "int", "runtime": true}),
 		cmd("component.create", map[string]any{"id": elara, "component_type_id": cast, "name": "Elara"}),
 	)
-	script := expressionIDs(t, d.Admin(t), p)["on_enter "+keeper]
+	scripts := expressionIDs(t, d.Admin(t), p)
+	script, condition := scripts["on_enter "+keeper], scripts["condition "+out]
 
 	// Each command that creates an entity, given the UUID of an entity of
 	// another kind, each kind's once.
@@ -125,4 +128,22 @@ func TestContentIDsAcrossKinds(t *testing.T) {
 	}
 	sendBatch(t, h, owner, p, cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection,
 		uuidOf(t, keeper)), "from_node_id": branch, "from_port": out, "to_node_id": branch}))
+
+	// Once the purge deletes the board, the cascade of its foreign keys
+	// deletes its nodes, its outputs, its connections, and their
+	// expressions, whose UUIDs folders then take.
+	sendBatch(t, h, owner, p, cmd("board.delete", map[string]any{"id": board, "confirm": true}))
+	if _, err := d.Admin(t).Exec(context.Background(),
+		"UPDATE board SET deleted_at = now() - interval '31 days' WHERE id = $1", uuidOf(t, board)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := trash.Purge(context.Background(), d.Open(t)); err != nil {
+		t.Fatal(err)
+	}
+	var folders []wireCommand
+	for i, id := range []ids.UUID{uuidOf(t, branch), uuidOf(t, out), uuidOf(t, keeper), condition} {
+		folders = append(folders, cmd("folder.create", map[string]any{"id": ids.Encode(ids.Folder, id),
+			"kind": "board", "name": fmt.Sprintf("Act %d", i+4)}))
+	}
+	sendBatch(t, h, owner, p, folders...)
 }

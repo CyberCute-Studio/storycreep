@@ -388,10 +388,15 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.BranchOutput, p.ID)
+	// An output of the project with the ID is refused for its ID before
+	// anything else is checked, as a node's create does; the insert refuses
+	// the ID of an output that the transaction does not see, and that of an
+	// entity of another kind of the content, whether it sees it or not, once
+	// the rest is checked (commands.RefuseTakenID).
 	switch _, err := q.BranchOutputAny(ctx, queries.BranchOutputAnyParams{WorkspaceID: ws, ProjectID: project,
 		ID: id}); {
 	case err == nil:
-		return refuseTakenOutputID()
+		return commands.Refuse("id", "is the ID of a branch output that exists already", nil)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("node: read the output: %w", err)
 	}
@@ -644,14 +649,6 @@ func conditional(o queries.BranchOutput, at string) error {
 			"comes after them", nil)
 	}
 	return nil
-}
-
-// refuseTakenOutputID returns the refusal, at id, of a command that creates
-// an output with the ID of one of the project's that exists already, which
-// the transaction sees; the insert refuses the ID of any other entity
-// (commands.RefuseTakenID).
-func refuseTakenOutputID() error {
-	return commands.Refuse("id", "is the ID of a branch output that exists already", nil)
 }
 
 // anyOutput returns the output of the batch's project whose ID is id, an

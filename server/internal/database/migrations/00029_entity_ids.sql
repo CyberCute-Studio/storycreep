@@ -35,19 +35,35 @@ ALTER TABLE entity_id ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY workspace_isolation ON entity_id TO storycreep_app
 	USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 
--- The triggers run as whoever inserts or deletes the content, as the
--- application does, and the purge in its transactions of a workspace, so the
--- application adds and deletes the UUIDs, which it reads to delete them. The
--- cascade of a project's or a workspace's deletion runs as the tables' owner.
+-- The triggers run as the role of the statement that inserts or deletes the
+-- content, and those of the rows that a foreign key's cascade deletes do
+-- too, though the cascade deletes the rows as the tables' owner: they fire
+-- with the statement that deleted the row that the foreign key refers to.
+-- That role is the application's, whose commands, and the trash's and the
+-- projects' purges, in their transactions of a workspace, add and delete the
+-- UUIDs, which it reads to delete them. A job that deletes content as another
+-- role, even only by the cascade of a workspace's deletion, as the
+-- maintenance path's will (plan item 110), needs DELETE on this table too,
+-- which its migration grants.
 GRANT SELECT, INSERT, DELETE ON entity_id TO storycreep_app;
 GRANT SELECT ON entity_id TO storycreep_maintenance;
+
+-- Another instance of the server may serve while this one migrates (PRD
+-- FR-ADMIN-04), so no session changes the content's tables from here until
+-- the migration commits: a row that one committed after the backfill's
+-- snapshot, and before its table's trigger, would hold no UUID here, and a
+-- row that one purged then would keep its UUID held for good. SHARE ROW
+-- EXCLUSIVE is the mode that CREATE TRIGGER takes below.
+LOCK TABLE folder, board, node, branch_output, connection, variable, component_type, attribute_def, component,
+	expression IN SHARE ROW EXCLUSIVE MODE;
 
 -- The UUIDs of the content that the migrations before this one left. Two
 -- entities of different kinds that hold one UUID already, which nothing
 -- refused until now, keep it: one of them holds it here, and the other is
--- left as it is, so that the migration applies to every database, and
--- deleting the other leaves the UUID held. Only a database that a client gave
--- such IDs on purpose has any.
+-- left as it is, so that the migration applies to every database. Deleting
+-- the other leaves the UUID held, but deleting the one that holds it frees
+-- it, though the other has it still, since no row here names the other. Only
+-- a database that a client gave such IDs on purpose has any.
 INSERT INTO entity_id (id, workspace_id, project_id, kind)
 	SELECT id, workspace_id, project_id, 'folder' FROM folder
 	UNION ALL SELECT id, workspace_id, project_id, 'board' FROM board
@@ -79,7 +95,8 @@ $$;
 -- entity_id_delete deletes the UUIDs of the rows that a statement deleted
 -- from the table of the kind of its trigger's argument, but those that
 -- another kind holds, as one of two entities that held a UUID before this
--- migration does.
+-- migration does. The rows of a deletion's cascades are among those of its
+-- statement, so that a statement fires each table's trigger once.
 -- +goose StatementBegin
 CREATE FUNCTION entity_id_delete() RETURNS trigger
 LANGUAGE plpgsql AS $$

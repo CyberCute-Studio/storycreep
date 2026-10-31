@@ -41,21 +41,6 @@ func newBoardIDs(n int) []string {
 	return out
 }
 
-// allowSharedUUIDs switches off, in the test's own database, the triggers of
-// the tables that add the UUIDs of their rows to entity_id (migration 00029),
-// so that the content that the test makes next may hold one UUID in rows of
-// different kinds, as a database whose client gave them such IDs before the
-// migration may, which the commands refuse since (PRD §5.2).
-func allowSharedUUIDs(t *testing.T, admin *pgx.Conn, tables ...string) {
-	t.Helper()
-	for _, table := range tables {
-		if _, err := admin.Exec(context.Background(),
-			"ALTER TABLE "+pgx.Identifier{table}.Sanitize()+" DISABLE TRIGGER entity_id_insert"); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 // graphWorld is a project whose content makes a graph of the dependencies
 // between its boards, built through the command endpoint, as the graph's
 // tests read it:
@@ -492,10 +477,11 @@ func TestDependencyContributions(t *testing.T) {
 // branch output's of B read whether the nodes of A were visited; and three
 // jumpers of A target nodes of B. Two sites of one node may share a UUID in
 // a database that held them before the commands refused them
-// (allowSharedUUIDs): the labels of two connections of B show elara.trust
-// too, the one whose UUID is that of r2, the text's node, which it leaves,
-// and the other's that of the condition's expression, of a connection that
-// leaves the same node, so that only the sites' types tell their keys apart.
+// (dbtest.Database.AllowSharedUUIDs): the labels of two connections of B
+// show elara.trust too, the one whose UUID is that of r2, the text's node,
+// which it leaves, and the other's that of the condition's expression, of a
+// connection that leaves the same node, so that only the sites' types tell
+// their keys apart.
 func TestDependencyContributionsPaged(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
@@ -544,7 +530,7 @@ func TestDependencyContributionsPaged(t *testing.T) {
 		return cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection, id), "from_node_id": from,
 			"to_node_id": to, "label": richText(textInline("Trust "), attributeInline(elara, trust))})
 	}
-	allowSharedUUIDs(t, d.Admin(t), "connection")
+	d.AllowSharedUUIDs(t, "connection")
 	sendBatch(t, h, owner, p, label(uuidOf(t, r2), r2, r1), label(condition, r1, gate))
 	counts := map[string]int64{}
 	for _, e := range graphOf(t, h, owner, p, "").Edges {
@@ -775,10 +761,10 @@ func TestDependencyGraphTrash(t *testing.T) {
 // TestDependencyGraphSharedUUIDs checks that a site is outside the trash by
 // its own kind alone: a node, a connection, and an expression may share a
 // UUID in a database that held them before the commands refused them
-// (allowSharedUUIDs), so that a connection whose UUID is a node's that is
-// not in the trash, and a script whose UUID is such a node's, go to the trash
-// with their owners all the same, and the graph counts what the edge's list
-// lists.
+// (dbtest.Database.AllowSharedUUIDs), so that a connection whose UUID is a
+// node's that is not in the trash, and a script whose UUID is such a node's,
+// go to the trash with their owners all the same, and the graph counts what
+// the edge's list lists.
 func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
@@ -786,7 +772,7 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	boards := newBoardIDs(2)
 	a, b := boards[0], boards[1]
 	names := map[string]string{a: "A", b: "B"}
-	allowSharedUUIDs(t, d.Admin(t), "node", "connection")
+	d.AllowSharedUUIDs(t, "node", "connection")
 	coins, writer, reader, after := newVariableID(), newNodeID(), newNodeID(), newNodeID()
 	// The connection's UUID is that of reader, the node that it leaves.
 	label := ids.Encode(ids.Connection, uuidOf(t, reader))

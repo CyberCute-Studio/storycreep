@@ -459,8 +459,9 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		ComponentTypeID: t.ID, FolderID: folder, SortKey: order, Key: key, Name: p.Name, Description: doc,
 		ImageAssetID: image, CreatedBy: by(tx)})
 	if database.IDTaken(err, "component") {
-		// The ID is another entity's, of any kind of the content, of any
-		// workspace or project, whose rows this transaction does not see.
+		// The ID is a component's of a workspace or project whose rows this
+		// transaction does not see, or an entity's of another kind of the
+		// content, of any workspace or project.
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

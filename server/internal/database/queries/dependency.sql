@@ -219,8 +219,9 @@ WITH live_site AS (
     -- and its ID: the expressions whose owners are not, and the nodes and
     -- the connections, whose texts are sites by their IDs. A site is matched
     -- by its kind too, since an expression, a node, and a connection may
-    -- share a UUID, as a client chooses a node's and a connection's, so that
-    -- a site in the trash is not live by another kind's live entity.
+    -- share a UUID in a database whose client gave a node or a connection
+    -- another's before migration 00029 refused it (PRD §5.2), so that a site
+    -- in the trash is not live by another kind's live entity.
     SELECT 'expression' AS kind, e.id FROM expression e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
@@ -277,11 +278,12 @@ GROUP BY j.board_id, t.board_id;
 -- and the sites that read them, a site being an expression, or a text's
 -- owner, by its UUID and then its type, since two sites of one node may
 -- share a UUID, as a node's text and the label of a connection that leaves
--- it whose UUID a client chose to be the node's do, after the key whose
--- parts are after_target, after_attribute, after_from_node, after_from_site,
--- after_from_site_type, after_to_node, after_to_site, and
--- after_to_site_type, which is all zero UUIDs and empty types for the first
--- page, as no contribution is.
+-- it do if a client chose the connection's UUID to be the node's before
+-- migration 00029 refused it (PRD §5.2), after the key whose parts are
+-- after_target, after_attribute, after_from_node, after_from_site,
+-- after_from_site_type, after_to_node, after_to_site, and after_to_site_type,
+-- which is all zero UUIDs and empty types for the first page, as no
+-- contribution is.
 WITH refs AS (
     SELECT r.* FROM expression_ref r
     WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.target_kind = @target_kind

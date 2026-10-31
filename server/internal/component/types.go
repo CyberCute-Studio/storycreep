@@ -246,8 +246,9 @@ func applyCreateType(ctx context.Context, tx *commands.Tx, p createTypePayload) 
 	err := q.InsertComponentType(ctx, queries.InsertComponentTypeParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Key: key, Name: p.Name, Icon: icon, CreatedBy: by(tx)})
 	if database.IDTaken(err, "component_type") {
-		// The ID is another entity's, of any kind of the content, of any
-		// workspace or project, whose rows this transaction does not see.
+		// The ID is a type's of a workspace or project whose rows this
+		// transaction does not see, or an entity's of another kind of the
+		// content, of any workspace or project.
 		return commands.RefuseTakenID()
 	}
 	if err != nil {

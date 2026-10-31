@@ -712,26 +712,19 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 
 // checkNewNode refuses the batch, at id, if the project has a node whose
 // UUID is id, the ID of a node that a command creates, before anything else
-// is checked, as a board's create does; the insert refuses the ID of any
-// other entity, of any kind, that the transaction does not see
+// is checked, as a board's create does; the insert refuses the ID of a node
+// that the transaction does not see, and that of an entity of another kind
+// of the content, whether it sees it or not, once the rest is checked
 // (commands.RefuseTakenID).
 func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtype.UUID) error {
 	_, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id})
 	switch {
 	case err == nil:
-		return refuseTakenID()
+		return commands.Refuse("id", "is the ID of a node that exists already", nil)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("node: read the node: %w", err)
 	}
 	return nil
-}
-
-// refuseTakenID returns the refusal, at id, of a command that creates a node
-// with the ID of one of the project's that exists already, which the
-// transaction sees; the insert refuses the ID of any other entity
-// (commands.RefuseTakenID).
-func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a node that exists already", nil)
 }
 
 // planUpdate returns the node of Update's payload p, as it is, and every
