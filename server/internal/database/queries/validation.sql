@@ -91,8 +91,10 @@ SELECT id, component_type_id FROM live_component WHERE workspace_id = @workspace
 -- name: ValidationAttributeDefs :many
 -- ValidationAttributeDefs returns the IDs of the project's attribute
 -- definitions that are not in its trash, each with the type that defines
--- it, whose components alone have it.
-SELECT id, component_type_id FROM live_attribute_def WHERE workspace_id = @workspace_id AND project_id = @project_id;
+-- it, whose components alone have it, and whether it is runtime, as a value
+-- reference of a node's text or a connection's label reads it.
+SELECT id, component_type_id, is_runtime FROM live_attribute_def
+WHERE workspace_id = @workspace_id AND project_id = @project_id;
 
 -- name: ValidationMutes :many
 -- ValidationMutes returns the project's mutes, those of owners in the trash

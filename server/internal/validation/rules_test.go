@@ -30,7 +30,7 @@ type world struct {
 // newWorld returns a clean world.
 func newWorld() *world {
 	w := &world{m: &model{project: ids.New(), components: map[ids.UUID]ids.UUID{},
-		attributes: map[ids.UUID]ids.UUID{}}}
+		attributes: map[ids.UUID]attribute{}}}
 	w.main = w.board()
 	w.start = w.element(w.main)
 	w.end = w.element(w.main, func(n *node) { n.ending = true })
@@ -391,36 +391,54 @@ func TestCompared(t *testing.T) {
 // trash, or to an attribute that its component's type does not define, is
 // found once for each thing that each field refers to, of a text, a speaker,
 // a board's entry node, and the project's entry, and that one to what is
-// there is not.
+// there is not; and that a node's text or a connection's label that shows a
+// variable of another board, or an attribute that is not runtime, which an
+// expression of its board does not read, is found too, while a component's
+// description, which no runtime shows, may show them.
 //
 // Verifies: FR-DEP-03/AC1, FR-TEXT-02/AC2
 func TestDanglingReferences(t *testing.T) {
 	w := newWorld()
 	gone, there, typ := ids.New(), ids.New(), ids.New()
 	w.m.components[there] = typ
-	attribute, foreign := ids.New(), ids.New()
-	w.m.attributes[attribute], w.m.attributes[foreign] = typ, ids.New()
+	trust, bio, foreign := ids.New(), ids.New(), ids.New()
+	w.m.attributes[trust] = attribute{typ: typ, runtime: true}
+	w.m.attributes[bio] = attribute{typ: typ}
+	w.m.attributes[foreign] = attribute{typ: ids.New(), runtime: true}
+	other := w.board()
+	// A variable of main, one of the other board, and a global one.
+	own, alien, global := ids.New(), ids.New(), ids.New()
+	w.m.variables = append(w.m.variables, variable{id: own, board: w.main, key: "tide", read: true, written: true},
+		variable{id: alien, board: other, key: "fog", read: true, written: true},
+		variable{id: global, key: "gold", read: true, written: true})
 	text := func(owner ref, kind dependency.Kind, target, attribute ids.UUID) {
 		w.m.texts = append(w.m.texts, textRef{owner: owner, use: dependency.Use{Kind: kind, Target: target,
 			Attribute: attribute, Access: dependency.Read}})
 	}
 	label := w.connect(w.end, w.start)
 	// The text of start shows a deleted variable twice, which is one
-	// finding, and mentions a component that is there.
+	// finding, a variable of the other board, and the variables of its own
+	// board and the global one, and mentions a component that is there.
 	text(ref{ids.Node, w.start}, dependency.Variable, gone, ids.UUID{})
 	text(ref{ids.Node, w.start}, dependency.Variable, gone, ids.UUID{})
+	text(ref{ids.Node, w.start}, dependency.Variable, alien, ids.UUID{})
+	text(ref{ids.Node, w.start}, dependency.Variable, own, ids.UUID{})
+	text(ref{ids.Node, w.start}, dependency.Variable, global, ids.UUID{})
 	text(ref{ids.Node, w.start}, dependency.Component, there, ids.UUID{})
 	// The label shows an attribute of a component that is there whose
-	// definition is not, one whose definition is another type's, and one
-	// whose component is not.
+	// definition is not, one whose definition is another type's, one whose
+	// component is not, one that is not runtime, and one that is.
 	text(ref{ids.Connection, label}, dependency.Attribute, there, ids.New())
 	text(ref{ids.Connection, label}, dependency.Attribute, there, foreign)
-	text(ref{ids.Connection, label}, dependency.Attribute, gone, attribute)
-	text(ref{ids.Connection, label}, dependency.Attribute, there, attribute)
-	// A component's description mentions a deleted component.
+	text(ref{ids.Connection, label}, dependency.Attribute, gone, trust)
+	text(ref{ids.Connection, label}, dependency.Attribute, there, bio)
+	text(ref{ids.Connection, label}, dependency.Attribute, there, trust)
+	// A component's description mentions a deleted component, and shows a
+	// variable of a board and an attribute that is not runtime.
 	text(ref{ids.Component, there}, dependency.Component, gone, ids.UUID{})
+	text(ref{ids.Component, there}, dependency.Variable, alien, ids.UUID{})
+	text(ref{ids.Component, there}, dependency.Attribute, there, bio)
 	w.m.nodes[1].kind, w.m.nodes[1].speaker = "dialogue", gone
-	other := w.board()
 	w.entry(other, gone)
 	w.element(other, func(n *node) { n.ending = true })
 	w.m.entry.board, w.m.entry.node = gone, w.start
@@ -428,14 +446,15 @@ func TestDanglingReferences(t *testing.T) {
 	for _, f := range check(w.m) {
 		if f.code == RefDangling {
 			got = append(got, f.entity.kind.String()+"."+f.field+"→"+f.target.kind.String()+
-				map[bool]string{true: "+attribute"}[f.attribute != ids.UUID{}])
+				map[bool]string{true: "+attribute"}[f.attribute != ids.UUID{}]+" "+f.args["reason"].(string))
 		}
 	}
 	slices.Sort(got)
-	want := []string{"board.entry_node_id→node", "component.description→component",
-		"connection.label→component+attribute", "connection.label→component+attribute",
-		"connection.label→component+attribute", "node.speaker_component_id→component", "node.text→variable",
-		"project.entry→board"}
+	want := []string{"board.entry_node_id→node deleted", "component.description→component deleted",
+		"connection.label→component+attribute deleted", "connection.label→component+attribute deleted",
+		"connection.label→component+attribute deleted", "connection.label→component+attribute runtime",
+		"node.speaker_component_id→component deleted", "node.text→variable deleted", "node.text→variable scope",
+		"project.entry→board deleted"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the dangling references are %q, want %q", got, want)
 	}

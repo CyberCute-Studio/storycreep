@@ -27,10 +27,19 @@ type model struct {
 	// texts are what the texts of the nodes, the connections, and the
 	// components that are not in the trash refer to.
 	texts []textRef
-	// components and attributes are the components and the attribute
-	// definitions that are not in the trash, each with its component type,
-	// so that an attribute of a component is one that its type defines.
-	components, attributes map[ids.UUID]ids.UUID
+	// components are the components that are not in the trash, each with
+	// its component type, and attributes the attribute definitions that are
+	// not, so that an attribute of a component is one that its type defines.
+	components map[ids.UUID]ids.UUID
+	attributes map[ids.UUID]attribute
+}
+
+// attribute is an attribute definition: the component type that defines it,
+// and whether it is runtime, which a value reference of a text that a
+// runtime shows reads alone (FR-TEXT-02).
+type attribute struct {
+	typ     ids.UUID
+	runtime bool
 }
 
 // The types of node.

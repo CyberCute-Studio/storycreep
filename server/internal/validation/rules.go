@@ -1,6 +1,8 @@
 package validation
 
 import (
+	"slices"
+
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
@@ -68,7 +70,7 @@ type condition struct {
 func newChecker(m *model) *checker {
 	c := &checker{m: m, nodes: map[ids.UUID]*node{}, outputs: map[ids.UUID]*output{},
 		outputsOf: map[ids.UUID]int{}, connections: map[ids.UUID]*connection{}, from: map[ids.UUID][]*connection{},
-		choices: map[ids.UUID][]*connection{}, fromOutput: map[ids.UUID]int{}, into: map[ids.UUID]int{},
+		choices: choicesOf(m.connections), fromOutput: map[ids.UUID]int{}, into: map[ids.UUID]int{},
 		roots: map[ids.UUID][]ids.UUID{}, conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{},
 		boards: map[ids.UUID]bool{}, entries: map[ids.UUID]ids.UUID{}}
 	for i := range m.nodes {
@@ -83,9 +85,7 @@ func newChecker(m *model) *checker {
 		cn := &m.connections[i]
 		c.connections[cn.id] = cn
 		c.from[cn.from] = append(c.from[cn.from], cn)
-		if cn.output == (ids.UUID{}) {
-			c.choices[cn.from] = append(c.choices[cn.from], cn)
-		} else {
+		if cn.output != (ids.UUID{}) {
 			c.fromOutput[cn.output]++
 		}
 		c.into[cn.to]++
@@ -161,9 +161,24 @@ func (c *checker) findExpressions() {
 	}
 }
 
+// The reasons that a reference dangles, as the message of ref_dangling says
+// them: what it refers to is not a part of the project outside its trash, or
+// is an attribute that its component does not have (deleted); or a node's
+// text or a connection's label shows what an expression of its board does
+// not read (FR-TEXT-02, §5.8.3), a variable of another board (scope), or an
+// attribute that is not runtime (runtime).
+const (
+	danglingDeleted = "deleted"
+	danglingScope   = "scope"
+	danglingRuntime = "runtime"
+)
+
 // findReferences finds what refers to what is not a part of the project
 // outside its trash, or to an attribute of a component that the component's
-// type does not define (ref_dangling), once for each thing that each field
+// type does not define, and the value references of a node's text or a
+// connection's label that read what an expression of its board does not, a
+// variable of another board or an attribute that is not runtime, which a
+// runtime does not load (ref_dangling), once for each thing that each field
 // refers to: a text's value references and mentions, an element's speaker, a
 // board's entry node, and the project's entry, its board and its node. A
 // jumper's target is jumper_broken's.
@@ -171,45 +186,78 @@ func (c *checker) findReferences() {
 	seen := map[danglingKey]bool{}
 	for _, t := range c.m.texts {
 		f := finding{code: RefDangling, entity: t.owner, field: textField(t.owner.kind)}
-		var live bool
+		board, shown := c.textBoard(t.owner)
+		var reason string
 		switch t.use.Kind {
 		case dependency.Variable:
 			f.target = ref{ids.Variable, t.use.Target}
-			_, live = c.variables[t.use.Target]
+			switch of, live := c.variables[t.use.Target]; {
+			case !live:
+				reason = danglingDeleted
+			case shown && of != (ids.UUID{}) && of != board:
+				reason = danglingScope
+			}
 		case dependency.Attribute:
 			f.target, f.attribute = ref{ids.Component, t.use.Target}, t.use.Attribute
 			typ, component := c.m.components[t.use.Target]
-			of, attribute := c.m.attributes[t.use.Attribute]
-			live = component && attribute && of == typ
+			a, defined := c.m.attributes[t.use.Attribute]
+			switch {
+			case !component || !defined || a.typ != typ:
+				reason = danglingDeleted
+			case shown && !a.runtime:
+				reason = danglingRuntime
+			}
 		case dependency.Component:
 			f.target = ref{ids.Component, t.use.Target}
-			_, live = c.m.components[t.use.Target]
+			if _, live := c.m.components[t.use.Target]; !live {
+				reason = danglingDeleted
+			}
 		default:
 			continue
 		}
-		if !live {
-			c.dangling(f, seen)
+		if reason != "" {
+			c.dangling(f, reason, seen)
 		}
 	}
 	for _, n := range c.m.nodes {
 		if _, live := c.m.components[n.speaker]; n.typ == element && n.speaker != (ids.UUID{}) && !live {
 			c.dangling(finding{code: RefDangling, entity: ref{ids.Node, n.id}, field: fieldSpeaker,
-				target: ref{ids.Component, n.speaker}}, seen)
+				target: ref{ids.Component, n.speaker}}, danglingDeleted, seen)
 		}
 	}
 	for _, b := range c.m.boards {
 		if b.entry != (ids.UUID{}) && !c.liveNode(b.entry) {
 			c.dangling(finding{code: RefDangling, entity: ref{ids.Board, b.id}, field: fieldEntryNode,
-				target: ref{ids.Node, b.entry}}, seen)
+				target: ref{ids.Node, b.entry}}, danglingDeleted, seen)
 		}
 	}
 	project := ref{ids.Project, c.m.project}
 	if e := c.m.entry.board; e != (ids.UUID{}) && !c.boards[e] {
-		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Board, e}}, seen)
+		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Board, e}},
+			danglingDeleted, seen)
 	}
 	if e := c.m.entry.node; e != (ids.UUID{}) && !c.liveNode(e) {
-		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Node, e}}, seen)
+		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Node, e}},
+			danglingDeleted, seen)
 	}
+}
+
+// textBoard returns the board of the text of the owner o, a node's or a
+// connection's, which a runtime shows, as an expression of the board reads
+// what it shows, and true; or false for a component's description, which no
+// runtime shows, and which is of no board.
+func (c *checker) textBoard(o ref) (ids.UUID, bool) {
+	switch o.kind {
+	case ids.Node:
+		if n := c.nodes[o.id]; n != nil {
+			return n.board, true
+		}
+	case ids.Connection:
+		if cn := c.connections[o.id]; cn != nil {
+			return cn.board, true
+		}
+	}
+	return ids.UUID{}, false
 }
 
 // danglingKey is a dangling reference, which a field refers to once
@@ -220,9 +268,10 @@ type danglingKey struct {
 	attribute      ids.UUID
 }
 
-// dangling adds the finding f of a dangling reference, unless seen holds it
-// already, with the kind of what it refers to as the message's argument.
-func (c *checker) dangling(f finding, seen map[danglingKey]bool) {
+// dangling adds the finding f of a dangling reference, which dangles for the
+// reason, unless seen holds it already, with the reason and the kind of what
+// it refers to as the message's arguments.
+func (c *checker) dangling(f finding, reason string, seen map[danglingKey]bool) {
 	k := danglingKey{entity: f.entity, target: f.target, field: f.field, attribute: f.attribute}
 	if seen[k] {
 		return
@@ -232,7 +281,7 @@ func (c *checker) dangling(f finding, seen map[danglingKey]bool) {
 	if f.attribute != (ids.UUID{}) {
 		kind = "attribute"
 	}
-	f.args = i18n.Args{"target": kind}
+	f.args = i18n.Args{"target": kind, "reason": reason}
 	c.add(f)
 }
 
@@ -375,16 +424,51 @@ func (c *checker) findElements() {
 		// One prover for the element's choices, so that however many share
 		// a label, the element costs a bounded time (maxSteps).
 		p := newProver()
-		for j, b := range out {
-			for _, a := range out[:j] {
-				if a.label == b.label && c.overlap(p, a.id, b.id) {
-					c.add(finding{code: ChoiceDuplicateLabel, entity: ref{ids.Connection, b.id},
-						target: ref{ids.Connection, a.id}})
-					break
+		for _, same := range sameLabel(out) {
+			for j, b := range same {
+				for _, a := range same[:j] {
+					if c.overlap(p, a.id, b.id) {
+						c.add(finding{code: ChoiceDuplicateLabel, entity: ref{ids.Connection, b.id},
+							target: ref{ids.Connection, a.id}})
+						break
+					}
 				}
 			}
 		}
 	}
+}
+
+// choicesOf returns the connections that leave each node by its out, an
+// element's choices, by the node's ID, each node's in the order of the
+// connections, which the model holds in the order of their ports.
+func choicesOf(connections []connection) map[ids.UUID][]*connection {
+	out := map[ids.UUID][]*connection{}
+	for i := range connections {
+		if cn := &connections[i]; cn.output == (ids.UUID{}) {
+			out[cn.from] = append(out[cn.from], cn)
+		}
+	}
+	return out
+}
+
+// sameLabel returns the choices of one node that share their label with
+// another of them, the same document, grouped by their labels, each group in
+// the choices' order: the choices whose conditions the rule of duplicate
+// choices compares (findElements), which the read of the draft decodes
+// alone (compared), so that both read the same pairs.
+func sameLabel(choices []*connection) [][]*connection {
+	at := map[string]int{}
+	var groups [][]*connection
+	for _, cn := range choices {
+		i, ok := at[cn.label]
+		if !ok {
+			i = len(groups)
+			at[cn.label] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], cn)
+	}
+	return slices.DeleteFunc(groups, func(g []*connection) bool { return len(g) < 2 })
 }
 
 // overlap reports whether the conditions of the connections a and b may both

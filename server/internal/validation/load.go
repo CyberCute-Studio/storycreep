@@ -45,7 +45,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	q := queries.New(tx)
 	w, p := pgUUID(ws), pgUUID(projectID)
 	d := &draft{model: &model{project: projectID, components: map[ids.UUID]ids.UUID{},
-		attributes: map[ids.UUID]ids.UUID{}}, mutes: map[muteKey]mute{}}
+		attributes: map[ids.UUID]attribute{}}, mutes: map[muteKey]mute{}}
 	m := d.model
 	proj, err := q.ValidationProject(ctx, queries.ValidationProjectParams{WorkspaceID: w, ID: p})
 	if err != nil {
@@ -109,7 +109,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the attribute definitions: %w", err)
 	}
 	for _, a := range attributes {
-		m.attributes[a.ID.Bytes] = a.ComponentTypeID.Bytes
+		m.attributes[a.ID.Bytes] = attribute{typ: a.ComponentTypeID.Bytes, runtime: a.IsRuntime}
 	}
 	if err := d.loadTexts(ctx, q, w, p, live, at); err != nil {
 		return nil, err
@@ -127,23 +127,16 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 
 // compared returns the connections whose conditions the rule of duplicate
 // choices may compare: the choices of an element, which leave it by its out,
-// each of which shares its label with another choice of the element. The
-// conditions of the others are never compared, so they are not decoded.
+// each of which shares its label with another choice of the element, as the
+// rule groups them (choicesOf, sameLabel). The conditions of the others are
+// never compared, so they are not decoded.
 func compared(connections []connection) map[ids.UUID]bool {
-	type choice struct {
-		from  ids.UUID
-		label string
-	}
-	labels := map[choice]int{}
-	for _, c := range connections {
-		if c.output == (ids.UUID{}) {
-			labels[choice{c.from, c.label}]++
-		}
-	}
 	out := map[ids.UUID]bool{}
-	for _, c := range connections {
-		if c.output == (ids.UUID{}) && labels[choice{c.from, c.label}] > 1 {
-			out[c.id] = true
+	for _, choices := range choicesOf(connections) {
+		for _, same := range sameLabel(choices) {
+			for _, c := range same {
+				out[c.id] = true
+			}
 		}
 	}
 	return out

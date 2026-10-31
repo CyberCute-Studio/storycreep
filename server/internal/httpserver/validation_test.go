@@ -455,7 +455,11 @@ func TestValidationMuteCodes(t *testing.T) {
 // attribute of a component that the component's type does not define, another
 // type's, each seeded in the database, are validation errors of the text,
 // though the index of what the texts name does not hold them, and that one
-// to an attribute that the component's type defines is not.
+// to an attribute that the component's type defines is not. A text that
+// shows a variable that has since become another board's, or an attribute
+// that has since stopped being runtime, which no expression of its board
+// reads and no runtime loads (FR-TEXT-02), is a validation error of the text
+// too.
 //
 // Verifies: FR-TEXT-02/AC2
 func TestValidationDanglingText(t *testing.T) {
@@ -498,6 +502,53 @@ func TestValidationDanglingText(t *testing.T) {
 	for _, f := range r.Findings {
 		if f.Target != nil && f.Target.Type == "attribute" && f.Target.AttributeID != weight {
 			t.Errorf("the dangling attribute is %s, want %s", f.Target.AttributeID, weight)
+		}
+	}
+
+	// The label of a choice of start shows tide, a global variable, and
+	// Elara's mood, a runtime attribute, which Harbour reads, and then tide
+	// becomes Pier's, and mood stops being runtime, neither of which changes
+	// a text.
+	pier, end, choice, tide, mood := newBoardID(), newNodeID(), newConnectionID(), ids.Encode(ids.Variable,
+		ids.New()), newAttributeID()
+	names[choice], names[tide] = "choice", "tide"
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": pier, "name": "Pier"}),
+		cmd("variable.create", map[string]any{"id": tide, "key": "tide", "type": "int", "scope": "global"}),
+		cmd("attribute.create", map[string]any{"id": mood, "component_type_id": character, "name": "Mood",
+			"type": "int", "runtime": true}),
+		cmd("node.create", map[string]any{"id": end, "board_id": board, "type": "element", "kind": "narration",
+			"text": paragraph("Bye"), "is_ending": true, "position": map[string]int{"x": 0, "y": 0}}),
+		cmd("connection.create", map[string]any{"id": choice, "from_node_id": start, "to_node_id": end,
+			"label": richText(valueInline(tide), attributeInline(elara, mood))}),
+	)
+	errorsOf := func(r validation.Report) []string {
+		var out []validation.Finding
+		for _, f := range r.Findings {
+			if f.Severity == validation.Error {
+				out = append(out, f)
+			}
+		}
+		return findingLines(out, names)
+	}
+	if got := errorsOf(validationReport(t, h, owner, p)); !slices.Equal(got, want) {
+		t.Errorf("before tide and mood change, the errors are %q, want %q", got, want)
+	}
+	sendBatch(t, h, owner, p,
+		cmd("variable.set_scope", map[string]any{"id": tide, "scope": "board", "board_id": pier}),
+		cmd("attribute.set_runtime", map[string]any{"id": mood, "runtime": false}),
+	)
+	r = validationReport(t, h, owner, p)
+	want = append([]string{"ref_dangling connection:choice.label → attribute:elara",
+		"ref_dangling connection:choice.label → variable:tide"}, want...)
+	if got := errorsOf(r); !slices.Equal(got, want) {
+		t.Errorf("once tide is Pier's, and mood is not runtime, the errors are %q, want %q", got, want)
+	}
+	for _, f := range r.Findings {
+		if f.EntityID == choice && (f.Code != validation.RefDangling || f.Field != "label" ||
+			strings.Contains(f.Message, "deleted")) {
+			t.Errorf("%s of the choice at %q says %q, want why its board cannot read what it shows", f.Code,
+				f.Field, f.Message)
 		}
 	}
 }

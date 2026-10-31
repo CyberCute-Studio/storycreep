@@ -182,7 +182,8 @@ func (q *Queries) UpsertValidationMute(ctx context.Context, arg UpsertValidation
 }
 
 const validationAttributeDefs = `-- name: ValidationAttributeDefs :many
-SELECT id, component_type_id FROM live_attribute_def WHERE workspace_id = $1 AND project_id = $2
+SELECT id, component_type_id, is_runtime FROM live_attribute_def
+WHERE workspace_id = $1 AND project_id = $2
 `
 
 type ValidationAttributeDefsParams struct {
@@ -193,11 +194,13 @@ type ValidationAttributeDefsParams struct {
 type ValidationAttributeDefsRow struct {
 	ID              pgtype.UUID
 	ComponentTypeID pgtype.UUID
+	IsRuntime       bool
 }
 
 // ValidationAttributeDefs returns the IDs of the project's attribute
 // definitions that are not in its trash, each with the type that defines
-// it, whose components alone have it.
+// it, whose components alone have it, and whether it is runtime, as a value
+// reference of a node's text or a connection's label reads it.
 func (q *Queries) ValidationAttributeDefs(ctx context.Context, arg ValidationAttributeDefsParams) ([]ValidationAttributeDefsRow, error) {
 	rows, err := q.db.Query(ctx, validationAttributeDefs, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
@@ -207,7 +210,7 @@ func (q *Queries) ValidationAttributeDefs(ctx context.Context, arg ValidationAtt
 	var items []ValidationAttributeDefsRow
 	for rows.Next() {
 		var i ValidationAttributeDefsRow
-		if err := rows.Scan(&i.ID, &i.ComponentTypeID); err != nil {
+		if err := rows.Scan(&i.ID, &i.ComponentTypeID, &i.IsRuntime); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
