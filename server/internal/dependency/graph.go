@@ -149,9 +149,10 @@ func (c Contribution) Key() ContributionKey { return c.key }
 // errors of project.Service.Get, as project.ErrNotFound.
 func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids.UUID, f Filter) (*Graph, error) {
 	var g *Graph
+	kinds := f.kinds()
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		q, ws, p := queries.New(tx), nullUUID(workspaceID), nullUUID(projectID)
-		seq, err := q.GraphSeq(ctx, queries.GraphSeqParams{WorkspaceID: ws, ID: p})
+		project, err := q.Project(ctx, queries.ProjectParams{WorkspaceID: ws, ID: p})
 		if err != nil {
 			return fmt.Errorf("dependency: read the project's seq: %w", err)
 		}
@@ -159,15 +160,23 @@ func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids
 		if err != nil {
 			return fmt.Errorf("dependency: read the boards: %w", err)
 		}
-		refs, err := q.GraphReferences(ctx, queries.GraphReferencesParams{WorkspaceID: ws, ProjectID: p})
-		if err != nil {
-			return fmt.Errorf("dependency: read the index's rows of the graph: %w", err)
+		// Each read is of the kinds of edge that f may keep alone: the index's
+		// rows of all but the jumpers', and the jumpers.
+		var refs []queries.GraphReferencesRow
+		if slices.ContainsFunc(kinds, func(k EdgeKind) bool { return k != EdgeJumper }) {
+			if refs, err = q.GraphReferences(ctx, queries.GraphReferencesParams{WorkspaceID: ws,
+				ProjectID: p}); err != nil {
+				return fmt.Errorf("dependency: read the index's rows of the graph: %w", err)
+			}
 		}
-		jumpers, err := q.GraphJumpers(ctx, queries.GraphJumpersParams{WorkspaceID: ws, ProjectID: p})
-		if err != nil {
-			return fmt.Errorf("dependency: read the jumpers of the graph: %w", err)
+		var jumpers []queries.GraphJumpersRow
+		if slices.Contains(kinds, EdgeJumper) {
+			if jumpers, err = q.GraphJumpers(ctx, queries.GraphJumpersParams{WorkspaceID: ws,
+				ProjectID: p}); err != nil {
+				return fmt.Errorf("dependency: read the jumpers of the graph: %w", err)
+			}
 		}
-		g = graphOf(seq, boards, edgesOf(f, refs, jumpers))
+		g = graphOf(project.Project.Seq, boards, edgesOf(f, refs, jumpers))
 		return nil
 	})
 	if err != nil {

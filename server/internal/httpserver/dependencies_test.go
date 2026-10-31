@@ -141,11 +141,7 @@ func newUsageWorld(t *testing.T) *usageWorld {
 			AND $2 IN (node_id, connection_id, branch_output_id)`, e.field, uuidOf(t, e.owner)).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
-		u, err := ids.ParseUUID(id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		w.expressions[e.site+" "+e.owner] = u
+		w.expressions[e.site+" "+e.owner] = mustParseUUID(t, id)
 	}
 	return w
 }
@@ -193,18 +189,19 @@ func uuidOf(t testing.TB, id string) ids.UUID {
 	return ids.UUID{}
 }
 
-// usages returns every usage of the list at path, page by page, of limit
-// items each, as si, and fails the test unless each page is 200.
-func usages(t *testing.T, h http.Handler, si signedIn, path string, limit int) []dependency.Usage {
+// allPages returns every item of the list at path, a path with a query,
+// page by page, of limit items each, as si, and fails the test unless each
+// page is 200.
+func allPages[T any](t *testing.T, h http.Handler, si signedIn, path string, limit int) []T {
 	t.Helper()
-	var out []dependency.Usage
+	var out []T
 	for cursor := ""; ; {
 		url := fmt.Sprintf("%s&limit=%d", path, limit)
 		if cursor != "" {
 			url += "&cursor=" + cursor
 		}
 		res := call(h, http.MethodGet, url, nil, si.header(false))
-		var page api.Page[dependency.Usage]
+		var page api.Page[T]
 		if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
 			t.Fatalf("GET %s: %d %s", url, res.status, res.body)
 		}
@@ -214,6 +211,12 @@ func usages(t *testing.T, h http.Handler, si signedIn, path string, limit int) [
 		}
 		cursor = *page.NextCursor
 	}
+}
+
+// usages returns every usage of the list at path (allPages).
+func usages(t *testing.T, h http.Handler, si signedIn, path string, limit int) []dependency.Usage {
+	t.Helper()
+	return allPages[dependency.Usage](t, h, si, path, limit)
 }
 
 // sites returns the usages as lines of their sites and what they name, in

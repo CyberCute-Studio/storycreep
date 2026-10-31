@@ -71,6 +71,7 @@ func (q *Queries) DeleteReferences(ctx context.Context, arg DeleteReferencesPara
 }
 
 const graphBoards = `-- name: GraphBoards :many
+
 SELECT id, name FROM live_board WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
 `
 
@@ -84,6 +85,22 @@ type GraphBoardsRow struct {
 	Name string
 }
 
+// The graph of the dependencies between a project's boards (PRD FR-DEP-02,
+// plan note N56), which the index's rows of the sites that are not in the
+// trash give, and the jumpers: an edge of the kind variable or attribute
+// from a board that writes a variable, or a component's attribute, to
+// another that reads it, of each pair of a site of the one that writes it
+// and a site of the other that reads it; an edge of the kind visit from the
+// board of a node to another one of whose expressions reads whether it was
+// visited, of each such expression; and an edge of the kind jumper from the
+// board of a jumper to another that its target is on, of each jumper. No
+// edge joins a board to itself. The graph's reads take no parameter but the
+// project, and package dependency pairs and filters what they return, since
+// a prepared statement's generic plan cannot tell a filter that is null from
+// one that is not: it planned the pairs of the large fixture's 10,000 sites
+// as if each filter kept one row, by nested loops of 12 s. The reads of an
+// edge's contributions may take filters that are null, since the edge's
+// boards, its kind, and the accesses bound their rows first.
 // GraphBoards returns the project's boards that are not in its trash, the
 // graph's nodes, each with its name, in the order of their IDs.
 func (q *Queries) GraphBoards(ctx context.Context, arg GraphBoardsParams) ([]GraphBoardsRow, error) {
@@ -150,26 +167,30 @@ func (q *Queries) GraphJumpers(ctx context.Context, arg GraphJumpersParams) ([]G
 
 const graphReferences = `-- name: GraphReferences :many
 WITH live_site AS (
-    -- The sites of the project that are not in its trash: the expressions
-    -- whose owners are not, and the nodes and the connections, whose texts
-    -- are sites by their IDs.
-    SELECT e.id FROM expression e
+    -- The sites of the project that are not in its trash, each by its kind
+    -- and its ID: the expressions whose owners are not, and the nodes and
+    -- the connections, whose texts are sites by their IDs. A site is matched
+    -- by its kind too, since an expression, a node, and a connection may
+    -- share a UUID, as a client chooses a node's and a connection's, so that
+    -- a site in the trash is not live by another kind's live entity.
+    SELECT 'expression' AS kind, e.id FROM expression e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
     WHERE e.workspace_id = $1 AND e.project_id = $2
     UNION ALL
-    SELECT e.id FROM expression e
+    SELECT 'expression', e.id FROM expression e
     JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
         AND c.id = e.connection_id
     WHERE e.workspace_id = $1 AND e.project_id = $2
     UNION ALL
-    SELECT e.id FROM expression e
+    SELECT 'expression', e.id FROM expression e
     JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
         AND o.id = e.branch_output_id
     WHERE e.workspace_id = $1 AND e.project_id = $2
     UNION ALL
-    SELECT n.id FROM live_node n WHERE n.workspace_id = $1 AND n.project_id = $2
+    SELECT 'node', n.id FROM live_node n WHERE n.workspace_id = $1 AND n.project_id = $2
     UNION ALL
-    SELECT c.id FROM live_connection c WHERE c.workspace_id = $1 AND c.project_id = $2
+    SELECT 'connection', c.id FROM live_connection c
+    WHERE c.workspace_id = $1 AND c.project_id = $2
 )
 SELECT r.board_id::uuid AS board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access,
     v.board_id AS visited_board_id, count(*)::bigint AS sites
@@ -178,7 +199,9 @@ LEFT JOIN live_node v ON r.target_kind = 'node' AND v.workspace_id = r.workspace
     AND v.id = r.target_id
 WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.board_id IS NOT NULL
     AND r.target_kind IN ('variable', 'attribute', 'node') AND (r.target_kind <> 'node' OR v.id IS NOT NULL)
-    AND coalesce(r.expression_id, r.node_id, r.connection_id) IN (SELECT id FROM live_site)
+    AND (CASE WHEN r.expression_id IS NOT NULL THEN 'expression' WHEN r.node_id IS NOT NULL THEN 'node'
+        ELSE 'connection' END, coalesce(r.expression_id, r.node_id, r.connection_id))
+        IN (SELECT kind, id FROM live_site)
 GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access, v.board_id
 `
 
@@ -230,39 +253,6 @@ func (q *Queries) GraphReferences(ctx context.Context, arg GraphReferencesParams
 		return nil, err
 	}
 	return items, nil
-}
-
-const graphSeq = `-- name: GraphSeq :one
-
-SELECT seq FROM project WHERE workspace_id = $1 AND id = $2
-`
-
-type GraphSeqParams struct {
-	WorkspaceID pgtype.UUID
-	ID          pgtype.UUID
-}
-
-// The graph of the dependencies between a project's boards (PRD FR-DEP-02,
-// plan note N56), which the index's rows of the sites that are not in the
-// trash give, and the jumpers: an edge of the kind variable or attribute
-// from a board that writes a variable, or a component's attribute, to
-// another that reads it, of each pair of a site of the one that writes it
-// and a site of the other that reads it; an edge of the kind visit from the
-// board of a node to another one of whose expressions reads whether it was
-// visited, of each such expression; and an edge of the kind jumper from the
-// board of a jumper to another that its target is on, of each jumper. No
-// edge joins a board to itself. The graph's reads take no parameter but the
-// project, and package dependency pairs and filters what they return, since
-// a prepared statement's generic plan cannot tell a filter that is null from
-// one that is not: it planned the pairs of the large fixture's 10,000 sites
-// as if each filter kept one row, by nested loops of 12 s.
-// GraphSeq returns the project's operation sequence, which the graph names
-// as the state of the draft that it read.
-func (q *Queries) GraphSeq(ctx context.Context, arg GraphSeqParams) (int64, error) {
-	row := q.db.QueryRow(ctx, graphSeq, arg.WorkspaceID, arg.ID)
-	var seq int64
-	err := row.Scan(&seq)
-	return seq, err
 }
 
 const insertReferences = `-- name: InsertReferences :exec

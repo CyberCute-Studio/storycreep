@@ -197,12 +197,9 @@ WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = A
 -- project, and package dependency pairs and filters what they return, since
 -- a prepared statement's generic plan cannot tell a filter that is null from
 -- one that is not: it planned the pairs of the large fixture's 10,000 sites
--- as if each filter kept one row, by nested loops of 12 s.
-
--- name: GraphSeq :one
--- GraphSeq returns the project's operation sequence, which the graph names
--- as the state of the draft that it read.
-SELECT seq FROM project WHERE workspace_id = @workspace_id AND id = @id;
+-- as if each filter kept one row, by nested loops of 12 s. The reads of an
+-- edge's contributions may take filters that are null, since the edge's
+-- boards, its kind, and the accesses bound their rows first.
 
 -- name: GraphBoards :many
 -- GraphBoards returns the project's boards that are not in its trash, the
@@ -218,26 +215,30 @@ SELECT id, name FROM live_board WHERE workspace_id = @workspace_id AND project_i
 -- attributes' definitions, and their accesses. A component's description
 -- belongs to no board, and a mention is no dependency.
 WITH live_site AS (
-    -- The sites of the project that are not in its trash: the expressions
-    -- whose owners are not, and the nodes and the connections, whose texts
-    -- are sites by their IDs.
-    SELECT e.id FROM expression e
+    -- The sites of the project that are not in its trash, each by its kind
+    -- and its ID: the expressions whose owners are not, and the nodes and
+    -- the connections, whose texts are sites by their IDs. A site is matched
+    -- by its kind too, since an expression, a node, and a connection may
+    -- share a UUID, as a client chooses a node's and a connection's, so that
+    -- a site in the trash is not live by another kind's live entity.
+    SELECT 'expression' AS kind, e.id FROM expression e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
     UNION ALL
-    SELECT e.id FROM expression e
+    SELECT 'expression', e.id FROM expression e
     JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
         AND c.id = e.connection_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
     UNION ALL
-    SELECT e.id FROM expression e
+    SELECT 'expression', e.id FROM expression e
     JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
         AND o.id = e.branch_output_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
     UNION ALL
-    SELECT n.id FROM live_node n WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
+    SELECT 'node', n.id FROM live_node n WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
     UNION ALL
-    SELECT c.id FROM live_connection c WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+    SELECT 'connection', c.id FROM live_connection c
+    WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
 )
 SELECT r.board_id::uuid AS board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access,
     v.board_id AS visited_board_id, count(*)::bigint AS sites
@@ -246,7 +247,9 @@ LEFT JOIN live_node v ON r.target_kind = 'node' AND v.workspace_id = r.workspace
     AND v.id = r.target_id
 WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.board_id IS NOT NULL
     AND r.target_kind IN ('variable', 'attribute', 'node') AND (r.target_kind <> 'node' OR v.id IS NOT NULL)
-    AND coalesce(r.expression_id, r.node_id, r.connection_id) IN (SELECT id FROM live_site)
+    AND (CASE WHEN r.expression_id IS NOT NULL THEN 'expression' WHEN r.node_id IS NOT NULL THEN 'node'
+        ELSE 'connection' END, coalesce(r.expression_id, r.node_id, r.connection_id))
+        IN (SELECT kind, id FROM live_site)
 GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access, v.board_id;
 
 -- name: GraphJumpers :many

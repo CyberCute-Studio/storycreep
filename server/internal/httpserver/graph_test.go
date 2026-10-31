@@ -233,28 +233,10 @@ func graphOf(t *testing.T, h http.Handler, si signedIn, project, query string) d
 	return g
 }
 
-// contributions returns every contribution of the list at path, page by
-// page, of limit items each, as si, and fails the test unless each page is
-// 200.
+// contributions returns every contribution of the list at path (allPages).
 func contributions(t *testing.T, h http.Handler, si signedIn, path string, limit int) []dependency.Contribution {
 	t.Helper()
-	var out []dependency.Contribution
-	for cursor := ""; ; {
-		url := fmt.Sprintf("%s&limit=%d", path, limit)
-		if cursor != "" {
-			url += "&cursor=" + cursor
-		}
-		res := call(h, http.MethodGet, url, nil, si.header(false))
-		var page api.Page[dependency.Contribution]
-		if res.status != http.StatusOK || json.Unmarshal(res.body, &page) != nil {
-			t.Fatalf("GET %s: %d %s", url, res.status, res.body)
-		}
-		out = append(out, page.Items...)
-		if page.NextCursor == nil {
-			return out
-		}
-		cursor = *page.NextCursor
-	}
+	return allPages[dependency.Contribution](t, h, si, path, limit)
 }
 
 // edges returns the graph's edges as lines of the names of their boards,
@@ -481,6 +463,76 @@ func TestDependencyContributions(t *testing.T) {
 	}
 }
 
+// TestDependencyContributionsPaged checks that each kind of list of
+// contributions, whose keys each kind makes of its own, lists a page at a
+// time what it lists in one page, each contribution once, in one order, and
+// as many as the graph counts: of A and B, where A's scripts write
+// elara.trust twice, and mira.trust and elara.mood once, which a condition
+// of B reads, and a text of B shows elara.trust; that condition and a
+// branch output's of B read whether the nodes of A were visited; and three
+// jumpers of A target nodes of B.
+func TestDependencyContributionsPaged(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	h, p := s.main, createProject(t, s.main, owner, ws, "Harbour").ID
+	boards := newBoardIDs(2)
+	a, b := boards[0], boards[1]
+	cast, trust, mood, elara, mira := newComponentTypeID(), newAttributeID(), newAttributeID(), newComponentID(),
+		newComponentID()
+	w1, w2, r1, r2, gate := newNodeID(), newNodeID(), newNodeID(), newNodeID(), newNodeID()
+	pos := map[string]int{"x": 0, "y": 0}
+	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
+	node := func(id, board, typ string, more ...any) wireCommand {
+		p := map[string]any{"id": id, "board_id": board, "type": typ, "position": pos}
+		for i := 0; i < len(more); i += 2 {
+			p[more[i].(string)] = more[i+1]
+		}
+		return cmd("node.create", p)
+	}
+	jumper := func(target string) wireCommand {
+		return node(newNodeID(), a, "jumper", "target", map[string]any{"board_id": b, "node_id": target})
+	}
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": a, "name": "A"}),
+		cmd("board.create", map[string]any{"id": b, "name": "B"}),
+		cmd("component_type.create", map[string]any{"id": cast, "name": "Cast"}),
+		cmd("attribute.create", map[string]any{"id": trust, "component_type_id": cast, "name": "Trust",
+			"type": "int", "runtime": true}),
+		cmd("attribute.create", map[string]any{"id": mood, "component_type_id": cast, "name": "Mood",
+			"type": "string", "runtime": true}),
+		cmd("component.create", map[string]any{"id": elara, "component_type_id": cast, "name": "Elara"}),
+		cmd("component.create", map[string]any{"id": mira, "component_type_id": cast, "name": "Mira"}),
+		node(w1, a, "element", "on_enter", "elara.trust = 1\nmira.trust = 2", "on_exit", `elara.mood = "calm"`),
+		node(w2, a, "element", "on_enter", "elara.trust = 3"),
+		node(r1, b, "element"),
+		node(r2, b, "element", "text", richText(textInline("Trust "), attributeInline(elara, trust))),
+		cmd("connection.create", map[string]any{"id": newConnectionID(), "from_node_id": r1, "to_node_id": r2,
+			"condition": `elara.trust > 0 and mira.trust > 0 and elara.mood == "calm" and visited(node("` + w1 +
+				`")) and visits(node("` + w2 + `")) > 1`}),
+		node(gate, b, "branch"),
+		cmd("branch_output.create", map[string]any{"id": ids.Encode(ids.BranchOutput, ids.New()), "node_id": gate,
+			"condition": `visited(node("` + w1 + `"))`}),
+		jumper(r1), jumper(r2), jumper(r1),
+	)
+	counts := map[string]int64{}
+	for _, e := range graphOf(t, h, owner, p, "").Edges {
+		if e.FromBoardID == a && e.ToBoardID == b {
+			counts[string(e.Kind)] = e.Contributions
+		}
+	}
+	// elara.trust: 2 writes by 2 reads; mira.trust and elara.mood: 1 by 1.
+	for kind, want := range map[string]int{"attribute": 6, "visit": 3, "jumper": 3} {
+		whole := contributions(t, h, owner, contributionsPath(p, a, b, kind), 50)
+		if len(whole) != want || counts[kind] != int64(want) {
+			t.Errorf("A->B lists %d contributions of the kind %s, and the graph counts %d, want %d", len(whole), kind,
+				counts[kind], want)
+		}
+		if paged := contributions(t, h, owner, contributionsPath(p, a, b, kind), 1); !slices.Equal(paged, whole) {
+			t.Errorf("a page at a time, A->B's contributions of the kind %s are\n%+v\nwant\n%+v", kind, paged, whole)
+		}
+	}
+}
+
 // TestDependencyGraphVisit checks FR-DEP-02 AC5's fixture: a choice on
 // Harbourmaster is gated on whether the entry node of Elara — First Meeting
 // was visited, and nothing else connects the two boards. The graph has an
@@ -679,6 +731,61 @@ func TestDependencyGraphTrash(t *testing.T) {
 		contributionsPath(p, w.market, w.fort, "variable")} {
 		wantCode(t, "a board in the trash", call(h, http.MethodGet, path, nil, o.header(false)), http.StatusNotFound,
 			api.CodeNotFound)
+	}
+}
+
+// TestDependencyGraphSharedUUIDs checks that a site is outside the trash by
+// its own kind alone: a node, a connection, and an expression may share a
+// UUID, since a client chooses a node's and a connection's, so that a
+// connection whose UUID is a node's that is not in the trash, and a script
+// whose UUID is such a node's, go to the trash with their owners all the
+// same, and the graph counts what the edge's list lists.
+func TestDependencyGraphSharedUUIDs(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	h, p := s.main, createProject(t, s.main, owner, ws, "Harbour").ID
+	boards := newBoardIDs(2)
+	a, b := boards[0], boards[1]
+	names := map[string]string{a: "A", b: "B"}
+	coins, writer, reader, after := newVariableID(), newNodeID(), newNodeID(), newNodeID()
+	// The connection's UUID is that of reader, the node that it leaves.
+	label := ids.Encode(ids.Connection, uuidOf(t, reader))
+	pos := map[string]int{"x": 0, "y": 0}
+	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
+	sendBatch(t, h, owner, p,
+		cmd("board.create", map[string]any{"id": a, "name": "A"}),
+		cmd("board.create", map[string]any{"id": b, "name": "B"}),
+		cmd("variable.create", map[string]any{"id": coins, "key": "coins", "type": "int", "scope": "global"}),
+		cmd("node.create", map[string]any{"id": writer, "board_id": a, "type": "element", "position": pos,
+			"on_enter": "coins = 1"}),
+		cmd("node.create", map[string]any{"id": reader, "board_id": b, "type": "element", "position": pos}),
+		cmd("node.create", map[string]any{"id": after, "board_id": b, "type": "element", "position": pos}),
+		cmd("connection.create", map[string]any{"id": label, "from_node_id": reader, "to_node_id": after,
+			"label": richText(textInline("Coins: "), valueInline(coins))}),
+	)
+	wantGraph(t, "the graph", names, graphOf(t, h, owner, p, ""), []string{"A->B variable 1"},
+		[]string{"A in 0 out 1", "B in 1 out 0"})
+	sendBatch(t, h, owner, p, cmd("connection.delete", map[string]any{"id": label}))
+	wantGraph(t, "the graph with the connection in the trash", names, graphOf(t, h, owner, p, ""), []string{},
+		[]string{"A in 0 out 0", "B in 0 out 0"})
+	if got := contributions(t, h, owner, contributionsPath(p, a, b, "variable"), 50); len(got) != 0 {
+		t.Errorf("with the connection in the trash, A->B lists %+v", got)
+	}
+
+	// A node of B whose UUID is that of writer's script, and a text of B
+	// that shows coins, which writer's script, once writer is in the trash,
+	// writes for none of them.
+	script := expressionIDs(t, d.Admin(t), p)["on_enter "+writer]
+	twin := ids.Encode(ids.Node, script)
+	sendBatch(t, h, owner, p,
+		cmd("connection.restore", map[string]any{"id": label}),
+		cmd("node.create", map[string]any{"id": twin, "board_id": b, "type": "element", "position": pos}),
+		cmd("node.delete", map[string]any{"id": writer}),
+	)
+	wantGraph(t, "the graph with writer in the trash", names, graphOf(t, h, owner, p, ""), []string{},
+		[]string{"A in 0 out 0", "B in 0 out 0"})
+	if got := contributions(t, h, owner, contributionsPath(p, a, b, "variable"), 50); len(got) != 0 {
+		t.Errorf("with writer in the trash, A->B lists %+v", got)
 	}
 }
 
