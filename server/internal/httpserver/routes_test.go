@@ -80,6 +80,9 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/trash"}: scope.ProjectRead,
 	// So is its validation, whose findings its commands mute.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/validation"}: scope.ProjectRead,
+	// So are the dependencies between its boards, which its commands index.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/dependencies"}:                               scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/dependencies/{from_board_id}/{to_board_id}"}: scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

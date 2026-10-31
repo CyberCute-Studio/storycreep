@@ -70,6 +70,191 @@ func (q *Queries) DeleteReferences(ctx context.Context, arg DeleteReferencesPara
 	return err
 }
 
+const graphBoards = `-- name: GraphBoards :many
+
+SELECT id, name FROM live_board WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
+`
+
+type GraphBoardsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+type GraphBoardsRow struct {
+	ID   pgtype.UUID
+	Name string
+}
+
+// The graph of the dependencies between a project's boards (PRD FR-DEP-02,
+// plan note N56), which the index's rows of the sites that are not in the
+// trash give, and the jumpers: an edge of the kind variable or attribute
+// from a board that writes a variable, or a component's attribute, to
+// another that reads it, of each pair of a site of the one that writes it
+// and a site of the other that reads it; an edge of the kind visit from the
+// board of a node to another one of whose expressions reads whether it was
+// visited, of each such expression; and an edge of the kind jumper from the
+// board of a jumper to another that its target is on, of each jumper. No
+// edge joins a board to itself. The graph's reads take no parameter but the
+// project, and package dependency pairs and filters what they return, since
+// a prepared statement's generic plan cannot tell a filter that is null from
+// one that is not: it planned the pairs of the large fixture's 10,000 sites
+// as if each filter kept one row, by nested loops of 12 s. The reads of an
+// edge's contributions may take filters that are null, since the edge's
+// boards, its kind, and the accesses bound their rows first.
+// GraphBoards returns the project's boards that are not in its trash, the
+// graph's nodes, each with its name, in the order of their IDs.
+func (q *Queries) GraphBoards(ctx context.Context, arg GraphBoardsParams) ([]GraphBoardsRow, error) {
+	rows, err := q.db.Query(ctx, graphBoards, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphBoardsRow
+	for rows.Next() {
+		var i GraphBoardsRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const graphJumpers = `-- name: GraphJumpers :many
+SELECT j.board_id AS from_board_id, t.board_id AS to_board_id, count(*)::bigint AS jumpers
+FROM live_node j
+JOIN live_node t ON t.workspace_id = j.workspace_id AND t.project_id = j.project_id AND t.id = j.target_node_id
+WHERE j.workspace_id = $1 AND j.project_id = $2 AND j.type = 'jumper' AND t.board_id <> j.board_id
+GROUP BY j.board_id, t.board_id
+`
+
+type GraphJumpersParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+type GraphJumpersRow struct {
+	FromBoardID pgtype.UUID
+	ToBoardID   pgtype.UUID
+	Jumpers     int64
+}
+
+// GraphJumpers returns how many jumpers of each board of the project target
+// nodes of each other board, of the jumpers and the targets that are not in
+// its trash.
+func (q *Queries) GraphJumpers(ctx context.Context, arg GraphJumpersParams) ([]GraphJumpersRow, error) {
+	rows, err := q.db.Query(ctx, graphJumpers, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphJumpersRow
+	for rows.Next() {
+		var i GraphJumpersRow
+		if err := rows.Scan(&i.FromBoardID, &i.ToBoardID, &i.Jumpers); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const graphReferences = `-- name: GraphReferences :many
+WITH live_site AS (
+    -- The sites of the project that are not in its trash, each by its kind
+    -- and its ID: the expressions whose owners are not, and the nodes and
+    -- the connections, whose texts are sites by their IDs. A site is matched
+    -- by its kind too, since an expression, a node, and a connection may
+    -- share a UUID, as a client chooses a node's and a connection's, so that
+    -- a site in the trash is not live by another kind's live entity.
+    SELECT 'expression' AS kind, e.id FROM expression e
+    JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    WHERE e.workspace_id = $1 AND e.project_id = $2
+    UNION ALL
+    SELECT 'expression', e.id FROM expression e
+    JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    WHERE e.workspace_id = $1 AND e.project_id = $2
+    UNION ALL
+    SELECT 'expression', e.id FROM expression e
+    JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE e.workspace_id = $1 AND e.project_id = $2
+    UNION ALL
+    SELECT 'node', n.id FROM live_node n WHERE n.workspace_id = $1 AND n.project_id = $2
+    UNION ALL
+    SELECT 'connection', c.id FROM live_connection c
+    WHERE c.workspace_id = $1 AND c.project_id = $2
+)
+SELECT r.board_id::uuid AS board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access,
+    v.board_id AS visited_board_id, count(*)::bigint AS sites
+FROM expression_ref r
+LEFT JOIN live_node v ON r.target_kind = 'node' AND v.workspace_id = r.workspace_id AND v.project_id = r.project_id
+    AND v.id = r.target_id
+WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.board_id IS NOT NULL
+    AND r.target_kind IN ('variable', 'attribute', 'node') AND (r.target_kind <> 'node' OR v.id IS NOT NULL)
+    AND (CASE WHEN r.expression_id IS NOT NULL THEN 'expression' WHEN r.node_id IS NOT NULL THEN 'node'
+        ELSE 'connection' END, coalesce(r.expression_id, r.node_id, r.connection_id))
+        IN (SELECT kind, id FROM live_site)
+GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access, v.board_id
+`
+
+type GraphReferencesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+type GraphReferencesRow struct {
+	BoardID        pgtype.UUID
+	TargetKind     string
+	TargetID       pgtype.UUID
+	AttributeDefID pgtype.UUID
+	Access         string
+	VisitedBoardID pgtype.UUID
+	Sites          int64
+}
+
+// GraphReferences returns how many sites of each board of the project read,
+// or write, each variable and each component's attribute, and read whether
+// each node was visited, with the node's board, of the sites and the nodes
+// that are not in its trash: the rows of the index of those kinds of the
+// sites on its boards, grouped by their boards, their targets, their
+// attributes' definitions, and their accesses. A component's description
+// belongs to no board, and a mention is no dependency.
+func (q *Queries) GraphReferences(ctx context.Context, arg GraphReferencesParams) ([]GraphReferencesRow, error) {
+	rows, err := q.db.Query(ctx, graphReferences, arg.WorkspaceID, arg.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GraphReferencesRow
+	for rows.Next() {
+		var i GraphReferencesRow
+		if err := rows.Scan(
+			&i.BoardID,
+			&i.TargetKind,
+			&i.TargetID,
+			&i.AttributeDefID,
+			&i.Access,
+			&i.VisitedBoardID,
+			&i.Sites,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertReferences = `-- name: InsertReferences :exec
 
 INSERT INTO expression_ref (workspace_id, project_id, expression_id, node_id, connection_id, component_id, board_id,
@@ -104,6 +289,86 @@ type InsertReferencesParams struct {
 func (q *Queries) InsertReferences(ctx context.Context, arg InsertReferencesParams) error {
 	_, err := q.db.Exec(ctx, insertReferences, arg.WorkspaceID, arg.ProjectID, arg.Rows)
 	return err
+}
+
+const jumperContributions = `-- name: JumperContributions :many
+SELECT j.id AS jumper_id, j.title AS jumper_title, t.id AS target_id, t.title AS target_title
+FROM live_node j
+JOIN live_node t ON t.workspace_id = j.workspace_id AND t.project_id = j.project_id AND t.id = j.target_node_id
+WHERE j.workspace_id = $1 AND j.project_id = $2 AND j.board_id = $3
+    AND j.type = 'jumper' AND t.board_id = $4
+    AND ('00000000-0000-0000-0000-000000000000'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, j.id, j.id,
+        t.id, t.id) > ($5::uuid, $6::uuid, $7::uuid, $8::uuid,
+            $9::uuid, $10::uuid)
+ORDER BY j.id
+LIMIT $11
+`
+
+type JumperContributionsParams struct {
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	FromBoardID    pgtype.UUID
+	ToBoardID      pgtype.UUID
+	AfterTarget    pgtype.UUID
+	AfterAttribute pgtype.UUID
+	AfterFromNode  pgtype.UUID
+	AfterFromSite  pgtype.UUID
+	AfterToNode    pgtype.UUID
+	AfterToSite    pgtype.UUID
+	MaxRows        int32
+}
+
+type JumperContributionsRow struct {
+	JumperID    pgtype.UUID
+	JumperTitle string
+	TargetID    pgtype.UUID
+	TargetTitle string
+}
+
+// JumperContributions returns at most max_rows of the contributions to the
+// edge of the kind jumper from the board from_board_id to the board
+// to_board_id, another: the jumpers of the one whose targets are nodes of
+// the other, of the jumpers and the targets that are not in the project's
+// trash, each with its target. They are in the order of the jumpers, after
+// the key of ValueContributions, whose target and attribute are the zero
+// UUID, whose node and site of the board from_board_id are each the
+// jumper's ID, and whose node and site of the board to_board_id are each
+// its target's, but for the sites' types, since a jumper's UUID is its own.
+func (q *Queries) JumperContributions(ctx context.Context, arg JumperContributionsParams) ([]JumperContributionsRow, error) {
+	rows, err := q.db.Query(ctx, jumperContributions,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.FromBoardID,
+		arg.ToBoardID,
+		arg.AfterTarget,
+		arg.AfterAttribute,
+		arg.AfterFromNode,
+		arg.AfterFromSite,
+		arg.AfterToNode,
+		arg.AfterToSite,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JumperContributionsRow
+	for rows.Next() {
+		var i JumperContributionsRow
+		if err := rows.Scan(
+			&i.JumperID,
+			&i.JumperTitle,
+			&i.TargetID,
+			&i.TargetTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const liveTextOwners = `-- name: LiveTextOwners :many
@@ -460,6 +725,278 @@ func (q *Queries) Usages(ctx context.Context, arg UsagesParams) ([]UsagesRow, er
 			&i.ComponentID,
 			&i.AttributeDefID,
 			&i.SiteID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const valueContributions = `-- name: ValueContributions :many
+WITH refs AS (
+    SELECT r.workspace_id, r.project_id, r.expression_id, r.node_id, r.connection_id, r.component_id, r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access FROM expression_ref r
+    WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.target_kind = $3
+        AND (r.board_id = $4 AND r.access = 'write' OR r.board_id = $5 AND r.access = 'read')
+        AND ($6::uuid IS NULL OR r.target_id = $6::uuid)
+        AND ($7::uuid IS NULL OR r.attribute_def_id = $7::uuid)
+), sites AS (
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000') AS attribute_key, e.id AS site_id,
+        (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
+            THEN 'connection_' || e.field ELSE 'branch_output_condition' END)::text AS site,
+        coalesce(n.id, c.from_node_id, o.node_id) AS node_id, c.id AS connection_id, o.id AS branch_output_id
+    FROM refs r
+    JOIN expression e ON e.workspace_id = r.workspace_id AND e.id = r.expression_id
+    LEFT JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    LEFT JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    LEFT JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE coalesce(n.id, c.id, o.id) IS NOT NULL
+    UNION ALL
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000'), n.id, 'node_text', n.id, NULL, NULL
+    FROM refs r JOIN live_node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
+    UNION ALL
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000'), c.id, 'connection_label',
+        c.from_node_id, c.id, NULL
+    FROM refs r JOIN live_connection c ON c.workspace_id = r.workspace_id AND c.project_id = r.project_id
+        AND c.id = r.connection_id
+), page AS (
+    -- The page's contributions, of which alone the nodes' titles are read,
+    -- however many contribute to the edge.
+    SELECT w.target_id, w.attribute_def_id, w.attribute_key, w.site AS from_site, w.node_id AS from_node_id,
+        w.site_id AS from_site_id, w.connection_id AS from_connection_id,
+        w.branch_output_id AS from_branch_output_id, r.site AS to_site, r.node_id AS to_node_id,
+        r.site_id AS to_site_id, r.connection_id AS to_connection_id, r.branch_output_id AS to_branch_output_id
+    FROM sites w
+    JOIN sites r ON r.target_id = w.target_id AND r.attribute_key = w.attribute_key
+    WHERE w.board_id = $4 AND w.access = 'write' AND r.board_id = $5 AND r.access = 'read'
+        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site)
+            > ($8::uuid, $9::uuid, $10::uuid, $11::uuid,
+                $12::text, $13::uuid, $14::uuid, $15::text)
+    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site
+    LIMIT $16
+)
+SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_node_id::uuid AS from_node_id,
+    fn.title AS from_node_title, p.from_site_id::uuid AS from_site_id, p.from_connection_id, p.from_branch_output_id,
+    p.to_site, p.to_node_id::uuid AS to_node_id, tn.title AS to_node_title, p.to_site_id::uuid AS to_site_id,
+    p.to_connection_id, p.to_branch_output_id
+FROM page p
+JOIN node fn ON fn.workspace_id = $1 AND fn.project_id = $2 AND fn.id = p.from_node_id
+JOIN node tn ON tn.workspace_id = $1 AND tn.project_id = $2 AND tn.id = p.to_node_id
+ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.from_site, p.to_node_id, p.to_site_id,
+    p.to_site
+`
+
+type ValueContributionsParams struct {
+	WorkspaceID       pgtype.UUID
+	ProjectID         pgtype.UUID
+	TargetKind        string
+	FromBoardID       pgtype.UUID
+	ToBoardID         pgtype.UUID
+	TargetID          pgtype.UUID
+	AttributeDefID    pgtype.UUID
+	AfterTarget       pgtype.UUID
+	AfterAttribute    pgtype.UUID
+	AfterFromNode     pgtype.UUID
+	AfterFromSite     pgtype.UUID
+	AfterFromSiteType string
+	AfterToNode       pgtype.UUID
+	AfterToSite       pgtype.UUID
+	AfterToSiteType   string
+	MaxRows           int32
+}
+
+type ValueContributionsRow struct {
+	TargetID           pgtype.UUID
+	AttributeDefID     pgtype.UUID
+	FromSite           string
+	FromNodeID         pgtype.UUID
+	FromNodeTitle      string
+	FromSiteID         pgtype.UUID
+	FromConnectionID   pgtype.UUID
+	FromBranchOutputID pgtype.UUID
+	ToSite             string
+	ToNodeID           pgtype.UUID
+	ToNodeTitle        string
+	ToSiteID           pgtype.UUID
+	ToConnectionID     pgtype.UUID
+	ToBranchOutputID   pgtype.UUID
+}
+
+// ValueContributions returns at most max_rows of the contributions to the
+// edge of the kind target_kind, variable or attribute, from the board
+// from_board_id to the board to_board_id, another: each pair of a site of
+// the one that writes a variable, or a component's attribute, and a site of
+// the other that reads it, of the sites that are not in the project's trash,
+// of the target_id and the attribute_def_id, if they are not null. Each site
+// comes with its node, as a usage's does: an expression's owner's node, a
+// connection's the node that it leaves, and an output's its branch; and a
+// text's owner's, a connection's the node that it leaves too. They are in
+// the order of their targets, their attributes' definitions, the zero UUID
+// for a variable's, the nodes and the sites that write them, and the nodes
+// and the sites that read them, a site being an expression, or a text's
+// owner, by its UUID and then its type, since two sites of one node may
+// share a UUID, as a node's text and the label of a connection that leaves
+// it whose UUID a client chose to be the node's do, after the key whose
+// parts are after_target, after_attribute, after_from_node, after_from_site,
+// after_from_site_type, after_to_node, after_to_site, and
+// after_to_site_type, which is all zero UUIDs and empty types for the first
+// page, as no contribution is.
+func (q *Queries) ValueContributions(ctx context.Context, arg ValueContributionsParams) ([]ValueContributionsRow, error) {
+	rows, err := q.db.Query(ctx, valueContributions,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.TargetKind,
+		arg.FromBoardID,
+		arg.ToBoardID,
+		arg.TargetID,
+		arg.AttributeDefID,
+		arg.AfterTarget,
+		arg.AfterAttribute,
+		arg.AfterFromNode,
+		arg.AfterFromSite,
+		arg.AfterFromSiteType,
+		arg.AfterToNode,
+		arg.AfterToSite,
+		arg.AfterToSiteType,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ValueContributionsRow
+	for rows.Next() {
+		var i ValueContributionsRow
+		if err := rows.Scan(
+			&i.TargetID,
+			&i.AttributeDefID,
+			&i.FromSite,
+			&i.FromNodeID,
+			&i.FromNodeTitle,
+			&i.FromSiteID,
+			&i.FromConnectionID,
+			&i.FromBranchOutputID,
+			&i.ToSite,
+			&i.ToNodeID,
+			&i.ToNodeTitle,
+			&i.ToSiteID,
+			&i.ToConnectionID,
+			&i.ToBranchOutputID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const visitContributions = `-- name: VisitContributions :many
+WITH page AS (
+    SELECT v.id AS visited_id, e.id AS site_id,
+        (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
+            THEN 'connection_' || e.field ELSE 'branch_output_condition' END)::text AS site,
+        coalesce(n.id, c.from_node_id, o.node_id) AS node_id, c.id AS connection_id, o.id AS branch_output_id
+    FROM expression_ref r
+    JOIN live_node v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.target_id
+    JOIN expression e ON e.workspace_id = r.workspace_id AND e.id = r.expression_id
+    LEFT JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    LEFT JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    LEFT JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.target_kind = 'node'
+        AND r.board_id = $3 AND v.board_id = $4 AND coalesce(n.id, c.id, o.id) IS NOT NULL
+        AND (v.id, '00000000-0000-0000-0000-000000000000'::uuid, v.id, v.id, coalesce(n.id, c.from_node_id, o.node_id),
+            e.id) > ($5::uuid, $6::uuid, $7::uuid, $8::uuid,
+                $9::uuid, $10::uuid)
+    ORDER BY v.id, coalesce(n.id, c.from_node_id, o.node_id), e.id
+    LIMIT $11
+)
+SELECT p.visited_id::uuid AS visited_id, vn.title AS visited_title, p.site, p.node_id::uuid AS node_id,
+    tn.title AS node_title, p.site_id::uuid AS site_id, p.connection_id, p.branch_output_id
+FROM page p
+JOIN node vn ON vn.workspace_id = $1 AND vn.project_id = $2 AND vn.id = p.visited_id
+JOIN node tn ON tn.workspace_id = $1 AND tn.project_id = $2 AND tn.id = p.node_id
+ORDER BY p.visited_id, p.node_id, p.site_id
+`
+
+type VisitContributionsParams struct {
+	WorkspaceID    pgtype.UUID
+	ProjectID      pgtype.UUID
+	ToBoardID      pgtype.UUID
+	FromBoardID    pgtype.UUID
+	AfterTarget    pgtype.UUID
+	AfterAttribute pgtype.UUID
+	AfterFromNode  pgtype.UUID
+	AfterFromSite  pgtype.UUID
+	AfterToNode    pgtype.UUID
+	AfterToSite    pgtype.UUID
+	MaxRows        int32
+}
+
+type VisitContributionsRow struct {
+	VisitedID      pgtype.UUID
+	VisitedTitle   string
+	Site           string
+	NodeID         pgtype.UUID
+	NodeTitle      string
+	SiteID         pgtype.UUID
+	ConnectionID   pgtype.UUID
+	BranchOutputID pgtype.UUID
+}
+
+// VisitContributions returns at most max_rows of the contributions to the
+// edge of the kind visit from the board from_board_id to the board
+// to_board_id, another: each pair of a node of the one and an expression of
+// the other that reads whether it was visited, of the nodes and the
+// expressions that are not in the project's trash, an expression with its
+// node, as a usage's is. Only an expression names a node. They are in the
+// order of the nodes visited, and the nodes and the expressions that read
+// them, after the key of ValueContributions, whose target, node, and site
+// of the board from_board_id are each the visited node's ID, and whose
+// attribute is the zero UUID, but for the sites' types, since an
+// expression's UUID is its own.
+func (q *Queries) VisitContributions(ctx context.Context, arg VisitContributionsParams) ([]VisitContributionsRow, error) {
+	rows, err := q.db.Query(ctx, visitContributions,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.ToBoardID,
+		arg.FromBoardID,
+		arg.AfterTarget,
+		arg.AfterAttribute,
+		arg.AfterFromNode,
+		arg.AfterFromSite,
+		arg.AfterToNode,
+		arg.AfterToSite,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []VisitContributionsRow
+	for rows.Next() {
+		var i VisitContributionsRow
+		if err := rows.Scan(
+			&i.VisitedID,
+			&i.VisitedTitle,
+			&i.Site,
+			&i.NodeID,
+			&i.NodeTitle,
+			&i.SiteID,
+			&i.ConnectionID,
+			&i.BranchOutputID,
 		); err != nil {
 			return nil, err
 		}

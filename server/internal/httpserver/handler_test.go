@@ -176,6 +176,8 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"GET /api/v1/projects/{project_id}/components/{component_id}/rename-preview",
 			"GET /api/v1/projects/{project_id}/components/{component_id}/usages",
 			"GET /api/v1/projects/{project_id}/connections/{connection_id}",
+			"GET /api/v1/projects/{project_id}/dependencies",
+			"GET /api/v1/projects/{project_id}/dependencies/{from_board_id}/{to_board_id}",
 			"GET /api/v1/projects/{project_id}/folders",
 			"GET /api/v1/projects/{project_id}/grants",
 			"GET /api/v1/projects/{project_id}/nodes/{node_id}",

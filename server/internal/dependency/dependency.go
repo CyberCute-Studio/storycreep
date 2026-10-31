@@ -3,7 +3,9 @@
 // the usage queries of a variable and of a component from it (FR-DEP-01
 // AC2, FR-COMP-04): which sites read a variable, and which write it, and
 // which nodes have a component as their speaker, which texts mention it, and
-// which sites read or write its attributes.
+// which sites read or write its attributes. It answers the graph of the
+// dependencies between a project's boards from it too (FR-DEP-02, plan note
+// N56), with the jumpers between them (Graph, Contributions).
 //
 // A site is an expression of the project (package expression): a node's
 // on-enter or on-exit script, a connection's condition or on-traverse

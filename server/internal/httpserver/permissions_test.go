@@ -501,6 +501,16 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodGet, componentUsagesPath(p, f.component(t, p, f.componentType(t, p)),
 						"speaker"), nil, si.header(false))
 				}},
+			{name: "read the dependencies between a project's boards", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, dependenciesPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "list the contributions to an edge between two boards", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, contributionsPath(p, f.board(t, p), f.board(t, p), "variable"),
+						nil, si.header(false))
+				}},
 			{name: "preview a change of a component's key", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					p := f.project(t, "")
@@ -1169,8 +1179,9 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 // fixture's routes: its workspace, and a membership, an invitation, a
 // project, the owner's API token narrowed to the project, an asset of the
 // project, which the owner uploads, and a board, a variable, a component
-// type with an int attribute definition, a component of it, a node, and a
-// connection, of the project, which the fixture adds.
+// type with an int attribute definition, a component of it, a node, a
+// connection, and the two boards of an edge between boards, of the project,
+// which the fixture adds.
 func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 	t.Helper()
 	p := f.project(t, "")
@@ -1189,6 +1200,8 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"component_id":      f.component(t, p, ct),
 		"node_id":           f.node(t, p),
 		"connection_id":     f.connection(t, p),
+		"from_board_id":     f.board(t, p),
+		"to_board_id":       f.board(t, p),
 	}
 }
 

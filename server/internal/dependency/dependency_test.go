@@ -2,7 +2,9 @@ package dependency_test
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
@@ -221,5 +223,42 @@ func TestTextNeutral(t *testing.T) {
 			t.Errorf("textNeutral lists %s, which is neither a registered type of command nor %s", typ,
 				expression.Name)
 		}
+	}
+}
+
+// TestGraphEnums checks the enums that the graph's API declares against the
+// values that the graph gives: an edge's kinds, in their order, and a
+// contribution's end's sites, which are a usage's sites on a board, all but
+// a node's speaker, which is no site of the index, and a component's
+// description, which is on no board, and the node itself.
+func TestGraphEnums(t *testing.T) {
+	enum := func(v any, field string) []string {
+		t.Helper()
+		f, ok := reflect.TypeOf(v).FieldByName(field)
+		if !ok {
+			t.Fatalf("%T has no field %s", v, field)
+		}
+		return strings.Split(f.Tag.Get("enum"), ",")
+	}
+	var kinds []string
+	for _, k := range dependency.EdgeKinds() {
+		kinds = append(kinds, string(k))
+	}
+	if got := enum(dependency.Edge{}, "Kind"); !slices.Equal(got, kinds) {
+		t.Errorf("the enum of an edge's kind is %q, want %q", got, kinds)
+	}
+	sites := []string{dependency.SiteNode}
+	for _, s := range enum(dependency.Usage{}, "Site") {
+		if s != dependency.SiteNodeSpeaker && s != dependency.SiteComponentDescription {
+			sites = append(sites, s)
+		}
+	}
+	if got := enum(dependency.End{}, "Site"); !slices.Equal(got, sites) {
+		t.Errorf("the enum of a contribution's end's site is %q, want %q", got, sites)
+	}
+	// A cursor of a list of contributions holds its ends' sites' types,
+	// which the API takes back if they are an end's (dependency.IsEndSite).
+	if got := dependency.EndSites(); !slices.Equal(got, sites) {
+		t.Errorf("the sites that a cursor's types may be are %q, want %q", got, sites)
 	}
 }

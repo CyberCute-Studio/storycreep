@@ -183,3 +183,218 @@ WHERE b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = A
 UNION ALL
 SELECT n.id, n.title FROM node n
 WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.id = ANY(@node_ids::uuid[]);
+
+-- The graph of the dependencies between a project's boards (PRD FR-DEP-02,
+-- plan note N56), which the index's rows of the sites that are not in the
+-- trash give, and the jumpers: an edge of the kind variable or attribute
+-- from a board that writes a variable, or a component's attribute, to
+-- another that reads it, of each pair of a site of the one that writes it
+-- and a site of the other that reads it; an edge of the kind visit from the
+-- board of a node to another one of whose expressions reads whether it was
+-- visited, of each such expression; and an edge of the kind jumper from the
+-- board of a jumper to another that its target is on, of each jumper. No
+-- edge joins a board to itself. The graph's reads take no parameter but the
+-- project, and package dependency pairs and filters what they return, since
+-- a prepared statement's generic plan cannot tell a filter that is null from
+-- one that is not: it planned the pairs of the large fixture's 10,000 sites
+-- as if each filter kept one row, by nested loops of 12 s. The reads of an
+-- edge's contributions may take filters that are null, since the edge's
+-- boards, its kind, and the accesses bound their rows first.
+
+-- name: GraphBoards :many
+-- GraphBoards returns the project's boards that are not in its trash, the
+-- graph's nodes, each with its name, in the order of their IDs.
+SELECT id, name FROM live_board WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
+
+-- name: GraphReferences :many
+-- GraphReferences returns how many sites of each board of the project read,
+-- or write, each variable and each component's attribute, and read whether
+-- each node was visited, with the node's board, of the sites and the nodes
+-- that are not in its trash: the rows of the index of those kinds of the
+-- sites on its boards, grouped by their boards, their targets, their
+-- attributes' definitions, and their accesses. A component's description
+-- belongs to no board, and a mention is no dependency.
+WITH live_site AS (
+    -- The sites of the project that are not in its trash, each by its kind
+    -- and its ID: the expressions whose owners are not, and the nodes and
+    -- the connections, whose texts are sites by their IDs. A site is matched
+    -- by its kind too, since an expression, a node, and a connection may
+    -- share a UUID, as a client chooses a node's and a connection's, so that
+    -- a site in the trash is not live by another kind's live entity.
+    SELECT 'expression' AS kind, e.id FROM expression e
+    JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+    UNION ALL
+    SELECT 'expression', e.id FROM expression e
+    JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+    UNION ALL
+    SELECT 'expression', e.id FROM expression e
+    JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+    UNION ALL
+    SELECT 'node', n.id FROM live_node n WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id
+    UNION ALL
+    SELECT 'connection', c.id FROM live_connection c
+    WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+)
+SELECT r.board_id::uuid AS board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access,
+    v.board_id AS visited_board_id, count(*)::bigint AS sites
+FROM expression_ref r
+LEFT JOIN live_node v ON r.target_kind = 'node' AND v.workspace_id = r.workspace_id AND v.project_id = r.project_id
+    AND v.id = r.target_id
+WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.board_id IS NOT NULL
+    AND r.target_kind IN ('variable', 'attribute', 'node') AND (r.target_kind <> 'node' OR v.id IS NOT NULL)
+    AND (CASE WHEN r.expression_id IS NOT NULL THEN 'expression' WHEN r.node_id IS NOT NULL THEN 'node'
+        ELSE 'connection' END, coalesce(r.expression_id, r.node_id, r.connection_id))
+        IN (SELECT kind, id FROM live_site)
+GROUP BY r.board_id, r.target_kind, r.target_id, r.attribute_def_id, r.access, v.board_id;
+
+-- name: GraphJumpers :many
+-- GraphJumpers returns how many jumpers of each board of the project target
+-- nodes of each other board, of the jumpers and the targets that are not in
+-- its trash.
+SELECT j.board_id AS from_board_id, t.board_id AS to_board_id, count(*)::bigint AS jumpers
+FROM live_node j
+JOIN live_node t ON t.workspace_id = j.workspace_id AND t.project_id = j.project_id AND t.id = j.target_node_id
+WHERE j.workspace_id = @workspace_id AND j.project_id = @project_id AND j.type = 'jumper' AND t.board_id <> j.board_id
+GROUP BY j.board_id, t.board_id;
+
+-- name: ValueContributions :many
+-- ValueContributions returns at most max_rows of the contributions to the
+-- edge of the kind target_kind, variable or attribute, from the board
+-- from_board_id to the board to_board_id, another: each pair of a site of
+-- the one that writes a variable, or a component's attribute, and a site of
+-- the other that reads it, of the sites that are not in the project's trash,
+-- of the target_id and the attribute_def_id, if they are not null. Each site
+-- comes with its node, as a usage's does: an expression's owner's node, a
+-- connection's the node that it leaves, and an output's its branch; and a
+-- text's owner's, a connection's the node that it leaves too. They are in
+-- the order of their targets, their attributes' definitions, the zero UUID
+-- for a variable's, the nodes and the sites that write them, and the nodes
+-- and the sites that read them, a site being an expression, or a text's
+-- owner, by its UUID and then its type, since two sites of one node may
+-- share a UUID, as a node's text and the label of a connection that leaves
+-- it whose UUID a client chose to be the node's do, after the key whose
+-- parts are after_target, after_attribute, after_from_node, after_from_site,
+-- after_from_site_type, after_to_node, after_to_site, and
+-- after_to_site_type, which is all zero UUIDs and empty types for the first
+-- page, as no contribution is.
+WITH refs AS (
+    SELECT r.* FROM expression_ref r
+    WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.target_kind = @target_kind
+        AND (r.board_id = @from_board_id AND r.access = 'write' OR r.board_id = @to_board_id AND r.access = 'read')
+        AND (sqlc.narg(target_id)::uuid IS NULL OR r.target_id = sqlc.narg(target_id)::uuid)
+        AND (sqlc.narg(attribute_def_id)::uuid IS NULL OR r.attribute_def_id = sqlc.narg(attribute_def_id)::uuid)
+), sites AS (
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000') AS attribute_key, e.id AS site_id,
+        (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
+            THEN 'connection_' || e.field ELSE 'branch_output_condition' END)::text AS site,
+        coalesce(n.id, c.from_node_id, o.node_id) AS node_id, c.id AS connection_id, o.id AS branch_output_id
+    FROM refs r
+    JOIN expression e ON e.workspace_id = r.workspace_id AND e.id = r.expression_id
+    LEFT JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    LEFT JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    LEFT JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE coalesce(n.id, c.id, o.id) IS NOT NULL
+    UNION ALL
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000'), n.id, 'node_text', n.id, NULL, NULL
+    FROM refs r JOIN live_node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
+    UNION ALL
+    SELECT r.board_id, r.access, r.target_id, r.attribute_def_id,
+        coalesce(r.attribute_def_id, '00000000-0000-0000-0000-000000000000'), c.id, 'connection_label',
+        c.from_node_id, c.id, NULL
+    FROM refs r JOIN live_connection c ON c.workspace_id = r.workspace_id AND c.project_id = r.project_id
+        AND c.id = r.connection_id
+), page AS (
+    -- The page's contributions, of which alone the nodes' titles are read,
+    -- however many contribute to the edge.
+    SELECT w.target_id, w.attribute_def_id, w.attribute_key, w.site AS from_site, w.node_id AS from_node_id,
+        w.site_id AS from_site_id, w.connection_id AS from_connection_id,
+        w.branch_output_id AS from_branch_output_id, r.site AS to_site, r.node_id AS to_node_id,
+        r.site_id AS to_site_id, r.connection_id AS to_connection_id, r.branch_output_id AS to_branch_output_id
+    FROM sites w
+    JOIN sites r ON r.target_id = w.target_id AND r.attribute_key = w.attribute_key
+    WHERE w.board_id = @from_board_id AND w.access = 'write' AND r.board_id = @to_board_id AND r.access = 'read'
+        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site)
+            > (@after_target::uuid, @after_attribute::uuid, @after_from_node::uuid, @after_from_site::uuid,
+                @after_from_site_type::text, @after_to_node::uuid, @after_to_site::uuid, @after_to_site_type::text)
+    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site
+    LIMIT @max_rows
+)
+SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_node_id::uuid AS from_node_id,
+    fn.title AS from_node_title, p.from_site_id::uuid AS from_site_id, p.from_connection_id, p.from_branch_output_id,
+    p.to_site, p.to_node_id::uuid AS to_node_id, tn.title AS to_node_title, p.to_site_id::uuid AS to_site_id,
+    p.to_connection_id, p.to_branch_output_id
+FROM page p
+JOIN node fn ON fn.workspace_id = @workspace_id AND fn.project_id = @project_id AND fn.id = p.from_node_id
+JOIN node tn ON tn.workspace_id = @workspace_id AND tn.project_id = @project_id AND tn.id = p.to_node_id
+ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.from_site, p.to_node_id, p.to_site_id,
+    p.to_site;
+
+-- name: VisitContributions :many
+-- VisitContributions returns at most max_rows of the contributions to the
+-- edge of the kind visit from the board from_board_id to the board
+-- to_board_id, another: each pair of a node of the one and an expression of
+-- the other that reads whether it was visited, of the nodes and the
+-- expressions that are not in the project's trash, an expression with its
+-- node, as a usage's is. Only an expression names a node. They are in the
+-- order of the nodes visited, and the nodes and the expressions that read
+-- them, after the key of ValueContributions, whose target, node, and site
+-- of the board from_board_id are each the visited node's ID, and whose
+-- attribute is the zero UUID, but for the sites' types, since an
+-- expression's UUID is its own.
+WITH page AS (
+    SELECT v.id AS visited_id, e.id AS site_id,
+        (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
+            THEN 'connection_' || e.field ELSE 'branch_output_condition' END)::text AS site,
+        coalesce(n.id, c.from_node_id, o.node_id) AS node_id, c.id AS connection_id, o.id AS branch_output_id
+    FROM expression_ref r
+    JOIN live_node v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.target_id
+    JOIN expression e ON e.workspace_id = r.workspace_id AND e.id = r.expression_id
+    LEFT JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.node_id
+    LEFT JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.connection_id
+    LEFT JOIN live_branch_output o ON o.workspace_id = e.workspace_id AND o.project_id = e.project_id
+        AND o.id = e.branch_output_id
+    WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.target_kind = 'node'
+        AND r.board_id = @to_board_id AND v.board_id = @from_board_id AND coalesce(n.id, c.id, o.id) IS NOT NULL
+        AND (v.id, '00000000-0000-0000-0000-000000000000'::uuid, v.id, v.id, coalesce(n.id, c.from_node_id, o.node_id),
+            e.id) > (@after_target::uuid, @after_attribute::uuid, @after_from_node::uuid, @after_from_site::uuid,
+                @after_to_node::uuid, @after_to_site::uuid)
+    ORDER BY v.id, coalesce(n.id, c.from_node_id, o.node_id), e.id
+    LIMIT @max_rows
+)
+SELECT p.visited_id::uuid AS visited_id, vn.title AS visited_title, p.site, p.node_id::uuid AS node_id,
+    tn.title AS node_title, p.site_id::uuid AS site_id, p.connection_id, p.branch_output_id
+FROM page p
+JOIN node vn ON vn.workspace_id = @workspace_id AND vn.project_id = @project_id AND vn.id = p.visited_id
+JOIN node tn ON tn.workspace_id = @workspace_id AND tn.project_id = @project_id AND tn.id = p.node_id
+ORDER BY p.visited_id, p.node_id, p.site_id;
+
+-- name: JumperContributions :many
+-- JumperContributions returns at most max_rows of the contributions to the
+-- edge of the kind jumper from the board from_board_id to the board
+-- to_board_id, another: the jumpers of the one whose targets are nodes of
+-- the other, of the jumpers and the targets that are not in the project's
+-- trash, each with its target. They are in the order of the jumpers, after
+-- the key of ValueContributions, whose target and attribute are the zero
+-- UUID, whose node and site of the board from_board_id are each the
+-- jumper's ID, and whose node and site of the board to_board_id are each
+-- its target's, but for the sites' types, since a jumper's UUID is its own.
+SELECT j.id AS jumper_id, j.title AS jumper_title, t.id AS target_id, t.title AS target_title
+FROM live_node j
+JOIN live_node t ON t.workspace_id = j.workspace_id AND t.project_id = j.project_id AND t.id = j.target_node_id
+WHERE j.workspace_id = @workspace_id AND j.project_id = @project_id AND j.board_id = @from_board_id
+    AND j.type = 'jumper' AND t.board_id = @to_board_id
+    AND ('00000000-0000-0000-0000-000000000000'::uuid, '00000000-0000-0000-0000-000000000000'::uuid, j.id, j.id,
+        t.id, t.id) > (@after_target::uuid, @after_attribute::uuid, @after_from_node::uuid, @after_from_site::uuid,
+            @after_to_node::uuid, @after_to_site::uuid)
+ORDER BY j.id
+LIMIT @max_rows;

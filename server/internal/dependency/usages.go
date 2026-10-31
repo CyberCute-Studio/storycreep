@@ -15,9 +15,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 )
 
-// ErrNotFound is returned for the usages of a variable or a component that
-// the project does not have, or that is in its trash.
-var ErrNotFound = errors.New("dependency: no such variable or component")
+// ErrNotFound is returned for the usages of a variable or a component, or the
+// contributions to an edge between two boards, that the project does not
+// have, or that is in its trash.
+var ErrNotFound = errors.New("dependency: no such variable, component, or board")
 
 // The sites of a usage (Usage.Site): a node's on-enter and on-exit scripts,
 // its text, and its speaker; a connection's condition, its on-traverse
