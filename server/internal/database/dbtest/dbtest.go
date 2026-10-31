@@ -185,6 +185,40 @@ func (d *Database) MarkSetUp(t testing.TB) {
 	}
 }
 
+// AllowSharedUUIDs switches off the triggers of the tables of the projects'
+// content that add the UUIDs of their rows to entity_id (migration 00029),
+// until the function that it returns switches them on again, so that the
+// content that the test makes in between may hold one UUID in rows of
+// different kinds, as a database whose clients gave such IDs before the
+// migration may, which the commands refuse since (PRD §5.2). The test calls
+// it once it has made that content, so that the content that it makes after
+// adds its UUIDs, as the commands' does; the test's end calls it if the test
+// did not.
+func (d *Database) AllowSharedUUIDs(t testing.TB, tables ...string) (restore func()) {
+	t.Helper()
+	admin := d.Admin(t)
+	set := func(state string) {
+		t.Helper()
+		for _, table := range tables {
+			if _, err := admin.Exec(context.Background(), "ALTER TABLE "+pgx.Identifier{table}.Sanitize()+" "+state+
+				" TRIGGER entity_id_insert"); err != nil {
+				t.Fatalf("%s the trigger entity_id_insert of %s: %v", strings.ToLower(state), table, err)
+			}
+		}
+	}
+	set("DISABLE")
+	restored := false
+	restore = func() {
+		t.Helper()
+		if !restored {
+			restored = true
+			set("ENABLE")
+		}
+	}
+	t.Cleanup(restore)
+	return restore
+}
+
 // Connect returns a connection to the database at url, closed when the test
 // ends.
 func Connect(t testing.TB, url config.DatabaseURL) *pgx.Conn {

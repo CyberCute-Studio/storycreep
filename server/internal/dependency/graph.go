@@ -148,7 +148,8 @@ type ContributionKey struct {
 	// FromSiteType and ToSiteType are the types of the ends' sites
 	// (End.Site), which tell apart two sites of one node that share a UUID,
 	// as a node's text and the label of a connection that leaves it do if a
-	// client chose the connection's UUID to be the node's.
+	// client chose the connection's UUID to be the node's before migration
+	// 00029 refused it (PRD §5.2).
 	FromSiteType, ToSiteType string
 }
 

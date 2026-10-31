@@ -52,7 +52,7 @@ const (
 
 // createPayload is Create's payload.
 type createPayload struct {
-	ID          string `json:"id" doc:"The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID          string `json:"id" doc:"The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	Name        string `json:"name" maxLength:"100" doc:"The board's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Slug        string `json:"slug,omitempty" doc:"The board's slug, which names its file in the game project: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour-intro, of at most 64 characters, that no other board of the project has, in its trash or not, and that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid, and one that another board has with 409 slug_taken. Without it, the server derives one from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters a hyphen, or board if that leaves nothing, with -board after a name that Windows reserves for a device, as con-board, and then with -2, -3, and so on, the first that no board of the project has (PRD FR-PROJ-02 AC1, AC4)."`
 	Description string `json:"description,omitempty" maxLength:"2000" doc:"The board's description, of at most 2000 characters, without white space around it, and without control characters but line feeds and tabs. Without it, the board has none."`
@@ -447,7 +447,8 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// command ID, as an offline client's keep-mine sends it (FR-OFF-04), is
 	// refused for its ID rather than for the slug that its board has taken;
 	// the insert below refuses the ID of a board that this transaction does
-	// not see.
+	// not see, and that of an entity of another kind of the content, whether
+	// it sees it or not, once the rest is checked.
 	if _, err := q.BoardAny(ctx, queries.BoardAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
 		return commands.Refuse("id", "is the ID of a board that exists already", nil)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -475,10 +476,11 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	}
 	err = q.InsertBoard(ctx, queries.InsertBoardParams{ID: id, WorkspaceID: ws, ProjectID: project, FolderID: folder,
 		SortKey: order, Name: p.Name, Slug: s, Description: p.Description, Color: color, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "board_pkey") {
-		// The ID is another workspace's, or another project's, whose rows
-		// this transaction does not see.
-		return commands.Refuse("id", "is the ID of a board that exists already", nil)
+	if database.IDTaken(err) {
+		// The ID is a board's of a workspace or project whose rows this
+		// transaction does not see, or an entity's of another kind of the
+		// content, of any workspace or project.
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("board: add the board: %w", err)

@@ -90,7 +90,7 @@ export interface AttributeCreatePayload {
   component_type_id: string;
   /** The definition's default, which each component of its type is given: a value of its type: true or false for bool; an integer from -9007199254740991 to 9007199254740991 for int, which every runtime holds exactly (PRD §5.8.9), written as 3, 3.0, or 3e0 alike; a number for float, which is read as the nearest double, and is not beyond a double's range; a string of at most 4096 characters for string, and of at most 100000 for text, without control characters but line feeds and tabs; and one of its options for enum. A value of another kind, as a string for an int, is answered with 422 validation_failed, and so is a number written with more than 327 characters, or with an exponent beyond ±999, as a variable's default is. Without it, the type's zero value: false, 0, 0.0, the empty string, or an enum's first option. */
   default?: boolean | number | string;
-  /** The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. Without it, the key is derived from the name, as a component type's is, or is attribute for a name without letters or digits. */
   key?: string;
@@ -333,7 +333,7 @@ export interface BoardCreatePayload {
   description?: string;
   /** The ID of the folder of boards that the board goes into, which is not deleted. Without it, the board goes at the top. */
   folder_id?: string;
-  /** The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The board's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them */
   name: string;
@@ -533,7 +533,7 @@ export interface BranchOutputCreatePayload {
   condition?: string;
   /** Whether the output is the branch's else, which the flow takes when the condition of none of its other outputs holds (PRD FR-EDIT-04), which has neither a condition nor an order, and comes after them. A branch has one else at most, and one only while it has a conditional output, so an else for a branch that has one already, or that has no conditional output, is answered with 422 validation_failed. Without it, the output is a conditional one. */
   else?: boolean;
-  /** The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The ID of the output's branch, a branch of the project that is not in its trash. Another type of node is answered with 422 validation_failed. */
   node_id: string;
@@ -757,7 +757,7 @@ export interface ComponentCreatePayload {
   description?: RichTextDoc;
   /** The ID of the folder of components that the component goes into, which is not deleted. Without it, the component goes at the top. */
   folder_id?: string;
-  /** The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The ID of the component's image, an asset of the project. Without it, none. */
   image_asset_id?: string;
@@ -963,7 +963,7 @@ export interface ComponentTypeCreateCommand {
 export interface ComponentTypeCreatePayload {
   /** The type's icon, which the web app shows a glyph for. Without it, none. */
   icon?: "none" | "person" | "group" | "item" | "location" | "event" | "book" | "star" | "heart" | "key" | "gem" | "shield" | "flag" | "tag";
-  /** The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The type's key, by which an export names it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or type for a name without them, and with _2, _3, and so on after it if another type of the project that is not in its trash has it, or it is a reserved word. */
   key?: string;
@@ -1112,7 +1112,7 @@ export interface ConnectionCreatePayload {
   from_node_id: string;
   /** The port of from_node_id that the connection leaves: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, since a branch's connections leave its outputs (PRD FR-EDIT-04). Without it, out, which a branch is answered with 422 validation_failed for. */
   from_port?: string;
-  /** The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The connection's label, a rich-text document (PRD FR-TEXT-01): the choice that the player is offered. Without it, an empty paragraph, for none. */
   label?: RichTextDoc;
@@ -1424,7 +1424,7 @@ export interface FolderCreateCommand {
 
 /** The payload of a command of the type folder.create. */
 export interface FolderCreatePayload {
-  /** The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** What the folder holds: boards, variables, or components, each in a tree of folders of its own */
   kind: "board" | "variable" | "component";
@@ -1733,7 +1733,7 @@ export interface NodeCreatePayload {
   color?: "none" | "red" | "orange" | "yellow" | "green" | "teal" | "blue" | "purple" | "pink" | "gray";
   /** The ID of an element's cover image, an asset of the project. Without it, none. Another type has none. */
   cover_asset_id?: string;
-  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** Whether the flow ends at the element (PRD §5.8.5). Without it, false. Another type may not. */
   is_ending?: boolean;
@@ -1791,7 +1791,7 @@ export interface NodeDuplicateCommand {
 
 /** The payload of a command of the type node.duplicate. */
 export interface NodeDuplicatePayload {
-  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** Where the new node goes on the board's canvas */
   position: NodePosition;
@@ -2784,7 +2784,7 @@ export interface VariableCreatePayload {
   description?: string;
   /** The ID of the folder of variables that the variable goes into, which is not deleted. Without it, the variable goes at the top. */
   folder_id?: string;
-  /** The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  /** The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed */
   id: string;
   /** The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken. */
   key: string;

@@ -38,7 +38,7 @@ const (
 
 // createTypePayload is CreateType's payload.
 type createTypePayload struct {
-	ID   string `json:"id" doc:"The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID   string `json:"id" doc:"The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	Name string `json:"name" maxLength:"100" doc:"The type's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Key  string `json:"key,omitempty" doc:"The type's key, by which an export names it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as character, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other type of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name: its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or type for a name without them, and with _2, _3, and so on after it if another type of the project that is not in its trash has it, or it is a reserved word."`
 	Icon string `json:"icon,omitempty" enum:"none,person,group,item,location,event,book,star,heart,key,gem,shield,flag,tag" doc:"The type's icon, which the web app shows a glyph for. Without it, none."`
@@ -245,10 +245,11 @@ func applyCreateType(ctx context.Context, tx *commands.Tx, p createTypePayload) 
 	}
 	err := q.InsertComponentType(ctx, queries.InsertComponentTypeParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Key: key, Name: p.Name, Icon: icon, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "component_type_pkey") {
-		// The ID is another workspace's, or another project's, whose rows this
-		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a component type that exists already", nil)
+	if database.IDTaken(err) {
+		// The ID is a type's of a workspace or project whose rows this
+		// transaction does not see, or an entity's of another kind of the
+		// content, of any workspace or project.
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the type: %w", err)

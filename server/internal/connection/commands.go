@@ -49,7 +49,7 @@ const (
 
 // createPayload is Create's payload.
 type createPayload struct {
-	ID         string        `json:"id" doc:"The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID         string        `json:"id" doc:"The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	FromNodeID string        `json:"from_node_id" doc:"The ID of the node that the connection leaves, by from_port: an element or a branch of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), so it is answered with 422 validation_failed."`
 	FromPort   string        `json:"from_port,omitempty" doc:"The port of from_node_id that the connection leaves: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, since a branch's connections leave its outputs (PRD FR-EDIT-04). Without it, out, which a branch is answered with 422 validation_failed for."`
 	ToNodeID   string        `json:"to_node_id" doc:"The ID of the node that the connection enters: a node of the board of from_node_id, of any type, that is not in the project's trash, which may be from_node_id itself, and which other connections of from_node_id may enter too"`
@@ -495,8 +495,8 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	err = q.InsertConnection(ctx, queries.InsertConnectionParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		BoardID: from.BoardID, FromNodeID: from.ID, FromOutputID: output, ToNodeID: to.ID, SortKey: order, Label: doc,
 		CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "connection_pkey") {
-		return refuseTakenID()
+	if database.IDTaken(err) {
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("connection: add the connection: %w", err)
@@ -693,24 +693,18 @@ func liveNode(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, 
 // checkNewConnection refuses the batch, at id, if the project has a
 // connection whose UUID is id, the ID of a connection that a command creates,
 // before anything else is checked, as a node's create does; the insert
-// refuses the ID of a connection that the transaction does not see
-// (refuseTakenID).
+// refuses the ID of a connection that the transaction does not see, and that
+// of an entity of another kind of the content, whether it sees it or not,
+// once the rest is checked (commands.RefuseTakenID).
 func checkNewConnection(ctx context.Context, q *queries.Queries, ws, project, id pgtype.UUID) error {
 	_, err := q.ConnectionAny(ctx, queries.ConnectionAnyParams{WorkspaceID: ws, ProjectID: project, ID: id})
 	switch {
 	case err == nil:
-		return refuseTakenID()
+		return commands.Refuse("id", "is the ID of a connection that exists already", nil)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("connection: read the connection: %w", err)
 	}
 	return nil
-}
-
-// refuseTakenID returns the refusal, at id, of a command that creates a
-// connection with the ID of one that exists already, which may be another
-// workspace's, or another project's, whose rows the transaction does not see.
-func refuseTakenID() error {
-	return commands.Refuse("id", "is the ID of a connection that exists already", nil)
 }
 
 // anyConnection returns the connection of the batch's project whose ID is id,

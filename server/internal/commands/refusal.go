@@ -40,6 +40,15 @@ func Refuse(field, message string, reason error) error {
 	return &commandRefusal{field: field, message: message, reason: reason}
 }
 
+// RefuseTakenID returns the refusal, at id, of a command that creates an
+// entity of a project's content with an ID that another entity holds
+// already, of any kind of the content, in any workspace, whose rows the
+// transaction may not see (PRD §5.2), as database.IDTaken reports of the
+// entity's insert.
+func RefuseTakenID() error {
+	return Refuse("id", "is the ID of an entity that exists already", nil)
+}
+
 // RefusedError is a batch that one of its commands refused (Refuse), which
 // applies nothing.
 type RefusedError struct {

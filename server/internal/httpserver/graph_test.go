@@ -475,8 +475,9 @@ func TestDependencyContributions(t *testing.T) {
 // elara.trust twice, and mira.trust and elara.mood once, which a condition
 // of B reads, and a text of B shows elara.trust; that condition and a
 // branch output's of B read whether the nodes of A were visited; and three
-// jumpers of A target nodes of B. Two sites of one node may share a UUID,
-// as a client chooses a connection's: the labels of two connections of B
+// jumpers of A target nodes of B. Two sites of one node may share a UUID in
+// a database that held them before the commands refused them
+// (dbtest.Database.AllowSharedUUIDs): the labels of two connections of B
 // show elara.trust too, the one whose UUID is that of r2, the text's node,
 // which it leaves, and the other's that of the condition's expression, of a
 // connection that leaves the same node, so that only the sites' types tell
@@ -529,7 +530,9 @@ func TestDependencyContributionsPaged(t *testing.T) {
 		return cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection, id), "from_node_id": from,
 			"to_node_id": to, "label": richText(textInline("Trust "), attributeInline(elara, trust))})
 	}
+	restore := d.AllowSharedUUIDs(t, "connection")
 	sendBatch(t, h, owner, p, label(uuidOf(t, r2), r2, r1), label(condition, r1, gate))
+	restore()
 	counts := map[string]int64{}
 	for _, e := range graphOf(t, h, owner, p, "").Edges {
 		if e.FromBoardID == a && e.ToBoardID == b {
@@ -758,10 +761,11 @@ func TestDependencyGraphTrash(t *testing.T) {
 
 // TestDependencyGraphSharedUUIDs checks that a site is outside the trash by
 // its own kind alone: a node, a connection, and an expression may share a
-// UUID, since a client chooses a node's and a connection's, so that a
-// connection whose UUID is a node's that is not in the trash, and a script
-// whose UUID is such a node's, go to the trash with their owners all the
-// same, and the graph counts what the edge's list lists.
+// UUID in a database that held them before the commands refused them
+// (dbtest.Database.AllowSharedUUIDs), so that a connection whose UUID is a
+// node's that is not in the trash, and a script whose UUID is such a node's,
+// go to the trash with their owners all the same, and the graph counts what
+// the edge's list lists.
 func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
@@ -769,6 +773,7 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	boards := newBoardIDs(2)
 	a, b := boards[0], boards[1]
 	names := map[string]string{a: "A", b: "B"}
+	restore := d.AllowSharedUUIDs(t, "node", "connection")
 	coins, writer, reader, after := newVariableID(), newNodeID(), newNodeID(), newNodeID()
 	// The connection's UUID is that of reader, the node that it leaves.
 	label := ids.Encode(ids.Connection, uuidOf(t, reader))
@@ -804,6 +809,7 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 		cmd("node.create", map[string]any{"id": twin, "board_id": b, "type": "element", "position": pos}),
 		cmd("node.delete", map[string]any{"id": writer}),
 	)
+	restore()
 	wantGraph(t, "the graph with writer in the trash", names, graphOf(t, h, owner, p, ""), []string{},
 		[]string{"A in 0 out 0", "B in 0 out 0"})
 	if got := contributions(t, h, owner, contributionsPath(p, a, b, "variable"), 50); len(got) != 0 {

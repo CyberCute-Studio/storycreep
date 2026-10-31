@@ -283,7 +283,7 @@
             ]
           },
           "id": {
-            "description": "The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "key": {
@@ -1083,7 +1083,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new board's ID, a bd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "name": {
@@ -1669,7 +1669,7 @@
             "type": "boolean"
           },
           "id": {
-            "description": "The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "node_id": {
@@ -2589,7 +2589,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "image_asset_id": {
@@ -3221,7 +3221,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new type's ID, a ct_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "key": {
@@ -3655,7 +3655,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "label": {
@@ -4581,7 +4581,7 @@
         "description": "The payload of a command of the type folder.create.",
         "properties": {
           "id": {
-            "description": "The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "kind": {
@@ -5508,7 +5508,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "is_ending": {
@@ -5678,7 +5678,7 @@
         "description": "The payload of a command of the type node.duplicate.",
         "properties": {
           "id": {
-            "description": "The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "position": {
@@ -8733,7 +8733,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "description": "The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed",
             "type": "string"
           },
           "key": {

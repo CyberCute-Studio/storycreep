@@ -746,11 +746,11 @@ type LastSortKeysRow struct {
 // them, since it is in the trash with its board, which no client sees, and
 // from which it comes back where it is, as a deleted board does. The child
 // moved is left out of its own table alone, so that a child of another table
-// with the same UUID, which a client may give it, still counts. Each table is
-// read by a branch for the children of a folder and one for those at the
-// top, so that the index of the children's parent finds them in a plan made
-// for any parent_id, which a condition that takes either kind of parent keeps
-// it from.
+// with the same UUID, which a client could give it before migration 00029
+// refused it (PRD §5.2), still counts. Each table is read by a branch for the
+// children of a folder and one for those at the top, so that the index of
+// the children's parent finds them in a plan made for any parent_id, which a
+// condition that takes either kind of parent keeps it from.
 func (q *Queries) LastSortKeys(ctx context.Context, arg LastSortKeysParams) (LastSortKeysRow, error) {
 	row := q.db.QueryRow(ctx, lastSortKeys,
 		arg.WorkspaceID,

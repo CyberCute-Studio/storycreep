@@ -132,7 +132,7 @@ func nodeOutputs(ctx context.Context, q *queries.Queries, ws, project pgtype.UUI
 
 // outputCreatePayload is CreateOutput's payload.
 type outputCreatePayload struct {
-	ID        string `json:"id" doc:"The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID        string `json:"id" doc:"The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	NodeID    string `json:"node_id" doc:"The ID of the output's branch, a branch of the project that is not in its trash. Another type of node is answered with 422 validation_failed."`
 	Else      bool   `json:"else,omitempty" doc:"Whether the output is the branch's else, which the flow takes when the condition of none of its other outputs holds (PRD FR-EDIT-04), which has neither a condition nor an order, and comes after them. A branch has one else at most, and one only while it has a conditional output, so an else for a branch that has one already, or that has no conditional output, is answered with 422 validation_failed. Without it, the output is a conditional one."`
 	Condition string `json:"condition,omitempty" maxLength:"16384" doc:"A conditional output's condition, the source of a condition (PRD §5.8.5), of at most 16384 characters, which may not compile, and is then kept, marked invalid (PRD FR-EDIT-03 AC4). Without it, the empty source, which does not compile, until the condition is written. An else has none."`
@@ -388,10 +388,15 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.BranchOutput, p.ID)
+	// An output of the project with the ID is refused for its ID before
+	// anything else is checked, as a node's create does; the insert refuses
+	// the ID of an output that the transaction does not see, and that of an
+	// entity of another kind of the content, whether it sees it or not, once
+	// the rest is checked (commands.RefuseTakenID).
 	switch _, err := q.BranchOutputAny(ctx, queries.BranchOutputAnyParams{WorkspaceID: ws, ProjectID: project,
 		ID: id}); {
 	case err == nil:
-		return refuseTakenOutputID()
+		return commands.Refuse("id", "is the ID of a branch output that exists already", nil)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("node: read the output: %w", err)
 	}
@@ -434,8 +439,8 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 		}
 	}
 	err = q.InsertBranchOutput(ctx, params)
-	if database.UniqueViolation(err, "branch_output_pkey") {
-		return refuseTakenOutputID()
+	if database.IDTaken(err) {
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("node: add the output: %w", err)
@@ -644,13 +649,6 @@ func conditional(o queries.BranchOutput, at string) error {
 			"comes after them", nil)
 	}
 	return nil
-}
-
-// refuseTakenOutputID returns the refusal, at id, of a command that creates
-// an output with the ID of one that exists already, which may be another
-// workspace's, or another project's, whose rows the transaction does not see.
-func refuseTakenOutputID() error {
-	return commands.Refuse("id", "is the ID of a branch output that exists already", nil)
 }
 
 // anyOutput returns the output of the batch's project whose ID is id, an
