@@ -82,10 +82,20 @@ func TestExclusive(t *testing.T) {
 		{"trust == -0", "trust == 0", false},
 		{"-trust == 1", "-trust == 2", true},
 		{"-trust == 1", "trust == 1", false},
+		// Strings in the order of their code points, the empty one first.
 		{"name == \"Elara\"", "name == \"Mira\"", true},
 		{"name == \"Elara\"", "name != \"Elara\"", true},
-		{"name < \"b\"", "name > \"c\"", false},
+		{"name < \"b\"", "name > \"c\"", true},
+		{"name == \"a\"", "name > \"a\"", true},
+		{"name >= \"b\"", "\"a\" >= name", true},
+		{"name < \"b\"", "name > \"a\"", false},
+		{"name < \"é\"", "name > \"z\"", false},
+		{"name <= \"\"", "name != \"\"", true},
+		{"name != \"a\"", "name != \"b\"", false},
+		// Booleans, of which there are two.
 		{"met == true", "met == false", true},
+		{"met != true", "met != false", true},
+		{"met == true", "met != false", false},
 		{"trust == 1", "mood == 2", false},
 		// A conjunction one of whose terms is exclusive with the other, and
 		// a disjunction both of whose terms are.

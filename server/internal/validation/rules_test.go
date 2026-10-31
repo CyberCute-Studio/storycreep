@@ -370,7 +370,8 @@ func TestRules(t *testing.T) {
 // decodes, as those that the rule of duplicate choices may compare: the
 // choices of an element that share their label with another of its choices,
 // and not a choice of another label, a choice of another element of the same
-// label, or a connection of a branch's output.
+// label, a connection of a branch's output, or the connections of an ending
+// or of a jumper, which are no choices, whatever their labels.
 func TestCompared(t *testing.T) {
 	w := newWorld()
 	other := w.element(w.main, func(n *node) { n.ending = true })
@@ -381,7 +382,12 @@ func TestCompared(t *testing.T) {
 	b := w.node(w.main, branch)
 	w.connectBy(b, w.output(b), w.end, `{"label": "Go"}`)
 	w.connectBy(b, w.output(b), w.end, `{"label": "Go"}`)
-	got := compared(w.m.connections)
+	w.connectBy(w.end, ids.UUID{}, w.start, `{"label": "Again"}`)
+	w.connectBy(w.end, ids.UUID{}, w.start, `{"label": "Again"}`)
+	j := w.jumper(w.main, w.end)
+	w.connect(j, w.start)
+	w.connect(j, w.start)
+	got := compared(w.m.nodes, w.m.connections)
 	if want := map[ids.UUID]bool{first: true, second: true}; !maps.Equal(got, want) {
 		t.Errorf("the compared connections are %v, want %v", got, want)
 	}
@@ -463,7 +469,8 @@ func TestDanglingReferences(t *testing.T) {
 // TestReachability checks where the flow may start and how it goes on: at a
 // board's entry node, or at every root of a board without one outside the
 // trash, and at the project's entry node; by every connection, whatever its
-// condition, and from a jumper to its target.
+// condition, but an ending's, where the flow ends, and a jumper's, which it
+// leaves for the jumper's target at once; and from a jumper to its target.
 //
 // Verifies: FR-DEP-03/AC1
 func TestReachability(t *testing.T) {
@@ -479,13 +486,20 @@ func TestReachability(t *testing.T) {
 	byEntry := w.element(w.main, func(n *node) { n.ending = true })
 	w.m.entry.board, w.m.entry.node = w.main, byEntry
 	byJumper := w.element(w.main, func(n *node) { n.ending = true })
-	w.connect(root, w.jumper(other, byJumper))
+	j := w.jumper(other, byJumper)
+	w.connect(root, j)
 	// A root of main that nothing reaches, which leads on to another.
 	lost := w.element(w.main)
 	after := w.element(w.main, func(n *node) { n.ending = true })
 	w.connect(lost, after)
+	// A node that only the ending end leads to, and one that only the
+	// jumper does, neither of which the flow takes.
+	beyond := w.element(w.main, func(n *node) { n.ending = true })
+	w.connect(w.end, beyond)
+	past := w.element(other, func(n *node) { n.ending = true })
+	w.connect(j, past)
 	got := w.found(NodeUnreachable)
-	want := []ref{{ids.Node, lost}, {ids.Node, after}}
+	want := []ref{{ids.Node, lost}, {ids.Node, after}, {ids.Node, beyond}, {ids.Node, past}}
 	if !slices.Equal(got, want) {
 		t.Errorf("the unreachable nodes are %v, want %v", got, want)
 	}

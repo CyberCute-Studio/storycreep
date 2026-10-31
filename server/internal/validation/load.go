@@ -43,7 +43,7 @@ type mute struct {
 // of its rows, whatever the rules read of them.
 func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error) {
 	q := queries.New(tx)
-	w, p := pgUUID(ws), pgUUID(projectID)
+	w, p := nullUUID(ws), nullUUID(projectID)
 	d := &draft{model: &model{project: projectID, components: map[ids.UUID]ids.UUID{},
 		attributes: map[ids.UUID]attribute{}}, mutes: map[muteKey]mute{}}
 	m := d.model
@@ -91,7 +91,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		m.connections = append(m.connections, connection{id: c.ID.Bytes, board: c.BoardID.Bytes,
 			from: c.FromNodeID.Bytes, output: c.FromOutputID.Bytes, to: c.ToNodeID.Bytes, label: string(c.Label)})
 	}
-	at, err := d.loadExpressions(ctx, q, w, p, live, compared(m.connections))
+	at, err := d.loadExpressions(ctx, q, w, p, live, compared(m.nodes, m.connections))
 	if err != nil {
 		return nil, err
 	}
@@ -126,14 +126,19 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 }
 
 // compared returns the connections whose conditions the rule of duplicate
-// choices may compare: the choices of an element, which leave it by its out,
-// each of which shares its label with another choice of the element, as the
-// rule groups them (choicesOf, sameLabel). The conditions of the others are
-// never compared, so they are not decoded.
-func compared(connections []connection) map[ids.UUID]bool {
+// choices may compare: the choices of an element that is not an ending,
+// which leave it by its out, each of which shares its label with another
+// choice of the element, as the rule picks and groups them (choosing,
+// choicesOf, sameLabel). The conditions of the others are never compared, so
+// they are not decoded.
+func compared(nodes []node, connections []connection) map[ids.UUID]bool {
+	choices := choicesOf(connections)
 	out := map[ids.UUID]bool{}
-	for _, choices := range choicesOf(connections) {
-		for _, same := range sameLabel(choices) {
+	for _, n := range nodes {
+		if !choosing(n) {
+			continue
+		}
+		for _, same := range sameLabel(choices[n.id]) {
 			for _, c := range same {
 				out[c.id] = true
 			}
@@ -243,7 +248,7 @@ func (d *draft) loadTexts(ctx context.Context, q *queries.Queries, w, p pgtype.U
 	return nil
 }
 
-// pgUUID returns id as a uuid column.
-func pgUUID(id ids.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
+// nullUUID returns id as a uuid column, null if id is zero.
+func nullUUID(id ids.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}
 }

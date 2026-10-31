@@ -102,8 +102,8 @@ const (
 // expression is an expression of an owner that is not in the trash: whether
 // it compiles, the code of its error if it does not, and, for the condition
 // that compiles of a choice that shares its label with another choice of its
-// element, its AST, which the rule of duplicate choices reads, of those
-// choices alone.
+// element, which is no ending, its AST, which the rule of duplicate choices
+// reads, of those choices alone (compared).
 type expression struct {
 	owner     ref
 	field     string

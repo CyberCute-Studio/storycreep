@@ -78,8 +78,8 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
-			params := queries.UpsertValidationMuteParams{WorkspaceID: pgUUID(tx.WorkspaceID()),
-				ProjectID: pgUUID(tx.ProjectID()), Code: p.Code, Reason: p.Reason, UpdatedBy: by(tx)}
+			params := queries.UpsertValidationMuteParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+				ProjectID: nullUUID(tx.ProjectID()), Code: p.Code, Reason: p.Reason, UpdatedBy: by(tx)}
 			switch kind {
 			case ids.Node:
 				params.NodeID = owner
@@ -114,7 +114,7 @@ func Register(r *commands.Registry) {
 				return err
 			}
 			n, err := queries.New(tx).DeleteValidationMute(ctx, queries.DeleteValidationMuteParams{
-				WorkspaceID: pgUUID(tx.WorkspaceID()), ProjectID: pgUUID(tx.ProjectID()), OwnerID: owner,
+				WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), OwnerID: owner,
 				Code: p.Code})
 			if err != nil {
 				return fmt.Errorf("validation: unmute %s of %s: %w", p.Code, p.EntityID, err)
@@ -154,7 +154,8 @@ func checkReason(reason string) string {
 func back(ctx context.Context, tx *commands.Tx, entity, code string) ([]commands.Step, error) {
 	_, owner, _ := ids.DecodeAny(entity)
 	reason, err := queries.New(tx).ValidationMute(ctx, queries.ValidationMuteParams{
-		WorkspaceID: pgUUID(tx.WorkspaceID()), ProjectID: pgUUID(tx.ProjectID()), OwnerID: pgUUID(owner), Code: code})
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), OwnerID: nullUUID(owner),
+		Code: code})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return []commands.Step{{Type: UnmuteFinding, Payload: unmutePayload{EntityID: entity, Code: code}}}, nil
@@ -170,7 +171,7 @@ func back(ctx context.Context, tx *commands.Tx, entity, code string) ([]commands
 func liveOwner(ctx context.Context, tx *commands.Tx, entity string) (ids.Kind, pgtype.UUID, error) {
 	kind, id, _ := ids.DecodeAny(entity)
 	live, err := queries.New(tx).MuteOwnerLive(ctx, queries.MuteOwnerLiveParams{Kind: kind.String(),
-		WorkspaceID: pgUUID(tx.WorkspaceID()), ProjectID: pgUUID(tx.ProjectID()), ID: pgUUID(id)})
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), ID: nullUUID(id)})
 	if err != nil {
 		return 0, pgtype.UUID{}, fmt.Errorf("validation: read the mute's owner %s: %w", entity, err)
 	}
@@ -178,7 +179,7 @@ func liveOwner(ctx context.Context, tx *commands.Tx, entity string) (ids.Kind, p
 		return 0, pgtype.UUID{}, commands.Refuse("entity_id",
 			fmt.Sprintf("is not a %s of the project outside its trash", kind), nil)
 	}
-	return kind, pgUUID(id), nil
+	return kind, nullUUID(id), nil
 }
 
 // touch reports the change of the owner of the kind, whose mute changed if
@@ -189,7 +190,8 @@ func touch(ctx context.Context, tx *commands.Tx, kind ids.Kind, owner pgtype.UUI
 		return nil
 	}
 	rev, err := queries.New(tx).TouchMuteOwner(ctx, queries.TouchMuteOwnerParams{UpdatedBy: by(tx),
-		Kind: kind.String(), WorkspaceID: pgUUID(tx.WorkspaceID()), ProjectID: pgUUID(tx.ProjectID()), ID: owner})
+		Kind: kind.String(), WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()),
+		ID: owner})
 	if err != nil {
 		return fmt.Errorf("validation: change the mute's owner: %w", err)
 	}
@@ -199,8 +201,7 @@ func touch(ctx context.Context, tx *commands.Tx, kind ids.Kind, owner pgtype.UUI
 // by returns the user who applies the batch, as a uuid column, null for
 // none, as the other packages write it.
 func by(tx *commands.Tx) pgtype.UUID {
-	id := tx.Actor().UserID
-	return pgtype.UUID{Bytes: id, Valid: id != (ids.UUID{})}
+	return nullUUID(tx.Actor().UserID)
 }
 
 // field returns the problem msg of the payload's field name, or none if msg

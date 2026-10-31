@@ -357,8 +357,10 @@ func (c *checker) findVariables() {
 // board's entry, whatever the conditions (node_unreachable). The flow starts
 // at a board's entry node, or, on a board without one outside the trash, at
 // any of the board's roots, the nodes that no connection enters, and at the
-// project's entry node; it goes on by every connection, and from a jumper to
-// its target.
+// project's entry node; it goes on from a jumper to its target, and from any
+// other node but an ending, where it ends, by every connection that leaves
+// it, as a runtime takes neither a jumper's connections nor an ending's
+// (§5.8.5).
 func (c *checker) findReachability() {
 	reached := map[ids.UUID]bool{}
 	var queue []ids.UUID
@@ -382,11 +384,13 @@ func (c *checker) findReachability() {
 	for len(queue) > 0 {
 		id := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		for _, cn := range c.from[id] {
-			reach(cn.to)
-		}
-		if n := c.nodes[id]; n.typ == jumper {
+		switch n := c.nodes[id]; {
+		case n.typ == jumper:
 			reach(n.targetNode)
+		case !n.ending:
+			for _, cn := range c.from[id] {
+				reach(cn.to)
+			}
 		}
 	}
 	for _, n := range c.m.nodes {
@@ -418,7 +422,7 @@ func (c *checker) findElements() {
 		if n.kind == "dialogue" && n.speaker == (ids.UUID{}) {
 			c.add(finding{code: SpeakerMissing, entity: self})
 		}
-		if n.ending {
+		if !choosing(n) {
 			continue
 		}
 		// One prover for the element's choices, so that however many share
@@ -436,6 +440,14 @@ func (c *checker) findElements() {
 			}
 		}
 	}
+}
+
+// choosing reports whether the connections that leave the node n by its out
+// are choices, which the rule of duplicate choices compares (findElements),
+// and whose conditions alone the read of the draft decodes (compared): an
+// element's, but an ending's, which are no choices (§5.8.5).
+func choosing(n node) bool {
+	return n.typ == element && !n.ending
 }
 
 // choicesOf returns the connections that leave each node by its out, an

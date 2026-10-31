@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"cmp"
 	"math"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
@@ -32,14 +33,16 @@ func newProver() *prover {
 // exclusive when one is the literal false, which needs no step; when one is
 // the negation of the other, as c and not c; when they compare the same
 // operand with literals, or negative numbers, of values that no value meets
-// both comparisons of, as x == 1 and x == 2, x < 3 and x >= 3, or x > 5 and
-// x < -2, with numbers compared as real numbers; when they compare the same
-// two operands with complementary operators, as x < y and x >= y; when one
-// is a conjunction one of whose terms is exclusive with the other; and when
-// one is a disjunction both of whose terms are. Two conditions that the
-// patterns do not prove exclusive may overlap. The conditions are pure, so
-// that an operand is the same value in both, and an operand that a runtime
-// error makes its type's zero value is a value all the same.
+// both comparisons of, as x == 1 and x == 2, x < 3 and x >= 3, x > 5 and
+// x < -2, name < "b" and name > "c", or met != true and met != false, with
+// numbers compared as real numbers, and strings in the order of their code
+// points; when they compare the same two operands with complementary
+// operators, as x < y and x >= y; when one is a conjunction one of whose
+// terms is exclusive with the other; and when one is a disjunction both of
+// whose terms are. Two conditions that the patterns do not prove exclusive
+// may overlap. The conditions are pure, so that an operand is the same value
+// in both, and an operand that a runtime error makes its type's zero value is
+// a value all the same.
 func (p *prover) exclusive(a, b expr.Node) bool {
 	if a == nil || b == nil {
 		return a != nil && never(a) || b != nil && never(b)
@@ -192,29 +195,60 @@ func literal(n expr.Node) *expr.Lit {
 }
 
 // disjoint reports whether no value v meets both v op1 l1 and v op2 l2: of
-// literals of the same value, by complementary operators; of different
-// values, by == both; and of numbers, by comparisons whose intervals of the
-// real numbers do not meet.
+// numbers, of either type, as real numbers; of strings, in the order of
+// their code points (§5.8.3); and of booleans, of which there are two.
+// Literals of different types may meet.
 func disjoint(op1 expr.BinaryOp, l1 *expr.Lit, op2 expr.BinaryOp, l2 *expr.Lit) bool {
 	n1, num1 := number(l1)
 	n2, num2 := number(l2)
-	if num1 && num2 {
-		if op1 == expr.OpNe || op2 == expr.OpNe {
-			return n1 == n2 && (op1 == expr.OpEq || op2 == expr.OpEq)
-		}
-		return interval(op1, n1).disjoint(interval(op2, n2))
-	}
-	if l1.Type != l2.Type || l1.Type != value.String && l1.Type != value.Bool {
-		return false
-	}
-	equal := l1.Str == l2.Str && l1.Bool == l2.Bool
 	switch {
-	case op1 == expr.OpEq && op2 == expr.OpEq:
-		return !equal
-	case op1 == expr.OpEq && op2 == expr.OpNe, op1 == expr.OpNe && op2 == expr.OpEq:
-		return equal
+	case num1 && num2:
+		return apart(op1, n1, op2, n2, math.Inf(-1))
+	case l1.Type != l2.Type:
+		return false
+	case l1.Type == value.String:
+		// Go compares strings by their UTF-8 bytes, in the order of their
+		// code points, and the empty string comes first.
+		return apart(op1, l1.Str, op2, l2.Str, "")
+	case l1.Type == value.Bool:
+		for _, v := range []bool{false, true} {
+			if meets(op1, v, l1.Bool) && meets(op2, v, l2.Bool) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
+}
+
+// meets reports whether the boolean v may meet v op l: by == and !=, as they
+// read, and by any other operator, which a boolean is never compared by, as
+// far as the prover knows.
+func meets(op expr.BinaryOp, v, l bool) bool {
+	switch op {
+	case expr.OpEq:
+		return v == l
+	case expr.OpNe:
+		return v != l
+	}
+	return true
+}
+
+// apart reports whether no value v of an order, the real numbers or the
+// strings, whose values are least or above it, meets both v op1 x and v op2
+// y: two comparisons by != always meet, as the order has more than two
+// values; one by != and another meet unless the other holds no value but the
+// one that != leaves out; and two others meet unless their intervals do not.
+func apart[T cmp.Ordered](op1 expr.BinaryOp, x T, op2 expr.BinaryOp, y T, least T) bool {
+	switch {
+	case op1 == expr.OpNe && op2 == expr.OpNe:
+		return false
+	case op1 == expr.OpNe:
+		return interval(op2, y, least).only(x)
+	case op2 == expr.OpNe:
+		return interval(op1, x, least).only(y)
+	}
+	return interval(op1, x, least).meet(interval(op2, y, least)).empty()
 }
 
 // number returns the literal l's value as a real number, and whether it is a
@@ -229,39 +263,50 @@ func number(l *expr.Lit) (float64, bool) {
 	return 0, false
 }
 
-// span is an interval of the real numbers, each bound open or closed.
-type span struct {
-	lo, hi         float64
+// span is an interval of an order, the real numbers or the strings: from lo
+// to hi, each bound open or closed, or from lo on, without end, where above.
+type span[T cmp.Ordered] struct {
+	lo, hi         T
 	loOpen, hiOpen bool
+	above          bool
 }
 
-// interval returns the interval of the values v that meet v op n.
-func interval(op expr.BinaryOp, n float64) span {
-	inf := math.Inf(1)
+// interval returns the interval of the values v that meet v op n, of an order
+// whose values are least or above it: -∞ for the real numbers, and the empty
+// string for the strings, which comes before every other.
+func interval[T cmp.Ordered](op expr.BinaryOp, n, least T) span[T] {
 	switch op {
 	case expr.OpLt:
-		return span{lo: -inf, hi: n, loOpen: true, hiOpen: true}
+		return span[T]{lo: least, hi: n, hiOpen: true}
 	case expr.OpLte:
-		return span{lo: -inf, hi: n, loOpen: true}
+		return span[T]{lo: least, hi: n}
 	case expr.OpGt:
-		return span{lo: n, hi: inf, loOpen: true, hiOpen: true}
+		return span[T]{lo: n, loOpen: true, above: true}
 	case expr.OpGte:
-		return span{lo: n, hi: inf, hiOpen: true}
+		return span[T]{lo: n, above: true}
 	}
-	return span{lo: n, hi: n}
+	return span[T]{lo: n, hi: n}
 }
 
-// disjoint reports whether s and t have no number in common.
-func (s span) disjoint(t span) bool {
-	lo, loOpen := s.lo, s.loOpen
-	if t.lo > lo || t.lo == lo && t.loOpen {
-		lo, loOpen = t.lo, t.loOpen
+// meet returns the interval of the values that both s and t hold.
+func (s span[T]) meet(t span[T]) span[T] {
+	if t.lo > s.lo || t.lo == s.lo && t.loOpen {
+		s.lo, s.loOpen = t.lo, t.loOpen
 	}
-	hi, hiOpen := s.hi, s.hiOpen
-	if t.hi < hi || t.hi == hi && t.hiOpen {
-		hi, hiOpen = t.hi, t.hiOpen
+	if s.above || !t.above && (t.hi < s.hi || t.hi == s.hi && t.hiOpen) {
+		s.hi, s.hiOpen, s.above = t.hi, t.hiOpen, t.above
 	}
-	return lo > hi || lo == hi && (loOpen || hiOpen)
+	return s
+}
+
+// empty reports whether s holds no value.
+func (s span[T]) empty() bool {
+	return !s.above && (s.lo > s.hi || s.lo == s.hi && (s.loOpen || s.hiOpen))
+}
+
+// only reports whether s holds no value but v, if it holds any.
+func (s span[T]) only(v T) bool {
+	return s.empty() || !s.above && s.lo == v && s.hi == v
 }
 
 // same reports whether a and b are the same expression: of the same kinds,
