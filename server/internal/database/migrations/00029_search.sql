@@ -111,7 +111,10 @@ CREATE INDEX search_entry_component ON search_entry (workspace_id, project_id, c
 -- written the document of every entity of a project that had none, so that
 -- its later runs pass over the project until a version of the server changes
 -- what a document holds. A project without a row has not been indexed whole
--- yet, as one that this migration finds, whose documents the job writes.
+-- yet, as one that this migration finds, whose documents the job writes, or
+-- a replica of an older version of the server has written a document of it
+-- since a newer one recorded it, as during a rolling upgrade, which deletes
+-- the row (UpsertSearchEntries), so that the newer job writes it again.
 CREATE TABLE search_state (
 	id uuid PRIMARY KEY DEFAULT uuid_v7(),
 	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,

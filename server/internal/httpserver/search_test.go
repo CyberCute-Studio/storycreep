@@ -334,6 +334,33 @@ func TestSearch(t *testing.T) {
 		t.Errorf("after the definition's restoration, the search for its value finds %v, want %s and %s", got,
 			w.old, w.elara)
 	}
+
+	// A match in a title ranks above one in a body for a query of several
+	// words too, however far from it the body's match is, and a snippet marks
+	// the body's match of a word whose fellow matched only the title.
+	far, near := newNodeID(), newNodeID()
+	pos := map[string]int{"x": 0, "y": 0}
+	sendBatch(t, h, w.owner, w.project,
+		cmd("node.create", map[string]any{"id": far, "board_id": w.harbour, "type": "element", "title": "Lantern",
+			"text": paragraph(strings.Repeat("calm ", 120) + "storm"), "position": pos}),
+		cmd("node.create", map[string]any{"id": near, "board_id": w.harbour, "type": "element",
+			"text": paragraph("A lantern in the storm."), "position": pos}),
+	)
+	ranked := searchPage(t, h, w.owner, searchPath(w.project, "lantern storm"))
+	var order []string
+	for _, r := range ranked.Items {
+		order = append(order, r.ID)
+	}
+	if len(order) != 3 || order[2] != near || !slices.Contains(order, far) || !slices.Contains(order, w.lamp) {
+		t.Fatalf("the search for lantern storm lists %v, want %s and %s, whose titles match, before %s", order,
+			w.lamp, far, near)
+	}
+	if got := marked(resultOf(t, ranked.Items, w.lamp).Snippet); got != "Light it before the [storm]." {
+		t.Errorf("the snippet of %s is %q, want its body with storm marked", w.lamp, got)
+	}
+	if got := marked(resultOf(t, ranked.Items, far).Snippet); !strings.HasSuffix(got, "calm calm [storm]") {
+		t.Errorf("the snippet of %s is %q, want the end of its body, with storm marked", far, got)
+	}
 }
 
 // TestSearchDiacritics checks that a search compares Czech text without

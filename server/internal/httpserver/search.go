@@ -49,12 +49,12 @@ func registerSearch(m *api.Mux, searches *search.Service) {
 			"string, text, and enum. A text is searched as its author wrote it, without what its value " +
 			"references show or its mentions name, which the usage lists find (GET " +
 			"/api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a " +
-			"component's body as far as its first 100,000 characters. Each result names its kind, its board and " +
-			"its node, by which a client opens it, and its title and a snippet of its body, each in parts, with " +
-			"the words that the query matched marked (AC2). The results are in the order of how well they match, " +
-			"a match in a title above one in a body, then of their kinds and IDs." + projectNotFoundDoc +
-			tokenNotFoundDoc + " A query that holds a control character is answered with 422 validation_failed at " +
-			"query.q, once the project is found." + tokenAuthDoc(scope.ProjectRead),
+			"body as far as its first 100,000 characters. Each result names its kind, its board and its node, by " +
+			"which a client opens it, and its title and a snippet of its body, each in parts, with the words that " +
+			"match a word of the query marked (AC2). The results are in the order of how well each word of the " +
+			"query matches them, a match in a title above one in a body, then of their kinds and IDs." +
+			projectNotFoundDoc + tokenNotFoundDoc + " A query that holds a control character is answered with 422 " +
+			"validation_failed at query.q, once the project is found." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Search"},
 	}, func(ctx context.Context, in *searchInput) (*searchOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

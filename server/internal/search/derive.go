@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 
@@ -9,6 +11,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
+	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
 
@@ -23,7 +26,8 @@ const Name = "search_entries"
 // definition that a command changed is of, as deleting a definition, which
 // changes neither its type nor the components, takes their values of it out
 // of their documents; but for the changes that commands of neutral types
-// alone made. It changes no entity's revision, as the index is no part of
+// alone made, or, of a node or a connection, those of neutral and rewriting
+// types alone. It changes no entity's revision, as the index is no part of
 // what the API shows of one. Register it after expression.Register, whose
 // derivation's changes of the owners of expressions it passes over.
 func Register(r *commands.Registry) {
@@ -66,12 +70,26 @@ var neutralTypes = func() map[commands.Type]bool {
 	return m
 }()
 
+// rewriting are the types of command that change a node or a connection
+// only as they rewrite the sources of its expressions, which no document
+// holds: a variable's rename and a component's change of key, which change
+// their own entity's document all the same, so they are not neutral. derive
+// passes over a change of a node or a connection that commands of these
+// types and of neutral ones alone made, so that a rename that rewrites 2,000
+// nodes' scripts reads none of them. They are package dependency's list, by
+// which package expression's derivation passes over such changes of a node
+// too (dependency.SourceRewrites).
+var rewriting = dependency.SourceRewrites
+
 // derive writes the documents of the entities of changed whose documents
 // the batch's commands may have changed, as Register says.
 func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
 	var sel selection
 	for _, c := range changed {
-		if slices.ContainsFunc(c.By, func(t commands.Type) bool { return !neutralTypes[t] }) {
+		rewritten := c.Kind == ids.Node || c.Kind == ids.Connection
+		if slices.ContainsFunc(c.By, func(t commands.Type) bool {
+			return !neutralTypes[t] && (!rewritten || !slices.Contains(rewriting, t))
+		}) {
 			sel.add(c.Kind, c.ID)
 		}
 	}
@@ -118,22 +136,27 @@ func (s *selection) empty() bool {
 // as the project's rows hold them now, but for those that the index holds
 // already, and returns how many entities it found. It reads each kind that
 // sel holds with a query of its own, each with the entities' documents as the
-// index holds them, so that a batch that changes nothing that a document
-// holds, as an edit of a node's script, writes nothing, and a batch of one
-// kind reads no other.
+// index holds them, their titles, the SHA-256 of their bodies, and their
+// versions, so that a batch that changes nothing that a document holds, as an
+// edit of a node's script, writes nothing, and reads a body of no document,
+// and a batch of one kind reads no other.
 func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.UUID, sel selection) (int, error) {
 	ws, project := nullUUID(workspaceID), nullUUID(projectID)
 	p := queries.UpsertSearchEntriesParams{WorkspaceID: ws, ProjectID: project, Version: Version}
 	found := 0
 	// add counts the entity of s, and adds its document to p, unless the
-	// index holds it already, of the current version.
-	add := func(s Source, title, body pgtype.Text, version pgtype.Int4) error {
+	// index holds it already, of the current version: the document whose
+	// title is title, whose body's SHA-256, in lowercase hexadecimal, is
+	// bodySHA256, and whose version is version, or none for a null title.
+	add := func(s Source, title pgtype.Text, bodySHA256 string, version pgtype.Int4) error {
 		found++
 		d, err := NewDocument(s)
 		if err != nil {
 			return err
 		}
-		if title.Valid && title.String == d.Title && body.String == d.Body && version.Int32 == Version {
+		sum := sha256.Sum256([]byte(d.Body))
+		if title.Valid && title.String == d.Title && bodySHA256 == hex.EncodeToString(sum[:]) &&
+			version.Int32 == Version {
 			return nil
 		}
 		p.Kinds = append(p.Kinds, string(d.Kind))
@@ -155,8 +178,8 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 			return 0, err
 		}
 		for _, r := range rows {
-			if err := add(Source{Kind: Node, ID: r.ID.Bytes, Title: r.Title, Doc: r.Doc}, r.EntryTitle, r.EntryBody,
-				r.EntryVersion); err != nil {
+			if err := add(Source{Kind: Node, ID: r.ID.Bytes, Title: r.Title, Doc: r.Doc}, r.EntryTitle,
+				r.EntryBodySha256, r.EntryVersion); err != nil {
 				return 0, err
 			}
 		}
@@ -168,8 +191,8 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 			return 0, err
 		}
 		for _, r := range rows {
-			if err := add(Source{Kind: Connection, ID: r.ID.Bytes, Doc: r.Doc}, r.EntryTitle, r.EntryBody,
-				r.EntryVersion); err != nil {
+			if err := add(Source{Kind: Connection, ID: r.ID.Bytes, Doc: r.Doc}, r.EntryTitle,
+				r.EntryBodySha256, r.EntryVersion); err != nil {
 				return 0, err
 			}
 		}
@@ -182,7 +205,7 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 		}
 		for _, r := range rows {
 			if err := add(Source{Kind: Variable, ID: r.ID.Bytes, Title: r.Key, Description: r.Description},
-				r.EntryTitle, r.EntryBody, r.EntryVersion); err != nil {
+				r.EntryTitle, r.EntryBodySha256, r.EntryVersion); err != nil {
 				return 0, err
 			}
 		}
@@ -195,7 +218,7 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 		}
 		for _, r := range rows {
 			if err := add(Source{Kind: Component, ID: r.ID.Bytes, Title: r.Name, Key: r.Key, Doc: r.Doc,
-				Values: r.AttributeValues}, r.EntryTitle, r.EntryBody, r.EntryVersion); err != nil {
+				Values: r.AttributeValues}, r.EntryTitle, r.EntryBodySha256, r.EntryVersion); err != nil {
 				return 0, err
 			}
 		}

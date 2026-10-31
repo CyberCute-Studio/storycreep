@@ -13,11 +13,14 @@ import (
 // The lengths of a document's title and body, in characters, at most, as
 // the database's checks of search_entry hold them too (migration 00029): a
 // title is as long as a node's title may be, the longest of the titles, and
-// a body as long as a node's text may be, so that a node's text is searched
-// whole, and a component's body, its key, its description, and its values,
-// which may be longer, as far as that, so that a document's vector stays
-// below the megabyte that a tsvector holds at most, which a body of a
-// hundred thousand distinct words of four bytes each would not pass.
+// a body as many characters as a node's text may hold (richtext.MaxChars),
+// so that a document's vector stays below the megabyte that a tsvector holds
+// at most, which a body of a hundred thousand distinct words of four bytes
+// each would not pass. A body is cut there, so a node's text whose plain
+// text is longer, as the line breaks, the indentation, and the bullets and
+// numbers of its list items that richtext.Render writes make a text near the
+// limit, is searched as far as that, and so is a component's body, its key,
+// its description, and its values, which may be longer.
 const (
 	MaxTitleLength = 200
 	MaxBodyLength  = richtext.MaxChars

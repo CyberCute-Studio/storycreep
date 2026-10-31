@@ -87,7 +87,11 @@ func IsKind(k Kind) bool { return idKind(k) != 0 }
 // are missing (Reindex); a migration that changes the search configuration
 // sets the documents' version to 0 instead, and deletes the projects' rows of
 // search_state, so that the job writes them again, which recomputes their
-// vectors, while a search still reads them meanwhile.
+// vectors, while a search still reads them meanwhile. While a rolling upgrade
+// replaces a version's replicas with the next one's, a replica of the older
+// version writes the documents of what its batches change of its own
+// version, and deletes the project's state that the newer one recorded
+// (queries.UpsertSearchEntries), so that the newer job writes them again.
 const Version = 1
 
 // MaxQueryLength is how many characters a search's query has at most.
@@ -127,8 +131,8 @@ type Result struct {
 	// a connection leaves.
 	NodeID    string  `json:"node_id,omitempty" doc:"The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none."`
 	NodeTitle *string `json:"node_title,omitempty" doc:"The title of the result's node, which may be empty, and which a result has exactly when it has node_id"`
-	Title     []Span  `json:"title" nullable:"false" doc:"The entity's title, whole, in parts, with the words that the query matched marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part."`
-	Snippet   []Span  `json:"snippet" nullable:"false" doc:"The entity's body, in parts, with the words that the query matched marked: whole where it has at most 35 words, or else 15 to 35 of its words from the start of its best match, or from its start where the query matched only the title. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part."`
+	Title     []Span  `json:"title" nullable:"false" doc:"The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part."`
+	Snippet   []Span  `json:"snippet" nullable:"false" doc:"Some of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end the body; or else, where the body holds no word that the query matched, as where it matched only the title, the body's first 15 words. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part."`
 	key       Key
 }
 
@@ -175,10 +179,12 @@ func New(db project.DB, opts Options) *Service {
 // configuration reads them, lowercased and without their diacritics, so that
 // "ela tru" matches "Elara trusts", and a query without a word matches
 // nothing. A match in a title ranks above one in a body (ts_rank, of the
-// weights of migration 00029). It returns the errors of project.Service.Get
-// first, as project.ErrNotFound, so that what a query holds is checked only
-// for an actor who may read the project, and then input.FieldErrors at q for
-// a query that CheckQuery refuses. The route's schema refuses a query longer
+// weights of migration 00029, of each of the query's words alone, as
+// queries.Search says, so that it does for a query of several words too). It
+// returns the errors of project.Service.Get first, as project.ErrNotFound,
+// so that what a query holds is checked only for an actor who may read the
+// project, and then input.FieldErrors at q for a query that CheckQuery
+// refuses. The route's schema refuses a query longer
 // than MaxQueryLength before, as it refuses any parameter that breaks it,
 // whoever sends it, which tells nothing of the project.
 func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID ids.UUID, query string, kind Kind,
@@ -202,10 +208,10 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 		if len(lexemes) == 0 {
 			return nil
 		}
-		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), WorkspaceID: nullUUID(workspaceID),
-			ProjectID: nullUUID(projectID), Kind: string(kind), After: after.Kind != "", AfterRank: after.Rank,
-			AfterKind: string(after.Kind), AfterID: pgtype.UUID{Bytes: after.ID, Valid: true},
-			MaxRows: int32(min(limit, 1<<20))})
+		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
+			WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID), Kind: string(kind),
+			After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
+			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("search: read the results: %w", err)
 		}
@@ -281,12 +287,22 @@ func Spans(s string) []Span {
 // holds a word that starts with each of lexemes, the words of a query as the
 // search configuration reads them: each quoted, as a tsquery's text quotes a
 // word, with :* after it, and joined by &.
-func PrefixQuery(lexemes []string) string {
+func PrefixQuery(lexemes []string) string { return prefixQuery(lexemes, " & ") }
+
+// AnyPrefixQuery returns the text of the tsquery that matches a document
+// that holds a word that starts with any of lexemes, as PrefixQuery writes
+// them, joined by |, by which a search ranks the documents that PrefixQuery
+// matches, and marks the matches in them (queries.Search).
+func AnyPrefixQuery(lexemes []string) string { return prefixQuery(lexemes, " | ") }
+
+// prefixQuery returns the text of the tsquery of lexemes, each as
+// PrefixQuery writes it, joined by op.
+func prefixQuery(lexemes []string, op string) string {
 	terms := make([]string, len(lexemes))
 	for i, l := range lexemes {
 		terms[i] = "'" + strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(l) + "':*"
 	}
-	return strings.Join(terms, " & ")
+	return strings.Join(terms, op)
 }
 
 // nullUUID returns id as a uuid column, null for zero.

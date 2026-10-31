@@ -2,6 +2,7 @@ package search_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -34,12 +35,15 @@ func TestMain(m *testing.M) {
 }
 
 // unindexed is a project whose content a pipeline without the derivation of
-// the documents made, as content that was there before migration 00029.
+// the documents made, as content that was there before migration 00029,
+// with its owner, and a pipeline of the commands with the derivation.
 type unindexed struct {
 	db        *database.DB
 	admin     *pgx.Conn
 	workspace ids.UUID
 	project   ids.UUID
+	owner     ids.UUID
+	indexed   *commands.Pipeline
 }
 
 // newUnindexed returns a project of a new database with the small fixture's
@@ -62,18 +66,24 @@ func newUnindexed(t *testing.T) unindexed {
 		VALUES ($1, $2, $3, 'owner')`, ids.New(), ws, owner); err != nil {
 		t.Fatal(err)
 	}
-	reg := commands.NewRegistry()
-	project.Register(reg)
-	board.Register(reg)
-	variable.Register(reg)
-	component.Register(reg)
-	node.Register(reg)
-	connection.Register(reg)
-	expression.Register(reg)
-	dependency.Register(reg)
-	validation.Register(reg)
+	registry := func(indexed bool) *commands.Registry {
+		reg := commands.NewRegistry()
+		project.Register(reg)
+		board.Register(reg)
+		variable.Register(reg)
+		component.Register(reg)
+		node.Register(reg)
+		connection.Register(reg)
+		expression.Register(reg)
+		dependency.Register(reg)
+		validation.Register(reg)
+		if indexed {
+			search.Register(reg)
+		}
+		return reg
+	}
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
-	pipeline := commands.New(db, commands.Options{Registry: reg, Entitlements: ent})
+	pipeline := commands.New(db, commands.Options{Registry: registry(false), Entitlements: ent})
 	projects := project.New(db, project.Options{Entitlements: ent, Pipeline: pipeline, Seed: component.Seed})
 	p, err := projects.Create(ctx, owner, ws, project.Settings{Name: "Small"}, audit.Client{})
 	if err != nil {
@@ -90,7 +100,8 @@ func newUnindexed(t *testing.T) unindexed {
 	if err := f.Apply(ctx, pipeline, commands.Actor{UserID: owner}, projectID); err != nil {
 		t.Fatal(err)
 	}
-	return unindexed{db: db, admin: admin, workspace: ws, project: projectID}
+	return unindexed{db: db, admin: admin, workspace: ws, project: projectID, owner: owner,
+		indexed: commands.New(db, commands.Options{Registry: registry(true), Entitlements: ent})}
 }
 
 // count returns what the query, of the project, counts.
@@ -132,9 +143,11 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // TestReindex checks the job of the index: it writes the documents of
 // content that has none, in transactions of a bounded number of documents,
 // and records the project's state, after which its runs write nothing; it
-// passes over a project whose lock a batch holds, until a later run; and it
-// writes again the documents that a migration marks. It changes how many
-// documents a transaction writes, so it runs alone.
+// passes over a project whose lock a batch holds, until a later run; it
+// writes again the documents that a migration marks; and it comes back to a
+// project whose state a newer version recorded once an older version's batch
+// writes a document of it. It changes how many documents a transaction
+// writes, so it runs alone.
 func TestReindex(t *testing.T) {
 	ctx := context.Background()
 	u := newUnindexed(t)
@@ -185,6 +198,36 @@ func TestReindex(t *testing.T) {
 	}
 	if n, err := search.Reindex(ctx, u.db); err != nil || n != int64(entities) {
 		t.Errorf("Reindex of marked documents wrote %d, %v, want %d", n, err, entities)
+	}
+	u.wantIndexed(t)
+
+	// A batch of a version of the server older than the one that recorded
+	// the project's state, as a replica that a rolling upgrade has yet to
+	// replace applies, deletes the state, so that the newer version's job
+	// comes back to the project and writes again the document that it wrote.
+	if _, err := u.admin.Exec(ctx, `UPDATE search_state SET version = version + 1 WHERE project_id = $1`,
+		u.project); err != nil {
+		t.Fatal(err)
+	}
+	var variableID ids.UUID
+	if err := u.admin.QueryRow(ctx, `SELECT id FROM variable WHERE project_id = $1 ORDER BY id LIMIT 1`,
+		u.project).Scan(&variableID); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]string{"id": ids.Encode(ids.Variable, variableID),
+		"description": "Described by an older server."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.indexed.Apply(ctx, commands.Actor{UserID: u.owner}, u.project,
+		[]commands.Command{{ID: ids.New(), Type: variable.Describe, Payload: payload}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := u.count(t, "SELECT count(*) FROM search_state WHERE project_id = $1"); got != 0 {
+		t.Errorf("after an older version's batch, the project has %d states, want none", got)
+	}
+	if n, err := search.Reindex(ctx, u.db); err != nil || n != 0 {
+		t.Errorf("Reindex after the batch wrote %d documents, %v, want none, all of its version", n, err)
 	}
 	u.wantIndexed(t)
 

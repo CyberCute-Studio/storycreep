@@ -47,11 +47,15 @@ func TestSpans(t *testing.T) {
 
 // TestPrefixQuery checks the text of a query's tsquery: each word quoted, as
 // a tsquery's text quotes it, a quote and a backslash in it escaped, with :*
-// after it, joined by &.
+// after it, joined by & for the query that matches, and by | for the one
+// that ranks and marks.
 func TestPrefixQuery(t *testing.T) {
-	got := search.PrefixQuery([]string{"elara", "o'neil", `a\b`})
-	if want := `'elara':* & 'o''neil':* & 'a\\b':*`; got != want {
+	words := []string{"elara", "o'neil", `a\b`}
+	if got, want := search.PrefixQuery(words), `'elara':* & 'o''neil':* & 'a\\b':*`; got != want {
 		t.Errorf("PrefixQuery = %s, want %s", got, want)
+	}
+	if got, want := search.AnyPrefixQuery(words), `'elara':* | 'o''neil':* | 'a\\b':*`; got != want {
+		t.Errorf("AnyPrefixQuery = %s, want %s", got, want)
 	}
 }
 
