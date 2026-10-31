@@ -1297,8 +1297,11 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 		}
 		return obj("nodes", places), len(places) > 0
 	},
-	"node.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.nodes, true) },
-	"node.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.nodes, false) },
+	"node.delete":       func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.nodes, true) },
+	"node.restore":      func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.nodes, false) },
+	"node.delete_many":  func(g *undoGen) (map[string]any, bool) { return g.idsOf(g.m.nodes, true) },
+	"node.restore_many": func(g *undoGen) (map[string]any, bool) { return g.idsOf(g.m.nodes, false) },
+	"clipboard.paste":   (*undoGen).paste,
 
 	"connection.create": func(g *undoGen) (map[string]any, bool) {
 		from, port, ok := g.port(func(n undoEntity) bool { return true })
@@ -1758,6 +1761,136 @@ func (g *undoGen) deletion(es []undoEntity) (map[string]any, bool) {
 		p["force"] = true
 	}
 	return p, ok
+}
+
+// idsOf returns the payload that names one to three random entities of es,
+// as idOf names one, each once.
+func (g *undoGen) idsOf(es []undoEntity, live bool) (map[string]any, bool) {
+	var list []string
+	for range 1 + g.r.IntN(3) {
+		e, ok := g.pick(es, func(e undoEntity) bool {
+			return (live && e.live || !live && e.deleted) && !slices.Contains(list, e.id)
+		})
+		if ok {
+			list = append(list, e.id)
+		}
+	}
+	return obj("ids", list), len(list) > 0
+}
+
+// paste returns the payload of a paste of a random clipboard onto a random
+// board of the model's that is outside the trash: one to three nodes of
+// random types and fields, whose texts, scripts, conditions, speakers, and
+// jumpers' targets name the model's entities, or the clipboard's nodes; a
+// branch's outputs; connections between the nodes; and declarations of some
+// of the model's variables and components, as a copy of another board, or
+// another project, would declare them, at the board that it names, the
+// model's or a new one.
+func (g *undoGen) paste() (map[string]any, bool) {
+	board, ok := g.live(g.m.boards)
+	if !ok {
+		return nil, false
+	}
+	from := board.id
+	if g.coin() {
+		from = g.id(ids.Board)
+	}
+	newIDs := map[string]string{}
+	type pasted struct {
+		id, typ string
+		ports   []string
+	}
+	var nodes []pasted
+	var clipNodes, connections []any
+	for range 1 + g.r.IntN(3) {
+		n := pasted{id: g.id(ids.Node), typ: []string{"element", "branch", "jumper"}[g.r.IntN(3)]}
+		newIDs[n.id] = g.id(ids.Node)
+		p := obj("id", n.id, "type", n.typ, "position", g.position())
+		g.nodeFields(p, n.typ)
+		if n.typ == "jumper" && len(nodes) > 0 && g.coin() {
+			p["target"] = obj("board_id", from, "node_id", nodes[g.r.IntN(len(nodes))].id)
+		}
+		if n.typ == "element" {
+			n.ports = []string{""}
+		}
+		if n.typ == "branch" {
+			var outputs []any
+			for range g.r.IntN(3) {
+				o := g.id(ids.BranchOutput)
+				newIDs[o] = g.id(ids.BranchOutput)
+				outputs = append(outputs, obj("id", o, "condition", g.condition()))
+				n.ports = append(n.ports, o)
+			}
+			if len(outputs) > 0 && g.coin() {
+				o := g.id(ids.BranchOutput)
+				newIDs[o] = g.id(ids.BranchOutput)
+				outputs = append(outputs, obj("id", o, "else", true))
+				n.ports = append(n.ports, o)
+			}
+			if len(outputs) > 0 {
+				p["outputs"] = outputs
+			}
+		}
+		nodes = append(nodes, n)
+		clipNodes = append(clipNodes, p)
+	}
+	for _, n := range nodes {
+		for _, port := range n.ports {
+			if !g.coin() {
+				continue
+			}
+			c := obj("id", g.id(ids.Connection), "from_node_id", n.id, "to_node_id", nodes[g.r.IntN(len(nodes))].id)
+			newIDs[c["id"].(string)] = g.id(ids.Connection)
+			if port != "" {
+				c["from_port"] = port
+			}
+			if g.coin() {
+				c["label"] = g.richText()
+			}
+			if g.coin() {
+				c["condition"] = g.condition()
+			}
+			if g.coin() {
+				c["on_traverse"] = g.script()
+			}
+			connections = append(connections, c)
+		}
+	}
+	variables := []any{}
+	for _, v := range g.m.variables {
+		if !g.coin() {
+			continue
+		}
+		d := obj("id", v.id, "key", v.key, "scope", v.scope, "type", v.typ)
+		if v.scope == "board" {
+			d["board_id"] = from
+		}
+		variables = append(variables, d)
+	}
+	components := []any{}
+	for _, c := range g.m.components {
+		if !g.coin() {
+			continue
+		}
+		attributes := []any{}
+		for _, a := range g.m.attributes {
+			if a.componentType == c.componentType && g.coin() {
+				d := obj("id", a.id, "key", a.key, "type", a.typ, "runtime", a.runtime)
+				if len(a.options) > 0 {
+					d["options"] = a.options
+				}
+				attributes = append(attributes, d)
+			}
+		}
+		components = append(components, obj("id", c.id, "key", c.key, "name", "Name",
+			"type", obj("id", c.componentType, "key", "k_type", "name", "Type"), "attributes", attributes))
+	}
+	if connections == nil {
+		connections = []any{}
+	}
+	clip := obj("format", "storycreep.clipboard", "version", 1, "project_id", g.id(ids.Project), "board_id", from,
+		"nodes", clipNodes, "connections", connections, "variables", variables, "components", components)
+	return obj("board_id", board.id, "offset", g.position(), "clipboard", clip, "ids", newIDs), true
 }
 
 // idOf returns the payload that names a random entity of es: one outside the

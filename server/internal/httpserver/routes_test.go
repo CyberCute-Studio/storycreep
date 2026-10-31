@@ -84,7 +84,9 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/dependencies"}:                               scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/dependencies/{from_board_id}/{to_board_id}"}: scope.ProjectRead,
 	// So is its search, whose index its commands keep.
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/search"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/search"}:             scope.ProjectRead,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}:    scope.ProjectRead,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: scope.ProjectRead,
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,

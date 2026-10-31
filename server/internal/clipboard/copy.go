@@ -103,15 +103,16 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 		u, _ := ids.Decode(ids.Node, n.ID)
 		found[u] = n
 	}
+	board := found[list[0].Bytes].BoardID
 	for i, id := range list {
 		n, ok := found[id.Bytes]
 		switch {
 		case !ok:
 			problems = append(problems, input.FieldError{Field: fmt.Sprintf("node_ids[%d]", i),
 				Message: "is not a node of the project, or is one in its trash"})
-		case n.BoardID != nodes[0].BoardID:
+		case board != "" && n.BoardID != board:
 			problems = append(problems, input.FieldError{Field: fmt.Sprintf("node_ids[%d]", i),
-				Message: "is a node of another board than the others, which a clipboard holds the nodes of one " +
+				Message: "is a node of another board than node_ids[0], which a clipboard holds the nodes of one " +
 					"board of"})
 		}
 	}

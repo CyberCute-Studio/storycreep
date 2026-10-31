@@ -51,7 +51,8 @@ func Register(r *commands.Registry) {
 // each is a registered type, or the derivation's name.
 var neutral = []commands.Type{
 	"expression",
-	"node.move", "node.delete", "node.restore", "board.set_entry_node", "branch_output.create",
+	"node.move", "node.delete", "node.restore", "node.delete_many", "node.restore_many", "board.set_entry_node",
+	"branch_output.create",
 	"connection.reconnect", "connection.reorder", "connection.delete", "connection.restore",
 	"variable.set_default", "variable.retype", "variable.set_scope", "variable.set_reset_on_enter",
 	"variable.move", "variable.delete", "variable.restore",

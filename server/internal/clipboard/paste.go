@@ -153,13 +153,28 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 	if err != nil {
 		return err
 	}
+	// A jumper that targets a node of the clipboard, which may be created
+	// after it, gets its target once every node is.
+	var targets []int
 	for i, n := range c.Nodes {
 		at := fmt.Sprintf("clipboard.nodes[%d]", i)
 		payload, err := pl.node(at, n, p.BoardID, p.Offset)
 		if err != nil {
 			return err
 		}
+		if t, ok := payload["target"].(map[string]string); ok && t["board_id"] == p.BoardID && pl.copied(n.Target) {
+			delete(payload, "target")
+			targets = append(targets, i)
+		}
 		if err := tx.ApplyPart(ctx, node.Create, payload, pl.fields(at, n.ID)); err != nil {
+			return err
+		}
+	}
+	for _, i := range targets {
+		n, at := c.Nodes[i], fmt.Sprintf("clipboard.nodes[%d]", i)
+		if err := tx.ApplyPart(ctx, node.Update, map[string]any{"id": p.IDs[n.ID], "target": map[string]string{
+			"board_id": p.BoardID, "node_id": pl.moves.Nodes[canonical(ids.Node, n.Target.NodeID)]}},
+			pl.fields(at, n.ID)); err != nil {
 			return err
 		}
 	}
@@ -306,6 +321,16 @@ func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.Nod
 		p[s.field] = source
 	}
 	return p, nil
+}
+
+// copied reports whether the jumper's target t is a node of the clipboard,
+// which the paste copies.
+func (pl *plan) copied(t *node.NodeTarget) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := pl.moves.Nodes[canonical(ids.Node, t.NodeID)]
+	return ok
 }
 
 // connection returns the payload of the connection.create of the

@@ -1074,12 +1074,38 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 // command, which unarchives the project, so that it is answered the same
 // whether a route walked before it archived the project, and needs owner or
 // admin, as the project's settings do. The upload's is a small PNG image.
-var sampleBodies = map[api.Route]func(t *testing.T) []byte{
-	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func(t *testing.T) []byte {
+// The clipboard's routes take the IDs of the project's entities, which params
+// holds (routeParams): a copy of its node, and a report of a clipboard of
+// another node onto its board.
+var sampleBodies = map[api.Route]func(t *testing.T, params map[string]string) []byte{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func(t *testing.T,
+		_ map[string]string) []byte {
 		return jsonBody(t, map[string]any{"commands": []any{map[string]any{"command_id": ids.New().String(),
 			"type": "project.unarchive", "payload": map[string]any{}}}})
 	},
-	{Method: http.MethodPost, Pattern: assetsPath}: func(t *testing.T) []byte { return testPNG(t, 4, 3) },
+	{Method: http.MethodPost, Pattern: assetsPath}: func(t *testing.T, _ map[string]string) []byte {
+		return testPNG(t, 4, 3)
+	},
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}: func(t *testing.T,
+		params map[string]string) []byte {
+		return jsonBody(t, map[string]any{"node_ids": []string{params["node_id"]}})
+	},
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: func(t *testing.T,
+		params map[string]string) []byte {
+		return jsonBody(t, map[string]any{"board_id": params["board_id"], "clipboard": map[string]any{
+			"format": "storycreep.clipboard", "version": 1, "project_id": params["project_id"],
+			"board_id": params["board_id"], "nodes": []any{map[string]any{"id": newNodeID(), "type": "element",
+				"position": map[string]any{"x": 0, "y": 0}}}, "connections": []any{}, "variables": []any{},
+			"components": []any{}}})
+	},
+}
+
+// postReads are the routes that read, and change nothing, but are POSTs, as
+// what they read does not fit in a URL: the clipboard's, which a role that
+// reads the project's content may use, as a GET of it.
+var postReads = map[api.Route]bool{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}:    true,
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: true,
 }
 
 // routeCall is a request of a route of a workspace or of a project, with a
@@ -1165,7 +1191,7 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 		}
 		var body []byte
 		if sample, ok := sampleBodies[r]; ok {
-			body = sample(t)
+			body = sample(t, params)
 		} else if op.RequestBody != nil {
 			mt := op.RequestBody.Content["application/json"]
 			if mt == nil || mt.Schema == nil {
@@ -1234,7 +1260,7 @@ func TestViewerReadsOnly(t *testing.T) {
 	for _, c := range routeCalls(t, f, routeParams(t, f)) {
 		r := c.route
 		res := call(f.s.main, r.Method, c.path, c.body, viewer.header(r.Method != http.MethodGet))
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && !postReads[r] {
 			mutating++
 			wantCode(t, "a viewer's "+r.String(), res, http.StatusForbidden, api.CodeInsufficientRole)
 			continue

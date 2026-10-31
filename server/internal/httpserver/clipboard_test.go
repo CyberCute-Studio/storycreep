@@ -1,0 +1,538 @@
+package httpserver
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/clipboard"
+	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+)
+
+// copyPath and resolvePath are the clipboard's routes of the project id.
+func copyPath(id string) string    { return projectPath(id) + "/clipboard/copy" }
+func resolvePath(id string) string { return projectPath(id) + "/clipboard/resolve" }
+
+// clipboardWorld is a project whose board Harbour holds what the clipboard's
+// tests copy: an element, Keeper, whose speaker is the component elara, whose
+// text shows the global trust and mentions elara, and whose on-enter script
+// writes trust and Harbour's own mood; a branch, Choice, whose if reads trust
+// and elara.fear and whose else has no condition; an element, Lamp; a jumper,
+// Back, that targets Keeper; and a jumper, Away, that targets Dock, a node of
+// the board Pier. Keeper's connection to Choice is labelled with trust's value
+// and needs the flow to have visited Keeper; Choice's if leads to Lamp and its
+// else back to Keeper, and Lamp leads to Back.
+type clipboardWorld struct {
+	s                                                   *server
+	owner                                               signedIn
+	ws, project, harbour, pier                          string
+	trust, mood, character, fear, elara, dock           string
+	keeper, choice, ifOut, elseOut, lamp, back, away    string
+	toChoice, ifToLamp, elseToKeeper, lampToBack, extra string
+}
+
+// newClipboardWorld returns a clipboardWorld.
+func newClipboardWorld(t *testing.T) *clipboardWorld {
+	t.Helper()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	w := &clipboardWorld{s: s, owner: owner, ws: ws}
+	w.project = createProject(t, s.main, owner, ws, "Lighthouse").ID
+	w.harbour, w.pier = createBoard(t, s.main, owner, w.project, "Harbour"), createBoard(t, s.main, owner, w.project,
+		"Pier")
+	w.trust, w.mood = newVariableID(), newVariableID()
+	w.character, w.fear = ids.Encode(ids.ComponentType, ids.New()), ids.Encode(ids.AttributeDef, ids.New())
+	w.elara = newComponentID()
+	w.apply(t,
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": w.trust, "key": "trust", "type": "int",
+			"scope": "global", "default": 3, "description": "How far the keeper trusts you"}},
+		wireCommand{Type: "variable.create", Payload: map[string]any{"id": w.mood, "key": "mood", "type": "string",
+			"scope": "board", "board_id": w.harbour, "reset_on_enter": true}},
+		wireCommand{Type: "component_type.create", Payload: map[string]any{"id": w.character, "name": "Hero",
+			"key": "hero"}},
+		wireCommand{Type: "attribute.create", Payload: map[string]any{"id": w.fear, "component_type_id": w.character,
+			"name": "Fear", "key": "fear", "type": "int", "runtime": true}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": w.elara, "component_type_id": w.character,
+			"name": "Elara", "key": "elara"}})
+	w.dock = createNode(t, s.main, owner, w.project, w.pier, "element", map[string]any{"title": "Dock"})
+	w.keeper, w.choice, w.lamp = newNodeID(), newNodeID(), newNodeID()
+	w.back, w.away = newNodeID(), newNodeID()
+	w.ifOut, w.elseOut = ids.Encode(ids.BranchOutput, ids.New()), ids.Encode(ids.BranchOutput, ids.New())
+	w.toChoice, w.ifToLamp, w.elseToKeeper = newConnectionID(), newConnectionID(), newConnectionID()
+	w.lampToBack, w.extra = newConnectionID(), newConnectionID()
+	at := func(x, y float64) map[string]any { return map[string]any{"x": x, "y": y} }
+	w.apply(t,
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": w.keeper, "board_id": w.harbour,
+			"type": "element", "title": "Keeper", "position": at(10.5, 20), "speaker_component_id": w.elara,
+			"tags": []string{"Quest"}, "text": richText(textInline("You have "), valueInline(w.trust),
+				textInline(" trust with "), mentionInline(w.elara), attributeInline(w.elara, w.fear)),
+			"on_enter": "trust += 1\nmood = \"calm\""}},
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": w.choice, "board_id": w.harbour,
+			"type": "branch", "position": at(200, 20)}},
+		wireCommand{Type: "branch_output.create", Payload: map[string]any{"id": w.ifOut, "node_id": w.choice,
+			"condition": "trust > 2 && elara.fear < 3"}},
+		wireCommand{Type: "branch_output.create", Payload: map[string]any{"id": w.elseOut, "node_id": w.choice,
+			"else": true}},
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": w.lamp, "board_id": w.harbour,
+			"type": "element", "title": "Lamp", "position": at(400, 0)}},
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": w.back, "board_id": w.harbour,
+			"type": "jumper", "position": at(600, 0), "target": map[string]string{"board_id": w.harbour,
+				"node_id": w.keeper}}},
+		wireCommand{Type: "node.create", Payload: map[string]any{"id": w.away, "board_id": w.harbour,
+			"type": "jumper", "position": at(600, 100), "target": map[string]string{"board_id": w.pier,
+				"node_id": w.dock}}},
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": w.toChoice, "from_node_id": w.keeper,
+			"to_node_id": w.choice, "label": richText(textInline("Trust: "), valueInline(w.trust)),
+			"condition": `visited(node("` + w.keeper + `"))`}},
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": w.ifToLamp, "from_node_id": w.choice,
+			"from_port": w.ifOut, "to_node_id": w.lamp}},
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": w.elseToKeeper,
+			"from_node_id": w.choice, "from_port": w.elseOut, "to_node_id": w.keeper}},
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": w.lampToBack, "from_node_id": w.lamp,
+			"to_node_id": w.back}},
+		// A second choice of Keeper, before the first, which the clipboard
+		// keeps before it.
+		wireCommand{Type: "connection.create", Payload: map[string]any{"id": w.extra, "from_node_id": w.keeper,
+			"to_node_id": w.lamp, "order": "1"}})
+	return w
+}
+
+// apply applies the batch to the world's project as its owner, and returns
+// its answer, which must be 200.
+func (w *clipboardWorld) apply(t *testing.T, cmds ...wireCommand) commandResultBody {
+	t.Helper()
+	return w.applyTo(t, w.project, cmds...)
+}
+
+// applyTo applies the batch to the project as the world's owner.
+func (w *clipboardWorld) applyTo(t *testing.T, project string, cmds ...wireCommand) commandResultBody {
+	t.Helper()
+	return resultFrom(t, call(w.s.main, http.MethodPost, commandsPath(project), commandBatch(t, cmds...),
+		w.owner.header(true)))
+}
+
+// copy copies the nodes of the world's project, which must answer 200.
+func (w *clipboardWorld) copy(t *testing.T, nodes ...string) clipboard.Clipboard {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"node_ids": nodes})
+	res := call(w.s.main, http.MethodPost, copyPath(w.project), body, w.owner.header(true))
+	if res.status != http.StatusOK {
+		t.Fatalf("copy: %d %s", res.status, res.body)
+	}
+	var c clipboard.Clipboard
+	if err := json.Unmarshal(res.body, &c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// resolve reports what of c a paste onto the board of the project would
+// resolve to nothing, which must answer 200.
+func (w *clipboardWorld) resolve(t *testing.T, project, board string, c clipboard.Clipboard) clipboard.ClipboardReport {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"board_id": board, "clipboard": c})
+	res := call(w.s.main, http.MethodPost, resolvePath(project), body, w.owner.header(true))
+	if res.status != http.StatusOK {
+		t.Fatalf("resolve: %d %s", res.status, res.body)
+	}
+	var r clipboard.ClipboardReport
+	if err := json.Unmarshal(res.body, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// paste returns the command that pastes c onto the board, its nodes moved by
+// (dx, dy), with new IDs, and the new IDs by the clipboard's.
+func paste(board string, c clipboard.Clipboard, dx, dy float64) (wireCommand, map[string]string) {
+	newIDs := map[string]string{}
+	for _, n := range c.Nodes {
+		newIDs[n.ID] = newNodeID()
+		for _, o := range n.Outputs {
+			newIDs[o.ID] = ids.Encode(ids.BranchOutput, ids.New())
+		}
+	}
+	for _, cn := range c.Connections {
+		newIDs[cn.ID] = newConnectionID()
+	}
+	return wireCommand{Type: "clipboard.paste", Payload: map[string]any{"board_id": board,
+		"offset": map[string]any{"x": dx, "y": dy}, "clipboard": c, "ids": newIDs}}, newIDs
+}
+
+// pastedNode reads the pasted node id of the project.
+func (w *clipboardWorld) pastedNode(t *testing.T, project, id string) node.Node {
+	t.Helper()
+	return readNode(t, w.s.main, w.owner, project, id)
+}
+
+// pastedConnection reads the connection id of the project.
+func (w *clipboardWorld) pastedConnection(t *testing.T, project, id string) connection.Connection {
+	t.Helper()
+	res := call(w.s.main, http.MethodGet, projectPath(project)+"/connections/"+id, nil, w.owner.header(false))
+	if res.status != http.StatusOK {
+		t.Fatalf("read the connection %s: %d %s", id, res.status, res.body)
+	}
+	var c connection.Connection
+	if err := json.Unmarshal(res.body, &c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// textJSON returns the document d as its canonical JSON.
+func textJSON(t *testing.T, d *richtext.Doc) string {
+	t.Helper()
+	if d == nil {
+		return ""
+	}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestClipboardCopy checks that copying a selection answers with a clipboard
+// of the documented structure, of the format's version (FR-EDIT-07 AC3): its
+// nodes in the order of their IDs, a branch with its outputs in their order,
+// the connections between them alone, in the order of their ports and of each
+// port's choices, and a declaration of each variable, component, and
+// attribute definition that their texts, expressions, and speakers name.
+//
+// Verifies: FR-EDIT-07/AC3
+func TestClipboardCopy(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	c := w.copy(t, w.lamp, w.keeper, w.choice, w.back, w.away)
+	if c.Format != clipboard.Format || c.Version != clipboard.Version || c.ProjectID != w.project ||
+		c.BoardID != w.harbour {
+		t.Errorf("the clipboard is %s %d of %s %s", c.Format, c.Version, c.ProjectID, c.BoardID)
+	}
+	var nodes []string
+	for _, n := range c.Nodes {
+		nodes = append(nodes, n.ID)
+	}
+	want := []string{w.keeper, w.choice, w.lamp, w.back, w.away}
+	slices.Sort(want)
+	if !slices.Equal(nodes, want) {
+		t.Errorf("the clipboard's nodes are %v, want %v", nodes, want)
+	}
+	for _, n := range c.Nodes {
+		if n.ID == w.choice && (len(n.Outputs) != 2 || n.Outputs[0].ID != w.ifOut || n.Outputs[1].ID != w.elseOut ||
+			!n.Outputs[1].Else || n.Outputs[0].Condition != "trust > 2 && elara.fear < 3") {
+			t.Errorf("the branch's outputs are %+v", n.Outputs)
+		}
+		if n.ID == w.keeper && (n.OnEnter != "trust += 1\nmood = \"calm\"" || n.SpeakerComponentID != w.elara ||
+			n.Position.X.IsZero() || len(n.Text) == 0) {
+			t.Errorf("Keeper is %+v", n)
+		}
+	}
+	// Each port's choices are in their order, Keeper's to Lamp before its to
+	// Choice, and the ports in the order of their nodes' IDs.
+	var connections []string
+	ports := map[string][]string{}
+	last := ""
+	for _, cn := range c.Connections {
+		connections = append(connections, cn.ID)
+		if cn.FromNodeID < last {
+			t.Errorf("the clipboard's connections leave %s after %s", cn.FromNodeID, last)
+		}
+		last = cn.FromNodeID
+		ports[cn.FromNodeID+"/"+cn.FromPort] = append(ports[cn.FromNodeID+"/"+cn.FromPort], cn.ID)
+	}
+	if got := ports[w.keeper+"/"]; !slices.Equal(got, []string{w.extra, w.toChoice}) {
+		t.Errorf("Keeper's choices in the clipboard are %v, want %v", got, []string{w.extra, w.toChoice})
+	}
+	slices.Sort(connections)
+	want = []string{w.extra, w.toChoice, w.ifToLamp, w.elseToKeeper, w.lampToBack}
+	slices.Sort(want)
+	if !slices.Equal(connections, want) {
+		t.Errorf("the clipboard's connections are %v, want %v", connections, want)
+	}
+	trust, mood := c.Variables[0], c.Variables[1]
+	if len(c.Variables) == 2 && trust.ID == w.mood {
+		trust, mood = mood, trust
+	}
+	if len(c.Variables) != 2 || trust.ID != w.trust || trust.Key != "trust" || trust.Scope != "global" ||
+		string(trust.Default.JSON()) != "3" || trust.Description == "" || mood.ID != w.mood ||
+		mood.BoardID != w.harbour || !mood.ResetOnEnter {
+		t.Errorf("the clipboard's variables are %+v", c.Variables)
+	}
+	if len(c.Components) != 1 || c.Components[0].ID != w.elara || c.Components[0].Key != "elara" ||
+		c.Components[0].Type.Key != "hero" || len(c.Components[0].Attributes) != 1 ||
+		c.Components[0].Attributes[0].ID != w.fear || !c.Components[0].Attributes[0].Runtime {
+		t.Errorf("the clipboard's components are %+v", c.Components)
+	}
+	// The clipboard is what clipboard.Check takes, and validates against the
+	// published schema of its version, with a validator that is not huma's.
+	if problems := clipboard.Check(c); len(problems) > 0 {
+		t.Errorf("the clipboard's problems: %v", problems)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(clipboard.Schema()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource(clipboard.SchemaID, doc); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(clipboard.SchemaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"node_ids": []string{w.lamp, w.keeper, w.choice, w.back, w.away}})
+	res := call(w.s.main, http.MethodPost, copyPath(w.project), body, w.owner.header(true))
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(res.body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Validate(inst); err != nil {
+		t.Errorf("the copy does not validate against %s: %v", clipboard.SchemaPath, err)
+	}
+
+	for _, bad := range []struct {
+		nodes []string
+		at    string
+	}{
+		{[]string{w.keeper, w.dock}, "body.node_ids[1]"},
+		{[]string{w.keeper, newNodeID()}, "body.node_ids[1]"},
+		{[]string{w.keeper, w.keeper}, "body.node_ids[1]"},
+		{[]string{"bd_nope"}, "body.node_ids[0]"},
+	} {
+		body, _ := json.Marshal(map[string]any{"node_ids": bad.nodes})
+		res := call(w.s.main, http.MethodPost, copyPath(w.project), body, w.owner.header(true))
+		wantCode(t, "a copy of "+strings.Join(bad.nodes, ", "), res, http.StatusUnprocessableEntity,
+			"validation_failed")
+		if !strings.Contains(string(res.body), bad.at) {
+			t.Errorf("a copy of %v: %s, want a problem at %s", bad.nodes, res.body, bad.at)
+		}
+	}
+}
+
+// TestClipboardPaste checks that a paste onto the board that the clipboard
+// was copied from creates copies of its nodes, outputs, and connections, at
+// their places moved by the offset, with every reference that the board
+// resolves kept, those between the copied nodes made the copies', and the
+// choices in their order; that its undo deletes the copies, and its redo
+// brings them back; and that a paste onto another board of the project
+// writes a name of a variable of the board copied from that the board pasted
+// onto lacks explicitly, which the report lists.
+func TestClipboardPaste(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	c := w.copy(t, w.keeper, w.choice, w.lamp, w.back, w.away)
+
+	cmd, newIDs := paste(w.harbour, c, 100, -20.25)
+	done := w.apply(t, cmd)
+	keeper := w.pastedNode(t, w.project, newIDs[w.keeper])
+	if keeper.BoardID != w.harbour || keeper.Title != "Keeper" || keeper.SpeakerComponentID != w.elara ||
+		!slices.Equal(keeper.Tags, []string{"Quest"}) || keeper.OnEnter == nil ||
+		keeper.OnEnter.Source != "trust += 1\nmood = \"calm\"" || !keeper.OnEnter.IsValid {
+		t.Errorf("the pasted Keeper is %+v", keeper)
+	}
+	if got, _ := json.Marshal(keeper.Position); string(got) != `{"x":110.5,"y":-0.25}` {
+		t.Errorf("the pasted Keeper is at %s, want 110.5, -0.25", got)
+	}
+	original := w.pastedNode(t, w.project, w.keeper)
+	if textJSON(t, keeper.Text) != textJSON(t, original.Text) {
+		t.Errorf("the pasted Keeper's text is %s, want %s", textJSON(t, keeper.Text), textJSON(t, original.Text))
+	}
+	choice := w.pastedNode(t, w.project, newIDs[w.choice])
+	if len(choice.Outputs) != 2 || choice.Outputs[0].ID != newIDs[w.ifOut] || choice.Outputs[0].Kind != "if" ||
+		choice.Outputs[1].ID != newIDs[w.elseOut] || choice.Outputs[1].Kind != "else" ||
+		!choice.Outputs[0].Condition.IsValid {
+		t.Errorf("the pasted branch's outputs are %+v", choice.Outputs)
+	}
+	if back := w.pastedNode(t, w.project, newIDs[w.back]); back.Target == nil ||
+		back.Target.NodeID != newIDs[w.keeper] {
+		t.Errorf("the pasted Back targets %+v, want the pasted Keeper", back.Target)
+	}
+	if away := w.pastedNode(t, w.project, newIDs[w.away]); away.Target == nil || away.Target.NodeID != w.dock {
+		t.Errorf("the pasted Away targets %+v, want Dock", away.Target)
+	}
+	toChoice := w.pastedConnection(t, w.project, newIDs[w.toChoice])
+	if toChoice.FromNodeID != newIDs[w.keeper] || toChoice.ToNodeID != newIDs[w.choice] ||
+		toChoice.Condition == nil || toChoice.Condition.Source != `visited(node("`+newIDs[w.keeper]+`"))` ||
+		!toChoice.Condition.IsValid {
+		t.Errorf("the pasted connection to Choice is %+v", toChoice)
+	}
+	extra := w.pastedConnection(t, w.project, newIDs[w.extra])
+	if extra.Order >= toChoice.Order {
+		t.Errorf("the pasted choices are in the order %s, %s, want Lamp's first", extra.Order, toChoice.Order)
+	}
+	if ifToLamp := w.pastedConnection(t, w.project, newIDs[w.ifToLamp]); ifToLamp.FromPort != newIDs[w.ifOut] {
+		t.Errorf("the pasted connection of the if leaves %s", ifToLamp.FromPort)
+	}
+	// The undo is one deletion of the pasted nodes, which takes their
+	// outputs and connections with them, and its own undo brings them back.
+	if len(done.Undo) != 1 || done.Undo[0].Type != "node.delete_many" {
+		t.Fatalf("the paste's undo is %+v", done.Undo)
+	}
+	undone := w.apply(t, undoCommands(done.Undo)...)
+	if res := call(w.s.main, http.MethodGet, projectPath(w.project)+"/nodes/"+newIDs[w.keeper], nil,
+		w.owner.header(false)); res.status != http.StatusNotFound {
+		t.Errorf("the pasted Keeper once undone: %d, want 404", res.status)
+	}
+	w.apply(t, undoCommands(undone.Undo)...)
+	if c := w.pastedConnection(t, w.project, newIDs[w.toChoice]); c.ID != newIDs[w.toChoice] {
+		t.Errorf("the redone connection is %+v", c)
+	}
+
+	// Pier has no mood, which the report lists, and which the paste writes
+	// explicitly, so that it names none but Pier's own once Pier has one.
+	if r := w.resolve(t, w.project, w.pier, c); len(r.Variables) != 1 || r.Variables[0].ID != w.mood ||
+		len(r.Components) != 0 || len(r.Nodes) != 0 {
+		t.Errorf("the report of a paste onto Pier is %+v", r)
+	}
+	cmd, newIDs = paste(w.pier, c, 0, 0)
+	w.apply(t, cmd)
+	if keeper := w.pastedNode(t, w.project, newIDs[w.keeper]); keeper.OnEnter == nil ||
+		keeper.OnEnter.Source != "trust += 1\nboard.mood = \"calm\"" || keeper.OnEnter.IsValid {
+		t.Errorf("Keeper pasted onto Pier enters with %+v", keeper.OnEnter)
+	}
+	if back := w.pastedNode(t, w.project, newIDs[w.back]); back.Target == nil ||
+		back.Target.BoardID != w.pier || back.Target.NodeID != newIDs[w.keeper] {
+		t.Errorf("Back pasted onto Pier targets %+v", back.Target)
+	}
+}
+
+// TestClipboardAcrossProjects checks that a paste into another project of the
+// workspace resolves what its content names by its keys, reports what it
+// resolves to nothing, with what creating it takes, keeps a text's reference
+// to it as it is, writes an expression's name of it explicitly, and leaves out
+// a speaker and a jumper's target that it lacks; and that a client that
+// creates what is missing in the batch of the paste, before it, has the paste
+// resolve to it (FR-EDIT-07 AC1).
+//
+// Verifies: FR-EDIT-07/AC1
+func TestClipboardAcrossProjects(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	c := w.copy(t, w.keeper, w.choice, w.lamp, w.back, w.away)
+	other := createProject(t, w.s.main, w.owner, w.ws, "Lantern").ID
+	board := createBoard(t, w.s.main, w.owner, other, "Shore")
+	character := ids.Encode(ids.ComponentType, ids.New())
+	w.applyTo(t, other, wireCommand{Type: "component_type.create", Payload: map[string]any{"id": character,
+		"name": "Person", "key": "hero"}})
+
+	r := w.resolve(t, other, board, c)
+	keys := []string{}
+	for _, v := range r.Variables {
+		keys = append(keys, v.Key)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"mood", "trust"}) ||
+		len(r.Components) != 1 || r.Components[0].Component.Key != "elara" ||
+		r.Components[0].ComponentTypeID != character || !slices.Equal(r.Nodes, []string{w.dock}) ||
+		len(r.Assets) != 0 {
+		t.Errorf("the report is %+v", r)
+	}
+
+	// Pasted as it is, what it names resolves to nothing.
+	cmd, newIDs := paste(board, c, 0, 0)
+	w.applyTo(t, other, cmd)
+	keeper := w.pastedNode(t, other, newIDs[w.keeper])
+	if keeper.SpeakerComponentID != "" || keeper.OnEnter == nil ||
+		keeper.OnEnter.Source != "global.trust += 1\nboard.mood = \"calm\"" || keeper.OnEnter.IsValid ||
+		!strings.Contains(textJSON(t, keeper.Text), w.trust) {
+		t.Errorf("Keeper pasted as it is: %+v, with the text %s", keeper, textJSON(t, keeper.Text))
+	}
+	choice := w.pastedNode(t, other, newIDs[w.choice])
+	if choice.Outputs[0].Condition.Source != "global.trust > 2 && cmp.elara.fear < 3" {
+		t.Errorf("the pasted if's condition is %q", choice.Outputs[0].Condition.Source)
+	}
+	if away := w.pastedNode(t, other, newIDs[w.away]); away.Target != nil {
+		t.Errorf("Away pasted into another project targets %+v, want none", away.Target)
+	}
+
+	// Pasted with what is missing created first, it resolves to that.
+	trust, mood, elara := newVariableID(), newVariableID(), newComponentID()
+	create := func(v clipboard.ClipboardVariable, id string) wireCommand {
+		p := map[string]any{"id": id, "key": v.Key, "type": v.Type, "scope": v.Scope, "default": v.Default,
+			"description": v.Description}
+		if v.Scope == "board" {
+			p["board_id"], p["reset_on_enter"] = board, v.ResetOnEnter
+		}
+		return wireCommand{Type: "variable.create", Payload: p}
+	}
+	fear := ids.Encode(ids.AttributeDef, ids.New())
+	cmd, newIDs = paste(board, c, 0, 300)
+	newVariables := map[string]string{"trust": trust, "mood": mood}
+	w.applyTo(t, other, create(r.Variables[0], newVariables[r.Variables[0].Key]),
+		create(r.Variables[1], newVariables[r.Variables[1].Key]),
+		wireCommand{Type: "attribute.create", Payload: map[string]any{"id": fear, "component_type_id": character,
+			"name": "Fear", "key": "fear", "type": "int", "runtime": true}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": elara,
+			"component_type_id": r.Components[0].ComponentTypeID, "name": r.Components[0].Component.Name,
+			"key": r.Components[0].Component.Key}},
+		cmd)
+	keeper = w.pastedNode(t, other, newIDs[w.keeper])
+	text := textJSON(t, keeper.Text)
+	if keeper.SpeakerComponentID != elara || keeper.OnEnter == nil ||
+		keeper.OnEnter.Source != "trust += 1\nmood = \"calm\"" || !keeper.OnEnter.IsValid ||
+		!strings.Contains(text, trust) || strings.Contains(text, w.trust) || !strings.Contains(text, fear) {
+		t.Errorf("Keeper pasted with what it names created: %+v, with the text %s", keeper, text)
+	}
+	if choice := w.pastedNode(t, other, newIDs[w.choice]); !choice.Outputs[0].Condition.IsValid ||
+		choice.Outputs[0].Condition.Source != "trust > 2 && elara.fear < 3" {
+		t.Errorf("the pasted if's condition is %+v", choice.Outputs[0].Condition)
+	}
+}
+
+// TestClipboardPasteRefused checks that a paste is refused, and changes
+// nothing, for a clipboard of a newer version, for new IDs that lack one of
+// its entities or name one twice, for a board in the trash, and for an offset
+// that takes a node beyond the bounds of a position, each at its field.
+func TestClipboardPasteRefused(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	c := w.copy(t, w.keeper, w.choice)
+	newer := c
+	newer.Version = clipboard.Version + 1
+	for _, bad := range []struct {
+		name string
+		make func() wireCommand
+		at   string
+	}{
+		{"a newer version", func() wireCommand { cmd, _ := paste(w.harbour, newer, 0, 0); return cmd },
+			"payload.clipboard.version"},
+		{"a missing ID", func() wireCommand {
+			cmd, newIDs := paste(w.harbour, c, 0, 0)
+			delete(newIDs, w.ifOut)
+			return cmd
+		}, "payload.ids"},
+		{"an ID twice", func() wireCommand {
+			cmd, newIDs := paste(w.harbour, c, 0, 0)
+			newIDs[w.choice] = newIDs[w.keeper]
+			return cmd
+		}, "payload.ids."},
+		{"a position beyond the bounds", func() wireCommand { cmd, _ := paste(w.harbour, c, 1e9, 0); return cmd },
+			"payload.clipboard.nodes[0].position.x"},
+		{"a board of another project", func() wireCommand {
+			cmd, _ := paste(createBoard(t, w.s.main, w.owner, createProject(t, w.s.main, w.owner, w.ws, "Other").ID,
+				"Elsewhere"), c, 0, 0)
+			return cmd
+		}, "payload.board_id"},
+	} {
+		res := call(w.s.main, http.MethodPost, commandsPath(w.project), commandBatch(t, bad.make()),
+			w.owner.header(true))
+		wantCode(t, bad.name, res, http.StatusUnprocessableEntity, "validation_failed")
+		if !strings.Contains(string(res.body), bad.at) {
+			t.Errorf("%s: %s, want a problem at %s", bad.name, res.body, bad.at)
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"board_id": w.harbour, "clipboard": newer})
+	res := call(w.s.main, http.MethodPost, resolvePath(w.project), body, w.owner.header(true))
+	wantCode(t, "the report of a newer version", res, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(res.body), "body.clipboard.version") {
+		t.Errorf("the report of a newer version: %s", res.body)
+	}
+}
