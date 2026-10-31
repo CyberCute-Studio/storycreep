@@ -294,30 +294,30 @@ WITH hits AS (
     SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, e.vector
     FROM search_entry e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.entity_id
-    WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'node'
-        AND $4::text IN ('', 'node') AND e.vector @@ $5::tsquery
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'node'
+        AND $5::text IN ('', 'node') AND e.vector @@ $6::tsquery
     UNION ALL
     SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, e.vector
     FROM search_entry e
     JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
         AND c.id = e.entity_id
-    WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'connection'
-        AND $4::text IN ('', 'connection') AND e.vector @@ $5::tsquery
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'connection'
+        AND $5::text IN ('', 'connection') AND e.vector @@ $6::tsquery
     UNION ALL
     SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, e.vector
     FROM search_entry e
     JOIN live_variable v ON v.workspace_id = e.workspace_id AND v.project_id = e.project_id AND v.id = e.entity_id
-    WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'variable'
-        AND $4::text IN ('', 'variable') AND e.vector @@ $5::tsquery
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'variable'
+        AND $5::text IN ('', 'variable') AND e.vector @@ $6::tsquery
     UNION ALL
     SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, e.vector
     FROM search_entry e
     JOIN live_component m ON m.workspace_id = e.workspace_id AND m.project_id = e.project_id
         AND m.id = e.entity_id
-    WHERE e.workspace_id = $2 AND e.project_id = $3 AND e.kind = 'component'
-        AND $4::text IN ('', 'component') AND e.vector @@ $5::tsquery
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'component'
+        AND $5::text IN ('', 'component') AND e.vector @@ $6::tsquery
 ), title_words AS MATERIALIZED (
-    SELECT t.word::tsquery AS query FROM unnest($6::text[]) AS t (word)
+    SELECT t.word::tsquery AS query FROM unnest($7::text[]) AS t (word)
 ), ranked AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id,
         ((SELECT count(*) FROM title_words t WHERE h.vector @@ t.query)
@@ -327,36 +327,37 @@ WITH hits AS (
 ), page AS (
     SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.rank
     FROM ranked h
-    WHERE NOT $7::boolean OR h.rank < $8::real OR h.rank = $8::real
-        AND (h.kind > $9::text OR h.kind = $9::text AND h.entity_id > $10::uuid)
+    WHERE NOT $8::boolean OR h.rank < $9::real OR h.rank = $9::real
+        AND (h.kind > $10::text OR h.kind = $10::text AND h.entity_id > $11::uuid)
     ORDER BY h.rank DESC, h.kind, h.entity_id
-    LIMIT $11
+    LIMIT $12
 )
 SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title, p.rank,
     ts_headline('public.storycreep_search'::regconfig, e.title, $1::tsquery,
         'HighlightAll=true, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS title,
-    ts_headline('public.storycreep_search'::regconfig, e.body, $1::tsquery,
+    ts_headline('public.storycreep_search'::regconfig, left(e.body, $2::integer), $1::tsquery,
         'MaxWords=35, MinWords=15, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS snippet
 FROM page p
-JOIN search_entry e ON e.workspace_id = $2 AND e.project_id = $3 AND e.kind = p.kind
+JOIN search_entry e ON e.workspace_id = $3 AND e.project_id = $4 AND e.kind = p.kind
     AND e.entity_id = p.entity_id
-LEFT JOIN board b ON b.workspace_id = $2 AND b.project_id = $3 AND b.id = p.board_id
-LEFT JOIN node nd ON nd.workspace_id = $2 AND nd.project_id = $3 AND nd.id = p.node_id
+LEFT JOIN board b ON b.workspace_id = $3 AND b.project_id = $4 AND b.id = p.board_id
+LEFT JOIN node nd ON nd.workspace_id = $3 AND nd.project_id = $4 AND nd.id = p.node_id
 ORDER BY p.rank DESC, p.kind, p.entity_id
 `
 
 type SearchParams struct {
-	Words       interface{}
-	WorkspaceID pgtype.UUID
-	ProjectID   pgtype.UUID
-	Kind        string
-	Query       interface{}
-	TitleWords  []string
-	After       bool
-	AfterRank   float32
-	AfterKind   string
-	AfterID     pgtype.UUID
-	MaxRows     int32
+	Words         interface{}
+	SnippetSource int32
+	WorkspaceID   pgtype.UUID
+	ProjectID     pgtype.UUID
+	Kind          string
+	Query         interface{}
+	TitleWords    []string
+	After         bool
+	AfterRank     float32
+	AfterKind     string
+	AfterID       pgtype.UUID
+	MaxRows       int32
 }
 
 type SearchRow struct {
@@ -393,16 +394,22 @@ type SearchRow struct {
 // connection leaves, with the node's title, and its title and its body as
 // ts_headline marks the matches of words in them, between the characters
 // U+0002 and U+0003, which no document holds (search.Document): the whole
-// title, and of the body, from a match of one of the words on, up to 35
-// words, or, where fewer than 15 are left from it, up to 35 that end the
-// body, or else, where it holds none of them, its first 15 words, so that a
-// body of at most 15 words is whole. The kinds are words of lowercase ASCII
-// letters, which every collation orders alike, as Go does. The kinds'
-// conditions on the parameter are evaluated once, so that a search of one
-// kind reads the documents of no other.
+// title, and of the body's first snippet_source characters
+// (search.MaxSnippetSource), so that what ts_headline reads of each row,
+// which it reads whole, is bounded however long the bodies are, from a match
+// of one of the words on, up to 35 words, or, where fewer than 15 are left
+// from it, up to 35 that end those characters, the last of which may be a
+// word that they cut, or else, where they hold none of them, the body's
+// first 15 words, so that a body of at most 15 words is whole, and one whose
+// matches all lie past those characters, which the vector, of the whole
+// document, matches and ranks, shows its start without a mark. The kinds
+// are words of lowercase ASCII letters, which every collation orders alike,
+// as Go does. The kinds' conditions on the parameter are evaluated once, so
+// that a search of one kind reads the documents of no other.
 func (q *Queries) Search(ctx context.Context, arg SearchParams) ([]SearchRow, error) {
 	rows, err := q.db.Query(ctx, search,
 		arg.Words,
+		arg.SnippetSource,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Kind,

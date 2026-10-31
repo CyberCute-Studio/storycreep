@@ -403,7 +403,7 @@ func (s *server) serverJobs() *jobs.Registry {
 	usage.RegisterJobs(r)
 	project.RegisterJobs(r)
 	trash.RegisterJobs(r)
-	search.RegisterJobs(r)
+	search.RegisterJobs(r, s.log)
 	commands.RegisterJobs(r)
 	s.assets.RegisterJobs(r)
 	return r

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -155,13 +157,13 @@ func (u unindexed) wantIndexed(t *testing.T) {
 // passes over a project whose lock a batch holds, until a later run; it
 // writes again the documents that a migration marks; a run that stops once
 // its time runs out while it writes documents, or records projects, has the
-// job run again soon, even if another project's index failed, whose error a
-// run that reaches every project returns; it leaves alone the documents and
-// the state of a newer version, even as it records its own; it comes back to
-// a project whose state a newer version recorded once an older version's
-// batch writes a document of it; and it lists no project whose time in the
-// trash has passed. It changes how many documents a transaction writes, so
-// it runs alone.
+// job run again soon, even if another project's index failed, which it warns
+// of, and whose error a run that reaches every project returns; it leaves
+// alone the documents and the state of a newer version, even as it records
+// its own; it comes back to a project whose state a newer version recorded
+// once an older version's batch writes a document of it; and it lists no
+// project whose time in the trash has passed. It changes how many documents
+// a transaction writes, so it runs alone.
 func TestReindex(t *testing.T) {
 	ctx := context.Background()
 	u := newUnindexed(t)
@@ -226,16 +228,18 @@ func TestReindex(t *testing.T) {
 	if _, err := u.admin.Exec(ctx, `DELETE FROM search_state WHERE project_id = $1`, u.project); err != nil {
 		t.Fatal(err)
 	}
-	if err := search.Work(ctx, u.db, func() bool { return false }); err != nil {
+	var logged bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logged, nil))
+	if err := search.Work(ctx, u.db, func() bool { return false }, nil); err != nil {
 		t.Errorf("a run without the time to write a document returned %v, want nil", err)
 	}
 	untilWritten := func() bool {
 		return u.count(t, "SELECT count(*) FROM search_entry WHERE project_id = $1 AND version > 0") == 0
 	}
-	if err := search.Work(ctx, u.db, untilWritten); !errors.As(err, new(*river.JobSnoozeError)) {
+	if err := search.Work(ctx, u.db, untilWritten, log); !errors.As(err, new(*river.JobSnoozeError)) {
 		t.Errorf("a run whose time ran out once it wrote a transaction's documents returned %v, want a snooze", err)
 	}
-	if err := search.Work(ctx, u.db, func() bool { return true }); err != nil {
+	if err := search.Work(ctx, u.db, func() bool { return true }, nil); err != nil {
 		t.Errorf("a run with the time to write the rest returned %v, want nil", err)
 	}
 	u.wantIndexed(t)
@@ -255,9 +259,12 @@ func TestReindex(t *testing.T) {
 	if _, err := u.admin.Exec(ctx, `DELETE FROM search_state WHERE project_id = $1`, u.project); err != nil {
 		t.Fatal(err)
 	}
-	if err := search.Work(ctx, u.db, func() bool { return states(u.project) == 0 }); !errors.As(err,
+	if err := search.Work(ctx, u.db, func() bool { return states(u.project) == 0 }, log); !errors.As(err,
 		new(*river.JobSnoozeError)) {
 		t.Errorf("a run whose time ran out once it recorded a project returned %v, want a snooze", err)
+	}
+	if logged.Len() > 0 {
+		t.Errorf("the runs that snoozed without an error warned: %s", logged.String())
 	}
 	u.wantIndexed(t)
 
@@ -289,12 +296,16 @@ func TestReindex(t *testing.T) {
 	if bytes.Compare(other[:], u.project[:]) <= 0 {
 		t.Fatal("the new project's UUID sorts before the first's, which the job must reach first")
 	}
-	if err := search.Work(ctx, u.db, func() bool { return states(other) == 0 }); !errors.As(err,
+	if err := search.Work(ctx, u.db, func() bool { return states(other) == 0 }, log); !errors.As(err,
 		new(*river.JobSnoozeError)) {
 		t.Errorf("a run whose time ran out once it indexed a project, after another's index failed, returned %v, "+
 			"want a snooze", err)
 	}
-	if err := search.Work(ctx, u.db, func() bool { return true }); err == nil ||
+	// The snoozed attempt keeps no error, so the run warns of the failure.
+	if !strings.Contains(logged.String(), u.project.String()) {
+		t.Errorf("the run that snoozed past the failure warned %q, want the failing project named", logged.String())
+	}
+	if err := search.Work(ctx, u.db, func() bool { return true }, nil); err == nil ||
 		errors.As(err, new(*river.JobSnoozeError)) {
 		t.Errorf("a run with the time to reach a project whose index fails returned %v, want its error", err)
 	}

@@ -140,13 +140,18 @@ SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, @que
 -- connection leaves, with the node's title, and its title and its body as
 -- ts_headline marks the matches of words in them, between the characters
 -- U+0002 and U+0003, which no document holds (search.Document): the whole
--- title, and of the body, from a match of one of the words on, up to 35
--- words, or, where fewer than 15 are left from it, up to 35 that end the
--- body, or else, where it holds none of them, its first 15 words, so that a
--- body of at most 15 words is whole. The kinds are words of lowercase ASCII
--- letters, which every collation orders alike, as Go does. The kinds'
--- conditions on the parameter are evaluated once, so that a search of one
--- kind reads the documents of no other.
+-- title, and of the body's first snippet_source characters
+-- (search.MaxSnippetSource), so that what ts_headline reads of each row,
+-- which it reads whole, is bounded however long the bodies are, from a match
+-- of one of the words on, up to 35 words, or, where fewer than 15 are left
+-- from it, up to 35 that end those characters, the last of which may be a
+-- word that they cut, or else, where they hold none of them, the body's
+-- first 15 words, so that a body of at most 15 words is whole, and one whose
+-- matches all lie past those characters, which the vector, of the whole
+-- document, matches and ranks, shows its start without a mark. The kinds
+-- are words of lowercase ASCII letters, which every collation orders alike,
+-- as Go does. The kinds' conditions on the parameter are evaluated once, so
+-- that a search of one kind reads the documents of no other.
 WITH hits AS (
     SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, e.vector
     FROM search_entry e
@@ -192,7 +197,7 @@ WITH hits AS (
 SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title, p.rank,
     ts_headline('public.storycreep_search'::regconfig, e.title, @words::tsquery,
         'HighlightAll=true, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS title,
-    ts_headline('public.storycreep_search'::regconfig, e.body, @words::tsquery,
+    ts_headline('public.storycreep_search'::regconfig, left(e.body, @snippet_source::integer), @words::tsquery,
         'MaxWords=35, MinWords=15, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS snippet
 FROM page p
 JOIN search_entry e ON e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = p.kind

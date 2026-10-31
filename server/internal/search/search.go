@@ -101,6 +101,16 @@ const Version = 1
 // MaxQueryLength is how many characters a search's query has at most.
 const MaxQueryLength = 200
 
+// MaxSnippetSource is how many of a body's first characters a result's
+// snippet is taken from (queries.Search), so that what ts_headline reads of
+// each result of a page, which it reads whole, is bounded however long the
+// bodies are: a page of 201 bodies of 100,000 characters took seconds,
+// against a fifth of a second of their first 10,000 each. The match and the
+// rank still read the whole document's vector, so a body whose matches all
+// lie past them is found, ranked as any other, and its snippet is its first
+// 15 words, without a mark, as where the title alone matched.
+const MaxSnippetSource = 10000
+
 // CheckQuery says what is wrong with q as a search's query, or returns "":
 // at most MaxQueryLength characters, without control characters.
 func CheckQuery(q string) string {
@@ -136,7 +146,7 @@ type Result struct {
 	NodeID    string  `json:"node_id,omitempty" doc:"The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none."`
 	NodeTitle *string `json:"node_title,omitempty" doc:"The title of the result's node, which may be empty, and which a result has exactly when it has node_id"`
 	Title     []Span  `json:"title" nullable:"false" doc:"The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part."`
-	Snippet   []Span  `json:"snippet" nullable:"false" doc:"Some of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end the body; or else, where the body holds no word that the query matched, as where it matched only the title, the body's first 15 words. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part."`
+	Snippet   []Span  `json:"snippet" nullable:"false" doc:"Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part."`
 	key       Key
 }
 
@@ -216,7 +226,8 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
 			TitleWords: TitleQueries(lexemes), WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID),
 			Kind: string(kind), After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
-			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20))})
+			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20)),
+			SnippetSource: MaxSnippetSource})
 		if err != nil {
 			return fmt.Errorf("search: read the results: %w", err)
 		}

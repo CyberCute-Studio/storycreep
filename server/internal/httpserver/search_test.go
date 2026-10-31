@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -207,8 +209,10 @@ func newSearchWorld(t *testing.T) *searchWorld {
 // its board, its node, and its title and snippet with the matches marked
 // (AC2), the matches in titles before those in bodies, however many words
 // of a body match; the filter by kind;
-// the pages of a list, which list what one page lists, in its order; and
-// the documents as later batches leave them.
+// the pages of a list, which list what one page lists, in its order; the
+// documents as later batches leave them; and a body whose match lies past
+// what its snippet is taken from, which is found, with its start as its
+// snippet.
 //
 // Verifies: FR-PROJ-03/AC2
 func TestSearch(t *testing.T) {
@@ -384,6 +388,22 @@ func TestSearch(t *testing.T) {
 			"whose titles match one, then %s and %s, whose bodies match both, in the order of ts_rank", got, squall,
 			w.lamp, far, gale, near)
 	}
+
+	// A snippet is taken from the body's first search.MaxSnippetSource
+	// characters alone: a body whose match lies past them is found all the
+	// same, and its snippet is its first 15 words, without a mark.
+	long := newNodeID()
+	sendBatch(t, h, w.owner, w.project, cmd("node.create", map[string]any{"id": long, "board_id": w.harbour,
+		"type": "element", "text": paragraph(strings.Repeat("calm ", search.MaxSnippetSource/len("calm ")) + "wreck"),
+		"position": pos}))
+	wrecked := searchPage(t, h, w.owner, searchPath(w.project, "wreck"))
+	if len(wrecked.Items) != 1 || wrecked.Items[0].ID != long {
+		t.Fatalf("the search for wreck finds %+v, want only %s, whose match lies past its snippet's source",
+			wrecked.Items, long)
+	}
+	if got, want := marked(wrecked.Items[0].Snippet), strings.TrimSpace(strings.Repeat("calm ", 15)); got != want {
+		t.Errorf("the snippet of %s is %q, want the first 15 words of its body, without a mark", long, got)
+	}
 }
 
 // TestSearchDiacritics checks that a search compares Czech text without
@@ -430,6 +450,31 @@ func TestSearchDiacritics(t *testing.T) {
 	}
 	wantProblem(t, "a query with a control character", call(h, http.MethodGet, searchPath(p, "kůň\x07"), nil,
 		owner.header(false)), "query.q")
+}
+
+// TestSearchQueryLimit checks that the limit that the OpenAPI document gives
+// a search's query, and that its description names, is the search package's,
+// which the service checks too (search.CheckQuery).
+func TestSearchQueryLimit(t *testing.T) {
+	s := newServer(loadConfig(t, nil), slog.New(slog.DiscardHandler))
+	item := s.main.OpenAPI().Paths["/api/v1/projects/{project_id}/search"]
+	if item == nil || item.Get == nil {
+		t.Fatal("the document has no search")
+	}
+	for _, p := range item.Get.Parameters {
+		if p.In != "query" || p.Name != "q" {
+			continue
+		}
+		if p.Schema == nil || p.Schema.MaxLength == nil || *p.Schema.MaxLength != search.MaxQueryLength {
+			t.Errorf("the document's maxLength of q is not %d", search.MaxQueryLength)
+		}
+		if want := fmt.Sprintf("of 1 to %d characters", search.MaxQueryLength); !strings.Contains(p.Description,
+			want) {
+			t.Errorf("the description of q, %q, does not say %q", p.Description, want)
+		}
+		return
+	}
+	t.Error("the search has no parameter q")
 }
 
 // TestSearchGuest checks that a guest without access to a project receives

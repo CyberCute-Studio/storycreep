@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,10 +45,15 @@ const reindexPause = time.Second
 // its runs stop once their time runs out while they index projects (work),
 // so that the documents of content that predates them, or of an older
 // Version, are written by one run after another, rather than a run's worth
-// of them, sweep.Budget's, an hour.
-func RegisterJobs(r *jobs.Registry) {
+// of them, sweep.Budget's, an hour. The job warns in log, or nowhere for nil,
+// of the errors of a run that it runs again after, which the job itself does
+// not keep.
+func RegisterJobs(r *jobs.Registry, log *slog.Logger) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	jobs.Register(r, func(ctx context.Context, job *jobs.Job[reindex]) error {
-		return work(ctx, job.DB, sweep.Within(sweep.Budget))
+		return work(ctx, job.DB, sweep.Within(sweep.Budget), log)
 	})
 	jobs.Periodic(r, reindexInterval, reindex{})
 }
@@ -62,13 +68,19 @@ func RegisterJobs(r *jobs.Registry) {
 // again only after the retries' growing waits, and discarded after its last
 // attempt, while the other projects' documents wait: such a project, which
 // has no state recorded, fails again in each later run, and the first that
-// has the time to reach every project returns its errors. A run that
-// neither writes a document nor records a project, as one of an instance
-// whose projects are all indexed, waits for the job's next period, however
-// long it takes.
-func work(ctx context.Context, db sweep.DB, more func() bool) error {
+// has the time to reach every project returns its errors. Since a snoozed
+// attempt keeps no error, it warns in log of the errors of a run that it
+// snoozes after, so that a failure shows while a backlog is written too. A
+// run that neither writes a document nor records a project, as one of an
+// instance whose projects are all indexed, waits for the job's next period,
+// however long it takes.
+func work(ctx context.Context, db sweep.DB, more func() bool, log *slog.Logger) error {
 	done, err := reindexWithin(ctx, db, more)
 	if (done.written > 0 || done.recorded > 0) && !more() {
+		if err != nil {
+			log.WarnContext(ctx, "the job of the search index runs again soon, past what it failed to index",
+				"error", err)
+		}
 		return jobs.Snooze(reindexPause)
 	}
 	return err
