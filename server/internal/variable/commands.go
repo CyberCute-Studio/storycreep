@@ -55,7 +55,7 @@ const (
 
 // createPayload is Create's payload.
 type createPayload struct {
-	ID           string `json:"id" doc:"The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID           string `json:"id" doc:"The new variable's ID, a var_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	Key          string `json:"key" doc:"The variable's key, by which expressions name it: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as met_elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other variable of its scope has, of those that are not in the project's trash, the project's global variables for a global, and its board's for a board's, which is answered with 409 key_taken."`
 	Type         string `json:"type" enum:"bool,int,float,string" doc:"The variable's type"`
 	Scope        string `json:"scope" enum:"global,board" doc:"Who reads the variable: every board's expressions, for global, or only its board's, for board (PRD FR-VAR-02). A board's variable keeps its value across the board's entries, as a global does, unless reset_on_enter is set."`
@@ -460,7 +460,8 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	// anything else is checked, so that a create sent again with a new command
 	// ID, as an offline client's keep-mine sends it (FR-OFF-04), is refused for
 	// its ID rather than for the key that its variable has taken; the insert
-	// below refuses the ID of a variable that this transaction does not see.
+	// below refuses the ID of any other entity, of any kind, that this
+	// transaction does not see.
 	if _, err := q.VariableAny(ctx, queries.VariableAnyParams{WorkspaceID: ws, ProjectID: project, ID: id}); err == nil {
 		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -486,10 +487,10 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	err = q.InsertVariable(ctx, queries.InsertVariableParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		Scope: p.Scope, BoardID: boardID, FolderID: folder, SortKey: order, Key: p.Key, Type: p.Type,
 		DefaultValue: def.JSON(), Description: p.Description, ResetOnEnter: p.ResetOnEnter, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "variable_pkey") {
-		// The ID is another workspace's, or another project's, whose rows this
-		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a variable that exists already", nil)
+	if database.IDTaken(err, "variable") {
+		// The ID is another entity's, of any kind of the content, of any
+		// workspace or project, whose rows this transaction does not see.
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("variable: add the variable: %w", err)

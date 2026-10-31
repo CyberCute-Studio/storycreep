@@ -245,6 +245,14 @@ var Tables = []Table{
 			"target_kind, target_id, access) VALUES ($1, $2, $3, $4, 'variable', $5, 'read')", []any{w.ID,
 			w.Rows["project"], w.Rows["expression"], w.Rows["board"], target}}, nil
 	}},
+	{Name: "entity_id", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A UUID of the workspace's content of its own, which no entity holds,
+		// as the harness reads the rows alone; the rows of the content's
+		// tables add theirs by their triggers.
+		id := ids.New()
+		return Statement{id, "INSERT INTO entity_id (id, workspace_id, project_id, kind) VALUES ($1, $2, $3, 'node')",
+			[]any{id, w.ID, w.Rows["project"]}}, nil
+	}},
 	{Name: "variable", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A global variable's key is unique within its project, which its ID
 		// makes. It belongs to no board, so that the trash's tests delete it

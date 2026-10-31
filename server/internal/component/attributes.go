@@ -60,7 +60,7 @@ const (
 
 // createAttributePayload is CreateAttribute's payload.
 type createAttributePayload struct {
-	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID              string      `json:"id" doc:"The new attribute definition's ID, an atr_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	ComponentTypeID string      `json:"component_type_id" doc:"The ID of the component type that the definition is added to, which is not in the project's trash, and which has fewer than 100 definitions that are not"`
 	Name            string      `json:"name" maxLength:"100" doc:"The definition's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Key             string      `json:"key,omitempty" doc:"The definition's key, by which expressions name its values, as trust in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as trust, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other attribute definition of its type has, of those that are not in the project's trash, which is answered with 409 key_taken. Without it, the key is derived from the name, as a component type's is, or is attribute for a name without letters or digits."`
@@ -486,8 +486,8 @@ func applyCreateAttribute(ctx context.Context, tx *commands.Tx, p createAttribut
 	err = q.InsertAttributeDef(ctx, queries.InsertAttributeDefParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		ComponentTypeID: t.ID, SortKey: order, Key: key, Name: p.Name, Type: p.Type, EnumOptions: options,
 		DefaultValue: def.JSON(), IsRuntime: p.Runtime, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "attribute_def_pkey") {
-		return commands.Refuse("id", "is the ID of an attribute definition that exists already", nil)
+	if database.IDTaken(err, "attribute_def") {
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the attribute definition: %w", err)

@@ -38,7 +38,7 @@ const (
 
 // createFolderPayload is CreateFolder's payload.
 type createFolderPayload struct {
-	ID       string `json:"id" doc:"The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID       string `json:"id" doc:"The new folder's ID, a fld_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	Kind     string `json:"kind" enum:"board,variable,component" doc:"What the folder holds: boards, variables, or components, each in a tree of folders of its own"`
 	Name     string `json:"name" maxLength:"100" doc:"The folder's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	ParentID string `json:"parent_id,omitempty" doc:"The ID of the folder of the same kind that the folder goes into, which is not deleted. Without it, the folder goes at the top."`
@@ -247,8 +247,8 @@ func applyCreateFolder(ctx context.Context, tx *commands.Tx, p createFolderPaylo
 	}
 	err = q.InsertFolder(ctx, queries.InsertFolderParams{ID: id, WorkspaceID: ws, ProjectID: project, Kind: p.Kind,
 		ParentID: parent, Name: p.Name, SortKey: order, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "folder_pkey") {
-		return commands.Refuse("id", "is the ID of a folder that exists already", nil)
+	if database.IDTaken(err, "folder") {
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("board: add the folder: %w", err)

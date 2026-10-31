@@ -58,7 +58,7 @@ const (
 
 // createPayload is Create's payload.
 type createPayload struct {
-	ID              string `json:"id" doc:"The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID              string `json:"id" doc:"The new component's ID, a cmp_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	ComponentTypeID string `json:"component_type_id" doc:"The ID of the component's type, which is not in the project's trash, and which is fixed once the component is created"`
 	Name            string `json:"name" maxLength:"100" doc:"The component's name, of 1 to 100 characters, not all of them blank, without white space around it, and without control characters, bidirectional controls, and line separators among them"`
 	Key             string `json:"key,omitempty" doc:"The component's key, by which expressions name it, as elara in elara.trust: an identifier of the expression language (PRD §5.8.1): an ASCII letter or an underscore, then ASCII letters, digits, and underscores, of at most 64 characters, as elara, compared case by case, and not one of its reserved words, true, false, and, or, not, global, board, null, if, else, and elseif, which is answered with 422 key_invalid, and that no other component of the project has, of those that are not in its trash, which is answered with 409 key_taken. Without it, the key is derived from the name (PRD FR-COMP-02): its letters and digits in lowercase ASCII, without their accents, each run of other characters an underscore, with an underscore before it if it starts with a digit, or component for a name without them, and with _2, _3, and so on after it if another component of the project that is not in its trash has it, or it is a reserved word."`
@@ -458,10 +458,10 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	err = q.InsertComponent(ctx, queries.InsertComponentParams{ID: id, WorkspaceID: ws, ProjectID: project,
 		ComponentTypeID: t.ID, FolderID: folder, SortKey: order, Key: key, Name: p.Name, Description: doc,
 		ImageAssetID: image, CreatedBy: by(tx)})
-	if database.UniqueViolation(err, "component_pkey") {
-		// The ID is another workspace's, or another project's, whose rows this
-		// transaction does not see.
-		return commands.Refuse("id", "is the ID of a component that exists already", nil)
+	if database.IDTaken(err, "component") {
+		// The ID is another entity's, of any kind of the content, of any
+		// workspace or project, whose rows this transaction does not see.
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("component: add the component: %w", err)

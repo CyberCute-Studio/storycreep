@@ -55,7 +55,7 @@ const (
 
 // createPayload is Create's payload.
 type createPayload struct {
-	ID                 string        `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID                 string        `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	BoardID            string        `json:"board_id" doc:"The ID of the node's board, which is not in the project's trash, and which is fixed once the node is created"`
 	Type               string        `json:"type" enum:"element,branch,jumper" doc:"The node's type, which is fixed once it is created: an element, a line of dialogue or of narration; a branch, which picks the first of its outputs whose condition holds; or a jumper, which continues the flow at its target (PRD §5.8.5)"`
 	Kind               string        `json:"kind,omitempty" enum:"dialogue,narration" doc:"An element's kind: dialogue, which a speaker says, or narration. Without it, dialogue. Another type has none, and is answered with 422 validation_failed for one."`
@@ -104,7 +104,7 @@ type movePayload struct {
 
 // duplicatePayload is Duplicate's payload.
 type duplicatePayload struct {
-	ID       string       `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
+	ID       string       `json:"id" doc:"The new node's ID, a nd_ ID of a UUIDv7 that the client makes, which no entity of a project's content has, of any kind, in any workspace (PRD §5.2); one that one has is answered with 422 validation_failed"`
 	SourceID string       `json:"source_id" doc:"The ID of the node that the new node is a copy of, which is not in the project's trash: the new node is of the same board, and has its type and every field of it but its position, its text, speaker, target, and scripts among them, but neither a branch's outputs nor the node's connections, which are entities of their own, and which a client copies with commands of their own"`
 	Position NodePosition `json:"position" doc:"Where the new node goes on the board's canvas"`
 }
@@ -648,8 +648,8 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		}
 	}
 	err = q.InsertNode(ctx, params)
-	if database.UniqueViolation(err, "node_pkey") {
-		return refuseTakenID()
+	if database.IDTaken(err, "node") {
+		return commands.RefuseTakenID()
 	}
 	if err != nil {
 		return fmt.Errorf("node: add the node: %w", err)
@@ -692,8 +692,8 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 	n, err := q.DuplicateNode(ctx, queries.DuplicateNodeParams{ID: id, X: x, Y: y, CreatedBy: by(tx),
 		WorkspaceID: ws, ProjectID: project, SourceID: source.ID})
 	switch {
-	case database.UniqueViolation(err, "node_pkey"):
-		return refuseTakenID()
+	case database.IDTaken(err, "node"):
+		return commands.RefuseTakenID()
 	case err != nil:
 		return fmt.Errorf("node: duplicate the node: %w", err)
 	case n != 1:
@@ -712,8 +712,9 @@ func applyDuplicate(ctx context.Context, tx *commands.Tx, p duplicatePayload) er
 
 // checkNewNode refuses the batch, at id, if the project has a node whose
 // UUID is id, the ID of a node that a command creates, before anything else
-// is checked, as a board's create does; the insert refuses the ID of a node
-// that the transaction does not see (refuseTakenID).
+// is checked, as a board's create does; the insert refuses the ID of any
+// other entity, of any kind, that the transaction does not see
+// (commands.RefuseTakenID).
 func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtype.UUID) error {
 	_, err := q.NodeAny(ctx, queries.NodeAnyParams{WorkspaceID: ws, ProjectID: project, ID: id})
 	switch {
@@ -726,8 +727,9 @@ func checkNewNode(ctx context.Context, q *queries.Queries, ws, project, id pgtyp
 }
 
 // refuseTakenID returns the refusal, at id, of a command that creates a node
-// with the ID of one that exists already, which may be another workspace's,
-// or another project's, whose rows the transaction does not see.
+// with the ID of one of the project's that exists already, which the
+// transaction sees; the insert refuses the ID of any other entity
+// (commands.RefuseTakenID).
 func refuseTakenID() error {
 	return commands.Refuse("id", "is the ID of a node that exists already", nil)
 }

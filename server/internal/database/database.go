@@ -612,6 +612,17 @@ func UniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 }
 
+// IDTaken reports whether err, the error of an insert of an entity of a
+// project's content into its table, is that the entity's ID is taken: by an
+// entity of its own kind, a violation of the table's primary key, named
+// <table>_pkey, or by an entity of another kind of the content, a violation
+// of entity_id's (PRD §5.2, migration 00029), whose triggers add the UUID of
+// each entity that the content's tables insert. A command that creates the
+// entity refuses its ID for either.
+func IDTaken(err error, table string) bool {
+	return UniqueViolation(err, table+"_pkey") || UniqueViolation(err, "entity_id_pkey")
+}
+
 // querier is what pgx.Conn, pgxpool.Pool, and pgx.Tx have in common for
 // reading.
 type querier interface {

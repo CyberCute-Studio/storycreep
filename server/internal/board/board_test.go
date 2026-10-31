@@ -611,7 +611,13 @@ func TestOrder(t *testing.T) {
 	}
 	// A folder and a board that a client gave the same UUID are each other's
 	// siblings all the same: the board, moved to the end, goes after the
-	// folder.
+	// folder. The commands refuse such IDs since migration 00029 (PRD §5.2),
+	// so the board's table adds no UUID to entity_id while the test makes
+	// them, as in a database that held them before the migration.
+	admin := f.d.Admin(t)
+	if _, err := admin.Exec(context.Background(), "ALTER TABLE board DISABLE TRIGGER entity_id_insert"); err != nil {
+		t.Fatal(err)
+	}
 	twin, shared := folderID(), ids.New()
 	f.must(t, cmd{board.CreateFolder, map[string]any{"id": twin, "kind": "board", "name": "Act 3"}},
 		cmd{board.CreateFolder, map[string]any{"id": ids.Encode(ids.Folder, shared), "kind": "board",
@@ -622,6 +628,9 @@ func TestOrder(t *testing.T) {
 	if got := f.get(t, ids.Encode(ids.Board, shared)); got.Order != "b" {
 		t.Errorf("a board moved to the end after a folder with its UUID is at %q, want b, after the folder's a",
 			got.Order)
+	}
+	if _, err := admin.Exec(context.Background(), "ALTER TABLE board ENABLE TRIGGER entity_id_insert"); err != nil {
+		t.Fatal(err)
 	}
 	// A folder and a board with the same key are ordered by their IDs without
 	// the prefix, as the API documents, which order them as their UUIDs do:
