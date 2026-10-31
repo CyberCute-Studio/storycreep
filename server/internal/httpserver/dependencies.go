@@ -61,14 +61,16 @@ type contributionsOutput struct {
 
 // contributionKey is the key of a list of contributions that its pages'
 // cursors hold (dependency.ContributionKey), each UUID in its text form, the
-// zero UUID where a contribution has none.
+// zero UUID where a contribution has none, and the types of its ends' sites.
 type contributionKey struct {
-	Target    string `json:"target"`
-	Attribute string `json:"attribute"`
-	FromNode  string `json:"from_node"`
-	FromSite  string `json:"from_site"`
-	ToNode    string `json:"to_node"`
-	ToSite    string `json:"to_site"`
+	Target       string `json:"target"`
+	Attribute    string `json:"attribute"`
+	FromNode     string `json:"from_node"`
+	FromSite     string `json:"from_site"`
+	FromSiteType string `json:"from_site_type"`
+	ToNode       string `json:"to_node"`
+	ToSite       string `json:"to_site"`
+	ToSiteType   string `json:"to_site_type"`
 }
 
 // graphDoc says, in the descriptions of the graph's operations, what an
@@ -82,7 +84,8 @@ const graphDoc = " An edge of the kind variable or attribute leaves a board that
 	"edges are those of the sites, the nodes, and the boards that are not in the project's trash, and none joins " +
 	"a board to itself, as a dependency within a board is none between boards. Each filter keeps the " +
 	"contributions that it names, and so the edges that have any, and filters that name nothing in common keep " +
-	"nothing; a filter by an ID that the project does not have keeps nothing either."
+	"nothing; a filter by an ID that the project does not have keeps nothing either, but one by an ID whose " +
+	"UUID is all zeros, which no entity has, is no filter, as if it were left out."
 
 // usageKey is the key of a list of usages that its pages' cursors hold
 // (dependency.Key), each UUID in its text form, the zero UUID where a usage
@@ -262,8 +265,8 @@ func registerDependencies(m *api.Mux, dependencies *dependency.Service) {
 		page, err := api.NewPage(in.PageParams, list, func(c dependency.Contribution) contributionKey {
 			k := c.Key()
 			return contributionKey{Target: k.Target.String(), Attribute: k.Attribute.String(),
-				FromNode: k.FromNode.String(), FromSite: k.FromSite.String(), ToNode: k.ToNode.String(),
-				ToSite: k.ToSite.String()}
+				FromNode: k.FromNode.String(), FromSite: k.FromSite.String(), FromSiteType: k.FromSiteType,
+				ToNode: k.ToNode.String(), ToSite: k.ToSite.String(), ToSiteType: k.ToSiteType}
 		})
 		if err != nil {
 			return nil, err
@@ -288,7 +291,9 @@ func graphFilter(f *dependency.Filter, variable, component, attribute string) er
 }
 
 // optionalID returns the UUID of s, an ID of the kind, or zero for the empty
-// s of a filter that a request leaves out.
+// s of a filter that a request leaves out. An ID whose UUID is zero, which
+// no entity has, is no filter either, as with component_type_id of GET
+// /api/v1/projects/{project_id}/components.
 func optionalID(k ids.Kind, s string) (ids.UUID, error) {
 	if s == "" {
 		return ids.UUID{}, nil
@@ -299,7 +304,8 @@ func optionalID(k ids.Kind, s string) (ids.UUID, error) {
 // contributionCursor returns the key that cursor, a next_cursor of a list of
 // contributions, holds, or the zero key, before every contribution, for the
 // empty cursor of the first page. A cursor that holds no key, or not in the
-// form that the server writes, is answered with invalid_cursor.
+// form that the server writes, each site's type one of a contribution's end
+// (dependency.End), is answered with invalid_cursor.
 func contributionCursor(cursor string) (dependency.ContributionKey, error) {
 	if cursor == "" {
 		return dependency.ContributionKey{}, nil
@@ -314,6 +320,10 @@ func contributionCursor(cursor string) (dependency.ContributionKey, error) {
 		cursorUUID{key.ToNode, &out.ToNode}, cursorUUID{key.ToSite, &out.ToSite}); err != nil {
 		return dependency.ContributionKey{}, err
 	}
+	if !dependency.IsEndSite(key.FromSiteType) || !dependency.IsEndSite(key.ToSiteType) {
+		return dependency.ContributionKey{}, api.NewError(api.CodeInvalidCursor)
+	}
+	out.FromSiteType, out.ToSiteType = key.FromSiteType, key.ToSiteType
 	return out, nil
 }
 

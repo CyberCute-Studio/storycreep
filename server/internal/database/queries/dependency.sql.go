@@ -333,7 +333,7 @@ type JumperContributionsRow struct {
 // the key of ValueContributions, whose target and attribute are the zero
 // UUID, whose node and site of the board from_board_id are each the
 // jumper's ID, and whose node and site of the board to_board_id are each
-// its target's.
+// its target's, but for the sites' types, since a jumper's UUID is its own.
 func (q *Queries) JumperContributions(ctx context.Context, arg JumperContributionsParams) ([]JumperContributionsRow, error) {
 	rows, err := q.db.Query(ctx, jumperContributions,
 		arg.WorkspaceID,
@@ -777,11 +777,11 @@ WITH refs AS (
     FROM sites w
     JOIN sites r ON r.target_id = w.target_id AND r.attribute_key = w.attribute_key
     WHERE w.board_id = $4 AND w.access = 'write' AND r.board_id = $5 AND r.access = 'read'
-        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, r.node_id, r.site_id)
+        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site)
             > ($8::uuid, $9::uuid, $10::uuid, $11::uuid,
-                $12::uuid, $13::uuid)
-    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, r.node_id, r.site_id
-    LIMIT $14
+                $12::text, $13::uuid, $14::uuid, $15::text)
+    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site
+    LIMIT $16
 )
 SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_node_id::uuid AS from_node_id,
     fn.title AS from_node_title, p.from_site_id::uuid AS from_site_id, p.from_connection_id, p.from_branch_output_id,
@@ -790,24 +790,27 @@ SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_n
 FROM page p
 JOIN node fn ON fn.workspace_id = $1 AND fn.project_id = $2 AND fn.id = p.from_node_id
 JOIN node tn ON tn.workspace_id = $1 AND tn.project_id = $2 AND tn.id = p.to_node_id
-ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.to_node_id, p.to_site_id
+ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.from_site, p.to_node_id, p.to_site_id,
+    p.to_site
 `
 
 type ValueContributionsParams struct {
-	WorkspaceID    pgtype.UUID
-	ProjectID      pgtype.UUID
-	TargetKind     string
-	FromBoardID    pgtype.UUID
-	ToBoardID      pgtype.UUID
-	TargetID       pgtype.UUID
-	AttributeDefID pgtype.UUID
-	AfterTarget    pgtype.UUID
-	AfterAttribute pgtype.UUID
-	AfterFromNode  pgtype.UUID
-	AfterFromSite  pgtype.UUID
-	AfterToNode    pgtype.UUID
-	AfterToSite    pgtype.UUID
-	MaxRows        int32
+	WorkspaceID       pgtype.UUID
+	ProjectID         pgtype.UUID
+	TargetKind        string
+	FromBoardID       pgtype.UUID
+	ToBoardID         pgtype.UUID
+	TargetID          pgtype.UUID
+	AttributeDefID    pgtype.UUID
+	AfterTarget       pgtype.UUID
+	AfterAttribute    pgtype.UUID
+	AfterFromNode     pgtype.UUID
+	AfterFromSite     pgtype.UUID
+	AfterFromSiteType string
+	AfterToNode       pgtype.UUID
+	AfterToSite       pgtype.UUID
+	AfterToSiteType   string
+	MaxRows           int32
 }
 
 type ValueContributionsRow struct {
@@ -839,9 +842,13 @@ type ValueContributionsRow struct {
 // the order of their targets, their attributes' definitions, the zero UUID
 // for a variable's, the nodes and the sites that write them, and the nodes
 // and the sites that read them, a site being an expression, or a text's
-// owner, after the key whose parts are after_target, after_attribute,
-// after_from_node, after_from_site, after_to_node, and after_to_site, which
-// is all zero UUIDs for the first page, as no contribution is.
+// owner, by its UUID and then its type, since two sites of one node may
+// share a UUID, as a node's text and the label of a connection that leaves
+// it whose UUID a client chose to be the node's do, after the key whose
+// parts are after_target, after_attribute, after_from_node, after_from_site,
+// after_from_site_type, after_to_node, after_to_site, and
+// after_to_site_type, which is all zero UUIDs and empty types for the first
+// page, as no contribution is.
 func (q *Queries) ValueContributions(ctx context.Context, arg ValueContributionsParams) ([]ValueContributionsRow, error) {
 	rows, err := q.db.Query(ctx, valueContributions,
 		arg.WorkspaceID,
@@ -855,8 +862,10 @@ func (q *Queries) ValueContributions(ctx context.Context, arg ValueContributions
 		arg.AfterAttribute,
 		arg.AfterFromNode,
 		arg.AfterFromSite,
+		arg.AfterFromSiteType,
 		arg.AfterToNode,
 		arg.AfterToSite,
+		arg.AfterToSiteType,
 		arg.MaxRows,
 	)
 	if err != nil {
@@ -956,7 +965,8 @@ type VisitContributionsRow struct {
 // order of the nodes visited, and the nodes and the expressions that read
 // them, after the key of ValueContributions, whose target, node, and site
 // of the board from_board_id are each the visited node's ID, and whose
-// attribute is the zero UUID.
+// attribute is the zero UUID, but for the sites' types, since an
+// expression's UUID is its own.
 func (q *Queries) VisitContributions(ctx context.Context, arg VisitContributionsParams) ([]VisitContributionsRow, error) {
 	rows, err := q.db.Query(ctx, visitContributions,
 		arg.WorkspaceID,

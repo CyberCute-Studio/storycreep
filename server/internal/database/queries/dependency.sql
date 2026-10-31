@@ -275,9 +275,13 @@ GROUP BY j.board_id, t.board_id;
 -- the order of their targets, their attributes' definitions, the zero UUID
 -- for a variable's, the nodes and the sites that write them, and the nodes
 -- and the sites that read them, a site being an expression, or a text's
--- owner, after the key whose parts are after_target, after_attribute,
--- after_from_node, after_from_site, after_to_node, and after_to_site, which
--- is all zero UUIDs for the first page, as no contribution is.
+-- owner, by its UUID and then its type, since two sites of one node may
+-- share a UUID, as a node's text and the label of a connection that leaves
+-- it whose UUID a client chose to be the node's do, after the key whose
+-- parts are after_target, after_attribute, after_from_node, after_from_site,
+-- after_from_site_type, after_to_node, after_to_site, and
+-- after_to_site_type, which is all zero UUIDs and empty types for the first
+-- page, as no contribution is.
 WITH refs AS (
     SELECT r.* FROM expression_ref r
     WHERE r.workspace_id = @workspace_id AND r.project_id = @project_id AND r.target_kind = @target_kind
@@ -318,10 +322,10 @@ WITH refs AS (
     FROM sites w
     JOIN sites r ON r.target_id = w.target_id AND r.attribute_key = w.attribute_key
     WHERE w.board_id = @from_board_id AND w.access = 'write' AND r.board_id = @to_board_id AND r.access = 'read'
-        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, r.node_id, r.site_id)
+        AND (w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site)
             > (@after_target::uuid, @after_attribute::uuid, @after_from_node::uuid, @after_from_site::uuid,
-                @after_to_node::uuid, @after_to_site::uuid)
-    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, r.node_id, r.site_id
+                @after_from_site_type::text, @after_to_node::uuid, @after_to_site::uuid, @after_to_site_type::text)
+    ORDER BY w.target_id, w.attribute_key, w.node_id, w.site_id, w.site, r.node_id, r.site_id, r.site
     LIMIT @max_rows
 )
 SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_node_id::uuid AS from_node_id,
@@ -331,7 +335,8 @@ SELECT p.target_id::uuid AS target_id, p.attribute_def_id, p.from_site, p.from_n
 FROM page p
 JOIN node fn ON fn.workspace_id = @workspace_id AND fn.project_id = @project_id AND fn.id = p.from_node_id
 JOIN node tn ON tn.workspace_id = @workspace_id AND tn.project_id = @project_id AND tn.id = p.to_node_id
-ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.to_node_id, p.to_site_id;
+ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.from_site, p.to_node_id, p.to_site_id,
+    p.to_site;
 
 -- name: VisitContributions :many
 -- VisitContributions returns at most max_rows of the contributions to the
@@ -343,7 +348,8 @@ ORDER BY p.target_id, p.attribute_key, p.from_node_id, p.from_site_id, p.to_node
 -- order of the nodes visited, and the nodes and the expressions that read
 -- them, after the key of ValueContributions, whose target, node, and site
 -- of the board from_board_id are each the visited node's ID, and whose
--- attribute is the zero UUID.
+-- attribute is the zero UUID, but for the sites' types, since an
+-- expression's UUID is its own.
 WITH page AS (
     SELECT v.id AS visited_id, e.id AS site_id,
         (CASE WHEN e.node_id IS NOT NULL THEN 'node_' || e.field WHEN e.connection_id IS NOT NULL
@@ -381,7 +387,7 @@ ORDER BY p.visited_id, p.node_id, p.site_id;
 -- the key of ValueContributions, whose target and attribute are the zero
 -- UUID, whose node and site of the board from_board_id are each the
 -- jumper's ID, and whose node and site of the board to_board_id are each
--- its target's.
+-- its target's, but for the sites' types, since a jumper's UUID is its own.
 SELECT j.id AS jumper_id, j.title AS jumper_title, t.id AS target_id, t.title AS target_title
 FROM live_node j
 JOIN live_node t ON t.workspace_id = j.workspace_id AND t.project_id = j.project_id AND t.id = j.target_node_id

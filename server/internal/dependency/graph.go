@@ -43,6 +43,16 @@ var edgeKinds = []EdgeKind{EdgeVariable, EdgeAttribute, EdgeJumper, EdgeVisit}
 // an expression reads whether it was visited.
 const SiteNode = "node"
 
+// endSites are the sites of a contribution's end (End.Site), in the order of
+// its enum: a usage's sites on a board, but a node's speaker, and the node
+// itself.
+var endSites = []string{SiteNode, SiteNodeOnEnter, SiteNodeOnExit, SiteNodeText, SiteConnectionCondition,
+	SiteConnectionOnTraverse, SiteConnectionLabel, SiteBranchOutputCondition}
+
+// IsEndSite reports whether s is a site of a contribution's end (End.Site),
+// as a cursor of a list of contributions holds its ends' sites' types.
+func IsEndSite(s string) bool { return slices.Contains(endSites, s) }
+
 // Filter keeps some of a graph's contributions, and so of its edges, as
 // FR-DEP-02's filters do: each of its fields that is not zero keeps the
 // contributions that it names, and a contribution is kept only if every one
@@ -62,16 +72,16 @@ type Filter struct {
 	Component, Attribute ids.UUID
 }
 
-// kinds returns the kinds of edge that f keeps, in their order.
-func (f Filter) kinds() []EdgeKind {
-	var out []EdgeKind
+// keeps returns the set of the kinds of edge that f keeps.
+func (f Filter) keeps() map[EdgeKind]bool {
+	out := map[EdgeKind]bool{}
 	for _, k := range edgeKinds {
 		switch {
 		case f.Kind != "" && f.Kind != k:
 		case f.Variable != (ids.UUID{}) && k != EdgeVariable:
 		case (f.Component != (ids.UUID{}) || f.Attribute != (ids.UUID{})) && k != EdgeAttribute:
 		default:
-			out = append(out, k)
+			out[k] = true
 		}
 	}
 	return out
@@ -131,9 +141,15 @@ type End struct {
 // starts: its target, the variable, the component, or the node visited, and
 // its attribute's definition, and the node and the site of each of its ends,
 // a site being an expression's UUID, or that of a text's owner, or the node
-// itself, each zero where it has none, as a jumper has no target.
+// itself, each zero where it has none, as a jumper has no target, and then
+// the site's type (End.Site).
 type ContributionKey struct {
 	Target, Attribute, FromNode, FromSite, ToNode, ToSite ids.UUID
+	// FromSiteType and ToSiteType are the types of the ends' sites
+	// (End.Site), which tell apart two sites of one node that share a UUID,
+	// as a node's text and the label of a connection that leaves it do if a
+	// client chose the connection's UUID to be the node's.
+	FromSiteType, ToSiteType string
 }
 
 // Key returns where c is in its list.
@@ -149,7 +165,7 @@ func (c Contribution) Key() ContributionKey { return c.key }
 // errors of project.Service.Get, as project.ErrNotFound.
 func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids.UUID, f Filter) (*Graph, error) {
 	var g *Graph
-	kinds := f.kinds()
+	keeps := f.keeps()
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		q, ws, p := queries.New(tx), nullUUID(workspaceID), nullUUID(projectID)
 		project, err := q.Project(ctx, queries.ProjectParams{WorkspaceID: ws, ID: p})
@@ -160,23 +176,26 @@ func (s *Service) Graph(ctx context.Context, actor commands.Actor, projectID ids
 		if err != nil {
 			return fmt.Errorf("dependency: read the boards: %w", err)
 		}
-		// Each read is of the kinds of edge that f may keep alone: the index's
-		// rows of all but the jumpers', and the jumpers.
+		// Each read is made only if f keeps a kind of edge that it gives: the
+		// index's rows, of the variables, the attributes, and the visits, and
+		// the jumpers. The index's are those of all three kinds, whichever of
+		// them f keeps, as the read takes no parameter but the project, for the
+		// reason that the header of the graph's queries gives.
 		var refs []queries.GraphReferencesRow
-		if slices.ContainsFunc(kinds, func(k EdgeKind) bool { return k != EdgeJumper }) {
+		if keeps[EdgeVariable] || keeps[EdgeAttribute] || keeps[EdgeVisit] {
 			if refs, err = q.GraphReferences(ctx, queries.GraphReferencesParams{WorkspaceID: ws,
 				ProjectID: p}); err != nil {
 				return fmt.Errorf("dependency: read the index's rows of the graph: %w", err)
 			}
 		}
 		var jumpers []queries.GraphJumpersRow
-		if slices.Contains(kinds, EdgeJumper) {
+		if keeps[EdgeJumper] {
 			if jumpers, err = q.GraphJumpers(ctx, queries.GraphJumpersParams{WorkspaceID: ws,
 				ProjectID: p}); err != nil {
 				return fmt.Errorf("dependency: read the jumpers of the graph: %w", err)
 			}
 		}
-		g = graphOf(project.Project.Seq, boards, edgesOf(f, refs, jumpers))
+		g = graphOf(project.Project.Seq, boards, edgesOf(f, keeps, refs, jumpers))
 		return nil
 	})
 	if err != nil {
@@ -191,17 +210,18 @@ type edge struct {
 	kind     EdgeKind
 }
 
-// edgesOf returns the edges that f keeps, each with how many of its
-// contributions f keeps, of the project's sites' rows of the index refs,
-// which GraphReferences returns, and of its jumpers, which GraphJumpers
-// returns: of a variable or an attribute, from each board that writes it to
-// each other board that reads it, counting each pair of their sites; of a
-// visit, from the visited node's board to another board that reads it,
-// counting each site; and of the jumpers, from their boards to another board
-// that their targets are on, counting each jumper. The rows hold no filter,
-// so that the reads' plans are of the project alone.
-func edgesOf(f Filter, refs []queries.GraphReferencesRow, jumpers []queries.GraphJumpersRow) map[edge]int64 {
-	kinds := f.kinds()
+// edgesOf returns the edges that f keeps, of the kinds keeps, which
+// f.keeps returns, each with how many of its contributions f keeps, of the
+// project's sites' rows of the index refs, which GraphReferences returns,
+// and of its jumpers, which GraphJumpers returns: of a variable or an
+// attribute, from each board that writes it to each other board that reads
+// it, counting each pair of their sites; of a visit, from the visited node's
+// board to another board that reads it, counting each site; and of the
+// jumpers, from their boards to another board that their targets are on,
+// counting each jumper. The rows hold no filter, so that the reads' plans are
+// of the project alone.
+func edgesOf(f Filter, keeps map[EdgeKind]bool, refs []queries.GraphReferencesRow,
+	jumpers []queries.GraphJumpersRow) map[edge]int64 {
 	out := map[edge]int64{}
 	add := func(from, to ids.UUID, kind EdgeKind, n int64) {
 		if from == to || f.Board != (ids.UUID{}) && f.Board != from && f.Board != to {
@@ -225,16 +245,16 @@ func edgesOf(f Filter, refs []queries.GraphReferencesRow, jumpers []queries.Grap
 		t := target{kind: Kind(r.TargetKind), id: r.TargetID.Bytes, attribute: r.AttributeDefID.Bytes}
 		switch t.kind {
 		case Node:
-			if slices.Contains(kinds, EdgeVisit) && r.VisitedBoardID.Valid {
+			if keeps[EdgeVisit] && r.VisitedBoardID.Valid {
 				add(r.VisitedBoardID.Bytes, board, EdgeVisit, r.Sites)
 			}
 			continue
 		case Variable:
-			if !slices.Contains(kinds, EdgeVariable) || f.Variable != (ids.UUID{}) && f.Variable != t.id {
+			if !keeps[EdgeVariable] || f.Variable != (ids.UUID{}) && f.Variable != t.id {
 				continue
 			}
 		case Attribute:
-			if !slices.Contains(kinds, EdgeAttribute) || f.Component != (ids.UUID{}) && f.Component != t.id ||
+			if !keeps[EdgeAttribute] || f.Component != (ids.UUID{}) && f.Component != t.id ||
 				f.Attribute != (ids.UUID{}) && f.Attribute != t.attribute {
 				continue
 			}
@@ -258,7 +278,7 @@ func edgesOf(f Filter, refs []queries.GraphReferencesRow, jumpers []queries.Grap
 			}
 		}
 	}
-	if slices.Contains(kinds, EdgeJumper) {
+	if keeps[EdgeJumper] {
 		for _, j := range jumpers {
 			add(j.FromBoardID.Bytes, j.ToBoardID.Bytes, EdgeJumper, j.Jumpers)
 		}
@@ -321,7 +341,7 @@ func (s *Service) Contributions(ctx context.Context, actor commands.Actor, proje
 				return fmt.Errorf("dependency: read the edge's boards: %w", err)
 			}
 		}
-		if from == to || !slices.Contains(f.kinds(), f.Kind) {
+		if from == to || !f.keeps()[f.Kind] {
 			return nil
 		}
 		var err error
@@ -342,8 +362,9 @@ func contributions(ctx context.Context, q *queries.Queries, ws, p pgtype.UUID, f
 	case EdgeVariable, EdgeAttribute:
 		params := queries.ValueContributionsParams{WorkspaceID: ws, ProjectID: p, TargetKind: string(Variable),
 			FromBoardID: nullUUID(from), ToBoardID: nullUUID(to), TargetID: nullUUID(f.Variable),
-			AfterTarget: a[0], AfterAttribute: a[1], AfterFromNode: a[2], AfterFromSite: a[3], AfterToNode: a[4],
-			AfterToSite: a[5], MaxRows: limit}
+			AfterTarget: a[0], AfterAttribute: a[1], AfterFromNode: a[2], AfterFromSite: a[3],
+			AfterFromSiteType: after.FromSiteType, AfterToNode: a[4], AfterToSite: a[5],
+			AfterToSiteType: after.ToSiteType, MaxRows: limit}
 		if f.Kind == EdgeAttribute {
 			params.TargetKind, params.TargetID = string(Attribute), nullUUID(f.Component)
 			params.AttributeDefID = nullUUID(f.Attribute)
@@ -362,7 +383,7 @@ func contributions(ctx context.Context, q *queries.Queries, ws, p pgtype.UUID, f
 					BranchOutputID: encode(ids.BranchOutput, r.ToBranchOutputID)},
 				key: ContributionKey{Target: r.TargetID.Bytes, Attribute: r.AttributeDefID.Bytes,
 					FromNode: r.FromNodeID.Bytes, FromSite: r.FromSiteID.Bytes, ToNode: r.ToNodeID.Bytes,
-					ToSite: r.ToSiteID.Bytes}}
+					ToSite: r.ToSiteID.Bytes, FromSiteType: r.FromSite, ToSiteType: r.ToSite}}
 			if f.Kind == EdgeVariable {
 				c.VariableID = encode(ids.Variable, r.TargetID)
 			} else {
@@ -384,7 +405,7 @@ func contributions(ctx context.Context, q *queries.Queries, ws, p pgtype.UUID, f
 					ConnectionID:   encode(ids.Connection, r.ConnectionID),
 					BranchOutputID: encode(ids.BranchOutput, r.BranchOutputID)},
 				key: ContributionKey{Target: r.VisitedID.Bytes, FromNode: r.VisitedID.Bytes, FromSite: r.VisitedID.Bytes,
-					ToNode: r.NodeID.Bytes, ToSite: r.SiteID.Bytes}})
+					ToNode: r.NodeID.Bytes, ToSite: r.SiteID.Bytes, FromSiteType: SiteNode, ToSiteType: r.Site}})
 		}
 	case EdgeJumper:
 		rows, err := q.JumperContributions(ctx, queries.JumperContributionsParams{WorkspaceID: ws, ProjectID: p,
@@ -398,7 +419,7 @@ func contributions(ctx context.Context, q *queries.Queries, ws, p pgtype.UUID, f
 				From: End{Site: SiteNode, NodeID: encode(ids.Node, r.JumperID), NodeTitle: r.JumperTitle},
 				To:   End{Site: SiteNode, NodeID: encode(ids.Node, r.TargetID), NodeTitle: r.TargetTitle},
 				key: ContributionKey{FromNode: r.JumperID.Bytes, FromSite: r.JumperID.Bytes, ToNode: r.TargetID.Bytes,
-					ToSite: r.TargetID.Bytes}})
+					ToSite: r.TargetID.Bytes, FromSiteType: SiteNode, ToSiteType: SiteNode}})
 		}
 	}
 	return out, nil

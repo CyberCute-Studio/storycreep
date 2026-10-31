@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -314,9 +315,9 @@ func (w *graphWorld) line(t *testing.T, c dependency.Contribution) string {
 
 // key returns where the contribution c is in its list
 // (dependency.ContributionKey), from what the API shows of it and the UUIDs
-// of the world's expressions: its target, its attribute, and the node and
-// the site of each end, a site being an expression's UUID, that of a text's
-// owner, or the node itself.
+// of the world's expressions: its target, its attribute, and the node, the
+// site, and the site's type of each end, a site being an expression's UUID,
+// that of a text's owner, or the node itself.
 func (w *graphWorld) key(t *testing.T, c dependency.Contribution) dependency.ContributionKey {
 	t.Helper()
 	id := func(public string) ids.UUID {
@@ -344,7 +345,8 @@ func (w *graphWorld) key(t *testing.T, c dependency.Contribution) dependency.Con
 		return u
 	}
 	k := dependency.ContributionKey{Target: id(cmp.Or(c.VariableID, c.ComponentID)), Attribute: id(c.AttributeID),
-		FromNode: id(c.From.NodeID), FromSite: site(c.From), ToNode: id(c.To.NodeID), ToSite: site(c.To)}
+		FromNode: id(c.From.NodeID), FromSite: site(c.From), ToNode: id(c.To.NodeID), ToSite: site(c.To),
+		FromSiteType: c.From.Site, ToSiteType: c.To.Site}
 	if c.From.Site == dependency.SiteNode && c.To.Site != dependency.SiteNode {
 		// A visit's target is the node visited.
 		k.Target = k.FromNode
@@ -371,12 +373,15 @@ func (w *graphWorld) wantContributions(t *testing.T, what string, got []dependen
 }
 
 // compareContributionKeys orders the keys of contributions as their lists
-// do: by their targets, their attributes, and the nodes and the sites of
-// their ends.
+// do: by their targets, their attributes, and the nodes, the sites, and the
+// sites' types of their ends. The types are compared as the database's
+// collation compares those of two sites of one node that share a UUID,
+// whose first letters, or those after their common prefix, differ.
 func compareContributionKeys(a, b dependency.ContributionKey) int {
 	return cmp.Or(bytes.Compare(a.Target[:], b.Target[:]), bytes.Compare(a.Attribute[:], b.Attribute[:]),
 		bytes.Compare(a.FromNode[:], b.FromNode[:]), bytes.Compare(a.FromSite[:], b.FromSite[:]),
-		bytes.Compare(a.ToNode[:], b.ToNode[:]), bytes.Compare(a.ToSite[:], b.ToSite[:]))
+		strings.Compare(a.FromSiteType, b.FromSiteType), bytes.Compare(a.ToNode[:], b.ToNode[:]),
+		bytes.Compare(a.ToSite[:], b.ToSite[:]), strings.Compare(a.ToSiteType, b.ToSiteType))
 }
 
 // TestDependencyGraph checks the graph of a project of three boards, each
@@ -470,16 +475,21 @@ func TestDependencyContributions(t *testing.T) {
 // elara.trust twice, and mira.trust and elara.mood once, which a condition
 // of B reads, and a text of B shows elara.trust; that condition and a
 // branch output's of B read whether the nodes of A were visited; and three
-// jumpers of A target nodes of B.
+// jumpers of A target nodes of B. Two sites of one node may share a UUID,
+// as a client chooses a connection's: the labels of two connections of B
+// show elara.trust too, the one whose UUID is that of r2, the text's node,
+// which it leaves, and the other's that of the condition's expression, of a
+// connection that leaves the same node, so that only the sites' types tell
+// their keys apart.
 func TestDependencyContributionsPaged(t *testing.T) {
 	t.Parallel()
-	s, _, owner, ws := inviteServer(t, "open", nil)
+	s, d, owner, ws := inviteServer(t, "open", nil)
 	h, p := s.main, createProject(t, s.main, owner, ws, "Harbour").ID
 	boards := newBoardIDs(2)
 	a, b := boards[0], boards[1]
 	cast, trust, mood, elara, mira := newComponentTypeID(), newAttributeID(), newAttributeID(), newComponentID(),
 		newComponentID()
-	w1, w2, r1, r2, gate := newNodeID(), newNodeID(), newNodeID(), newNodeID(), newNodeID()
+	w1, w2, r1, r2, gate, cond := newNodeID(), newNodeID(), newNodeID(), newNodeID(), newNodeID(), newConnectionID()
 	pos := map[string]int{"x": 0, "y": 0}
 	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
 	node := func(id, board, typ string, more ...any) wireCommand {
@@ -506,7 +516,7 @@ func TestDependencyContributionsPaged(t *testing.T) {
 		node(w2, a, "element", "on_enter", "elara.trust = 3"),
 		node(r1, b, "element"),
 		node(r2, b, "element", "text", richText(textInline("Trust "), attributeInline(elara, trust))),
-		cmd("connection.create", map[string]any{"id": newConnectionID(), "from_node_id": r1, "to_node_id": r2,
+		cmd("connection.create", map[string]any{"id": cond, "from_node_id": r1, "to_node_id": r2,
 			"condition": `elara.trust > 0 and mira.trust > 0 and elara.mood == "calm" and visited(node("` + w1 +
 				`")) and visits(node("` + w2 + `")) > 1`}),
 		node(gate, b, "branch"),
@@ -514,14 +524,20 @@ func TestDependencyContributionsPaged(t *testing.T) {
 			"condition": `visited(node("` + w1 + `"))`}),
 		jumper(r1), jumper(r2), jumper(r1),
 	)
+	condition := expressionIDs(t, d.Admin(t), p)["condition "+cond]
+	label := func(id ids.UUID, from, to string) wireCommand {
+		return cmd("connection.create", map[string]any{"id": ids.Encode(ids.Connection, id), "from_node_id": from,
+			"to_node_id": to, "label": richText(textInline("Trust "), attributeInline(elara, trust))})
+	}
+	sendBatch(t, h, owner, p, label(uuidOf(t, r2), r2, r1), label(condition, r1, gate))
 	counts := map[string]int64{}
 	for _, e := range graphOf(t, h, owner, p, "").Edges {
 		if e.FromBoardID == a && e.ToBoardID == b {
 			counts[string(e.Kind)] = e.Contributions
 		}
 	}
-	// elara.trust: 2 writes by 2 reads; mira.trust and elara.mood: 1 by 1.
-	for kind, want := range map[string]int{"attribute": 6, "visit": 3, "jumper": 3} {
+	// elara.trust: 2 writes by 4 reads; mira.trust and elara.mood: 1 by 1.
+	for kind, want := range map[string]int{"attribute": 10, "visit": 3, "jumper": 3} {
 		whole := contributions(t, h, owner, contributionsPath(p, a, b, kind), 50)
 		if len(whole) != want || counts[kind] != int64(want) {
 			t.Errorf("A->B lists %d contributions of the kind %s, and the graph counts %d, want %d", len(whole), kind,
@@ -634,14 +650,17 @@ func TestDependencyGraphByPair(t *testing.T) {
 // the contributions that it names, and so the edges that have any, and the
 // badges that count them, with every board listed: by kind, by board, by
 // variable, by component, and by an attribute's definition, of any
-// component; and that filters that name nothing in common, or an ID that the
-// project does not have, keep nothing. An edge's list keeps what the same
-// filters keep.
+// component; that filters that name nothing in common, or an ID that the
+// project does not have, keep nothing; and that an ID whose UUID is all
+// zeros, which no entity has, is no filter. An edge's list keeps what the
+// same filters keep.
 func TestDependencyGraphFilters(t *testing.T) {
 	t.Parallel()
 	w := newGraphWorld(t)
 	h, o, p := w.s.main, w.owner, w.project
 	none := []string{"Market in 0 out 0", "Docks in 0 out 0", "Fort in 0 out 0"}
+	zero := func(k ids.Kind) string { return ids.Encode(k, ids.UUID{}) }
+	all := graphOf(t, h, o, p, "")
 	for _, tt := range []struct {
 		query         string
 		edges, boards []string
@@ -668,6 +687,8 @@ func TestDependencyGraphFilters(t *testing.T) {
 		{"kind=jumper&variable_id=" + w.coins, []string{}, none},
 		{"variable_id=" + newVariableID(), []string{}, none},
 		{"board_id=" + newBoardID(), []string{}, none},
+		{"variable_id=" + zero(ids.Variable) + "&component_id=" + zero(ids.Component) + "&attribute_id=" +
+			zero(ids.AttributeDef) + "&board_id=" + zero(ids.Board), edges(w.names, all), badges(t, w.names, all)},
 	} {
 		t.Run(tt.query, func(t *testing.T) {
 			wantGraph(t, tt.query, w.names, graphOf(t, h, o, p, tt.query), tt.edges, tt.boards)
@@ -683,6 +704,7 @@ func TestDependencyGraphFilters(t *testing.T) {
 		{"attribute", "&component_id=" + w.elara + "&attribute_id=" + w.mood, nil},
 		{"jumper", "&variable_id=" + w.coins, nil},
 		{"visit", "&attribute_id=" + w.trust, nil},
+		{"jumper", "&variable_id=" + zero(ids.Variable), []string{"node Leave -> node Quay"}},
 	} {
 		w.wantContributions(t, "Market->Docks's "+tt.kind+tt.query, contributions(t, h, o,
 			contributionsPath(p, w.market, w.docks, tt.kind)+tt.query, 50), tt.want...)
@@ -789,6 +811,25 @@ func TestDependencyGraphSharedUUIDs(t *testing.T) {
 	}
 }
 
+// TestDependencyKindEnums checks that the kind by which the graph filters,
+// and the kind of an edge's list, take the kinds that the graph's edges
+// have, which TestGraphEnums of package dependency holds to the kinds that
+// it gives, so that a kind that the graph gives and a route does not take
+// fails.
+func TestDependencyKindEnums(t *testing.T) {
+	t.Parallel()
+	f, ok := reflect.TypeFor[dependency.Edge]().FieldByName("Kind")
+	if !ok {
+		t.Fatal("an edge has no kind")
+	}
+	want := f.Tag.Get("enum")
+	for _, typ := range []reflect.Type{reflect.TypeFor[dependencyGraphInput](), reflect.TypeFor[contributionsInput]()} {
+		if f, ok := typ.FieldByName("Kind"); !ok || f.Tag.Get("enum") != want {
+			t.Errorf("the kind of %s takes %q, want %q", typ.Name(), f.Tag.Get("enum"), want)
+		}
+	}
+}
+
 // TestDependencyGraphErrors checks the answers to the graph's requests that
 // the API refuses.
 func TestDependencyGraphErrors(t *testing.T) {
@@ -826,7 +867,13 @@ func TestDependencyGraphErrors(t *testing.T) {
 			http.StatusBadRequest, api.CodeInvalidCursor},
 		{"a cursor of a UUID in upper case", list + "&cursor=" + mustCursor(t, contributionKey{
 			Target: strings.ToUpper(ids.New().String()), Attribute: ids.UUID{}.String(), FromNode: ids.New().String(),
-			FromSite: ids.New().String(), ToNode: ids.New().String(), ToSite: ids.New().String()}),
+			FromSite: ids.New().String(), FromSiteType: dependency.SiteNodeOnEnter, ToNode: ids.New().String(),
+			ToSite: ids.New().String(), ToSiteType: dependency.SiteNodeText}),
+			http.StatusBadRequest, api.CodeInvalidCursor},
+		{"a cursor of a site's type that no end has", list + "&cursor=" + mustCursor(t, contributionKey{
+			Target: ids.New().String(), Attribute: ids.UUID{}.String(), FromNode: ids.New().String(),
+			FromSite: ids.New().String(), FromSiteType: dependency.SiteNodeOnEnter, ToNode: ids.New().String(),
+			ToSite: ids.New().String(), ToSiteType: dependency.SiteNodeSpeaker}),
 			http.StatusBadRequest, api.CodeInvalidCursor},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

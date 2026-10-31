@@ -256,4 +256,9 @@ func TestGraphEnums(t *testing.T) {
 	if got := enum(dependency.End{}, "Site"); !slices.Equal(got, sites) {
 		t.Errorf("the enum of a contribution's end's site is %q, want %q", got, sites)
 	}
+	// A cursor of a list of contributions holds its ends' sites' types,
+	// which the API takes back if they are an end's (dependency.IsEndSite).
+	if got := dependency.EndSites(); !slices.Equal(got, sites) {
+		t.Errorf("the sites that a cursor's types may be are %q, want %q", got, sites)
+	}
 }
