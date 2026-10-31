@@ -321,6 +321,37 @@ var Tables = []Table{
 			"attribute_def_id, value) VALUES ($1, $2, $3, $4, $5, '3')", []any{id, w.ID, w.Rows["project"], component,
 			w.Rows["attribute_def"]}}, nil
 	}},
+	{Name: "search_entry", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// An entity has one document, so each is of the workspace's node,
+		// connection, variable, or component that has none yet, rather than of
+		// an entity of its own, which the trash's tests of the entities' views
+		// would find.
+		var kind string
+		var entity ids.UUID
+		if err := admin.QueryRow(ctx, `SELECT f.kind, f.id FROM (VALUES
+				(1, 'node', $1::uuid), (2, 'connection', $2), (3, 'variable', $3), (4, 'component', $4)) f (n, kind, id)
+			WHERE NOT EXISTS (SELECT 1 FROM search_entry e WHERE e.kind = f.kind AND e.entity_id = f.id)
+			ORDER BY f.n LIMIT 1`, w.Rows["node"], w.Rows["connection"], w.Rows["variable"],
+			w.Rows["component"]).Scan(&kind, &entity); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO search_entry (id, workspace_id, project_id, kind, entity_id, title, body, " +
+			"version) VALUES ($1, $2, $3, $4, $5, 'The Lantern', 'Light it before the storm.', 1)",
+			[]any{row, w.ID, w.Rows["project"], kind, entity}}, nil
+	}},
+	{Name: "search_state", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A project has one state, so each is of a project of its own, which
+		// it adds first.
+		id := ids.New()
+		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", id,
+			w.ID); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO search_state (id, workspace_id, project_id, version) VALUES ($1, $2, $3, 1)",
+			[]any{row, w.ID, id}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

@@ -146,8 +146,9 @@ func NewRegistry() *Registry {
 // attempt. The exception is a stopping server that cancels ctx (Queue.Stop):
 // work that returns ctx's error then, or an error that wraps it, is attempted
 // again later without the attempt counting, so return the error with %w. The
-// other exception is an error of Cancel, which ends the job without another
-// attempt. Register panics if kind T has a worker already.
+// others are an error of Cancel, which ends the job without another attempt,
+// and one of Snooze, which runs it again later without the attempt counting.
+// Register panics if kind T has a worker already.
 func Register[T Args](r *Registry, work func(ctx context.Context, job *Job[T]) error) {
 	var args T
 	river.AddWorker(r.workers, river.WorkFunc(func(ctx context.Context, j *river.Job[T]) error {
@@ -177,6 +178,17 @@ type cancelError struct{ err error }
 func (e cancelError) Error() string { return e.err.Error() }
 
 func (e cancelError) Unwrap() error { return river.JobCancel(e.err) }
+
+// Snooze returns the error of work that has its job run again once d, which
+// is not negative, has passed: work that returns it, or an error that wraps
+// it, ends its attempt without counting it, so that the job never runs out
+// of attempts by it, and storycreep_job_attempts_total counts the attempt as
+// snoozed. It is for work that stops on purpose before it is done, as a run
+// that has used the time it allows itself, so that another run goes on with
+// the rest soon rather than at the job's next period.
+func Snooze(d time.Duration) error {
+	return river.JobSnooze(d)
+}
 
 // Periodic makes the server enqueue a job with args every interval, which
 // is at least a second. The instance that River elects as the leader among

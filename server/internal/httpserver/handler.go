@@ -31,6 +31,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
+	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -83,6 +84,9 @@ type server struct {
 	// validation validates the projects' drafts, whose mutes their commands
 	// change (package validation).
 	validation *validation.Service
+	// search searches the projects' content, from the index that their
+	// commands keep (package search).
+	search *search.Service
 	// trash lists the projects' trash, from which their commands restore
 	// what it holds (package trash).
 	trash *trash.Service
@@ -117,6 +121,7 @@ func newCommandRegistry() *commands.Registry {
 	expression.Register(registry)
 	dependency.Register(registry)
 	validation.Register(registry)
+	search.Register(registry)
 	return registry
 }
 
@@ -157,6 +162,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.connections = connection.New(readyDB{s.ready}, connection.Options{Projects: s.projects})
 	s.dependencies = dependency.New(readyDB{s.ready}, dependency.Options{Projects: s.projects})
 	s.validation = validation.New(readyDB{s.ready}, validation.Options{Projects: s.projects})
+	s.search = search.New(readyDB{s.ready}, search.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -245,6 +251,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerConnections(s.main, s.connections)
 	registerDependencies(s.main, s.dependencies)
 	registerValidation(s.main, s.validation)
+	registerSearch(s.main, s.search)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)

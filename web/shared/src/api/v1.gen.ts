@@ -1986,6 +1986,12 @@ export interface PageRenameSite {
   next_cursor: string | null;
 }
 
+export interface PageResult {
+  items: Array<Result>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageSessionBody {
   items: Array<SessionBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2315,6 +2321,25 @@ export interface ResetPasswordBody {
   token: string;
 }
 
+export interface Result {
+  /** The ID of the entity's board: a node's, a connection's, or a board variable's. A global variable and a component have none. */
+  board_id?: string;
+  /** The name of the entity's board, which a result has exactly when it has board_id */
+  board_name?: string;
+  /** The entity's ID */
+  id: string;
+  /** The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none. */
+  node_id?: string;
+  /** The title of the result's node, which may be empty, and which a result has exactly when it has node_id */
+  node_title?: string;
+  /** Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part. */
+  snippet: Array<Span>;
+  /** The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part. */
+  title: Array<Span>;
+  /** The kind of the entity: a node, a connection, a variable, or a component */
+  type: "node" | "connection" | "variable" | "component";
+}
+
 export interface RevokedBody {
   /** How many sessions were revoked */
   revoked: number;
@@ -2531,6 +2556,13 @@ export interface Source {
   owner: string;
   /** The expression's source, of at most 16384 characters */
   source: string;
+}
+
+export interface Span {
+  /** Whether the part is a word that the query matched, which a client highlights */
+  match: boolean;
+  /** The text of the part */
+  text: string;
 }
 
 export interface StatusBody {
@@ -4561,6 +4593,32 @@ export interface Operations {
     };
   };
   /**
+   * Search a project
+   *
+   * Lists the project's nodes, connections, variables, and components that are not in its trash whose titles or bodies hold a word that starts with each word of the query, compared without regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's key and description, and a component's name, key, description, and values of text, of the types string, text, and enum. A text is searched as its author wrote it, without what its value references show or its mentions name, which the usage lists find (GET /api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a body as far as its first 100,000 characters. Each result names its kind, its board and its node, by which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). The results are in the order of how well each word of the query matches them, a match in a title above one in a body, then of their kinds and IDs. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A query that holds a control character is answered with 422 validation_failed at query.q, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  searchProject: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** What to search for, of 1 to 200 characters, without control characters: each of its words must start a word of a result's title or body, compared without regard to case or diacritics, so that ela tru finds Elara trusts and zlut finds Žluťoučký. A query without a word, as one of punctuation alone, finds nothing. */
+        q: string;
+        /** A kind of entity: only the results of that kind are listed. Without it, those of every kind. */
+        type?: "node" | "connection" | "variable" | "component";
+      };
+    };
+    responses: {
+      200: PageResult;
+    };
+  };
+  /**
    * Set a member's grant on a project
    *
    * Gives a member of the project's workspace a role on the project, which replaces their role in the workspace there, raising or lowering it, and returns the grant: it adds the member's grant on the project, or changes its role. A grant that has the role already stays as it is. A grant is the only way that a guest acts on a project, and it applies only to the project's own operations: every operation of the workspace, as deleting the project or managing its grants, is still authorised by the member's role in the workspace. The role owner is answered with 400 owner_not_grantable (PRD FR-TEN-04 AC5). Only an owner sets or removes an owner's grant, which replaces their role on the project, and an admin is answered with 403 owner_required. Only an owner or an admin of the project's workspace may, and anyone else with a role on the project, as a viewer or a guest with an admin grant on it, is answered with 403 insufficient_role: a grant never authorises an operation of the workspace (PRD FR-TEN-04 AC4). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a membership that the workspace does not have. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -4779,6 +4837,7 @@ export const routes = {
   revokeProjectToken: { method: "DELETE", path: "/api/v1/projects/{project_id}/tokens/{token_id}" },
   revokeSession: { method: "DELETE", path: "/api/v1/auth/sessions/{session_id}" },
   revokeWorkspaceToken: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/tokens/{token_id}" },
+  searchProject: { method: "GET", path: "/api/v1/projects/{project_id}/search" },
   setProjectGrant: { method: "PUT", path: "/api/v1/projects/{project_id}/grants/{membership_id}" },
   unarchiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/unarchive" },
   updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
