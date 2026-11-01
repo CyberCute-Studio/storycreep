@@ -567,7 +567,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PROJ-03 AC1–AC4 pass, and a benchmark of item 45's suite reports NFR-PERF-09 on `large`.
 
 ### 51. Clipboard payload and paste
-**Status:** todo · **Depends on:** 46, 47, 48
+**Status:** done ([#62](https://github.com/CyberCute-Studio/storycreep/pull/62)) · **Depends on:** 46, 47, 48
 **PRD:** FR-EDIT-07 (server: AC1 report, AC3)
 - A documented, versioned clipboard JSON structure, in package `server/internal/clipboard`, with its JSON Schema in `/schema/clipboard/v1`, and `POST …/clipboard/copy`, which answers with the clipboard of a board's nodes (N58).
 - A paste command, `clipboard.paste`, that assigns new IDs, keeps references that resolve in the destination, and reports the ones that do not (`POST …/clipboard/resolve`), with "create missing" support: what the report lists, a client creates in the batch of the paste, before it. It applies `node.create`, `branch_output.create`, and `connection.create` as its parts (`commands.Tx.ApplyPart`), writes its expressions' names with `expr.Relocate`, and is undone by one `node.delete_many` (N58).
