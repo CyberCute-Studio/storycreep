@@ -981,9 +981,19 @@ func TestRealtimePing(t *testing.T) {
 		Heartbeat: 250 * time.Millisecond, SilenceTimeout: 2 * time.Second})
 	srv := realtimeServer(t, s)
 	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	// The sockets subscribe since the project's seq before the first board,
+	// so that each is sent every board's operation however late the server
+	// handles its subscription, which neither reads the answer of yet.
+	var before struct {
+		Seq int64 `json:"seq"`
+	}
+	if res := call(s.main, http.MethodGet, projectPath(project), nil, owner.header(false)); res.status != http.StatusOK ||
+		json.Unmarshal(res.body, &before) != nil {
+		t.Fatalf("read the project: %d %s", res.status, res.body)
+	}
 	gone, slow := openSocket(t, srv, owner.header(false)), openSocket(t, srv, owner.header(false))
-	gone.subscribe(project, -1)
-	slow.subscribe(project, -1)
+	gone.subscribe(project, before.Seq)
+	slow.subscribe(project, before.Seq)
 	var boards, commandIDs []string
 	reading := false
 	for start := time.Now(); time.Since(start) < 5*time.Second; {
@@ -995,7 +1005,8 @@ func TestRealtimePing(t *testing.T) {
 		boards, commandIDs = append(boards, b...), append(commandIDs, c...)
 		time.Sleep(100 * time.Millisecond)
 	}
-	slow.wantOperations(project, slow.next("subscribed").Seq, boards, commandIDs)
+	slow.next("subscribed")
+	slow.wantOperations(project, before.Seq, boards, commandIDs)
 	slow.quiet()
 
 	gone.start()
