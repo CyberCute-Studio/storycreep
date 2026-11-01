@@ -34,8 +34,10 @@ export function App({ i18n, queryClient, router, log }: AppProps) {
 
 /**
  * Shows the error console in place of the app once an error has kept the
- * router itself from rendering, which its pages' errors do not: the React
- * root has recorded it.
+ * router from rendering, as one that its error page could not show, since
+ * that page failed too (createAppRouter turns the router's own boundary
+ * off); its pages' errors show that page instead. The React root has
+ * recorded it.
  */
 class CrashBoundary extends Component<
   { children: ReactNode },

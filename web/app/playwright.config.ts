@@ -8,8 +8,16 @@ import { defineConfig, devices } from "@playwright/test";
 
 const port = Number(process.env.STORYCREEP_E2E_PORT ?? 8788);
 const baseURL = `http://127.0.0.1:${port}`;
-const database = (login: string) =>
-  `postgres://${login}:storycreep-dev@localhost:5432/storycreep`;
+// The development compose file's database, whose password and port its
+// variables set, as they do the file's, if the environment has them
+// (deploy/dev/docker-compose.yml), and are its defaults otherwise.
+const database = (login: string) => {
+  const password = encodeURIComponent(
+    process.env.STORYCREEP_DEV_DB_PASSWORD || "storycreep-dev",
+  );
+  const dbPort = process.env.STORYCREEP_DEV_DB_PORT || "5432";
+  return `postgres://${login}:${password}@localhost:${dbPort}/storycreep`;
+};
 
 // Playwright has no build of Chromium for Windows on ARM64, whose x64 build
 // would run emulated (PRD §9.9), so the tests run in Windows's own Edge

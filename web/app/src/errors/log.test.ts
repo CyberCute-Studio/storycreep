@@ -95,6 +95,18 @@ describe("describeError", () => {
     });
   });
 
+  it("reads a request's URL without its query or fragment, which may hold a secret", () => {
+    // A file's read that an S3 bucket refused, after the server's redirect
+    // to a URL of the bucket that it signed.
+    const response = new Response(null, { status: 403 });
+    Object.defineProperty(response, "url", {
+      value: "https://bucket.example/w/a.png?X-Amz-Signature=secret#top",
+    });
+    expect(describeError(new ApiError(response, undefined)).request?.url).toBe(
+      "https://bucket.example/w/a.png",
+    );
+  });
+
   it("describes a thrown value that is not an error", () => {
     expect(describeError({ a: 1 })).toEqual({
       name: "object",

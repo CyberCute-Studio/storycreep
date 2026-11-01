@@ -10,7 +10,7 @@ import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { createQueryClient } from "./api";
+import { createQueryClient, requestVersion } from "./api";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -29,6 +29,8 @@ if (nonce !== undefined) {
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
 const queryClient = createQueryClient(errorLog);
+// What the error console's reports name, asked for before anything is shown.
+requestVersion(queryClient);
 const router = createAppRouter({ queryClient });
 
 const container = document.getElementById("root");

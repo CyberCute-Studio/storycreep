@@ -8,8 +8,11 @@
 // hoverProperties, which change how an element looks, never whether it is
 // shown or where it is. So hover may colour a control, underline it, or
 // shadow it, but not reveal it, move it, or make it larger, which would leave
-// a touch screen's user without it. hoverCheck runs the check when Vite
-// builds the app, and fails the build on a rule that it refuses.
+// a touch screen's user without it. It refuses, too, CSS that lightningcss
+// cannot read, as a selector or an at-rule newer than it knows, which it
+// would otherwise skip, with any rule there that applies on hover, which a
+// browser may still apply. hoverCheck runs the check when Vite builds the
+// app, and fails the build on what it refuses.
 //
 // The check cannot tell a colour that tints a control from one that makes it
 // visible, as from transparent, so a control is never transparent, nor the
@@ -58,17 +61,22 @@ export const hoverProperties: ReadonlySet<string> = new Set([
   "stroke",
 ]);
 
-/** A declaration that a rule that applies on hover may not make. */
+/**
+ * A declaration that a rule that applies on hover may not make, or CSS that
+ * the check could not read.
+ */
 export interface HoverProblem {
   file: string;
   /** The line of the rule, from 1. */
   line: number;
   /** The column of the rule, from 1. */
   column: number;
-  /** The rule's selector, as the source writes it. */
+  /** The rule's selector, as the source writes it, or "" for CSS that the check could not read. */
   selector: string;
-  /** The property that the rule sets. */
+  /** The property that the rule sets, or "" for CSS that the check could not read. */
   property: string;
+  /** What lightningcss could not read there, for CSS that the check could not read. */
+  unread?: string;
 }
 
 /** Returns the declarations of the stylesheet css that hover may not make. */
@@ -132,12 +140,11 @@ export function checkHover(css: string, file: string): HoverProblem[] {
       }
     }
   };
-  transform({
+  const { warnings } = transform({
     filename: file,
     code: new TextEncoder().encode(css),
-    // Tailwind's output may use syntax that is newer than lightningcss's
-    // defaults, which errorRecovery parses rather than refuses; the check
-    // reads only the selectors and the properties.
+    // lightningcss reads past what it cannot, rather than stop at the
+    // first, and warns of each, so that the check says where each is.
     errorRecovery: true,
     visitor: {
       StyleSheet(sheet) {
@@ -145,11 +152,29 @@ export function checkHover(css: string, file: string): HoverProblem[] {
       },
     },
   });
+  for (const warning of warnings) {
+    problems.push({
+      file,
+      line: warning.loc.line,
+      column: warning.loc.column,
+      selector: "",
+      property: "",
+      unread: warning.message,
+    });
+  }
   return problems;
 }
 
 /** Formats a problem as file:line:column: message. */
 export function formatHoverProblem(p: HoverProblem): string {
+  if (p.unread !== undefined) {
+    return (
+      `${p.file}:${p.line}:${p.column}: the hover check cannot read this CSS (${p.unread}), so a rule ` +
+      "there that applies on hover, which a browser may still apply, would go unchecked (PRD FR-EDIT-09). " +
+      "Write it as lightningcss, which the check reads the build with, reads it, or update lightningcss. " +
+      "See web/app/lint/hover.ts."
+    );
+  }
   return (
     `${p.file}:${p.line}:${p.column}: ${p.selector} applies on hover and sets ${p.property}, ` +
     "which can show, hide, move, or resize what it styles, so that a touch screen, which has no hover, " +
@@ -198,7 +223,7 @@ function propertyName(declaration: {
 /**
  * Returns the Vite plugin that checks the CSS of the app's build, and fails
  * the build on a rule that applies on hover and sets a property that
- * hoverProperties does not list.
+ * hoverProperties does not list, or on CSS that the check cannot read.
  */
 export function hoverCheck(): Plugin {
   return {

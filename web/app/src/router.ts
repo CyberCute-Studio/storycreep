@@ -18,6 +18,11 @@ export function createAppRouter(context: RouterContext) {
     basepath: "/app",
     context,
     scrollRestoration: true,
+    // An error that the root route's error page could not show, as one of
+    // that page itself, reaches the app's CrashBoundary, which shows the
+    // error console, rather than the router's own boundary, whose page is in
+    // English alone and has no console.
+    disableGlobalCatchBoundary: true,
   });
 }
 

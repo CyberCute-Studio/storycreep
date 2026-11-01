@@ -11,7 +11,12 @@ export type ErrorSource = "error" | "rejection" | "render" | "request";
 
 /** The request of an error that the server answered with. */
 export interface RequestDetails {
-  /** The URL that the request was made to. */
+  /**
+   * The URL that answered the request, after any redirect, without its query
+   * or fragment, which may hold a secret, as the signature of a URL of an S3
+   * bucket that a file's read is redirected to does, or what the user
+   * searched for, which a report must not give away.
+   */
   url: string;
   status: number;
   /** The error code of the error envelope, if the answer has one. */
@@ -162,7 +167,7 @@ export function describeError(error: unknown): ErrorDetails {
     }
     if (error instanceof ApiError) {
       details.request = {
-        url: error.response.url,
+        url: withoutQuery(error.response.url),
         status: error.status,
         code: error.error?.code,
         requestId: error.error?.request_id,
@@ -180,6 +185,12 @@ export function describeError(error: unknown): ErrorDetails {
     message = text(error);
   }
   return { name: typeof error, message };
+}
+
+/** Returns url without its query or fragment. */
+function withoutQuery(url: string): string {
+  const end = url.search(/[?#]/);
+  return end < 0 ? url : url.slice(0, end);
 }
 
 /**

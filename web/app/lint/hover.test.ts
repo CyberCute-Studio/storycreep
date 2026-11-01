@@ -75,6 +75,28 @@ describe("checkHover", () => {
     }
   });
 
+  // Verifies: FR-EDIT-09/AC2
+  it("refuses CSS that it cannot read, where a rule that applies on hover would go unchecked", () => {
+    for (const css of [
+      // A selector that lightningcss cannot parse, whose rule it skips.
+      ".a:hover >>> .b { display: block }",
+      // An at-rule that it does not know, whose rules it does not read.
+      "@future-rule { .a:hover { display: block } }",
+    ]) {
+      expect(checkHover(css, "test.css"), css).toEqual([
+        expect.objectContaining({ unread: expect.any(String) }),
+      ]);
+    }
+    const [problem] = checkHover(
+      ".x { color: red }\n@future-rule { }",
+      "assets/index.css",
+    );
+    expect(problem).toMatchObject({ file: "assets/index.css", line: 2 });
+    expect(formatHoverProblem(problem)).toMatch(
+      /^assets\/index\.css:2:\d+: the hover check cannot read this CSS \(Unknown at rule: @future-rule\)/,
+    );
+  });
+
   it("says where the rule is, and which selector", () => {
     const css = ".x { color: red }\n  .menu:hover .actions { display: block }";
     const [problem] = checkHover(css, "assets/index.css");

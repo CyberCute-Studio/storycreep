@@ -45,6 +45,9 @@ export async function copyText(
   container.append(area);
   try {
     area.select();
+    // Safari on iOS and iPadOS selects nothing of a read-only field by
+    // select() alone; read-only, it shows no keyboard.
+    area.setSelectionRange(0, text.length);
     // The only way to copy without the Clipboard API.
     return doc.execCommand("copy");
   } catch {

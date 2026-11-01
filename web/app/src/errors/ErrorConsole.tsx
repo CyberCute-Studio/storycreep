@@ -93,9 +93,6 @@ export function ErrorConsoleButton() {
   const { t } = useTranslation();
   const { log } = useErrorConsole();
   const count = useErrorLog(log).length;
-  // Asked for once, when the app starts, so that a report names the server
-  // without a request of its own.
-  useQuery(versionQuery);
   return (
     <Dialog.Trigger asChild>
       {/* Its name starts with its label, which a user of speech input says
@@ -115,10 +112,16 @@ export function ErrorConsoleButton() {
           <path d="M12 10v5M12 18h.01" />
         </svg>
         <span className="hidden sm:inline">{t("error_console.button")}</span>
+        {/* The space keeps the label and the number apart in the button's
+            text, as they are in its name, which the gap between them does
+            not. */}
         {count > 0 && (
-          <span className="min-w-6 rounded-full bg-danger px-1.5 text-center text-sm text-danger-fg">
-            {count}
-          </span>
+          <>
+            {" "}
+            <span className="min-w-6 rounded-full bg-danger px-1.5 text-center text-sm text-danger-fg">
+              {count}
+            </span>
+          </>
         )}
       </Button>
     </Dialog.Trigger>
@@ -170,6 +173,8 @@ export function ErrorConsoleBody() {
   // them.
   const entries = useMemo(() => [...logged].reverse(), [logged]);
   const empty = entries.length === 0;
+  // As the app asked for it when it started (requestVersion), without asking
+  // again.
   const { data: server } = useQuery({ ...versionQuery, enabled: false });
   const [status, setStatus] = useState("");
   const body = useRef<HTMLDivElement>(null);
@@ -261,8 +266,22 @@ function ErrorEntry({
   const details = useMemo(() => formatEntry(entry, t), [entry, t]);
   return (
     <li className="rounded-md border border-border bg-surface">
-      <details>
-        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 px-3 py-2">
+      <details className="group">
+        {/* A summary laid out as flex has no marker of its own, so the
+            chevron shows that it opens, and turns once it is open. */}
+        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 px-3 py-2 [&::-webkit-details-marker]:hidden">
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="size-4 shrink-0 text-fg-muted group-open:rotate-180"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
           <span className="text-fg-muted">
             {formatDateTime(i18n.language, entry.time, "short", "medium")}
           </span>

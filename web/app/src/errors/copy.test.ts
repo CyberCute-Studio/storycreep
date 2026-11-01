@@ -52,6 +52,14 @@ describe("copyText", () => {
     ).toBe(true);
     expect(selected).toBe("report");
     expect(container.querySelector("textarea")).toBeNull();
+
+    // As Safari on iOS, where select() selects nothing of a read-only field.
+    vi.spyOn(HTMLTextAreaElement.prototype, "select").mockImplementation(
+      () => {},
+    );
+    selected = "";
+    expect(await copyText("report", container, { document })).toBe(true);
+    expect(selected).toBe("report");
     expect(document.activeElement).toBe(button);
 
     execCommand.mockReturnValue(false);

@@ -1,11 +1,16 @@
 import { createI18n } from "@storycreep/shared/i18n";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  focusManager,
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, expect, it, vi } from "vitest";
-import { versionQuery } from "../api";
+import { createQueryClient, requestVersion, versionQuery } from "../api";
 import {
   ErrorConsoleButton,
   ErrorConsoleProvider,
@@ -97,6 +102,55 @@ it("lists the errors with details that the user copies, and sends nothing", asyn
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("reads the server's version that the app asked for when it started, without asking again", async () => {
+  const user = userEvent.setup();
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    Response.json(
+      {
+        error: {
+          code: "not_found",
+          message: "There is no such page.",
+          request_id: "req_1",
+        },
+      },
+      { status: 404 },
+    ),
+  );
+  const log = createErrorLog();
+  const queryClient = createQueryClient(log);
+  requestVersion(queryClient);
+  await waitFor(() => expect(log.entries()).toHaveLength(1));
+  render(
+    <I18nextProvider i18n={createI18n("en")}>
+      <QueryClientProvider client={queryClient}>
+        <ErrorConsoleProvider log={log}>
+          <ErrorConsoleButton />
+        </ErrorConsoleProvider>
+      </QueryClientProvider>
+    </I18nextProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "Errors: 1" }));
+  expect(screen.getByRole("dialog").textContent).toContain(
+    "There is no such page.",
+  );
+  // A query that failed would be asked for again when its components mount,
+  // the tab gets the focus back, or the network comes back.
+  try {
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    });
+  } finally {
+    focusManager.setFocused(undefined);
+    onlineManager.setOnline(true);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(log.entries()).toHaveLength(1);
+});
+
 it("copies one error's details", async () => {
   const user = userEvent.setup();
   const log = renderConsole();
@@ -132,8 +186,9 @@ it("names its button with the label that it shows, and the number of errors", as
   expect(button.textContent).toBe("Errors");
   log.record("error", new Error("once"));
   // A user of speech input says the label that the button shows, which its
-  // name starts with (WCAG 2.5.3).
-  await waitFor(() => expect(button.textContent).toBe("Errors1"));
+  // name starts with, and its words are those of its name, in order
+  // (WCAG 2.5.3).
+  await waitFor(() => expect(button.textContent).toBe("Errors 1"));
   expect(button.getAttribute("aria-label")).toBe("Errors: 1");
 });
 

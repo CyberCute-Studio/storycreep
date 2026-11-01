@@ -3,7 +3,8 @@
 // so that it serves the app's build, which the e2e script makes first, as
 // the container image does. It runs as the binary of the image runs,
 // migrating its database at startup, and stops when Playwright stops this
-// process. Node runs this file as it is, without a build.
+// process's group, which it is in. Node runs this file as it is, without a
+// build.
 
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
@@ -41,8 +42,14 @@ const child = spawn(binary, ["serve"], {
   stdio: "inherit",
   env: { ...process.env, STORYCREEP_ASSET_STORAGE: join(dir, "assets") },
 });
+// Playwright stops the server by signalling this process's whole group, as
+// a terminal's Ctrl+C does, so the binary gets the signal itself: passing it
+// on would send it a second, which ends it at once rather than let it shut
+// down (cmd/storycreep). This process only waits for the binary to exit, to
+// remove the directory, rather than end at the signal, as it would without
+// a handler.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.on(signal, () => child.kill(signal));
+  process.on(signal, () => {});
 }
 child.on("exit", (code, signal) => {
   rmSync(dir, { recursive: true, force: true });

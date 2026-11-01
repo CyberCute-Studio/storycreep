@@ -54,6 +54,93 @@ async function makeErrors(page: Page): Promise<void> {
   await expect(consoleButton(page)).toHaveAccessibleName("Errors: 2");
 }
 
+/**
+ * Makes the app fail as it shows a page, as an app's bug would: setting the
+ * document's title to one of titles, which a page does once it is shown,
+ * throws.
+ */
+async function failTitles(
+  page: Page,
+  titles: readonly string[],
+): Promise<void> {
+  await page.addInitScript((failing) => {
+    const title = Object.getOwnPropertyDescriptor(Document.prototype, "title");
+    Object.defineProperty(Document.prototype, "title", {
+      configurable: true,
+      get() {
+        return title?.get?.call(this);
+      },
+      set(value: string) {
+        if (failing.includes(value)) {
+          throw new Error("e2e: a page that fails");
+        }
+        title?.set?.call(this, value);
+      },
+    });
+  }, titles);
+}
+
+// Verifies: NFR-A11Y-08, NFR-A11Y-01
+test("the page of an error that kept a page from being shown offers the error console, and has no accessibility violations", async ({
+  page,
+}) => {
+  // The start page fails, and its error page shows.
+  await failTitles(page, ["Storycreep"]);
+  await page.goto("/app/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    en["route_error.title"],
+  );
+  await expect(page).toHaveTitle(`${en["route_error.title"]} – Storycreep`);
+  expect(await violations(page)).toEqual([]);
+
+  await press(
+    page.getByRole("button", { name: en["route_error.show_console"] }),
+  );
+  const dialog = page.getByRole("dialog", { name: en["error_console.title"] });
+  await expect(dialog).toContainText("Error: e2e: a page that fails");
+});
+
+// Verifies: NFR-A11Y-08, NFR-A11Y-01
+test("an error that the error page could not show shows the error console in place of the app, with no accessibility violations", async ({
+  page,
+}) => {
+  // The header's button fails to render once it counts one error, on the
+  // start page and on the error page alike, which leaves the router nothing
+  // to show; its first error is the failed request of the server's version.
+  await page.addInitScript(() => {
+    const select = Intl.PluralRules.prototype.select;
+    Intl.PluralRules.prototype.select = function (
+      this: Intl.PluralRules,
+      n: number,
+    ) {
+      if (n === 1) {
+        throw new Error("e2e: a header that fails");
+      }
+      return select.call(this, n);
+    };
+  });
+  await page.route("**/version", (route) =>
+    route.fulfill({
+      status: 404,
+      json: {
+        error: {
+          code: "not_found",
+          message: "e2e: no version",
+          request_id: "req_e2e",
+        },
+      },
+    }),
+  );
+  await page.goto("/app/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    en["crash.title"],
+  );
+  await expect(
+    page.getByRole("list", { name: en["error_console.list"] }),
+  ).toContainText("Error: e2e: a header that fails");
+  expect(await violations(page)).toEqual([]);
+});
+
 // Verifies: NFR-A11Y-08, NFR-A11Y-01
 test("the shell's pages and the error console have no accessibility violations", async ({
   page,
