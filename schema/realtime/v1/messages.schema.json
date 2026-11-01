@@ -273,7 +273,7 @@
           "type": "string"
         },
         "project_id": {
-          "description": "The project's ID as the subscription named it",
+          "description": "The project's ID, as prj_…, or, for invalid_id, as the subscription named it",
           "type": "string"
         },
         "retry_after": {

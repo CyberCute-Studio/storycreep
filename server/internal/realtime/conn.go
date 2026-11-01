@@ -82,6 +82,14 @@ type conn struct {
 	// down, or the socket is ended (end).
 	ctx    context.Context
 	cancel context.CancelFunc
+	// writes is the context of the socket's writes, which the socket's end
+	// (end) ends at once, but the hub's shutdown only shutdownWriteGrace
+	// after it, because a write whose context ends closes the connection
+	// there and then, without a close: a write in flight as the server stops,
+	// which to a client that reads takes no time, finishes, and the socket
+	// closes with 1001 after it.
+	writes     context.Context
+	stopWrites context.CancelFunc
 	// subs are the socket's subscriptions, by project, which only the loop
 	// (run) reads and changes.
 	subs map[ids.UUID]*subscription
@@ -91,6 +99,13 @@ type conn struct {
 	// at most maxQueued, past which the reader waits for the loop.
 	messages chan queuedMessage
 	pinging  atomic.Bool
+	// frames counts the client's messages that the reader has read, and
+	// waiting is whether it waits for the loop to take one, while maxQueued
+	// wait already, so that a ping whose pong the reader has not read, since
+	// a pong is read after the messages before it, does not end a socket
+	// whose client is there (heartbeat).
+	frames  atomic.Uint64
+	waiting atomic.Bool
 
 	mu sync.Mutex
 	// ended, code, and reason are how the socket ends, once something ends
@@ -133,8 +148,11 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	defer context.AfterFunc(h.ctx, cancel)()
-	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, subs: map[ids.UUID]*subscription{},
-		wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
+	writes, stopWrites := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopWrites()
+	defer context.AfterFunc(h.ctx, func() { time.AfterFunc(shutdownWriteGrace, stopWrites) })()
+	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, writes: writes, stopWrites: stopWrites,
+		subs: map[ids.UUID]*subscription{}, wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
 	ws.SetReadLimit(maxMessageBytes)
 	// The reader has a context of its own, which the socket's end does not
 	// end, because a read whose context ends closes the connection at once,
@@ -191,7 +209,8 @@ func (c *conn) run() (websocket.StatusCode, string) {
 }
 
 // end ends the socket with code and reason, unless something ended it
-// before.
+// before, and its write in flight, if it has one, as one to a client that
+// answers no ping.
 func (c *conn) end(code websocket.StatusCode, reason string) {
 	c.mu.Lock()
 	if !c.ended {
@@ -199,6 +218,7 @@ func (c *conn) end(code websocket.StatusCode, reason string) {
 	}
 	c.mu.Unlock()
 	c.cancel()
+	c.stopWrites()
 }
 
 // closing returns the code and reason that the socket closes with: going
@@ -229,11 +249,20 @@ func (c *conn) read(ctx context.Context) {
 			c.cancel()
 			return
 		}
+		c.frames.Add(1)
+		m := queuedMessage{data: data, text: typ == websocket.MessageText}
 		select {
-		case c.messages <- queuedMessage{data: data, text: typ == websocket.MessageText}:
+		case c.messages <- m:
+			continue
+		default:
+		}
+		c.waiting.Store(true)
+		select {
+		case c.messages <- m:
 		case <-ctx.Done():
 			return
 		}
+		c.waiting.Store(false)
 	}
 }
 
@@ -246,13 +275,18 @@ func (c *conn) signal() {
 }
 
 // send sends msg, or returns gone if the socket cannot be written to within
-// writeTimeout, as when its client has gone, or reads too slowly.
+// writeTimeout, as when its client has gone, or reads too slowly, and
+// returns the socket's context's error, sending nothing, once the socket has
+// ended.
 func (c *conn) send(msg any) error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
+	ctx, cancel := context.WithTimeout(c.writes, writeTimeout)
 	defer cancel()
 	if err := c.ws.Write(ctx, websocket.MessageText, data); err != nil {
 		return gone
@@ -263,7 +297,12 @@ func (c *conn) send(msg any) error {
 // heartbeat sends a heartbeat, which the client's script hears, and pings
 // the client, whose pong a browser sends by itself, unless the last ping
 // still waits for its pong. A ping that is not answered within PongTimeout
-// ends the socket.
+// ends the socket, unless the reader has read a message of the client since
+// the ping, or waits for the loop to take one: the library reads a pong as
+// the reader reads, after the messages that the client sent before it, so a
+// client that sent more than the loop has handled yet, as one that
+// subscribes to every project that it pins at once, is there, and is pinged
+// again at the next heartbeat.
 func (c *conn) heartbeat() error {
 	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
 		return err
@@ -273,9 +312,11 @@ func (c *conn) heartbeat() error {
 	}
 	go func() {
 		defer c.pinging.Store(false)
-		ctx, cancel := context.WithTimeout(c.ctx, c.hub.pongTimeout)
+		ctx, cancel := context.WithTimeout(c.writes, c.hub.pongTimeout)
 		defer cancel()
-		if err := c.ws.Ping(ctx); err != nil && c.ctx.Err() == nil {
+		read := c.frames.Load()
+		if err := c.ws.Ping(ctx); err != nil && c.ctx.Err() == nil && !c.waiting.Load() &&
+			c.frames.Load() == read {
 			c.end(websocket.StatusPolicyViolation, "no pong")
 		}
 	}()
@@ -339,17 +380,27 @@ func (c *conn) failed(projectID, code string) error {
 // resync_required when it cannot send them, or refuses: a project that does
 // not exist, or that the actor cannot read, alike with not_found (PRD
 // FR-RT-01 AC2). A subscription to a project that the socket subscribes to
-// already starts anew.
+// already starts anew once it holds, and leaves the one before as it was if
+// it is refused, but for not_found, which ends that one too. The answers
+// name the project as the API writes its ID (ids.Encode), as the operations
+// do, whichever spelling of it m has (ids.Decode), so that a client that
+// compares them as strings finds them alike, but for invalid_id, which
+// names it as m does.
 func (c *conn) subscribe(m SubscribeMessage) error {
 	id, err := ids.Decode(ids.Project, m.ProjectID)
 	if err != nil {
 		return c.failed(m.ProjectID, "invalid_id")
 	}
-	if old := c.subs[id]; old != nil {
-		c.drop(old)
+	projectID := ids.Encode(ids.Project, id)
+	old := c.subs[id]
+	if old == nil && len(c.subs) >= MaxSubscriptions {
+		return c.failed(projectID, "too_many_subscriptions")
 	}
-	if len(c.subs) >= MaxSubscriptions {
-		return c.failed(m.ProjectID, "too_many_subscriptions")
+	notFound := func() error {
+		if old != nil {
+			c.drop(old)
+		}
+		return c.failed(projectID, "not_found")
 	}
 	actor, err := c.check()
 	if err != nil {
@@ -360,12 +411,12 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		if !errors.As(err, &limited) {
 			return err
 		}
-		return c.send(SubscriptionFailedMessage{Type: typeSubscriptionFailed, ProjectID: m.ProjectID,
+		return c.send(SubscriptionFailedMessage{Type: typeSubscriptionFailed, ProjectID: projectID,
 			Code: "rate_limited", RetryAfter: int(max(1, (limited.RetryAfter+time.Second-1)/time.Second))})
 	}
 	workspaceID, err := c.hub.projects.ActorWorkspace(c.ctx, actor, id)
 	if errors.Is(err, project.ErrNotFound) {
-		return c.failed(m.ProjectID, "not_found")
+		return notFound()
 	}
 	if err != nil {
 		return err
@@ -389,18 +440,21 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		return nil
 	})
 	if errors.Is(err, project.ErrNotFound) {
-		return c.failed(m.ProjectID, "not_found")
+		return notFound()
 	}
 	if err != nil {
 		return err
 	}
+	if old != nil {
+		c.drop(old)
+	}
 	sub := &subscription{conn: c, project: id, workspace: workspaceID, sent: seq}
-	var answer any = SubscribedMessage{Type: typeSubscribed, ProjectID: m.ProjectID, Seq: seq}
+	var answer any = SubscribedMessage{Type: typeSubscribed, ProjectID: projectID, Seq: seq}
 	switch {
 	case follows:
 		sub.sent = *m.Since
 	case m.Since != nil:
-		answer = ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: m.ProjectID, Seq: seq}
+		answer = ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: projectID, Seq: seq}
 	}
 	c.subs[id] = sub
 	c.hub.join(sub, seq)
@@ -408,12 +462,13 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		return err
 	}
 	// What commits between the read and the join is read now, as what it
-	// missed is.
-	return c.deliver(sub, actor)
+	// missed is, with the credential just checked.
+	return c.deliver(sub, &actor)
 }
 
 // unsubscribe ends the socket's subscription to the project that m names,
-// if it has one, and answers unsubscribed whether it had one or not.
+// if it has one, and answers unsubscribed whether it had one or not, naming
+// the project as subscribe's answers do.
 func (c *conn) unsubscribe(m UnsubscribeMessage) error {
 	id, err := ids.Decode(ids.Project, m.ProjectID)
 	if err != nil {
@@ -422,7 +477,8 @@ func (c *conn) unsubscribe(m UnsubscribeMessage) error {
 	if sub := c.subs[id]; sub != nil {
 		c.drop(sub)
 	}
-	return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: m.ProjectID, Reason: "requested"})
+	return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: ids.Encode(ids.Project, id),
+		Reason: "requested"})
 }
 
 // drop ends the subscription sub.
@@ -432,22 +488,13 @@ func (c *conn) drop(sub *subscription) {
 }
 
 // deliverHeard sends each subscription the operations after the last that
-// it was sent, if it has heard of a later seq, with the credential checked
-// once for them all.
+// it was sent, if it has heard of a later seq.
 func (c *conn) deliverHeard() error {
-	var actor *commands.Actor
 	for _, sub := range c.subs {
 		if sub.heard.Load() <= sub.sent {
 			continue
 		}
-		if actor == nil {
-			a, err := c.check()
-			if err != nil {
-				return err
-			}
-			actor = &a
-		}
-		if err := c.deliver(sub, *actor); err != nil {
+		if err := c.deliver(sub, nil); err != nil {
 			return err
 		}
 	}
@@ -455,17 +502,26 @@ func (c *conn) deliverHeard() error {
 }
 
 // deliver sends sub the operations of its project after the last that it
-// was sent, read as the actor, whose credential was just checked, a page at
-// a time (commands.ReadLog), checking the credential again before each page
-// after the first, until it has sent what the project had when it read the
-// page. A project that the actor can no longer read ends the subscription,
-// with unsubscribed, and one whose log no longer has an operation that sub
-// was not sent, as once compaction (PRD FR-GDPR-03) dropped it, has sub told
-// to reload the project (resync_required).
-func (c *conn) deliver(sub *subscription, actor commands.Actor) error {
+// was sent, read as the socket's actor, a page at a time (commands.ReadLog),
+// with the credential checked before each page, but for the first when
+// checked is the actor of a check that the caller has just made, until it
+// has sent what the project had when it read the first page: what commits
+// later wakes the socket again (Hub.dispatch), so that a project that commits
+// faster than the client reads keeps neither the socket's other
+// subscriptions, nor its client's messages, nor its heartbeats waiting. A
+// project that the actor can no longer read ends the subscription, with
+// unsubscribed, and one whose log no longer has an operation that sub was not
+// sent, as once compaction (PRD FR-GDPR-03) dropped it, or of which more than
+// MaxCatchUp wait to be sent, as once the hub heard of none for long, has sub
+// told to reload the project (resync_required), as a subscription is.
+func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 	projectID := ids.Encode(ids.Project, sub.project)
+	var until int64
 	for first := true; ; first = false {
-		if !first {
+		var actor commands.Actor
+		if checked != nil {
+			actor, checked = *checked, nil
+		} else {
 			var err error
 			if actor, err = c.check(); err != nil {
 				return err
@@ -473,8 +529,13 @@ func (c *conn) deliver(sub *subscription, actor commands.Actor) error {
 		}
 		var ops []commands.Operation
 		var seq int64
+		tooMany := false
 		err := c.hub.read(c.ctx, actor, sub.workspace, sub.project, func(tx pgx.Tx, s int64) error {
 			seq = s
+			if first && s-sub.sent > MaxCatchUp {
+				tooMany = true
+				return nil
+			}
 			var err error
 			ops, err = commands.ReadLog(c.ctx, tx, sub.workspace, sub.project, sub.sent, pageRows, pageBytes)
 			return err
@@ -485,6 +546,10 @@ func (c *conn) deliver(sub *subscription, actor commands.Actor) error {
 			return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: projectID, Reason: "not_found"})
 		case err != nil:
 			return err
+		case tooMany:
+			return c.resync(sub, projectID, seq)
+		case first:
+			until = seq
 		}
 		for _, op := range ops {
 			if op.Seq != sub.sent+1 {
@@ -498,7 +563,7 @@ func (c *conn) deliver(sub *subscription, actor commands.Actor) error {
 		switch {
 		case len(ops) == 0 && seq > sub.sent:
 			return c.resync(sub, projectID, seq)
-		case len(ops) == 0 || sub.sent >= seq:
+		case len(ops) == 0 || sub.sent >= until:
 			return nil
 		}
 	}

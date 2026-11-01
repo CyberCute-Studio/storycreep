@@ -107,7 +107,7 @@ type UnsubscribedMessage struct {
 type SubscriptionFailedMessage struct {
 	_         struct{} `additionalProperties:"true"`
 	Type      string   `json:"type" enum:"subscription_failed" doc:"subscription_failed"`
-	ProjectID string   `json:"project_id" doc:"The project's ID as the subscription named it"`
+	ProjectID string   `json:"project_id" doc:"The project's ID, as prj_…, or, for invalid_id, as the subscription named it"`
 	Code      string   `json:"code" enum:"invalid_id,not_found,rate_limited,too_many_subscriptions" doc:"invalid_id, the ID is not a project's; not_found, there is no such project, or the user cannot read it, which the answer does not tell apart; rate_limited, the user has subscribed too often, and retries after retry_after seconds; or too_many_subscriptions, the socket subscribes to 100 projects already"`
 	// RetryAfter is how many seconds to wait, for rate_limited.
 	RetryAfter int `json:"retry_after,omitempty" minimum:"1" doc:"For rate_limited, how many seconds to wait before subscribing again"`

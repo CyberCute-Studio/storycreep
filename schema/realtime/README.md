@@ -15,17 +15,19 @@ A client sends:
 - `subscribe`, with `project_id` and, optionally, `since`, the seq of the project's latest operation that it has, `0` for none.
 - `unsubscribe`, with `project_id`.
 
-A client's message holds exactly its type's fields, at most 4 KiB, or the server answers it with `error` (`invalid_message`), or closes the socket with 1009 when it is larger.
+A client's message holds exactly its type's fields, at most 4 KiB, or the server answers it with `error` (`invalid_message`), or closes the socket with 1009 when it is larger. A `subscribe` to a project that the socket subscribes to already starts the subscription anew once it holds; one that is refused leaves the subscription as it was, but for `not_found`, which ends it.
 
 The server sends:
 
 - `subscribed`, with the project's `seq`: the operations after `since`, up to `seq`, follow, and then each that commits. Without `since`, only those that commit from now on do.
-- `resync_required`, with the `seq` that the subscription goes on from: the operations after `since` cannot be sent, because the log no longer has one of them, as once compaction has dropped it, more than 10,000 follow `since`, or `since` is beyond the project's seq. The client reloads the project, and passes over an operation that follows whose revisions it has already. It may come during a subscription too, when the log turns out not to have an operation that the subscription was not sent.
+- `resync_required`, with the `seq` that the subscription goes on from: the operations after `since` cannot be sent, because the log no longer has one of them, as once compaction has dropped it, more than 10,000 follow `since`, or `since` is beyond the project's seq. The client reloads the project, and passes over an operation that follows whose revisions it has already. It may come during a subscription too, when the log turns out not to have an operation that the subscription was not sent, or more than 10,000 wait to be sent at once, as once the server has missed the notifications of many.
 - `operation`, a batch that committed: its `seq`, the next of the project's, its `commands`, each with its `command_id`, its `type`, and its `payload`, as the command endpoint's document describes them, the `revisions` of the entities that it changed, and `created_at`.
 - `subscription_failed`, with a `code`: `invalid_id`; `not_found`, for a project that does not exist and one that the user cannot read alike; `rate_limited`, with `retry_after` in seconds, since each subscription counts in the rate limit of reads; or `too_many_subscriptions`, past 100 of one socket.
 - `unsubscribed`, with a `reason`: `requested`, as the client asked, or `not_found`, once the project can no longer be read, as once the user is removed from its workspace, or it goes to the trash.
 - `error`, for a message that the server cannot read.
 - `heartbeat`, every 25 seconds, beside a ping. A client that hears nothing for a minute takes the connection for lost.
+
+The server's messages name a project by its ID as the API writes it, whichever spelling of it the client's message had, but for `subscription_failed` with `invalid_id`, which names it as the client's message did.
 
 A server's message may hold properties that its schema does not name, which a later server adds and a client ignores. A change that a client could not ignore is a version of its own, with a schema at a path of its version.
 

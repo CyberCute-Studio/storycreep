@@ -313,16 +313,21 @@ func (q *Queries) OperationInverse(ctx context.Context, arg OperationInversePara
 }
 
 const operationsAfter = `-- name: OperationsAfter :many
-SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM (
-    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
-        pg_column_size(o.payload) + pg_column_size(o.entity_refs) AS size,
-        sum(pg_column_size(o.payload) + pg_column_size(o.entity_refs)) OVER (ORDER BY o.seq) AS through
+WITH RECURSIVE page AS (
+    (SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        (octet_length(o.payload::text) + octet_length(o.entity_refs::text))::bigint AS through, 1 AS n
     FROM operation o
     WHERE o.workspace_id = $1 AND o.project_id = $2 AND o.seq > $3
     ORDER BY o.seq
-    LIMIT $4
-) page
-WHERE page.through - page.size < $5::bigint
+    LIMIT 1)
+    UNION ALL
+    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        page.through + octet_length(o.payload::text) + octet_length(o.entity_refs::text), page.n + 1
+    FROM page
+    JOIN operation o ON o.workspace_id = $1 AND o.project_id = $2 AND o.seq = page.seq + 1
+    WHERE page.through < $4::bigint AND page.n < $5::integer
+)
+SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM page
 ORDER BY page.seq
 `
 
@@ -330,8 +335,8 @@ type OperationsAfterParams struct {
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	After       int64
-	MaxRows     int32
 	MaxBytes    int64
+	MaxRows     int32
 }
 
 type OperationsAfterRow struct {
@@ -342,21 +347,25 @@ type OperationsAfterRow struct {
 }
 
 // OperationsAfter returns the project's operations whose seqs come after
-// @after, in the order of their seqs: at most @max_rows of them, the first of
-// them whatever its size, and each after it while the ones before it take
-// less than @max_bytes, by the room that their payloads and entity refs take
-// where the log keeps them, compressed or not (pg_column_size), which reads
-// none of the values themselves, so that a page of the log that the
-// real-time hub holds in memory and sends a session is bounded however large
-// its batches are, and holds one at least (package realtime). The values of
-// the operations that the page leaves out are not read.
+// @after, in the order of their seqs: the first of them, whatever its size,
+// and each that follows the one before it, of the next seq, at most @max_rows
+// in all, while the ones before it take less than @max_bytes as the JSON of
+// their payloads and entity refs, which is what a reader holds of them,
+// rather than the room that the log keeps them in, which compression makes
+// far less for a batch that repeats itself, so that a page of the log that
+// the real-time hub holds in memory and sends a session is bounded however
+// large its batches are, and holds one at least (package realtime). It reads
+// one operation at a time, by its seq, and stops at the first past either
+// bound, or at a seq that the log no longer holds, as once compaction
+// (FR-GDPR-03) has dropped it, so that it reads the values of no operation
+// that the page leaves out.
 func (q *Queries) OperationsAfter(ctx context.Context, arg OperationsAfterParams) ([]OperationsAfterRow, error) {
 	rows, err := q.db.Query(ctx, operationsAfter,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.After,
-		arg.MaxRows,
 		arg.MaxBytes,
+		arg.MaxRows,
 	)
 	if err != nil {
 		return nil, err
@@ -431,22 +440,42 @@ func (q *Queries) ProjectInTrash(ctx context.Context, arg ProjectInTrashParams) 
 	return deleted, err
 }
 
-const projectSeq = `-- name: ProjectSeq :one
-SELECT seq FROM project WHERE workspace_id = $1 AND id = $2
+const projectSeqs = `-- name: ProjectSeqs :many
+SELECT id, seq FROM project WHERE workspace_id = $1 AND id = ANY($2::uuid[])
 `
 
-type ProjectSeqParams struct {
+type ProjectSeqsParams struct {
 	WorkspaceID pgtype.UUID
-	ID          pgtype.UUID
+	Ids         []pgtype.UUID
 }
 
-// ProjectSeq returns the seq of the project's latest operation, without
-// locking the project's row, as of the statement's start.
-func (q *Queries) ProjectSeq(ctx context.Context, arg ProjectSeqParams) (int64, error) {
-	row := q.db.QueryRow(ctx, projectSeq, arg.WorkspaceID, arg.ID)
-	var seq int64
-	err := row.Scan(&seq)
-	return seq, err
+type ProjectSeqsRow struct {
+	ID  pgtype.UUID
+	Seq int64
+}
+
+// ProjectSeqs returns the seq of the latest operation of each of the
+// workspace's projects among @ids, without locking their rows, as of the
+// statement's start, and nothing of an ID that is no project of the
+// workspace's.
+func (q *Queries) ProjectSeqs(ctx context.Context, arg ProjectSeqsParams) ([]ProjectSeqsRow, error) {
+	rows, err := q.db.Query(ctx, projectSeqs, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectSeqsRow
+	for rows.Next() {
+		var i ProjectSeqsRow
+		if err := rows.Scan(&i.ID, &i.Seq); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const projectWorkspace = `-- name: ProjectWorkspace :one

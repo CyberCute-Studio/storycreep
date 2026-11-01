@@ -2,7 +2,6 @@ package realtime
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -159,37 +158,50 @@ func (h *Hub) poll() {
 	}
 }
 
-// pollOnce reads the seq of each project that the hub's sockets subscribe
-// to, one project at a time, and dispatches each that the hub had not heard
-// of. A project that its workspace no longer has, as once it is purged, is
-// dispatched all the same, so that its subscriptions find it gone.
+// pollOnce reads the seqs of the projects that the hub's sockets subscribe
+// to, in one statement for each workspace, one workspace at a time, and
+// dispatches each that the hub had not heard of. A project that its
+// workspace no longer has, as once it is purged, is dispatched all the same,
+// so that its subscriptions find it gone. The workspaces whose seqs it cannot
+// read, as while the database is down, it logs once for the poll, with the
+// first error.
 func (h *Hub) pollOnce() {
-	type known struct {
-		project, workspace ids.UUID
-		latest             int64
-	}
 	h.mu.Lock()
-	projects := make([]known, 0, len(h.channels))
+	latest := make(map[ids.UUID]int64, len(h.channels))
+	byWorkspace := map[ids.UUID][]ids.UUID{}
 	for id, ch := range h.channels {
-		projects = append(projects, known{project: id, workspace: ch.workspace, latest: ch.latest})
+		latest[id] = ch.latest
+		byWorkspace[ch.workspace] = append(byWorkspace[ch.workspace], id)
 	}
 	h.mu.Unlock()
-	for _, p := range projects {
-		var seq int64
-		err := h.db.InTx(h.ctx, database.Scope{WorkspaceID: p.workspace}, func(tx pgx.Tx) error {
+	failed, first := 0, error(nil)
+	for workspaceID, projects := range byWorkspace {
+		var seqs map[ids.UUID]int64
+		err := h.db.InTx(h.ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 			var err error
-			seq, err = commands.ProjectSeq(h.ctx, tx, p.workspace, p.project)
+			seqs, err = commands.ProjectSeqs(h.ctx, tx, workspaceID, projects)
 			return err
 		})
 		switch {
 		case h.ctx.Err() != nil:
 			return
-		case errors.Is(err, commands.ErrNoProject):
-			h.dispatch(p.project, p.latest+1)
 		case err != nil:
-			h.log.WarnContext(h.ctx, "the real-time hub could not read a project's seq", "error", err)
-		case seq > p.latest:
-			h.dispatch(p.project, seq)
+			if failed++; first == nil {
+				first = err
+			}
+			continue
 		}
+		for _, id := range projects {
+			switch seq, ok := seqs[id]; {
+			case !ok:
+				h.dispatch(id, latest[id]+1)
+			case seq > latest[id]:
+				h.dispatch(id, seq)
+			}
+		}
+	}
+	if failed > 0 {
+		h.log.WarnContext(h.ctx, "the real-time hub could not read the seqs of the projects of some workspaces, so "+
+			"it reads them again at its next poll", "workspaces", failed, "error", first)
 	}
 }

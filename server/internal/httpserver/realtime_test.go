@@ -361,9 +361,10 @@ func TestRealtimeSubscriptionRefusedAlike(t *testing.T) {
 
 // TestRealtimeListenerReconnects checks that the operations that commit while
 // the hub's LISTEN connection is gone, whose notifications nobody hears, are
-// sent all the same once it LISTENs again, in order: the notifications are
-// only a way to be told sooner, and the log the source of truth (FR-RT-01
-// AC3, ADR-005).
+// sent all the same once it LISTENs again, in order, whether or not another
+// socket subscribes to the project meanwhile: the notifications are only a
+// way to be told sooner, and the log the source of truth (FR-RT-01 AC3,
+// ADR-005).
 //
 // Verifies: FR-RT-01/AC3
 func TestRealtimeListenerReconnects(t *testing.T) {
@@ -390,6 +391,15 @@ func TestRealtimeListenerReconnects(t *testing.T) {
 		t.Fatalf("ended %d LISTEN connections, want the hub's", ended)
 	}
 	missed, missedIDs := createBoards(t, s.main, owner, project, 3)
+	// A socket that subscribes meanwhile reads the seq that the hub was not
+	// told of, which wakes the first socket, since the poll once the hub
+	// LISTENs again, which compares the seq with the latest that the hub
+	// knows of, finds nothing new then.
+	other := dialSocket(t, srv, owner.header(false))
+	other.subscribe(project, -1)
+	if m := other.next("subscribed"); m.Seq != seq+3 {
+		t.Errorf("the socket subscribed meanwhile at seq %d, want %d", m.Seq, seq+3)
+	}
 	sock.wantOperations(project, seq, missed, missedIDs)
 	seq += 3
 	later, laterIDs := createBoards(t, s.main, owner, project, 1)
@@ -538,8 +548,9 @@ func TestRealtimeResync(t *testing.T) {
 
 // TestRealtimeMessages checks how the socket answers what a client sends: a
 // message that it cannot read with an error, an unsubscription with
-// unsubscribed, which ends the subscription, an ID that is not a project's
-// with invalid_id, and the 101st subscription with too_many_subscriptions.
+// unsubscribed, which ends the subscription, each naming the project as the
+// API writes its ID, an ID that is not a project's with invalid_id, and the
+// 101st subscription with too_many_subscriptions.
 func TestRealtimeMessages(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
@@ -561,9 +572,13 @@ func TestRealtimeMessages(t *testing.T) {
 		t.Errorf("an ID that is not a project's is refused with %+v", m)
 	}
 
-	sock.subscribe(project, -1)
-	sock.next("subscribed")
-	sock.send(map[string]string{"type": "unsubscribe", "project_id": project})
+	// The answers name the project as the API writes its ID, whichever
+	// spelling of it the client's message has.
+	sock.subscribe(strings.ToLower(project), -1)
+	if m := sock.next("subscribed"); m.ProjectID != project {
+		t.Errorf("a subscription to %s is answered for %s, want %s", strings.ToLower(project), m.ProjectID, project)
+	}
+	sock.send(map[string]string{"type": "unsubscribe", "project_id": strings.ToLower(project)})
 	if m := sock.next("unsubscribed"); m.ProjectID != project || m.Reason != "requested" {
 		t.Errorf("the unsubscription is answered with %+v", m)
 	}
@@ -586,7 +601,8 @@ func TestRealtimeMessages(t *testing.T) {
 
 // TestRealtimeSubscriptionRateLimit checks that each subscription counts in
 // the rate limit of reads, which refuses one over it with rate_limited, and
-// how long to wait.
+// how long to wait, and that a subscription anew that it refuses leaves the
+// one before as it was.
 func TestRealtimeSubscriptionRateLimit(t *testing.T) {
 	t.Parallel()
 	s, _, owner, ws := inviteServer(t, "open", nil)
@@ -604,6 +620,10 @@ func TestRealtimeSubscriptionRateLimit(t *testing.T) {
 	if m := sock.next("subscription_failed"); m.Code != "rate_limited" || m.RetryAfter < 1 || m.RetryAfter > 60 {
 		t.Errorf("the subscription over the limit is answered with %+v", m)
 	}
+	// The refused subscription was to a project that the socket subscribes to
+	// already, which it goes on subscribing to.
+	boards, commandIDs := createBoards(t, s.main, owner, project, 1)
+	sock.wantOperations(project, 0, boards, commandIDs)
 }
 
 // TestRealtimeUpgrade checks the upgrade's refusals: a request that does not
@@ -618,9 +638,10 @@ func TestRealtimeUpgrade(t *testing.T) {
 	srv := realtimeServer(t, s)
 	res := call(s.main, http.MethodGet, realtimePath, nil, owner.header(false))
 	wantCode(t, "a GET that does not upgrade", res, http.StatusUpgradeRequired, api.CodeUpgradeRequired)
-	if res.header.Get("Upgrade") != "websocket" || res.header.Get("Sec-WebSocket-Version") != "13" {
-		t.Errorf("the 426 names Upgrade %q and version %q", res.header.Get("Upgrade"),
-			res.header.Get("Sec-WebSocket-Version"))
+	if res.header.Get("Upgrade") != "websocket" || res.header.Get("Connection") != "Upgrade" ||
+		res.header.Get("Sec-WebSocket-Version") != "13" {
+		t.Errorf("the 426 names Upgrade %q, Connection %q, and version %q", res.header.Get("Upgrade"),
+			res.header.Get("Connection"), res.header.Get("Sec-WebSocket-Version"))
 	}
 	upgrade := http.Header{"Connection": {"Upgrade"}, "Upgrade": {"websocket"}, "Sec-Websocket-Version": {"13"},
 		"Sec-Websocket-Key": {"dGhlIHNhbXBsZSBub25jZQ=="}}

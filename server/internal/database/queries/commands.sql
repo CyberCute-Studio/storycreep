@@ -123,24 +123,33 @@ ORDER BY seq;
 
 -- name: OperationsAfter :many
 -- OperationsAfter returns the project's operations whose seqs come after
--- @after, in the order of their seqs: at most @max_rows of them, the first of
--- them whatever its size, and each after it while the ones before it take
--- less than @max_bytes, by the room that their payloads and entity refs take
--- where the log keeps them, compressed or not (pg_column_size), which reads
--- none of the values themselves, so that a page of the log that the
--- real-time hub holds in memory and sends a session is bounded however large
--- its batches are, and holds one at least (package realtime). The values of
--- the operations that the page leaves out are not read.
-SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM (
-    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
-        pg_column_size(o.payload) + pg_column_size(o.entity_refs) AS size,
-        sum(pg_column_size(o.payload) + pg_column_size(o.entity_refs)) OVER (ORDER BY o.seq) AS through
+-- @after, in the order of their seqs: the first of them, whatever its size,
+-- and each that follows the one before it, of the next seq, at most @max_rows
+-- in all, while the ones before it take less than @max_bytes as the JSON of
+-- their payloads and entity refs, which is what a reader holds of them,
+-- rather than the room that the log keeps them in, which compression makes
+-- far less for a batch that repeats itself, so that a page of the log that
+-- the real-time hub holds in memory and sends a session is bounded however
+-- large its batches are, and holds one at least (package realtime). It reads
+-- one operation at a time, by its seq, and stops at the first past either
+-- bound, or at a seq that the log no longer holds, as once compaction
+-- (FR-GDPR-03) has dropped it, so that it reads the values of no operation
+-- that the page leaves out.
+WITH RECURSIVE page AS (
+    (SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        (octet_length(o.payload::text) + octet_length(o.entity_refs::text))::bigint AS through, 1 AS n
     FROM operation o
     WHERE o.workspace_id = @workspace_id AND o.project_id = @project_id AND o.seq > @after
     ORDER BY o.seq
-    LIMIT @max_rows
-) page
-WHERE page.through - page.size < @max_bytes::bigint
+    LIMIT 1)
+    UNION ALL
+    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        page.through + octet_length(o.payload::text) + octet_length(o.entity_refs::text), page.n + 1
+    FROM page
+    JOIN operation o ON o.workspace_id = @workspace_id AND o.project_id = @project_id AND o.seq = page.seq + 1
+    WHERE page.through < @max_bytes::bigint AND page.n < @max_rows::integer
+)
+SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM page
 ORDER BY page.seq;
 
 -- name: FirstOperationAfter :one
@@ -151,10 +160,12 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq > @after
 ORDER BY seq
 LIMIT 1;
 
--- name: ProjectSeq :one
--- ProjectSeq returns the seq of the project's latest operation, without
--- locking the project's row, as of the statement's start.
-SELECT seq FROM project WHERE workspace_id = @workspace_id AND id = @id;
+-- name: ProjectSeqs :many
+-- ProjectSeqs returns the seq of the latest operation of each of the
+-- workspace's projects among @ids, without locking their rows, as of the
+-- statement's start, and nothing of an ID that is no project of the
+-- workspace's.
+SELECT id, seq FROM project WHERE workspace_id = @workspace_id AND id = ANY(@ids::uuid[]);
 
 -- name: PruneBatchRecords :one
 -- PruneBatchRecords deletes the workspace's oldest batches' idempotency

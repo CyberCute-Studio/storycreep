@@ -60,13 +60,15 @@ const (
 	// sockets, which the rate limit of connects lets them open 30 a minute.
 	MaxConnectionsPerUser = 50
 	// MaxCatchUp is how many operations a subscription is sent of those that
-	// it missed before it is told to reload the project instead: reading the
-	// project anew is then cheaper than replaying them.
+	// it missed, as it subscribes, or once its hub hears of them, before it
+	// is told to reload the project instead: reading the project anew is then
+	// cheaper than replaying them.
 	MaxCatchUp = 10_000
 	// pageRows and pageBytes bound a page of the log that a subscription is
-	// sent at once (commands.ReadLog): it is read whole, in one transaction,
-	// before it is sent, so the bounds hold how much a socket's delivery
-	// holds in memory, whatever its batches hold.
+	// sent at once (commands.ReadLog), pageBytes by its operations' JSON: it
+	// is read whole, in one transaction, before it is sent, so the bounds
+	// hold how much a socket's delivery holds in memory, whatever its batches
+	// hold, however well the log compresses them.
 	pageRows  = 100
 	pageBytes = 1 << 20
 	// maxMessageBytes is the most that a client's message may hold. A
@@ -90,6 +92,11 @@ const (
 	defaultPongTimeout  = 20 * time.Second
 	defaultPollInterval = 30 * time.Second
 	writeTimeout        = 30 * time.Second
+	// shutdownWriteGrace is how long a socket's write in flight as the hub
+	// shuts down may take before it is cut, which leaves the socket without
+	// its close of 1001, so that a client that reads too slowly does not hold
+	// the server's shutdown, of 20 seconds, with writeTimeout.
+	shutdownWriteGrace = 5 * time.Second
 	// maxListenDelay is the longest that the hub waits before it tries
 	// again to LISTEN, once a try has failed: it waits a second after the
 	// first failure, and twice as long after each failure after it.
@@ -303,7 +310,12 @@ func (h *Hub) begin() bool {
 // workspace that sub read the project in, if the project has none, where
 // sub read the seq seq. The first subscription starts the LISTEN connection
 // and the poller. The subscription has heard of the latest seq that the
-// channel had heard of, so that it reads what it missed.
+// channel had heard of, so that it reads what it missed. A seq that the
+// channel had not heard of, as one whose notification was lost while the
+// LISTEN connection reconnected, wakes the channel's other subscriptions as
+// a notification would, since the poller, which compares the project's seq
+// with the channel's latest, would find nothing to tell them of once it is
+// the channel's.
 func (h *Hub) join(sub *subscription, seq int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -312,8 +324,16 @@ func (h *Hub) join(sub *subscription, seq int64) {
 		ch = &channel{workspace: sub.workspace, subs: map[*subscription]struct{}{}}
 		h.channels[sub.project] = ch
 	}
+	if seq > ch.latest {
+		ch.latest = seq
+		for other := range ch.subs {
+			if seq > other.heard.Load() {
+				other.heard.Store(seq)
+			}
+			other.conn.signal()
+		}
+	}
 	ch.subs[sub] = struct{}{}
-	ch.latest = max(ch.latest, seq)
 	sub.heard.Store(ch.latest)
 	h.subscriptions.Inc()
 	if !h.started && !h.closed {

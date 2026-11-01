@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"golang.org/x/net/http/httpguts"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
@@ -85,7 +86,10 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			r, w := humachi.Unwrap(hctx)
 			if err := upgradeError(r); err != nil {
+				// An Upgrade header goes with the connection option upgrade,
+				// so that no proxy forwards it (RFC 9110 §7.8).
 				w.Header().Set("Upgrade", "websocket")
+				w.Header().Set("Connection", "Upgrade")
 				w.Header().Set("Sec-WebSocket-Version", "13")
 				api.WriteError(w, r, err)
 				return
@@ -117,26 +121,12 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 // to a WebSocket of version 13 (RFC 6455 §4.2.1), or nil for one that does.
 func upgradeError(r *http.Request) error {
 	key, err := base64.StdEncoding.DecodeString(r.Header.Get("Sec-WebSocket-Key"))
-	if r.Method != http.MethodGet || !headerHas(r.Header, "Connection", "upgrade") ||
-		!headerHas(r.Header, "Upgrade", "websocket") || r.Header.Get("Sec-WebSocket-Version") != "13" ||
-		err != nil || len(key) != 16 {
+	if r.Method != http.MethodGet || !httpguts.HeaderValuesContainsToken(r.Header.Values("Connection"), "upgrade") ||
+		!httpguts.HeaderValuesContainsToken(r.Header.Values("Upgrade"), "websocket") ||
+		r.Header.Get("Sec-WebSocket-Version") != "13" || err != nil || len(key) != 16 {
 		return api.NewError(api.CodeUpgradeRequired)
 	}
 	return nil
-}
-
-// headerHas reports whether the header name of h lists token, as a header
-// of comma-separated tokens does, on one line or several, whatever their
-// case.
-func headerHas(h http.Header, name, token string) bool {
-	for _, line := range h.Values(name) {
-		for t := range strings.SplitSeq(line, ",") {
-			if strings.EqualFold(strings.TrimSpace(t), token) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // sameOrigin reports whether r, a socket's upgrade, comes from a page of the

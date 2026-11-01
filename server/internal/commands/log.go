@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
@@ -36,16 +37,17 @@ type LoggedCommand struct {
 
 // ReadLog returns, in tx, a transaction of the project's workspace, the
 // project's operations whose seqs come after after, in the order of their
-// seqs: at most maxRows of them, the first whatever its size, and each after
-// it while those before it take less than maxBytes of the room that the log
-// keeps them in, which may be less than their JSON, compressed, so that a
-// page of the log is bounded however large its batches are, and holds one at
-// least. The seqs of a project commit in order, without a gap (plan note
-// N30), so the operations are those that follow after, unless the log no
-// longer holds them, as once compaction (PRD FR-GDPR-03) has dropped them,
-// which the caller tells by the first seq, and by the seqs that follow it,
-// each the one before plus one. It returns none if no operation comes after
-// after, or the project has none.
+// seqs: the first of them whatever its size, and each that follows the one
+// before it, of the next seq, at most maxRows in all, while those before it
+// take less than maxBytes as JSON, which is what the caller holds of them,
+// however small the log keeps them, compressed, so that a page of the log is
+// bounded however large its batches are, and holds one at least. The seqs
+// of a project commit in order, without a gap (plan note N30), so the
+// operations are those that follow after, unless the log no longer holds
+// them, as once compaction (PRD FR-GDPR-03) has dropped them, which the
+// caller tells by the first seq: a page ends before a seq that the log no
+// longer holds, and the next starts after it. It returns none if no
+// operation comes after after, or the project has none.
 func ReadLog(ctx context.Context, tx pgx.Tx, workspaceID, projectID ids.UUID, after int64, maxRows int,
 	maxBytes int64) ([]Operation, error) {
 	rows, err := queries.New(tx).OperationsAfter(ctx, queries.OperationsAfterParams{WorkspaceID: nullUUID(workspaceID),
@@ -101,23 +103,25 @@ func LogFollows(ctx context.Context, tx pgx.Tx, workspaceID, projectID ids.UUID,
 	return seq == after+1, nil
 }
 
-// ErrNoProject is returned by ProjectSeq for a project that its workspace
-// does not have.
-var ErrNoProject = errors.New("commands: the workspace has no such project")
-
-// ProjectSeq returns, in tx, a transaction of the workspace workspaceID, the
-// seq of the project's latest operation, 0 before its first, as of the
-// statement's start, without locking the project, or ErrNoProject if the
-// workspace has no such project, as once the project is purged. A project in
-// the trash still has its seq.
-func ProjectSeq(ctx context.Context, tx pgx.Tx, workspaceID, projectID ids.UUID) (int64, error) {
-	seq, err := queries.New(tx).ProjectSeq(ctx, queries.ProjectSeqParams{WorkspaceID: nullUUID(workspaceID),
-		ID: nullUUID(projectID)})
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return 0, ErrNoProject
-	case err != nil:
-		return 0, fmt.Errorf("commands: read the project's seq: %w", err)
+// ProjectSeqs returns, in tx, a transaction of the workspace workspaceID,
+// the seq of the latest operation of each of the projects projectIDs that
+// the workspace has, 0 before its first, as of the statement's start,
+// without locking the projects, by their IDs, and none of a project that the
+// workspace does not have, as once the project is purged. A project in the
+// trash still has its seq.
+func ProjectSeqs(ctx context.Context, tx pgx.Tx, workspaceID ids.UUID, projectIDs []ids.UUID) (map[ids.UUID]int64,
+	error) {
+	params := queries.ProjectSeqsParams{WorkspaceID: nullUUID(workspaceID), Ids: make([]pgtype.UUID, len(projectIDs))}
+	for i, id := range projectIDs {
+		params.Ids[i] = nullUUID(id)
 	}
-	return seq, nil
+	rows, err := queries.New(tx).ProjectSeqs(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("commands: read the projects' seqs: %w", err)
+	}
+	out := make(map[ids.UUID]int64, len(rows))
+	for _, row := range rows {
+		out[ids.UUID(row.ID.Bytes)] = row.Seq
+	}
+	return out, nil
 }
