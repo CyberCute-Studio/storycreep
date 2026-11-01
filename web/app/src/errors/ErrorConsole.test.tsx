@@ -1,11 +1,16 @@
 import { createI18n } from "@storycreep/shared/i18n";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, expect, it, vi } from "vitest";
 import { versionQuery } from "../api";
-import { ErrorConsoleButton, ErrorConsoleProvider } from "./ErrorConsole";
+import {
+  ErrorConsoleButton,
+  ErrorConsoleProvider,
+  useErrorConsole,
+} from "./ErrorConsole";
 import { createErrorLog } from "./log";
 
 afterEach(() => {
@@ -13,7 +18,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderConsole() {
+function renderConsole(children?: ReactNode) {
   // The Clipboard API, which userEvent.setup stubs, exists only in a secure
   // context, which jsdom's page is not.
   vi.stubGlobal("isSecureContext", true);
@@ -28,6 +33,7 @@ function renderConsole() {
       <QueryClientProvider client={queryClient}>
         <ErrorConsoleProvider log={log}>
           <ErrorConsoleButton />
+          {children}
         </ErrorConsoleProvider>
       </QueryClientProvider>
     </I18nextProvider>,
@@ -43,9 +49,7 @@ it("lists the errors with details that the user copies, and sends nothing", asyn
   log.record("error", new Error("boom"));
   log.record("rejection", new Error("bust"));
 
-  await user.click(
-    await screen.findByRole("button", { name: "Error console, 2 errors" }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Errors: 2" }));
   const dialog = screen.getByRole("dialog", { name: "Error console" });
   const items = within(
     within(dialog).getByRole("list", { name: "Errors, newest first" }),
@@ -98,9 +102,7 @@ it("copies one error's details", async () => {
   const log = renderConsole();
   log.record("error", new Error("first"));
   log.record("error", new Error("second"));
-  await user.click(
-    await screen.findByRole("button", { name: /^Error console/ }),
-  );
+  await user.click(await screen.findByRole("button", { name: /^Errors: / }));
   const dialog = screen.getByRole("dialog");
   const [newest] = within(dialog).getAllByRole("listitem");
   const summary = newest.querySelector("summary");
@@ -121,4 +123,43 @@ it("copies one error's details", async () => {
   expect(copied).toMatch(/^Storycreep error report\nReport made at: /);
   expect(copied).toContain(details);
   expect(copied).not.toContain("Error: first");
+});
+
+// Verifies: NFR-A11Y-01
+it("names its button with the label that it shows, and the number of errors", async () => {
+  const log = renderConsole();
+  const button = await screen.findByRole("button", { name: "Errors: none" });
+  expect(button.textContent).toBe("Errors");
+  log.record("error", new Error("once"));
+  // A user of speech input says the label that the button shows, which its
+  // name starts with (WCAG 2.5.3).
+  await waitFor(() => expect(button.textContent).toBe("Errors1"));
+  expect(button.getAttribute("aria-label")).toBe("Errors: 1");
+});
+
+/** A control that opens the console as the page of an error does. */
+function ShowButton() {
+  const { show } = useErrorConsole();
+  return (
+    <button type="button" onClick={show}>
+      Show
+    </button>
+  );
+}
+
+// Verifies: NFR-A11Y-01
+it("gives the focus back to the control that opened it", async () => {
+  const user = userEvent.setup();
+  renderConsole(<ShowButton />);
+  const show = screen.getByRole("button", { name: "Show" });
+  await user.click(show);
+  const dialog = screen.getByRole("dialog", { name: "Error console" });
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(document.activeElement).toBe(show));
+
+  // The header's button gets it back when it opened the console.
+  const button = screen.getByRole("button", { name: /^Errors: / });
+  await user.click(button);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.activeElement).toBe(button));
 });

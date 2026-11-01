@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"strconv"
@@ -21,7 +20,9 @@ import (
 const appPrefix = "/app/"
 
 // appAssets is the directory of the tool's bundle where Vite writes the files
-// whose names hold a hash of their content, which therefore never change.
+// whose names hold a hash of their content, which therefore never change
+// (assetsDir, in web/app/vite.config.ts, which refuses a file of the app's
+// public/ there, whose name has none).
 const appAssets = "assets/"
 
 // noncePlaceholder is what the tool's entry page, index.html, holds where
@@ -48,8 +49,9 @@ type fileType struct {
 // mime.TypeByExtension does, which may name another type: macOS's
 // /etc/apache2/mime.types names application/javascript for .js, and a
 // Windows registry may name any type for .css, which a browser then refuses
-// as a stylesheet, under nosniff. A file of another extension has the type
-// that mime.TypeByExtension names, and does not compress.
+// as a stylesheet, under nosniff. A file of another extension is
+// application/octet-stream, whatever the host, and does not compress: a type
+// that a bundle needs joins the table.
 var fileTypes = map[string]fileType{
 	".avif":        {"image/avif", false},
 	".css":         {"text/css; charset=utf-8", true},
@@ -62,8 +64,10 @@ var fileTypes = map[string]fileType{
 	".json":        {"application/json", true},
 	".map":         {"application/json", true},
 	".mjs":         {"text/javascript; charset=utf-8", true},
+	".otf":         {"font/otf", true},
 	".png":         {"image/png", false},
 	".svg":         {"image/svg+xml", true},
+	".ttf":         {"font/ttf", true},
 	".txt":         {"text/plain; charset=utf-8", true},
 	".wasm":        {"application/wasm", true},
 	".webmanifest": {"application/manifest+json", true},
@@ -75,12 +79,8 @@ var fileTypes = map[string]fileType{
 
 // typeOf returns the type of the file name.
 func typeOf(name string) fileType {
-	ext := strings.ToLower(path.Ext(name))
-	if t, ok := fileTypes[ext]; ok {
+	if t, ok := fileTypes[strings.ToLower(path.Ext(name))]; ok {
 		return t
-	}
-	if ctype := mime.TypeByExtension(ext); ctype != "" {
-		return fileType{contentType: ctype}
 	}
 	return fileType{contentType: "application/octet-stream"}
 }

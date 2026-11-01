@@ -2,7 +2,7 @@
 // caught, a promise rejected without a handler, and an error of rendering,
 // whether an error boundary caught it or not. Each is recorded in the log
 // and nowhere else. The errors of the API's requests are recorded by the
-// query client (query.ts).
+// query client (createQueryClient, in api.ts).
 
 import type { RootOptions } from "react-dom/client";
 import type { ErrorLog } from "./log";

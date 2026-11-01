@@ -37,7 +37,11 @@ export interface LoggedError extends ErrorDetails {
   source: ErrorSource;
   /** When it last happened. */
   time: Date;
-  /** The page that was open, as its URL. */
+  /**
+   * The page that was open, as its URL without its query or fragment, which
+   * may hold a link's secret, as the fragment of a link that resets a
+   * password does (plan note N26), and which a report must not give away.
+   */
   page: string;
   /** How many times in a row it happened. */
   count: number;
@@ -61,7 +65,7 @@ export interface ErrorLogOptions {
   /** How many errors the log keeps; the oldest goes first. */
   limit?: number;
   now?: () => Date;
-  /** The URL of the page that is open. */
+  /** The URL of the page that is open, without its query or fragment. */
   page?: () => string;
 }
 
@@ -72,7 +76,7 @@ export const DEFAULT_LIMIT = 100;
 export function createErrorLog(options: ErrorLogOptions = {}): ErrorLog {
   const limit = options.limit ?? DEFAULT_LIMIT;
   const now = options.now ?? (() => new Date());
-  const page = options.page ?? (() => globalThis.location?.href ?? "");
+  const page = options.page ?? currentPage;
   let entries: readonly LoggedError[] = [];
   let next = 1;
   const listeners = new Set<() => void>();
@@ -118,6 +122,12 @@ export function createErrorLog(options: ErrorLogOptions = {}): ErrorLog {
       };
     },
   };
+}
+
+/** Returns the URL of the page that is open, without its query or fragment. */
+function currentPage(): string {
+  const location = globalThis.location;
+  return location === undefined ? "" : location.origin + location.pathname;
 }
 
 /** Reports whether two entries are the same error on the same page. */

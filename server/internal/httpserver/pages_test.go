@@ -150,7 +150,10 @@ func TestPages(t *testing.T) {
 // TestPagesOfBundle checks how the files of a bundle such as Vite builds are
 // served: those under assets/, whose names hold a hash of their content, for
 // a year, and the others as every response, never stored, each with the type
-// of its extension, whatever the operating system's tables say; a path of a
+// of its extension in the server's table, whatever the operating system's
+// tables say, or, for an extension that the table lacks,
+// application/octet-stream, even for a PDF, whose type Go's own table names;
+// a path of a
 // file that the bundle does not have, as one of an older bundle, with
 // not_found; /app/index.html with a redirect to /app/; and any other path
 // with the entry page, whose route the app's router shows.
@@ -158,10 +161,11 @@ func TestPagesOfBundle(t *testing.T) {
 	page := []byte(`<!doctype html><meta property="csp-nonce" nonce="` + noncePlaceholder + `">` +
 		`<script type="module" src="/app/assets/index-abc.js" nonce="` + noncePlaceholder + `"></script>`)
 	app := fstest.MapFS{
-		"index.html":           {Data: page},
-		"favicon.svg":          {Data: []byte("<svg></svg>")},
-		"assets/index-abc.js":  {Data: []byte("export {};")},
-		"assets/index-abc.css": {Data: []byte("body{}")},
+		"index.html":            {Data: page},
+		"favicon.svg":           {Data: []byte("<svg></svg>")},
+		"assets/index-abc.js":   {Data: []byte("export {};")},
+		"assets/index-abc.css":  {Data: []byte("body{}")},
+		"assets/manual-abc.pdf": {Data: []byte("%PDF-")},
 	}
 	m := api.NewMux(api.MuxOptions{
 		Middleware: []func(http.Handler) http.Handler{securityHeaders(false)},
@@ -169,9 +173,10 @@ func TestPagesOfBundle(t *testing.T) {
 	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false)
 
 	for path, want := range map[string]struct{ ctype, cache, body string }{
-		"/app/assets/index-abc.js":  {"text/javascript; charset=utf-8", immutable, "export {};"},
-		"/app/assets/index-abc.css": {"text/css; charset=utf-8", immutable, "body{}"},
-		"/app/favicon.svg":          {"image/svg+xml", "no-store", "<svg></svg>"},
+		"/app/assets/index-abc.js":   {"text/javascript; charset=utf-8", immutable, "export {};"},
+		"/app/assets/index-abc.css":  {"text/css; charset=utf-8", immutable, "body{}"},
+		"/app/assets/manual-abc.pdf": {"application/octet-stream", immutable, "%PDF-"},
+		"/app/favicon.svg":           {"image/svg+xml", "no-store", "<svg></svg>"},
 	} {
 		res := do(m, http.MethodGet, path, nil)
 		if res.status != http.StatusOK || string(res.body) != want.body {

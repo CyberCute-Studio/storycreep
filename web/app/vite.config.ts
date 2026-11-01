@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 
+import { existsSync } from "node:fs";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -31,6 +32,30 @@ const cspNonce = "__STORYCREEP_CSP_NONCE__";
  */
 const apiServer = process.env.STORYCREEP_DEV_API_URL ?? "http://localhost:8080";
 
+/**
+ * The server's origin, which a URL with a path, even only a /, as
+ * http://localhost:8080/, would not be.
+ */
+const apiOrigin = new URL(apiServer).origin;
+
+/**
+ * The directory of the build where Vite writes the files whose names hold a
+ * hash of their content, which the server caches for a year (appAssets, in
+ * server/internal/httpserver/pages.go).
+ */
+const assetsDir = "assets";
+
+// A file of public/ is copied to the build as it is named, with no hash, so
+// one in public/assets/ would be cached for a year as if its name changed
+// with its content.
+if (
+  existsSync(fileURLToPath(new URL(`./public/${assetsDir}`, import.meta.url)))
+) {
+  throw new Error(
+    `web/app/public/${assetsDir}/: the server caches the build's ${assetsDir}/ for a year, which only files with a hash in their names may be in; put these files elsewhere in public/.`,
+  );
+}
+
 // The development server passes these to the server, and gives those from
 // its own pages the server's origin, since the server refuses a WebSocket of
 // the session cookie from another origin. A request from any other origin
@@ -43,7 +68,7 @@ const proxy: ProxyOptions = {
   configure(server) {
     const rewrite = (proxyReq: ClientRequest, req: IncomingMessage) => {
       if (fromDevServer(req)) {
-        proxyReq.setHeader("Origin", apiServer);
+        proxyReq.setHeader("Origin", apiOrigin);
       }
     };
     server.on("proxyReq", rewrite);
@@ -80,7 +105,7 @@ export default defineConfig({
   html: { cspNonce },
   // Vite would write a small image or font as a data: URL, which the entry
   // page's Content-Security-Policy refuses: every file is one of the build.
-  build: { outDir, emptyOutDir: true, assetsInlineLimit: 0 },
+  build: { outDir, assetsDir, emptyOutDir: true, assetsInlineLimit: 0 },
   server: {
     proxy: {
       "/api": { ...proxy, ws: true },

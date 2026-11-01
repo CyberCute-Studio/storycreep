@@ -20,7 +20,7 @@ import { versionQuery } from "../api";
 import { Button } from "../ui/Button";
 import { copyText } from "./copy";
 import { type ErrorLog, errorLog, type LoggedError, useErrorLog } from "./log";
-import { formatEntry, formatReport, sourceLabel } from "./report";
+import { errorHeading, formatEntry, formatReport, sourceLabel } from "./report";
 
 interface ErrorConsoleContext {
   log: ErrorLog;
@@ -50,12 +50,39 @@ export function ErrorConsoleProvider({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const context = useMemo(() => ({ log, show: () => setOpen(true) }), [log]);
+  // The control that had the focus when show opened the console, as the
+  // error page's button, which gets the focus back when the console closes,
+  // as the header's button does when it opened the console (WCAG 2.4.3).
+  const opener = useRef<HTMLElement | null>(null);
+  const context = useMemo(
+    () => ({
+      log,
+      show: () => {
+        const focused = document.activeElement;
+        opener.current =
+          focused instanceof HTMLElement && focused !== document.body
+            ? focused
+            : null;
+        setOpen(true);
+      },
+    }),
+    [log],
+  );
+  const onCloseAutoFocus = (event: Event) => {
+    const element = opener.current;
+    opener.current = null;
+    // The header's button gets it otherwise, as when no control had it, or
+    // the control has gone with the page that it was on.
+    if (element?.isConnected) {
+      event.preventDefault();
+      element.focus();
+    }
+  };
   return (
     <Context.Provider value={context}>
       <Dialog.Root open={open} onOpenChange={setOpen}>
         {children}
-        <ErrorConsoleDialog />
+        <ErrorConsoleDialog onCloseAutoFocus={onCloseAutoFocus} />
       </Dialog.Root>
     </Context.Provider>
   );
@@ -71,6 +98,8 @@ export function ErrorConsoleButton() {
   useQuery(versionQuery);
   return (
     <Dialog.Trigger asChild>
+      {/* Its name starts with its label, which a user of speech input says
+          to press it, and has the number that it shows (WCAG 2.5.3). */}
       <Button aria-label={t("error_console.open", { count })}>
         <svg
           aria-hidden="true"
@@ -96,12 +125,19 @@ export function ErrorConsoleButton() {
   );
 }
 
-function ErrorConsoleDialog() {
+function ErrorConsoleDialog({
+  onCloseAutoFocus,
+}: {
+  onCloseAutoFocus: (event: Event) => void;
+}) {
   const { t } = useTranslation();
   return (
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 bg-backdrop/50" />
-      <Dialog.Content className="fixed inset-x-2 top-4 bottom-4 mx-auto flex max-w-3xl flex-col gap-4 overflow-hidden rounded-lg border border-border bg-canvas p-4 text-fg shadow-xl sm:inset-x-8 sm:top-12 sm:bottom-12">
+      <Dialog.Content
+        onCloseAutoFocus={onCloseAutoFocus}
+        className="fixed inset-x-2 top-4 bottom-4 mx-auto flex max-w-3xl flex-col gap-4 overflow-hidden rounded-lg border border-border bg-canvas p-4 text-fg shadow-xl sm:inset-x-8 sm:top-12 sm:bottom-12"
+      >
         <div className="flex items-start gap-4">
           <div className="flex-1">
             <Dialog.Title className="text-xl font-semibold">
@@ -167,44 +203,11 @@ export function ErrorConsoleBody() {
           className="min-h-0 flex-1 space-y-2 overflow-y-auto"
         >
           {entries.map((entry) => (
-            <li
+            <ErrorEntry
               key={entry.id}
-              className="rounded-md border border-border bg-surface"
-            >
-              <details>
-                <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 px-3 py-2">
-                  <span className="text-fg-muted">
-                    {formatDateTime(
-                      i18n.language,
-                      entry.time,
-                      "short",
-                      "medium",
-                    )}
-                  </span>
-                  <span className="text-fg-muted">
-                    {sourceLabel(entry.source, t)}
-                  </span>
-                  <span className="min-w-0 break-words font-medium text-danger">
-                    {entry.name}: {entry.message}
-                  </span>
-                  {entry.count > 1 && (
-                    <span className="text-fg-muted">
-                      {t("error_console.repeated", { count: entry.count })}
-                    </span>
-                  )}
-                </summary>
-                <div className="flex flex-col items-start gap-2 border-t border-border p-3">
-                  {/* The error's own details, which a copy of them gives
-                      with the report's heading, made as it is copied. */}
-                  <pre className="max-w-full overflow-x-auto font-mono text-sm whitespace-pre-wrap break-words">
-                    {formatEntry(entry, t)}
-                  </pre>
-                  <Button onClick={() => copy([entry])}>
-                    {t("error_console.copy_one")}
-                  </Button>
-                </div>
-              </details>
-            </li>
+              entry={entry}
+              onCopy={() => copy([entry])}
+            />
           ))}
         </ol>
       )}
@@ -239,5 +242,47 @@ export function ErrorConsoleBody() {
         </p>
       </div>
     </div>
+  );
+}
+
+/** An error of the console's list, whose details open below it. */
+function ErrorEntry({
+  entry,
+  onCopy,
+}: {
+  entry: LoggedError;
+  onCopy: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  // The error's own details, which a copy of them gives with the report's
+  // heading, made as it is copied. They are made again only when the entry
+  // changes, as when its error happens again, rather than for each entry
+  // whenever the log records an error.
+  const details = useMemo(() => formatEntry(entry, t), [entry, t]);
+  return (
+    <li className="rounded-md border border-border bg-surface">
+      <details>
+        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 px-3 py-2">
+          <span className="text-fg-muted">
+            {formatDateTime(i18n.language, entry.time, "short", "medium")}
+          </span>
+          <span className="text-fg-muted">{sourceLabel(entry.source, t)}</span>
+          <span className="min-w-0 break-words font-medium text-danger">
+            {errorHeading(entry)}
+          </span>
+          {entry.count > 1 && (
+            <span className="text-fg-muted">
+              {t("error_console.repeated", { count: entry.count })}
+            </span>
+          )}
+        </summary>
+        <div className="flex flex-col items-start gap-2 border-t border-border p-3">
+          <pre className="max-w-full overflow-x-auto font-mono text-sm whitespace-pre-wrap break-words">
+            {details}
+          </pre>
+          <Button onClick={onCopy}>{t("error_console.copy_one")}</Button>
+        </div>
+      </details>
+    </li>
   );
 }

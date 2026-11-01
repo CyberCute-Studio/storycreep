@@ -77,8 +77,19 @@ jobs:
       - name: Build the web app
         run: pnpm build
 
+      # Nor added one that the repository lacks and does not ignore, as a
+      # generated file that was never committed, which git diff does not
+      # see.
       - name: The build changed no file of the repository
-        run: git diff --exit-code
+        shell: bash
+        run: |
+          git diff --exit-code
+          added="$(git status --porcelain)"
+          if [ -n "$added" ]; then
+            echo "The build wrote files that the repository does not have:"
+            echo "$added"
+            exit 1
+          fi
 
       - name: gofmt
         working-directory: server

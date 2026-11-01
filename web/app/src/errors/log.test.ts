@@ -27,6 +27,18 @@ describe("createErrorLog", () => {
     ]);
   });
 
+  it("records the page without its query or fragment, which may hold a link's secret", () => {
+    const l = createErrorLog({ now: () => at });
+    const before = location.href;
+    history.pushState(null, "", "/app/reset-password?next=1#token=secret");
+    try {
+      l.record("error", new Error("a"));
+    } finally {
+      history.pushState(null, "", before);
+    }
+    expect(l.entries()[0]?.page).toBe(`${location.origin}/app/reset-password`);
+  });
+
   it("counts an error that happens again in a row as one entry", () => {
     const l = log();
     const error = new Error("loop");

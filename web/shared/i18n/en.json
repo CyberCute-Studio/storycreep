@@ -13,7 +13,7 @@
   "error_console.description": "The errors that happened in this tab since it opened. They stay in this browser and are never sent anywhere: copy their details into a report of a problem.",
   "error_console.empty": "No errors have happened in this tab.",
   "error_console.list": "Errors, newest first",
-  "error_console.open": "Error console, {count, plural, =0 {no errors} one {# error} other {# errors}}",
+  "error_console.open": "Errors: {count, plural, =0 {none} other {#}}",
   "error_console.repeated": "{count, plural, one {# time} other {# times}} in a row",
   "error_console.report.browser": "Browser: {agent}",
   "error_console.report.code": "Error code: {code}",

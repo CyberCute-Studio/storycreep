@@ -1,7 +1,7 @@
 import { createI18n } from "@storycreep/shared/i18n";
 import { expect, it } from "vitest";
 import type { LoggedError } from "./log";
-import { formatEntry, formatReport } from "./report";
+import { errorHeading, formatEntry, formatReport } from "./report";
 
 const { t } = createI18n("en");
 
@@ -58,6 +58,25 @@ it("names an error whose stack does not, and the components that were rendering"
     "    at Board",
     "    at Shell",
   ]);
+});
+
+it("names an error without a message once, as its stack does", () => {
+  const text = formatEntry(
+    {
+      ...entry,
+      count: 1,
+      request: undefined,
+      name: "Error",
+      message: "",
+      stack: "Error\n    at f (app.js:1:2)",
+    },
+    t,
+  );
+  expect(text.split("\n").slice(2)).toEqual(["Error", "    at f (app.js:1:2)"]);
+  expect(errorHeading({ name: "", message: "x" })).toBe("x");
+  expect(errorHeading({ name: "TypeError", message: "x" })).toBe(
+    "TypeError: x",
+  );
 });
 
 it("heads a report with where the errors happened", () => {

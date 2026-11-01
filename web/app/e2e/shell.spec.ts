@@ -31,7 +31,7 @@ async function violations(page: Page): Promise<string[]> {
 
 /** The button that opens the error console, whose name says how many errors it has. */
 function consoleButton(page: Page): Locator {
-  return page.getByRole("button", { name: /^Error console, / });
+  return page.getByRole("button", { name: /^Errors: / });
 }
 
 /** Opens the start page once the app has made its first requests. */
@@ -51,9 +51,7 @@ async function makeErrors(page: Page): Promise<void> {
     });
     void Promise.reject(new Error("e2e: an unhandled rejection"));
   });
-  await expect(consoleButton(page)).toHaveAccessibleName(
-    "Error console, 2 errors",
-  );
+  await expect(consoleButton(page)).toHaveAccessibleName("Errors: 2");
 }
 
 // Verifies: NFR-A11Y-08, NFR-A11Y-01
@@ -172,9 +170,7 @@ test("the error console shows the errors with details to copy, and sends nothing
   // The dialog hides the rest of the page from assistive technology while
   // it is open.
   await press(dialog.getByRole("button", { name: en["error_console.close"] }));
-  await expect(consoleButton(page)).toHaveAccessibleName(
-    "Error console, no errors",
-  );
+  await expect(consoleButton(page)).toHaveAccessibleName("Errors: none");
   expect(requests).toEqual([]);
 });
 

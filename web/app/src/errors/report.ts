@@ -33,6 +33,23 @@ export function sourceLabel(source: ErrorSource, t: TFunction): string {
   }
 }
 
+/**
+ * Returns an error's name and message as one line, as Error's toString writes
+ * them, and V8 at the start of a stack: without the colon when either is
+ * empty, as for new Error().
+ */
+export function errorHeading(
+  error: Pick<LoggedError, "name" | "message">,
+): string {
+  if (error.message === "") {
+    return error.name;
+  }
+  if (error.name === "") {
+    return error.message;
+  }
+  return `${error.name}: ${error.message}`;
+}
+
 /** Returns the details of one error. */
 export function formatEntry(entry: LoggedError, t: TFunction): string {
   const lines = [
@@ -62,7 +79,7 @@ export function formatEntry(entry: LoggedError, t: TFunction): string {
       );
     }
   }
-  const heading = `${entry.name}: ${entry.message}`;
+  const heading = errorHeading(entry);
   // A V8 stack starts with the error's name and message, and another
   // engine's has only the frames.
   if (entry.stack === undefined) {
