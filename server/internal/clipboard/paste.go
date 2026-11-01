@@ -256,16 +256,18 @@ func (d *destination) plan(ctx context.Context, q *queries.Queries, c Clipboard,
 
 // fields returns the field of the paste's payload that each field of the
 // payload of the part that creates the clipboard's entity old, at at, comes
-// from: its id from its new ID's, at ids, and every other from the entity's
-// own field of the same name, which is where the part's problem is.
+// from: its id from its new ID's, at ids, its order, which the paste gives it
+// (orderkey.Spread), from the entity, whose place among its port's or its
+// branch's the clipboard holds, as no field of it, and every other from the
+// entity's own field of the same name, which is where the part's problem is.
 func (pl *plan) fields(at, old string) func(string) string {
 	return func(f string) string {
-		switch {
-		case f == "id":
+		switch f {
+		case "id":
 			return "ids." + old
-		case f == "board_id":
+		case "board_id":
 			return "board_id"
-		case f == "":
+		case "", "order":
 			return at
 		}
 		return at + "." + f

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Named is what a name of a source names (Names): a variable, a component's
@@ -122,13 +123,17 @@ func AttributeRef(component, definition string) string {
 // reference to a node that moves gives another is written as a reference to
 // that one, as node("<ID>"); and every other name stays as the source writes
 // it, as one that names nothing in from. A name written with white space or
-// comments between its parts keeps them, as respell says, but a node
-// reference is written whole. It returns the source as it is if it does not
-// parse, or if no name of it changes.
+// comments between its parts keeps them, as respell says, a variable's
+// qualifier that it keeps for a comment naming the scope of the variable that
+// it is to name (respellVariable), but a node reference is written whole. It
+// returns the source as it is if it does not parse, as a source that does not
+// parse names nothing, which Rewrite leaves as it is too, or if no name of it
+// changes.
 //
 // It returns an error, the caller's mistake or its own, never the source's,
 // if to lacks an entity that moves gives, or if the rewritten source does not
-// parse, or its names do not name in to what moves gives.
+// parse, or the names of the source that it returns, rewritten or as it is,
+// do not name in to what moves gives.
 func Relocate(source string, ctx Context, from *Project, fromBoard string, to *Project, toBoard string,
 	moves Moves) (string, error) {
 	if from == nil || to == nil {
@@ -164,25 +169,31 @@ func Relocate(source string, ctx Context, from *Project, fromBoard string, to *P
 		}
 		r := m.Range()
 		old := string(runes[r.Start:r.End])
-		if _, isNode := m.(*NodeRef); !isNode {
+		switch m.(type) {
+		case *NodeRef:
+		case *Var:
+			written = respellVariable(old, written, to.variable(ref))
+		default:
 			written = respell(old, written)
 		}
 		if old != written {
 			edits = append(edits, Edit{Range: r, Old: old, New: written})
 		}
 	}
-	if len(edits) == 0 {
-		return source, nil
-	}
-	rewritten := splice(runes, edits)
-	got, err := Parse(rewritten, ctx)
-	if err != nil {
-		return "", fmt.Errorf("expr: the source that a paste rewrote does not parse: %w", err)
-	}
-	names = relocated(got)
-	if len(names) != len(want) {
-		return "", fmt.Errorf("expr: the source that a paste rewrote has %d names, where it had %d", len(names),
-			len(want))
+	// The names are checked whether or not one of them changes, so that one
+	// that is spelled as the source writes it names what moves gives it too,
+	// or the paste fails, rather than name something else.
+	rewritten := source
+	if len(edits) > 0 {
+		rewritten = splice(runes, edits)
+		got, err := Parse(rewritten, ctx)
+		if err != nil {
+			return "", fmt.Errorf("expr: the source that a paste rewrote does not parse: %w", err)
+		}
+		if names = relocated(got); len(names) != len(want) {
+			return "", fmt.Errorf("expr: the source that a paste rewrote has %d names, where it had %d", len(names),
+				len(want))
+		}
 	}
 	for i, m := range names {
 		if want[i] == "" {
@@ -258,6 +269,27 @@ func moved(m Node, from *Project, fromBoard string, to *Project, toBoard string,
 		return `node("` + target + `")`, target, nil
 	}
 	return "", "", nil
+}
+
+// respellVariable returns the name written, of the variable v, which Relocate
+// writes in place of old, a variable's name as the source writes it, as
+// respell spells it, unless respell keeps old's qualifier, global. or board.,
+// with the comment that follows it, which names the scope of the variable that
+// old named where the source was copied, while v may be of the other, as a
+// variable whose scope has changed since is, which a paste resolves to by its
+// ID (variable.set_scope): the name is spelled then as v's of its own scope,
+// global.<key> or board.<key>, which keeps the comment too, so that it names
+// v, rather than nothing, or a variable of the other scope. v is nil for a
+// name that names nothing in to, which respell spells.
+func respellVariable(old, written string, v *Variable) string {
+	spelled := respell(old, written)
+	if v == nil || spelled == written || strings.Contains(written, ".") {
+		return spelled
+	}
+	if v.Board == "" {
+		return respell(old, "global."+v.Key)
+	}
+	return respell(old, "board."+v.Key)
 }
 
 // shadowing returns what moved returns for the name m, <key>.<attribute>,

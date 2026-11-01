@@ -3,6 +3,7 @@ package clipboard
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -447,20 +448,11 @@ func (d *destination) speakers(ctx context.Context, q *queries.Queries, c Clipbo
 
 // held returns which of the IDs of, of the kind, read returns the UUIDs of,
 // by their IDs in their canonical spelling, each of which it reads once,
-// leaving out "" and an ID that is not one of the kind, and reading nothing
-// for none.
+// leaving out "" and an ID that is not one of the kind (uuidsOf), and reading
+// nothing for none.
 func held(kind ids.Kind, of []string, read func(list []pgtype.UUID) ([]pgtype.UUID, error)) (map[string]bool,
 	error) {
-	var list []pgtype.UUID
-	seen := map[ids.UUID]bool{}
-	for _, id := range of {
-		u, err := ids.Decode(kind, id)
-		if id == "" || err != nil || seen[u] {
-			continue
-		}
-		seen[u] = true
-		list = append(list, nullUUID(u))
-	}
+	list := uuidsOf(kind, slices.Values(of))
 	out := map[string]bool{}
 	if len(list) == 0 {
 		return out, nil

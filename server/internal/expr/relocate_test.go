@@ -133,6 +133,33 @@ func TestRelocate(t *testing.T) {
 		t.Errorf("Relocate of a variable's <key>.<attribute> that resolves to none = %q, %v, want it as it is",
 			got, err)
 	}
+	// A qualifier that a comment follows, which a name keeps, names the scope
+	// of the variable that the name resolves to, which may differ from the one
+	// that it had where it was copied, as a variable's scope that changed since
+	// does, rather than name nothing, or another variable, of the other scope.
+	for _, c := range []struct {
+		name, board, source, want string
+	}{
+		{name: "a global resolved to a board's variable", board: boardC, source: "global // why\n.x > 1",
+			want: "board // why\n.x > 1"},
+		{name: "a global resolved to a board's variable, with another edit", board: boardC,
+			source: "global // why\n.x > elara.trust", want: "board // why\n.x > vera.trust"},
+		{name: "a board's variable resolved to a global", board: boardD, source: "board // why\n.trust > 1",
+			want: "global // why\n.trust > 1"},
+		{name: "a board's variable resolved to a global that the board's hides", board: boardC,
+			source: "board // why\n.trust > 1", want: "global // why\n.trust > 1"},
+		{name: "a global resolved to a global", board: boardD, source: "global // why\n.rep > 1",
+			want: "global // why\n.rep > 1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rescoped := Moves{Variables: map[string]string{varX: varCX, varBTrust: varToTrust, varRep: varToRep},
+				Components: map[string]string{cmpElaraR: cmpVera}}
+			got, err := Relocate(c.source, ContextCondition, from, boardB, to, c.board, rescoped)
+			if err != nil || got != c.want {
+				t.Errorf("Relocate(%q) = %q, %v, want %q", c.source, got, err, c.want)
+			}
+		})
+	}
 	// An entity that moves gives, but the project that the paste goes to
 	// lacks, is the caller's mistake.
 	if _, err := Relocate("rep > 1", ContextCondition, from, boardB, to, boardC,

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -359,12 +361,17 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 	return err
 }
 
-// uuidsOf returns the UUIDs of the IDs of the kind, keys of set, in their
-// order, leaving out those that are no such IDs.
-func uuidsOf(kind ids.Kind, set map[string]bool) []pgtype.UUID {
+// uuidsOf returns the UUIDs of the IDs of, of the kind, each once, in their
+// order, leaving out "" and those that are no such IDs, as the clipboard's
+// reads by IDs take them: of the keys of a set, as the declarations', or of a
+// list that may spell an ID two ways, as the speakers and the covers of its
+// elements (held).
+func uuidsOf(kind ids.Kind, of iter.Seq[string]) []pgtype.UUID {
 	var out []pgtype.UUID
-	for id := range set {
-		if u, err := ids.Decode(kind, id); err == nil {
+	seen := map[ids.UUID]bool{}
+	for id := range of {
+		if u, err := ids.Decode(kind, id); err == nil && !seen[u] {
+			seen[u] = true
 			out = append(out, nullUUID(u))
 		}
 	}
@@ -377,7 +384,7 @@ func uuidsOf(kind ids.Kind, set map[string]bool) []pgtype.UUID {
 func declareVariables(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, used map[string]bool) (
 	[]ClipboardVariable, error) {
 	out := []ClipboardVariable{}
-	list := uuidsOf(ids.Variable, used)
+	list := uuidsOf(ids.Variable, maps.Keys(used))
 	if len(list) == 0 {
 		return out, nil
 	}
@@ -414,7 +421,7 @@ func declareVariables(ctx context.Context, q *queries.Queries, ws, projectID pgt
 func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, live []expr.Component,
 	used, attributes map[string]bool) ([]ClipboardComponent, error) {
 	out := []ClipboardComponent{}
-	list := uuidsOf(ids.Component, used)
+	list := uuidsOf(ids.Component, maps.Keys(used))
 	if len(list) == 0 {
 		return out, nil
 	}
@@ -470,7 +477,7 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 func declareAttributes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 	named map[string]bool) (map[string]ClipboardAttribute, error) {
 	out := map[string]ClipboardAttribute{}
-	list := uuidsOf(ids.AttributeDef, named)
+	list := uuidsOf(ids.AttributeDef, maps.Keys(named))
 	if len(list) == 0 {
 		return out, nil
 	}

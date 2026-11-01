@@ -405,6 +405,30 @@ func TestClipboardPaste(t *testing.T) {
 	}
 }
 
+// TestClipboardPasteRescoped checks that a paste resolves a variable whose
+// scope has changed since the copy to the same variable, where the board
+// reaches it, and writes a name of it whose qualifier a comment follows,
+// which the name keeps, with the qualifier of the variable's new scope, so
+// that it names the variable, rather than one of its old scope.
+func TestClipboardPasteRescoped(t *testing.T) {
+	t.Parallel()
+	w := newClipboardWorld(t)
+	note := createNode(t, w.s.main, w.owner, w.project, w.harbour, "element", map[string]any{
+		"on_enter": "trust = global // the keeper's\n  .trust + 1"})
+	c := w.copy(t, note)
+	w.apply(t, wireCommand{Type: "variable.set_scope", Payload: map[string]any{"id": w.trust, "scope": "board",
+		"board_id": w.harbour}})
+	if r := w.resolve(t, w.project, w.harbour, c); len(r.Variables) != 0 {
+		t.Errorf("the report of a variable rescoped since the copy is %+v, want none", r)
+	}
+	cmd, newIDs := paste(w.harbour, c, 0, 0)
+	w.apply(t, cmd)
+	if got := w.pastedNode(t, w.project, newIDs[note]); got.OnEnter == nil ||
+		got.OnEnter.Source != "trust = board // the keeper's\n  .trust + 1" || !got.OnEnter.IsValid {
+		t.Errorf("the pasted note enters with %+v, want board // the keeper's .trust", got.OnEnter)
+	}
+}
+
 // TestClipboardAcrossProjects checks that a paste into another project of the
 // workspace resolves what its content names by its keys, reports what it
 // resolves to nothing, with what creating it takes, once for what a client
