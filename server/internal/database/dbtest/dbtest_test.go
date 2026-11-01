@@ -64,6 +64,35 @@ func TestDatabasesAreSeparate(t *testing.T) {
 	}
 }
 
+// TestFreeze checks that a database is frozen though a pool and a connection
+// are connected to it, that its copies hold what it held then, each apart,
+// and that the frozen copy outlives the test whose database it copied.
+func TestFreeze(t *testing.T) {
+	ctx := context.Background()
+	var frozen *Frozen
+	t.Run("fill", func(t *testing.T) {
+		d := New(t)
+		if _, err := d.Admin(t).Exec(ctx, "CREATE TABLE filled (x int); INSERT INTO filled VALUES (1)"); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Open(t).Ping(ctx); err != nil {
+			t.Fatal(err)
+		}
+		frozen = d.Freeze(t)
+	})
+	if frozen == nil {
+		t.FailNow()
+	}
+	a, b := frozen.New(t), frozen.New(t)
+	if _, err := a.Admin(t).Exec(ctx, "INSERT INTO filled VALUES (2)"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := b.Admin(t).QueryRow(ctx, "SELECT count(*) FROM filled").Scan(&n); err != nil || n != 1 {
+		t.Errorf("a copy of the frozen database holds %d rows: %v; want the 1 it was frozen with", n, err)
+	}
+}
+
 // TestDurability checks that the tests' server does not keep what it
 // commits, which makes them faster, and that the benchmarks', which a
 // benchmark run together with them gets, does, so that the server's

@@ -8,11 +8,13 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/fixture"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
@@ -22,9 +24,10 @@ import (
 
 // The server's benchmarks (PRD §9.1, plan note N52) run against a project of
 // the large fixture, which an owner, signed in, edits through the API, as the
-// web app does. CI's benchmark job runs them on a pull request's base and on
-// its head, on one machine, and fails on a regression of more than 20%
-// (cmd/benchgate); a benchmark checks its own target of §9.1.
+// web app does, each in a copy of the database that the test binary loaded
+// the fixture into once. CI's benchmark job runs them on a pull request's
+// base and on its head, on one machine, and fails on a regression of more
+// than 20% (cmd/benchgate); a benchmark checks its own target of §9.1.
 
 // commandRoundTripTarget is NFR-PERF-07's target: the p95 of a command's
 // round trip, server-side.
@@ -304,33 +307,79 @@ type benchServer struct {
 	model   *benchModel
 }
 
-// newBenchServer returns a server with a new project of the fixture of the
-// size, seed 1, which the owner sent to the command endpoint as
-// cmd/fixturegen does, and what its commands may name.
+// newBenchServer returns a server with a project of the fixture of the size,
+// seed 1, which the owner sent to the command endpoint as cmd/fixturegen
+// does, on a database of the benchmark's own, a copy of the one that the
+// test binary loaded the fixture into once (benchFixtureOf), and what its
+// commands may name.
 func newBenchServer(b *testing.B, size fixture.Size) *benchServer {
 	b.Helper()
 	if testing.Short() {
 		b.Skip("skipped with -short: needs PostgreSQL, which the benchmarks run in Docker")
 	}
-	s, d, owner, ws := inviteServer(b, "open", nil)
-	// The benchmarks send many more batches, and requests that read, in a
-	// minute than a person does.
-	policy := ratelimit.DefaultPolicy()
-	for _, bucket := range []ratelimit.Bucket{ratelimit.Write, ratelimit.Read} {
-		policy.Rates[bucket].Limits[ratelimit.User] = 1_000_000
-		policy.Rates[bucket].Limits[ratelimit.IP] = 1_000_000
+	f := benchFixtureOf(b, size)
+	d := f.frozen.New(b)
+	s := serverOn(b, d, inviteEnv("open", nil))
+	unlimited(s)
+	// The owner that inviteServer's setup made, in the database that the
+	// fixture was loaded into, which this one copies.
+	owner := signIn(b, s.main, "admin@example.com")
+	// The copy leaves a checkpoint of what CREATE DATABASE wrote to come,
+	// which would land in the timed batches of some runs and not of others,
+	// and none of its pages in PostgreSQL's buffers, so the benchmarks start
+	// from a database that is vacuumed, analyzed, checkpointed, and read into
+	// the buffers, as a project that has been edited a while is. The
+	// fixture's database was vacuumed before it was frozen, so the vacuum of
+	// the copy skips its pages.
+	ctx, admin := context.Background(), d.Admin(b)
+	for _, stmt := range []string{"VACUUM (ANALYZE)", "CHECKPOINT", `SELECT count(pg_prewarm(oid)) FROM pg_class
+		WHERE relkind IN ('r', 'i', 't', 'm') AND relpersistence <> 't'`} {
+		if _, err := admin.Exec(ctx, stmt); err != nil {
+			b.Fatalf("%s: %v", stmt, err)
+		}
 	}
-	s.limits = ratelimit.New(readyDB{s.ready}, policy)
+	return &benchServer{s: s, project: f.project, path: commandsPath(f.project), header: owner.header(true),
+		model: f.model}
+}
+
+// benchFixture is a fixture's project, which its owner sent to the command
+// endpoint, in a frozen database that each benchmark's is a copy of
+// (newBenchServer), and what its commands may name.
+type benchFixture struct {
+	frozen  *dbtest.Frozen
+	project string
+	model   *benchModel
+}
+
+// benchFixtures are the fixtures that the test binary's benchmarks have
+// loaded, by size (benchFixtureOf).
+var benchFixtures = struct {
+	sync.Mutex
+	of map[fixture.Size]*benchFixture
+}{of: map[fixture.Size]*benchFixture{}}
+
+// benchFixtureOf returns the fixture of the size, seed 1, which the first
+// benchmark of the test binary that asks for it loads, as cmd/fixturegen
+// does, and freezes, so that a run of the benchmarks, a go test of its own in
+// CI, loads each fixture once, which takes minutes for large, rather than
+// once for each benchmark, while each benchmark has a database of its own.
+func benchFixtureOf(b *testing.B, size fixture.Size) *benchFixture {
+	b.Helper()
+	benchFixtures.Lock()
+	defer benchFixtures.Unlock()
+	if f := benchFixtures.of[size]; f != nil {
+		return f
+	}
+	s, d, owner, ws := inviteServer(b, "open", nil)
+	unlimited(s)
 	f, err := fixture.Generate(size, 1)
 	if err != nil {
 		b.Fatal(err)
 	}
 	p := createProject(b, s.main, owner, ws, f.Name).ID
-	bs := &benchServer{s: s, project: p, path: commandsPath(p), header: owner.header(true),
-		model: newBenchModel(b, f)}
 	start := time.Now()
 	sender := fixture.Sender{Client: &http.Client{Transport: handlerTransport{s.main}},
-		Endpoint: "http://localhost:8080" + bs.path, Header: bs.header}
+		Endpoint: "http://localhost:8080" + commandsPath(p), Header: owner.header(true)}
 	if err := sender.Send(context.Background(), f); err != nil {
 		b.Fatal(err)
 	}
@@ -347,17 +396,32 @@ func newBenchServer(b *testing.B, size fixture.Size) *benchServer {
 	if invalid > 0 {
 		b.Fatalf("%d expressions of the %s fixture do not compile", invalid, size)
 	}
-	// The load leaves the autovacuum and the autoanalyze of what it wrote,
-	// and a checkpoint of it, to come, which would land in the timed batches
-	// of some runs and not of others, so the benchmarks start from a database
-	// that is vacuumed, analyzed, and checkpointed, as a project that has
-	// been edited a while is.
-	for _, stmt := range []string{"VACUUM (ANALYZE)", "CHECKPOINT"} {
+	// pg_prewarm, which PostgreSQL's images ship, reads a copy's pages into
+	// the buffers (newBenchServer).
+	for _, stmt := range []string{"VACUUM (ANALYZE)", "CREATE EXTENSION pg_prewarm"} {
 		if _, err := admin.Exec(ctx, stmt); err != nil {
 			b.Fatalf("%s: %v", stmt, err)
 		}
 	}
-	return bs
+	var bytes string
+	if err := admin.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&bytes); err != nil {
+		b.Fatal(err)
+	}
+	b.Logf("the %s fixture's database is %s", size, bytes)
+	loaded := &benchFixture{frozen: d.Freeze(b), project: p, model: newBenchModel(b, f)}
+	benchFixtures.of[size] = loaded
+	return loaded
+}
+
+// unlimited lifts the rate limits of the server's owner: the benchmarks send
+// many more batches, and requests that read, in a minute than a person does.
+func unlimited(s *server) {
+	policy := ratelimit.DefaultPolicy()
+	for _, bucket := range []ratelimit.Bucket{ratelimit.Write, ratelimit.Read} {
+		policy.Rates[bucket].Limits[ratelimit.User] = 1_000_000
+		policy.Rates[bucket].Limits[ratelimit.IP] = 1_000_000
+	}
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 }
 
 // handlerTransport is an http.RoundTripper that serves each request with a
