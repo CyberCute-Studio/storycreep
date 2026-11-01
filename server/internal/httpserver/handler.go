@@ -17,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/apitoken"
 	"github.com/CyberCute-Studio/storycreep/server/internal/asset"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
+	"github.com/CyberCute-Studio/storycreep/server/internal/clipboard"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
@@ -87,6 +88,9 @@ type server struct {
 	// search searches the projects' content, from the index that their
 	// commands keep (package search).
 	search *search.Service
+	// clipboard copies nodes as a clipboard, and reports what of one a paste
+	// would resolve to nothing.
+	clipboard *clipboard.Service
 	// trash lists the projects' trash, from which their commands restore
 	// what it holds (package trash).
 	trash *trash.Service
@@ -118,6 +122,7 @@ func newCommandRegistry() *commands.Registry {
 	component.Register(registry)
 	node.Register(registry)
 	connection.Register(registry)
+	clipboard.Register(registry)
 	expression.Register(registry)
 	dependency.Register(registry)
 	validation.Register(registry)
@@ -163,6 +168,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.dependencies = dependency.New(readyDB{s.ready}, dependency.Options{Projects: s.projects})
 	s.validation = validation.New(readyDB{s.ready}, validation.Options{Projects: s.projects})
 	s.search = search.New(readyDB{s.ready}, search.Options{Projects: s.projects})
+	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -252,6 +258,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerDependencies(s.main, s.dependencies)
 	registerValidation(s.main, s.validation)
 	registerSearch(s.main, s.search)
+	registerClipboard(s.main, s.clipboard)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)

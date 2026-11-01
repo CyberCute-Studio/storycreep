@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"math"
 	"net/netip"
 	"slices"
@@ -110,6 +111,36 @@ type Item struct {
 
 func (*Paragraph) block() {}
 func (*List) block()      {}
+
+// Inlines returns the inline nodes of the document, in its order, those of
+// its lists' items among them, as package dependency reads the value
+// references and mentions of a text, and package clipboard writes them anew,
+// which may change a node that it yields in place.
+func (d *Doc) Inlines() iter.Seq[Inline] {
+	return func(yield func(Inline) bool) {
+		var blocks func([]Block) bool
+		blocks = func(bs []Block) bool {
+			for _, b := range bs {
+				switch b := b.(type) {
+				case *Paragraph:
+					for _, in := range b.Inlines {
+						if !yield(in) {
+							return false
+						}
+					}
+				case *List:
+					for _, item := range b.Items {
+						if !blocks(item.Blocks) {
+							return false
+						}
+					}
+				}
+			}
+			return true
+		}
+		blocks(d.Blocks)
+	}
+}
 
 // Inline is the content of a paragraph: a *Text, a *Break, a *Mention, or a
 // *Value.

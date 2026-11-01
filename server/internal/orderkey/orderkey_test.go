@@ -50,3 +50,24 @@ func TestAfter(t *testing.T) {
 		}
 	}
 }
+
+// TestSpread checks that Spread gives keys in order, each a key, of one
+// length, the fewest digits that so many take.
+func TestSpread(t *testing.T) {
+	t.Parallel()
+	for n, width := range map[int]int{0: 1, 1: 1, 62: 1, 63: 2, 3844: 2, 3845: 3, 10_000: 3} {
+		keys := Spread(n)
+		if len(keys) != n {
+			t.Fatalf("Spread(%d) gives %d keys", n, len(keys))
+		}
+		for i, k := range keys {
+			if !Valid(k) || len(k) != width+1 || i > 0 && keys[i-1] >= k {
+				t.Fatalf("Spread(%d)[%d] = %q, after %q, want a key of %d digits after it", n, i, k,
+					keys[max(i-1, 0)], width+1)
+			}
+		}
+	}
+	if got := Spread(2); got[0] != "0V" || got[1] != "1V" {
+		t.Errorf("Spread(2) = %v, want 0V and 1V", got)
+	}
+}

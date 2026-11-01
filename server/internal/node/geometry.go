@@ -308,6 +308,41 @@ func checkPosition(at string, p NodePosition) input.FieldErrors {
 	return errs
 }
 
+// CheckPosition returns the problems of a payload's position at the field at,
+// as a node's position's: each coordinate is a number within the bounds, as
+// package clipboard checks a clipboard's positions and a paste's offset.
+func CheckPosition(at string, p NodePosition) input.FieldErrors { return checkPosition(at, p) }
+
+// Shifted returns the position p moved by offset: each coordinate the sum of
+// p's and offset's, each kept to 2 decimal places as a node's is, as a paste
+// places what it pastes (package clipboard), or says what is wrong with it,
+// as of one beyond the bounds, at the coordinate's field, x or y. p and offset
+// are positions that CheckPosition takes.
+func Shifted(p, offset NodePosition) (NodePosition, input.FieldErrors) {
+	var out NodePosition
+	var errs input.FieldErrors
+	for _, c := range []struct {
+		name    string
+		at, by  Coord
+		shifted *Coord
+	}{{"x", p.X, offset.X, &out.X}, {"y", p.Y, offset.Y, &out.Y}} {
+		at, problem := c.at.hundredths()
+		by, byProblem := c.by.hundredths()
+		sum := at + by
+		switch {
+		case problem != "" || byProblem != "":
+			errs = append(errs, input.FieldError{Field: c.name, Message: "is not a coordinate"})
+		case sum < -MaxCoordinate*100 || sum > MaxCoordinate*100:
+			errs = append(errs, input.FieldError{Field: c.name, Message: fmt.Sprintf("is %s once the offset is "+
+				"added, beyond the bounds of a coordinate, from -%d to %d", formatHundredths(sum), MaxCoordinate,
+				MaxCoordinate)})
+		default:
+			*c.shifted = coordOf(sum)
+		}
+	}
+	return out, errs
+}
+
 // checkSize returns the problems of a payload's size at the field at: both
 // its width and its height, each within the bounds, or neither.
 func checkSize(at string, s NodeSize) input.FieldErrors {

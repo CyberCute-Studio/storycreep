@@ -130,8 +130,9 @@ func nodeOutputs(ctx context.Context, q *queries.Queries, ws, project pgtype.UUI
 	return out, nil
 }
 
-// outputCreatePayload is CreateOutput's payload.
-type outputCreatePayload struct {
+// CreateOutputPayload is CreateOutput's payload, exported as CreatePayload
+// is.
+type CreateOutputPayload struct {
 	ID        string `json:"id" doc:"The new output's ID, a bo_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	NodeID    string `json:"node_id" doc:"The ID of the output's branch, a branch of the project that is not in its trash. Another type of node is answered with 422 validation_failed."`
 	Else      bool   `json:"else,omitempty" doc:"Whether the output is the branch's else, which the flow takes when the condition of none of its other outputs holds (PRD FR-EDIT-04), which has neither a condition nor an order, and comes after them. A branch has one else at most, and one only while it has a conditional output, so an else for a branch that has one already, or that has no conditional output, is answered with 422 validation_failed. Without it, the output is a conditional one."`
@@ -239,11 +240,11 @@ func registerOutputs(r *commands.Registry) {
 	output := []ids.Kind{ids.BranchOutput}
 	op, sc := authz.EditContent, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[outputCreatePayload]{
+	commands.Register(r, commands.Spec[CreateOutputPayload]{
 		// A command that creates an output of a branch refers to the branch,
 		// so that a client may expect its revision too.
 		Type: CreateOutput, Capability: op, Scope: sc, Touches: []ids.Kind{ids.BranchOutput, ids.Node},
-		Check: func(p outputCreatePayload) input.FieldErrors {
+		Check: func(p CreateOutputPayload) input.FieldErrors {
 			errs := newID(ids.BranchOutput, p.ID)
 			errs = append(errs, entityID(ids.Node, "node_id", p.NodeID)...)
 			if p.Else && p.Condition != "" {
@@ -255,7 +256,7 @@ func registerOutputs(r *commands.Registry) {
 			}
 			return append(errs, field("condition", expression.CheckSource(p.Condition))...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p outputCreatePayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreateOutputPayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: DeleteOutput, Payload: outputDeletePayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreateOutput,
@@ -384,7 +385,7 @@ func registerOutputs(r *commands.Registry) {
 }
 
 // applyCreateOutput is CreateOutput's Apply.
-func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePayload) error {
+func applyCreateOutput(ctx context.Context, tx *commands.Tx, p CreateOutputPayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.BranchOutput, p.ID)
@@ -403,15 +404,21 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 		return commands.Refuse("node_id", fmt.Sprintf("is a node of the type %s, which has no outputs: only a "+
 			"branch has them", n.Type), nil)
 	}
-	counts, err := q.NodeOutputCounts(ctx, queries.NodeOutputCountsParams{WorkspaceID: ws, ProjectID: project,
-		NodeID: n.ID})
-	if err != nil {
-		return fmt.Errorf("node: count the branch's outputs: %w", err)
-	}
 	params := queries.InsertBranchOutputParams{ID: id, WorkspaceID: ws, ProjectID: project, BoardID: n.BoardID,
 		NodeID: n.ID, CreatedBy: by(tx)}
+	// displaces says that the output comes before the branch's first
+	// conditional output, whose if it takes, which the others are rekinded
+	// for below, as they are by a reorder; one that comes after it, as an
+	// output created after the last does, and an else, change the kind of no
+	// other, so that creating each of a branch's many outputs, as a paste
+	// does (package clipboard), reads few of the others.
+	displaces := false
 	if p.Else {
+		counts, err := q.NodeOutputCounts(ctx, queries.NodeOutputCountsParams{WorkspaceID: ws, ProjectID: project,
+			NodeID: n.ID})
 		switch {
+		case err != nil:
+			return fmt.Errorf("node: count the branch's outputs: %w", err)
 		case counts.ElseID.Valid:
 			return commands.Refuse("else", "is set, but the branch has an else already, and has one at most", nil)
 		case counts.Conditional == 0:
@@ -424,13 +431,16 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 			return err
 		}
 		params.SortKey.Valid = true
-		// The output is the branch's if when it comes first, and the others
-		// are rekinded below, as they are by a reorder.
+		// The output is the branch's if when it comes first.
 		params.Kind = OutputElseIf
-		if first, err := firstConditional(ctx, q, ws, project, n.ID); err != nil {
+		first, err := firstConditional(ctx, q, ws, project, n.ID)
+		switch {
+		case err != nil:
 			return err
-		} else if first == nil || compareOutputs(params.SortKey.String, id, first.Order.String, first.ID) < 0 {
+		case first == nil:
 			params.Kind = OutputIf
+		case compareOutputs(params.SortKey.String, id, first.Order.String, first.ID) < 0:
+			params.Kind, displaces = OutputIf, true
 		}
 	}
 	err = q.InsertBranchOutput(ctx, params)
@@ -448,6 +458,9 @@ func applyCreateOutput(ctx context.Context, tx *commands.Tx, p outputCreatePaylo
 			expression.Condition, &p.Condition); err != nil {
 			return err
 		}
+	}
+	if !displaces {
+		return nil
 	}
 	return rekind(ctx, tx, n.ID)
 }
@@ -583,20 +596,20 @@ func sortedRevs(rows []queries.RekindBranchOutputsRow) []queries.RekindBranchOut
 
 // firstConditional returns the first conditional output of the branch node,
 // which is not in the trash, that is not in the trash either, or nil if it
-// has none.
+// has none, read alone, so that creating each of a branch's many outputs, as
+// a paste does (package clipboard), does not read every one of them each
+// time.
 func firstConditional(ctx context.Context, q *queries.Queries, ws, project, node pgtype.UUID) (
 	*queries.BranchOutput, error) {
-	rows, err := q.NodeOutputs(ctx, queries.NodeOutputsParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: []pgtype.UUID{node}})
-	if err != nil {
-		return nil, fmt.Errorf("node: read the branch's outputs: %w", err)
+	o, err := q.FirstConditionalOutput(ctx, queries.FirstConditionalOutputParams{WorkspaceID: ws,
+		ProjectID: project, NodeID: node})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("node: read the branch's first output: %w", err)
 	}
-	for i := range rows {
-		if rows[i].Kind != OutputElse {
-			return &rows[i], nil
-		}
-	}
-	return nil, nil
+	return &o, nil
 }
 
 // compareOutputs compares the places of two conditional outputs, by their

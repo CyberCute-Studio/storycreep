@@ -47,8 +47,11 @@ const (
 	Restore commands.Type = "connection.restore"
 )
 
-// createPayload is Create's payload.
-type createPayload struct {
+// CreatePayload is Create's payload, which is exported, as node.CreatePayload
+// is, so that package clipboard's paste, which applies Create as its part
+// (commands.Tx.ApplyPart), writes it as a value of its type, which the
+// compiler holds to its fields.
+type CreatePayload struct {
 	ID         string        `json:"id" doc:"The new connection's ID, a cn_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	FromNodeID string        `json:"from_node_id" doc:"The ID of the node that the connection leaves, by from_port: an element or a branch of the project that is not in its trash. A jumper has no connections out, because the flow continues at its target (PRD §5.8.5), so it is answered with 422 validation_failed."`
 	FromPort   string        `json:"from_port,omitempty" doc:"The port of from_node_id that the connection leaves: out, an element's one port, or the ID of an output of a branch that is not in the project's trash, since a branch's connections leave its outputs (PRD FR-EDIT-04). Without it, out, which a branch is answered with 422 validation_failed for."`
@@ -157,9 +160,9 @@ func Register(r *commands.Registry) {
 	ends := []ids.Kind{ids.Connection, ids.Node, ids.BranchOutput}
 	op, sc := authz.EditContent, scope.ProjectWrite
 
-	commands.Register(r, commands.Spec[createPayload]{
+	commands.Register(r, commands.Spec[CreatePayload]{
 		Type: Create, Capability: op, Scope: sc, Touches: ends,
-		Check: func(p createPayload) input.FieldErrors {
+		Check: func(p CreatePayload) input.FieldErrors {
 			errs := newID(ids.Connection, p.ID)
 			errs = append(errs, entityID(ids.Node, "from_node_id", p.FromNodeID)...)
 			errs = append(errs, checkPort("from_port", p.FromPort)...)
@@ -167,7 +170,7 @@ func Register(r *commands.Registry) {
 			errs = append(errs, field("condition", expression.CheckSource(p.Condition))...)
 			return append(errs, field("on_traverse", expression.CheckSource(p.OnTraverse))...)
 		},
-		Inverse: func(_ context.Context, _ *commands.Tx, p createPayload) ([]commands.Step, error) {
+		Inverse: func(_ context.Context, _ *commands.Tx, p CreatePayload) ([]commands.Step, error) {
 			return []commands.Step{{Type: Delete, Payload: idPayload{ID: p.ID}}}, nil
 		},
 		Apply: applyCreate,
@@ -458,7 +461,7 @@ func setExpressions(ctx context.Context, tx *commands.Tx, owner expression.Owner
 }
 
 // applyCreate is Create's Apply.
-func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
+func applyCreate(ctx context.Context, tx *commands.Tx, p CreatePayload) error {
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	id := decoded(ids.Connection, p.ID)

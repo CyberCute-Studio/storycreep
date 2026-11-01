@@ -92,17 +92,25 @@ func Rewrite(source string, ctx Context, before, after *Project, board, renamed 
 	if len(edits) == 0 {
 		return source, nil, nil
 	}
+	rewritten := splice(runes, edits)
+	if err := sameNames(names, rewritten, ctx, before, after, board); err != nil {
+		return "", nil, err
+	}
+	return rewritten, edits, nil
+}
+
+// splice returns the source whose characters are runes with the characters of
+// each edit's range written as its New, the edits in the order of their
+// ranges, none of which overlaps another, as Rewrite and Relocate write the
+// names that they change.
+func splice(runes []rune, edits []Edit) string {
 	out := make([]rune, 0, len(runes))
 	at := 0
 	for _, ed := range edits {
 		out = append(append(out, runes[at:ed.Range.Start]...), []rune(ed.New)...)
 		at = ed.Range.End
 	}
-	rewritten := string(append(out, runes[at:]...))
-	if err := sameNames(names, rewritten, ctx, before, after, board); err != nil {
-		return "", nil, err
-	}
-	return rewritten, edits, nil
+	return string(append(out, runes[at:]...))
 }
 
 // respell returns the name written, the parts of a name joined by dots, as

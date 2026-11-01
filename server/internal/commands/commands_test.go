@@ -1308,6 +1308,69 @@ func TestChanged(t *testing.T) {
 	}
 }
 
+// TestApplyPart checks that a command applies a command of another type as a
+// part of itself (Tx.ApplyPart): the part's changes are the command's, which
+// its own inverse undoes; a part whose payload its schema or its checks
+// refuse, or whose Apply refuses the batch, refuses it at the command's
+// field that the part's field comes from; and a part that needs another
+// capability, adds to a limit that the command does not declare, cannot be
+// undone where the command can, or is of no type, fails the batch, which
+// applies nothing.
+func TestApplyPart(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	x, xID := newNote()
+	if _, err := p.Apply(ctx, w.as(ownerUser), w.project,
+		[]Command{command(t, noteCreate, notePayload{ID: xID, Body: "x"}, nil)}); err != nil {
+		t.Fatal(err)
+	}
+	compose := func(part Type, body string) Command {
+		return command(t, noteCompose, composePayload{Part: string(part), With: composeWith{ID: xID, Body: body}}, nil)
+	}
+	res, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{compose(noteUpdate, "composed")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Revisions) != 1 || res.Revisions[0] != (Revision{Ref: noteRef(x), Rev: 2}) {
+		t.Errorf("the batch's revisions are %+v, want the note's 2nd", res.Revisions)
+	}
+	if len(res.Undo) != 1 || res.Undo[0].Type != noteUpdate || res.Undo[0].ExpectedRev[noteRef(x)] != 2 ||
+		!strings.Contains(string(res.Undo[0].Payload), `"x"`) {
+		t.Errorf("the batch's undo is %+v, want the command's own inverse, which sets the body back", res.Undo)
+	}
+	refusals := []struct {
+		part        Type
+		body, field string
+	}{
+		{noteUpdate, strings.Repeat("b", 101), "with.body"}, // the part's schema
+		{noteUpdate, "a\x01b", "with.body"},                 // the part's CheckNew
+		{noteReject, "x", "with.body"},                      // the part's Apply
+	}
+	for _, c := range refusals {
+		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{compose(c.part, c.body)})
+		var refused *RefusedError
+		if !errors.As(err, &refused) || refused.Field != c.field || refused.Type != noteCompose {
+			t.Errorf("a part %s of %q: %v, want the command refused at %s", c.part, c.body, err, c.field)
+		}
+	}
+	for _, part := range []Type{noteDelete, noteCreate, noteFail, "note.nothing", noteCompose} {
+		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{compose(part, "y")})
+		var refused *RefusedError
+		if err == nil || errors.As(err, &refused) {
+			t.Errorf("a part %s: %v, want the batch failed", part, err)
+		}
+	}
+	if s := w.written(t); s.seq != 2 {
+		t.Errorf("the refused batches left the seq %d, want 2", s.seq)
+	}
+	var body string
+	if err := w.admin.QueryRow(ctx, "SELECT body FROM note WHERE id = $1", x).Scan(&body); err != nil ||
+		body != "composed" {
+		t.Errorf("the note's body is %q (%v), want composed", body, err)
+	}
+}
+
 // deltas returns the workspace's deltas of usage that no rollup has folded,
 // each as its key and its delta.
 func (w *world) deltas(t *testing.T) []string {

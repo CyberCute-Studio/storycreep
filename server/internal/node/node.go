@@ -66,9 +66,11 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -91,6 +93,10 @@ const MaxTitleLength = 200
 
 // MaxMoved is the most nodes that one node.move moves.
 const MaxMoved = 10_000
+
+// MaxMany is the most nodes that one node.delete_many deletes, or
+// node.restore_many restores.
+const MaxMany = 10_000
 
 // The types of node.
 const (
@@ -214,6 +220,27 @@ func nodesOf(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, r
 		out[i].Outputs = outputs[n.ID.Bytes]
 	}
 	return out, nil
+}
+
+// Live returns the nodes of the project whose UUIDs are among nodes as the API
+// shows them, those that are not in the trash, themselves or with their
+// boards, in the order of their IDs, with their scripts, and a branch with
+// its outputs that are not in the trash: what package clipboard copies. It
+// reads with q, in a transaction of the workspace ws, and leaves out a UUID
+// that is no such node's.
+func Live(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) ([]Node, error) {
+	rows, err := q.NodesByID(ctx, queries.NodesByIDParams{WorkspaceID: ws, ProjectID: project, Ids: nodes})
+	if err != nil {
+		return nil, fmt.Errorf("node: read the nodes: %w", err)
+	}
+	var live []queries.Node
+	for _, row := range rows {
+		if !row.Node.DeletedAt.Valid && !row.BoardDeletedAt.Valid {
+			live = append(live, row.Node)
+		}
+	}
+	slices.SortFunc(live, func(a, b queries.Node) int { return bytes.Compare(a.ID.Bytes[:], b.ID.Bytes[:]) })
+	return nodesOf(ctx, q, ws, project, live)
 }
 
 // encode returns the ID of the entity of the kind k whose UUID is the column

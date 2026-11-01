@@ -1,0 +1,874 @@
+{
+  "$defs": {
+    "Clipboard": {
+      "additionalProperties": false,
+      "properties": {
+        "board_id": {
+          "description": "The ID of the board that the nodes were copied from, whose variables are those of the board scope that the clipboard declares, and at which its expressions' names were read",
+          "type": "string"
+        },
+        "components": {
+          "description": "The components that the nodes' and the connections' texts and expressions name, and the elements' speakers, each once, as they were where they were copied, by which a paste resolves them",
+          "items": {
+            "$ref": "#/$defs/ClipboardComponent"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "connections": {
+          "description": "The connections between the nodes, those that leave one of them and enter one of them, at most 10000, in the order of the ports that they leave, by their nodes and then their outputs, out first, and of each port's choices (PRD FR-EDIT-03 AC1), which a paste keeps",
+          "items": {
+            "$ref": "#/$defs/ClipboardConnection"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "format": {
+          "description": "What the JSON is, a Storycreep clipboard: always storycreep.clipboard",
+          "enum": [
+            "storycreep.clipboard"
+          ],
+          "type": "string"
+        },
+        "nodes": {
+          "description": "The nodes, at most 1000, each once, in the order of their IDs",
+          "items": {
+            "$ref": "#/$defs/ClipboardNode"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "type": "array"
+        },
+        "project_id": {
+          "description": "The ID of the project that the nodes were copied from",
+          "type": "string"
+        },
+        "variables": {
+          "description": "The variables that the nodes' and the connections' texts and expressions name, each once, as they were where they were copied, by which a paste resolves them",
+          "items": {
+            "$ref": "#/$defs/ClipboardVariable"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        },
+        "version": {
+          "description": "The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed at it, with what else of it the schema of the version that it writes refuses, as a field that a newer version adds.",
+          "format": "int64",
+          "maximum": 1,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "project_id",
+        "board_id",
+        "nodes",
+        "connections",
+        "variables",
+        "components"
+      ],
+      "type": "object"
+    },
+    "ClipboardAttribute": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "description": "The attribute definition's default, a value of its type, as attribute.create takes it. Without it, the type's zero value.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "id": {
+          "description": "The attribute definition's ID where it was copied",
+          "type": "string"
+        },
+        "key": {
+          "description": "The attribute definition's key, an identifier of the expression language (PRD §5.8.1)",
+          "type": "string"
+        },
+        "name": {
+          "description": "The attribute definition's name",
+          "maxLength": 100,
+          "type": "string"
+        },
+        "options": {
+          "description": "An enum's options",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "runtime": {
+          "description": "Whether the attribute is runtime, which expressions read and write (PRD FR-COMP-03)",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "The attribute's type (PRD FR-COMP-01)",
+          "enum": [
+            "bool",
+            "int",
+            "float",
+            "string",
+            "text",
+            "enum"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ClipboardComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "description": "The attribute definitions of the component's type that the content names of the component, each once",
+          "items": {
+            "$ref": "#/$defs/ClipboardAttribute"
+          },
+          "maxItems": 1000,
+          "type": "array"
+        },
+        "id": {
+          "description": "The component's ID where it was copied",
+          "type": "string"
+        },
+        "key": {
+          "description": "The component's key, an identifier of the expression language (PRD §5.8.1)",
+          "type": "string"
+        },
+        "name": {
+          "description": "The component's name",
+          "maxLength": 100,
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ClipboardComponentType",
+          "description": "The component's type"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "name",
+        "type",
+        "attributes"
+      ],
+      "type": "object"
+    },
+    "ClipboardComponentType": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "The component type's ID where it was copied",
+          "type": "string"
+        },
+        "key": {
+          "description": "The component type's key, by which a paste finds the type of the key, in which a component in the component's place may be created",
+          "type": "string"
+        },
+        "name": {
+          "description": "The component type's name",
+          "maxLength": 100,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ClipboardConnection": {
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "description": "The connection's condition's source, if it has one",
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "from_node_id": {
+          "description": "The ID of the node of the clipboard that the connection leaves, an element or a branch",
+          "type": "string"
+        },
+        "from_port": {
+          "description": "The port that the connection leaves: out, an element's, or the ID of an output of the branch that it leaves, which a branch's connection has. Without it, out.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The connection's ID where it was copied, which the paste's ids give a new one",
+          "type": "string"
+        },
+        "label": {
+          "$ref": "#/$defs/RichTextDoc",
+          "description": "The connection's label, a rich-text document (PRD FR-TEXT-01), as a node's text is. Without it, an empty paragraph."
+        },
+        "on_traverse": {
+          "description": "The connection's on-traverse script's source, if it has one",
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "to_node_id": {
+          "description": "The ID of the node of the clipboard that the connection enters",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from_node_id",
+        "to_node_id"
+      ],
+      "type": "object"
+    },
+    "ClipboardNode": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "description": "The node's colour. Without it, none.",
+          "enum": [
+            "none",
+            "red",
+            "orange",
+            "yellow",
+            "green",
+            "teal",
+            "blue",
+            "purple",
+            "pink",
+            "gray"
+          ],
+          "type": "string"
+        },
+        "cover_asset_id": {
+          "description": "The ID of an element's cover image, an asset of the project that it was copied from, which a paste into another project leaves out, if it has one. Another type has none.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The node's ID where it was copied, by which the clipboard's connections, jumpers' targets, and node references name it, and the paste's ids give it a new one",
+          "type": "string"
+        },
+        "is_ending": {
+          "description": "Whether the flow ends at the element. Another type may not.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "An element's kind. Another type has none.",
+          "enum": [
+            "dialogue",
+            "narration"
+          ],
+          "type": "string"
+        },
+        "on_enter": {
+          "description": "An element's or a branch's on-enter script's source, if it has one. A jumper has none.",
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "on_exit": {
+          "description": "An element's or a branch's on-exit script's source, if it has one. A jumper has none.",
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "outputs": {
+          "description": "A branch's outputs, at most 1000, in their order: its conditional outputs, the first its if, and its else after them, if it has one (PRD FR-EDIT-04). Another type has none.",
+          "items": {
+            "$ref": "#/$defs/ClipboardOutput"
+          },
+          "maxItems": 1000,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "position": {
+          "$ref": "#/$defs/NodePosition",
+          "description": "Where the node was on its board's canvas, which a paste moves by its offset, so that the pasted nodes keep their places relative to each other (PRD FR-EDIT-07 AC2)"
+        },
+        "size": {
+          "$ref": "#/$defs/NodeSize",
+          "description": "The node's width and height, if it has a size of its own"
+        },
+        "speaker_component_id": {
+          "description": "The ID of an element's speaker, if it has one: a component that the clipboard declares, or one that it does not, as one in the trash of the project that it was copied from, which a paste keeps where the project that it pastes into has it, in its trash or not. Another type has none.",
+          "type": "string"
+        },
+        "tags": {
+          "description": "The node's tags, as node.create takes them",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/NodeTarget",
+          "description": "A jumper's target, if it has one: a node of the clipboard, or another of the project that it was copied from. Another type has none."
+        },
+        "text": {
+          "$ref": "#/$defs/RichTextDoc",
+          "description": "An element's text, a rich-text document (PRD FR-TEXT-01), whose value references and mentions name variables and components that the clipboard declares, or else name what a paste keeps as it is. Another type has none."
+        },
+        "title": {
+          "description": "The node's title, if it has one, as node.create takes it",
+          "maxLength": 200,
+          "type": "string"
+        },
+        "type": {
+          "description": "The node's type: an element, a branch, or a jumper (PRD §5.8.5)",
+          "enum": [
+            "element",
+            "branch",
+            "jumper"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "position"
+      ],
+      "type": "object"
+    },
+    "ClipboardOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "description": "A conditional output's condition's source. An else has none.",
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "else": {
+          "description": "Whether the output is the branch's else, which comes after its conditional outputs, and has no condition",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The output's ID where it was copied, by which the connections that leave it name it as their from_port, and the paste's ids give it a new one",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ClipboardVariable": {
+      "additionalProperties": false,
+      "properties": {
+        "board_id": {
+          "description": "The ID of the board whose variable it is, a board's: the clipboard's own, whose expressions read it, or another, whose variable a text names. A global variable has none.",
+          "type": "string"
+        },
+        "default": {
+          "description": "The variable's default, a value of its type, as variable.create takes it. Without it, the type's zero value.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "description": {
+          "description": "The variable's description, if it has one",
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "id": {
+          "description": "The variable's ID where it was copied",
+          "type": "string"
+        },
+        "key": {
+          "description": "The variable's key, an identifier of the expression language (PRD §5.8.1)",
+          "type": "string"
+        },
+        "reset_on_enter": {
+          "description": "Whether a board's variable is reset to its default each time the flow enters its board",
+          "type": "boolean"
+        },
+        "scope": {
+          "description": "Whether the variable is global or of a board (PRD FR-VAR-02)",
+          "enum": [
+            "global",
+            "board"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "description": "The variable's type",
+          "enum": [
+            "bool",
+            "int",
+            "float",
+            "string"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "scope",
+        "type"
+      ],
+      "type": "object"
+    },
+    "NodePosition": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "The node's position across its board's canvas, rightward, in units of the canvas: a number from -1000000000 to 1000000000, read as the decimal that it is written as, and kept to 2 decimal places, rounded half away from zero, as 0.125 is 0.13 (PRD FR-EDIT-02 AC4). The node is shown with it written without trailing zeros, as 240 or 120.5.",
+          "maximum": 1000000000,
+          "minimum": -1000000000,
+          "type": "number"
+        },
+        "y": {
+          "description": "The node's position down its board's canvas, downward, in units of the canvas: a number from -1000000000 to 1000000000, read and kept as x is.",
+          "maximum": 1000000000,
+          "minimum": -1000000000,
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "NodeSize": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "description": "The node's height, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With width, or neither of them, for none.",
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "number"
+        },
+        "width": {
+          "description": "The node's width, in units of its board's canvas: a number from 1 to 100000, read and kept as a position's x is. With height, or neither of them, for none.",
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "NodeTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "board_id": {
+          "description": "The ID of the board of the node that the jumper targets, which may be the jumper's own. With node_id, or neither of them, for none.",
+          "type": "string"
+        },
+        "node_id": {
+          "description": "The ID of the node that the jumper targets, a node of the board board_id. With board_id, or neither of them, for none.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RichTextAttributeId": {
+      "description": "A component type's attribute definition's ID.",
+      "pattern": "^[Aa][Tt][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "RichTextBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RichTextParagraph"
+        },
+        {
+          "$ref": "#/$defs/RichTextList"
+        }
+      ]
+    },
+    "RichTextBold": {
+      "additionalProperties": false,
+      "description": "Bold.",
+      "properties": {
+        "type": {
+          "const": "bold"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextCode": {
+      "additionalProperties": false,
+      "description": "Inline code.",
+      "properties": {
+        "type": {
+          "const": "code"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextComponentId": {
+      "description": "A component's ID.",
+      "pattern": "^[Cc][Mm][Pp]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    },
+    "RichTextDecimals": {
+      "description": "The number of digits after the point that a number is shown with, rounded half away from zero. A value that is not a number is shown as it is.",
+      "maximum": 6,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "RichTextDoc": {
+      "additionalProperties": false,
+      "description": "A document: its blocks, at least one. The editor's empty document is one empty paragraph.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextBlock"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "doc"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextHardBreak": {
+      "additionalProperties": false,
+      "description": "A line break within a paragraph.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "hardBreak"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextInline": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RichTextText"
+        },
+        {
+          "$ref": "#/$defs/RichTextHardBreak"
+        },
+        {
+          "$ref": "#/$defs/RichTextMention"
+        },
+        {
+          "$ref": "#/$defs/RichTextValueRef"
+        }
+      ]
+    },
+    "RichTextItalic": {
+      "additionalProperties": false,
+      "description": "Italic.",
+      "properties": {
+        "type": {
+          "const": "italic"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextLink": {
+      "additionalProperties": false,
+      "description": "A link to an absolute http or https URL with a host, without white space, or a mailto URL of one address and nothing else.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "href": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^(?:[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f-\\x9f/?#][^\\x00-\\x20\\x7f-\\x9f]*|[Mm][Aa][Ii][Ll][Tt][Oo]:[A-Za-z0-9_+-]+(?:\\.[A-Za-z0-9_+-]+)*@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)*(?:[0-9]*[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?|[0-9]+-[A-Za-z0-9-]*[A-Za-z0-9]))$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "href"
+          ],
+          "type": "object"
+        },
+        "type": {
+          "const": "link"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextList": {
+      "additionalProperties": false,
+      "description": "A list, bulleted (bulletList) or numbered (orderedList), of at least one item. Lists nest at most 5 deep, which the server checks beyond this schema.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "description": "An orderedList's attributes. A bulletList has none, which the server checks beyond this schema.",
+          "properties": {
+            "start": {
+              "description": "The number of the first item, 1 when it is not given.",
+              "maximum": 999999,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextListItem"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "bulletList",
+            "orderedList"
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextListItem": {
+      "additionalProperties": false,
+      "description": "A list item: a paragraph, then any paragraphs and lists. That it starts with a paragraph is checked by the server, beyond this schema.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextBlock"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "listItem"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextMarks": {
+      "description": "The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another.",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/RichTextBold"
+          },
+          {
+            "$ref": "#/$defs/RichTextCode"
+          },
+          {
+            "$ref": "#/$defs/RichTextItalic"
+          },
+          {
+            "$ref": "#/$defs/RichTextLink"
+          },
+          {
+            "$ref": "#/$defs/RichTextStrike"
+          }
+        ]
+      },
+      "maxItems": 5,
+      "type": "array"
+    },
+    "RichTextMention": {
+      "additionalProperties": false,
+      "description": "A mention of a component, which the text shows by the component's name.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RichTextComponentId"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "mention"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextParagraph": {
+      "additionalProperties": false,
+      "description": "A paragraph, which may be empty.",
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/RichTextInline"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "paragraph"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextStrike": {
+      "additionalProperties": false,
+      "description": "Strikethrough.",
+      "properties": {
+        "type": {
+          "const": "strike"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextText": {
+      "additionalProperties": false,
+      "description": "Text, without control characters but tabs, or line and paragraph separators: a line break is a hardBreak, and a paragraph a paragraph. Nor does it hold bidirectional controls, as U+202E, which the server checks beyond this schema. A document's texts hold at most 100,000 characters together.",
+      "properties": {
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "text": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\u2028\u2029]+$",
+          "type": "string"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "text",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextValueRef": {
+      "additionalProperties": false,
+      "description": "A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component.",
+      "properties": {
+        "attrs": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "decimals": {
+                  "$ref": "#/$defs/RichTextDecimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/RichTextVariableId"
+                }
+              },
+              "required": [
+                "ref"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "attribute": {
+                  "$ref": "#/$defs/RichTextAttributeId"
+                },
+                "decimals": {
+                  "$ref": "#/$defs/RichTextDecimals"
+                },
+                "ref": {
+                  "$ref": "#/$defs/RichTextComponentId"
+                }
+              },
+              "required": [
+                "attribute",
+                "ref"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "valueRef"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RichTextVariableId": {
+      "description": "A variable's ID.",
+      "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/clipboard/v1/clipboard.schema.json",
+  "$ref": "#/$defs/Clipboard",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A selection of the nodes of a board of a Storycreep project, as POST /api/v1/projects/{project_id}/clipboard/copy answers with it and the command clipboard.paste pastes it (PRD FR-EDIT-07): the nodes, with a branch's outputs, the connections between them, and a declaration of each variable, component, and attribute definition that their texts, expressions, and speakers name. Its version is the version field's, which a change of what a clipboard holds increments, with a schema of its own.",
+  "title": "Storycreep clipboard, version 1"
+}

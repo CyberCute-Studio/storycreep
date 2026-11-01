@@ -1925,6 +1925,605 @@
         ],
         "type": "object"
       },
+      "Clipboard": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the board that the nodes were copied from, whose variables are those of the board scope that the clipboard declares, and at which its expressions' names were read",
+            "type": "string"
+          },
+          "components": {
+            "description": "The components that the nodes' and the connections' texts and expressions name, and the elements' speakers, each once, as they were where they were copied, by which a paste resolves them",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardComponent"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "connections": {
+            "description": "The connections between the nodes, those that leave one of them and enter one of them, at most 10000, in the order of the ports that they leave, by their nodes and then their outputs, out first, and of each port's choices (PRD FR-EDIT-03 AC1), which a paste keeps",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardConnection"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "format": {
+            "description": "What the JSON is, a Storycreep clipboard: always storycreep.clipboard",
+            "enum": [
+              "storycreep.clipboard"
+            ],
+            "type": "string"
+          },
+          "nodes": {
+            "description": "The nodes, at most 1000, each once, in the order of their IDs",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardNode"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          },
+          "project_id": {
+            "description": "The ID of the project that the nodes were copied from",
+            "type": "string"
+          },
+          "variables": {
+            "description": "The variables that the nodes' and the connections' texts and expressions name, each once, as they were where they were copied, by which a paste resolves them",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardVariable"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "version": {
+            "description": "The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed at it, with what else of it the schema of the version that it writes refuses, as a field that a newer version adds.",
+            "format": "int64",
+            "maximum": 1,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "format",
+          "version",
+          "project_id",
+          "board_id",
+          "nodes",
+          "connections",
+          "variables",
+          "components"
+        ],
+        "type": "object"
+      },
+      "ClipboardAttribute": {
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "description": "The attribute definition's default, a value of its type, as attribute.create takes it. Without it, the type's zero value.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "id": {
+            "description": "The attribute definition's ID where it was copied",
+            "type": "string"
+          },
+          "key": {
+            "description": "The attribute definition's key, an identifier of the expression language (PRD §5.8.1)",
+            "type": "string"
+          },
+          "name": {
+            "description": "The attribute definition's name",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "options": {
+            "description": "An enum's options",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "runtime": {
+            "description": "Whether the attribute is runtime, which expressions read and write (PRD FR-COMP-03)",
+            "type": "boolean"
+          },
+          "type": {
+            "description": "The attribute's type (PRD FR-COMP-01)",
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "string",
+              "text",
+              "enum"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ClipboardComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "description": "The attribute definitions of the component's type that the content names of the component, each once",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardAttribute"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "id": {
+            "description": "The component's ID where it was copied",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component's key, an identifier of the expression language (PRD §5.8.1)",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component's name",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ClipboardComponentType",
+            "description": "The component's type"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "name",
+          "type",
+          "attributes"
+        ],
+        "type": "object"
+      },
+      "ClipboardComponentType": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The component type's ID where it was copied",
+            "type": "string"
+          },
+          "key": {
+            "description": "The component type's key, by which a paste finds the type of the key, in which a component in the component's place may be created",
+            "type": "string"
+          },
+          "name": {
+            "description": "The component type's name",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ClipboardConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "description": "The connection's condition's source, if it has one",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "from_node_id": {
+            "description": "The ID of the node of the clipboard that the connection leaves, an element or a branch",
+            "type": "string"
+          },
+          "from_port": {
+            "description": "The port that the connection leaves: out, an element's, or the ID of an output of the branch that it leaves, which a branch's connection has. Without it, out.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The connection's ID where it was copied, which the paste's ids give a new one",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The connection's label, a rich-text document (PRD FR-TEXT-01), as a node's text is. Without it, an empty paragraph."
+          },
+          "on_traverse": {
+            "description": "The connection's on-traverse script's source, if it has one",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "to_node_id": {
+            "description": "The ID of the node of the clipboard that the connection enters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_node_id",
+          "to_node_id"
+        ],
+        "type": "object"
+      },
+      "ClipboardCopyInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "node_ids": {
+            "description": "The IDs of the nodes to copy, at most 1000, each once, of one board of the project, none of them in its trash, itself or with its board",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "node_ids"
+        ],
+        "type": "object"
+      },
+      "ClipboardNode": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "description": "The node's colour. Without it, none.",
+            "enum": [
+              "none",
+              "red",
+              "orange",
+              "yellow",
+              "green",
+              "teal",
+              "blue",
+              "purple",
+              "pink",
+              "gray"
+            ],
+            "type": "string"
+          },
+          "cover_asset_id": {
+            "description": "The ID of an element's cover image, an asset of the project that it was copied from, which a paste into another project leaves out, if it has one. Another type has none.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The node's ID where it was copied, by which the clipboard's connections, jumpers' targets, and node references name it, and the paste's ids give it a new one",
+            "type": "string"
+          },
+          "is_ending": {
+            "description": "Whether the flow ends at the element. Another type may not.",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "An element's kind. Another type has none.",
+            "enum": [
+              "dialogue",
+              "narration"
+            ],
+            "type": "string"
+          },
+          "on_enter": {
+            "description": "An element's or a branch's on-enter script's source, if it has one. A jumper has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "on_exit": {
+            "description": "An element's or a branch's on-exit script's source, if it has one. A jumper has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "outputs": {
+            "description": "A branch's outputs, at most 1000, in their order: its conditional outputs, the first its if, and its else after them, if it has one (PRD FR-EDIT-04). Another type has none.",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardOutput"
+            },
+            "maxItems": 1000,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "position": {
+            "$ref": "#/components/schemas/NodePosition",
+            "description": "Where the node was on its board's canvas, which a paste moves by its offset, so that the pasted nodes keep their places relative to each other (PRD FR-EDIT-07 AC2)"
+          },
+          "size": {
+            "$ref": "#/components/schemas/NodeSize",
+            "description": "The node's width and height, if it has a size of its own"
+          },
+          "speaker_component_id": {
+            "description": "The ID of an element's speaker, if it has one: a component that the clipboard declares, or one that it does not, as one in the trash of the project that it was copied from, which a paste keeps where the project that it pastes into has it, in its trash or not. Another type has none.",
+            "type": "string"
+          },
+          "tags": {
+            "description": "The node's tags, as node.create takes them",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/NodeTarget",
+            "description": "A jumper's target, if it has one: a node of the clipboard, or another of the project that it was copied from. Another type has none."
+          },
+          "text": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "An element's text, a rich-text document (PRD FR-TEXT-01), whose value references and mentions name variables and components that the clipboard declares, or else name what a paste keeps as it is. Another type has none."
+          },
+          "title": {
+            "description": "The node's title, if it has one, as node.create takes it",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "type": {
+            "description": "The node's type: an element, a branch, or a jumper (PRD §5.8.5)",
+            "enum": [
+              "element",
+              "branch",
+              "jumper"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "position"
+        ],
+        "type": "object"
+      },
+      "ClipboardOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "description": "A conditional output's condition's source. An else has none.",
+            "maxLength": 16384,
+            "type": "string"
+          },
+          "else": {
+            "description": "Whether the output is the branch's else, which comes after its conditional outputs, and has no condition",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The output's ID where it was copied, by which the connections that leave it name it as their from_port, and the paste's ids give it a new one",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ClipboardPasteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type clipboard.paste.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ClipboardPastePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "clipboard.paste"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "ClipboardPastePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type clipboard.paste.",
+        "properties": {
+          "board_id": {
+            "description": "The ID of the board that the clipboard is pasted onto, which is not in the project's trash",
+            "type": "string"
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/Clipboard",
+            "description": "The clipboard (PRD FR-EDIT-07 AC3), as POST /api/v1/projects/{project_id}/clipboard/copy answers with it, of this project or of another of the workspace's, which a server answers with 422 validation_failed where it is not one that it reads"
+          },
+          "ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The new ID of each node, output, and connection of the clipboard, by its ID in the clipboard: an ID of the same kind, of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2), as nd_, bo_, and cn_ IDs that a node.create, a branch_output.create, and a connection.create would take, each once",
+            "type": "object"
+          },
+          "offset": {
+            "$ref": "#/components/schemas/NodePosition",
+            "description": "What is added to each pasted node's position, as the clipboard holds it, so that the nodes keep their places relative to each other (PRD FR-EDIT-07 AC2): {\"x\": 0, \"y\": 0} pastes them where they were copied from. A node whose position is then beyond the bounds of a position is answered with 422 validation_failed at its position."
+          }
+        },
+        "required": [
+          "board_id",
+          "offset",
+          "clipboard",
+          "ids"
+        ],
+        "type": "object"
+      },
+      "ClipboardReport": {
+        "additionalProperties": false,
+        "properties": {
+          "assets": {
+            "description": "The cover images of the clipboard's elements that are not the board's project's assets, as those of another project are not, each once: the elements are pasted without them",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "attributes": {
+            "description": "The attribute definitions that the clipboard declares of a component, which the project's component type that a paste resolves it by does not have, neither the same definition nor one of its key: the type of the component that it resolves to, or the one that components lists for a component that resolves to none. Each is listed with that type, once for the type and its key, the first that the clipboard declares, as the components of a type share its definitions, which an attribute.create of the type, with an ID of its own, takes.",
+            "items": {
+              "$ref": "#/components/schemas/MissingAttribute"
+            },
+            "type": "array"
+          },
+          "components": {
+            "description": "The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type that a component.create in its place may take: the same type as its own, or else the one of its type's key, if the project has one. One without a type is created with a component_type.create of its type, as the clipboard declares it, once for each type, and with an attribute.create of that type of each attribute definition that the clipboard declares of it, once for each key.",
+            "items": {
+              "$ref": "#/components/schemas/MissingComponent"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "description": "The nodes outside the clipboard that its jumpers target or its expressions name by node references, each once, that the board's project does not have, in its trash or not, or not on the board that a target names: a jumper whose target this lists is pasted without one, and a node reference names nothing",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "speakers": {
+            "description": "The speakers of the clipboard's elements that it does not declare, as it declares no component that was in the trash where it was copied, that the board's project does not have, in its trash or not, each once: the elements are pasted without them. A speaker that the clipboard declares that resolves to none, which components lists, is pasted as it is where the project has it, in its trash or not, and else left out too.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "variables": {
+            "description": "The variables that the clipboard declares that resolve to none at the board: neither the same variable, global or of the board, nor one of its key and scope, a global one or one of the board. Each is as the clipboard declares it, which a variable.create of the board's project, of the board for a board's variable, takes, with an ID of its own, and is listed once for its key and scope, the first that the clipboard declares, as the clipboard may declare variables of one key of several boards, which a text names, which each resolve to the one of that key of the board that it is pasted onto.",
+            "items": {
+              "$ref": "#/components/schemas/ClipboardVariable"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "variables",
+          "components",
+          "attributes",
+          "speakers",
+          "nodes",
+          "assets"
+        ],
+        "type": "object"
+      },
+      "ClipboardResolveInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the board that the clipboard would be pasted onto, a board of the project that is not in its trash",
+            "type": "string"
+          },
+          "clipboard": {
+            "$ref": "#/components/schemas/Clipboard",
+            "description": "The clipboard (PRD FR-EDIT-07 AC3), as POST /api/v1/projects/{project_id}/clipboard/copy answers with it, of this project or of another of the workspace's"
+          }
+        },
+        "required": [
+          "board_id",
+          "clipboard"
+        ],
+        "type": "object"
+      },
+      "ClipboardVariable": {
+        "additionalProperties": false,
+        "properties": {
+          "board_id": {
+            "description": "The ID of the board whose variable it is, a board's: the clipboard's own, whose expressions read it, or another, whose variable a text names. A global variable has none.",
+            "type": "string"
+          },
+          "default": {
+            "description": "The variable's default, a value of its type, as variable.create takes it. Without it, the type's zero value.",
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "description": {
+            "description": "The variable's description, if it has one",
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "id": {
+            "description": "The variable's ID where it was copied",
+            "type": "string"
+          },
+          "key": {
+            "description": "The variable's key, an identifier of the expression language (PRD §5.8.1)",
+            "type": "string"
+          },
+          "reset_on_enter": {
+            "description": "Whether a board's variable is reset to its default each time the flow enters its board",
+            "type": "boolean"
+          },
+          "scope": {
+            "description": "Whether the variable is global or of a board (PRD FR-VAR-02)",
+            "enum": [
+              "global",
+              "board"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "description": "The variable's type",
+            "enum": [
+              "bool",
+              "int",
+              "float",
+              "string"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "scope",
+          "type"
+        ],
+        "type": "object"
+      },
       "CommandBatchBody": {
         "additionalProperties": false,
         "description": "A batch of commands, which applies whole, in one transaction, or not at all.",
@@ -2039,6 +2638,9 @@
             "$ref": "#/components/schemas/BranchOutputUpdateCommand"
           },
           {
+            "$ref": "#/components/schemas/ClipboardPasteCommand"
+          },
+          {
             "$ref": "#/components/schemas/ComponentCreateCommand"
           },
           {
@@ -2123,6 +2725,9 @@
             "$ref": "#/components/schemas/NodeDeleteCommand"
           },
           {
+            "$ref": "#/components/schemas/NodeDeleteManyCommand"
+          },
+          {
             "$ref": "#/components/schemas/NodeDuplicateCommand"
           },
           {
@@ -2130,6 +2735,9 @@
           },
           {
             "$ref": "#/components/schemas/NodeRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/NodeRestoreManyCommand"
           },
           {
             "$ref": "#/components/schemas/NodeUpdateCommand"
@@ -5278,6 +5886,41 @@
         ],
         "type": "object"
       },
+      "MissingAttribute": {
+        "additionalProperties": false,
+        "properties": {
+          "attribute": {
+            "$ref": "#/components/schemas/ClipboardAttribute",
+            "description": "The attribute definition, as the clipboard declares it"
+          },
+          "component_type_id": {
+            "description": "The ID of the project's component type, not in its trash, that does not have the definition, which an attribute.create in its place is of",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component_type_id",
+          "attribute"
+        ],
+        "type": "object"
+      },
+      "MissingComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "$ref": "#/components/schemas/ClipboardComponent",
+            "description": "The component, as the clipboard declares it"
+          },
+          "component_type_id": {
+            "description": "The ID of the project's component type, not in its trash, which a component created in its place may be of: the component's own type, and else the one of the key of the component's type, if the project has one",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component"
+        ],
+        "type": "object"
+      },
       "Mute": {
         "additionalProperties": false,
         "properties": {
@@ -5623,6 +6266,61 @@
         ],
         "type": "object"
       },
+      "NodeDeleteManyCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type node.delete_many.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeDeleteManyPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "node.delete_many"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "NodeDeleteManyPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type node.delete_many.",
+        "properties": {
+          "ids": {
+            "description": "The IDs of the nodes, each once, at most 10000, of any of the project's boards",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      },
       "NodeDeletePayload": {
         "additionalProperties": false,
         "description": "The payload of a command of the type node.delete.",
@@ -5825,6 +6523,61 @@
           "command_id",
           "type",
           "payload"
+        ],
+        "type": "object"
+      },
+      "NodeRestoreManyCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type node.restore_many.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/NodeRestoreManyPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "node.restore_many"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "NodeRestoreManyPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type node.restore_many.",
+        "properties": {
+          "ids": {
+            "description": "The IDs of the nodes, each once, at most 10000, of any of the project's boards",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
         ],
         "type": "object"
       },
@@ -13537,6 +14290,236 @@
         "summary": "List the jumpers that target a board's nodes",
         "tags": [
           "Nodes"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/clipboard/copy": {
+      "post": {
+        "description": "Answers with the clipboard of the nodes, a documented JSON structure of a version of its own (PRD FR-EDIT-07 AC3, schema/clipboard): the nodes, with a branch's outputs, the connections between them, in the order of their ports and of each port's choices, and a declaration of each variable, component, and attribute definition, not in the project's trash, that their texts, expressions, and speakers name, by which the command clipboard.paste resolves them where it pastes the clipboard, onto a board of this project or of another of the workspace's. It reads, and changes nothing. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or has in its trash, or of another board than the others, is answered with 422 validation_failed at its place in body.node_ids, and nodes whose clipboard would pass a clipboard's bounds, which a paste could not take, as more than 10000 connections between them, or more than 4 MiB (4194304 bytes) of JSON with the new IDs that a paste of it gives, so that a paste of it fits in a request's body, at body.node_ids, or at its place in it for a branch of more than 1000 outputs, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "copyNodes",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClipboardCopyInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Clipboard"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Copy nodes as a clipboard",
+        "tags": [
+          "Clipboard"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/clipboard/resolve": {
+      "post": {
+        "description": "Answers with what of the clipboard a paste onto the board, by the command clipboard.paste, would resolve to nothing, as the project is now (PRD FR-EDIT-07 AC1): the variables and the components that it declares, as it declares them, with what creating one in their place takes, the attribute definitions that it declares that the component types that it resolves its components by lack, each with its type, each of them once for what a client creates in its place, the speakers that it does not declare that the project lacks, in its trash or not, the nodes outside it that its jumpers target or its expressions name that the project lacks, and the cover images that are not the project's. A client may create the variables, the components, and the attribute definitions in the batch of the paste, before it, or in batches before it where they do not fit in its batch, so that the paste resolves to them. A paste resolves a variable to the same variable, where the board reaches it, global or of the board, and else to the one of its key and scope, a global one or one of the board; a component to the same component, and else to the one of its key; and an attribute definition of each component to the same one, of the type of the component that its component resolves to, and else to the one of its key of that type; none of them in the project's trash. It reads, and changes nothing. A clipboard of a newer version than the server reads is answered with 422 validation_failed at body.clipboard.version, with what else of it the schema of the version that the server reads refuses. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board that the project does not have, or has in its trash, is answered with 422 validation_failed at body.board_id, and a clipboard that the server does not read otherwise, at its field of body.clipboard, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "resolveClipboard",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClipboardResolveInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipboardReport"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Report what a paste would not resolve",
+        "tags": [
+          "Clipboard"
         ]
       }
     },

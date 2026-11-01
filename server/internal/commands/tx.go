@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -335,6 +336,92 @@ func (t *Tx) Carry(v any) {
 // Apply (Carry), or nil.
 func (t *Tx) Carried() any {
 	return t.carried
+}
+
+// ApplyPart applies, from the Apply of the command that applies, a command of
+// the registered type typ with the payload, as a part of that command, as
+// package clipboard's paste applies node.create, branch_output.create, and
+// connection.create for what it pastes, so that a command that does what
+// several of another type would does it through their Apply, with their
+// checks, rather than a copy of them. The part's payload is held to its
+// type's schema, Check, and CheckNew, as a command of a batch's is, and its
+// Apply runs as the command's own: what it reports (Changed, Restored,
+// AddUsage, Leave) is the command's, by the command's type, which the
+// derivations read, and the command's undo is its own Inverse's steps, which
+// undo the parts too, since the parts' inverses are not computed. A part
+// needs nothing that the batch was not checked for: its type needs the
+// command's capability and scope, touches only kinds that the command
+// touches, adds to no limit that the command does not declare, and needs a
+// session only if the command does; and it can be undone if the command can
+// (Spec.NonUndoable), since a batch can be undone by its commands' types
+// alone, and its undo would otherwise leave what the part did as it is. It
+// returns an error, which the command returns, otherwise, and a refusal of
+// the part, of its payload as its schema or its checks find it or of its
+// Apply (Refuse), as the command's refusal at the field of the command's
+// payload that at returns for the part's field, as name or items[2].id, or
+// "" for the part's payload itself, so that the client is answered where its
+// payload holds what is wrong. at is nil for a part whose fields are the
+// command's payload's own.
+func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field string) string) error {
+	if t.current == nil {
+		return errors.New("commands: ApplyPart is called outside a command's Apply")
+	}
+	if at == nil {
+		at = func(field string) string { return field }
+	}
+	parent := t.current
+	part, ok := t.pipeline.registry.specs[typ]
+	switch {
+	case !ok:
+		return fmt.Errorf("commands: %s applies a part of the type %s, which is not registered", parent.typ, typ)
+	case part == parent:
+		return fmt.Errorf("commands: %s applies a part of its own type", parent.typ)
+	case part.capability != parent.capability || part.scope != parent.scope:
+		return fmt.Errorf("commands: %s applies a part of the type %s, which needs %s and %s, where the command "+
+			"was authorised for %s and %s", parent.typ, typ, part.capability, part.scope, parent.capability,
+			parent.scope)
+	case part.sessionOnly && !parent.sessionOnly:
+		return fmt.Errorf("commands: %s applies a part of the type %s, which only a session may apply", parent.typ,
+			typ)
+	case part.inverse == nil && parent.inverse != nil:
+		return fmt.Errorf("commands: %s applies a part of the type %s, which cannot be undone, where the command "+
+			"can", parent.typ, typ)
+	}
+	for _, k := range part.touches {
+		if !slices.Contains(parent.touches, k) {
+			return fmt.Errorf("commands: %s applies a part of the type %s, which touches a %s, which the command "+
+				"does not touch", parent.typ, typ, k)
+		}
+	}
+	for _, l := range part.limits {
+		if !slices.Contains(parent.limits, l) {
+			return fmt.Errorf("commands: %s applies a part of the type %s, which adds to the limit %s, which the "+
+				"command does not declare", parent.typ, typ, l)
+		}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("commands: encode a part of the type %s: %w", typ, err)
+	}
+	problems := t.pipeline.registry.validate(part.schema, raw)
+	var decoded any
+	if len(problems) == 0 {
+		decoded, problems = part.decode(raw, false)
+	}
+	if len(problems) > 0 {
+		return Refuse(at(problems[0].Field), problems[0].Message, nil)
+	}
+	// What the command's inverse carried for its Apply is the command's, not
+	// the part's (Carry), which has no inverse computed.
+	carried := t.carried
+	t.carried = nil
+	err = part.apply(ctx, t, decoded)
+	t.carried = carried
+	var r *commandRefusal
+	if errors.As(err, &r) {
+		return &commandRefusal{field: at(r.field), message: r.message, reason: r.reason}
+	}
+	return err
 }
 
 // Keep keeps v under key for the rest of the batch, for the inverses and the

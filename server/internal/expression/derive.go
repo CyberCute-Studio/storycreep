@@ -449,16 +449,64 @@ func loadProjects(ctx context.Context, q *queries.Queries, ws, project pgtype.UU
 	return n.build()
 }
 
+// LiveNames is what Live reads of a project: the Project that the expressions
+// of its boards that are not in the trash can name, and the variables and the
+// components that it holds, each in the order of their IDs, each component
+// with the attribute definitions of its type, in their order, which the
+// components of a type share, and which the caller does not change. Types
+// are the attribute definitions of each component type that has some, by the
+// type's ID, those that its components hold, and ComponentTypes the ID of
+// each component's type, by the component's ID.
+type LiveNames struct {
+	Project        *expr.Project
+	Variables      []expr.Variable
+	Components     []expr.Component
+	Types          map[string][]expr.Attribute
+	ComponentTypes map[string]string
+}
+
+// Live returns what the expressions of the project's boards that are not in
+// the trash can name, of the project's variables, components, and nodes that
+// are not in the trash, those of its nodes among nodes alone, which its
+// expressions name, as the derivation reads them (§5.8.3), with the variables
+// and the components that it is made of, as package clipboard reads what a
+// copied expression names and what a pasted one is to name, and resolves a
+// clipboard's declarations by them, without reading them again. It reads with
+// q, in a transaction of the workspace ws.
+func Live(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) (LiveNames,
+	error) {
+	n, err := loadNames(ctx, q, ws, project, nodes, nil)
+	if err != nil {
+		return LiveNames{}, err
+	}
+	ps, err := n.build()
+	if err != nil {
+		return LiveNames{}, err
+	}
+	out := LiveNames{Project: ps.live, Variables: n.variables, Components: n.components,
+		Types: make(map[string][]expr.Attribute, len(n.ofType)), ComponentTypes: make(map[string]string,
+			len(n.components))}
+	for t, attributes := range n.ofType {
+		out.Types[ids.Encode(ids.ComponentType, t)] = attributes
+	}
+	for i, c := range n.components {
+		out.ComponentTypes[c.ID] = ids.Encode(ids.ComponentType, n.componentTypes[i])
+	}
+	return out, nil
+}
+
 // names are what the project's expressions can name, as loadNames reads them
 // and build makes projects of: the variables, the components with their
 // attributes, and the nodes that the expressions to compile name, of those
 // that are not in the project's trash, and the variables and those nodes of
 // each board in the trash trashed that are there with it alone. ofType are
 // the attributes of each component type that is not in the trash, by the
-// type's UUID.
+// type's UUID, and componentTypes the UUID of each component's type, in the
+// order of components.
 type names struct {
 	variables        []expr.Variable
 	components       []expr.Component
+	componentTypes   []ids.UUID
 	nodes            []expr.BoardNode
 	ofType           map[ids.UUID][]expr.Attribute
 	trashed          []pgtype.UUID
@@ -500,9 +548,11 @@ func loadNames(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID,
 		return names{}, fmt.Errorf("expression: read the project's components: %w", err)
 	}
 	n.components = make([]expr.Component, len(components))
+	n.componentTypes = make([]ids.UUID, len(components))
 	for i, c := range components {
 		n.components[i] = expr.Component{ID: ids.Encode(ids.Component, c.ID.Bytes), Key: c.Key,
 			Attributes: n.ofType[c.ComponentTypeID.Bytes]}
+		n.componentTypes[i] = c.ComponentTypeID.Bytes
 	}
 	// The nodes that the expressions name, those of the boards that are not
 	// in the trash, and those of each board in the trash trashed, there with

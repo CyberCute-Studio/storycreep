@@ -56,7 +56,8 @@ var SourceRewrites = []commands.Type{"variable.rename", "component.set_key"}
 // derivation's name.
 var textNeutral = append([]commands.Type{
 	"expression",
-	"node.move", "node.delete", "node.restore", "board.set_entry_node", "branch_output.create",
+	"node.move", "node.delete", "node.restore", "node.delete_many", "node.restore_many", "board.set_entry_node",
+	"branch_output.create",
 	"connection.reconnect", "connection.reorder", "connection.delete", "connection.restore",
 	"component.rename", "component.set_image", "component.set_attribute", "component.move",
 	"component.delete", "component.restore",

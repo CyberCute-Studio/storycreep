@@ -774,58 +774,99 @@ func (q *Queries) ProjectTags(ctx context.Context, arg ProjectTagsParams) ([]Pro
 	return items, nil
 }
 
-const restoreNode = `-- name: RestoreNode :one
+const restoreNodes = `-- name: RestoreNodes :many
 UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND deleted_at IS NOT NULL
-RETURNING rev
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[])
+    AND deleted_at IS NOT NULL
+RETURNING id, rev
 `
 
-type RestoreNodeParams struct {
+type RestoreNodesParams struct {
 	UpdatedBy   pgtype.UUID
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
-	ID          pgtype.UUID
+	Ids         []pgtype.UUID
 }
 
-// RestoreNode takes the node out of the project's trash, unless it is not
-// there, and returns its new revision, or no row if it is not.
-func (q *Queries) RestoreNode(ctx context.Context, arg RestoreNodeParams) (int64, error) {
-	row := q.db.QueryRow(ctx, restoreNode,
+type RestoreNodesRow struct {
+	ID  pgtype.UUID
+	Rev int64
+}
+
+// RestoreNodes takes the project's nodes whose IDs are among ids out of its
+// trash, but for those that are not there, and returns those that it
+// restored, with their new revisions, as node.restore restores one, and
+// node.restore_many a selection, in one statement.
+func (q *Queries) RestoreNodes(ctx context.Context, arg RestoreNodesParams) ([]RestoreNodesRow, error) {
+	rows, err := q.db.Query(ctx, restoreNodes,
 		arg.UpdatedBy,
 		arg.WorkspaceID,
 		arg.ProjectID,
-		arg.ID,
+		arg.Ids,
 	)
-	var rev int64
-	err := row.Scan(&rev)
-	return rev, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RestoreNodesRow
+	for rows.Next() {
+		var i RestoreNodesRow
+		if err := rows.Scan(&i.ID, &i.Rev); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const trashNode = `-- name: TrashNode :one
+const trashNodes = `-- name: TrashNodes :many
 UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND deleted_at IS NULL
-RETURNING rev
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev
 `
 
-type TrashNodeParams struct {
+type TrashNodesParams struct {
 	UpdatedBy   pgtype.UUID
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
-	ID          pgtype.UUID
+	Ids         []pgtype.UUID
 }
 
-// TrashNode deletes the node to the project's trash, unless it is there
-// already, and returns its new revision, or no row if it is.
-func (q *Queries) TrashNode(ctx context.Context, arg TrashNodeParams) (int64, error) {
-	row := q.db.QueryRow(ctx, trashNode,
+type TrashNodesRow struct {
+	ID  pgtype.UUID
+	Rev int64
+}
+
+// TrashNodes deletes the project's nodes whose IDs are among ids to its
+// trash, but for those that are there already, and returns those that it
+// deleted, with their new revisions, as node.delete deletes one, and
+// node.delete_many a selection, in one statement.
+func (q *Queries) TrashNodes(ctx context.Context, arg TrashNodesParams) ([]TrashNodesRow, error) {
+	rows, err := q.db.Query(ctx, trashNodes,
 		arg.UpdatedBy,
 		arg.WorkspaceID,
 		arg.ProjectID,
-		arg.ID,
+		arg.Ids,
 	)
-	var rev int64
-	err := row.Scan(&rev)
-	return rev, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrashNodesRow
+	for rows.Next() {
+		var i TrashNodesRow
+		if err := rows.Scan(&i.ID, &i.Rev); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateNode = `-- name: UpdateNode :one

@@ -64,6 +64,18 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND node_id = AN
     AND deleted_at IS NULL
 ORDER BY node_id, kind = 'else', "order", id;
 
+-- name: FirstConditionalOutput :one
+-- FirstConditionalOutput returns the first conditional output of the
+-- project's node node_id, which is not in the trash, that is not deleted on
+-- its own, by their orders and then their IDs, as NodeOutputs orders them, or
+-- no row if it has none: what a new output's kind is read by, without the
+-- branch's other outputs.
+SELECT * FROM branch_output
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND node_id = @node_id AND deleted_at IS NULL
+    AND kind <> 'else'
+ORDER BY "order", id
+LIMIT 1;
+
 -- name: NodeOutputCounts :one
 -- NodeOutputCounts returns how many conditional outputs the project's node
 -- node_id has that are not in the trash, and the ID of its else that is not,

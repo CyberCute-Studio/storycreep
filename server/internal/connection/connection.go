@@ -128,6 +128,25 @@ func connectionsOf(ctx context.Context, q *queries.Queries, ws, project pgtype.U
 	return out, nil
 }
 
+// Among returns the connections of the project that are not in the trash both
+// of whose nodes are among nodes, as the API shows them, in the order of the
+// ports that they leave, by their nodes' IDs and then their outputs', out
+// before them, and of each port's choices: what package clipboard copies of
+// the nodes. It reads with q, in a transaction of the workspace ws.
+func Among(ctx context.Context, q *queries.Queries, ws, project pgtype.UUID, nodes []pgtype.UUID) ([]Connection,
+	error) {
+	rows, err := q.ConnectionsAmong(ctx, queries.ConnectionsAmongParams{WorkspaceID: ws, ProjectID: project,
+		NodeIds: nodes})
+	if err != nil {
+		return nil, fmt.Errorf("connection: read the connections of the nodes: %w", err)
+	}
+	live := make([]queries.Connection, len(rows))
+	for i, r := range rows {
+		live[i] = queries.Connection(r.LiveConnection)
+	}
+	return connectionsOf(ctx, q, ws, project, live)
+}
+
 // portOf returns the port of a connection whose column of the output that it
 // leaves is output: out if it is null, or else the output's ID.
 func portOf(output pgtype.UUID) string {

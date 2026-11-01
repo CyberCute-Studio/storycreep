@@ -163,6 +163,46 @@ func (q *Queries) BranchOutputsByID(ctx context.Context, arg BranchOutputsByIDPa
 	return items, nil
 }
 
+const firstConditionalOutput = `-- name: FirstConditionalOutput :one
+SELECT id, workspace_id, project_id, board_id, node_id, kind, "order", rev, deleted_at, created_by, updated_by, created_at, updated_at FROM branch_output
+WHERE workspace_id = $1 AND project_id = $2 AND node_id = $3 AND deleted_at IS NULL
+    AND kind <> 'else'
+ORDER BY "order", id
+LIMIT 1
+`
+
+type FirstConditionalOutputParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	NodeID      pgtype.UUID
+}
+
+// FirstConditionalOutput returns the first conditional output of the
+// project's node node_id, which is not in the trash, that is not deleted on
+// its own, by their orders and then their IDs, as NodeOutputs orders them, or
+// no row if it has none: what a new output's kind is read by, without the
+// branch's other outputs.
+func (q *Queries) FirstConditionalOutput(ctx context.Context, arg FirstConditionalOutputParams) (BranchOutput, error) {
+	row := q.db.QueryRow(ctx, firstConditionalOutput, arg.WorkspaceID, arg.ProjectID, arg.NodeID)
+	var i BranchOutput
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.BoardID,
+		&i.NodeID,
+		&i.Kind,
+		&i.Order,
+		&i.Rev,
+		&i.DeletedAt,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertBranchOutput = `-- name: InsertBranchOutput :exec
 
 INSERT INTO branch_output (id, workspace_id, project_id, board_id, node_id, kind, "order", created_by, updated_by)

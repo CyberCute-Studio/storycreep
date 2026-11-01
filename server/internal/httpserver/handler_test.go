@@ -204,6 +204,8 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"POST /api/v1/auth/password-reset/confirm", "POST /api/v1/auth/register", "POST /api/v1/auth/verify-email",
 			"POST /api/v1/invites/accept", "POST /api/v1/invites/lookup", "POST /api/v1/invites/register",
 			"POST /api/v1/projects/{project_id}/archive", "POST /api/v1/projects/{project_id}/assets",
+			"POST /api/v1/projects/{project_id}/clipboard/copy",
+			"POST /api/v1/projects/{project_id}/clipboard/resolve",
 			"POST /api/v1/projects/{project_id}/commands",
 			"POST /api/v1/projects/{project_id}/restore",
 			"POST /api/v1/projects/{project_id}/tokens", "POST /api/v1/projects/{project_id}/unarchive",
