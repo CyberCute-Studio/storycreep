@@ -1,0 +1,29 @@
+/*
+ * The app's stylesheet: Tailwind CSS v4, with the shared design tokens as its
+ * theme (PRD §10.6). A hover state may change only how a control looks,
+ * never whether it can be seen or reached (web/app/lint/hover.ts).
+ */
+
+@import "tailwindcss";
+@import "@storycreep/shared/tokens.css";
+
+@layer base {
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+  }
+
+  /* The focus ring of the control that has the keyboard's focus, at 3:1
+     against the page and its panels (tokens.test.ts). */
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  /* The page's main landmark takes the focus from the skip link, which
+     needs no ring. */
+  main:focus {
+    outline: none;
+  }
+}

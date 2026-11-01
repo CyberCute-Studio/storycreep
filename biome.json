@@ -19,6 +19,11 @@
     "enabled": true,
     "useEditorconfig": true
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -43,6 +48,13 @@
         "!**/*.spec.*"
       ],
       "plugins": ["./web/shared/lint/hardcoded-text.grit"]
+    },
+    {
+      "includes": ["web/app/src/**", "!**/*.test.*", "!**/*.spec.*"],
+      "plugins": [
+        "./web/shared/lint/hardcoded-text.grit",
+        "./web/app/lint/direct-request.grit"
+      ]
     }
   ]
 }

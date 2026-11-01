@@ -9,6 +9,7 @@
   "scripts": {
     "check": "biome check .",
     "fix": "biome check --write .",
+    "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "docs:check": "go -C server run ./cmd/doccheck",

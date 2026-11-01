@@ -49,6 +49,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
+	"github.com/CyberCute-Studio/storycreep/server/internal/webassets"
 )
 
 // Timeouts of the HTTP servers. A request's body has a time limit of its own
@@ -187,6 +188,10 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 		attrs = append(attrs, "metrics", s.metricsOff)
 	}
 	log.InfoContext(ctx, "listening", attrs...)
+	if !webassets.AppBundled() {
+		log.WarnContext(ctx, "this binary was built without the web app, so /app/ serves a page that says so; "+
+			"build web/app, and then the server with -tags webdist, as deploy/README.md describes")
+	}
 
 	// stop stops the servers and the job workers together, so that each has
 	// the whole time to finish its requests or jobs in progress. Once the

@@ -1,0 +1,37 @@
+// A Biome lint rule that the web app calls the server only through the API
+// client of @storycreep/shared/api, whose types are generated from the
+// server's OpenAPI document, so that the app describes no request or answer
+// by hand (PRD FR-API-02 AC2), and that it sends nothing that way that the
+// client would not, as an error report (NFR-OBS-06). biome.json applies it
+// to the app's source, but for its tests, and CI runs it with the rest of
+// Biome's checks.
+//
+// It reports the browser's ways for a script to make a request: fetch,
+// XMLHttpRequest, EventSource, WebSocket, and sendBeacon, named as a global,
+// as in fetch(url) or new WebSocket(url), or as a property, as in
+// window.fetch, globalThis["fetch"], or navigator.sendBeacon(url). A type
+// that is named so, as in a parameter of the type WebSocket, is not
+// reported. Code that rightly makes such a request, as the real-time
+// channel's client will, is marked with a comment that says why, as in
+// // biome-ignore lint/plugin: the real-time channel's socket.
+
+language js
+
+pattern request_api() {
+  r"^(?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)$"
+}
+
+or {
+  JsIdentifierExpression() as $name where {
+    $name <: request_api(),
+    register_diagnostic(span=$name, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  JsStaticMemberExpression(member=$member) where {
+    $member <: request_api(),
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  JsComputedMemberExpression(member=$member) where {
+    $member <: r"^[\"'`](?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)[\"'`]$",
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  }
+}

@@ -11,11 +11,30 @@
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -f deploy/Dockerfile .
 #
-# Dockerfile.dockerignore, next to this file, sends only the server's sources.
+# Dockerfile.dockerignore, next to this file, sends only the server's and the
+# web app's sources.
 #
 # The base images are named by tag rather than by digest, because nothing
 # would update a digest: a tag picks up Go's patch releases and the base
 # image's updated CA certificates and time zones at every build.
+
+# The web app's bundle, which the binary embeds (server/internal/webassets).
+# It is the same for every platform, so it is built once, on the build
+# machine's platform, with the pnpm that package.json pins, from the lockfile
+# alone.
+FROM --platform=$BUILDPLATFORM node:24-slim AS web
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
+WORKDIR /src
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/app/package.json web/app/
+COPY web/shared/package.json web/shared/
+COPY web/site/package.json web/site/
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    corepack enable pnpm && pnpm install --frozen-lockfile --filter @storycreep/app...
+COPY web/shared/ web/shared/
+COPY web/app/ web/app/
+# Vite writes the bundle to server/internal/webassets/dist/app.
+RUN pnpm --filter @storycreep/app build
 
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 # The Go of this image builds the binary: a go.mod that needs a newer one
@@ -23,6 +42,7 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 ENV GOTOOLCHAIN=local CGO_ENABLED=0
 WORKDIR /src/server
 COPY server/ ./
+COPY --from=web /src/server/internal/webassets/dist/ ./internal/webassets/dist/
 ARG TARGETOS
 ARG TARGETARCH
 # What /version reports. The build has no Git checkout to read the revision
@@ -33,7 +53,7 @@ ARG STORYCREEP_COMMIT_TIME=
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     v=github.com/CyberCute-Studio/storycreep/server/internal/version && \
-    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false \
+    GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags webdist -trimpath -buildvcs=false \
       -ldflags="-s -w -X $v.release=$STORYCREEP_VERSION -X $v.commit=$STORYCREEP_COMMIT -X $v.commitTime=$STORYCREEP_COMMIT_TIME" \
       -o /out/usr/local/bin/storycreep ./cmd/storycreep
 # The asset directory, where docker-compose.yml mounts a named volume. Docker
