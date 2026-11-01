@@ -109,6 +109,28 @@ func (q *Queries) DeleteBatchRecords(ctx context.Context, arg DeleteBatchRecords
 	return err
 }
 
+const firstOperationAfter = `-- name: FirstOperationAfter :one
+SELECT seq FROM operation
+WHERE workspace_id = $1 AND project_id = $2 AND seq > $3
+ORDER BY seq
+LIMIT 1
+`
+
+type FirstOperationAfterParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	After       int64
+}
+
+// FirstOperationAfter returns the seq of the project's first operation whose
+// seq comes after @after, without reading what the operation holds.
+func (q *Queries) FirstOperationAfter(ctx context.Context, arg FirstOperationAfterParams) (int64, error) {
+	row := q.db.QueryRow(ctx, firstOperationAfter, arg.WorkspaceID, arg.ProjectID, arg.After)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
+}
+
 const insertAppliedCommands = `-- name: InsertAppliedCommands :exec
 INSERT INTO applied_command (workspace_id, project_id, command_id, seq)
 SELECT $1, $2, c.command_id, $3
@@ -290,6 +312,75 @@ func (q *Queries) OperationInverse(ctx context.Context, arg OperationInversePara
 	return inverse, err
 }
 
+const operationsAfter = `-- name: OperationsAfter :many
+SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM (
+    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        pg_column_size(o.payload) + pg_column_size(o.entity_refs) AS size,
+        sum(pg_column_size(o.payload) + pg_column_size(o.entity_refs)) OVER (ORDER BY o.seq) AS through
+    FROM operation o
+    WHERE o.workspace_id = $1 AND o.project_id = $2 AND o.seq > $3
+    ORDER BY o.seq
+    LIMIT $4
+) page
+WHERE page.through - page.size < $5::bigint
+ORDER BY page.seq
+`
+
+type OperationsAfterParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	After       int64
+	MaxRows     int32
+	MaxBytes    int64
+}
+
+type OperationsAfterRow struct {
+	Seq        int64
+	Payload    []byte
+	EntityRefs []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+// OperationsAfter returns the project's operations whose seqs come after
+// @after, in the order of their seqs: at most @max_rows of them, the first of
+// them whatever its size, and each after it while the ones before it take
+// less than @max_bytes, by the room that their payloads and entity refs take
+// where the log keeps them, compressed or not (pg_column_size), which reads
+// none of the values themselves, so that a page of the log that the
+// real-time hub holds in memory and sends a session is bounded however large
+// its batches are, and holds one at least (package realtime). The values of
+// the operations that the page leaves out are not read.
+func (q *Queries) OperationsAfter(ctx context.Context, arg OperationsAfterParams) ([]OperationsAfterRow, error) {
+	rows, err := q.db.Query(ctx, operationsAfter,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.After,
+		arg.MaxRows,
+		arg.MaxBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OperationsAfterRow
+	for rows.Next() {
+		var i OperationsAfterRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.Payload,
+			&i.EntityRefs,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectGrantRole = `-- name: ProjectGrantRole :one
 SELECT role FROM project_grant
 WHERE workspace_id = $1 AND membership_id = $2 AND project_id = $3
@@ -338,6 +429,24 @@ func (q *Queries) ProjectInTrash(ctx context.Context, arg ProjectInTrashParams) 
 	var deleted bool
 	err := row.Scan(&deleted)
 	return deleted, err
+}
+
+const projectSeq = `-- name: ProjectSeq :one
+SELECT seq FROM project WHERE workspace_id = $1 AND id = $2
+`
+
+type ProjectSeqParams struct {
+	WorkspaceID pgtype.UUID
+	ID          pgtype.UUID
+}
+
+// ProjectSeq returns the seq of the project's latest operation, without
+// locking the project's row, as of the statement's start.
+func (q *Queries) ProjectSeq(ctx context.Context, arg ProjectSeqParams) (int64, error) {
+	row := q.db.QueryRow(ctx, projectSeq, arg.WorkspaceID, arg.ID)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
 }
 
 const projectWorkspace = `-- name: ProjectWorkspace :one

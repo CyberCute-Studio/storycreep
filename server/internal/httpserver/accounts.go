@@ -39,6 +39,22 @@ func (d readyDB) InSnapshot(ctx context.Context, scope database.Scope, fn func(p
 	return db.InSnapshot(ctx, scope, fn)
 }
 
+func (d readyDB) Dedicated(ctx context.Context) (*pgx.Conn, error) {
+	db := d.ready.db.Load()
+	if db == nil {
+		return nil, errors.New("the database step of startup has not finished")
+	}
+	return db.Dedicated(ctx)
+}
+
+func (d readyDB) Notify(ctx context.Context, channel, payload string) error {
+	db := d.ready.db.Load()
+	if db == nil {
+		return errors.New("the database step of startup has not finished")
+	}
+	return db.Notify(ctx, channel, payload)
+}
+
 // registerBody is the body of POST /api/v1/auth/register.
 type registerBody struct {
 	// The format is idn-email, because JSON Schema's email is an address in

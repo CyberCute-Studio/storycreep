@@ -207,6 +207,15 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) error {
 				}
 			})
 		}
+		// The sockets of the real-time channel are no longer the servers'
+		// connections once they upgrade, so Shutdown does not wait for them:
+		// the hub closes them, with 1001, so that their clients connect again
+		// to another server, or to this one once it is back.
+		wg.Go(func() {
+			if err := s.hub.Shutdown(shutdownCtx); err != nil {
+				log.WarnContext(ctx, "the real-time sockets did not close in time", "error", err)
+			}
+		})
 		if queue != nil {
 			wg.Go(func() {
 				if err := queue.Stop(shutdownCtx); err != nil {

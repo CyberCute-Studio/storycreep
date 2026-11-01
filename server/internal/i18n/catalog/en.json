@@ -79,6 +79,7 @@
   "error.token_used": "This link has been used already. Ask for a new one.",
   "error.unauthenticated": "Authentication is required.",
   "error.unsupported_media_type": "The request body is not in a supported format.",
+  "error.upgrade_required": "This address takes only a WebSocket connection.",
   "error.validation_failed": "The request is invalid.",
   "error.variable_in_use": "Parts of the project use this variable. Delete it anyway only if you mean to break them, which needs a role that may publish.",
   "error.weak_password": "The password is too weak.",

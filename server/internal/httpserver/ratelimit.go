@@ -75,7 +75,8 @@ func authLimitDoc(r ratelimit.Rate) string {
 // requests count against.
 func bucketDoc(b ratelimit.Bucket, r ratelimit.Rate, callers api.Callers) string {
 	what := map[ratelimit.Bucket]string{ratelimit.Read: "Requests that read", ratelimit.Write: "Requests that " +
-		"change something", ratelimit.Export: "Exports"}[b]
+		"change something", ratelimit.Export: "Exports", ratelimit.Connect: "Openings of the real-time channel's " +
+		"WebSocket"}[b]
 	// The descriptions are in the source locale, which writes 1200 as 1,200.
 	digits := i18n.Default().Localizer(i18n.Source).Number
 	ip, user, token := digits(r.Limits[ratelimit.IP]), digits(r.Limits[ratelimit.User]),

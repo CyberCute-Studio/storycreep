@@ -400,8 +400,7 @@ func SessionOnly() Option {
 // requests each bucket allows.
 type Bucket string
 
-// The buckets of the routes. The WebSocket connects of NFR-SEC-06 have one of
-// their own, which is no route's that Register registers.
+// The buckets of the routes.
 const (
 	// BucketAuth is signing in, registering, and the other requests about
 	// credentials that FR-AUTH-05 limits most, among them listing and
@@ -419,12 +418,15 @@ const (
 	BucketWrite Bucket = "write"
 	// BucketExport is a request for an export.
 	BucketExport Bucket = "export"
+	// BucketConnect is the opening of a WebSocket, of GET /api/v1/ws, which
+	// NFR-SEC-06 limits on its own (package realtime).
+	BucketConnect Bucket = "connect"
 )
 
 // Known reports whether b is a bucket of the routes.
 func (b Bucket) Known() bool {
 	switch b {
-	case BucketAuth, BucketRead, BucketWrite, BucketExport:
+	case BucketAuth, BucketRead, BucketWrite, BucketExport, BucketConnect:
 		return true
 	}
 	return false

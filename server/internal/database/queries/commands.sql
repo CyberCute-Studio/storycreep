@@ -121,6 +121,41 @@ SELECT entity_refs FROM operation
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq = ANY(@seqs::bigint[])
 ORDER BY seq;
 
+-- name: OperationsAfter :many
+-- OperationsAfter returns the project's operations whose seqs come after
+-- @after, in the order of their seqs: at most @max_rows of them, the first of
+-- them whatever its size, and each after it while the ones before it take
+-- less than @max_bytes, by the room that their payloads and entity refs take
+-- where the log keeps them, compressed or not (pg_column_size), which reads
+-- none of the values themselves, so that a page of the log that the
+-- real-time hub holds in memory and sends a session is bounded however large
+-- its batches are, and holds one at least (package realtime). The values of
+-- the operations that the page leaves out are not read.
+SELECT page.seq, page.payload, page.entity_refs, page.created_at FROM (
+    SELECT o.seq, o.payload, o.entity_refs, o.created_at,
+        pg_column_size(o.payload) + pg_column_size(o.entity_refs) AS size,
+        sum(pg_column_size(o.payload) + pg_column_size(o.entity_refs)) OVER (ORDER BY o.seq) AS through
+    FROM operation o
+    WHERE o.workspace_id = @workspace_id AND o.project_id = @project_id AND o.seq > @after
+    ORDER BY o.seq
+    LIMIT @max_rows
+) page
+WHERE page.through - page.size < @max_bytes::bigint
+ORDER BY page.seq;
+
+-- name: FirstOperationAfter :one
+-- FirstOperationAfter returns the seq of the project's first operation whose
+-- seq comes after @after, without reading what the operation holds.
+SELECT seq FROM operation
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND seq > @after
+ORDER BY seq
+LIMIT 1;
+
+-- name: ProjectSeq :one
+-- ProjectSeq returns the seq of the project's latest operation, without
+-- locking the project's row, as of the statement's start.
+SELECT seq FROM project WHERE workspace_id = @workspace_id AND id = @id;
+
 -- name: PruneBatchRecords :one
 -- PruneBatchRecords deletes the workspace's oldest batches' idempotency
 -- records that are older than retention, each whole, by the row of its first

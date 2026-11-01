@@ -71,6 +71,7 @@ const (
 	CodeInviteAccepted        Code = "invite_accepted"
 	CodeMethodNotAllowed      Code = "method_not_allowed"
 	CodeRequestTimeout        Code = "request_timeout"
+	CodeUpgradeRequired       Code = "upgrade_required"
 	CodeRequestTooLarge       Code = "request_too_large"
 	CodeUnsupportedMediaType  Code = "unsupported_media_type"
 	CodeValidationFailed      Code = "validation_failed"
@@ -134,7 +135,10 @@ var codes = []codeSpec{
 			"from another site or from another origin of the same site, as its `Sec-Fetch-Site` header says, " +
 			"whatever its credentials. Browsers send that header only to `https` URLs and to loopback addresses, " +
 			"such as `localhost`, so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF " +
-			"token is checked, on the routes that need a signed-in user."},
+			"token is checked, on the routes that need a signed-in user. A WebSocket of `GET /api/v1/ws` opened with " +
+			"the session cookie, rather than an API token, is refused with it too when its `Origin` header names " +
+			"another origin than `STORYCREEP_PUBLIC_URL`'s, or another host than the request's, so that no page " +
+			"of another site reads a project with a browser's session (PRD FR-RT-01)."},
 	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},
@@ -361,6 +365,11 @@ var codes = []codeSpec{
 		"A route matches the path, but not the method. The `Allow` header lists the methods it takes."},
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),
 		"The client did not send the whole request body within the route's time limit."},
+	{CodeUpgradeRequired, http.StatusUpgradeRequired, i18n.K("error.upgrade_required"),
+		"`GET /api/v1/ws` was requested without upgrading to a WebSocket (RFC 6455 §4.1): its `Upgrade` header " +
+			"is not `websocket`, its `Connection` header does not name `upgrade`, its `Sec-WebSocket-Key` header " +
+			"is not 16 bytes in base64, or its `Sec-WebSocket-Version` header is not `13`, the one version that " +
+			"the server speaks, which the answer's `Sec-WebSocket-Version` header names (PRD FR-RT-01)."},
 	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, i18n.K("error.request_too_large"),
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
 			"(PRD NFR-SEC-07), or, for an upload of an SVG image, the file that the server would store once it has " +
@@ -450,7 +459,10 @@ var codes = []codeSpec{
 			"making, listing, and revoking an API token, which the description of each operation that counts in it " +
 			"lists, and in which no request made with an API token counts, so that a token's requests cannot keep " +
 			"its owner from revoking it; `read` for every other request that reads; and `write` for every other " +
-			"that changes something. Every operation's description states its limits."},
+			"that changes something; `connect` for opening a WebSocket of `GET /api/v1/ws`, whose answer is then " +
+			"429 as for any other request, before it upgrades, and for a user who has 50 sockets open to the " +
+			"server already, with `details.reason` `connections`, until one of them closes. Every operation's " +
+			"description states its limits."},
 	{CodeInternal, http.StatusInternalServerError, i18n.K("error.internal_error"),
 		"The server failed. Its log has the cause, under the envelope's `request_id`."},
 	{CodeNotReady, http.StatusServiceUnavailable, i18n.K("error.not_ready"),

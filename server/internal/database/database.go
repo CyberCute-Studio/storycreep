@@ -151,6 +151,32 @@ func (db *DB) Pool() *pgxpool.Pool {
 	return db.pool
 }
 
+// Dedicated returns a connection of the application login that the pool no
+// longer holds, for work that keeps a connection for as long as it runs, as
+// the real-time hub's LISTEN does (package realtime, PRD ADR-005), rather
+// than one transaction at a time: the pool opens another in its place, so
+// that the connection takes none of the pool's from its requests. The caller
+// closes it. Its scope is unset, as every connection's is outside InTx, so
+// row-level security holds it to no workspace's rows.
+func (db *DB) Dedicated(ctx context.Context) (*pgx.Conn, error) {
+	c, err := db.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire a connection: %w", err)
+	}
+	return c.Hijack(), nil
+}
+
+// Notify sends payload on the channel of PostgreSQL's LISTEN and NOTIFY, on
+// one of the pool's connections, outside a transaction, so that the
+// listeners of every server of the instance are told of it at once (package
+// realtime). It reads and writes no table.
+func (db *DB) Notify(ctx context.Context, channel, payload string) error {
+	if _, err := db.pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload); err != nil {
+		return fmt.Errorf("notify %s: %w", channel, err)
+	}
+	return nil
+}
+
 // setApplicationName names the connections name, unless the URL, PGAPPNAME,
 // or a service file already does.
 func setApplicationName(c *pgx.ConnConfig, name string) {

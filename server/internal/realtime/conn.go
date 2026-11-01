@@ -1,0 +1,526 @@
+package realtime
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+)
+
+// Client is who a socket's client is, whom the upgrade authenticated.
+type Client struct {
+	// UserID is the user, whose sockets Admit counted.
+	UserID ids.UUID
+	// Check checks the socket's credential again, its session or its API
+	// token, as a request with it would be checked, and returns the actor
+	// that the socket reads its projects as, or ErrUnauthenticated if the
+	// credential no longer holds, as once the session has ended or the token
+	// has been revoked. The socket checks it before each subscription and
+	// each page of operations that it is sent, so that a credential that no
+	// longer holds is sent nothing more, and closes the socket with
+	// CloseUnauthenticated then.
+	Check func(ctx context.Context) (commands.Actor, error)
+	// Limit counts a subscription in the actor's rate limit of reads, and
+	// returns a *LimitedError if it is over it.
+	Limit func(ctx context.Context, actor commands.Actor) error
+}
+
+// ErrUnauthenticated is returned by Client.Check for a credential that no
+// longer holds.
+var ErrUnauthenticated = errors.New("realtime: the socket's session has ended, or its API token no longer holds")
+
+// LimitedError is returned by Client.Limit for a subscription over the rate
+// limit, which may be tried again after RetryAfter.
+type LimitedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *LimitedError) Error() string {
+	return "realtime: the subscription is over the rate limit; retry after " + e.RetryAfter.String()
+}
+
+// CloseUnauthenticated is the code that a socket is closed with once its
+// credential no longer holds (Client.Check): its client signs in again, or
+// takes another API token, before it connects again. The other codes are
+// RFC 6455's: 1001 (going away) as the server shuts down, 1008 (policy
+// violation) for a client that answers no ping, 1009 (message too big) for a
+// message over 4 KiB, and
+// 1011 (internal error) when the server cannot read the database; a client
+// connects again after each, with backoff, and subscribes with the seq that
+// it has.
+const CloseUnauthenticated websocket.StatusCode = 4001
+
+// closeError ends a socket with its code.
+type closeError struct {
+	code   websocket.StatusCode
+	reason string
+}
+
+func (e *closeError) Error() string {
+	return "realtime: the socket closes with " + e.code.String() + ": " + e.reason
+}
+
+// gone ends a socket that could not be written to, as one whose client went
+// away, whose close cannot be sent either.
+var gone = &closeError{code: websocket.StatusGoingAway, reason: "the socket could not be written to"}
+
+// conn is a socket that the hub serves.
+type conn struct {
+	hub    *Hub
+	ws     *websocket.Conn
+	client Client
+	// ctx ends when the socket ends, as its client closes it, the hub shuts
+	// down, or the socket is ended (end).
+	ctx    context.Context
+	cancel context.CancelFunc
+	// subs are the socket's subscriptions, by project, which only the loop
+	// (run) reads and changes.
+	subs map[ids.UUID]*subscription
+	// wake tells the loop that a subscription has heard of a seq.
+	wake chan struct{}
+	// messages are the client's messages that the loop has not handled yet,
+	// at most maxQueued, past which the reader waits for the loop.
+	messages chan queuedMessage
+	pinging  atomic.Bool
+
+	mu sync.Mutex
+	// ended, code, and reason are how the socket ends, once something ends
+	// it.
+	ended  bool
+	code   websocket.StatusCode
+	reason string
+}
+
+// queuedMessage is a message of the client, and whether it is text.
+type queuedMessage struct {
+	data []byte
+	text bool
+}
+
+// subscription is a socket's subscription to a project.
+type subscription struct {
+	conn               *conn
+	project, workspace ids.UUID
+	// sent is the seq of the last operation that the subscription was sent,
+	// or that it goes on from, which only the socket's loop reads and
+	// changes.
+	sent int64
+	// heard is the latest seq of the project that the hub heard of.
+	heard atomic.Int64
+}
+
+// Serve serves the socket ws, of the client, until it closes, or the hub
+// shuts down, and closes it. ctx gives the socket's reads and logs the
+// request's values, but not its cancellation: an upgraded request's ends
+// only with the socket.
+func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
+	if !h.begin() {
+		_ = ws.Close(websocket.StatusGoingAway, "the server is shutting down")
+		return
+	}
+	defer h.running.Done()
+	h.connections.Inc()
+	defer h.connections.Dec()
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancel()
+	defer context.AfterFunc(h.ctx, cancel)()
+	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, subs: map[ids.UUID]*subscription{},
+		wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
+	ws.SetReadLimit(maxMessageBytes)
+	// The reader has a context of its own, which the socket's end does not
+	// end, because a read whose context ends closes the connection at once,
+	// and the socket is closed with its code instead, by the close handshake,
+	// whose client's half the reader reads.
+	readCtx, stopReading := context.WithCancel(context.WithoutCancel(ctx))
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		c.read(readCtx)
+	}()
+	code, reason := c.run()
+	for _, sub := range c.subs {
+		h.leave(sub)
+	}
+	_ = ws.Close(code, reason)
+	stopReading()
+	<-read
+}
+
+// run is the socket's loop: it handles the client's messages, sends the
+// subscriptions what they have heard of, and sends the heartbeats, one at a
+// time, until the socket ends, and returns the code and reason that it
+// closes with.
+func (c *conn) run() (websocket.StatusCode, string) {
+	t := time.NewTicker(c.hub.heartbeat)
+	defer t.Stop()
+	for {
+		var err error
+		select {
+		case <-c.ctx.Done():
+			return c.closing()
+		case m := <-c.messages:
+			err = c.handle(m)
+		case <-c.wake:
+			err = c.deliverHeard()
+		case <-t.C:
+			err = c.heartbeat()
+		}
+		if err != nil {
+			var ce *closeError
+			if !errors.As(err, &ce) {
+				if c.ctx.Err() != nil {
+					return c.closing()
+				}
+				c.hub.log.ErrorContext(c.ctx, "a real-time socket could not read the database, so it closes, and "+
+					"its client connects again", "error", err)
+				ce = &closeError{code: websocket.StatusInternalError, reason: "internal error"}
+			}
+			c.end(ce.code, ce.reason)
+			return c.closing()
+		}
+	}
+}
+
+// end ends the socket with code and reason, unless something ended it
+// before.
+func (c *conn) end(code websocket.StatusCode, reason string) {
+	c.mu.Lock()
+	if !c.ended {
+		c.ended, c.code, c.reason = true, code, reason
+	}
+	c.mu.Unlock()
+	c.cancel()
+}
+
+// closing returns the code and reason that the socket closes with: going
+// away if the hub shuts down, and else what ended it.
+func (c *conn) closing() (websocket.StatusCode, string) {
+	if c.hub.ctx.Err() != nil {
+		return websocket.StatusGoingAway, "the server is shutting down"
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ended {
+		return c.code, c.reason
+	}
+	return websocket.StatusNormalClosure, ""
+}
+
+// read reads the client's messages, and queues them for the loop, until the
+// socket closes, or ctx ends. While maxQueued wait, it waits for the loop
+// before it reads more, so that a client that sends faster than the loop
+// handles its messages, as one that subscribes to every project that it pins
+// at once, is slowed down, and holds no more of them in memory.
+func (c *conn) read(ctx context.Context) {
+	for {
+		typ, data, err := c.ws.Read(ctx)
+		if err != nil {
+			// The client closed the socket, it failed, or a message was too
+			// big, which the library closes it for.
+			c.cancel()
+			return
+		}
+		select {
+		case c.messages <- queuedMessage{data: data, text: typ == websocket.MessageText}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// signal wakes the loop to send the subscriptions what they heard of.
+func (c *conn) signal() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// send sends msg, or returns gone if the socket cannot be written to within
+// writeTimeout, as when its client has gone, or reads too slowly.
+func (c *conn) send(msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, writeTimeout)
+	defer cancel()
+	if err := c.ws.Write(ctx, websocket.MessageText, data); err != nil {
+		return gone
+	}
+	return nil
+}
+
+// heartbeat sends a heartbeat, which the client's script hears, and pings
+// the client, whose pong a browser sends by itself, unless the last ping
+// still waits for its pong. A ping that is not answered within PongTimeout
+// ends the socket.
+func (c *conn) heartbeat() error {
+	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
+		return err
+	}
+	if c.pinging.Swap(true) {
+		return nil
+	}
+	go func() {
+		defer c.pinging.Store(false)
+		ctx, cancel := context.WithTimeout(c.ctx, c.hub.pongTimeout)
+		defer cancel()
+		if err := c.ws.Ping(ctx); err != nil && c.ctx.Err() == nil {
+			c.end(websocket.StatusPolicyViolation, "no pong")
+		}
+	}()
+	return nil
+}
+
+// check checks the socket's credential (Client.Check), in one of the hub's
+// slots of reads, and returns the closeError of CloseUnauthenticated if it no
+// longer holds.
+func (c *conn) check() (commands.Actor, error) {
+	release, err := c.hub.acquire(c.ctx)
+	if err != nil {
+		return commands.Actor{}, err
+	}
+	actor, err := c.client.Check(c.ctx)
+	release()
+	if errors.Is(err, ErrUnauthenticated) {
+		return commands.Actor{}, &closeError{code: CloseUnauthenticated,
+			reason: "the session has ended, or the API token no longer holds"}
+	}
+	return actor, err
+}
+
+// invalidMessage answers a message that the socket cannot read.
+var invalidMessage = ErrorMessage{Type: typeError, Code: "invalid_message"}
+
+// handle handles a message of the client: a subscription, or the end of
+// one, each a JSON object of exactly its fields, and answers anything else
+// with an error message.
+func (c *conn) handle(m queuedMessage) error {
+	var head struct {
+		Type string `json:"type"`
+	}
+	if !m.text || json.Unmarshal(m.data, &head) != nil {
+		return c.send(invalidMessage)
+	}
+	switch head.Type {
+	case typeSubscribe:
+		var s SubscribeMessage
+		if commands.DecodeObject(m.data, &s) != nil || (s.Since != nil && *s.Since < 0) {
+			return c.send(invalidMessage)
+		}
+		return c.subscribe(s)
+	case typeUnsubscribe:
+		var u UnsubscribeMessage
+		if commands.DecodeObject(m.data, &u) != nil {
+			return c.send(invalidMessage)
+		}
+		return c.unsubscribe(u)
+	}
+	return c.send(invalidMessage)
+}
+
+// failed answers a subscription to the project named projectID with code.
+func (c *conn) failed(projectID, code string) error {
+	return c.send(SubscriptionFailedMessage{Type: typeSubscriptionFailed, ProjectID: projectID, Code: code})
+}
+
+// subscribe subscribes the socket to a project, as m asks, which it answers
+// with subscribed, and the operations after m's since, or with
+// resync_required when it cannot send them, or refuses: a project that does
+// not exist, or that the actor cannot read, alike with not_found (PRD
+// FR-RT-01 AC2). A subscription to a project that the socket subscribes to
+// already starts anew.
+func (c *conn) subscribe(m SubscribeMessage) error {
+	id, err := ids.Decode(ids.Project, m.ProjectID)
+	if err != nil {
+		return c.failed(m.ProjectID, "invalid_id")
+	}
+	if old := c.subs[id]; old != nil {
+		c.drop(old)
+	}
+	if len(c.subs) >= MaxSubscriptions {
+		return c.failed(m.ProjectID, "too_many_subscriptions")
+	}
+	actor, err := c.check()
+	if err != nil {
+		return err
+	}
+	if err := c.client.Limit(c.ctx, actor); err != nil {
+		var limited *LimitedError
+		if !errors.As(err, &limited) {
+			return err
+		}
+		return c.send(SubscriptionFailedMessage{Type: typeSubscriptionFailed, ProjectID: m.ProjectID,
+			Code: "rate_limited", RetryAfter: int(max(1, (limited.RetryAfter+time.Second-1)/time.Second))})
+	}
+	workspaceID, err := c.hub.projects.ActorWorkspace(c.ctx, actor, id)
+	if errors.Is(err, project.ErrNotFound) {
+		return c.failed(m.ProjectID, "not_found")
+	}
+	if err != nil {
+		return err
+	}
+	// The subscription is sent what follows since if the log still holds
+	// it, and there is not too much of it. A client ahead of the project, as
+	// of a database restored from before its seq, reloads the project too.
+	var seq int64
+	follows := m.Since != nil
+	err = c.hub.read(c.ctx, actor, workspaceID, id, func(tx pgx.Tx, s int64) error {
+		seq = s
+		switch since := m.Since; {
+		case since == nil || *since == s:
+		case *since > s || s-*since > MaxCatchUp:
+			follows = false
+		default:
+			var err error
+			follows, err = commands.LogFollows(c.ctx, tx, workspaceID, id, *since)
+			return err
+		}
+		return nil
+	})
+	if errors.Is(err, project.ErrNotFound) {
+		return c.failed(m.ProjectID, "not_found")
+	}
+	if err != nil {
+		return err
+	}
+	sub := &subscription{conn: c, project: id, workspace: workspaceID, sent: seq}
+	var answer any = SubscribedMessage{Type: typeSubscribed, ProjectID: m.ProjectID, Seq: seq}
+	switch {
+	case follows:
+		sub.sent = *m.Since
+	case m.Since != nil:
+		answer = ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: m.ProjectID, Seq: seq}
+	}
+	c.subs[id] = sub
+	c.hub.join(sub, seq)
+	if err := c.send(answer); err != nil {
+		return err
+	}
+	// What commits between the read and the join is read now, as what it
+	// missed is.
+	return c.deliver(sub, actor)
+}
+
+// unsubscribe ends the socket's subscription to the project that m names,
+// if it has one, and answers unsubscribed whether it had one or not.
+func (c *conn) unsubscribe(m UnsubscribeMessage) error {
+	id, err := ids.Decode(ids.Project, m.ProjectID)
+	if err != nil {
+		return c.failed(m.ProjectID, "invalid_id")
+	}
+	if sub := c.subs[id]; sub != nil {
+		c.drop(sub)
+	}
+	return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: m.ProjectID, Reason: "requested"})
+}
+
+// drop ends the subscription sub.
+func (c *conn) drop(sub *subscription) {
+	delete(c.subs, sub.project)
+	c.hub.leave(sub)
+}
+
+// deliverHeard sends each subscription the operations after the last that
+// it was sent, if it has heard of a later seq, with the credential checked
+// once for them all.
+func (c *conn) deliverHeard() error {
+	var actor *commands.Actor
+	for _, sub := range c.subs {
+		if sub.heard.Load() <= sub.sent {
+			continue
+		}
+		if actor == nil {
+			a, err := c.check()
+			if err != nil {
+				return err
+			}
+			actor = &a
+		}
+		if err := c.deliver(sub, *actor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deliver sends sub the operations of its project after the last that it
+// was sent, read as the actor, whose credential was just checked, a page at
+// a time (commands.ReadLog), checking the credential again before each page
+// after the first, until it has sent what the project had when it read the
+// page. A project that the actor can no longer read ends the subscription,
+// with unsubscribed, and one whose log no longer has an operation that sub
+// was not sent, as once compaction (PRD FR-GDPR-03) dropped it, has sub told
+// to reload the project (resync_required).
+func (c *conn) deliver(sub *subscription, actor commands.Actor) error {
+	projectID := ids.Encode(ids.Project, sub.project)
+	for first := true; ; first = false {
+		if !first {
+			var err error
+			if actor, err = c.check(); err != nil {
+				return err
+			}
+		}
+		var ops []commands.Operation
+		var seq int64
+		err := c.hub.read(c.ctx, actor, sub.workspace, sub.project, func(tx pgx.Tx, s int64) error {
+			seq = s
+			var err error
+			ops, err = commands.ReadLog(c.ctx, tx, sub.workspace, sub.project, sub.sent, pageRows, pageBytes)
+			return err
+		})
+		switch {
+		case errors.Is(err, project.ErrNotFound):
+			c.drop(sub)
+			return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: projectID, Reason: "not_found"})
+		case err != nil:
+			return err
+		}
+		for _, op := range ops {
+			if op.Seq != sub.sent+1 {
+				return c.resync(sub, projectID, max(seq, ops[len(ops)-1].Seq))
+			}
+			if err := c.send(operationMessage(projectID, op)); err != nil {
+				return err
+			}
+			sub.sent = op.Seq
+		}
+		switch {
+		case len(ops) == 0 && seq > sub.sent:
+			return c.resync(sub, projectID, seq)
+		case len(ops) == 0 || sub.sent >= seq:
+			return nil
+		}
+	}
+}
+
+// resync tells sub to reload its project, whose operations after seq follow.
+func (c *conn) resync(sub *subscription, projectID string, seq int64) error {
+	sub.sent = seq
+	return c.send(ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: projectID, Seq: seq})
+}
+
+// operationMessage returns the message of the operation op of the project
+// projectID, as the API writes its IDs.
+func operationMessage(projectID string, op commands.Operation) OperationMessage {
+	msg := OperationMessage{Type: typeOperation, ProjectID: projectID, Seq: op.Seq,
+		Commands: make([]OperationCommand, len(op.Commands)), Revisions: make([]OperationRevision, len(op.Revisions)),
+		CreatedAt: op.CreatedAt.UTC()}
+	for i, cmd := range op.Commands {
+		msg.Commands[i] = OperationCommand{CommandID: cmd.ID.String(), Type: string(cmd.Type), Payload: cmd.Payload}
+	}
+	for i, r := range op.Revisions {
+		msg.Revisions[i] = OperationRevision{ID: ids.Encode(r.Kind, r.ID), Rev: r.Rev}
+	}
+	return msg
+}
