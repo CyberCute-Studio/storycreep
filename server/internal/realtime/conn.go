@@ -55,9 +55,11 @@ func (e *LimitedError) Error() string {
 // CloseUnauthenticated is the code that a socket is closed with once its
 // credential no longer holds (Client.Check): its client signs in again, or
 // takes another API token, before it connects again. The other codes are
-// RFC 6455's: 1001 (going away) as the server shuts down, 1008 (policy
-// violation) for a client that answers no ping, 1009 (message too big) for a
-// message over 4 KiB, and
+// RFC 6455's: 1001 (going away) as the server shuts down, or a message to
+// the client cannot be written in time, 1008 (policy violation) for a client
+// that the socket has heard nothing from, neither a message nor a pong, for
+// the hub's SilenceTimeout, 1009 (message too big) for a message over 4 KiB,
+// and
 // 1011 (internal error) when the server cannot read the database; a client
 // connects again after each, with backoff, and subscribes with the seq that
 // it has.
@@ -102,28 +104,15 @@ type conn struct {
 	// messages are the client's messages that the loop has not handled yet,
 	// at most maxQueued, past which the reader waits for the loop.
 	messages chan queuedMessage
-	pinging  atomic.Bool
-	// frames counts the client's messages that the reader has read, and
-	// waiting is whether it waits for the loop to take one, while maxQueued
-	// wait already, so that a ping whose pong the reader has not read, since
-	// a pong is read after the messages before it, does not end a socket
-	// whose client is there (heartbeat).
-	frames  atomic.Uint64
+	// pinging is whether a ping waits for its pong.
+	pinging atomic.Bool
+	// heard is when the socket last heard from its client, in Unix
+	// nanoseconds: when it opened, read a message, or was answered a ping.
+	// waiting is whether the reader waits for the loop to take a message,
+	// while maxQueued wait already, when it reads nothing, pongs neither,
+	// which the library reads as the reader reads (heartbeat).
+	heard   atomic.Int64
 	waiting atomic.Bool
-	// sent counts the messages but the heartbeats that the socket has sent,
-	// and beat is how many it had sent at the last heartbeat, which only the
-	// loop reads and changes, so that a ping whose pong waits behind them,
-	// in the connection's buffers, as a slow client reads them, does not end
-	// a socket whose client is there either (heartbeat).
-	sent atomic.Uint64
-	beat uint64
-	// answered is when the client was last found there, in Unix nanoseconds:
-	// when the socket opened, and when the client answered a ping, or sent a
-	// message while one waited for its pong, which only the pings, one at a
-	// time, change, so that a client that is sent operations, whose pong may
-	// wait behind them, is taken for gone all the same once it has not been
-	// found there for long (heartbeat).
-	answered atomic.Int64
 
 	mu sync.Mutex
 	// ended, code, and reason are how the socket ends, once something ends
@@ -171,7 +160,7 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 	defer context.AfterFunc(h.ctx, func() { time.AfterFunc(shutdownWriteGrace, stopWrites) })()
 	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, writes: writes, stopWrites: stopWrites,
 		subs: map[ids.UUID]*subscription{}, wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
-	c.answered.Store(time.Now().UnixNano())
+	c.hear()
 	ws.SetReadLimit(maxMessageBytes)
 	// The reader has a context of its own, which the socket's end does not
 	// end, because a read whose context ends closes the connection at once,
@@ -268,7 +257,7 @@ func (c *conn) read(ctx context.Context) {
 			c.cancel()
 			return
 		}
-		c.frames.Add(1)
+		c.hear()
 		m := queuedMessage{data: data, text: typ == websocket.MessageText}
 		select {
 		case c.messages <- m:
@@ -282,7 +271,13 @@ func (c *conn) read(ctx context.Context) {
 			return
 		}
 		c.waiting.Store(false)
+		c.hear()
 	}
+}
+
+// hear records that the socket heard from its client now.
+func (c *conn) hear() {
+	c.heard.Store(time.Now().UnixNano())
 }
 
 // signal wakes the loop to send the subscriptions what they heard of.
@@ -305,9 +300,6 @@ func (c *conn) send(msg any) error {
 	if err != nil {
 		return err
 	}
-	if _, beat := msg.(HeartbeatMessage); !beat {
-		c.sent.Add(1)
-	}
 	ctx, cancel := context.WithTimeout(c.writes, c.hub.writeTimeout)
 	defer cancel()
 	if err := c.ws.Write(ctx, websocket.MessageText, data); err != nil {
@@ -316,53 +308,31 @@ func (c *conn) send(msg any) error {
 	return nil
 }
 
-// heartbeat sends a heartbeat, which the client's script hears, and pings
-// the client, whose pong a browser sends by itself, unless the last ping
-// still waits for its pong. A ping that is not answered within PongTimeout
-// ends the socket, unless the reader has read a message of the client since
-// the ping, or waits for the loop to take one, or the socket has sent
-// anything but a heartbeat since the heartbeat before, and the client was
-// last found there (answered) within PongTimeout and WriteTimeout, together,
-// before: the library reads a pong as the reader reads, after the messages
-// that the client sent before it, so a client that sent more than the loop
-// has handled yet, as one that subscribes to every project that it pins at
-// once, is there, and the client reads the ping after the messages that the
-// socket sent before it, which wait in the connection's buffers for as long
-// as a slow client takes to read them, as the operations that it catches up
-// with, so the pong of a client that is sent them may come as much later as
-// a write of them may take. Past that, the client is taken for gone even
-// while each write still finishes, as each does at once into the buffers of
-// a client that has gone without a word, as a laptop that sleeps, until they
-// fill, or the system gives up on the connection, which for a project that
-// commits a little at a time can be a quarter of an hour. Either is pinged
-// again at the next heartbeat.
+// heartbeat closes the socket with 1008 if it has heard nothing from its
+// client for SilenceTimeout, neither a message nor a pong, unless the reader
+// waits for the loop, which then hears nothing of the client through its own
+// fault, and else sends a heartbeat, which the client's script hears, and
+// pings the client, whose pong a browser sends by itself, unless the last
+// ping still waits for its pong. The ping waits for its pong as long as the
+// silence may last, since its pong comes after the messages that the socket
+// sent before it, which a slow client may take a while to read, each within
+// WriteTimeout.
 func (c *conn) heartbeat() error {
+	if !c.waiting.Load() && time.Since(time.Unix(0, c.heard.Load())) >= c.hub.silenceTimeout {
+		return &closeError{code: websocket.StatusPolicyViolation, reason: "the client has answered nothing"}
+	}
 	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
 		return err
 	}
-	since := c.beat
-	c.beat = c.sent.Load()
 	if c.pinging.Swap(true) {
 		return nil
 	}
 	go func() {
 		defer c.pinging.Store(false)
-		ctx, cancel := context.WithTimeout(c.writes, c.hub.pongTimeout)
+		ctx, cancel := context.WithTimeout(c.writes, c.hub.silenceTimeout)
 		defer cancel()
-		read := c.frames.Load()
-		err := c.ws.Ping(ctx)
-		now := time.Now()
-		switch {
-		case err == nil || c.frames.Load() != read:
-			// The client answered, or sent a message, which is read before
-			// its pong.
-			c.answered.Store(now.UnixNano())
-		case c.ctx.Err() != nil || c.waiting.Load():
-			// The socket has ended, or the reader waits for the loop, before
-			// it reads the pong.
-		case c.sent.Load() == since ||
-			now.Sub(time.Unix(0, c.answered.Load())) >= c.hub.pongTimeout+c.hub.writeTimeout:
-			c.end(websocket.StatusPolicyViolation, "no pong")
+		if c.ws.Ping(ctx) == nil {
+			c.hear()
 		}
 	}()
 	return nil

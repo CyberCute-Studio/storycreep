@@ -64,7 +64,10 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"subscription_failed, whose code is not_found for a project that does not exist and one that the user " +
 			"cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, " +
 			"unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 " +
-			"seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection. A " +
+			"seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; " +
+			"the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, " +
+			"neither a message nor a pong, and with 1001 once a message to it takes longer than 30 seconds to " +
+			"write. A " +
 			"socket subscribes to 100 projects at most, each subscription counts in the " +
 			"rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is " +
 			"answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, " +

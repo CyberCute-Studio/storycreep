@@ -723,85 +723,52 @@ func TestRealtimeUpgrade(t *testing.T) {
 	}
 }
 
-// TestRealtimePing checks that a socket whose client answers no ping is
-// closed with 1008 once the pong is late, but not while it is sent
-// operations, which a slow client reads before the ping, whose pong waits
-// behind them, for as long as a write of them may take, 30 seconds here
-// (TestRealtimePingWhileSent): two clients read nothing for a while, and so
-// answer no ping,
-// the one subscribed to a quiet project, and the other to a project that
-// commits meanwhile, and once they read again, the first finds its socket
-// closed, and the second the operations, on a socket that stays open.
+// TestRealtimePing checks that a socket is closed with 1008 once it has
+// heard nothing from its client for the silence's timeout, neither a message
+// nor a pong, even while its project commits, whose operations the
+// connection's buffers take at once, as those of a client that has gone
+// without a word do, and that a client that stops reading for less than that,
+// whose pong comes late, keeps its socket, and is sent every operation: two
+// clients subscribe to a project that commits for a while, one of which
+// reads again after a second, and the other only once the project is done.
 func TestRealtimePing(t *testing.T) {
 	t.Parallel()
 	s, _, owner, ws := inviteServer(t, "open", nil)
 	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
-		Heartbeat: 400 * time.Millisecond, PongTimeout: 800 * time.Millisecond})
+		Heartbeat: 250 * time.Millisecond, SilenceTimeout: 2 * time.Second})
 	srv := realtimeServer(t, s)
-	quietProject := createProject(t, s.main, owner, ws, "Harbour").ID
-	busyProject := createProject(t, s.main, owner, ws, "Lighthouse").ID
-	quiet, busy := openSocket(t, srv, owner.header(false)), openSocket(t, srv, owner.header(false))
-	quiet.subscribe(quietProject, -1)
-	busy.subscribe(busyProject, -1)
-	// The quiet socket closes within four heartbeats and a pong's wait, 2.4
-	// seconds, and the busy project commits for twice as long, while its
-	// socket's pings go unanswered as well.
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	gone, slow := openSocket(t, srv, owner.header(false)), openSocket(t, srv, owner.header(false))
+	gone.subscribe(project, -1)
+	slow.subscribe(project, -1)
 	var boards, commandIDs []string
+	reading := false
 	for start := time.Now(); time.Since(start) < 5*time.Second; {
-		b, c := createBoards(t, s.main, owner, busyProject, 1)
+		if !reading && time.Since(start) >= time.Second {
+			slow.start()
+			reading = true
+		}
+		b, c := createBoards(t, s.main, owner, project, 1)
 		boards, commandIDs = append(boards, b...), append(commandIDs, c...)
 		time.Sleep(100 * time.Millisecond)
 	}
-	busy.start()
-	quiet.start()
-	quiet.next("subscribed")
-	if code := quiet.closedWith(); code != websocket.StatusPolicyViolation {
-		t.Errorf("the socket of the client that answers no ping closed with %v, want policy violation", code)
-	}
-	busy.wantOperations(busyProject, busy.next("subscribed").Seq, boards, commandIDs)
-	busy.quiet()
-}
+	slow.wantOperations(project, slow.next("subscribed").Seq, boards, commandIDs)
+	slow.quiet()
 
-// TestRealtimePingWhileSent checks that a socket whose client answers no
-// ping is closed with 1008 even while its project commits, whose operations
-// the connection's buffers take at once, as those of a client that has gone
-// without a word do, once the client has answered no ping for the pong's
-// wait and a write's: the client reads nothing for a while, and once it
-// reads again, finds its socket closed before it was sent every operation
-// that committed meanwhile.
-func TestRealtimePingWhileSent(t *testing.T) {
-	t.Parallel()
-	s, _, owner, ws := inviteServer(t, "open", nil)
-	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
-		Heartbeat: 400 * time.Millisecond, PongTimeout: 800 * time.Millisecond, WriteTimeout: 1500 * time.Millisecond})
-	srv := realtimeServer(t, s)
-	project := createProject(t, s.main, owner, ws, "Harbour").ID
-	sock := openSocket(t, srv, owner.header(false))
-	sock.subscribe(project, -1)
-	// The socket closes once a ping times out 2.3 seconds or more after it
-	// opened, the pong's wait and a write's, which one does within 3.2, and
-	// the project commits for twice as long, while each of the socket's pings
-	// goes unanswered, as each that it is sent an operation before is
-	// excused, until then.
-	committed := 0
-	for start := time.Now(); time.Since(start) < 6*time.Second; committed++ {
-		createBoards(t, s.main, owner, project, 1)
-		time.Sleep(100 * time.Millisecond)
-	}
-	sock.start()
-	sock.next("subscribed")
+	gone.start()
+	gone.next("subscribed")
 	for sent := 0; ; sent++ {
-		r := sock.receive()
+		r := gone.receive()
 		switch {
 		case r.err == nil && r.msg.Type == "operation":
 			continue
 		case r.err == nil:
-			t.Fatalf("the socket was sent %s, want operations", r.raw)
+			t.Fatalf("the silent client's socket was sent %s, want operations", r.raw)
 		case websocket.CloseStatus(r.err) != websocket.StatusPolicyViolation:
-			t.Fatalf("the socket ended with %v, want a close with policy violation", r.err)
-		case sent >= committed:
-			t.Errorf("the socket was sent every one of the %d operations before it closed, want it closed while "+
-				"its project still committed", committed)
+			t.Fatalf("the silent client's socket ended with %v, want a close with policy violation", r.err)
+		case sent >= len(boards):
+			t.Errorf("the silent client's socket was sent every one of the %d operations before it closed, want it "+
+				"closed while its project still committed", len(boards))
 		}
 		return
 	}

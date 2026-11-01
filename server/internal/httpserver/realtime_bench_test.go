@@ -47,7 +47,7 @@ func BenchmarkIdleConnections(b *testing.B) {
 	}
 	bs.s.limits = ratelimit.New(readyDB{bs.s.ready}, policy)
 	bs.s.hub = realtime.New(realtime.Options{DB: readyDB{bs.s.ready}, Projects: bs.s.projects,
-		Heartbeat: time.Hour, PongTimeout: time.Hour, MaxConnectionsPerUser: idleConnections})
+		Heartbeat: time.Hour, SilenceTimeout: time.Hour, MaxConnectionsPerUser: idleConnections})
 	srv := httptestServer(b, bs.s)
 	addr, cookie := strings.TrimPrefix(srv, "http://"), bs.header.Get("Cookie")
 
