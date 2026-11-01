@@ -143,6 +143,33 @@ var (
 		reflect.TypeFor[HeartbeatMessage]()}
 )
 
+// clientSchemas holds the schemas of the client's messages, as Schema writes
+// them, and subscribeSchema and unsubscribeSchema are those of its types,
+// which the socket holds a client's message to (validMessage).
+var (
+	clientSchemas     = huma.NewMapRegistry("#/$defs/", huma.DefaultSchemaNamer)
+	subscribeSchema   = clientSchemas.Schema(reflect.TypeFor[SubscribeMessage](), true, "")
+	unsubscribeSchema = clientSchemas.Schema(reflect.TypeFor[UnsubscribeMessage](), true, "")
+)
+
+// validMessage reports whether data, a client's message, is what the schema
+// s describes, as huma's validation holds the API's bodies to their schemas:
+// a JSON object of its type's fields alone, with each that it requires, not
+// null, each of its JSON type and within its bounds, so that the socket
+// answers a message that the published schema refuses, as one without its
+// project_id, with invalid_message, rather than take the field that
+// encoding/json leaves empty for one that it misses. As in the API's bodies,
+// null is taken for a field that may be left out, as since, left out.
+func validMessage(s *huma.Schema, data []byte) bool {
+	var v any
+	if json.Unmarshal(data, &v) != nil {
+		return false
+	}
+	res := &huma.ValidateResult{}
+	huma.Validate(clientSchemas, s, huma.NewPathBuffer([]byte{}, 0), huma.ModeWriteToServer, v, res)
+	return len(res.Errors) == 0
+}
+
 // Schema returns the JSON Schema (2020-12) of the real-time channel's
 // messages, as SchemaPath holds it: a message is a ClientMessage, which a
 // client sends, or a ServerMessage, which the server sends, each one of its

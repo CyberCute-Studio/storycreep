@@ -29,9 +29,13 @@ type Client struct {
 	// longer holds is sent nothing more, and closes the socket with
 	// CloseUnauthenticated then.
 	Check func(ctx context.Context) (commands.Actor, error)
-	// Limit counts a subscription in the actor's rate limit of reads, and
-	// returns a *LimitedError if it is over it.
-	Limit func(ctx context.Context, actor commands.Actor) error
+	// Limit counts a subscription in the rate limit of reads of the socket's
+	// client, its IP address, its user, and its API token, if it has one,
+	// which are the socket's for its life, and returns a *LimitedError if it
+	// is over it. The socket counts a subscription before it checks the
+	// credential again, so that one over the limit takes none of the hub's
+	// slots of reads, which every socket's deliveries share.
+	Limit func(ctx context.Context) error
 }
 
 // ErrUnauthenticated is returned by Client.Check for a credential that no
@@ -113,6 +117,13 @@ type conn struct {
 	// a socket whose client is there either (heartbeat).
 	sent atomic.Uint64
 	beat uint64
+	// answered is when the client was last found there, in Unix nanoseconds:
+	// when the socket opened, and when the client answered a ping, or sent a
+	// message while one waited for its pong, which only the pings, one at a
+	// time, change, so that a client that is sent operations, whose pong may
+	// wait behind them, is taken for gone all the same once it has not been
+	// found there for long (heartbeat).
+	answered atomic.Int64
 
 	mu sync.Mutex
 	// ended, code, and reason are how the socket ends, once something ends
@@ -160,6 +171,7 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 	defer context.AfterFunc(h.ctx, func() { time.AfterFunc(shutdownWriteGrace, stopWrites) })()
 	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, writes: writes, stopWrites: stopWrites,
 		subs: map[ids.UUID]*subscription{}, wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
+	c.answered.Store(time.Now().UnixNano())
 	ws.SetReadLimit(maxMessageBytes)
 	// The reader has a context of its own, which the socket's end does not
 	// end, because a read whose context ends closes the connection at once,
@@ -282,9 +294,9 @@ func (c *conn) signal() {
 }
 
 // send sends msg, or returns gone if the socket cannot be written to within
-// writeTimeout, as when its client has gone, or reads too slowly, and
-// returns the socket's context's error, sending nothing, once the socket has
-// ended.
+// the hub's WriteTimeout, as when its client has gone, or reads too slowly,
+// and returns the socket's context's error, sending nothing, once the socket
+// has ended.
 func (c *conn) send(msg any) error {
 	if err := c.ctx.Err(); err != nil {
 		return err
@@ -296,7 +308,7 @@ func (c *conn) send(msg any) error {
 	if _, beat := msg.(HeartbeatMessage); !beat {
 		c.sent.Add(1)
 	}
-	ctx, cancel := context.WithTimeout(c.writes, writeTimeout)
+	ctx, cancel := context.WithTimeout(c.writes, c.hub.writeTimeout)
 	defer cancel()
 	if err := c.ws.Write(ctx, websocket.MessageText, data); err != nil {
 		return gone
@@ -309,15 +321,21 @@ func (c *conn) send(msg any) error {
 // still waits for its pong. A ping that is not answered within PongTimeout
 // ends the socket, unless the reader has read a message of the client since
 // the ping, or waits for the loop to take one, or the socket has sent
-// anything but a heartbeat since the heartbeat before: the library reads a
-// pong as the reader reads, after the messages that the client sent before
-// it, so a client that sent more than the loop has handled yet, as one that
-// subscribes to every project that it pins at once, is there, and the
-// client reads the ping after the messages that the socket sent before it,
-// which wait in the connection's buffers for as long as a slow client takes
-// to read them, as the operations that it catches up with, so a client that
-// is sent them is taken for gone only once a write of them cannot finish
-// within writeTimeout. Either is pinged again at the next heartbeat.
+// anything but a heartbeat since the heartbeat before, and the client was
+// last found there (answered) within PongTimeout and WriteTimeout, together,
+// before: the library reads a pong as the reader reads, after the messages
+// that the client sent before it, so a client that sent more than the loop
+// has handled yet, as one that subscribes to every project that it pins at
+// once, is there, and the client reads the ping after the messages that the
+// socket sent before it, which wait in the connection's buffers for as long
+// as a slow client takes to read them, as the operations that it catches up
+// with, so the pong of a client that is sent them may come as much later as
+// a write of them may take. Past that, the client is taken for gone even
+// while each write still finishes, as each does at once into the buffers of
+// a client that has gone without a word, as a laptop that sleeps, until they
+// fill, or the system gives up on the connection, which for a project that
+// commits a little at a time can be a quarter of an hour. Either is pinged
+// again at the next heartbeat.
 func (c *conn) heartbeat() error {
 	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
 		return err
@@ -332,8 +350,18 @@ func (c *conn) heartbeat() error {
 		ctx, cancel := context.WithTimeout(c.writes, c.hub.pongTimeout)
 		defer cancel()
 		read := c.frames.Load()
-		if err := c.ws.Ping(ctx); err != nil && c.ctx.Err() == nil && !c.waiting.Load() &&
-			c.frames.Load() == read && c.sent.Load() == since {
+		err := c.ws.Ping(ctx)
+		now := time.Now()
+		switch {
+		case err == nil || c.frames.Load() != read:
+			// The client answered, or sent a message, which is read before
+			// its pong.
+			c.answered.Store(now.UnixNano())
+		case c.ctx.Err() != nil || c.waiting.Load():
+			// The socket has ended, or the reader waits for the loop, before
+			// it reads the pong.
+		case c.sent.Load() == since ||
+			now.Sub(time.Unix(0, c.answered.Load())) >= c.hub.pongTimeout+c.hub.writeTimeout:
 			c.end(websocket.StatusPolicyViolation, "no pong")
 		}
 	}()
@@ -361,8 +389,9 @@ func (c *conn) check() (commands.Actor, error) {
 var invalidMessage = ErrorMessage{Type: typeError, Code: "invalid_message"}
 
 // handle handles a message of the client: a subscription, or the end of
-// one, each a JSON object of exactly its fields, and answers anything else
-// with an error message.
+// one, each a JSON object of exactly its fields, with those that it
+// requires, as the schema describes them (validMessage), and answers
+// anything else with an error message.
 func (c *conn) handle(m queuedMessage) error {
 	var head struct {
 		Type string `json:"type"`
@@ -373,13 +402,13 @@ func (c *conn) handle(m queuedMessage) error {
 	switch head.Type {
 	case typeSubscribe:
 		var s SubscribeMessage
-		if commands.DecodeObject(m.data, &s) != nil || (s.Since != nil && *s.Since < 0) {
+		if !validMessage(subscribeSchema, m.data) || commands.DecodeObject(m.data, &s) != nil {
 			return c.send(invalidMessage)
 		}
 		return c.subscribe(s)
 	case typeUnsubscribe:
 		var u UnsubscribeMessage
-		if commands.DecodeObject(m.data, &u) != nil {
+		if !validMessage(unsubscribeSchema, m.data) || commands.DecodeObject(m.data, &u) != nil {
 			return c.send(invalidMessage)
 		}
 		return c.unsubscribe(u)
@@ -402,7 +431,10 @@ func (c *conn) failed(projectID, code string) error {
 // name the project as the API writes its ID (ids.Encode), as the operations
 // do, whichever spelling of it m has (ids.Decode), so that a client that
 // compares them as strings finds them alike, but for invalid_id, which
-// names it as m does.
+// names it as m does. The subscription counts in the rate limit before the
+// credential is checked again, so that a client that subscribes over the
+// limit, however often, takes none of the hub's slots of reads from the
+// deliveries of the other sockets (Client.Limit).
 func (c *conn) subscribe(m SubscribeMessage) error {
 	id, err := ids.Decode(ids.Project, m.ProjectID)
 	if err != nil {
@@ -419,17 +451,17 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		}
 		return c.failed(projectID, "not_found")
 	}
-	actor, err := c.check()
-	if err != nil {
-		return err
-	}
-	if err := c.client.Limit(c.ctx, actor); err != nil {
+	if err := c.client.Limit(c.ctx); err != nil {
 		var limited *LimitedError
 		if !errors.As(err, &limited) {
 			return err
 		}
 		return c.send(SubscriptionFailedMessage{Type: typeSubscriptionFailed, ProjectID: projectID,
 			Code: "rate_limited", RetryAfter: int(max(1, (limited.RetryAfter+time.Second-1)/time.Second))})
+	}
+	actor, err := c.check()
+	if err != nil {
+		return err
 	}
 	workspaceID, err := c.hub.projects.ActorWorkspace(c.ctx, actor, id)
 	if errors.Is(err, project.ErrNotFound) {
@@ -571,7 +603,7 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 		}
 		for _, op := range ops {
 			if op.Seq != sub.sent+1 {
-				return c.resync(sub, projectID, max(seq, ops[len(ops)-1].Seq))
+				return c.resync(sub, projectID, seq)
 			}
 			if err := c.send(operationMessage(projectID, op)); err != nil {
 				return err

@@ -63,13 +63,15 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"\"project_id\"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or " +
 			"subscription_failed, whose code is not_found for a project that does not exist and one that the user " +
 			"cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, " +
-			"unsubscribed once the project can no longer be read, and a heartbeat every 25 seconds, beside a " +
-			"ping, which a client that hears nothing for a minute takes for a lost connection. A socket " +
-			"subscribes to 100 projects at most, each subscription counts in the " +
+			"unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 " +
+			"seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection. A " +
+			"socket subscribes to 100 projects at most, each subscription counts in the " +
 			"rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is " +
 			"answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, " +
-			"and the user's access to each project, are checked again before each page of operations that it is " +
-			"sent; once the session ends, or the token no longer holds, the socket closes with 4001. It closes " +
+			"and the user's access to each project, are checked again before each subscription and each page of " +
+			"operations that it is sent, and not while it is sent nothing: a check that finds that the session " +
+			"has ended, or that the token no longer holds, closes the socket with 4001, and one that finds that " +
+			"the project can no longer be read ends its subscription, at the project's next operation. It closes " +
 			"with 1001 as the server stops, and 1011 when the server cannot read the database, after either of " +
 			"which a client connects again, with exponential backoff and jitter, and subscribes with the seqs " +
 			"that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened " +
@@ -175,7 +177,8 @@ func admitError(err error) error {
 // session of its cookie, or its API token, with project:read, whose use it
 // records as a request's, and its Limit counts a subscription in the read
 // bucket of the rate limits, as a read of the API counts, against the
-// client's IP address, the user, and the token.
+// client's IP address, the user, and the token, which are cur's for as long
+// as the credential holds.
 func (s *server) socketClient(ctx context.Context, cur current, r *http.Request) realtime.Client {
 	client := clientFrom(ctx)
 	token, _ := bearerToken(r)
@@ -202,10 +205,10 @@ func (s *server) socketClient(ctx context.Context, cur current, r *http.Request)
 			}
 			return commands.Actor{UserID: session.UserID, Client: client}, nil
 		},
-		Limit: func(ctx context.Context, actor commands.Actor) error {
-			keys := []ratelimit.Key{ratelimit.ClientIP(client.IP), ratelimit.UserID(actor.UserID)}
-			if actor.Token != nil {
-				keys = append(keys, ratelimit.TokenID(actor.Token.ID))
+		Limit: func(ctx context.Context) error {
+			keys := []ratelimit.Key{ratelimit.ClientIP(client.IP), ratelimit.UserID(cur.userID)}
+			if cur.token != nil {
+				keys = append(keys, ratelimit.TokenID(cur.token.ID))
 			}
 			_, err := s.limits.Take(ctx, ratelimit.Read, keys...)
 			var limited *ratelimit.LimitError

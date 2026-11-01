@@ -15,7 +15,7 @@ A client sends:
 - `subscribe`, with `project_id` and, optionally, `since`, the seq of the project's latest operation that it has, `0` for none.
 - `unsubscribe`, with `project_id`.
 
-A client's message holds exactly its type's fields, at most 4 KiB, or the server answers it with `error` (`invalid_message`), or closes the socket with 1009 when it is larger. A `subscribe` to a project that the socket subscribes to already starts the subscription anew once it holds; one that is refused leaves the subscription as it was, but for `not_found`, which ends it.
+A client's message holds exactly its type's fields, with each that the schema requires, at most 4 KiB, or the server answers it with `error` (`invalid_message`), or closes the socket with 1009 when it is larger. A `subscribe` to a project that the socket subscribes to already starts the subscription anew once it holds; one that is refused leaves the subscription as it was, but for `not_found`, which ends it.
 
 The server sends:
 
@@ -23,9 +23,9 @@ The server sends:
 - `resync_required`, with the `seq` that the subscription goes on from: the operations after `since` cannot be sent, because the log no longer has one of them, as once compaction has dropped it, more than 10,000 follow `since`, or `since` is beyond the project's seq. The client reloads the project, and passes over an operation that follows whose revisions it has already. It may come during a subscription too, when the log turns out not to have an operation that the subscription was not sent, or more than 10,000 wait to be sent at once, as once the server has missed the notifications of many.
 - `operation`, a batch that committed: its `seq`, the next of the project's, its `commands`, each with its `command_id`, its `type`, and its `payload`, as the command endpoint's document describes them, the `revisions` of the entities that it changed, and `created_at`.
 - `subscription_failed`, with a `code`: `invalid_id`; `not_found`, for a project that does not exist and one that the user cannot read alike; `rate_limited`, with `retry_after` in seconds, since each subscription counts in the rate limit of reads; or `too_many_subscriptions`, past 100 of one socket.
-- `unsubscribed`, with a `reason`: `requested`, as the client asked, whether the socket subscribed to the project or not, or `not_found`, once the project can no longer be read, as once the user is removed from its workspace, or it goes to the trash.
+- `unsubscribed`, with a `reason`: `requested`, as the client asked, whether the socket subscribed to the project or not, or `not_found`, once a check finds that the project can no longer be read, as once the user is removed from its workspace, or it goes to the trash, which is at the project's next operation.
 - `error`, for a message that the server cannot read.
-- `heartbeat`, every 25 seconds, beside a ping, whose pong the server waits 20 seconds for, past which it closes the socket with 1008, unless the client has sent a message meanwhile, or been sent anything but a heartbeat since the heartbeat before, which a slow client reads before the ping: the socket of such a client is cut only once a message to it takes longer than 30 seconds to write. A client that hears nothing for a minute takes the connection for lost.
+- `heartbeat`, every 25 seconds, beside a ping, whose pong the server waits 20 seconds for, past which it closes the socket with 1008, unless the client has sent a message meanwhile, or been sent anything but a heartbeat since the heartbeat before, which a slow client reads before the ping, and has answered a ping within the 50 seconds before: the socket of a client that is sent operations is cut once it has answered no ping for 50 seconds, the pong's own 20 and the 30 that a message to it may take to write, which a client that has gone without a word, as a laptop that sleeps, never answers however many operations the server writes to it, or once a message to it takes longer than 30 seconds to write. A client that hears nothing for a minute takes the connection for lost.
 
 The server's messages name a project by its ID as the API writes it, whichever spelling of it the client's message had, but for `subscription_failed` with `invalid_id`, and `unsubscribed` for an ID that is not a project's, which name it as the client's message did.
 
@@ -33,7 +33,7 @@ A server's message may hold properties that its schema does not name, which a la
 
 ## Closing
 
-The socket's session or API token, and the user's access to each project, are checked again before each page of operations that it is sent. The server closes the socket with:
+The socket's session or API token, and the user's access to each project, are checked again before each subscription and each page of operations that it is sent, and not while it is sent nothing. The server closes the socket with:
 
-- 4001 once its session has ended, or its token no longer holds: the client signs in again before it connects again.
+- 4001 once a check finds that its session has ended, or its token no longer holds: the client signs in again before it connects again.
 - 1001 as the server stops, 1008 when the client answers no ping, and 1011 when the server cannot read the database: the client connects again, with exponential backoff and jitter, and subscribes with the seqs that it has.

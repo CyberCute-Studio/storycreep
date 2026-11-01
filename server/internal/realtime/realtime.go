@@ -95,11 +95,11 @@ const (
 	defaultHeartbeat    = 25 * time.Second
 	defaultPongTimeout  = 20 * time.Second
 	defaultPollInterval = 30 * time.Second
-	writeTimeout        = 30 * time.Second
+	defaultWriteTimeout = 30 * time.Second
 	// shutdownWriteGrace is how long a socket's write in flight as the hub
 	// shuts down may take before it is cut, which leaves the socket without
 	// its close of 1001, so that a client that reads too slowly does not hold
-	// the server's shutdown, of 20 seconds, with writeTimeout.
+	// the server's shutdown, of 20 seconds, with its WriteTimeout.
 	shutdownWriteGrace = 5 * time.Second
 	// maxListenDelay is the longest that the hub waits before it tries
 	// again to LISTEN, once a try has failed: it waits a second after the
@@ -108,9 +108,10 @@ const (
 )
 
 // DB is what the hub needs of the database: transactions of the application
-// login, and a connection of its own to LISTEN on, as *database.DB has them.
+// login that only read, as of one moment, and a connection of its own to
+// LISTEN on, as *database.DB has them.
 type DB interface {
-	InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
+	InSnapshot(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error
 	Dedicated(ctx context.Context) (*pgx.Conn, error)
 }
 
@@ -130,8 +131,12 @@ type Options struct {
 	Log *slog.Logger
 	// Heartbeat is how often a socket is sent a heartbeat and pinged, 25
 	// seconds if 0, and PongTimeout how long the ping waits for its pong
-	// before the socket is closed, 20 seconds if 0. A test shortens them.
-	Heartbeat, PongTimeout time.Duration
+	// before the socket is closed, 20 seconds if 0. WriteTimeout is how long
+	// a write to a socket may take, 30 seconds if 0, past which its client is
+	// taken for gone, and how much later than PongTimeout a pong may come
+	// that waits behind the operations that the socket sent, before the
+	// client is taken for gone all the same. A test shortens them.
+	Heartbeat, PongTimeout, WriteTimeout time.Duration
 	// PollInterval is how often the hub reads the seqs of the projects that
 	// its sockets subscribe to, in case a notification was lost, 30 seconds
 	// if 0.
@@ -145,12 +150,12 @@ type Options struct {
 // Hub is the real-time hub of a server process. Its zero value is not
 // usable; New makes one.
 type Hub struct {
-	db                     DB
-	projects               Projects
-	log                    *slog.Logger
-	heartbeat, pongTimeout time.Duration
-	pollInterval           time.Duration
-	maxConnectionsPerUser  int
+	db                                   DB
+	projects                             Projects
+	log                                  *slog.Logger
+	heartbeat, pongTimeout, writeTimeout time.Duration
+	pollInterval                         time.Duration
+	maxConnectionsPerUser                int
 
 	// ctx ends when the hub shuts down, which closes every socket.
 	ctx    context.Context
@@ -194,7 +199,7 @@ func New(opts Options) *Hub {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{db: opts.DB, projects: opts.Projects, log: log, heartbeat: opts.Heartbeat,
-		pongTimeout: opts.PongTimeout, pollInterval: opts.PollInterval,
+		pongTimeout: opts.PongTimeout, writeTimeout: opts.WriteTimeout, pollInterval: opts.PollInterval,
 		maxConnectionsPerUser: opts.MaxConnectionsPerUser, ctx: ctx, cancel: cancel,
 		reads: make(chan struct{}, readSlots), pollNow: make(chan struct{}, 1), channels: map[ids.UUID]*channel{},
 		users: map[ids.UUID]int{},
@@ -208,6 +213,9 @@ func New(opts Options) *Hub {
 	}
 	if h.pongTimeout <= 0 {
 		h.pongTimeout = defaultPongTimeout
+	}
+	if h.writeTimeout <= 0 {
+		h.writeTimeout = defaultWriteTimeout
 	}
 	if h.pollInterval <= 0 {
 		h.pollInterval = defaultPollInterval
@@ -400,7 +408,11 @@ func (h *Hub) acquire(ctx context.Context) (release func(), err error) {
 // read runs fn in a transaction of the workspace workspaceID, as the actor,
 // once it has checked there that the actor may read the project projectID
 // (project.Service.GetIn), with the project's seq, while it holds one of the
-// hub's slots of reads. It returns project.ErrNotFound as GetIn does.
+// hub's slots of reads. The transaction reads as of one moment
+// (database.DB.InSnapshot), so that the actor's access, the project's seq,
+// and what fn reads of the log agree: a batch that commits meanwhile is in
+// none of them, and a member removed meanwhile is sent nothing that commits
+// after. It returns project.ErrNotFound as GetIn does.
 func (h *Hub) read(ctx context.Context, actor commands.Actor, workspaceID, projectID ids.UUID,
 	fn func(tx pgx.Tx, seq int64) error) error {
 	release, err := h.acquire(ctx)
@@ -408,7 +420,8 @@ func (h *Hub) read(ctx context.Context, actor commands.Actor, workspaceID, proje
 		return err
 	}
 	defer release()
-	return h.db.InTx(ctx, database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}, func(tx pgx.Tx) error {
+	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
+	return h.db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
 		v, err := h.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
 		if err != nil {
 			return err

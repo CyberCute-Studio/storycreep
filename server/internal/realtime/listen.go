@@ -177,7 +177,7 @@ func (h *Hub) pollOnce() {
 	failed, first := 0, error(nil)
 	for workspaceID, projects := range byWorkspace {
 		var seqs map[ids.UUID]int64
-		err := h.db.InTx(h.ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		err := h.db.InSnapshot(h.ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 			var err error
 			seqs, err = commands.ProjectSeqs(h.ctx, tx, workspaceID, projects)
 			return err

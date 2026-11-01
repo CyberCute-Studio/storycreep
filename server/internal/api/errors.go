@@ -137,8 +137,9 @@ var codes = []codeSpec{
 			"such as `localhost`, so with a plain-HTTP `STORYCREEP_PUBLIC_URL` of another host only the CSRF " +
 			"token is checked, on the routes that need a signed-in user. A WebSocket of `GET /api/v1/ws` opened with " +
 			"the session cookie, rather than an API token, is refused with it too when its `Origin` header names " +
-			"another origin than `STORYCREEP_PUBLIC_URL`'s, or another host than the request's, so that no page " +
-			"of another site reads a project with a browser's session (PRD FR-RT-01)."},
+			"neither `STORYCREEP_PUBLIC_URL`'s origin nor the request's host by that URL's scheme, so that no page " +
+			"of another site, nor one of the host by another scheme, reads a project with a browser's session " +
+			"(PRD FR-RT-01)."},
 	{CodeWrongPassword, http.StatusForbidden, i18n.K("error.wrong_password"),
 		"`POST /api/v1/auth/password` was given a current password that is not the account's, so the " +
 			"password stays as it was."},

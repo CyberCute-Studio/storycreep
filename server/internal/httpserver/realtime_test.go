@@ -562,7 +562,8 @@ func TestRealtimeResync(t *testing.T) {
 }
 
 // TestRealtimeMessages checks how the socket answers what a client sends: a
-// message that it cannot read with an error, an unsubscription with
+// message that it cannot read, or that lacks a field that the schema
+// requires, with an error, an unsubscription with
 // unsubscribed, which ends the subscription, each naming the project as the
 // API writes its ID, a subscription to an ID that is not a project's with
 // invalid_id, and an unsubscription from one with unsubscribed, each naming
@@ -576,7 +577,9 @@ func TestRealtimeMessages(t *testing.T) {
 	project := createProject(t, f.s.main, owner, f.ws, "Harbour").ID
 	sock := dialSocket(t, srv, owner.header(false))
 	for _, raw := range []string{`not json`, `[]`, `{"type": "ping"}`, `{"type": "subscribe", "project": "x"}`,
-		`{"type": "subscribe", "project_id": "` + project + `", "since": -1}`, `{"Type": "subscribe"}`} {
+		`{"type": "subscribe", "project_id": "` + project + `", "since": -1}`, `{"Type": "subscribe"}`,
+		`{"type": "subscribe"}`, `{"type": "subscribe", "project_id": null}`, `{"type": "unsubscribe"}`,
+		`{"type": "subscribe", "project_id": "` + project + `", "since": 1.5}`} {
 		sock.write(websocket.MessageText, []byte(raw))
 		if m := sock.next("error"); m.Code != "invalid_message" {
 			t.Errorf("%s is answered with %+v", raw, m)
@@ -723,7 +726,9 @@ func TestRealtimeUpgrade(t *testing.T) {
 // TestRealtimePing checks that a socket whose client answers no ping is
 // closed with 1008 once the pong is late, but not while it is sent
 // operations, which a slow client reads before the ping, whose pong waits
-// behind them: two clients read nothing for a while, and so answer no ping,
+// behind them, for as long as a write of them may take, 30 seconds here
+// (TestRealtimePingWhileSent): two clients read nothing for a while, and so
+// answer no ping,
 // the one subscribed to a quiet project, and the other to a project that
 // commits meanwhile, and once they read again, the first finds its socket
 // closed, and the second the operations, on a socket that stays open.
@@ -755,6 +760,51 @@ func TestRealtimePing(t *testing.T) {
 	}
 	busy.wantOperations(busyProject, busy.next("subscribed").Seq, boards, commandIDs)
 	busy.quiet()
+}
+
+// TestRealtimePingWhileSent checks that a socket whose client answers no
+// ping is closed with 1008 even while its project commits, whose operations
+// the connection's buffers take at once, as those of a client that has gone
+// without a word do, once the client has answered no ping for the pong's
+// wait and a write's: the client reads nothing for a while, and once it
+// reads again, finds its socket closed before it was sent every operation
+// that committed meanwhile.
+func TestRealtimePingWhileSent(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+		Heartbeat: 400 * time.Millisecond, PongTimeout: 800 * time.Millisecond, WriteTimeout: 1500 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	sock := openSocket(t, srv, owner.header(false))
+	sock.subscribe(project, -1)
+	// The socket closes once a ping times out 2.3 seconds or more after it
+	// opened, the pong's wait and a write's, which one does within 3.2, and
+	// the project commits for twice as long, while each of the socket's pings
+	// goes unanswered, as each that it is sent an operation before is
+	// excused, until then.
+	committed := 0
+	for start := time.Now(); time.Since(start) < 6*time.Second; committed++ {
+		createBoards(t, s.main, owner, project, 1)
+		time.Sleep(100 * time.Millisecond)
+	}
+	sock.start()
+	sock.next("subscribed")
+	for sent := 0; ; sent++ {
+		r := sock.receive()
+		switch {
+		case r.err == nil && r.msg.Type == "operation":
+			continue
+		case r.err == nil:
+			t.Fatalf("the socket was sent %s, want operations", r.raw)
+		case websocket.CloseStatus(r.err) != websocket.StatusPolicyViolation:
+			t.Fatalf("the socket ended with %v, want a close with policy violation", r.err)
+		case sent >= committed:
+			t.Errorf("the socket was sent every one of the %d operations before it closed, want it closed while "+
+				"its project still committed", committed)
+		}
+		return
+	}
 }
 
 // TestRealtimeAcrossServers checks that a batch that commits through one
