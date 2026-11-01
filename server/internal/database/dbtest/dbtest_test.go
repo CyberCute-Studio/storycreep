@@ -70,7 +70,7 @@ func TestDatabasesAreSeparate(t *testing.T) {
 func TestFreeze(t *testing.T) {
 	ctx := context.Background()
 	var frozen *Frozen
-	t.Run("fill", func(t *testing.T) {
+	if !t.Run("fill", func(t *testing.T) {
 		d := New(t)
 		if _, err := d.Admin(t).Exec(ctx, "CREATE TABLE filled (x int); INSERT INTO filled VALUES (1)"); err != nil {
 			t.Fatal(err)
@@ -79,9 +79,11 @@ func TestFreeze(t *testing.T) {
 			t.Fatal(err)
 		}
 		frozen = d.Freeze(t)
-	})
-	if frozen == nil {
+	}) {
 		t.FailNow()
+	}
+	if frozen == nil {
+		t.Skip("skipped with -short: needs PostgreSQL, which the tests run in Docker")
 	}
 	a, b := frozen.New(t), frozen.New(t)
 	if _, err := a.Admin(t).Exec(ctx, "INSERT INTO filled VALUES (2)"); err != nil {
