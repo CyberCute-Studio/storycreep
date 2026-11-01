@@ -424,6 +424,52 @@ func TestRealtimeListenerReconnects(t *testing.T) {
 	sock.wantOperations(project, seq, later, laterIDs)
 }
 
+// TestRealtimeListenerPings checks that the hub's LISTEN connection, which
+// it pings once it has heard nothing for the poll's interval, so that one
+// whose database went away without a word is found gone, stays the same
+// connection, LISTENing, through its pings: the backend's pid stays, and its
+// last statement, the LISTEN that pings it, starts anew.
+func TestRealtimeListenerPings(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+		PollInterval: 100 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(project, -1)
+	seq := sock.next("subscribed").Seq
+
+	// listener returns the pid of the hub's LISTEN backend, and when its last
+	// statement started.
+	ctx, admin := context.Background(), d.Admin(t)
+	listener := func() (int, time.Time) {
+		t.Helper()
+		var pid int
+		var started time.Time
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			err := admin.QueryRow(ctx, `SELECT pid, query_start FROM pg_stat_activity
+				WHERE datname = current_database() AND query = $1`, `LISTEN "`+realtime.Channel+`"`).Scan(&pid, &started)
+			switch {
+			case err == nil:
+				return pid, started
+			case !errors.Is(err, pgx.ErrNoRows) || time.Now().After(deadline):
+				t.Fatalf("find the hub's LISTEN connection: %v", err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	pid, started := listener()
+	time.Sleep(time.Second)
+	if again, pinged := listener(); again != pid || !pinged.After(started) {
+		t.Errorf("the LISTEN connection is backend %d, last pinged at %v, want backend %d pinged after %v", again,
+			pinged, pid, started)
+	}
+	boards, commandIDs := createBoards(t, s.main, owner, project, 1)
+	sock.wantOperations(project, seq, boards, commandIDs)
+}
+
 // TestRealtimeNotificationPayload checks that the notification of a batch
 // holds the project and the seq alone, far below NOTIFY's limit of 8,000
 // bytes, however large the batch, which the subscribers read from the log
@@ -487,8 +533,11 @@ func TestRealtimeNotificationPayload(t *testing.T) {
 // TestRealtimeAccessEnds checks that a socket is sent nothing once its
 // credential no longer holds, or its user can no longer read the project:
 // a removed member's subscription ends with unsubscribed not_found, at the
-// project's next batch, and a socket whose session has signed out, or whose
-// API token is revoked, closes with 4001 then, before it is sent the batch.
+// project's next batch, and a socket whose session has signed out, whose
+// API token is revoked, or whose session a change of its password gave a new
+// secret, closes with 4001 then, before it is sent the batch, after which
+// the cookie that the change set, which GET /api/v1/auth/session answers,
+// opens a socket again.
 func TestRealtimeAccessEnds(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
@@ -497,12 +546,15 @@ func TestRealtimeAccessEnds(t *testing.T) {
 	project := createProject(t, f.s.main, owner, f.ws, "Harbour").ID
 	editor := dialSocket(t, srv, f.as["editor"].header(false))
 	viewer := dialSocket(t, srv, f.as["viewer"].header(false))
+	commenter := dialSocket(t, srv, f.as["commenter"].header(false))
 	token := makeToken(t, f.s.main, owner, workspaceTokensPath(f.ws), "project:read")
 	byToken := dialSocket(t, srv, bearer(token.Secret))
-	for _, sock := range []*testSocket{editor, viewer, byToken} {
+	for _, sock := range []*testSocket{editor, viewer, commenter, byToken} {
 		sock.subscribe(project, -1)
 		sock.next("subscribed")
 	}
+	changed := signedInFrom(t, send(f.s.main, http.MethodPost, passwordPath,
+		passwordChange(t, testPassword, "an entirely new passphrase"), "", f.as["commenter"].header(true)))
 
 	if _, err := f.admin.Exec(context.Background(), "DELETE FROM membership WHERE id = $1",
 		decode(t, ids.Membership, f.membership(t, "editor"))); err != nil {
@@ -521,11 +573,18 @@ func TestRealtimeAccessEnds(t *testing.T) {
 		t.Errorf("the removed member was sent %+v, want unsubscribed not_found", m)
 	}
 	editor.quiet()
-	for name, sock := range map[string]*testSocket{"signed out": viewer, "of a revoked token": byToken} {
+	for name, sock := range map[string]*testSocket{"signed out": viewer, "of a revoked token": byToken,
+		"whose session has a new secret": commenter} {
 		if code := sock.closedWith(); code != realtime.CloseUnauthenticated {
 			t.Errorf("the socket %s closed with %v, want %v", name, code, realtime.CloseUnauthenticated)
 		}
 	}
+	if res := send(f.s.main, http.MethodGet, sessionPath, nil, "", changed.header(false)); res.status != http.StatusOK {
+		t.Fatalf("the session of the changed password: %d %s", res.status, res.body)
+	}
+	again := dialSocket(t, srv, changed.header(false))
+	again.subscribe(project, -1)
+	again.next("subscribed")
 }
 
 // TestRealtimeResync checks that a subscriber is told to reload the project,
@@ -562,6 +621,43 @@ func TestRealtimeResync(t *testing.T) {
 		again.wantOperations(project, seq, later, laterIDs)
 		seq++
 	}
+}
+
+// TestRealtimeRestore checks that a subscriber is told to reload the project
+// once the project's seq goes back behind what the subscriber was sent, as
+// once the database is restored from a backup older than it, whose batches
+// after that seq, as they commit anew, are other operations than those that
+// it was sent, which the hub's poll finds behind the latest seq that it had
+// heard of, and that it is sent the batches that commit after.
+func TestRealtimeRestore(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+		PollInterval: 200 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(project, -1)
+	seq := sock.next("subscribed").Seq
+	boards, commandIDs := createBoards(t, s.main, owner, project, 3)
+	sock.wantOperations(project, seq, boards, commandIDs)
+
+	// The database goes back to a backup taken after the first of the three
+	// batches.
+	restored := seq + 1
+	ctx, admin, id := context.Background(), d.Admin(t), decode(t, ids.Project, project)
+	if _, err := admin.Exec(ctx, `DELETE FROM operation WHERE project_id = $1 AND seq > $2`, id, restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE project SET seq = $2 WHERE id = $1`, id, restored); err != nil {
+		t.Fatal(err)
+	}
+	if m := sock.next("resync_required"); m.ProjectID != project || m.Seq != restored {
+		t.Errorf("told %+v, want resync_required at %d", m, restored)
+	}
+	sock.quiet()
+	later, laterIDs := createBoards(t, s.main, owner, project, 1)
+	sock.wantOperations(project, restored, later, laterIDs)
 }
 
 // TestRealtimeMessages checks how the socket answers what a client sends: a
@@ -825,6 +921,68 @@ func TestRealtimeHeartbeatWhileDelivering(t *testing.T) {
 		t.Errorf("once the catch-up was read, the socket sent %s (%v), want it open, with nothing to send", r.raw,
 			r.err)
 	case <-time.After(2 * time.Second):
+	}
+}
+
+// heldProjects resolves an actor's access to the projects as Projects does,
+// but holds the first hold of its reads of a project, in the slot of reads
+// that each runs in, until the socket that reads ends, telling held of each,
+// as reads of a database under load would hold them.
+type heldProjects struct {
+	realtime.Projects
+	hold atomic.Int32
+	held chan struct{}
+}
+
+func (p *heldProjects) GetIn(ctx context.Context, tx pgx.Tx, actor commands.Actor, workspaceID,
+	projectID ids.UUID) (project.Visible, error) {
+	if p.hold.Add(-1) >= 0 {
+		p.held <- struct{}{}
+		<-ctx.Done()
+		return project.Visible{}, ctx.Err()
+	}
+	return p.Projects.GetIn(ctx, tx, actor, workspaceID, projectID)
+}
+
+// TestRealtimeHeartbeatWhileWaiting checks that a socket that waits for one
+// of the hub's slots of reads, behind the reads of other sockets, for longer
+// than the silence's timeout, pings its client as it waits, so that a client
+// that answers the pings keeps its socket once the socket has its slot,
+// rather than be closed with 1008 for as long as it waited: two sockets hold
+// both slots, with reads that take three times the silence's timeout.
+func TestRealtimeHeartbeatWhileWaiting(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	held := &heldProjects{Projects: s.projects, held: make(chan struct{}, 2)}
+	held.hold.Store(2)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: held, Heartbeat: 50 * time.Millisecond,
+		SilenceTimeout: 500 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	var holders []*testSocket
+	for range 2 {
+		holder := dialSocket(t, srv, owner.header(false))
+		holder.subscribe(project, -1)
+		holders = append(holders, holder)
+	}
+	for range 2 {
+		select {
+		case <-held.held:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the reads that hold the slots did not start")
+		}
+	}
+	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(project, -1)
+	time.Sleep(1500 * time.Millisecond)
+	for _, holder := range holders {
+		_ = holder.ws.CloseNow()
+	}
+	sock.next("subscribed")
+	select {
+	case r := <-sock.received:
+		t.Errorf("once the socket had its slot, it sent %s (%v), want it open, with nothing to send", r.raw, r.err)
+	case <-time.After(time.Second):
 	}
 }
 

@@ -333,11 +333,14 @@ func (h *Hub) begin() bool {
 // LISTEN connection reconnected, wakes the channel's other subscriptions as
 // a notification would, since the poller, which compares the project's seq
 // with the channel's latest, would find nothing to tell them of once it is
-// the channel's.
-func (h *Hub) join(sub *subscription, seq int64) {
+// the channel's. It reports whether the channel was there before, whose
+// notifications since sub's read sub has heard of then, where a channel
+// that it makes heard none.
+func (h *Hub) join(sub *subscription, seq int64) (joined bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ch := h.channels[sub.project]
+	joined = ch != nil
 	if ch == nil {
 		ch = &channel{workspace: sub.workspace, subs: map[*subscription]struct{}{}}
 		h.channels[sub.project] = ch
@@ -360,6 +363,7 @@ func (h *Hub) join(sub *subscription, seq int64) {
 		go h.listen()
 		go h.poll()
 	}
+	return joined
 }
 
 // leave removes sub from its project's channel, and the channel once it has
@@ -400,32 +404,39 @@ func (h *Hub) dispatch(projectID ids.UUID, seq int64) {
 	}
 }
 
-// acquire waits for one of the hub's slots of reads, and returns the
-// function that releases it, or ctx's error if ctx ends first.
-func (h *Hub) acquire(ctx context.Context) (release func(), err error) {
-	select {
-	case h.reads <- struct{}{}:
-		return func() { <-h.reads }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+// rewind tells the subscriptions of the project projectID that the poller
+// read its seq as seq, behind the latest that the hub had heard of, which
+// only a database restored from a backup older than what the hub heard of
+// does, whose seqs after seq, as they commit anew, are other operations
+// than those that the subscriptions may have been sent: each that was sent
+// more than seq is told to reload the project (conn.deliverHeard), which
+// nothing else would tell it, since it hears of no later seq until the
+// project has passed what it was sent, after which it would be sent the
+// operations that follow, as if nothing had happened.
+func (h *Hub) rewind(projectID ids.UUID, seq int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ch := h.channels[projectID]
+	if ch == nil {
+		return
+	}
+	ch.latest = seq
+	for sub := range ch.subs {
+		sub.rewound.Store(&seq)
+		sub.conn.signal()
 	}
 }
 
 // read runs fn in a transaction of the workspace workspaceID, as the actor,
 // once it has checked there that the actor may read the project projectID
-// (project.Service.GetIn), with the project's seq, while it holds one of the
-// hub's slots of reads. The transaction reads as of one moment
-// (database.DB.InSnapshot), so that the actor's access, the project's seq,
-// and what fn reads of the log agree: a batch that commits meanwhile is in
-// none of them, and a member removed meanwhile is sent nothing that commits
-// after. It returns project.ErrNotFound as GetIn does.
+// (project.Service.GetIn), with the project's seq, which its caller runs in
+// one of the hub's slots of reads (conn.readProject). The transaction reads
+// as of one moment (database.DB.InSnapshot), so that the actor's access, the
+// project's seq, and what fn reads of the log agree: a batch that commits
+// meanwhile is in none of them, and a member removed meanwhile is sent
+// nothing that commits after. It returns project.ErrNotFound as GetIn does.
 func (h *Hub) read(ctx context.Context, actor commands.Actor, workspaceID, projectID ids.UUID,
 	fn func(tx pgx.Tx, seq int64) error) error {
-	release, err := h.acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
 	return h.db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
 		v, err := h.projects.GetIn(ctx, tx, actor, workspaceID, projectID)

@@ -76,11 +76,15 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, " +
 			"and the user's access to each project, are checked again before each subscription and each page of " +
 			"operations that it is sent, and not while it is sent nothing: a check that finds that the session " +
-			"has ended, or that the token no longer holds, closes the socket with 4001, and one that finds that " +
+			"has ended, or has a new secret, as a change of the password gives the session that made it, or that " +
+			"the token no longer holds, closes the socket with 4001, after which a client connects again if a " +
+			"request with the credential that it holds now, as GET /api/v1/auth/session with the cookie, is " +
+			"answered, and signs in again, or takes another token, if it is refused with 401; one that finds that " +
 			"the project can no longer be read ends its subscription, at the project's next operation. It closes " +
-			"with 1001 as the server stops, and 1011 when the server cannot read the database, after either of " +
-			"which, as after a connection dropped, a client connects again, with exponential backoff and " +
-			"jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with " +
+			"with 1001 as the server stops, and 1011 when the server fails, as when it cannot read the database, " +
+			"after either of which, as after a connection dropped, a client connects again, with exponential " +
+			"backoff and jitter, and subscribes with the seqs that it has. A request that does not upgrade is " +
+			"answered with " +
 			"426 upgrade_required. A socket opened with the session cookie whose Origin header names neither " +
 			"STORYCREEP_PUBLIC_URL's origin nor the " +
 			"request's host by that URL's scheme is refused with 403 csrf_failed." + tokenAuthDoc(scope.ProjectRead),
@@ -181,8 +185,10 @@ func admitError(err error) error {
 
 // socketClient returns the client of a socket that cur opened with r: its
 // Check checks r's credential again as the authenticator checked it, the
-// session of its cookie, or its API token, with project:read, whose use it
-// records as a request's, and its Limit counts a subscription in the read
+// session of its cookie, by the secret that the cookie held, which no longer
+// finds the session once a change of the password has given it another, or
+// its API token, with project:read, whose use it records as a request's,
+// and its Limit counts a subscription in the read
 // bucket of the rate limits, as a read of the API counts, against the
 // client's IP address, the user, and the token, which are cur's for as long
 // as the credential holds.

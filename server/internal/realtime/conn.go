@@ -23,8 +23,10 @@ type Client struct {
 	// Check checks the socket's credential again, its session or its API
 	// token, as a request with it would be checked, and returns the actor
 	// that the socket reads its projects as, or ErrUnauthenticated if the
-	// credential no longer holds, as once the session has ended or the token
-	// has been revoked. The socket checks it before each subscription and
+	// credential no longer holds, as once the session has ended, or has been
+	// given a new secret, as a change of the account's password gives the
+	// session that made it, or once the token has been revoked. The socket
+	// checks it before each subscription and
 	// each page of operations that it is sent, so that a credential that no
 	// longer holds is sent nothing more, and closes the socket with
 	// CloseUnauthenticated then.
@@ -40,7 +42,7 @@ type Client struct {
 
 // ErrUnauthenticated is returned by Client.Check for a credential that no
 // longer holds.
-var ErrUnauthenticated = errors.New("realtime: the socket's session has ended, or its API token no longer holds")
+var ErrUnauthenticated = errors.New("realtime: the credential that the socket was opened with no longer holds")
 
 // LimitedError is returned by Client.Limit for a subscription over the rate
 // limit, which may be tried again after RetryAfter.
@@ -52,14 +54,22 @@ func (e *LimitedError) Error() string {
 	return "realtime: the subscription is over the rate limit; retry after " + e.RetryAfter.String()
 }
 
-// CloseUnauthenticated is the code that a socket is closed with once its
-// credential no longer holds (Client.Check): its client signs in again, or
-// takes another API token, before it connects again. The other codes are
-// RFC 6455's: 1001 (going away) as the server shuts down, 1008 (policy
-// violation) for a client that the socket has heard nothing from, neither a
-// message nor a pong, for the hub's SilenceTimeout, 1009 (message too big)
-// for a message over 4 KiB, and 1011 (internal error) when the server cannot
-// read the database; a client connects again after each, with backoff, and
+// CloseUnauthenticated is the code that a socket is closed with once the
+// credential that it was opened with no longer holds (Client.Check): its
+// session has ended, or has been given a new secret, as a change of the
+// account's password gives the session that made it, whose cookie the
+// change sets, or its API token no longer holds. Its client makes a request
+// of the API with the credential that it holds now, as GET
+// /api/v1/auth/session with the cookie, and connects again if the request is
+// answered, or signs in again, or takes another API token, if it is refused
+// with 401, since a browser's socket does not tell the status that refused
+// its upgrade. The other codes are RFC 6455's: 1001 (going away) as the
+// server shuts down, 1008 (policy violation) for a client that the socket has
+// heard nothing from, neither a message nor a pong, for the hub's
+// SilenceTimeout, 1009 (message too big) for a message over 4 KiB, and 1011
+// (internal error) when the server fails, as when it cannot read the
+// database, or cannot answer the client's ping in time, behind a message
+// that it still writes; a client connects again after each, with backoff, and
 // subscribes with the seq that it has. A message to the client that cannot
 // be written within the hub's WriteTimeout drops the connection without a
 // close, which the client sees as 1006 (abnormal closure), since the close
@@ -107,8 +117,9 @@ type conn struct {
 	// messages are the client's messages that the loop has not handled yet,
 	// at most maxQueued, past which the reader waits for the loop.
 	messages chan queuedMessage
-	// beat ticks when the loop, or a delivery that it runs, sends its next
-	// heartbeat (heartbeat), which only the loop reads.
+	// beat ticks when the loop, or a delivery or a wait for a slot of reads
+	// that it runs, sends its next heartbeat (heartbeat), which only the loop
+	// reads.
 	beat *time.Ticker
 	// pinging is whether a ping waits for its pong.
 	pinging atomic.Bool
@@ -150,6 +161,10 @@ type subscription struct {
 	sent int64
 	// heard is the latest seq of the project that the hub heard of.
 	heard atomic.Int64
+	// rewound is the seq that the hub found the project's seq gone back to,
+	// behind the latest that it had heard of, as of a database restored from
+	// a backup (Hub.rewind), until the socket's loop takes it, or nil.
+	rewound atomic.Pointer[int64]
 }
 
 // Serve serves the socket ws, of the client, until it closes, or the hub
@@ -204,7 +219,8 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 // subscriptions what they have heard of, and sends the heartbeats, one at a
 // time, until the socket ends, and returns the code and reason that it
 // closes with. A delivery sends a heartbeat that falls due as it runs too,
-// between its operations (beatIfDue).
+// between its operations (beatIfDue), and so does a wait for one of the
+// hub's slots of reads (slot).
 func (c *conn) run() (websocket.StatusCode, string) {
 	c.beat = time.NewTicker(c.hub.heartbeat)
 	defer c.beat.Stop()
@@ -237,20 +253,28 @@ func (c *conn) run() (websocket.StatusCode, string) {
 }
 
 // end ends the socket with code and reason, unless something ended it
-// before, and its write in flight, if it has one, as one to a client that
-// answers no ping.
+// before, and its writes, as that of the ping that waits for its pong.
 func (c *conn) end(code websocket.StatusCode, reason string) {
+	c.endAfterWrite(code, reason)
+	c.stopWrites()
+}
+
+// endAfterWrite ends the socket with code and reason, unless something ended
+// it before, but leaves the loop's write in flight, if it has one, to
+// finish, after which the loop finds the socket ended, and closes it.
+func (c *conn) endAfterWrite(code websocket.StatusCode, reason string) {
 	c.mu.Lock()
 	if !c.ended {
 		c.ended, c.code, c.reason = true, code, reason
 	}
 	c.mu.Unlock()
 	c.cancel()
-	c.stopWrites()
 }
 
 // closing returns the code and reason that the socket closes with: going
-// away if the hub shuts down, and else what ended it.
+// away if the hub shuts down, and else what ended it, or, once the client
+// has closed the socket, which the library has answered with the client's
+// own code already, the normal closure, which goes nowhere then.
 func (c *conn) closing() (websocket.StatusCode, string) {
 	if c.hub.ctx.Err() != nil {
 		return websocket.StatusGoingAway, "the server is shutting down"
@@ -272,9 +296,21 @@ func (c *conn) read(ctx context.Context) {
 	for {
 		typ, data, err := c.ws.Read(ctx)
 		if err != nil {
-			// The client closed the socket, it failed, or a message was too
-			// big, which the library closes it for.
-			c.cancel()
+			// The client closed the socket, which the library has answered
+			// with the client's code. Else the connection failed, which no
+			// code reaches, a message was too big, which the library has
+			// closed the socket for with 1009 already, or the library could
+			// not answer a ping of the client within the 5 seconds that it
+			// gives a control frame, behind a message that the loop still
+			// writes to a slow client, which leaves the connection open: the
+			// socket closes with 1011 then, once that message is written, so
+			// that its client connects again, rather than with the normal
+			// closure, after which a client need not.
+			if websocket.CloseStatus(err) == -1 {
+				c.endAfterWrite(websocket.StatusInternalError, "the socket could not be read")
+			} else {
+				c.cancel()
+			}
 			return
 		}
 		c.hear()
@@ -385,11 +421,34 @@ func (c *conn) beatIfDue() error {
 	}
 }
 
+// slot waits for one of the hub's slots of reads, and returns the function
+// that releases it, or the socket's context's error once the socket ends,
+// and sends each heartbeat that falls due as it waits (heartbeat), as a
+// delivery does between its operations, so that a socket that waits behind
+// the checks and reads of the process's other sockets, as while many of
+// them subscribe again at once, keeps its client pinged, and heard, rather
+// than find, once it has its slot, that it has heard nothing for as long as
+// it waited, and close a client that answered every ping that it was sent.
+func (c *conn) slot() (release func(), err error) {
+	for {
+		select {
+		case c.hub.reads <- struct{}{}:
+			return func() { <-c.hub.reads }, nil
+		case <-c.ctx.Done():
+			return nil, c.ctx.Err()
+		case <-c.beat.C:
+			if err := c.heartbeat(); err != nil {
+				return nil, err
+			}
+		}
+	}
+}
+
 // check checks the socket's credential (Client.Check), in one of the hub's
-// slots of reads, and returns the closeError of CloseUnauthenticated if it no
-// longer holds.
+// slots of reads (slot), and returns the closeError of CloseUnauthenticated
+// if it no longer holds.
 func (c *conn) check() (commands.Actor, error) {
-	release, err := c.hub.acquire(c.ctx)
+	release, err := c.slot()
 	if err != nil {
 		return commands.Actor{}, err
 	}
@@ -400,9 +459,21 @@ func (c *conn) check() (commands.Actor, error) {
 	actor, err := c.client.Check(c.ctx)
 	if errors.Is(err, ErrUnauthenticated) {
 		return commands.Actor{}, &closeError{code: CloseUnauthenticated,
-			reason: "the session has ended, or the API token no longer holds"}
+			reason: "the credential that the socket was opened with no longer holds"}
 	}
 	return actor, err
+}
+
+// readProject runs fn as Hub.read does, in one of the hub's slots of reads
+// (slot), which it holds until fn returns, however it returns.
+func (c *conn) readProject(actor commands.Actor, workspaceID, projectID ids.UUID,
+	fn func(tx pgx.Tx, seq int64) error) error {
+	release, err := c.slot()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return c.hub.read(c.ctx, actor, workspaceID, projectID, fn)
 }
 
 // invalidMessage answers a message that the socket cannot read.
@@ -500,7 +571,7 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 	// of a database restored from before its seq, reloads the project too.
 	var seq int64
 	follows := m.Since != nil
-	err = c.hub.read(c.ctx, actor, workspaceID, id, func(tx pgx.Tx, s int64) error {
+	err = c.readProject(actor, workspaceID, id, func(tx pgx.Tx, s int64) error {
 		seq = s
 		switch since := m.Since; {
 		case since == nil || *since == s:
@@ -531,13 +602,21 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		answer = ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: projectID, Seq: seq}
 	}
 	c.subs[id] = sub
-	c.hub.join(sub, seq)
+	joined := c.hub.join(sub, seq)
 	if err := c.send(answer); err != nil {
 		return err
 	}
-	// What commits between the read and the join is read now, as what it
-	// missed is, with the credential just checked.
-	return c.deliver(sub, &actor)
+	// What the subscription missed is read now, with the credential just
+	// checked, and so is what commits between the read and the join, of
+	// which a channel that the subscription joined has told it (heard), but
+	// one that the join made heard no notification. Else nothing waits, and
+	// the subscription is sent what commits from now on, as its hub hears of
+	// it, without another transaction in one of the hub's slots for each
+	// subscription, as while many sockets subscribe again at once.
+	if joined && sub.heard.Load() <= sub.sent {
+		return nil
+	}
+	return c.deliver(sub, &actor, false)
 }
 
 // unsubscribe ends the socket's subscription to the project that m names,
@@ -563,13 +642,17 @@ func (c *conn) drop(sub *subscription) {
 }
 
 // deliverHeard sends each subscription the operations after the last that
-// it was sent, if it has heard of a later seq.
+// it was sent, if it has heard of a later seq, and tells one to reload the
+// project if the hub has found the project's seq gone back behind what it
+// was sent (Hub.rewind).
 func (c *conn) deliverHeard() error {
 	for _, sub := range c.subs {
-		if sub.heard.Load() <= sub.sent {
+		to := sub.rewound.Swap(nil)
+		reload := to != nil && *to < sub.sent
+		if !reload && sub.heard.Load() <= sub.sent {
 			continue
 		}
-		if err := c.deliver(sub, nil); err != nil {
+		if err := c.deliver(sub, nil, reload); err != nil {
 			return err
 		}
 	}
@@ -589,10 +672,16 @@ func (c *conn) deliverHeard() error {
 // slow client, keeps the client pinged, and heard, as it reads. A
 // project that the actor can no longer read ends the subscription, with
 // unsubscribed, and one whose log no longer has an operation that sub was not
-// sent, as once compaction (PRD FR-GDPR-03) dropped it, or of which more than
-// MaxCatchUp wait to be sent, as once the hub heard of none for long, has sub
-// told to reload the project (resync_required), as a subscription is.
-func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
+// sent, as once compaction (PRD FR-GDPR-03) dropped it, of which more than
+// MaxCatchUp wait to be sent, as once the hub heard of none for long, or
+// whose seq is not the last that sub was sent although the log has nothing
+// after it, as of a database restored from a backup older than what sub was
+// sent, has sub told to reload the project (resync_required), as a
+// subscription is, and so does reload, once the hub has found the project's
+// seq gone back behind what sub was sent, as such a database's is, whose
+// operations after its seq, which commit anew, are not those that sub was
+// sent.
+func (c *conn) deliver(sub *subscription, checked *commands.Actor, reload bool) error {
 	projectID := ids.Encode(ids.Project, sub.project)
 	var until int64
 	for first := true; ; first = false {
@@ -607,11 +696,11 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 		}
 		var ops []commands.Operation
 		var seq int64
-		tooMany := false
-		err := c.hub.read(c.ctx, actor, sub.workspace, sub.project, func(tx pgx.Tx, s int64) error {
+		reloads := false
+		err := c.readProject(actor, sub.workspace, sub.project, func(tx pgx.Tx, s int64) error {
 			seq = s
-			if first && s-sub.sent > MaxCatchUp {
-				tooMany = true
+			if first && (reload || s-sub.sent > MaxCatchUp) {
+				reloads = true
 				return nil
 			}
 			var err error
@@ -624,7 +713,7 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 			return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: projectID, Reason: "not_found"})
 		case err != nil:
 			return err
-		case tooMany:
+		case reloads:
 			return c.resync(sub, projectID, seq)
 		case first:
 			until = seq
@@ -642,7 +731,7 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 			sub.sent = op.Seq
 		}
 		switch {
-		case len(ops) == 0 && seq > sub.sent:
+		case len(ops) == 0 && seq != sub.sent:
 			return c.resync(sub, projectID, seq)
 		case len(ops) == 0 || sub.sent >= until:
 			return nil

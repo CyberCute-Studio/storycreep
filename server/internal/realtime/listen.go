@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -48,6 +49,11 @@ type Notifies interface {
 // notifyTimeout is how long the Notifier waits for the database to take a
 // notification, which the request of the batch that it tells of waits for.
 const notifyTimeout = 5 * time.Second
+
+// listenPingTimeout is how long the hub waits for the database to answer
+// the ping of its LISTEN connection (listenOnce), past which it opens the
+// connection anew.
+const listenPingTimeout = 10 * time.Second
 
 // Notifier is the command pipeline's Notifier (commands.Notifier): it sends
 // the notification of each batch that commits on Channel, which the hub of
@@ -110,24 +116,44 @@ func (h *Hub) listen() {
 
 // listenOnce LISTENs on a connection of its own, and dispatches the
 // notifications that it hears, until the connection fails or the hub shuts
-// down, and reports whether it got as far as LISTENing.
+// down, and reports whether it got as far as LISTENing. Once it has heard
+// nothing for PollInterval, it LISTENs again, which the connection does
+// already, and so changes nothing, as a ping that the database must answer
+// within listenPingTimeout, so that a connection whose database went away
+// without a word, as one that failed over, which only waits otherwise,
+// until the system gives up on the connection minutes later, while the hub
+// hears of each batch only as it polls, is found gone, and opened anew. The
+// notifications that come meanwhile wait in the connection for the next
+// wait.
 func (h *Hub) listenOnce() (bool, error) {
 	conn, err := h.db.Dedicated(h.ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(h.ctx)) }()
-	if _, err := conn.Exec(h.ctx, "LISTEN "+pgx.Identifier{Channel}.Sanitize()); err != nil {
+	listen := "LISTEN " + pgx.Identifier{Channel}.Sanitize()
+	if _, err := conn.Exec(h.ctx, listen); err != nil {
 		return false, err
 	}
 	h.pollSoon()
 	for {
-		n, err := conn.WaitForNotification(h.ctx)
-		if err != nil {
+		wait, cancel := context.WithTimeout(h.ctx, h.pollInterval)
+		n, err := conn.WaitForNotification(wait)
+		cancel()
+		switch {
+		case err == nil:
+			if project, seq, ok := parsePayload(n.Payload); ok {
+				h.dispatch(project, seq)
+			}
+		case errors.Is(err, context.DeadlineExceeded) && h.ctx.Err() == nil:
+			ping, cancel := context.WithTimeout(h.ctx, listenPingTimeout)
+			_, err := conn.Exec(ping, listen)
+			cancel()
+			if err != nil {
+				return true, err
+			}
+		default:
 			return true, err
-		}
-		if project, seq, ok := parsePayload(n.Payload); ok {
-			h.dispatch(project, seq)
 		}
 	}
 }
@@ -162,7 +188,9 @@ func (h *Hub) poll() {
 // to, in one statement for each workspace, one workspace at a time, and
 // dispatches each that the hub had not heard of. A project that its
 // workspace no longer has, as once it is purged, is dispatched all the same,
-// so that its subscriptions find it gone. The workspaces whose seqs it cannot
+// so that its subscriptions find it gone, and one whose seq is behind the
+// latest that the hub had heard of is rewound (Hub.rewind), so that its
+// subscriptions reload it. The workspaces whose seqs it cannot
 // read, as while the database is down, it logs once for the poll, with the
 // first error.
 func (h *Hub) pollOnce() {
@@ -197,6 +225,11 @@ func (h *Hub) pollOnce() {
 				h.dispatch(id, latest[id]+1)
 			case seq > latest[id]:
 				h.dispatch(id, seq)
+			case seq < latest[id]:
+				// The hub heard of each seq of latest once it had committed,
+				// before this read, so a seq behind it is of a database
+				// restored from a backup older than it.
+				h.rewind(id, seq)
 			}
 		}
 	}
