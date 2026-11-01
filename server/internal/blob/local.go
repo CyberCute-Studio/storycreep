@@ -275,8 +275,22 @@ func (l *Local) readDir(dir string) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return f.ReadDir(-1)
+	entries, err := f.ReadDir(-1)
+	// Windows answers a listing of a file's entries as it answers a path that
+	// does not exist (ERROR_PATH_NOT_FOUND, which syscall.ENOTDIR is there
+	// too), which walk takes for a prefix of no keys, where Linux and macOS
+	// answer ENOTDIR: a file that stands where the directory would be fails
+	// the listing on every system.
+	if errors.Is(err, fs.ErrNotExist) {
+		if info, statErr := f.Stat(); statErr == nil && !info.IsDir() {
+			return nil, &fs.PathError{Op: "readdir", Path: dir, Err: errNotDirectory}
+		}
+	}
+	return entries, err
 }
+
+// errNotDirectory is the error of a listing of a file's entries (readDir).
+var errNotDirectory = errors.New("not a directory")
 
 // removeStale removes the file e, at p, that Put was writing, if it was last
 // written more than staleTemp ago. A file that cannot be removed now is left
