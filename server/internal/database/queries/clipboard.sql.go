@@ -11,6 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clipboardAttributes = `-- name: ClipboardAttributes :many
+SELECT id, name, default_value FROM live_attribute_def
+WHERE workspace_id = $1 AND project_id = $2 AND id = ANY($3::uuid[])
+ORDER BY id
+`
+
+type ClipboardAttributesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type ClipboardAttributesRow struct {
+	ID           pgtype.UUID
+	Name         string
+	DefaultValue []byte
+}
+
+// ClipboardAttributes returns the project's attribute definitions that are
+// not in its trash whose IDs are among ids, in the order of their IDs, with
+// what a clipboard declares of each that an expression does not read: its
+// name and its default, which creating one in its place takes.
+func (q *Queries) ClipboardAttributes(ctx context.Context, arg ClipboardAttributesParams) ([]ClipboardAttributesRow, error) {
+	rows, err := q.db.Query(ctx, clipboardAttributes, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClipboardAttributesRow
+	for rows.Next() {
+		var i ClipboardAttributesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.DefaultValue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clipboardComponentTypes = `-- name: ClipboardComponentTypes :many
 SELECT id, key FROM live_component_type
 WHERE workspace_id = $1 AND project_id = $2

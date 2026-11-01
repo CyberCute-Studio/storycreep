@@ -52,12 +52,16 @@ const Version = 1
 // The bounds of a clipboard: the most nodes, outputs of a branch, connections,
 // variables, components, and attribute definitions of a component that it
 // holds, which its schema says too (TestSchemaBounds), and the most bytes of
-// its JSON, as encoding/json writes it, that Copy answers with, 4 MiB, so
-// that the report's request, and a paste's batch, with its new IDs and the
-// commands that create what the report lists, fit in a request's body of at
-// most 5 MiB (api.DefaultMaxBodyBytes), with a mebibyte for the rest, as a
-// batch's undo does (commands.DefaultMaxUndoBytes). Copy refuses a selection
-// whose clipboard would pass one of them, which a paste could not take.
+// its JSON, as encoding/json writes it, with those of the new IDs that a
+// paste of it gives (pasteBytes), that Copy answers with, 4 MiB, so that the
+// report's request, and a paste's command, with its new IDs, fit in a
+// request's body of at most 5 MiB (api.DefaultMaxBodyBytes), with a mebibyte
+// for the rest of its batch, as a batch's undo does
+// (commands.DefaultMaxUndoBytes): the commands that create what the report
+// lists, which a client that they do not fit with it, in bytes or in the
+// commands that a batch holds, sends in batches before the paste's, which it
+// resolves to all the same. Copy refuses a selection whose clipboard would
+// pass one of them, which a paste could not take.
 const (
 	MaxNodes       = 1000
 	MaxOutputs     = 1000
@@ -153,13 +157,17 @@ type ClipboardComponentType struct {
 	Name string `json:"name" maxLength:"100" doc:"The component type's name"`
 }
 
-// ClipboardAttribute is an attribute definition of a component of a clipboard.
+// ClipboardAttribute is an attribute definition of a component of a
+// clipboard: what a paste resolves it by, and what creating one in its place
+// takes (attribute.create).
 type ClipboardAttribute struct {
-	ID      string   `json:"id" doc:"The attribute definition's ID where it was copied"`
-	Key     string   `json:"key" doc:"The attribute definition's key, an identifier of the expression language (PRD §5.8.1)"`
-	Type    string   `json:"type" enum:"bool,int,float,string,text,enum" doc:"The attribute's type (PRD FR-COMP-01)"`
-	Runtime bool     `json:"runtime,omitempty" doc:"Whether the attribute is runtime, which expressions read and write (PRD FR-COMP-03)"`
-	Options []string `json:"options,omitempty" doc:"An enum's options"`
+	ID      string      `json:"id" doc:"The attribute definition's ID where it was copied"`
+	Key     string      `json:"key" doc:"The attribute definition's key, an identifier of the expression language (PRD §5.8.1)"`
+	Name    string      `json:"name" maxLength:"100" doc:"The attribute definition's name"`
+	Type    string      `json:"type" enum:"bool,int,float,string,text,enum" doc:"The attribute's type (PRD FR-COMP-01)"`
+	Runtime bool        `json:"runtime,omitempty" doc:"Whether the attribute is runtime, which expressions read and write (PRD FR-COMP-03)"`
+	Options []string    `json:"options,omitempty" doc:"An enum's options"`
+	Default value.Value `json:"default,omitzero" doc:"The attribute definition's default, a value of its type, as attribute.create takes it. Without it, the type's zero value."`
 }
 
 // Text is a rich-text document of a clipboard (PRD FR-TEXT-01), as its JSON

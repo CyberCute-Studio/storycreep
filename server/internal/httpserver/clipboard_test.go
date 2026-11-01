@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -406,17 +407,32 @@ func TestClipboardPaste(t *testing.T) {
 
 // TestClipboardAcrossProjects checks that a paste into another project of the
 // workspace resolves what its content names by its keys, reports what it
-// resolves to nothing, with what creating it takes, keeps a text's reference
-// to it as it is, writes an expression's name of it explicitly, and leaves out
-// a speaker and a jumper's target that it lacks; and that a client that
-// creates what is missing in the batch of the paste, before it, has the paste
+// resolves to nothing, with what creating it takes, once for what a client
+// creates in its place, two variables of one key of two boards once, and an
+// attribute definition that the type that a component that resolves to none
+// would be created of lacks with that type, keeps a text's reference to it as
+// it is, writes an expression's name of it explicitly, and leaves out a
+// speaker and a jumper's target that it lacks; and that a client that creates
+// what the report lists in the batch of the paste, before it, has the paste
 // resolve to it (FR-EDIT-07 AC1).
 //
 // Verifies: FR-EDIT-07/AC1
 func TestClipboardAcrossProjects(t *testing.T) {
 	t.Parallel()
 	w := newClipboardWorld(t)
+	// Keeper's text shows Pier's mood too, which the clipboard declares with
+	// Harbour's, and which a paste resolves to the mood of the board that it
+	// pastes onto, as it resolves Harbour's.
+	pierMood := newVariableID()
+	w.apply(t, wireCommand{Type: "variable.create", Payload: map[string]any{"id": pierMood, "key": "mood",
+		"type": "string", "scope": "board", "board_id": w.pier}},
+		wireCommand{Type: "node.update", Payload: map[string]any{"id": w.keeper, "text": richText(
+			textInline("You have "), valueInline(w.trust), textInline(" trust with "), mentionInline(w.elara),
+			attributeInline(w.elara, w.fear), valueInline(pierMood))}})
 	c := w.copy(t, w.keeper, w.choice, w.lamp, w.back, w.away)
+	if len(c.Variables) != 3 {
+		t.Fatalf("the clipboard's variables are %+v, want trust and both moods", c.Variables)
+	}
 	other := createProject(t, w.s.main, w.owner, w.ws, "Lantern").ID
 	board := createBoard(t, w.s.main, w.owner, other, "Shore")
 	character := ids.Encode(ids.ComponentType, ids.New())
@@ -434,6 +450,14 @@ func TestClipboardAcrossProjects(t *testing.T) {
 		r.Components[0].ComponentTypeID != character || !slices.Equal(r.Nodes, []string{w.dock}) ||
 		len(r.Assets) != 0 {
 		t.Errorf("the report is %+v", r)
+	}
+	// Lantern's hero lacks fear, which a component created in Elara's place
+	// is of, and which the report lists with it, with what creating it takes.
+	if len(r.Attributes) != 1 || r.Attributes[0].ComponentTypeID != character ||
+		r.Attributes[0].Attribute.ID != w.fear || r.Attributes[0].Attribute.Name != "Fear" ||
+		r.Attributes[0].Attribute.Type != "int" || !r.Attributes[0].Attribute.Runtime ||
+		string(r.Attributes[0].Attribute.Default.JSON()) != "0" {
+		t.Errorf("the report's attribute definitions are %+v", r.Attributes)
 	}
 
 	// Pasted as it is, what it names resolves to nothing.
@@ -463,13 +487,14 @@ func TestClipboardAcrossProjects(t *testing.T) {
 		}
 		return wireCommand{Type: "variable.create", Payload: p}
 	}
-	fear := ids.Encode(ids.AttributeDef, ids.New())
+	fear, a := ids.Encode(ids.AttributeDef, ids.New()), r.Attributes[0]
 	cmd, newIDs = paste(board, c, 0, 300)
 	newVariables := map[string]string{"trust": trust, "mood": mood}
 	w.applyTo(t, other, create(r.Variables[0], newVariables[r.Variables[0].Key]),
 		create(r.Variables[1], newVariables[r.Variables[1].Key]),
-		wireCommand{Type: "attribute.create", Payload: map[string]any{"id": fear, "component_type_id": character,
-			"name": "Fear", "key": "fear", "type": "int", "runtime": true}},
+		wireCommand{Type: "attribute.create", Payload: map[string]any{"id": fear,
+			"component_type_id": a.ComponentTypeID, "name": a.Attribute.Name, "key": a.Attribute.Key,
+			"type": a.Attribute.Type, "runtime": a.Attribute.Runtime, "default": a.Attribute.Default}},
 		wireCommand{Type: "component.create", Payload: map[string]any{"id": elara,
 			"component_type_id": r.Components[0].ComponentTypeID, "name": r.Components[0].Component.Name,
 			"key": r.Components[0].Component.Key}},
@@ -478,7 +503,8 @@ func TestClipboardAcrossProjects(t *testing.T) {
 	text := textJSON(t, keeper.Text)
 	if keeper.SpeakerComponentID != elara || keeper.OnEnter == nil ||
 		keeper.OnEnter.Source != "trust += 1\nmood = \"calm\"" || !keeper.OnEnter.IsValid ||
-		!strings.Contains(text, trust) || strings.Contains(text, w.trust) || !strings.Contains(text, fear) {
+		!strings.Contains(text, trust) || strings.Contains(text, w.trust) || !strings.Contains(text, fear) ||
+		!strings.Contains(text, mood) || strings.Contains(text, pierMood) {
 		t.Errorf("Keeper pasted with what it names created: %+v, with the text %s", keeper, text)
 	}
 	if choice := w.pastedNode(t, other, newIDs[w.choice]); !choice.Outputs[0].Condition.IsValid ||
@@ -491,7 +517,9 @@ func TestClipboardAcrossProjects(t *testing.T) {
 // attribute definition that two components of one type share for each of
 // them apart, where one resolves and the other does not, so that the report
 // lists no definition that the one that resolves has, and its text's value
-// reference names its definition; that an expression's attribute is written
+// reference names its definition, and where both resolve to components of a
+// type that lacks it, which the report lists once, with that type, so that a
+// client creates it once; that an expression's attribute is written
 // with the key of the definition that it resolves to, which a rename since
 // the copy changed; that a speaker in the trash where it was copied, which
 // the clipboard does not declare, is kept where the project has it, and
@@ -561,6 +589,38 @@ func TestClipboardResolvesEachComponent(t *testing.T) {
 		t.Errorf("Pair pasted into Lantern is %+v, with the text %s", pasted, text)
 	}
 
+	// In Beacon, Elara and Mira resolve to components of a type without
+	// their fear, which the report lists once, with that type, and which,
+	// created as the report lists it, both resolve to.
+	beacon := createProject(t, w.s.main, w.owner, w.ws, "Beacon").ID
+	cove := createBoard(t, w.s.main, w.owner, beacon, "Cove")
+	person, beaconElara, beaconMira := ids.Encode(ids.ComponentType, ids.New()), newComponentID(),
+		newComponentID()
+	w.applyTo(t, beacon,
+		wireCommand{Type: "component_type.create", Payload: map[string]any{"id": person, "name": "Person",
+			"key": "person"}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": beaconElara, "component_type_id": person,
+			"name": "Elara", "key": "elara"}},
+		wireCommand{Type: "component.create", Payload: map[string]any{"id": beaconMira, "component_type_id": person,
+			"name": "Mira", "key": "mira"}})
+	r := w.resolve(t, beacon, cove, c)
+	if len(r.Components) != 0 || len(r.Attributes) != 1 || r.Attributes[0].ComponentTypeID != person ||
+		r.Attributes[0].Attribute.ID != w.fear || r.Attributes[0].Attribute.Name != "Fear" {
+		t.Fatalf("the report of a paste into Beacon is %+v", r)
+	}
+	beaconFear, a := ids.Encode(ids.AttributeDef, ids.New()), r.Attributes[0]
+	cmd, newIDs = paste(cove, c, 0, 0)
+	w.applyTo(t, beacon, wireCommand{Type: "attribute.create", Payload: map[string]any{"id": beaconFear,
+		"component_type_id": a.ComponentTypeID, "name": a.Attribute.Name, "key": a.Attribute.Key,
+		"type": a.Attribute.Type, "runtime": a.Attribute.Runtime, "default": a.Attribute.Default}}, cmd)
+	pasted = w.pastedNode(t, beacon, newIDs[pair])
+	text = textJSON(t, pasted.Text)
+	if pasted.OnEnter == nil || pasted.OnEnter.Source != "elara.fear += 1" || !pasted.OnEnter.IsValid ||
+		!strings.Contains(text, beaconElara) || !strings.Contains(text, beaconMira) ||
+		strings.Count(text, beaconFear) != 2 || strings.Contains(text, w.fear) {
+		t.Errorf("Pair pasted into Beacon is %+v, with the text %s", pasted, text)
+	}
+
 	// Mira, once in the trash, resolves to none, and is listed with her own
 	// type, whose key is no longer the one that the clipboard declares.
 	w.apply(t, wireCommand{Type: "component.delete", Payload: map[string]any{"id": mira, "force": true}},
@@ -573,8 +633,11 @@ func TestClipboardResolvesEachComponent(t *testing.T) {
 
 // TestClipboardPasteRefused checks that a paste is refused, and changes
 // nothing, for a clipboard of a newer version, for new IDs that lack one of
-// its entities or name one twice, for a board in the trash, and for an offset
-// that takes a node beyond the bounds of a position, each at its field.
+// its entities or name one twice, for a board in the trash, for an offset
+// that takes a node beyond the bounds of a position, and for a script that the
+// names that it writes make longer than a source may be, each at its field;
+// and that the report is refused for a clipboard of a newer version, and for
+// a node that node.create would refuse.
 func TestClipboardPasteRefused(t *testing.T) {
 	t.Parallel()
 	w := newClipboardWorld(t)
@@ -618,5 +681,37 @@ func TestClipboardPasteRefused(t *testing.T) {
 	wantCode(t, "the report of a newer version", res, http.StatusUnprocessableEntity, "validation_failed")
 	if !strings.Contains(string(res.body), "body.clipboard.version") {
 		t.Errorf("the report of a newer version: %s", res.body)
+	}
+
+	// A node that node.create would refuse, as one of a size without a
+	// height, is refused by the report too, at its field.
+	sized := c
+	sized.Nodes = slices.Clone(c.Nodes)
+	sized.Nodes[0].Size = &node.NodeSize{}
+	if err := json.Unmarshal([]byte(`{"width":5}`), sized.Nodes[0].Size); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]any{"board_id": w.harbour, "clipboard": sized})
+	res = call(w.s.main, http.MethodPost, resolvePath(w.project), body, w.owner.header(true))
+	wantCode(t, "the report of a size without a height", res, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(res.body), "body.clipboard.nodes[0].size.height") {
+		t.Errorf("the report of a size without a height: %s", res.body)
+	}
+
+	// A script whose names resolve to nothing in another project, which the
+	// paste writes explicitly, longer than a source may be once they are, is
+	// refused at its field of the clipboard, whose own source is not.
+	long := c
+	long.Nodes = slices.Clone(c.Nodes)
+	keeper := slices.IndexFunc(long.Nodes, func(n clipboard.ClipboardNode) bool { return n.ID == w.keeper })
+	long.Nodes[keeper].OnEnter = strings.Repeat(`mood = "`+strings.Repeat("x", 4000)+"\"\n", 4) +
+		strings.Repeat("trust += 1\n", 31)
+	other := createProject(t, w.s.main, w.owner, w.ws, "Far").ID
+	cmd, _ := paste(createBoard(t, w.s.main, w.owner, other, "Shore"), long, 0, 0)
+	res = call(w.s.main, http.MethodPost, commandsPath(other), commandBatch(t, cmd), w.owner.header(true))
+	wantCode(t, "a script too long once pasted", res, http.StatusUnprocessableEntity, "validation_failed")
+	if at := fmt.Sprintf("payload.clipboard.nodes[%d].on_enter", keeper); !strings.Contains(string(res.body), at) ||
+		!strings.Contains(string(res.body), "would have") {
+		t.Errorf("a script too long once pasted: %s, want a problem at %s", res.body, at)
 	}
 }

@@ -73,12 +73,31 @@
     "ClipboardAttribute": {
       "additionalProperties": false,
       "properties": {
+        "default": {
+          "description": "The attribute definition's default, a value of its type, as attribute.create takes it. Without it, the type's zero value.",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
         "id": {
           "description": "The attribute definition's ID where it was copied",
           "type": "string"
         },
         "key": {
           "description": "The attribute definition's key, an identifier of the expression language (PRD §5.8.1)",
+          "type": "string"
+        },
+        "name": {
+          "description": "The attribute definition's name",
+          "maxLength": 100,
           "type": "string"
         },
         "options": {
@@ -111,6 +130,7 @@
       "required": [
         "id",
         "key",
+        "name",
         "type"
       ],
       "type": "object"

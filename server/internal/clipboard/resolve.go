@@ -14,13 +14,13 @@ import (
 
 // ClipboardReport is what a clipboard's content names that resolves to nothing
 // at a board that it would be pasted onto (PRD FR-EDIT-07 AC1): each as the
-// clipboard declares it, with what creating one in its place takes, which a
-// client may create in the batch of the paste, before it, so that the paste
-// resolves to it.
+// clipboard declares it, with what creating one in its place takes, once for
+// each that a client would create, which it may create in the batch of the
+// paste, before it, so that the paste resolves to it.
 type ClipboardReport struct {
-	Variables  []ClipboardVariable `json:"variables" nullable:"false" doc:"The variables that the clipboard declares that resolve to none at the board: neither the same variable, global or of the board, nor one of its key and scope, a global one or one of the board. Each is as the clipboard declares it, which a variable.create of the board's project, of the board for a board's variable, takes, with an ID of its own."`
-	Components []MissingComponent  `json:"components" nullable:"false" doc:"The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type that a component.create in its place may take: the same type as its own, or else the one of its type's key, if the project has one"`
-	Attributes []MissingAttribute  `json:"attributes" nullable:"false" doc:"The attribute definitions that the clipboard declares of a component that resolves, which the type of the component that it resolves to does not have, neither the same definition nor one of its key, each with that component"`
+	Variables  []ClipboardVariable `json:"variables" nullable:"false" doc:"The variables that the clipboard declares that resolve to none at the board: neither the same variable, global or of the board, nor one of its key and scope, a global one or one of the board. Each is as the clipboard declares it, which a variable.create of the board's project, of the board for a board's variable, takes, with an ID of its own, and is listed once for its key and scope, the first that the clipboard declares, as the clipboard may declare variables of one key of several boards, which a text names, which each resolve to the one of that key of the board that it is pasted onto."`
+	Components []MissingComponent  `json:"components" nullable:"false" doc:"The components that the clipboard declares that resolve to none in the board's project: neither the same component nor one of its key, of those that are not in the project's trash, each with the project's component type that a component.create in its place may take: the same type as its own, or else the one of its type's key, if the project has one. One without a type is created with a component_type.create of its type, as the clipboard declares it, once for each type, and with an attribute.create of that type of each attribute definition that the clipboard declares of it, once for each key."`
+	Attributes []MissingAttribute  `json:"attributes" nullable:"false" doc:"The attribute definitions that the clipboard declares of a component, which the project's component type that a paste resolves it by does not have, neither the same definition nor one of its key: the type of the component that it resolves to, or the one that components lists for a component that resolves to none. Each is listed with that type, once for the type and its key, the first that the clipboard declares, as the components of a type share its definitions, which an attribute.create of the type, with an ID of its own, takes."`
 	Speakers   []string            `json:"speakers" nullable:"false" doc:"The speakers of the clipboard's elements that it does not declare, as it declares no component that was in the trash where it was copied, that the board's project does not have, in its trash or not, each once: the elements are pasted without them. A speaker that the clipboard declares that resolves to none, which components lists, is pasted as it is where the project has it, in its trash or not, and else left out too."`
 	Nodes      []string            `json:"nodes" nullable:"false" doc:"The nodes outside the clipboard that its jumpers target or its expressions name by node references, each once, that the board's project does not have, in its trash or not, or not on the board that a target names: a jumper whose target this lists is pasted without one, and a node reference names nothing"`
 	Assets     []string            `json:"assets" nullable:"false" doc:"The cover images of the clipboard's elements that are not the board's project's assets, as those of another project are not, each once: the elements are pasted without them"`
@@ -34,10 +34,12 @@ type MissingComponent struct {
 }
 
 // MissingAttribute is an attribute definition of a component of a clipboard
-// that the component that it resolves to does not have (ClipboardReport).
+// that the component type that a paste resolves it by does not have: the type
+// of the component that the clipboard's component resolves to, or the one
+// that one created in its place may be of (ClipboardReport).
 type MissingAttribute struct {
-	ComponentID string             `json:"component_id" doc:"The ID of the project's component that the clipboard's component resolves to"`
-	Attribute   ClipboardAttribute `json:"attribute" doc:"The attribute definition, as the clipboard declares it"`
+	ComponentTypeID string             `json:"component_type_id" doc:"The ID of the project's component type, not in its trash, that does not have the definition, which an attribute.create in its place is of"`
+	Attribute       ClipboardAttribute `json:"attribute" doc:"The attribute definition, as the clipboard declares it"`
 }
 
 // destination is what a paste resolves a clipboard's declarations against: a
@@ -58,9 +60,13 @@ type destination struct {
 	components  map[string]string
 	definitions map[string][]expr.Attribute
 	// types are the IDs of the project's component types by their keys, and
-	// typeIDs those IDs.
-	types   map[string]string
-	typeIDs map[string]bool
+	// typeIDs those IDs; componentTypes are the IDs of the components' types
+	// by the components' IDs, and ofType the attribute definitions of each
+	// type that has some, by its ID.
+	types          map[string]string
+	typeIDs        map[string]bool
+	componentTypes map[string]string
+	ofType         map[string][]expr.Attribute
 }
 
 // loadDestination returns the board board of the project, of the workspace
@@ -76,7 +82,7 @@ func loadDestination(ctx context.Context, q *queries.Queries, ws, project, board
 	if err != nil {
 		return nil, err
 	}
-	d.names = live.Project
+	d.names, d.componentTypes, d.ofType = live.Project, live.ComponentTypes, live.Types
 	for _, v := range live.Variables {
 		switch v.Board {
 		case "":
@@ -181,29 +187,43 @@ func (d *destination) typeOf(typ ClipboardComponentType) string {
 }
 
 // report returns what of the clipboard c's declarations resolves to nothing
-// as r says, with the speakers that it does not declare, the nodes that its
-// jumpers target, or that its expressions name, outside it, that the board's
-// project lacks, and the covers that are not its assets (ClipboardReport), as
-// speakers, targets, and covers read them.
+// as r says, each once for what a client would create in its place, with the
+// speakers that it does not declare, the nodes that its jumpers target, or
+// that its expressions name, outside it, that the board's project lacks, and
+// the covers that are not its assets (ClipboardReport), as speakers, targets,
+// and covers read them.
 func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboard, r resolution) (ClipboardReport,
 	error) {
 	out := ClipboardReport{Variables: []ClipboardVariable{}, Components: []MissingComponent{},
 		Attributes: []MissingAttribute{}, Speakers: []string{}, Nodes: []string{}, Assets: []string{}}
+	// What resolves to nothing is listed once for what a client creates in
+	// its place: a variable once for its scope and key, and an attribute
+	// definition once for the type that lacks it and its key, since a scope,
+	// and a type, has one of a key.
+	places := map[string]bool{}
 	for _, v := range c.Variables {
-		if r.variables[canonical(ids.Variable, v.ID)] == "" {
+		if place := v.Scope + " " + v.Key; r.variables[canonical(ids.Variable, v.ID)] == "" && !places[place] {
+			places[place] = true
 			out.Variables = append(out.Variables, v)
 		}
 	}
 	for _, k := range c.Components {
-		id := canonical(ids.Component, k.ID)
-		to := r.components[id]
+		to := r.components[canonical(ids.Component, k.ID)]
+		typ := d.componentTypes[to]
 		if to == "" {
-			out.Components = append(out.Components, MissingComponent{Component: k, ComponentTypeID: d.typeOf(k.Type)})
+			typ = d.typeOf(k.Type)
+			out.Components = append(out.Components, MissingComponent{Component: k, ComponentTypeID: typ})
+		}
+		// A component created in the place of one without a type is of a
+		// type created with it, with each definition that it declares.
+		if typ == "" {
 			continue
 		}
 		for _, a := range k.Attributes {
-			if r.attributes[expr.AttributeRef(id, canonical(ids.AttributeDef, a.ID))] == "" {
-				out.Attributes = append(out.Attributes, MissingAttribute{ComponentID: to, Attribute: a})
+			place := typ + " " + a.Key
+			if definitionOf(d.ofType[typ], canonical(ids.AttributeDef, a.ID), a.Key) == "" && !places[place] {
+				places[place] = true
+				out.Attributes = append(out.Attributes, MissingAttribute{ComponentTypeID: typ, Attribute: a})
 			}
 		}
 	}
@@ -223,15 +243,15 @@ func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboar
 			out.Speakers = append(out.Speakers, id)
 		}
 	}
-	targets, err := d.targets(ctx, q, c)
+	named, err := c.outsiders()
 	if err != nil {
 		return ClipboardReport{}, err
 	}
-	refs, err := c.nodeReferences()
+	targets, err := d.targets(ctx, q, named)
 	if err != nil {
 		return ClipboardReport{}, err
 	}
-	for _, n := range append(c.outsideTargets(), refs...) {
+	for _, n := range named {
 		if !targets[n.key()] && !listed[n.id] {
 			listed[n.id] = true
 			out.Nodes = append(out.Nodes, n.id)
@@ -260,6 +280,17 @@ type outside struct {
 // key returns what the node is known by among those that targets found.
 func (o outside) key() string {
 	return canonical(ids.Node, o.id) + "@" + canonical(ids.Board, o.board)
+}
+
+// outsiders returns the nodes outside the clipboard that its content names,
+// in its order: its jumpers' targets (outsideTargets), and then the nodes
+// that its expressions name (nodeReferences), whose sources it parses once.
+func (c Clipboard) outsiders() ([]outside, error) {
+	refs, err := c.nodeReferences()
+	if err != nil {
+		return nil, err
+	}
+	return append(c.outsideTargets(), refs...), nil
 }
 
 // outsideTargets returns the targets of the clipboard's jumpers that are not
@@ -339,19 +370,16 @@ func (c Clipboard) eachSource(f func(at, source string, ctx expr.Context) error)
 	return nil
 }
 
-// targets returns which of the nodes outside the clipboard c that its content
-// names the board's project has, in its trash or not, each known by its ID
-// and, for a jumper's target, the board that the target names it on, which
-// it is on (outside.key), and for a node reference by its ID and "@" alone.
-func (d *destination) targets(ctx context.Context, q *queries.Queries, c Clipboard) (map[string]bool, error) {
-	refs, err := c.nodeReferences()
-	if err != nil {
-		return nil, err
-	}
+// targets returns which of the nodes outside a clipboard that its content
+// names, named (Clipboard.outsiders), the board's project has, in its trash or
+// not, each known by its ID and, for a jumper's target, the board that the
+// target names it on, which it is on (outside.key), and for a node reference
+// by its ID and "@" alone.
+func (d *destination) targets(ctx context.Context, q *queries.Queries, named []outside) (map[string]bool, error) {
 	var list []pgtype.UUID
-	for _, n := range append(c.outsideTargets(), refs...) {
+	for _, n := range named {
 		if u, err := ids.Decode(ids.Node, n.id); err == nil {
-			list = append(list, pgtype.UUID{Bytes: u, Valid: true})
+			list = append(list, nullUUID(u))
 		}
 	}
 	out := map[string]bool{}
@@ -420,7 +448,7 @@ func held(kind ids.Kind, of []string, read func(list []pgtype.UUID) ([]pgtype.UU
 			continue
 		}
 		seen[u] = true
-		list = append(list, uuidOf(u))
+		list = append(list, nullUUID(u))
 	}
 	out := map[string]bool{}
 	if len(list) == 0 {

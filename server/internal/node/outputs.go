@@ -583,20 +583,20 @@ func sortedRevs(rows []queries.RekindBranchOutputsRow) []queries.RekindBranchOut
 
 // firstConditional returns the first conditional output of the branch node,
 // which is not in the trash, that is not in the trash either, or nil if it
-// has none.
+// has none, read alone, so that creating each of a branch's many outputs, as
+// a paste does (package clipboard), does not read every one of them each
+// time.
 func firstConditional(ctx context.Context, q *queries.Queries, ws, project, node pgtype.UUID) (
 	*queries.BranchOutput, error) {
-	rows, err := q.NodeOutputs(ctx, queries.NodeOutputsParams{WorkspaceID: ws, ProjectID: project,
-		NodeIds: []pgtype.UUID{node}})
-	if err != nil {
-		return nil, fmt.Errorf("node: read the branch's outputs: %w", err)
+	o, err := q.FirstConditionalOutput(ctx, queries.FirstConditionalOutputParams{WorkspaceID: ws,
+		ProjectID: project, NodeID: node})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("node: read the branch's first output: %w", err)
 	}
-	for i := range rows {
-		if rows[i].Kind != OutputElse {
-			return &rows[i], nil
-		}
-	}
-	return nil, nil
+	return &o, nil
 }
 
 // compareOutputs compares the places of two conditional outputs, by their

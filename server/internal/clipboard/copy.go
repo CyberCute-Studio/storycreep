@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -62,7 +63,7 @@ func (s *Service) Copy(ctx context.Context, actor commands.Actor, projectID ids.
 	var out Clipboard
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
 		var err error
-		out, err = copyNodes(ctx, queries.New(tx), uuidOf(workspaceID), uuidOf(projectID), nodeIDs)
+		out, err = copyNodes(ctx, queries.New(tx), nullUUID(workspaceID), nullUUID(projectID), nodeIDs)
 		return err
 	})
 	return out, err
@@ -96,7 +97,7 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 			continue
 		}
 		at[u] = i
-		list = append(list, uuidOf(u))
+		list = append(list, nullUUID(u))
 	}
 	if len(problems) > 0 {
 		return Clipboard{}, problems
@@ -163,7 +164,8 @@ func copyNodes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUI
 // c.Nodes[j], whose place in node_ids is place(j): more connections between
 // its nodes, more variables or components declared, or more attribute
 // definitions declared of one component, than a clipboard holds, or more than
-// MaxBytes bytes of JSON.
+// MaxBytes bytes of JSON, with the new IDs that a paste of it gives
+// (pasteBytes).
 func (c Clipboard) bounds(place func(j int) int) input.FieldErrors {
 	var errs input.FieldErrors
 	add := func(at, msg string) { errs = append(errs, input.FieldError{Field: at, Message: msg}) }
@@ -193,11 +195,47 @@ func (c Clipboard) bounds(place func(j int) int) input.FieldErrors {
 	if len(errs) > 0 {
 		return errs
 	}
-	if data, err := json.Marshal(c); err == nil && len(data) > MaxBytes {
-		add("node_ids", fmt.Sprintf("are nodes whose clipboard is %d bytes of JSON, more than the %d that a "+
-			"paste takes: copy fewer of them", len(data), MaxBytes))
+	if n, err := c.pasteBytes(); err == nil && n > MaxBytes {
+		add("node_ids", fmt.Sprintf("are nodes whose clipboard, with the new IDs that a paste of it gives, is %d "+
+			"bytes of JSON, more than the %d that a paste takes: copy fewer of them", n, MaxBytes))
 	}
 	return errs
+}
+
+// pasteBytes returns how many bytes of JSON a paste's command holds of the
+// clipboard c (MaxBytes): c, as encoding/json writes it, which it counts
+// without keeping it, and the new ID of each of its nodes, outputs, and
+// connections by its ID, which the paste's ids hold, each as long as the ID
+// that it replaces, an ID of the same kind, which c holds in its canonical
+// spelling, as Copy writes it.
+func (c Clipboard) pasteBytes() (int, error) {
+	var n counter
+	if err := json.NewEncoder(&n).Encode(c); err != nil {
+		return 0, err
+	}
+	// Encode ends the JSON with a line feed, which Marshal does not write.
+	total := int(n) - 1
+	entry := func(id string) { total += 2*len(id) + len(`"":"",`) }
+	for _, nd := range c.Nodes {
+		entry(nd.ID)
+		for _, o := range nd.Outputs {
+			entry(o.ID)
+		}
+	}
+	for _, cn := range c.Connections {
+		entry(cn.ID)
+	}
+	return total, nil
+}
+
+// counter is a writer that counts the bytes written to it, and keeps none of
+// them.
+type counter int
+
+// Write counts p.
+func (n *counter) Write(p []byte) (int, error) {
+	*n += counter(len(p))
+	return len(p), nil
 }
 
 // clipboardNode returns the node n as a clipboard holds it.
@@ -315,7 +353,7 @@ func uuidsOf(kind ids.Kind, set map[string]bool) []pgtype.UUID {
 	var out []pgtype.UUID
 	for id := range set {
 		if u, err := ids.Decode(kind, id); err == nil {
-			out = append(out, uuidOf(u))
+			out = append(out, nullUUID(u))
 		}
 	}
 	slices.SortFunc(out, func(a, b pgtype.UUID) int { return bytes.Compare(a.Bytes[:], b.Bytes[:]) })
@@ -360,7 +398,7 @@ func declareVariables(ctx context.Context, q *queries.Queries, ws, projectID pgt
 // each with the attribute definitions of its type, not in the trash, as live,
 // the project's components that are not in its trash, holds them, whose IDs,
 // with the component's, are keys of attributes (expr.AttributeRef), in their
-// order.
+// order, with their names and defaults (declareAttributes).
 func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, live []expr.Component,
 	used, attributes map[string]bool) ([]ClipboardComponent, error) {
 	out := []ClipboardComponent{}
@@ -374,10 +412,21 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 		return nil, fmt.Errorf("clipboard: read the components: %w", err)
 	}
 	definitions := make(map[string][]expr.Attribute, len(list))
+	named := map[string]bool{}
 	for _, k := range live {
-		if used[k.ID] {
-			definitions[k.ID] = k.Attributes
+		if !used[k.ID] {
+			continue
 		}
+		definitions[k.ID] = k.Attributes
+		for _, a := range k.Attributes {
+			if attributes[expr.AttributeRef(k.ID, a.ID)] {
+				named[a.ID] = true
+			}
+		}
+	}
+	declared, err := declareAttributes(ctx, q, ws, projectID, named)
+	if err != nil {
+		return nil, err
 	}
 	for _, r := range rows {
 		k := ClipboardComponent{ID: ids.Encode(ids.Component, r.ID.Bytes), Key: r.Key, Name: r.Name,
@@ -385,12 +434,45 @@ func declareComponents(ctx context.Context, q *queries.Queries, ws, projectID pg
 				Name: r.TypeName},
 			Attributes: []ClipboardAttribute{}}
 		for _, a := range definitions[k.ID] {
-			if attributes[expr.AttributeRef(k.ID, a.ID)] {
-				k.Attributes = append(k.Attributes, ClipboardAttribute{ID: a.ID, Key: a.Key, Type: a.Type,
-					Runtime: a.Runtime, Options: a.Options})
+			if !attributes[expr.AttributeRef(k.ID, a.ID)] {
+				continue
 			}
+			d := ClipboardAttribute{ID: a.ID, Key: a.Key, Name: declared[a.ID].Name, Type: a.Type,
+				Runtime: a.Runtime, Options: a.Options, Default: declared[a.ID].Default}
+			// The default as attribute.create writes it, as jsonb need not
+			// have kept it.
+			if def, problem := d.Default.Read(d.Type, value.Checks{}, d.Options...); problem == "" {
+				d.Default = def
+			}
+			k.Attributes = append(k.Attributes, d)
 		}
 		out = append(out, k)
+	}
+	return out, nil
+}
+
+// declareAttributes returns the names and the defaults of the project's
+// attribute definitions, not in its trash, whose IDs are keys of named, by
+// their IDs, as a clipboard declares them, with what creating one in their
+// place takes that an expression does not read.
+func declareAttributes(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
+	named map[string]bool) (map[string]ClipboardAttribute, error) {
+	out := map[string]ClipboardAttribute{}
+	list := uuidsOf(ids.AttributeDef, named)
+	if len(list) == 0 {
+		return out, nil
+	}
+	rows, err := q.ClipboardAttributes(ctx, queries.ClipboardAttributesParams{WorkspaceID: ws,
+		ProjectID: projectID, Ids: list})
+	if err != nil {
+		return nil, fmt.Errorf("clipboard: read the attribute definitions: %w", err)
+	}
+	for _, r := range rows {
+		a := ClipboardAttribute{Name: r.Name}
+		if err := json.Unmarshal(r.DefaultValue, &a.Default); err != nil {
+			return nil, fmt.Errorf("clipboard: the default of an attribute definition: %w", err)
+		}
+		out[ids.Encode(ids.AttributeDef, r.ID.Bytes)] = a
 	}
 	return out, nil
 }
@@ -405,7 +487,7 @@ func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID i
 	c Clipboard) (ClipboardReport, error) {
 	var out ClipboardReport
 	err := s.projects.ReadSnapshot(ctx, s.db, actor, projectID, func(tx pgx.Tx, workspaceID ids.UUID) error {
-		problems := checkID(ids.Board, "board_id", boardID)
+		problems := entityID(ids.Board, "board_id", boardID)
 		for _, e := range Check(c) {
 			e.Field = clipboardField(e.Field)
 			problems = append(problems, e)
@@ -414,16 +496,16 @@ func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID i
 			return problems
 		}
 		q := queries.New(tx)
-		ws, project := uuidOf(workspaceID), uuidOf(projectID)
+		ws, project := nullUUID(workspaceID), nullUUID(projectID)
 		b, _ := ids.Decode(ids.Board, boardID)
 		if _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project,
-			ID: uuidOf(b)}); isNoRows(err) {
+			ID: nullUUID(b)}); errors.Is(err, pgx.ErrNoRows) {
 			return input.FieldErrors{{Field: "board_id", Message: "is not a board of the project, or is one in " +
 				"its trash"}}
 		} else if err != nil {
 			return fmt.Errorf("clipboard: read the board: %w", err)
 		}
-		d, err := loadDestination(ctx, q, ws, project, uuidOf(b))
+		d, err := loadDestination(ctx, q, ws, project, nullUUID(b))
 		if err != nil {
 			return err
 		}

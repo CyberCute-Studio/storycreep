@@ -1313,8 +1313,9 @@ func TestChanged(t *testing.T) {
 // its own inverse undoes; a part whose payload its schema or its checks
 // refuse, or whose Apply refuses the batch, refuses it at the command's
 // field that the part's field comes from; and a part that needs another
-// capability, adds to a limit that the command does not declare, or is of no
-// type, fails the batch, which applies nothing.
+// capability, adds to a limit that the command does not declare, cannot be
+// undone where the command can, or is of no type, fails the batch, which
+// applies nothing.
 func TestApplyPart(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t)
@@ -1353,7 +1354,7 @@ func TestApplyPart(t *testing.T) {
 			t.Errorf("a part %s of %q: %v, want the command refused at %s", c.part, c.body, err, c.field)
 		}
 	}
-	for _, part := range []Type{noteDelete, noteCreate, "note.nothing", noteCompose} {
+	for _, part := range []Type{noteDelete, noteCreate, noteFail, "note.nothing", noteCompose} {
 		_, err := p.Apply(ctx, w.as(ownerUser), w.project, []Command{compose(part, "y")})
 		var refused *RefusedError
 		if err == nil || errors.As(err, &refused) {

@@ -55,8 +55,8 @@ func TestSchemaFile(t *testing.T) {
 
 // TestSchemaBounds checks that the bounds that the clipboard's schema says,
 // which its types' tags give, are those that Copy holds a copy to, and those
-// of what a node, a variable, and a component take where they are created, so
-// that neither drifts from the other.
+// of what a node, a variable, a component, and an attribute definition take
+// where they are created, so that neither drifts from the other.
 func TestSchemaBounds(t *testing.T) {
 	var doc struct {
 		Defs map[string]struct {
@@ -89,6 +89,7 @@ func TestSchemaBounds(t *testing.T) {
 		{"ClipboardVariable", "description", variable.MaxDescriptionLength},
 		{"ClipboardComponent", "name", component.MaxNameLength},
 		{"ClipboardComponentType", "name", component.MaxNameLength},
+		{"ClipboardAttribute", "name", component.MaxNameLength},
 	} {
 		p := doc.Defs[b.def].Properties[b.property]
 		if got := max(p.MaxItems, p.MaxLength); got != b.want {

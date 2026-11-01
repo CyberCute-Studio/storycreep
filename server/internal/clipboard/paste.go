@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,6 +17,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/expr"
+	"github.com/CyberCute-Studio/storycreep/server/internal/expression"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
@@ -67,7 +69,7 @@ func Register(r *commands.Registry) {
 // clipboard, and its new IDs, which are one of each node, output, and
 // connection of the clipboard, of their kinds, of UUIDv7s, and no two alike.
 func checkPaste(p pastePayload) input.FieldErrors {
-	errs := checkID(ids.Board, "board_id", p.BoardID)
+	errs := entityID(ids.Board, "board_id", p.BoardID)
 	errs = append(errs, node.CheckPosition("offset", p.Offset)...)
 	for _, e := range Check(p.Clipboard) {
 		e.Field = clipboardField(e.Field)
@@ -125,12 +127,13 @@ func checkPaste(p pastePayload) input.FieldErrors {
 // applyPaste is Paste's Apply.
 func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 	q := queries.New(tx)
-	ws, project := uuidOf(tx.WorkspaceID()), uuidOf(tx.ProjectID())
+	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
 	b, _ := ids.Decode(ids.Board, p.BoardID)
-	board := uuidOf(b)
-	if _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project, ID: board}); isNoRows(err) {
+	board := nullUUID(b)
+	switch _, err := q.Board(ctx, queries.BoardParams{WorkspaceID: ws, ProjectID: project, ID: board}); {
+	case errors.Is(err, pgx.ErrNoRows):
 		return commands.Refuse("board_id", "is not a board of the project, or is one in its trash", nil)
-	} else if err != nil {
+	case err != nil:
 		return fmt.Errorf("clipboard: read the board: %w", err)
 	}
 	c := p.Clipboard
@@ -173,7 +176,8 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 			payload := map[string]any{"id": p.IDs[o.ID], "node_id": p.IDs[n.ID]}
 			if o.Else {
 				payload["else"] = true
-			} else if payload["condition"], err = pl.source(o.Condition, expr.ContextCondition); err != nil {
+			} else if payload["condition"], err = pl.source(at+".condition", o.Condition,
+				expr.ContextCondition); err != nil {
 				return err
 			}
 			fields := pl.fields(at, o.ID)
@@ -203,8 +207,8 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 // plan is how a paste writes what it pastes of a clipboard at a board: what
 // the clipboard's declarations resolve to there, and the moves of the
 // expressions' names, the projects that they are read in, the new IDs, the
-// nodes outside the clipboard and the speakers that the board's project has,
-// and the covers that are its assets.
+// jumpers' targets outside the clipboard and the speakers that the board's
+// project has, and the covers that are its assets.
 type plan struct {
 	d        *destination
 	r        resolution
@@ -232,7 +236,9 @@ func (d *destination) plan(ctx context.Context, q *queries.Queries, c Clipboard,
 	}
 	pl.moves = expr.Moves{Variables: pl.r.variables, Components: pl.r.components, Attributes: pl.r.attributes,
 		Nodes: nodes}
-	if pl.targets, err = d.targets(ctx, q, c); err != nil {
+	// A node reference to a node outside the clipboard is written as it is,
+	// whatever the project has, so the targets alone are read.
+	if pl.targets, err = d.targets(ctx, q, c.outsideTargets()); err != nil {
 		return nil, err
 	}
 	if pl.speakers, err = d.speakers(ctx, q, c); err != nil {
@@ -315,7 +321,7 @@ func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.Nod
 		if s.source == "" {
 			continue
 		}
-		source, err := pl.source(s.source, expr.ContextScript)
+		source, err := pl.source(at+"."+s.field, s.source, expr.ContextScript)
 		if err != nil {
 			return nil, err
 		}
@@ -357,7 +363,7 @@ func (pl *plan) connection(at string, c ClipboardConnection) (map[string]any, er
 		if s.source == "" {
 			continue
 		}
-		source, err := pl.source(s.source, s.ctx)
+		source, err := pl.source(at+"."+s.field, s.source, s.ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -366,14 +372,24 @@ func (pl *plan) connection(at string, c ClipboardConnection) (map[string]any, er
 	return p, nil
 }
 
-// source returns the source of an expression of the clipboard, of the
-// context ctx, as it is pasted: with each name that names one of its
-// declarations naming what that resolves to, and each node reference to one
-// of its nodes the node's copy (expr.Relocate).
-func (pl *plan) source(source string, ctx expr.Context) (string, error) {
+// source returns the source of an expression of the clipboard, at the field
+// at of the paste's payload, of the context ctx, as it is pasted: with each
+// name that names one of its declarations naming what that resolves to, and
+// each node reference to one of its nodes the node's copy (expr.Relocate). It
+// refuses the batch, at at, if that source is longer than an expression's
+// source may be, as a name of what resolves to nothing, which is written
+// explicitly, may make it, before the part that writes it refuses it at a
+// field that is not.
+func (pl *plan) source(at, source string, ctx expr.Context) (string, error) {
 	out, err := expr.Relocate(source, ctx, pl.from, pl.fromAt, pl.d.names, pl.d.boardID, pl.moves)
 	if err != nil {
 		return "", fmt.Errorf("clipboard: %w", err)
+	}
+	if expression.CheckSource(out) != "" {
+		return "", commands.Refuse(at, fmt.Sprintf("would have %d characters once the paste writes its names as "+
+			"they name what they resolve to at the board, those of what resolves to nothing explicitly, more than "+
+			"the %d of an expression's source: shorten it, or create first what its names name, which the report "+
+			"lists", utf8.RuneCountInString(out), expression.MaxSourceLength), nil)
 	}
 	return out, nil
 }
@@ -408,12 +424,7 @@ func (pl *plan) text(t Text) (Text, error) {
 	return textOf(*doc)
 }
 
-// uuidOf returns id as a uuid column.
-func uuidOf(id ids.UUID) pgtype.UUID {
+// nullUUID returns id as a uuid column.
+func nullUUID(id ids.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-// isNoRows reports whether err is a read's of no row.
-func isNoRows(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows)
 }

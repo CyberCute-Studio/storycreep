@@ -1875,7 +1875,7 @@ func (g *undoGen) paste() (map[string]any, bool) {
 		attributes := []any{}
 		for _, a := range g.m.attributes {
 			if a.componentType == c.componentType && g.coin() {
-				d := obj("id", a.id, "key", a.key, "type", a.typ, "runtime", a.runtime)
+				d := obj("id", a.id, "key", a.key, "name", "Name", "type", a.typ, "runtime", a.runtime)
 				if len(a.options) > 0 {
 					d["options"] = a.options
 				}

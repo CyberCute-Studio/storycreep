@@ -360,28 +360,25 @@ func Register(r *commands.Registry) {
 	})
 
 	// node.delete_many and node.restore_many do what node.delete and
-	// node.restore do to each node of their payload, in its order, and the
-	// inverse of each does the other to those that it changes.
+	// node.restore do to each node of their payload, each reading the nodes,
+	// and changing them, in one statement, and the inverse of each does the
+	// other to those that it changes.
 	commands.Register(r, commands.Spec[manyPayload]{
 		Type: DeleteMany, Capability: op, Scope: sc, Touches: node,
 		Check: checkMany,
 		Inverse: func(ctx context.Context, tx *commands.Tx, p manyPayload) ([]commands.Step, error) {
-			return manyInverse(ctx, tx, p, deletes, RestoreMany)
+			return manyInverse(ctx, tx, p, deletable, RestoreMany)
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p manyPayload) error {
-			return applyMany(ctx, tx, p, deleteNode)
-		},
+		Apply: applyDeleteMany,
 	})
 
 	commands.Register(r, commands.Spec[manyPayload]{
 		Type: RestoreMany, Capability: op, Scope: sc, Touches: node,
 		Check: checkMany,
 		Inverse: func(ctx context.Context, tx *commands.Tx, p manyPayload) ([]commands.Step, error) {
-			return manyInverse(ctx, tx, p, restores, DeleteMany)
+			return manyInverse(ctx, tx, p, restorable, DeleteMany)
 		},
-		Apply: func(ctx context.Context, tx *commands.Tx, p manyPayload) error {
-			return applyMany(ctx, tx, p, restoreNode)
-		},
+		Apply: applyRestoreMany,
 	})
 
 	commands.Register(r, commands.Spec[entryPayload]{
@@ -423,24 +420,63 @@ func Register(r *commands.Registry) {
 
 // checkCreate returns what is wrong with Create's payload p that its schema
 // cannot say, but for the text rules of its title and tags (CheckNew): its
-// IDs, its position and size, and the fields that only an element or a
-// jumper has, set on a node of another type.
+// IDs, and what checkCreated checks.
 func checkCreate(p createPayload) input.FieldErrors {
 	errs := newID(ids.Node, p.ID)
 	errs = append(errs, entityID(ids.Board, "board_id", p.BoardID)...)
-	errs = append(errs, typedFields{kind: p.Kind != "", text: p.Text != nil, speaker: p.SpeakerComponentID != "",
-		cover: p.CoverAssetID != "", isEnding: p.IsEnding, target: p.Target != nil, onEnter: p.OnEnter != "",
-		onExit: p.OnExit != ""}.misplaced(p.Type)...)
-	errs = append(errs, field("on_enter", expression.CheckSource(p.OnEnter))...)
-	errs = append(errs, field("on_exit", expression.CheckSource(p.OnExit))...)
-	errs = append(errs, optionalID(ids.Component, "speaker_component_id", p.SpeakerComponentID)...)
-	errs = append(errs, optionalID(ids.Asset, "cover_asset_id", p.CoverAssetID)...)
-	errs = append(errs, checkPosition("position", p.Position)...)
-	if p.Size != nil {
-		errs = append(errs, checkSize("size", *p.Size)...)
+	return append(errs, checkCreated(Created{Type: p.Type, Kind: p.Kind, Text: p.Text != nil,
+		SpeakerComponentID: p.SpeakerComponentID, CoverAssetID: p.CoverAssetID, Position: p.Position, Size: p.Size,
+		IsEnding: p.IsEnding, Target: p.Target, OnEnter: p.OnEnter, OnExit: p.OnExit})...)
+}
+
+// Created is a node as node.create creates it, but for its ID, its board, and
+// its text, of which it says only whether the node has one: what package
+// clipboard checks of a node of a clipboard, which a paste creates with
+// node.create, as node.create checks it (CheckCreated).
+type Created struct {
+	Type, Kind, Title                string
+	Text                             bool
+	SpeakerComponentID, CoverAssetID string
+	Tags                             []string
+	Position                         NodePosition
+	Size                             *NodeSize
+	IsEnding                         bool
+	Target                           *NodeTarget
+	OnEnter, OnExit                  string
+}
+
+// CheckCreated returns what node.create would find wrong with the node n
+// before it reads the project, as its Check and its CheckNew find it, each at
+// its field of a node.create's payload, as on_enter: a field that only an
+// element or a jumper has, or a script, set on a node of another type, the
+// lengths of its scripts' sources, the IDs of its speaker and its cover, its
+// position, its size, and its target, and the text rules of its title and its
+// tags, those of a new node, so that package clipboard holds a clipboard's
+// nodes to the rules that a paste of them is held to, without a copy of them.
+func CheckCreated(n Created) input.FieldErrors {
+	errs := checkCreated(n)
+	errs = append(errs, field("title", checkTitle(n.Title))...)
+	return append(errs, checkTags("tags", n.Tags)...)
+}
+
+// checkCreated returns what is wrong with the node n that node.create's Check
+// finds, but for its ID and its board: its position and size, its scripts'
+// lengths, its speaker's, cover's, and target's IDs, and the fields that only
+// an element or a jumper has, set on a node of another type.
+func checkCreated(n Created) input.FieldErrors {
+	errs := typedFields{kind: n.Kind != "", text: n.Text, speaker: n.SpeakerComponentID != "",
+		cover: n.CoverAssetID != "", isEnding: n.IsEnding, target: n.Target != nil, onEnter: n.OnEnter != "",
+		onExit: n.OnExit != ""}.misplaced(n.Type)
+	errs = append(errs, field("on_enter", expression.CheckSource(n.OnEnter))...)
+	errs = append(errs, field("on_exit", expression.CheckSource(n.OnExit))...)
+	errs = append(errs, optionalID(ids.Component, "speaker_component_id", n.SpeakerComponentID)...)
+	errs = append(errs, optionalID(ids.Asset, "cover_asset_id", n.CoverAssetID)...)
+	errs = append(errs, checkPosition("position", n.Position)...)
+	if n.Size != nil {
+		errs = append(errs, checkSize("size", *n.Size)...)
 	}
-	if p.Target != nil {
-		errs = append(errs, checkTarget("target", *p.Target)...)
+	if n.Target != nil {
+		errs = append(errs, checkTarget("target", *n.Target)...)
 	}
 	return errs
 }
@@ -605,21 +641,63 @@ func restoreNode(ctx context.Context, tx *commands.Tx, at, id string) error {
 	return tx.AddUsage(usage.Nodes, 1)
 }
 
+// manyNodes returns the nodes of the payload p of DeleteMany or RestoreMany,
+// each at its place in p, read in one query, in the trash or not, with
+// whether their boards are, or refuses the batch, at the place in p of the
+// first that the project does not have, as anyNode does.
+func manyNodes(ctx context.Context, tx *commands.Tx, p manyPayload) ([]queries.NodesByIDRow, error) {
+	list := make([]pgtype.UUID, len(p.IDs))
+	for i, id := range p.IDs {
+		list[i] = decoded(ids.Node, id)
+	}
+	rows, err := queries.New(tx).NodesByID(ctx, queries.NodesByIDParams{WorkspaceID: nullUUID(tx.WorkspaceID()),
+		ProjectID: nullUUID(tx.ProjectID()), Ids: list})
+	if err != nil {
+		return nil, fmt.Errorf("node: read the nodes: %w", err)
+	}
+	found := make(map[[16]byte]queries.NodesByIDRow, len(rows))
+	for _, row := range rows {
+		found[row.Node.ID.Bytes] = row
+	}
+	out := make([]queries.NodesByIDRow, len(list))
+	for i, u := range list {
+		row, ok := found[u.Bytes]
+		if !ok {
+			return nil, commands.Refuse(fmt.Sprintf("ids[%d]", i), "is not a node of the project", nil)
+		}
+		out[i] = row
+	}
+	return out, nil
+}
+
+// deletable reports whether DeleteMany deletes the node of row, as deletes
+// reports of node.delete: whether it is not in the trash, deleted itself or
+// with its board.
+func deletable(row queries.NodesByIDRow) bool {
+	return !row.Node.DeletedAt.Valid && !row.BoardDeletedAt.Valid
+}
+
+// restorable reports whether RestoreMany restores the node of row, as
+// restores reports of node.restore: whether it is in the trash, deleted
+// itself, of a board that is not.
+func restorable(row queries.NodesByIDRow) bool {
+	return row.Node.DeletedAt.Valid && !row.BoardDeletedAt.Valid
+}
+
 // manyInverse returns the inverse of the command of DeleteMany or RestoreMany
 // whose payload is p: a step of the type back of the nodes of p that the
 // command changes, as changes reports of each, in p's order, or no step if it
 // changes none.
-func manyInverse(ctx context.Context, tx *commands.Tx, p manyPayload,
-	changes func(ctx context.Context, tx *commands.Tx, at, id string) (bool, error), back commands.Type) (
-	[]commands.Step, error) {
+func manyInverse(ctx context.Context, tx *commands.Tx, p manyPayload, changes func(queries.NodesByIDRow) bool,
+	back commands.Type) ([]commands.Step, error) {
+	rows, err := manyNodes(ctx, tx, p)
+	if err != nil {
+		return nil, err
+	}
 	var nodes []string
-	for i, id := range p.IDs {
-		ok, err := changes(ctx, tx, fmt.Sprintf("ids[%d]", i), id)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			nodes = append(nodes, id)
+	for i, row := range rows {
+		if changes(row) {
+			nodes = append(nodes, p.IDs[i])
 		}
 	}
 	if len(nodes) == 0 {
@@ -628,16 +706,101 @@ func manyInverse(ctx context.Context, tx *commands.Tx, p manyPayload,
 	return []commands.Step{{Type: back, Payload: manyPayload{IDs: nodes}}}, nil
 }
 
-// applyMany applies one to each node of the payload p of DeleteMany or
-// RestoreMany, at its place in p, in p's order.
-func applyMany(ctx context.Context, tx *commands.Tx, p manyPayload,
-	one func(ctx context.Context, tx *commands.Tx, at, id string) error) error {
-	for i, id := range p.IDs {
-		if err := one(ctx, tx, fmt.Sprintf("ids[%d]", i), id); err != nil {
+// applyDeleteMany is DeleteMany's Apply: what deleteNode does to each node of
+// p, in one statement, which refuses the batch at the place in p of the first
+// node of a board in the trash that is not in the trash itself.
+func applyDeleteMany(ctx context.Context, tx *commands.Tx, p manyPayload) error {
+	rows, err := manyNodes(ctx, tx, p)
+	if err != nil {
+		return err
+	}
+	var list []pgtype.UUID
+	for i, row := range rows {
+		switch {
+		case row.Node.DeletedAt.Valid:
+			continue
+		case row.BoardDeletedAt.Valid:
+			return refuseBoardInTrash(fmt.Sprintf("ids[%d]", i))
+		}
+		list = append(list, row.Node.ID)
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	revs, err := queries.New(tx).TrashNodes(ctx, queries.TrashNodesParams{UpdatedBy: by(tx),
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: list})
+	if err != nil {
+		return fmt.Errorf("node: delete the nodes: %w", err)
+	}
+	changed := make(map[[16]byte]int64, len(revs))
+	for _, r := range revs {
+		changed[r.ID.Bytes] = r.Rev
+	}
+	return reportMany(tx, list, changed, false)
+}
+
+// applyRestoreMany is RestoreMany's Apply: what restoreNode does to each node
+// of p, in one statement, which refuses the batch at the place in p of the
+// first node of a board in the trash.
+func applyRestoreMany(ctx context.Context, tx *commands.Tx, p manyPayload) error {
+	rows, err := manyNodes(ctx, tx, p)
+	if err != nil {
+		return err
+	}
+	var list []pgtype.UUID
+	for i, row := range rows {
+		switch {
+		case row.BoardDeletedAt.Valid:
+			return commands.Refuse(fmt.Sprintf("ids[%d]", i), "is a node of a board in the project's trash, which "+
+				"comes back only with its board: restore the board first", nil)
+		case !row.Node.DeletedAt.Valid:
+			continue
+		}
+		list = append(list, row.Node.ID)
+	}
+	if len(list) == 0 {
+		return nil
+	}
+	revs, err := queries.New(tx).RestoreNodes(ctx, queries.RestoreNodesParams{UpdatedBy: by(tx),
+		WorkspaceID: nullUUID(tx.WorkspaceID()), ProjectID: nullUUID(tx.ProjectID()), Ids: list})
+	if err != nil {
+		return fmt.Errorf("node: restore the nodes: %w", err)
+	}
+	changed := make(map[[16]byte]int64, len(revs))
+	for _, r := range revs {
+		changed[r.ID.Bytes] = r.Rev
+	}
+	return reportMany(tx, list, changed, true)
+}
+
+// reportMany reports the change of each node of list whose new revision
+// changed holds, in list's order, and its restoration too if restored, with
+// its connections, as restoreNode reports one's, and takes each from the
+// workspace's nodes, or adds it back if restored.
+func reportMany(tx *commands.Tx, list []pgtype.UUID, changed map[[16]byte]int64, restored bool) error {
+	var n int64
+	for _, id := range list {
+		rev, ok := changed[id.Bytes]
+		if !ok {
+			continue
+		}
+		if err := tx.Changed(ids.Node, id.Bytes, rev); err != nil {
 			return err
 		}
+		if restored {
+			if err := tx.Restored(ids.Node, id.Bytes); err != nil {
+				return err
+			}
+		}
+		n++
 	}
-	return nil
+	switch {
+	case n == 0:
+		return nil
+	case !restored:
+		n = -n
+	}
+	return tx.AddUsage(usage.Nodes, n)
 }
 
 // checkTarget returns the problems of a jumper's target at the field at:

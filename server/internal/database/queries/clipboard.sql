@@ -17,6 +17,15 @@ JOIN component_type t ON t.workspace_id = c.workspace_id AND t.project_id = c.pr
 WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id AND c.id = ANY(@ids::uuid[])
 ORDER BY c.id;
 
+-- name: ClipboardAttributes :many
+-- ClipboardAttributes returns the project's attribute definitions that are
+-- not in its trash whose IDs are among ids, in the order of their IDs, with
+-- what a clipboard declares of each that an expression does not read: its
+-- name and its default, which creating one in its place takes.
+SELECT id, name, default_value FROM live_attribute_def
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[])
+ORDER BY id;
+
 -- name: ClipboardComponentTypes :many
 -- ClipboardComponentTypes returns the project's component types that are not
 -- in its trash, in the order of their IDs, each with its key, by which a

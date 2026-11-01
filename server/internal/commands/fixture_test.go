@@ -101,7 +101,8 @@ const (
 	// noteCompose applies, as a part of itself (Tx.ApplyPart), a command of
 	// the type that its payload names, with the note and the body of its
 	// payload, at the fields of its payload's part, and is undone as
-	// noteUpdate is. noteReject refuses its batch at its payload's body.
+	// noteUpdate is. noteReject refuses its batch at its payload's body, and
+	// has an inverse of no step, so that it may be a part of noteCompose.
 	noteCompose Type = "note.compose"
 	noteReject  Type = "note.reject"
 )
@@ -438,7 +439,7 @@ func noteRegistry() *Registry {
 	})
 	Register(r, Spec[notePayload]{
 		Type: noteReject, Capability: authz.ListMembers, Scope: scope.ProjectWrite, Touches: touches,
-		NonUndoable: true,
+		Inverse: func(context.Context, *Tx, notePayload) ([]Step, error) { return []Step{}, nil },
 		Apply: func(context.Context, *Tx, notePayload) error {
 			return Refuse("body", "is rejected", errRefused)
 		},

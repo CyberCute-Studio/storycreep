@@ -801,6 +801,54 @@ func (q *Queries) RestoreNode(ctx context.Context, arg RestoreNodeParams) (int64
 	return rev, err
 }
 
+const restoreNodes = `-- name: RestoreNodes :many
+UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = $1
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[])
+    AND deleted_at IS NOT NULL
+RETURNING id, rev
+`
+
+type RestoreNodesParams struct {
+	UpdatedBy   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type RestoreNodesRow struct {
+	ID  pgtype.UUID
+	Rev int64
+}
+
+// RestoreNodes takes the project's nodes whose IDs are among ids out of its
+// trash, as RestoreNode takes one, but for those that are not there, and
+// returns those that it restored, with their new revisions, as
+// node.restore_many restores a selection in one statement.
+func (q *Queries) RestoreNodes(ctx context.Context, arg RestoreNodesParams) ([]RestoreNodesRow, error) {
+	rows, err := q.db.Query(ctx, restoreNodes,
+		arg.UpdatedBy,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RestoreNodesRow
+	for rows.Next() {
+		var i RestoreNodesRow
+		if err := rows.Scan(&i.ID, &i.Rev); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const trashNode = `-- name: TrashNode :one
 UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = $1
 WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND deleted_at IS NULL
@@ -826,6 +874,53 @@ func (q *Queries) TrashNode(ctx context.Context, arg TrashNodeParams) (int64, er
 	var rev int64
 	err := row.Scan(&rev)
 	return rev, err
+}
+
+const trashNodes = `-- name: TrashNodes :many
+UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = $1
+WHERE workspace_id = $2 AND project_id = $3 AND id = ANY($4::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev
+`
+
+type TrashNodesParams struct {
+	UpdatedBy   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type TrashNodesRow struct {
+	ID  pgtype.UUID
+	Rev int64
+}
+
+// TrashNodes deletes the project's nodes whose IDs are among ids to its
+// trash, as TrashNode deletes one, but for those that are there already, and
+// returns those that it deleted, with their new revisions, as node.delete_many
+// deletes a selection in one statement.
+func (q *Queries) TrashNodes(ctx context.Context, arg TrashNodesParams) ([]TrashNodesRow, error) {
+	rows, err := q.db.Query(ctx, trashNodes,
+		arg.UpdatedBy,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Ids,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TrashNodesRow
+	for rows.Next() {
+		var i TrashNodesRow
+		if err := rows.Scan(&i.ID, &i.Rev); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateNode = `-- name: UpdateNode :one

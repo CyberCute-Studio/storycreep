@@ -352,13 +352,16 @@ func (t *Tx) Carried() any {
 // needs nothing that the batch was not checked for: its type needs the
 // command's capability and scope, touches only kinds that the command
 // touches, adds to no limit that the command does not declare, and needs a
-// session only if the command does. It returns an error, which the command
-// returns, otherwise, and a refusal of the part, of its payload as its schema
-// or its checks find it or of its Apply (Refuse), as the command's refusal at
-// the field of the command's payload that at returns for the part's field,
-// as name or items[2].id, or "" for the part's payload itself, so that the
-// client is answered where its payload holds what is wrong. at is nil for a
-// part whose fields are the command's payload's own.
+// session only if the command does; and it can be undone if the command can
+// (Spec.NonUndoable), since a batch can be undone by its commands' types
+// alone, and its undo would otherwise leave what the part did as it is. It
+// returns an error, which the command returns, otherwise, and a refusal of
+// the part, of its payload as its schema or its checks find it or of its
+// Apply (Refuse), as the command's refusal at the field of the command's
+// payload that at returns for the part's field, as name or items[2].id, or
+// "" for the part's payload itself, so that the client is answered where its
+// payload holds what is wrong. at is nil for a part whose fields are the
+// command's payload's own.
 func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field string) string) error {
 	if t.current == nil {
 		return errors.New("commands: ApplyPart is called outside a command's Apply")
@@ -380,6 +383,9 @@ func (t *Tx) ApplyPart(ctx context.Context, typ Type, payload any, at func(field
 	case part.sessionOnly && !parent.sessionOnly:
 		return fmt.Errorf("commands: %s applies a part of the type %s, which only a session may apply", parent.typ,
 			typ)
+	case part.inverse == nil && parent.inverse != nil:
+		return fmt.Errorf("commands: %s applies a part of the type %s, which cannot be undone, where the command "+
+			"can", parent.typ, typ)
 	}
 	for _, k := range part.touches {
 		if !slices.Contains(parent.touches, k) {

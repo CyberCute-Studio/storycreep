@@ -104,6 +104,25 @@ UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NOT NULL
 RETURNING rev;
 
+-- name: TrashNodes :many
+-- TrashNodes deletes the project's nodes whose IDs are among ids to its
+-- trash, as TrashNode deletes one, but for those that are there already, and
+-- returns those that it deleted, with their new revisions, as node.delete_many
+-- deletes a selection in one statement.
+UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = @updated_by
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
+RETURNING id, rev;
+
+-- name: RestoreNodes :many
+-- RestoreNodes takes the project's nodes whose IDs are among ids out of its
+-- trash, as RestoreNode takes one, but for those that are not there, and
+-- returns those that it restored, with their new revisions, as
+-- node.restore_many restores a selection in one statement.
+UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = @updated_by
+WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[])
+    AND deleted_at IS NOT NULL
+RETURNING id, rev;
+
 -- name: Node :one
 -- Node returns a node of the project that is not in the trash, and no row if
 -- the project has no such node, or it is, itself or with its board.
