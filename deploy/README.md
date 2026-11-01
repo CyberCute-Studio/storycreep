@@ -193,7 +193,7 @@ To build it, from the repository's root:
 docker build -f deploy/Dockerfile -t storycreep .
 ```
 
-The binary is cross-compiled, so building for both platforms needs no emulation:
+The build makes the web app's bundle in a Node stage of its own, once, and the binary, which embeds it, in a Go stage. The binary is cross-compiled, so building for both platforms needs no emulation:
 
 ```sh
 docker buildx build --platform linux/amd64,linux/arm64 -f deploy/Dockerfile .
@@ -220,4 +220,11 @@ export STORYCREEP_DATABASE_MAINTENANCE_URL=postgres://storycreep_maintainer:stor
 export STORYCREEP_PUBLIC_URL=http://localhost:8080
 export STORYCREEP_ASSET_STORAGE="$PWD/.dev-assets"
 go run ./cmd/storycreep serve
+```
+
+A server built from the source tree, by the development compose file or `go run`, has no web app: `/app/` serves a page that says so. To work on the app, run its development server, as [`CONTRIBUTING.md`](../CONTRIBUTING.md#the-web-app) describes, which passes the API's requests to this server. To have the server serve the app itself, as the image does, build the app first, and the server with the `webdist` tag, in `server/`:
+
+```sh
+pnpm --filter @storycreep/app build
+go run -tags webdist ./cmd/storycreep serve
 ```
