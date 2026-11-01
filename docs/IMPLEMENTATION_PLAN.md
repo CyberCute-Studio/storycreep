@@ -577,7 +577,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone G — Real-time server
 
 ### 52. WebSocket hub and LISTEN/NOTIFY fanout
-**Status:** todo · **Depends on:** 26, 28
+**Status:** done ([#65](https://github.com/CyberCute-Studio/storycreep/pull/65)) · **Depends on:** 26, 28
 **PRD:** FR-RT-01, FR-RT-02 (server: AC2), ADR-005, NFR-PERF-17
 - `GET /api/v1/ws` authenticated by cookie or token (`project:read`), counted in the connect bucket, and upgraded with `coder/websocket`, in package `server/internal/realtime`. Subscriptions require read access, without revealing whether a project exists, and the socket's credential and the access are checked again before each page of operations that it is sent. A socket of the cookie from another origin is refused (`csrf_failed`), and a request that does not upgrade is answered with `upgrade_required` (N59).
 - `since={seq}` resume or `resync_required`. Heartbeats. The messages' JSON Schema in `/schema/realtime/v1`, generated from the package's types (N59).
