@@ -552,7 +552,14 @@ var keys = []key{
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
 			"password the others log in with. The pool parameters, such as `pool_max_conns`, configure the pool " +
 			"that serves requests. A server that runs the background jobs opens a second pool of the login for " +
-			"them, configured the same way but with at most 8 connections, whatever `pool_max_conns` says. Query " +
+			"them, configured the same way but with at most 8 connections, whatever `pool_max_conns` says. The " +
+			"real-time channel's hub keeps one more connection of the login, beside the pools, from the first " +
+			"subscription of one of the server's WebSockets on, which `LISTEN`s for the batches of commands that " +
+			"commit (PRD ADR-005), so a connection pooler between the server and PostgreSQL must run in session " +
+			"mode, as PgBouncer's `pool_mode = session`, in which each of the server's connections has a session " +
+			"of the database to itself: in transaction mode, the `LISTEN` hears nothing, without an error, and " +
+			"the other sessions of a project are sent each of its batches only once their server reads the " +
+			"projects' seqs, every 30 seconds, rather than at once. Query " +
 			"parameters, such as `sslmode`, are read as libpq reads them, " +
 			"with an `=` in a value percent-encoded as `%3D`, and the libpq environment variables, such as " +
 			"`PGSSLMODE`, fill in settings the URL leaves out. A space anywhere in the URL is written as `%20`. " +

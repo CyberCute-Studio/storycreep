@@ -87,6 +87,24 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/search"}:             scope.ProjectRead,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}:    scope.ProjectRead,
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: scope.ProjectRead,
+	// So are the operations that the real-time channel sends of the projects
+	// that it subscribes to.
+	{Method: http.MethodGet, Pattern: realtimePath}: scope.ProjectRead,
+}
+
+// upgradeRoutes are the routes that upgrade to a WebSocket, which a
+// ResponseRecorder, that the walks of the routes make their requests with,
+// cannot hijack: a request of one is answered with 426 upgrade_required, for
+// it does not upgrade, once its credentials, its scope, and its rate limit
+// have let it through, which tells that the walk reached it (reachedRoute).
+var upgradeRoutes = map[api.Route]bool{{Method: http.MethodGet, Pattern: realtimePath}: true}
+
+// reachedRoute reports whether res, the answer to a walk's request of the
+// route r, did what the request asked, as far as a walk can: it succeeded,
+// or r upgrades (upgradeRoutes), and res refuses the request only because it
+// does not.
+func reachedRoute(r api.Route, res response) bool {
+	return res.status < 300 || upgradeRoutes[r] && res.code() == api.CodeUpgradeRequired
 }
 
 // operationOf returns the operation of the route r in the OpenAPI document,
@@ -221,7 +239,7 @@ func TestEveryRouteReachable(t *testing.T) {
 			held[needed] = tok
 		}
 		if res := call(f.s.main, c.route.Method, c.path, c.body, bearer(tok.Secret)); credentialRefusal(res) ||
-			res.status >= 300 {
+			!reachedRoute(c.route, res) {
 			t.Errorf("%s with a %s token: %d %s", c.route, needed, res.status, res.body)
 		}
 	}
@@ -306,6 +324,9 @@ func TestEveryRouteRateLimited(t *testing.T) {
 		switch {
 		case authRoutes[r]:
 			want = api.BucketAuth
+		case upgradeRoutes[r]:
+			// Opening a WebSocket counts in a bucket of its own (NFR-SEC-06).
+			want = api.BucketConnect
 		case r.Method == http.MethodGet:
 			want = api.BucketRead
 		}
@@ -356,6 +377,7 @@ func TestEveryRouteRateLimited(t *testing.T) {
 		{http.MethodGet, "/api/v1/auth/session"},
 		{http.MethodPatch, workspacesPath + "/" + f.ws},
 		{http.MethodGet, workspaceTokensPath(f.ws)},
+		{http.MethodGet, realtimePath},
 	} {
 		if res := send(f.s.main, r.method, r.path, []byte("{}"), "", with(owner.header(true), client)); res.status ==
 			http.StatusTooManyRequests {

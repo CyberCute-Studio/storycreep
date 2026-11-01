@@ -220,7 +220,7 @@ func TestTokenScopes(t *testing.T) {
 			res := call(f.s.main, c.route.Method, c.path, c.body, bearer(tok.Secret))
 			where := fmt.Sprintf("%s with a %s token", c.route, held)
 			if scope.Grants([]scope.Scope{held}, needed) {
-				if res.status >= 300 {
+				if !reachedRoute(c.route, res) {
 					t.Errorf("%s: %d %s, want it done", where, res.status, res.body)
 				}
 				continue

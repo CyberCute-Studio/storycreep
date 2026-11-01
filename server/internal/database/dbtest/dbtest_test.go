@@ -68,6 +68,10 @@ func TestDatabasesAreSeparate(t *testing.T) {
 // are connected to it, that its copies hold what it held then, each apart,
 // and that the frozen copy outlives the test whose database it copied.
 func TestFreeze(t *testing.T) {
+	// New skips with -short, which would leave nothing frozen to copy.
+	if testing.Short() {
+		t.Skip("skipped with -short: needs PostgreSQL, which the tests run in Docker")
+	}
 	ctx := context.Background()
 	var frozen *Frozen
 	t.Run("fill", func(t *testing.T) {

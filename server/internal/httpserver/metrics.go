@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"net/http"
 	"slices"
 	"strconv"
 	"time"
@@ -47,7 +48,11 @@ const unmatchedRoute = "unmatched"
 
 // observe counts a request that the route answered with status after
 // elapsed. A method that no route takes (api.Methods) is labelled "other",
-// for the same reason as an unmatched path.
+// for the same reason as an unmatched path. A request that switched
+// protocols, as a WebSocket of the real-time channel does, is counted, but
+// its duration, which is the socket's life, minutes or hours of it, rather
+// than how long the server took to answer, is not observed, so that it does
+// not skew the latency of the requests.
 func (m *metrics) observe(method, route string, status int, elapsed time.Duration) {
 	if route == "" {
 		route = unmatchedRoute
@@ -56,5 +61,7 @@ func (m *metrics) observe(method, route string, status int, elapsed time.Duratio
 		method = "other"
 	}
 	m.requests.WithLabelValues(route, method, strconv.Itoa(status)).Inc()
-	m.duration.WithLabelValues(route, method).Observe(elapsed.Seconds())
+	if status != http.StatusSwitchingProtocols {
+		m.duration.WithLabelValues(route, method).Observe(elapsed.Seconds())
+	}
 }

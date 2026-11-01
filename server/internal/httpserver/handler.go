@@ -31,6 +31,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/realtime"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
@@ -61,6 +62,9 @@ type server struct {
 	// commands applies the batches of commands that change the projects'
 	// content (package commands).
 	commands *commands.Pipeline
+	// hub serves the real-time channel's sockets, which it tells of the
+	// batches that commit (package realtime).
+	hub *realtime.Hub
 	// projects keeps the projects.
 	projects *project.Service
 	// boards reads the projects' boards and folders, which their commands
@@ -152,6 +156,9 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Policy:       role.Policy{InstanceAdminAccess: cfg.Capabilities.InstanceAdminAccess},
 		Entitlements: s.entitlements,
 		Jobs:         s.queue,
+		// Each batch that commits is told of to the real-time hub of every
+		// server of the instance (PRD FR-RT-02).
+		Notifier: realtime.NewNotifier(readyDB{s.ready}, log),
 	})
 	s.metrics.registry.MustRegister(s.commands.Collector())
 	s.projects = project.New(readyDB{s.ready}, project.Options{
@@ -160,6 +167,8 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 		Pipeline:     s.commands,
 		Seed:         component.Seed,
 	})
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects, Log: log})
+	s.metrics.registry.MustRegister(s.hub.Collector())
 	s.boards = board.New(readyDB{s.ready}, board.Options{Projects: s.projects})
 	s.variables = variable.New(readyDB{s.ready}, variable.Options{Projects: s.projects})
 	s.components = component.New(readyDB{s.ready}, component.Options{Projects: s.projects})
@@ -250,6 +259,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
 	registerCommands(s.main, s.commands)
+	registerRealtime(s.main, s, cfg.PublicURL)
 	registerBoards(s.main, s.boards)
 	registerVariables(s.main, s.variables)
 	registerComponents(s.main, s.components)

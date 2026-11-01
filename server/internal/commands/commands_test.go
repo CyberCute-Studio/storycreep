@@ -1593,3 +1593,106 @@ func TestMetrics(t *testing.T) {
 		}
 	}
 }
+
+// TestReadLog checks that ReadLog pages the log by the JSON of its
+// operations, which is what its caller holds of them, rather than by the
+// room that the log keeps them in, which compression makes far less for a
+// batch that repeats itself, at most maxRows of them, the first whatever its
+// size, that a page ends before a seq that the log no longer holds, and the
+// next starts after it, and that ProjectSeqs reads the seqs of the projects
+// that the workspace has, and of no other.
+func TestReadLog(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	p := w.pipeline(t, nil)
+	for range 4 {
+		var batch []Command
+		for range 200 {
+			_, id := newNote()
+			batch = append(batch, command(t, noteCreate, notePayload{ID: id, Body: strings.Repeat("a", 100)}, nil))
+		}
+		if _, err := p.Apply(ctx, w.as(ownerUser), w.project, batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// asJSON and stored are the bytes of each operation's JSON, and of the room
+	// that the log keeps it in.
+	asJSON, stored := map[int64]int{}, map[int64]int{}
+	rows, err := w.admin.Query(ctx, `SELECT seq, octet_length(payload::text) + octet_length(entity_refs::text),
+		pg_column_size(payload) + pg_column_size(entity_refs) FROM operation WHERE project_id = $1`, w.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var seq int64
+		var j, s int
+		if err := rows.Scan(&seq, &j, &s); err != nil {
+			t.Fatal(err)
+		}
+		asJSON[seq], stored[seq] = j, s
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if stored[1]+stored[2] >= asJSON[1] {
+		t.Fatalf("the log keeps the operations in %d and %d bytes of their %d and %d, want them compressed", stored[1],
+			stored[2], asJSON[1], asJSON[2])
+	}
+	// read returns the seqs of the page after after.
+	read := func(after int64, maxRows int, maxBytes int64) []int64 {
+		t.Helper()
+		var seqs []int64
+		err := w.db.InTx(ctx, database.Scope{WorkspaceID: w.ws, UserID: w.users[ownerUser]}, func(tx pgx.Tx) error {
+			ops, err := ReadLog(ctx, tx, w.ws, w.project, after, maxRows, maxBytes)
+			for _, op := range ops {
+				if len(op.Commands) != 200 || len(op.Revisions) != 200 {
+					t.Errorf("the operation of seq %d has %d commands and %d revisions, want 200 of each", op.Seq,
+						len(op.Commands), len(op.Revisions))
+				}
+				seqs = append(seqs, op.Seq)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return seqs
+	}
+	for _, c := range []struct {
+		name     string
+		after    int64
+		maxRows  int
+		maxBytes int64
+		want     []int64
+	}{
+		{"the whole log", 0, 100, 1 << 30, []int64{1, 2, 3, 4}},
+		{"at most maxRows", 1, 2, 1 << 30, []int64{2, 3}},
+		{"the first whatever its size", 0, 100, 1, []int64{1}},
+		{"while those before take less than maxBytes as JSON", 0, 100, int64(asJSON[1] + 1), []int64{1, 2}},
+		{"nothing after the last", 4, 100, 1 << 30, nil},
+	} {
+		if got := read(c.after, c.maxRows, c.maxBytes); !slices.Equal(got, c.want) {
+			t.Errorf("%s: read %v, want %v", c.name, got, c.want)
+		}
+	}
+	w.exec(t, "DELETE FROM operation WHERE project_id = $1 AND seq = 3", w.project)
+	if got := read(0, 100, 1<<30); !slices.Equal(got, []int64{1, 2}) {
+		t.Errorf("the log without seq 3 is read as %v, want the page to end before it", got)
+	}
+	if got := read(2, 100, 1<<30); !slices.Equal(got, []int64{4}) {
+		t.Errorf("the log after seq 2, without seq 3, is read as %v, want the next page to start after it", got)
+	}
+
+	missing := ids.New()
+	var seqs map[ids.UUID]int64
+	if err := w.db.InTx(ctx, database.Scope{WorkspaceID: w.ws}, func(tx pgx.Tx) error {
+		var err error
+		seqs, err = ProjectSeqs(ctx, tx, w.ws, []ids.UUID{w.project, missing})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[ids.UUID]int64{w.project: 4}; !maps.Equal(seqs, want) {
+		t.Errorf("ProjectSeqs read %v, want %v", seqs, want)
+	}
+}

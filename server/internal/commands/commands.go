@@ -345,8 +345,9 @@ type Enqueuer interface {
 }
 
 // Notifier is told of each batch that applies, once it has committed, with
-// its project and its seq (§10.2 step 7). The real-time hub (plan item 52)
-// tells the project's sockets of it; until then, nothing is told. Its
+// its project and its seq (§10.2 step 7). The server's, realtime.Notifier,
+// notifies the real-time hub of every server of the instance, each of which
+// tells the project's sockets of it (plan item 52). Its
 // context carries the values of Apply's, but not its cancellation, because
 // the batch has committed whatever becomes of the request that sent it, as
 // when its client goes away at that moment.

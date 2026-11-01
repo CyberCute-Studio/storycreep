@@ -57,6 +57,9 @@ func serverOn(t testing.TB, d *dbtest.Database, env map[string]string) *server {
 	t.Cleanup(q.Close)
 	s.queue.queue.Store(q)
 	s.ready.setPhase(phaseReady)
+	// The hub closes its sockets, and its LISTEN connection, before the
+	// database closes.
+	t.Cleanup(func() { _ = s.hub.Shutdown(context.Background()) })
 	return s
 }
 

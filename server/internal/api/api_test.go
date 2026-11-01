@@ -776,7 +776,7 @@ func TestRateLimit(t *testing.T) {
 		},
 		"an operation in an unknown bucket": func() {
 			Register(m, Public, huma.Operation{OperationID: "e", Method: http.MethodGet, Path: "/api/e"}, handler,
-				RateLimit("connect"))
+				RateLimit("stream"))
 		},
 		// A token's requests count against its owner too, so none counts in
 		// the bucket of the requests that revoke it.

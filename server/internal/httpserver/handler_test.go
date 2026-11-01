@@ -196,6 +196,7 @@ func TestRoutesDeclareCapabilities(t *testing.T) {
 			"GET /api/v1/workspaces/{workspace_id}/members/{membership_id}/grants",
 			"GET /api/v1/workspaces/{workspace_id}/projects", "GET /api/v1/workspaces/{workspace_id}/tokens",
 			"GET /api/v1/workspaces/{workspace_id}/trash/projects", "GET /api/v1/workspaces/{workspace_id}/usage",
+			"GET /api/v1/ws",
 			"GET /app", "GET /app/*", "GET /healthz", "GET /readyz", "GET /version",
 			"PATCH /api/v1/projects/{project_id}", "PATCH /api/v1/workspaces/{workspace_id}",
 			"PATCH /api/v1/workspaces/{workspace_id}/members/{membership_id}", "POST /api/v1/admin/password-reset-links",

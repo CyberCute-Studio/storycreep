@@ -4,6 +4,7 @@ Everything that must agree between Go, TypeScript, and GDScript: the published J
 
 - [`api/v1/openapi.json`](api/v1/openapi.json) is the OpenAPI document of the REST API, which the server generates from its routes and serves at `/api/v1/openapi.json`. The TypeScript client's types are generated from it; see "The API contract" in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 - [`clipboard/`](clipboard/) holds the JSON Schema of a clipboard, a selection of a board's nodes as the API copies it and the command `clipboard.paste` pastes it, by the clipboard's version, which the server generates from its Go types (PRD FR-EDIT-07).
+- [`realtime/`](realtime/) holds the JSON Schema of the messages of the real-time channel, the WebSocket of `GET /api/v1/ws`, which the server generates from its Go types (PRD FR-RT-01).
 - [`conformance/`](conformance/) holds the conformance suite: snapshots of the published format, and scenarios of a runtime's flow through them, the events that each call emits and what a game sees after it, which every runtime runs (PRD §8.6, FR-PLAY-06).
 - [`expr-corpus/`](expr-corpus/) holds the expression corpus: cases of the expression language's operations, as of its numbers and strings, which every evaluator runs, and of its parser, the AST or the error that each source gives, which every parser runs.
 - [`ids/`](ids/) holds the vectors of the identifier encoding.
