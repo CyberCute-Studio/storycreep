@@ -332,7 +332,8 @@ jobs:
           benchmarked "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/head-packages.txt"
 
       # Each run is a go test of its own, with a PostgreSQL server and a
-      # fixture of its own, and is one sample of each metric of its benchmarks
+      # fixture of its own, which it loads once and each of its benchmarks
+      # copies, and is one sample of each metric of its benchmarks
       # (cmd/benchgate), and four runs of each side are the fewest that a
       # Mann-Whitney U test can find apart at p < 0.05. -p 1 runs one package's
       # benchmarks at a time, so that no two share the machine. A run has at

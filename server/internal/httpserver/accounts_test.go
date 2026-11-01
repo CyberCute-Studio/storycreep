@@ -38,6 +38,14 @@ func readyServer(t *testing.T, env map[string]string) (*server, *dbtest.Database
 func pendingServer(t testing.TB, env map[string]string) (*server, *dbtest.Database) {
 	t.Helper()
 	d := dbtest.New(t)
+	return serverOn(t, d, env), d
+}
+
+// serverOn returns a server, ready, on the database d, whatever its
+// first-run setup's state. Its job queue enqueues the server's jobs, and runs
+// none.
+func serverOn(t testing.TB, d *dbtest.Database, env map[string]string) *server {
+	t.Helper()
 	s := newServer(loadConfig(t, env), slog.New(slog.DiscardHandler))
 	t.Cleanup(func() { _ = s.assets.Storage().Close() })
 	db := d.Open(t)
@@ -49,7 +57,7 @@ func pendingServer(t testing.TB, env map[string]string) (*server, *dbtest.Databa
 	t.Cleanup(q.Close)
 	s.queue.queue.Store(q)
 	s.ready.setPhase(phaseReady)
-	return s, d
+	return s
 }
 
 // send sends a request with body, as JSON unless contentType says

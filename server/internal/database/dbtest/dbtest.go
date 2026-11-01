@@ -2,7 +2,10 @@
 // testcontainers starts one PostgreSQL container per test binary, and one
 // more for its benchmarks (see below), the embedded migrations are applied
 // once to a template database, and New gives each test its own copy of the
-// template, which is dropped when the test ends.
+// template, which is dropped when the test ends. A database that a test has
+// filled may be frozen (Database.Freeze), and copied for other tests in turn
+// (Frozen.New), as the server's benchmarks do with the fixture that they load
+// once per test binary.
 //
 // The tests that use it need Docker. With go test -short they are skipped,
 // which is how CI runs the suite on the runners that cannot run Linux
@@ -116,6 +119,44 @@ func Empty(t testing.TB) *Database {
 	t.Helper()
 	s := start(t)
 	return s.create(t, "TEMPLATE template0")
+}
+
+// Frozen is a copy of a database, which Freeze makes, that New copies again
+// for each test or benchmark that asks, so that what a test made once, as a
+// benchmark's fixture that takes minutes to load, is not made again for each.
+// It is kept until the server stops.
+type Frozen struct {
+	name string
+	srv  *server
+}
+
+// Freeze copies d into a Frozen. It first ends every session connected to d,
+// as those of the pools that d's test closes only when it ends, because
+// PostgreSQL copies no database that another session uses; CREATE DATABASE
+// waits up to five seconds for them to exit. The test uses d no more, since
+// a connection of a pool that was ended fails when it is next used.
+func (d *Database) Freeze(t testing.TB) *Frozen {
+	t.Helper()
+	ctx := context.Background()
+	name := fmt.Sprintf("frozen_%d", d.srv.n.Add(1))
+	d.srv.createMu.Lock()
+	defer d.srv.createMu.Unlock()
+	if _, err := d.srv.admin.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+		WHERE datname = $1 AND pid <> pg_backend_pid()`, d.Name); err != nil {
+		t.Fatalf("end the sessions of %s: %v", d.Name, err)
+	}
+	if _, err := d.srv.admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()+" TEMPLATE "+
+		pgx.Identifier{d.Name}.Sanitize()); err != nil {
+		t.Fatalf("freeze %s: %v", d.Name, err)
+	}
+	return &Frozen{name: name, srv: d.srv}
+}
+
+// New returns a new database, a copy of f, on f's server, which is dropped
+// when the test ends. As with New, any login can connect to it.
+func (f *Frozen) New(t testing.TB) *Database {
+	t.Helper()
+	return f.srv.create(t, "TEMPLATE "+pgx.Identifier{f.name}.Sanitize())
 }
 
 // Run runs the tests of m, for a test binary's TestMain, and returns the exit
