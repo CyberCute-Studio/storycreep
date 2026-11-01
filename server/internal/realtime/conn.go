@@ -556,7 +556,14 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		}
 		return c.failed(projectID, "not_found")
 	}
-	if err := c.client.Limit(c.ctx); err != nil {
+	// The count in the rate limit and the read of the project's workspace
+	// take readTimeout at most, as the socket's other reads of the database
+	// do, so that a database that does not answer holds the socket's loop,
+	// and its heartbeats, no longer than that.
+	ctx, cancel := context.WithTimeout(c.ctx, readTimeout)
+	err = c.client.Limit(ctx)
+	cancel()
+	if err != nil {
 		var limited *LimitedError
 		if !errors.As(err, &limited) {
 			return err
@@ -568,7 +575,9 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 	if err != nil {
 		return err
 	}
-	workspaceID, err := c.hub.projects.ActorWorkspace(c.ctx, actor, id)
+	ctx, cancel = context.WithTimeout(c.ctx, readTimeout)
+	workspaceID, err := c.hub.projects.ActorWorkspace(ctx, actor, id)
+	cancel()
 	if errors.Is(err, project.ErrNotFound) {
 		return notFound()
 	}

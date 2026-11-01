@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -873,7 +874,8 @@ func TestRealtimeUpgrade(t *testing.T) {
 	wantCode(t, "an upgrade without credentials", call(s.main, http.MethodGet, realtimePath, nil, upgrade),
 		http.StatusUnauthorized, api.CodeUnauthenticated)
 	for _, bad := range []http.Header{{"Sec-Websocket-Version": {"8"}}, {"Sec-Websocket-Key": {"c2hvcnQ="}},
-		{"Upgrade": {"h2c"}}, {"Connection": {"keep-alive"}}} {
+		{"Sec-Websocket-Key": {"dGhlIHNhbXBsZSBub25jZQ==", "dGhlIHNhbXBsZSBub25jZQ=="}}, {"Upgrade": {"h2c"}},
+		{"Connection": {"keep-alive"}}} {
 		h := owner.header(false)
 		for k, v := range upgrade {
 			h[k] = v
@@ -883,10 +885,25 @@ func TestRealtimeUpgrade(t *testing.T) {
 		}
 		wantCode(t, "an upgrade with "+strings.Join(slices.Collect(func(yield func(string) bool) {
 			for k, v := range bad {
-				yield(k + ": " + v[0])
+				yield(k + ": " + strings.Join(v, ", "))
 			}
 		}), ""), call(s.main, http.MethodGet, realtimePath, nil, h), http.StatusUpgradeRequired, api.CodeUpgradeRequired)
 	}
+	// An upgrade with a body, or made by HTTP/1.0, as a proxy that forwards
+	// it by HTTP/1.0 makes it, which websocket.Accept would refuse in plain
+	// text, is answered in the envelope too.
+	full := owner.header(false)
+	maps.Copy(full, upgrade)
+	wantCode(t, "an upgrade with a body", call(s.main, http.MethodGet, realtimePath, []byte("{}"), full),
+		http.StatusUpgradeRequired, api.CodeUpgradeRequired)
+	old := httptest.NewRequest(http.MethodGet, realtimePath, nil)
+	old.Proto, old.ProtoMinor = "HTTP/1.0", 0
+	maps.Copy(old.Header, full)
+	maps.Copy(old.Header, newClient())
+	rec := httptest.NewRecorder()
+	s.main.ServeHTTP(rec, old)
+	wantCode(t, "an upgrade by HTTP/1.0", response{status: rec.Code, header: rec.Header(), body: rec.Body.Bytes()},
+		http.StatusUpgradeRequired, api.CodeUpgradeRequired)
 
 	// A page of the request's host, or of the public URL's, by another
 	// scheme than the public URL's, http, is of another origin too.

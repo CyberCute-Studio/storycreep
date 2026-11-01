@@ -367,10 +367,12 @@ var codes = []codeSpec{
 	{CodeRequestTimeout, http.StatusRequestTimeout, i18n.K("error.request_timeout"),
 		"The client did not send the whole request body within the route's time limit."},
 	{CodeUpgradeRequired, http.StatusUpgradeRequired, i18n.K("error.upgrade_required"),
-		"`GET /api/v1/ws` was requested without upgrading to a WebSocket (RFC 6455 §4.1): its `Upgrade` header " +
-			"is not `websocket`, its `Connection` header does not name `upgrade`, its `Sec-WebSocket-Key` header " +
-			"is not 16 bytes in base64, or its `Sec-WebSocket-Version` header is not `13`, the one version that " +
-			"the server speaks, which the answer's `Sec-WebSocket-Version` header names (PRD FR-RT-01)."},
+		"`GET /api/v1/ws` was requested without upgrading to a WebSocket (RFC 6455 §4.1): it was made by " +
+			"HTTP/1.0, as a proxy that forwards it by HTTP/1.0 makes it, or with a body, its `Upgrade` header " +
+			"is not `websocket`, its `Connection` header does not name `upgrade`, it has no `Sec-WebSocket-Key` " +
+			"header, or more than one, or one that is not 16 bytes in base64, or its `Sec-WebSocket-Version` " +
+			"header is not `13`, the one version that the server speaks, which the answer's " +
+			"`Sec-WebSocket-Version` header names (PRD FR-RT-01)."},
 	{CodeRequestTooLarge, http.StatusRequestEntityTooLarge, i18n.K("error.request_too_large"),
 		"The request body is larger than the route accepts, 5 MB unless the route says otherwise " +
 			"(PRD NFR-SEC-07), or, for an upload of an SVG image, the file that the server would store once it has " +

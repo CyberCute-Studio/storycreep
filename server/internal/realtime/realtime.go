@@ -105,15 +105,17 @@ const (
 	defaultWriteTimeout   = 30 * time.Second
 	// readTimeout is how long one of the hub's reads of the database may take:
 	// a socket's check of its credential, or its read of a project and a page
-	// of its log, each in one of the hub's slots of reads, and the poll's read
-	// of a workspace's seqs, past which the hub takes the database for one that
-	// does not answer, as one whose connection failed over without a word,
-	// which would otherwise hold the read until the system gives up on the
-	// connection, as long as a quarter of an hour, and with it a slot that
-	// every socket's deliveries share, or the poll that every lost notification
-	// waits for: the socket closes with 1011 then, after which its client
-	// connects again, and the poll reads the workspace again at its next. A
-	// read of the hub takes milliseconds of a database that answers.
+	// of its log, each in one of the hub's slots of reads, a subscription's
+	// count in the rate limit and its read of its project's workspace, and the
+	// poll's read of a workspace's seqs, past which the hub takes the database
+	// for one that does not answer, as one whose connection failed over
+	// without a word, which would otherwise hold the read until the system
+	// gives up on the connection, as long as a quarter of an hour, and with it
+	// a slot that every socket's deliveries share, the socket's loop, and its
+	// heartbeats, or the poll that every lost notification waits for: the
+	// socket closes with 1011 then, after which its client connects again, and
+	// the poll reads the workspace again at its next. A read of the hub takes
+	// milliseconds of a database that answers.
 	readTimeout = 30 * time.Second
 	// shutdownWriteGrace is how long a socket's write in flight as the hub
 	// shuts down may take before it is cut, which leaves the socket without
@@ -202,9 +204,12 @@ type Hub struct {
 
 // channel is a project that sockets of the hub subscribe to.
 type channel struct {
+	// workspace is the project's workspace, which the poller reads its seq
+	// in: that of the subscription whose read last held (Hub.saw), or, until
+	// one has, of the subscription that created the channel (Hub.join).
 	workspace ids.UUID
 	// latest is the latest seq that the hub was told of, or read, of the
-	// project.
+	// project, which each of its subscriptions has heard of too (heard).
 	latest int64
 	subs   map[*subscription]struct{}
 }
@@ -343,7 +348,11 @@ func (h *Hub) begin() bool {
 // is sent it then, without a read of its own to find it. The subscription
 // has heard of the latest seq that the channel had heard of. The first
 // subscription starts the LISTEN connection and the poller. A subscription
-// that is refused once it has read leaves the channel (leave).
+// that is refused once it has read leaves the channel (leave). The workspace
+// of the subscription that creates the channel is not yet known to be the
+// project's, since that of an API token's subscription is the token's,
+// whatever the project, until the read finds the project there, so the
+// channel takes the workspace of each subscription whose read holds (saw).
 func (h *Hub) join(sub *subscription) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -364,25 +373,45 @@ func (h *Hub) join(sub *subscription) {
 }
 
 // saw tells the hub that sub, which joined its project's channel, read the
-// project's seq as seq. A seq that the channel had not heard of, as one whose
-// notification was lost while the LISTEN connection reconnected, wakes the
-// channel's other subscriptions as a notification would, since the poller,
-// which compares the project's seq with the channel's latest, would find
-// nothing to tell them of once it is the channel's.
+// project's seq as seq, in sub's workspace, which the read found the project
+// in, and which the poller reads the project's seq in from then on, rather
+// than in that of the subscription that created the channel, which may not
+// have been the project's (join): a token's subscription to a project of
+// another workspace than the token's, which is refused, would otherwise have
+// the poller find the project gone, poll after poll, for as long as the
+// channel lasted, and never find a seq that it had not heard of. A seq that
+// the channel had not heard of, as one whose notification was lost while the
+// LISTEN connection reconnected, wakes the channel's other subscriptions as a
+// notification would (hear), since the poller, which compares the project's
+// seq with the channel's latest, would find nothing to tell them of once it
+// is the channel's.
 func (h *Hub) saw(sub *subscription, seq int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ch := h.channels[sub.project]
-	if ch == nil || seq <= ch.latest {
+	if ch := h.channels[sub.project]; ch != nil {
+		ch.workspace = sub.workspace
+		ch.hear(seq, sub)
+	}
+}
+
+// hear makes seq the latest seq that the channel has heard of, if it is later
+// than that, and has each of the channel's subscriptions hear of it, and
+// wakes each of them but except, so that it reads what it has not been sent,
+// up to seq at least. A seq that is not later, as one that the poller reads
+// once a notification has told of it, wakes none, since each subscription
+// has heard of the channel's latest whenever the channel has, and was woken
+// as it heard of it, or, as it joined, reads the project itself (join).
+func (ch *channel) hear(seq int64, except *subscription) {
+	if seq <= ch.latest {
 		return
 	}
 	ch.latest = seq
-	for other := range ch.subs {
-		if seq > other.heard.Load() {
-			other.heard.Store(seq)
+	for sub := range ch.subs {
+		if seq > sub.heard.Load() {
+			sub.heard.Store(seq)
 		}
-		if other != sub {
-			other.conn.signal()
+		if sub != except {
+			sub.conn.signal()
 		}
 	}
 }
@@ -408,20 +437,12 @@ func (h *Hub) leave(sub *subscription) {
 
 // dispatch tells the subscriptions of the project projectID that its
 // operation of the seq seq has committed, so that each reads what it has not
-// been sent, up to it at least.
+// been sent, up to it at least (hear).
 func (h *Hub) dispatch(projectID ids.UUID, seq int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ch := h.channels[projectID]
-	if ch == nil {
-		return
-	}
-	ch.latest = max(ch.latest, seq)
-	for sub := range ch.subs {
-		if seq > sub.heard.Load() {
-			sub.heard.Store(seq)
-		}
-		sub.conn.signal()
+	if ch := h.channels[projectID]; ch != nil {
+		ch.hear(seq, nil)
 	}
 }
 

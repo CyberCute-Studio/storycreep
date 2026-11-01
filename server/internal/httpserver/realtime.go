@@ -129,9 +129,11 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 				return
 			}
 			defer release()
-			// The checks above are those that Accept makes, and its check of
-			// the origin is the route's guard's, sameOrigin's, which only a
-			// socket of the session cookie needs.
+			// The checks above are those that Accept makes of the request
+			// (upgradeError), so that it refuses none that the API has not
+			// answered in its envelope already, and its check of the origin is
+			// the route's guard's, sameOrigin's, which only a socket of the
+			// session cookie needs.
 			ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
 				// Accept has answered the request.
@@ -143,12 +145,19 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 }
 
 // upgradeError returns upgrade_required for a request that does not upgrade
-// to a WebSocket of version 13 (RFC 6455 §4.2.1), or nil for one that does.
+// to a WebSocket of version 13 (RFC 6455 §4.2.1), or nil for one that does:
+// a GET of HTTP/1.1 or later, which websocket.Accept requires too, as a
+// proxy that forwards the request by HTTP/1.0 does not make it, without a
+// body, whose bytes would come before the socket's first frame, and fail it,
+// with Connection: upgrade, Upgrade: websocket, Sec-WebSocket-Version: 13,
+// and one Sec-WebSocket-Key, of 16 bytes in base64, as Accept requires.
 func upgradeError(r *http.Request) error {
+	keys := r.Header.Values("Sec-WebSocket-Key")
 	key, err := base64.StdEncoding.DecodeString(r.Header.Get("Sec-WebSocket-Key"))
-	if r.Method != http.MethodGet || !httpguts.HeaderValuesContainsToken(r.Header.Values("Connection"), "upgrade") ||
+	if r.Method != http.MethodGet || !r.ProtoAtLeast(1, 1) || r.ContentLength != 0 ||
+		!httpguts.HeaderValuesContainsToken(r.Header.Values("Connection"), "upgrade") ||
 		!httpguts.HeaderValuesContainsToken(r.Header.Values("Upgrade"), "websocket") ||
-		r.Header.Get("Sec-WebSocket-Version") != "13" || err != nil || len(key) != 16 {
+		r.Header.Get("Sec-WebSocket-Version") != "13" || len(keys) != 1 || err != nil || len(key) != 16 {
 		return api.NewError(api.CodeUpgradeRequired)
 	}
 	return nil

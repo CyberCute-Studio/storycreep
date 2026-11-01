@@ -155,12 +155,15 @@ func (db *DB) Pool() *pgxpool.Pool {
 // longer holds, for work that keeps a connection for as long as it runs, as
 // the real-time hub's LISTEN does (package realtime, PRD ADR-005), rather
 // than one transaction at a time: the pool opens another in its place, so
-// that the connection takes none of the pool's from its requests. The caller
-// closes it. Its scope is unset, as every connection's is outside InTx, so
-// row-level security holds it to no workspace's rows. Its session has no
-// idle_session_timeout, which the server, the database, or the login may
-// set, and which would end it as it waits, idle, as LISTEN waits for its
-// notifications, as the migration lock's session has none either.
+// that the connection takes none of the pool's from its requests, which the
+// reference of STORYCREEP_DATABASE_URL counts, as it says that a pooler in
+// front of the database must run in session mode, which a LISTEN needs
+// (package config). The caller closes it. Its scope is unset, as every
+// connection's is outside InTx, so row-level security holds it to no
+// workspace's rows. Its session has no idle_session_timeout, which the
+// server, the database, or the login may set, and which would end it as it
+// waits, idle, as LISTEN waits for its notifications, as the migration
+// lock's session has none either.
 func (db *DB) Dedicated(ctx context.Context) (*pgx.Conn, error) {
 	c, err := db.pool.Acquire(ctx)
 	if err != nil {
