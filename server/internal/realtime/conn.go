@@ -106,6 +106,13 @@ type conn struct {
 	// whose client is there (heartbeat).
 	frames  atomic.Uint64
 	waiting atomic.Bool
+	// sent counts the messages but the heartbeats that the socket has sent,
+	// and beat is how many it had sent at the last heartbeat, which only the
+	// loop reads and changes, so that a ping whose pong waits behind them,
+	// in the connection's buffers, as a slow client reads them, does not end
+	// a socket whose client is there either (heartbeat).
+	sent atomic.Uint64
+	beat uint64
 
 	mu sync.Mutex
 	// ended, code, and reason are how the socket ends, once something ends
@@ -286,6 +293,9 @@ func (c *conn) send(msg any) error {
 	if err != nil {
 		return err
 	}
+	if _, beat := msg.(HeartbeatMessage); !beat {
+		c.sent.Add(1)
+	}
 	ctx, cancel := context.WithTimeout(c.writes, writeTimeout)
 	defer cancel()
 	if err := c.ws.Write(ctx, websocket.MessageText, data); err != nil {
@@ -298,15 +308,22 @@ func (c *conn) send(msg any) error {
 // the client, whose pong a browser sends by itself, unless the last ping
 // still waits for its pong. A ping that is not answered within PongTimeout
 // ends the socket, unless the reader has read a message of the client since
-// the ping, or waits for the loop to take one: the library reads a pong as
-// the reader reads, after the messages that the client sent before it, so a
-// client that sent more than the loop has handled yet, as one that
-// subscribes to every project that it pins at once, is there, and is pinged
-// again at the next heartbeat.
+// the ping, or waits for the loop to take one, or the socket has sent
+// anything but a heartbeat since the heartbeat before: the library reads a
+// pong as the reader reads, after the messages that the client sent before
+// it, so a client that sent more than the loop has handled yet, as one that
+// subscribes to every project that it pins at once, is there, and the
+// client reads the ping after the messages that the socket sent before it,
+// which wait in the connection's buffers for as long as a slow client takes
+// to read them, as the operations that it catches up with, so a client that
+// is sent them is taken for gone only once a write of them cannot finish
+// within writeTimeout. Either is pinged again at the next heartbeat.
 func (c *conn) heartbeat() error {
 	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
 		return err
 	}
+	since := c.beat
+	c.beat = c.sent.Load()
 	if c.pinging.Swap(true) {
 		return nil
 	}
@@ -316,7 +333,7 @@ func (c *conn) heartbeat() error {
 		defer cancel()
 		read := c.frames.Load()
 		if err := c.ws.Ping(ctx); err != nil && c.ctx.Err() == nil && !c.waiting.Load() &&
-			c.frames.Load() == read {
+			c.frames.Load() == read && c.sent.Load() == since {
 			c.end(websocket.StatusPolicyViolation, "no pong")
 		}
 	}()
@@ -468,11 +485,12 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 
 // unsubscribe ends the socket's subscription to the project that m names,
 // if it has one, and answers unsubscribed whether it had one or not, naming
-// the project as subscribe's answers do.
+// the project as subscribe's answers do, or, for an ID that is not a
+// project's, which no subscription has, as m does.
 func (c *conn) unsubscribe(m UnsubscribeMessage) error {
 	id, err := ids.Decode(ids.Project, m.ProjectID)
 	if err != nil {
-		return c.failed(m.ProjectID, "invalid_id")
+		return c.send(UnsubscribedMessage{Type: typeUnsubscribed, ProjectID: m.ProjectID, Reason: "requested"})
 	}
 	if sub := c.subs[id]; sub != nil {
 		c.drop(sub)

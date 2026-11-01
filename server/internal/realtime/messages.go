@@ -99,7 +99,7 @@ type OperationRevision struct {
 type UnsubscribedMessage struct {
 	_         struct{} `additionalProperties:"true"`
 	Type      string   `json:"type" enum:"unsubscribed" doc:"unsubscribed"`
-	ProjectID string   `json:"project_id" doc:"The project's ID, as prj_…"`
+	ProjectID string   `json:"project_id" doc:"The project's ID, as prj_…, or, for an unsubscription of an ID that is not a project's, as it named it"`
 	Reason    string   `json:"reason" enum:"requested,not_found" doc:"requested, as the client asked, or not_found, the project can no longer be read"`
 }
 

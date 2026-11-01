@@ -60,11 +60,12 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"(resync_required) when the log no longer has them, or more than 10,000 follow. The messages are JSON, " +
 			"each in a text message of its own, as schema/realtime/v1/messages.schema.json describes them: a " +
 			"client sends {\"type\": \"subscribe\", \"project_id\", \"since\"} and {\"type\": \"unsubscribe\", " +
-			"\"project_id\"}, at most 4 KiB each, and is answered with subscribed, resync_required, or " +
+			"\"project_id\"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or " +
 			"subscription_failed, whose code is not_found for a project that does not exist and one that the user " +
-			"cannot read alike, then sent operation messages, unsubscribed once the project can no longer be read, " +
-			"and a heartbeat every 25 seconds, beside a ping, which a client that hears nothing for a minute takes " +
-			"for a lost connection. A socket subscribes to 100 projects at most, each subscription counts in the " +
+			"cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, " +
+			"unsubscribed once the project can no longer be read, and a heartbeat every 25 seconds, beside a " +
+			"ping, which a client that hears nothing for a minute takes for a lost connection. A socket " +
+			"subscribes to 100 projects at most, each subscription counts in the " +
 			"rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is " +
 			"answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, " +
 			"and the user's access to each project, are checked again before each page of operations that it is " +
@@ -72,8 +73,8 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"with 1001 as the server stops, and 1011 when the server cannot read the database, after either of " +
 			"which a client connects again, with exponential backoff and jitter, and subscribes with the seqs " +
 			"that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened " +
-			"with the session cookie whose Origin header names another origin than STORYCREEP_PUBLIC_URL's, and " +
-			"another host than the request's, is refused with 403 csrf_failed." + tokenAuthDoc(scope.ProjectRead),
+			"with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the " +
+			"request's host by that URL's scheme is refused with 403 csrf_failed." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Real time"},
 		Responses: map[string]*huma.Response{
 			"101": {Description: "Switching Protocols: the connection is a WebSocket from now on."},
@@ -133,7 +134,11 @@ func upgradeError(r *http.Request) error {
 // tool, or from no page at all: its Origin header, which a browser sends
 // with every WebSocket, is missing, or names the origin of the public URL,
 // or the host that r was made to, as one that a proxy forwards whose public
-// URL another name of the host is.
+// URL another name of the host is, by the public URL's scheme, which r's
+// is not known by behind a proxy that ends TLS. A page of the host by
+// another scheme is another origin than the tool's, as one of plain HTTP
+// that a network injects, whose socket a browser that takes it for the same
+// site sends the cookie of the tool's HTTPS with.
 func sameOrigin(r *http.Request, public config.PublicURL) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -143,7 +148,8 @@ func sameOrigin(r *http.Request, public config.PublicURL) bool {
 	if err != nil || u.Host == "" {
 		return false
 	}
-	return strings.EqualFold(u.Host, r.Host) || strings.EqualFold(u.Scheme+"://"+u.Host, public.String())
+	return strings.EqualFold(u.Scheme+"://"+u.Host, public.String()) ||
+		strings.EqualFold(u.Scheme+"://"+u.Host, public.URL().Scheme+"://"+r.Host)
 }
 
 // admitError returns the error that the API answers a refusal of the hub's

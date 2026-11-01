@@ -82,7 +82,11 @@ const (
 	// the log run at once, so that a batch of a busy project, which each of
 	// its many subscribers checks and reads as its own, never takes more of
 	// the pool's connections than these from the requests: pgx's pool has 4
-	// at least.
+	// at least. What else the hub reads takes a connection outside them, as
+	// a request does: a subscription's count in the rate limit and its
+	// project's workspace (subscribe), one at a time for each socket, as its
+	// client sends them, as its requests would, and the poller's seqs, one
+	// workspace at a time.
 	readSlots = 2
 )
 

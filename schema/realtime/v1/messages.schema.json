@@ -322,7 +322,7 @@
       "additionalProperties": true,
       "properties": {
         "project_id": {
-          "description": "The project's ID, as prj_…",
+          "description": "The project's ID, as prj_…, or, for an unsubscription of an ID that is not a project's, as it named it",
           "type": "string"
         },
         "reason": {

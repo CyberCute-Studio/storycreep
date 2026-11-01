@@ -157,13 +157,21 @@ func (db *DB) Pool() *pgxpool.Pool {
 // than one transaction at a time: the pool opens another in its place, so
 // that the connection takes none of the pool's from its requests. The caller
 // closes it. Its scope is unset, as every connection's is outside InTx, so
-// row-level security holds it to no workspace's rows.
+// row-level security holds it to no workspace's rows. Its session has no
+// idle_session_timeout, which the server, the database, or the login may
+// set, and which would end it as it waits, idle, as LISTEN waits for its
+// notifications, as the migration lock's session has none either.
 func (db *DB) Dedicated(ctx context.Context) (*pgx.Conn, error) {
 	c, err := db.pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire a connection: %w", err)
 	}
-	return c.Hijack(), nil
+	conn := c.Hijack()
+	if _, err := conn.Exec(ctx, "SET idle_session_timeout = 0"); err != nil {
+		_ = conn.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("switch off the idle session timeout: %w", err)
+	}
+	return conn, nil
 }
 
 // Notify sends payload on the channel of PostgreSQL's LISTEN and NOTIFY, on

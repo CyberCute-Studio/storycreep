@@ -9,9 +9,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
@@ -213,6 +215,47 @@ func TestApplicationName(t *testing.T) {
 		if err != nil || got != tt.want {
 			t.Errorf("%s: application_name %q, %v; want %q", tt.url, got, err, tt.want)
 		}
+	}
+}
+
+// TestDedicatedOutlivesIdleSessionTimeout checks that a dedicated connection,
+// which waits idle for as long as its work runs, as the real-time hub's
+// LISTEN does, is not ended by an idle_session_timeout that the login has in
+// the database, as the pool's connections are.
+func TestDedicatedOutlivesIdleSessionTimeout(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	// The pool keeps none of the connections that it hands out, so that the
+	// dedicated one is opened once the login has its timeout, which a
+	// session takes as it starts, and Open's checks run without it.
+	db, err := database.OpenWith(ctx, d.AppURL, func(c *pgxpool.Config) {
+		c.AfterRelease = func(*pgx.Conn) bool { return false }
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := d.Admin(t).Exec(ctx, "ALTER ROLE "+pgx.Identifier{d.AppURL.User()}.Sanitize()+" IN DATABASE "+
+		pgx.Identifier{d.Name}.Sanitize()+" SET idle_session_timeout = '100ms'"); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Dedicated(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	// Another session of the login, which keeps the timeout, shows that it
+	// ends a session as idle as the dedicated one.
+	other := dbtest.Connect(t, d.AppURL)
+	time.Sleep(500 * time.Millisecond)
+	if _, err := other.Exec(ctx, "SELECT 1"); err == nil {
+		t.Fatal("a session of the login outlived its idle_session_timeout")
+	}
+	var timeout string
+	if err := conn.QueryRow(ctx, "SHOW idle_session_timeout").Scan(&timeout); err != nil || timeout != "0" {
+		t.Errorf("the dedicated connection, idle for longer than the login's idle_session_timeout, has %q, %v; "+
+			"want it alive, with none", timeout, err)
 	}
 }
 

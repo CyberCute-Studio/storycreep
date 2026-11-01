@@ -65,8 +65,19 @@ func socketURL(srv *httptest.Server) string {
 }
 
 // dialSocket opens a socket of the real-time channel of srv, with the
-// request's header, which must upgrade.
+// request's header, which must upgrade, and reads its messages from then on.
 func dialSocket(t *testing.T, srv *httptest.Server, header http.Header) *testSocket {
+	t.Helper()
+	s := openSocket(t, srv, header)
+	s.start()
+	return s
+}
+
+// openSocket opens a socket of the real-time channel of srv, with the
+// request's header, which must upgrade, and reads none of its messages, nor
+// answers its pings, which the client library answers as it reads, until
+// start.
+func openSocket(t *testing.T, srv *httptest.Server, header http.Header) *testSocket {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -79,7 +90,13 @@ func dialSocket(t *testing.T, srv *httptest.Server, header http.Header) *testSoc
 		t.Fatalf("dial the real-time channel: %d %v", status, err)
 	}
 	ws.SetReadLimit(16 << 20)
-	s := &testSocket{t: t, ws: ws, received: make(chan received, 1024)}
+	t.Cleanup(func() { _ = ws.CloseNow() })
+	return &testSocket{t: t, ws: ws, received: make(chan received, 1024)}
+}
+
+// start reads the socket's messages, in a goroutine of its own, from now on.
+func (s *testSocket) start() {
+	ws := s.ws
 	go func() {
 		for {
 			typ, data, err := ws.Read(context.Background())
@@ -102,8 +119,6 @@ func dialSocket(t *testing.T, srv *httptest.Server, header http.Header) *testSoc
 			}
 		}
 	}()
-	t.Cleanup(func() { _ = ws.CloseNow() })
-	return s
 }
 
 // send sends msg, as JSON.
@@ -549,8 +564,10 @@ func TestRealtimeResync(t *testing.T) {
 // TestRealtimeMessages checks how the socket answers what a client sends: a
 // message that it cannot read with an error, an unsubscription with
 // unsubscribed, which ends the subscription, each naming the project as the
-// API writes its ID, an ID that is not a project's with invalid_id, and the
-// 101st subscription with too_many_subscriptions.
+// API writes its ID, a subscription to an ID that is not a project's with
+// invalid_id, and an unsubscription from one with unsubscribed, each naming
+// it as the client did, and the 101st subscription with
+// too_many_subscriptions.
 func TestRealtimeMessages(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
@@ -570,6 +587,10 @@ func TestRealtimeMessages(t *testing.T) {
 	sock.subscribe("prj_nothing", 0)
 	if m := sock.next("subscription_failed"); m.Code != "invalid_id" || m.ProjectID != "prj_nothing" {
 		t.Errorf("an ID that is not a project's is refused with %+v", m)
+	}
+	sock.send(map[string]string{"type": "unsubscribe", "project_id": "prj_nothing"})
+	if m := sock.next("unsubscribed"); m.ProjectID != "prj_nothing" || m.Reason != "requested" {
+		t.Errorf("an unsubscription from an ID that is not a project's is answered with %+v", m)
 	}
 
 	// The answers name the project as the API writes its ID, whichever
@@ -663,12 +684,17 @@ func TestRealtimeUpgrade(t *testing.T) {
 		}), ""), call(s.main, http.MethodGet, realtimePath, nil, h), http.StatusUpgradeRequired, api.CodeUpgradeRequired)
 	}
 
+	// A page of the request's host, or of the public URL's, by another
+	// scheme than the public URL's, http, is of another origin too.
 	ctx := context.Background()
-	foreign := owner.header(false)
-	foreign.Set("Origin", "https://elsewhere.example")
-	_, refused, err := websocket.Dial(ctx, socketURL(srv), &websocket.DialOptions{HTTPHeader: foreign})
-	if err == nil || refused == nil || refused.StatusCode != http.StatusForbidden {
-		t.Errorf("a socket of the session cookie from another origin upgraded, or was answered %v: %v", refused, err)
+	for _, origin := range []string{"https://elsewhere.example", "https://" + strings.TrimPrefix(srv.URL, "http://"),
+		"https://localhost:8080"} {
+		foreign := owner.header(false)
+		foreign.Set("Origin", origin)
+		_, refused, err := websocket.Dial(ctx, socketURL(srv), &websocket.DialOptions{HTTPHeader: foreign})
+		if err == nil || refused == nil || refused.StatusCode != http.StatusForbidden {
+			t.Errorf("a socket of the session cookie from %s upgraded, or was answered %v: %v", origin, refused, err)
+		}
 	}
 	for _, origin := range []string{srv.URL, "http://localhost:8080"} {
 		h := owner.header(false)
@@ -687,11 +713,48 @@ func TestRealtimeUpgrade(t *testing.T) {
 	for range realtime.MaxConnectionsPerUser - 1 {
 		dialSocket(t, srv, owner.header(false))
 	}
-	_, refused, err = websocket.Dial(ctx, socketURL(srv), &websocket.DialOptions{HTTPHeader: owner.header(false)})
+	_, refused, err := websocket.Dial(ctx, socketURL(srv), &websocket.DialOptions{HTTPHeader: owner.header(false)})
 	if err == nil || refused == nil || refused.StatusCode != http.StatusTooManyRequests ||
 		refused.Header.Get(api.RetryAfterHeader) == "" {
 		t.Errorf("the user's socket %d upgraded, or was answered %v: %v", realtime.MaxConnectionsPerUser+1, refused, err)
 	}
+}
+
+// TestRealtimePing checks that a socket whose client answers no ping is
+// closed with 1008 once the pong is late, but not while it is sent
+// operations, which a slow client reads before the ping, whose pong waits
+// behind them: two clients read nothing for a while, and so answer no ping,
+// the one subscribed to a quiet project, and the other to a project that
+// commits meanwhile, and once they read again, the first finds its socket
+// closed, and the second the operations, on a socket that stays open.
+func TestRealtimePing(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+		Heartbeat: 400 * time.Millisecond, PongTimeout: 800 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	quietProject := createProject(t, s.main, owner, ws, "Harbour").ID
+	busyProject := createProject(t, s.main, owner, ws, "Lighthouse").ID
+	quiet, busy := openSocket(t, srv, owner.header(false)), openSocket(t, srv, owner.header(false))
+	quiet.subscribe(quietProject, -1)
+	busy.subscribe(busyProject, -1)
+	// The quiet socket closes within four heartbeats and a pong's wait, 2.4
+	// seconds, and the busy project commits for twice as long, while its
+	// socket's pings go unanswered as well.
+	var boards, commandIDs []string
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
+		b, c := createBoards(t, s.main, owner, busyProject, 1)
+		boards, commandIDs = append(boards, b...), append(commandIDs, c...)
+		time.Sleep(100 * time.Millisecond)
+	}
+	busy.start()
+	quiet.start()
+	quiet.next("subscribed")
+	if code := quiet.closedWith(); code != websocket.StatusPolicyViolation {
+		t.Errorf("the socket of the client that answers no ping closed with %v, want policy violation", code)
+	}
+	busy.wantOperations(busyProject, busy.next("subscribed").Seq, boards, commandIDs)
+	busy.quiet()
 }
 
 // TestRealtimeAcrossServers checks that a batch that commits through one
