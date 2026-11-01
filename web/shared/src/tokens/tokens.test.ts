@@ -15,6 +15,8 @@ const text: readonly [string, string][] = [
   ["fg-muted", "surface-hover"],
   ["accent", "canvas"],
   ["accent", "surface"],
+  // A link under the pointer.
+  ["accent-hover", "canvas"],
   ["accent-fg", "accent"],
   ["accent-fg", "accent-hover"],
   ["danger", "canvas"],

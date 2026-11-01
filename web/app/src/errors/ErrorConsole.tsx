@@ -20,7 +20,7 @@ import { versionQuery } from "../api";
 import { Button } from "../ui/Button";
 import { copyText } from "./copy";
 import { type ErrorLog, errorLog, type LoggedError, useErrorLog } from "./log";
-import { formatReport, sourceLabel } from "./report";
+import { formatEntry, formatReport, sourceLabel } from "./report";
 
 interface ErrorConsoleContext {
   log: ErrorLog;
@@ -129,7 +129,11 @@ function ErrorConsoleDialog() {
 export function ErrorConsoleBody() {
   const { t, i18n } = useTranslation();
   const { log } = useErrorConsole();
-  const entries = useErrorLog(log);
+  const logged = useErrorLog(log);
+  // Newest first, as the list shows them and a report of all of them holds
+  // them.
+  const entries = useMemo(() => [...logged].reverse(), [logged]);
+  const empty = entries.length === 0;
   const { data: server } = useQuery({ ...versionQuery, enabled: false });
   const [status, setStatus] = useState("");
   const body = useRef<HTMLDivElement>(null);
@@ -155,14 +159,14 @@ export function ErrorConsoleBody() {
 
   return (
     <div ref={body} className="flex min-h-0 flex-1 flex-col gap-4">
-      {entries.length === 0 ? (
+      {empty ? (
         <p className="text-fg-muted">{t("error_console.empty")}</p>
       ) : (
         <ol
           aria-label={t("error_console.list")}
           className="min-h-0 flex-1 space-y-2 overflow-y-auto"
         >
-          {[...entries].reverse().map((entry) => (
+          {entries.map((entry) => (
             <li
               key={entry.id}
               className="rounded-md border border-border bg-surface"
@@ -190,17 +194,10 @@ export function ErrorConsoleBody() {
                   )}
                 </summary>
                 <div className="flex flex-col items-start gap-2 border-t border-border p-3">
+                  {/* The error's own details, which a copy of them gives
+                      with the report's heading, made as it is copied. */}
                   <pre className="max-w-full overflow-x-auto font-mono text-sm whitespace-pre-wrap break-words">
-                    {formatReport(
-                      [entry],
-                      {
-                        time: entry.time,
-                        userAgent: navigator.userAgent,
-                        locale: i18n.language,
-                        server,
-                      },
-                      t,
-                    )}
+                    {formatEntry(entry, t)}
                   </pre>
                   <Button onClick={() => copy([entry])}>
                     {t("error_console.copy_one")}
@@ -211,19 +208,28 @@ export function ErrorConsoleBody() {
           ))}
         </ol>
       )}
+      {/* Without errors, the buttons say that they are unavailable but keep
+          the keyboard's focus, which a disabled button would drop, as Clear
+          would once it has cleared the errors. */}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="primary"
-          disabled={entries.length === 0}
-          onClick={() => copy(entries)}
+          aria-disabled={empty}
+          onClick={() => {
+            if (!empty) {
+              void copy(entries);
+            }
+          }}
         >
           {t("error_console.copy_all")}
         </Button>
         <Button
-          disabled={entries.length === 0}
+          aria-disabled={empty}
           onClick={() => {
-            log.clear();
-            setStatus(t("error_console.cleared"));
+            if (!empty) {
+              log.clear();
+              setStatus(t("error_console.cleared"));
+            }
           }}
         >
           {t("error_console.clear")}

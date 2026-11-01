@@ -33,6 +33,14 @@ describe("checkHover", () => {
       // A custom property may feed any other.
       ".a:hover { --reveal: 1 }": ["--reveal"],
       ".a:hover { opacity: var(--shown) }": ["opacity"],
+      // Tailwind's hover:shadow-md, which sets one, as its ring utilities do.
+      ".a:hover { --tw-shadow: 0 4px 6px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1)); box-shadow: var(--tw-ring-shadow), var(--tw-shadow) }":
+        ["--tw-shadow"],
+      // An image, as an icon, that only hover shows.
+      ".row:hover .delete { background-image: url(trash.svg) }": [
+        "background-image",
+      ],
+      ".a:hover { background: url(trash.svg) }": ["background"],
       ".a:hover { display: block !important }": ["display"],
       // Hover or focus is still hover on a touch screen, which has neither.
       ".a:hover, .a:focus-visible { opacity: 1 }": ["opacity"],
@@ -53,6 +61,8 @@ describe("checkHover", () => {
       ".a:hover { border-color: var(--color-border); outline-color: red }",
       ".a:hover { text-decoration-line: underline; text-underline-offset: 2px }",
       ".a:hover { box-shadow: 0 0 0 1px red; cursor: pointer }",
+      // Tailwind's hover:[box-shadow:…], a shadow without a custom property.
+      ".hover\\:\\[box-shadow\\:0_4px_6px_-1px_rgb\\(0_0_0\\/0\\.1\\)\\]:hover { box-shadow: 0 4px 6px -1px rgb(0 0 0/0.1) }",
       "@media (hover: hover) { .a:hover { background-color: color-mix(in oklab, red 50%, transparent) } }",
       // A class named after Tailwind's variant is not the pseudo-class.
       ".hover\\:block { display: block }",

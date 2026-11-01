@@ -2,6 +2,8 @@ package httpserver
 
 import (
 	"bytes"
+	"compress/gzip"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -88,7 +90,7 @@ func TestPages(t *testing.T) {
 			s.ready.setPhase(phaseStarting)
 			nonces := map[string]bool{}
 			entries := []string{
-				"/app/", "/app/?x=1", "/app/index.html", "/app/projects", "/app/projects/",
+				"/app/", "/app/?x=1", "/app/projects", "/app/projects/",
 				"/app/projects/prj_0123/boards/brd_4567?view=script#node",
 			}
 			if tt.publicSite == "off" {
@@ -115,7 +117,10 @@ func TestPages(t *testing.T) {
 				}
 			}
 
-			for path, want := range map[string]string{"/app": "/app/", "/app?x=1&y=2": "/app/?x=1&y=2"} {
+			for path, want := range map[string]string{
+				"/app": "/app/", "/app?x=1&y=2": "/app/?x=1&y=2",
+				"/app/index.html": "/app/", "/app/index.html?x=1": "/app/?x=1",
+			} {
 				res := do(s.main, http.MethodGet, path, nil)
 				if res.status != http.StatusMovedPermanently || res.header.Get("Location") != want {
 					t.Errorf("GET %s: status %d, Location %q; want 301 to %s", path, res.status,
@@ -144,10 +149,11 @@ func TestPages(t *testing.T) {
 
 // TestPagesOfBundle checks how the files of a bundle such as Vite builds are
 // served: those under assets/, whose names hold a hash of their content, for
-// a year, and the others as every response, never stored; a path of a file
-// that the bundle does not have, as one of an older bundle, with not_found;
-// and any other path with the entry page, whose route the app's router
-// shows.
+// a year, and the others as every response, never stored, each with the type
+// of its extension, whatever the operating system's tables say; a path of a
+// file that the bundle does not have, as one of an older bundle, with
+// not_found; /app/index.html with a redirect to /app/; and any other path
+// with the entry page, whose route the app's router shows.
 func TestPagesOfBundle(t *testing.T) {
 	page := []byte(`<!doctype html><meta property="csp-nonce" nonce="` + noncePlaceholder + `">` +
 		`<script type="module" src="/app/assets/index-abc.js" nonce="` + noncePlaceholder + `"></script>`)
@@ -179,8 +185,13 @@ func TestPagesOfBundle(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"/app/", "/app/index.html", "/app/projects/prj_1", "/app/favicon", "/"} {
+	for _, path := range []string{"/app/", "/app/projects/prj_1", "/app/favicon", "/"} {
 		checkEntry(t, http.MethodGet, path, do(m, http.MethodGet, path, nil), page)
+	}
+	res := do(m, http.MethodGet, "/app/index.html?x=1", nil)
+	if res.status != http.StatusMovedPermanently || res.header.Get("Location") != "/app/?x=1" {
+		t.Errorf("GET /app/index.html?x=1: status %d, Location %q; want 301 to /app/?x=1", res.status,
+			res.header.Get("Location"))
 	}
 
 	for _, path := range []string{
@@ -192,6 +203,109 @@ func TestPagesOfBundle(t *testing.T) {
 		}
 		if strings.Contains(string(res.body), "<script") {
 			t.Errorf("GET %s: the entry page, which a browser would not run as the script it asked for", path)
+		}
+	}
+}
+
+// TestPagesCompressed checks that a file of the bundle that compresses, as a
+// script does, goes as its gzip to a request that accepts gzip, and as it is
+// to one that does not, with a Vary that says so, while one that would not be
+// smaller, or that is an image, goes as it is.
+func TestPagesCompressed(t *testing.T) {
+	script := []byte(strings.Repeat("export const answer = 42;\n", 200))
+	image := bytes.Repeat([]byte{0}, 4096)
+	app := fstest.MapFS{
+		"index.html":           {Data: []byte("<!doctype html>")},
+		"assets/index-abc.js":  {Data: script},
+		"assets/small-abc.js":  {Data: []byte("export {};")},
+		"assets/image-abc.png": {Data: image},
+	}
+	m := api.NewMux(api.MuxOptions{})
+	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false)
+
+	for _, tt := range []struct {
+		path, accept    string
+		gzipped, varies bool
+		body            []byte
+	}{
+		{"/app/assets/index-abc.js", "gzip, deflate, br", true, true, script},
+		{"/app/assets/index-abc.js", "br;q=1.0, GZIP;q=0.5", true, true, script},
+		{"/app/assets/index-abc.js", "*", true, true, script},
+		{"/app/assets/index-abc.js", "", false, true, script},
+		{"/app/assets/index-abc.js", "gzip;q=0", false, true, script},
+		{"/app/assets/index-abc.js", "br", false, true, script},
+		{"/app/assets/small-abc.js", "gzip", false, true, []byte("export {};")},
+		{"/app/assets/image-abc.png", "gzip", false, false, image},
+	} {
+		// Twice, the second from the gzip that the first made.
+		for range 2 {
+			header := http.Header{}
+			if tt.accept != "" {
+				header.Set("Accept-Encoding", tt.accept)
+			}
+			res := do(m, http.MethodGet, tt.path, header)
+			body := res.body
+			if tt.gzipped {
+				if got := res.header.Get("Content-Encoding"); got != "gzip" {
+					t.Errorf("GET %s, Accept-Encoding %q: Content-Encoding %q, want gzip", tt.path, tt.accept, got)
+					continue
+				}
+				zr, err := gzip.NewReader(bytes.NewReader(res.body))
+				if err != nil {
+					t.Fatalf("GET %s, Accept-Encoding %q: %v", tt.path, tt.accept, err)
+				}
+				if body, err = io.ReadAll(zr); err != nil {
+					t.Fatalf("GET %s, Accept-Encoding %q: %v", tt.path, tt.accept, err)
+				}
+				if len(res.body) >= len(tt.body) {
+					t.Errorf("GET %s, Accept-Encoding %q: %d bytes of gzip of %d", tt.path, tt.accept,
+						len(res.body), len(tt.body))
+				}
+			} else if got := res.header.Get("Content-Encoding"); got != "" {
+				t.Errorf("GET %s, Accept-Encoding %q: Content-Encoding %q, want none", tt.path, tt.accept, got)
+			}
+			if res.status != http.StatusOK || !bytes.Equal(body, tt.body) {
+				t.Errorf("GET %s, Accept-Encoding %q: status %d, want 200 and the file", tt.path, tt.accept,
+					res.status)
+			}
+			if got := res.header.Get("Content-Length"); got != strconv.Itoa(len(res.body)) {
+				t.Errorf("GET %s, Accept-Encoding %q: Content-Length %s, want %d", tt.path, tt.accept, got,
+					len(res.body))
+			}
+			if got := res.header.Get("Vary") == "Accept-Encoding"; got != tt.varies {
+				t.Errorf("GET %s, Accept-Encoding %q: Vary %q", tt.path, tt.accept, res.header.Get("Vary"))
+			}
+		}
+	}
+}
+
+// TestAcceptsGzip checks how a request's Accept-Encoding header is read.
+func TestAcceptsGzip(t *testing.T) {
+	for _, tt := range []struct {
+		values []string
+		want   bool
+	}{
+		{nil, false},
+		{[]string{""}, false},
+		{[]string{"gzip"}, true},
+		{[]string{"x-gzip"}, true},
+		{[]string{" Gzip ; Q = 0.001 "}, true},
+		{[]string{"identity"}, false},
+		{[]string{"br", "gzip"}, true},
+		{[]string{"gzip;q=0"}, false},
+		{[]string{"gzip;q=0.000"}, false},
+		{[]string{"gzip;q=x"}, false},
+		{[]string{"gzip;q=2"}, false},
+		{[]string{"gzip;q=NaN"}, false},
+		{[]string{"*"}, true},
+		{[]string{"*;q=0"}, false},
+		{[]string{"*, gzip;q=0"}, false},
+		{[]string{"gzip;q=0, *"}, false},
+		{[]string{"*;q=0, gzip"}, true},
+		{[]string{"gzip;q=0", "gzip"}, true},
+	} {
+		if got := acceptsGzip(tt.values); got != tt.want {
+			t.Errorf("acceptsGzip(%q) = %v, want %v", tt.values, got, tt.want)
 		}
 	}
 }

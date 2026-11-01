@@ -98,5 +98,18 @@ describe("describeError", () => {
       name: "object",
       message: "[object Object]",
     });
+    // Neither JSON.stringify nor String can write it.
+    const bare = Object.create(null) as Record<string, unknown>;
+    bare.self = bare;
+    expect(describeError(bare)).toEqual({ name: "object", message: "" });
+  });
+
+  it("describes an error whose name, message, or stack is not text as text", () => {
+    const error = new Error("x");
+    Object.assign(error, { name: 42, message: { a: 1 }, stack: ["at a"] });
+    expect(describeError(error)).toEqual({
+      name: "42",
+      message: "[object Object]",
+    });
   });
 });

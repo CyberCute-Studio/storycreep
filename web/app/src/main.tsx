@@ -1,5 +1,9 @@
-// The app's entry point: it records the page's errors from the start, sets
-// up the locale, the server's state, and the router, and renders the app.
+// The app's entry point: it records the page's errors before anything else
+// of it runs, sets up the locale, the server's state, and the router, and
+// renders the app. Only the modules that it imports run before, as they
+// load: an error that one of them throws then stops them all, and this file
+// too, so that no console could show it, while what they leave to run later
+// runs after this file has run.
 
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { setNonce } from "get-nonce";

@@ -42,6 +42,11 @@ export default defineConfig({
     // Building the server, and migrating a new database, take a while.
     timeout: 300_000,
     reuseExistingServer: false,
+    // Without it, Playwright kills the server outright, and e2e/server.ts
+    // could not remove its directory. Windows has no such signal, and there
+    // Playwright kills it anyway, so the next run on the port reuses the
+    // directory.
+    gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     env: {
       STORYCREEP_HTTP_ADDR: `127.0.0.1:${port}`,
       STORYCREEP_ADMIN_ADDR: "off",

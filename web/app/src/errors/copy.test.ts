@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { copyText } from "./copy";
 
+// The document's own execCommand, if it has one, which a test replaces and
+// afterEach puts back, as vi.restoreAllMocks does not.
+const execCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+
 afterEach(() => {
   vi.restoreAllMocks();
+  if (execCommand === undefined) {
+    Reflect.deleteProperty(document, "execCommand");
+  } else {
+    Object.defineProperty(document, "execCommand", execCommand);
+  }
   document.body.replaceChildren();
 });
 

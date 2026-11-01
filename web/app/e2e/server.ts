@@ -6,13 +6,22 @@
 // process. Node runs this file as it is, without a build.
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const server = fileURLToPath(new URL("../../../server/", import.meta.url));
-const dir = mkdtempSync(join(tmpdir(), "storycreep-e2e-"));
+// The directory of the binary and of the uploaded files: one for each port
+// that the server listens on, so that runs on other ports keep apart. A run
+// starts it anew, and removes it when Playwright stops the server. On
+// Windows, Playwright kills the server instead, which leaves the directory
+// for the next run on the port to remove, rather than one more each run.
+const address = process.env.STORYCREEP_HTTP_ADDR ?? "";
+const port = address.slice(address.lastIndexOf(":") + 1) || "default";
+const dir = join(tmpdir(), `storycreep-e2e-${port}`);
+rmSync(dir, { recursive: true, force: true });
+mkdirSync(dir, { recursive: true });
 const binary = join(
   dir,
   process.platform === "win32" ? "storycreep.exe" : "storycreep",

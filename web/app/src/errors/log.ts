@@ -136,34 +136,55 @@ function same(a: LoggedError, b: LoggedError): boolean {
   );
 }
 
-/** Returns what is known of a thrown value, which may be anything. */
+/**
+ * Returns what is known of a thrown value, which may be anything, as text: an
+ * error's name, message, or stack may be any value too, as a library's
+ * subclass may set it, which the console could not show.
+ */
 export function describeError(error: unknown): ErrorDetails {
-  if (error instanceof ApiError) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      request: {
+  if (error instanceof Error) {
+    const details: ErrorDetails = {
+      name: text(error.name),
+      message: text(error.message),
+    };
+    if (typeof error.stack === "string") {
+      details.stack = error.stack;
+    }
+    if (error instanceof ApiError) {
+      details.request = {
         url: error.response.url,
         status: error.status,
         code: error.error?.code,
         requestId: error.error?.request_id,
-      },
-    };
-  }
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message, stack: error.stack };
+      };
+    }
+    return details;
   }
   if (typeof error === "string") {
     return { name: "Error", message: error };
   }
   let message: string;
   try {
-    message = JSON.stringify(error) ?? String(error);
+    message = JSON.stringify(error) ?? text(error);
   } catch {
-    message = String(error);
+    message = text(error);
   }
   return { name: typeof error, message };
+}
+
+/**
+ * Returns a value as text, as String does, or "" for one that String cannot
+ * write, as an object without a prototype, or whose toString throws.
+ */
+function text(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return String(value);
+  } catch {
+    return "";
+  }
 }
 
 /** The log of this tab. */

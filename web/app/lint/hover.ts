@@ -10,21 +10,30 @@
 // shadow it, but not reveal it, move it, or make it larger, which would leave
 // a touch screen's user without it. hoverCheck runs the check when Vite
 // builds the app, and fails the build on a rule that it refuses.
+//
+// The check cannot tell a colour that tints a control from one that makes it
+// visible, as from transparent, so a control is never transparent, nor the
+// colour of what is behind it, until hover: that is for review to catch.
 
-import { type Rule, type StyleRule, transform } from "lightningcss";
+import {
+  type DeclarationBlock,
+  type Rule,
+  type StyleRule,
+  transform,
+} from "lightningcss";
 import type { Plugin } from "vite";
 
 /**
  * The properties that a rule that applies on hover may set: colours, a
  * text's decoration, a shadow, and the pointer's cursor. Every other
- * property, a custom property among them, is refused, since it may show,
- * hide, move, or resize what it styles: display, opacity, or a variable
- * that feeds them. A property joins the list only if it cannot do that.
+ * property is refused, since it may show, hide, move, or resize what it
+ * styles: display, opacity, a background's image, which may be an icon, or a
+ * custom property, which may feed any of them, as Tailwind's shadow and ring
+ * utilities set. A property joins the list only if it cannot do that.
  */
 export const hoverProperties: ReadonlySet<string> = new Set([
   "color",
   "background-color",
-  "background-image",
   "border-color",
   "border-top-color",
   "border-right-color",
@@ -73,56 +82,48 @@ export function checkHover(css: string, file: string): HoverProblem[] {
     const brace = rest.indexOf("{");
     return (brace < 0 ? rest : rest.slice(0, brace)).trim();
   };
+  // Reports each declaration of block, of the rule at loc, which applies on
+  // hover, that sets a property that hoverProperties does not list.
+  const check = (
+    block: DeclarationBlock | undefined,
+    loc: { line: number; column: number },
+  ): void => {
+    for (const declaration of [
+      ...(block?.declarations ?? []),
+      ...(block?.importantDeclarations ?? []),
+    ]) {
+      const property = propertyName(declaration);
+      if (!hoverProperties.has(property)) {
+        problems.push({
+          file,
+          line: loc.line + 1,
+          column: loc.column,
+          selector: selectorAt(loc.line, loc.column),
+          property,
+        });
+      }
+    }
+  };
   const walk = (rules: readonly Rule[], onHover: boolean): void => {
     for (const rule of rules) {
       if (rule.type === "style") {
         const style = rule.value as StyleRule;
         const hover = onHover || mentionsHover(style.selectors);
         if (hover) {
-          const declarations = [
-            ...(style.declarations?.declarations ?? []),
-            ...(style.declarations?.importantDeclarations ?? []),
-          ];
-          for (const declaration of declarations) {
-            const property = propertyName(declaration);
-            if (!hoverProperties.has(property)) {
-              problems.push({
-                file,
-                line: style.loc.line + 1,
-                column: style.loc.column,
-                selector: selectorAt(style.loc.line, style.loc.column),
-                property,
-              });
-            }
-          }
+          check(style.declarations, style.loc);
         }
         walk(style.rules ?? [], hover);
         continue;
       }
       const value = ("value" in rule ? rule.value : {}) as {
         rules?: Rule[];
-        declarations?: StyleRule["declarations"];
+        declarations?: DeclarationBlock;
         loc?: StyleRule["loc"];
       };
       if (onHover && value.declarations !== undefined) {
         // Declarations nested in a rule that applies on hover, after its
         // nested rules, as CSS nesting allows.
-        for (const declaration of [
-          ...(value.declarations.declarations ?? []),
-          ...(value.declarations.importantDeclarations ?? []),
-        ]) {
-          const property = propertyName(declaration);
-          if (!hoverProperties.has(property)) {
-            const loc = value.loc ?? { line: 0, column: 1 };
-            problems.push({
-              file,
-              line: loc.line + 1,
-              column: loc.column,
-              selector: selectorAt(loc.line, loc.column),
-              property,
-            });
-          }
-        }
+        check(value.declarations, value.loc ?? { line: 0, column: 1 });
       }
       // A conditional group, as @media, @supports, @layer, or @container,
       // applies its rules as they are.
@@ -152,8 +153,9 @@ export function formatHoverProblem(p: HoverProblem): string {
   return (
     `${p.file}:${p.line}:${p.column}: ${p.selector} applies on hover and sets ${p.property}, ` +
     "which can show, hide, move, or resize what it styles, so that a touch screen, which has no hover, " +
-    "could not reach it (PRD FR-EDIT-09). A hover state may set only colours, decoration, shadows, " +
-    "and the cursor; see hoverProperties in web/app/lint/hover.ts."
+    "could not reach it (PRD FR-EDIT-09). A hover state may set only colours, decoration, box-shadow, " +
+    "and the cursor, and no custom property, as Tailwind's shadow and ring utilities set: write a " +
+    "shadow as hover:[box-shadow:…]. See hoverProperties in web/app/lint/hover.ts."
   );
 }
 

@@ -65,13 +65,31 @@ it("lists the errors with details that the user copies, and sends nothing", asyn
   const copied = await navigator.clipboard.readText();
   expect(copied).toMatch(/^Storycreep error report\n/);
   expect(copied).toContain("Server: 1.0.0");
-  expect(copied).toContain("Error 1, at");
   expect(copied).toContain("Error: boom");
-  expect(copied).toContain("Error 2, at");
+  // Newest first, as the list shows them.
+  expect(copied.indexOf("Error 2, at")).toBeGreaterThan(0);
+  expect(copied.indexOf("Error 1, at")).toBeGreaterThan(
+    copied.indexOf("Error 2, at"),
+  );
 
-  await user.click(within(dialog).getByRole("button", { name: "Clear" }));
+  // The button keeps the keyboard's focus once it has cleared the errors,
+  // and says that it is unavailable, as Copy all does.
+  const clear = within(dialog).getByRole("button", { name: "Clear" });
+  await user.click(clear);
   expect(log.entries()).toEqual([]);
   expect(dialog.textContent).toContain("No errors have happened in this tab.");
+  expect(document.activeElement).toBe(clear);
+  expect(clear.getAttribute("aria-disabled")).toBe("true");
+  const copyAll = within(dialog).getByRole("button", {
+    name: "Copy all details",
+  });
+  expect(copyAll.getAttribute("aria-disabled")).toBe("true");
+  await user.click(copyAll);
+  await user.click(clear);
+  expect(within(dialog).getByRole("status")).toHaveProperty(
+    "textContent",
+    "Cleared.",
+  );
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -90,10 +108,17 @@ it("copies one error's details", async () => {
     throw new Error("an error has no summary");
   }
   await user.click(summary);
+  // The error's own details, which the copy gives with a report's heading,
+  // made as it is copied.
+  const details = newest.querySelector("pre")?.textContent ?? "";
+  expect(details).toMatch(/^Error 2, at /);
+  expect(details).toContain("Error: second");
+  expect(details).not.toContain("Report made at");
   await user.click(
     within(newest).getByRole("button", { name: "Copy these details" }),
   );
   const copied = await navigator.clipboard.readText();
-  expect(copied).toContain("Error: second");
+  expect(copied).toMatch(/^Storycreep error report\nReport made at: /);
+  expect(copied).toContain(details);
   expect(copied).not.toContain("Error: first");
 });
