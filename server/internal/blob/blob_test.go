@@ -137,6 +137,33 @@ func TestLocalStaysInItsDirectory(t *testing.T) {
 	}
 }
 
+// TestLocalListsNoFileAsDirectory checks that a listing of a prefix where a
+// file stands in place of the directory fails on every system, as on Linux,
+// rather than list nothing, as a prefix whose directory does not exist does,
+// which is how Windows answers reading a file's entries, so that the orphan
+// reconciliation counts such a workspace as failed (asset.TestReconcileOwner).
+func TestLocalListsNoFileAsDirectory(t *testing.T) {
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "assets")
+	store, err := blob.OpenLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := os.WriteFile(filepath.Join(dir, "ws"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := func(prefix string) error {
+		return store.List(ctx, prefix, "", func(blob.Info) error { return nil })
+	}
+	if err := list("ws/"); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("listing a prefix whose directory is a file: %v, want an error that is not ErrNotExist", err)
+	}
+	if err := list("missing/"); err != nil {
+		t.Errorf("listing a prefix whose directory does not exist: %v, want nothing listed", err)
+	}
+}
+
 // TestCheckKey checks which keys a store takes.
 func TestCheckKey(t *testing.T) {
 	for _, key := range []string{"a", "ws/0123abc.png", "a/b/c.thumb.png", "A_b-c.d"} {
