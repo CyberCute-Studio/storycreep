@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -629,14 +630,23 @@ func TestRealtimeResync(t *testing.T) {
 // after that seq, as they commit anew, are other operations than those that
 // it was sent, which the hub's poll finds behind the latest seq that it had
 // heard of, and that it is sent the batches that commit after.
+//
+// The subscription has heard of the seq that it reloads at from then on,
+// rather than of those that the restore undid, so that it does not read the
+// project again at each wake of its socket, as the batches of another
+// project that it subscribes to wake it, until the project passes them.
 func TestRealtimeRestore(t *testing.T) {
 	t.Parallel()
 	s, d, owner, ws := inviteServer(t, "open", nil)
-	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+	counted := &countedProjects{Projects: s.projects}
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: counted,
 		PollInterval: 200 * time.Millisecond})
 	srv := realtimeServer(t, s)
 	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	other := createProject(t, s.main, owner, ws, "Lighthouse").ID
 	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(other, -1)
+	sock.next("subscribed")
 	sock.subscribe(project, -1)
 	seq := sock.next("subscribed").Seq
 	boards, commandIDs := createBoards(t, s.main, owner, project, 3)
@@ -656,8 +666,100 @@ func TestRealtimeRestore(t *testing.T) {
 		t.Errorf("told %+v, want resync_required at %d", m, restored)
 	}
 	sock.quiet()
+	reads := counted.reads(id)
+	createBoards(t, s.main, owner, other, 2)
+	for range 2 {
+		if m := sock.next("operation"); m.ProjectID != other {
+			t.Fatalf("sent an operation of %s, want one of %s", m.ProjectID, other)
+		}
+	}
+	if again := counted.reads(id); again != reads {
+		t.Errorf("the restored project was read %d times as the other project committed, want none", again-reads)
+	}
 	later, laterIDs := createBoards(t, s.main, owner, project, 1)
 	sock.wantOperations(project, restored, later, laterIDs)
+}
+
+// countedProjects resolves an actor's access to the projects as Projects
+// does, and counts its reads of each project.
+type countedProjects struct {
+	realtime.Projects
+	mu    sync.Mutex
+	count map[ids.UUID]int
+}
+
+func (p *countedProjects) GetIn(ctx context.Context, tx pgx.Tx, actor commands.Actor, workspaceID,
+	projectID ids.UUID) (project.Visible, error) {
+	p.mu.Lock()
+	if p.count == nil {
+		p.count = map[ids.UUID]int{}
+	}
+	p.count[projectID]++
+	p.mu.Unlock()
+	return p.Projects.GetIn(ctx, tx, actor, workspaceID, projectID)
+}
+
+// reads returns how many times the project was read.
+func (p *countedProjects) reads(projectID ids.UUID) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.count[projectID]
+}
+
+// TestRealtimeSubscriptionReads checks that a subscription reads its project
+// once, whether its socket is the first of the server's to subscribe to the
+// project or not, since it hears of each batch that commits after its read,
+// which it is sent then, and that each batch is read once for each
+// subscriber.
+func TestRealtimeSubscriptionReads(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	counted := &countedProjects{Projects: s.projects}
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: counted})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	id := decode(t, ids.Project, project)
+	var socks []*testSocket
+	for i := range 2 {
+		sock := dialSocket(t, srv, owner.header(false))
+		sock.subscribe(project, -1)
+		sock.next("subscribed")
+		sock.quiet()
+		if n := counted.reads(id); n != i+1 {
+			t.Errorf("%d subscriptions read the project %d times, want %d", i+1, n, i+1)
+		}
+		socks = append(socks, sock)
+	}
+	createBoards(t, s.main, owner, project, 1)
+	for _, sock := range socks {
+		sock.next("operation")
+	}
+	if n := counted.reads(id); n != 4 {
+		t.Errorf("two subscriptions and a batch read the project %d times, want 4", n)
+	}
+}
+
+// TestRealtimePurged checks that a subscriber is told that its project is
+// gone, with unsubscribed not_found, once the project is purged, which no
+// batch of the project tells of, at the hub's next poll.
+func TestRealtimePurged(t *testing.T) {
+	t.Parallel()
+	s, d, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready}, Projects: s.projects,
+		PollInterval: 200 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(project, -1)
+	sock.next("subscribed")
+	if _, err := d.Admin(t).Exec(context.Background(), `DELETE FROM project WHERE id = $1`,
+		decode(t, ids.Project, project)); err != nil {
+		t.Fatal(err)
+	}
+	if m := sock.next("unsubscribed"); m.ProjectID != project || m.Reason != "not_found" {
+		t.Errorf("the subscriber of the purged project was sent %+v, want unsubscribed not_found", m)
+	}
+	sock.quiet()
 }
 
 // TestRealtimeMessages checks how the socket answers what a client sends: a
@@ -820,6 +922,31 @@ func TestRealtimeUpgrade(t *testing.T) {
 		refused.Header.Get(api.RetryAfterHeader) == "" {
 		t.Errorf("the user's socket %d upgraded, or was answered %v: %v", realtime.MaxConnectionsPerUser+1, refused, err)
 	}
+}
+
+// TestRealtimeForeignOriginUncounted checks that a socket of the session
+// cookie from a page of another origin, which is refused, does not count in
+// the user's connects, so that such a page, as one of another origin of the
+// same site, whose sockets a browser sends the cookie with, cannot use up
+// those that the user's own tabs need: the user may connect once, after
+// three refusals.
+func TestRealtimeForeignOriginUncounted(t *testing.T) {
+	t.Parallel()
+	s, _, owner, _ := inviteServer(t, "open", nil)
+	policy := ratelimit.DefaultPolicy()
+	policy.Rates[ratelimit.Connect].Limits[ratelimit.User] = 1
+	s.limits = ratelimit.New(readyDB{s.ready}, policy)
+	srv := realtimeServer(t, s)
+	foreign := owner.header(false)
+	foreign.Set("Origin", "https://elsewhere.example")
+	for range 3 {
+		_, refused, err := websocket.Dial(context.Background(), socketURL(srv),
+			&websocket.DialOptions{HTTPHeader: foreign})
+		if err == nil || refused == nil || refused.StatusCode != http.StatusForbidden {
+			t.Fatalf("a socket of the session cookie from another origin upgraded, or was answered %v: %v", refused, err)
+		}
+	}
+	dialSocket(t, srv, owner.header(false))
 }
 
 // TestRealtimePing checks that a socket is closed with 1008 once it has

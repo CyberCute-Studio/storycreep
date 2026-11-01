@@ -32,8 +32,9 @@ import (
 // opened with the session cookie must come from a page of the tool's own
 // origin, as its Origin header says, because a browser sends the cookie with
 // a page of another site's WebSocket too, which would read the user's
-// projects otherwise; one opened with a token needs no such check, because
-// no page sends an Authorization header with a WebSocket.
+// projects otherwise, and is refused before the rate limit counts it; one
+// opened with a token needs no such check, because no page sends an
+// Authorization header with a WebSocket.
 
 // realtimePath is where the real-time channel is.
 const realtimePath = "/api/v1/ws"
@@ -92,6 +93,20 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 		Responses: map[string]*huma.Response{
 			"101": {Description: "Switching Protocols: the connection is a WebSocket from now on."},
 		},
+		// A socket of the session cookie from a page of another origin is
+		// refused before the rate limit counts it, so that a page of another
+		// origin of the same site, whose sockets a browser sends the cookie
+		// with, cannot use up the user's connects, which their own tabs need.
+		Middlewares: huma.Middlewares{api.GuardRequest(func(hctx huma.Context) error {
+			cur, err := currentFrom(hctx.Context())
+			if err != nil {
+				return err
+			}
+			if r, _ := humachi.Unwrap(hctx); cur.token == nil && !sameOrigin(r, public) {
+				return api.NewError(api.CodeCSRFFailed)
+			}
+			return nil
+		})},
 	}, func(ctx context.Context, _ *struct{}) (*huma.StreamResponse, error) {
 		cur, err := currentFrom(ctx)
 		if err != nil {
@@ -108,10 +123,6 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 				api.WriteError(w, r, err)
 				return
 			}
-			if cur.token == nil && !sameOrigin(r, public) {
-				api.WriteError(w, r, api.NewError(api.CodeCSRFFailed))
-				return
-			}
 			release, err := s.hub.Admit(cur.userID)
 			if err != nil {
 				api.WriteError(w, r, admitError(err))
@@ -119,8 +130,8 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			}
 			defer release()
 			// The checks above are those that Accept makes, and its check of
-			// the origin, sameOrigin's, which only a socket of the session
-			// cookie needs.
+			// the origin is the route's guard's, sameOrigin's, which only a
+			// socket of the session cookie needs.
 			ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
 				// Accept has answered the request.

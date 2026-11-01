@@ -185,14 +185,14 @@ func (h *Hub) poll() {
 }
 
 // pollOnce reads the seqs of the projects that the hub's sockets subscribe
-// to, in one statement for each workspace, one workspace at a time, and
-// dispatches each that the hub had not heard of. A project that its
-// workspace no longer has, as once it is purged, is dispatched all the same,
-// so that its subscriptions find it gone, and one whose seq is behind the
-// latest that the hub had heard of is rewound (Hub.rewind), so that its
-// subscriptions reload it. The workspaces whose seqs it cannot
-// read, as while the database is down, it logs once for the poll, with the
-// first error.
+// to, in one statement for each workspace, one workspace at a time, each
+// within readTimeout, and dispatches each that the hub had not heard of. A
+// project that its workspace no longer has, as once it is purged, has its
+// subscriptions read it (Hub.vanish), so that they find it gone, and one
+// whose seq is behind the latest that the hub had heard of is rewound
+// (Hub.rewind), so that its subscriptions reload it. The workspaces whose
+// seqs it cannot read, as while the database is down, it logs once for the
+// poll, with the first error.
 func (h *Hub) pollOnce() {
 	h.mu.Lock()
 	latest := make(map[ids.UUID]int64, len(h.channels))
@@ -205,11 +205,13 @@ func (h *Hub) pollOnce() {
 	failed, first := 0, error(nil)
 	for workspaceID, projects := range byWorkspace {
 		var seqs map[ids.UUID]int64
-		err := h.db.InSnapshot(h.ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
+		ctx, cancel := context.WithTimeout(h.ctx, readTimeout)
+		err := h.db.InSnapshot(ctx, database.Scope{WorkspaceID: workspaceID}, func(tx pgx.Tx) error {
 			var err error
-			seqs, err = commands.ProjectSeqs(h.ctx, tx, workspaceID, projects)
+			seqs, err = commands.ProjectSeqs(ctx, tx, workspaceID, projects)
 			return err
 		})
+		cancel()
 		switch {
 		case h.ctx.Err() != nil:
 			return
@@ -222,7 +224,7 @@ func (h *Hub) pollOnce() {
 		for _, id := range projects {
 			switch seq, ok := seqs[id]; {
 			case !ok:
-				h.dispatch(id, latest[id]+1)
+				h.vanish(id)
 			case seq > latest[id]:
 				h.dispatch(id, seq)
 			case seq < latest[id]:

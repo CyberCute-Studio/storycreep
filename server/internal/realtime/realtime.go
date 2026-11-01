@@ -103,6 +103,18 @@ const (
 	defaultSilenceTimeout = 75 * time.Second
 	defaultPollInterval   = 30 * time.Second
 	defaultWriteTimeout   = 30 * time.Second
+	// readTimeout is how long one of the hub's reads of the database may take:
+	// a socket's check of its credential, or its read of a project and a page
+	// of its log, each in one of the hub's slots of reads, and the poll's read
+	// of a workspace's seqs, past which the hub takes the database for one that
+	// does not answer, as one whose connection failed over without a word,
+	// which would otherwise hold the read until the system gives up on the
+	// connection, as long as a quarter of an hour, and with it a slot that
+	// every socket's deliveries share, or the poll that every lost notification
+	// waits for: the socket closes with 1011 then, after which its client
+	// connects again, and the poll reads the workspace again at its next. A
+	// read of the hub takes milliseconds of a database that answers.
+	readTimeout = 30 * time.Second
 	// shutdownWriteGrace is how long a socket's write in flight as the hub
 	// shuts down may take before it is cut, which leaves the socket without
 	// its close of 1001, so that a client that reads too slowly does not hold
@@ -324,35 +336,21 @@ func (h *Hub) begin() bool {
 	return true
 }
 
-// join adds sub to its project's channel, which it creates, of the
-// workspace that sub read the project in, if the project has none, where
-// sub read the seq seq. The first subscription starts the LISTEN connection
-// and the poller. The subscription has heard of the latest seq that the
-// channel had heard of, so that it reads what it missed. A seq that the
-// channel had not heard of, as one whose notification was lost while the
-// LISTEN connection reconnected, wakes the channel's other subscriptions as
-// a notification would, since the poller, which compares the project's seq
-// with the channel's latest, would find nothing to tell them of once it is
-// the channel's. It reports whether the channel was there before, whose
-// notifications since sub's read sub has heard of then, where a channel
-// that it makes heard none.
-func (h *Hub) join(sub *subscription, seq int64) (joined bool) {
+// join adds sub to its project's channel, which it creates, of sub's
+// workspace, if the project has none, before sub reads the project, so that
+// sub hears of each batch that commits after its read, as the channel's
+// other subscriptions do, whether the channel was there before or not, and
+// is sent it then, without a read of its own to find it. The subscription
+// has heard of the latest seq that the channel had heard of. The first
+// subscription starts the LISTEN connection and the poller. A subscription
+// that is refused once it has read leaves the channel (leave).
+func (h *Hub) join(sub *subscription) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ch := h.channels[sub.project]
-	joined = ch != nil
 	if ch == nil {
 		ch = &channel{workspace: sub.workspace, subs: map[*subscription]struct{}{}}
 		h.channels[sub.project] = ch
-	}
-	if seq > ch.latest {
-		ch.latest = seq
-		for other := range ch.subs {
-			if seq > other.heard.Load() {
-				other.heard.Store(seq)
-			}
-			other.conn.signal()
-		}
 	}
 	ch.subs[sub] = struct{}{}
 	sub.heard.Store(ch.latest)
@@ -363,7 +361,30 @@ func (h *Hub) join(sub *subscription, seq int64) (joined bool) {
 		go h.listen()
 		go h.poll()
 	}
-	return joined
+}
+
+// saw tells the hub that sub, which joined its project's channel, read the
+// project's seq as seq. A seq that the channel had not heard of, as one whose
+// notification was lost while the LISTEN connection reconnected, wakes the
+// channel's other subscriptions as a notification would, since the poller,
+// which compares the project's seq with the channel's latest, would find
+// nothing to tell them of once it is the channel's.
+func (h *Hub) saw(sub *subscription, seq int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ch := h.channels[sub.project]
+	if ch == nil || seq <= ch.latest {
+		return
+	}
+	ch.latest = seq
+	for other := range ch.subs {
+		if seq > other.heard.Load() {
+			other.heard.Store(seq)
+		}
+		if other != sub {
+			other.conn.signal()
+		}
+	}
 }
 
 // leave removes sub from its project's channel, and the channel once it has
@@ -412,7 +433,13 @@ func (h *Hub) dispatch(projectID ids.UUID, seq int64) {
 // more than seq is told to reload the project (conn.deliverHeard), which
 // nothing else would tell it, since it hears of no later seq until the
 // project has passed what it was sent, after which it would be sent the
-// operations that follow, as if nothing had happened.
+// operations that follow, as if nothing had happened. Each has heard of seq
+// from then on, rather than of the seqs that the restore undid, after which
+// it would read the project at each wake of its socket, to find nothing,
+// until the project had passed them; a seq that the hub heard of between the
+// poll's read and the rewind, which the rewind takes from what the
+// subscriptions heard, the next poll, which the rewind has run at once,
+// gives back.
 func (h *Hub) rewind(projectID ids.UUID, seq int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -423,26 +450,47 @@ func (h *Hub) rewind(projectID ids.UUID, seq int64) {
 	ch.latest = seq
 	for sub := range ch.subs {
 		sub.rewound.Store(&seq)
+		sub.heard.Store(seq)
+		sub.conn.signal()
+	}
+	h.pollSoon()
+}
+
+// vanish tells the subscriptions of the project projectID that the poller
+// found that its workspace no longer has it, as once it is purged, so that
+// each reads it, whatever it has heard of, and finds it gone, with
+// unsubscribed (conn.deliver), rather than wait for a seq after the last
+// that it was sent, which a project that is gone never commits.
+func (h *Hub) vanish(projectID ids.UUID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ch := h.channels[projectID]
+	if ch == nil {
+		return
+	}
+	for sub := range ch.subs {
+		sub.vanished.Store(true)
 		sub.conn.signal()
 	}
 }
 
 // read runs fn in a transaction of the workspace workspaceID, as the actor,
 // once it has checked there that the actor may read the project projectID
-// (project.Service.GetIn), with the project's seq, which its caller runs in
-// one of the hub's slots of reads (conn.readProject). The transaction reads
-// as of one moment (database.DB.InSnapshot), so that the actor's access, the
-// project's seq, and what fn reads of the log agree: a batch that commits
-// meanwhile is in none of them, and a member removed meanwhile is sent
-// nothing that commits after. It returns project.ErrNotFound as GetIn does.
+// (project.Service.GetIn), with ctx, which fn reads with too, and the
+// project's seq, which its caller runs in one of the hub's slots of reads
+// (conn.readProject). The transaction reads as of one moment
+// (database.DB.InSnapshot), so that the actor's access, the project's seq,
+// and what fn reads of the log agree: a batch that commits meanwhile is in
+// none of them, and a member removed meanwhile is sent nothing that commits
+// after. It returns project.ErrNotFound as GetIn does.
 func (h *Hub) read(ctx context.Context, actor commands.Actor, workspaceID, projectID ids.UUID,
-	fn func(tx pgx.Tx, seq int64) error) error {
+	fn func(ctx context.Context, tx pgx.Tx, seq int64) error) error {
 	scope := database.Scope{WorkspaceID: workspaceID, UserID: actor.UserID}
 	return h.db.InSnapshot(ctx, scope, func(tx pgx.Tx) error {
 		v, err := h.projects.GetIn(ctx, tx, actor, workspaceID, projectID)
 		if err != nil {
 			return err
 		}
-		return fn(tx, v.Project.Seq)
+		return fn(ctx, tx, v.Project.Seq)
 	})
 }

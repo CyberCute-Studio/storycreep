@@ -165,6 +165,10 @@ type subscription struct {
 	// behind the latest that it had heard of, as of a database restored from
 	// a backup (Hub.rewind), until the socket's loop takes it, or nil.
 	rewound atomic.Pointer[int64]
+	// vanished is whether the hub found that the project's workspace no
+	// longer has it, as once it is purged (Hub.vanish), until the socket's
+	// loop takes it.
+	vanished atomic.Bool
 }
 
 // Serve serves the socket ws, of the client, until it closes, or the hub
@@ -445,8 +449,8 @@ func (c *conn) slot() (release func(), err error) {
 }
 
 // check checks the socket's credential (Client.Check), in one of the hub's
-// slots of reads (slot), and returns the closeError of CloseUnauthenticated
-// if it no longer holds.
+// slots of reads (slot), within readTimeout, and returns the closeError of
+// CloseUnauthenticated if it no longer holds.
 func (c *conn) check() (commands.Actor, error) {
 	release, err := c.slot()
 	if err != nil {
@@ -456,7 +460,9 @@ func (c *conn) check() (commands.Actor, error) {
 	// which the server recovers from, does not keep one of the hub's slots,
 	// which every socket's deliveries share, for good.
 	defer release()
-	actor, err := c.client.Check(c.ctx)
+	ctx, cancel := context.WithTimeout(c.ctx, readTimeout)
+	defer cancel()
+	actor, err := c.client.Check(ctx)
 	if errors.Is(err, ErrUnauthenticated) {
 		return commands.Actor{}, &closeError{code: CloseUnauthenticated,
 			reason: "the credential that the socket was opened with no longer holds"}
@@ -465,15 +471,18 @@ func (c *conn) check() (commands.Actor, error) {
 }
 
 // readProject runs fn as Hub.read does, in one of the hub's slots of reads
-// (slot), which it holds until fn returns, however it returns.
+// (slot), which it holds until fn returns, however it returns, within
+// readTimeout.
 func (c *conn) readProject(actor commands.Actor, workspaceID, projectID ids.UUID,
-	fn func(tx pgx.Tx, seq int64) error) error {
+	fn func(ctx context.Context, tx pgx.Tx, seq int64) error) error {
 	release, err := c.slot()
 	if err != nil {
 		return err
 	}
 	defer release()
-	return c.hub.read(c.ctx, actor, workspaceID, projectID, fn)
+	ctx, cancel := context.WithTimeout(c.ctx, readTimeout)
+	defer cancel()
+	return c.hub.read(ctx, actor, workspaceID, projectID, fn)
 }
 
 // invalidMessage answers a message that the socket cannot read.
@@ -566,12 +575,24 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 	if err != nil {
 		return err
 	}
+	// The subscription joins its project's channel before it reads the
+	// project, so that it hears of each batch that commits after its read
+	// (Hub.join), and leaves it again unless it holds, however subscribe
+	// returns, a panic of a read too, which the server recovers from, so that
+	// no subscription that the socket does not hold stays in the hub.
+	sub := &subscription{conn: c, project: id, workspace: workspaceID}
+	c.hub.join(sub)
+	defer func() {
+		if c.subs[id] != sub {
+			c.hub.leave(sub)
+		}
+	}()
 	// The subscription is sent what follows since if the log still holds
 	// it, and there is not too much of it. A client ahead of the project, as
 	// of a database restored from before its seq, reloads the project too.
 	var seq int64
 	follows := m.Since != nil
-	err = c.readProject(actor, workspaceID, id, func(tx pgx.Tx, s int64) error {
+	err = c.readProject(actor, workspaceID, id, func(ctx context.Context, tx pgx.Tx, s int64) error {
 		seq = s
 		switch since := m.Since; {
 		case since == nil || *since == s:
@@ -579,7 +600,7 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 			follows = false
 		default:
 			var err error
-			follows, err = commands.LogFollows(c.ctx, tx, workspaceID, id, *since)
+			follows, err = commands.LogFollows(ctx, tx, workspaceID, id, *since)
 			return err
 		}
 		return nil
@@ -593,7 +614,7 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 	if old != nil {
 		c.drop(old)
 	}
-	sub := &subscription{conn: c, project: id, workspace: workspaceID, sent: seq}
+	sub.sent = seq
 	var answer any = SubscribedMessage{Type: typeSubscribed, ProjectID: projectID, Seq: seq}
 	switch {
 	case follows:
@@ -602,18 +623,17 @@ func (c *conn) subscribe(m SubscribeMessage) error {
 		answer = ResyncRequiredMessage{Type: typeResyncRequired, ProjectID: projectID, Seq: seq}
 	}
 	c.subs[id] = sub
-	joined := c.hub.join(sub, seq)
+	c.hub.saw(sub, seq)
 	if err := c.send(answer); err != nil {
 		return err
 	}
 	// What the subscription missed is read now, with the credential just
-	// checked, and so is what commits between the read and the join, of
-	// which a channel that the subscription joined has told it (heard), but
-	// one that the join made heard no notification. Else nothing waits, and
-	// the subscription is sent what commits from now on, as its hub hears of
-	// it, without another transaction in one of the hub's slots for each
-	// subscription, as while many sockets subscribe again at once.
-	if joined && sub.heard.Load() <= sub.sent {
+	// checked, and so is what committed after its read, of which the channel
+	// has told it (heard). Else nothing waits, and the subscription is sent
+	// what commits from now on, as its hub hears of it, without another
+	// transaction in one of the hub's slots, as while many sockets subscribe
+	// again at once.
+	if sub.heard.Load() <= sub.sent {
 		return nil
 	}
 	return c.deliver(sub, &actor, false)
@@ -642,14 +662,16 @@ func (c *conn) drop(sub *subscription) {
 }
 
 // deliverHeard sends each subscription the operations after the last that
-// it was sent, if it has heard of a later seq, and tells one to reload the
+// it was sent, if it has heard of a later seq, tells one to reload the
 // project if the hub has found the project's seq gone back behind what it
-// was sent (Hub.rewind).
+// was sent (Hub.rewind), and reads one whose project the hub has found gone
+// (Hub.vanish), which ends it.
 func (c *conn) deliverHeard() error {
 	for _, sub := range c.subs {
 		to := sub.rewound.Swap(nil)
 		reload := to != nil && *to < sub.sent
-		if !reload && sub.heard.Load() <= sub.sent {
+		vanished := sub.vanished.Swap(false)
+		if !reload && !vanished && sub.heard.Load() <= sub.sent {
 			continue
 		}
 		if err := c.deliver(sub, nil, reload); err != nil {
@@ -697,14 +719,14 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor, reload bool) 
 		var ops []commands.Operation
 		var seq int64
 		reloads := false
-		err := c.readProject(actor, sub.workspace, sub.project, func(tx pgx.Tx, s int64) error {
+		err := c.readProject(actor, sub.workspace, sub.project, func(ctx context.Context, tx pgx.Tx, s int64) error {
 			seq = s
 			if first && (reload || s-sub.sent > MaxCatchUp) {
 				reloads = true
 				return nil
 			}
 			var err error
-			ops, err = commands.ReadLog(c.ctx, tx, sub.workspace, sub.project, sub.sent, pageRows, pageBytes)
+			ops, err = commands.ReadLog(ctx, tx, sub.workspace, sub.project, sub.sent, pageRows, pageBytes)
 			return err
 		})
 		switch {
