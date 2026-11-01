@@ -46,7 +46,8 @@ type MissingAttribute struct {
 // board of a project, and what is there that isn't in the trash.
 type destination struct {
 	ws, project, board pgtype.UUID
-	// names is what the board's expressions can name.
+	// names is what the board's expressions can name, or nothing, where the
+	// clipboard declares nothing (loadDestination).
 	names *expr.Project
 	// boardID is the board's ID, in its canonical spelling.
 	boardID string
@@ -70,14 +71,20 @@ type destination struct {
 }
 
 // loadDestination returns the board board of the project, of the workspace
-// ws, as a paste reads it, which q reads in a transaction of the workspace.
-// The board is one of the project, not in its trash, which the caller has
-// checked.
-func loadDestination(ctx context.Context, q *queries.Queries, ws, project, board pgtype.UUID) (*destination, error) {
+// ws, as a paste of the clipboard c reads it, which q reads in a transaction
+// of the workspace: what c's declarations resolve by, which it reads only
+// where c declares something, as an expression of one that declares nothing
+// names nothing there but nodes (expr.Relocate). The board is one of the
+// project, not in its trash, which the caller has checked.
+func loadDestination(ctx context.Context, q *queries.Queries, ws, project, board pgtype.UUID, c Clipboard) (
+	*destination, error) {
 	d := &destination{ws: ws, project: project, board: board, boardID: ids.Encode(ids.Board, board.Bytes),
-		globals: map[string]string{}, ofBoard: map[string]string{}, reach: map[string]bool{},
+		names: &expr.Project{}, globals: map[string]string{}, ofBoard: map[string]string{}, reach: map[string]bool{},
 		components: map[string]string{}, definitions: map[string][]expr.Attribute{}, types: map[string]string{},
 		typeIDs: map[string]bool{}}
+	if len(c.Variables) == 0 && len(c.Components) == 0 {
+		return d, nil
+	}
 	live, err := expression.Live(ctx, q, ws, project, nil)
 	if err != nil {
 		return nil, err
@@ -231,16 +238,20 @@ func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboar
 	if err != nil {
 		return ClipboardReport{}, err
 	}
+	// A speaker, a node, and an asset are listed once for their IDs in their
+	// canonical spelling, as an ID is read without regard to case, which a
+	// clipboard that a client wrote may have spelled two ways.
 	listed := map[string]bool{}
 	for _, n := range c.Nodes {
 		id := n.SpeakerComponentID
 		if id == "" {
 			continue
 		}
-		if _, declared := r.components[canonical(ids.Component, id)]; !declared &&
-			!speakers[canonical(ids.Component, id)] && !listed[id] {
-			listed[id] = true
-			out.Speakers = append(out.Speakers, id)
+		if u := canonical(ids.Component, id); !listed[u] && !speakers[u] {
+			if _, declared := r.components[u]; !declared {
+				listed[u] = true
+				out.Speakers = append(out.Speakers, id)
+			}
 		}
 	}
 	named, err := c.outsiders()
@@ -252,8 +263,8 @@ func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboar
 		return ClipboardReport{}, err
 	}
 	for _, n := range named {
-		if !targets[n.key()] && !listed[n.id] {
-			listed[n.id] = true
+		if u := canonical(ids.Node, n.id); !targets[n.key()] && !listed[u] {
+			listed[u] = true
 			out.Nodes = append(out.Nodes, n.id)
 		}
 	}
@@ -262,8 +273,8 @@ func (d *destination) report(ctx context.Context, q *queries.Queries, c Clipboar
 		return ClipboardReport{}, err
 	}
 	for _, n := range c.Nodes {
-		if id := n.CoverAssetID; id != "" && !covers[canonical(ids.Asset, id)] && !listed[id] {
-			listed[id] = true
+		if id, u := n.CoverAssetID, canonical(ids.Asset, n.CoverAssetID); id != "" && !covers[u] && !listed[u] {
+			listed[u] = true
 			out.Assets = append(out.Assets, id)
 		}
 	}

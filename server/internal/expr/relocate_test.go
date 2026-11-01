@@ -113,15 +113,25 @@ func TestRelocate(t *testing.T) {
 		t.Errorf("Relocate of an attribute renamed since = %q, %v, want vera.faith and vera.mood", got, err)
 	}
 	// <key>.<attribute> that a variable of the key names, as no component,
-	// where it was copied stays as it is, rather than name the component.
+	// where it was copied is written with the key of the variable that it
+	// resolves to, rather than name a component of its own key, and stays as
+	// it is where it resolves to none, rather than name the component that
+	// its component's name resolves to.
 	shadow, err := NewProject([]Variable{{ID: varRep, Key: "elara", Type: value.Int}}, renameComps, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	shadowed := Moves{Variables: map[string]string{varRep: ""}, Components: map[string]string{cmpElaraR: cmpVera}}
+	shadowed := Moves{Variables: map[string]string{varRep: varToRep},
+		Components: map[string]string{cmpElaraR: cmpVera}}
+	if got, err := Relocate("elara.trust > 1 && cmp.elara.trust > 1", ContextCondition, shadow, boardB, to, boardD,
+		shadowed); err != nil || got != "rep.trust > 1 && vera.trust > 1" {
+		t.Errorf("Relocate of a variable's <key>.<attribute> = %q, %v, want rep.trust and vera.trust", got, err)
+	}
+	shadowed.Variables[varRep] = ""
 	if got, err := Relocate("elara.trust > 1", ContextCondition, shadow, boardB, to, boardD, shadowed); err != nil ||
 		got != "elara.trust > 1" {
-		t.Errorf("Relocate of a variable's <key>.<attribute> = %q, %v, want it as it is", got, err)
+		t.Errorf("Relocate of a variable's <key>.<attribute> that resolves to none = %q, %v, want it as it is",
+			got, err)
 	}
 	// An entity that moves gives, but the project that the paste goes to
 	// lacks, is the caller's mistake.

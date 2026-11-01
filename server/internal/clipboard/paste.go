@@ -2,7 +2,6 @@ package clipboard
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -21,6 +20,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/orderkey"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
@@ -45,7 +45,7 @@ type pastePayload struct {
 // Register registers in r the type of command that pastes a clipboard. It
 // needs the role "Edit nodes, connections, text, expressions" (§5.6), as the
 // commands of what it creates do, and project:write of an API token. r has
-// node.create, branch_output.create, connection.create, and
+// node.create, node.update, branch_output.create, connection.create, and
 // node.delete_many registered once the registry makes a pipeline
 // (node.Register, connection.Register).
 func Register(r *commands.Registry) {
@@ -58,7 +58,7 @@ func Register(r *commands.Registry) {
 			for i, n := range p.Clipboard.Nodes {
 				nodes[i] = p.IDs[n.ID]
 			}
-			return []commands.Step{{Type: node.DeleteMany, Payload: map[string]any{"ids": nodes}}}, nil
+			return []commands.Step{{Type: node.DeleteMany, Payload: node.ManyPayload{IDs: nodes}}}, nil
 		},
 		Apply: applyPaste,
 	})
@@ -137,7 +137,7 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 		return fmt.Errorf("clipboard: read the board: %w", err)
 	}
 	c := p.Clipboard
-	d, err := loadDestination(ctx, q, ws, project, board)
+	d, err := loadDestination(ctx, q, ws, project, board, c)
 	if err != nil {
 		return err
 	}
@@ -150,12 +150,11 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 	var targets []int
 	for i, n := range c.Nodes {
 		at := fmt.Sprintf("clipboard.nodes[%d]", i)
-		payload, err := pl.node(at, n, p.BoardID, p.Offset)
+		payload, later, err := pl.node(at, n, p.BoardID, p.Offset)
 		if err != nil {
 			return err
 		}
-		if t, ok := payload["target"].(map[string]string); ok && t["board_id"] == p.BoardID && pl.copied(n.Target) {
-			delete(payload, "target")
+		if later {
 			targets = append(targets, i)
 		}
 		if err := tx.ApplyPart(ctx, node.Create, payload, pl.fields(at, n.ID)); err != nil {
@@ -164,21 +163,25 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 	}
 	for _, i := range targets {
 		n, at := c.Nodes[i], fmt.Sprintf("clipboard.nodes[%d]", i)
-		if err := tx.ApplyPart(ctx, node.Update, map[string]any{"id": p.IDs[n.ID], "target": map[string]string{
-			"board_id": p.BoardID, "node_id": pl.moves.Nodes[canonical(ids.Node, n.Target.NodeID)]}},
+		if err := tx.ApplyPart(ctx, node.Update, node.UpdatePayload{ID: p.IDs[n.ID], Target: &node.NodeTarget{
+			BoardID: p.BoardID, NodeID: pl.moves.Nodes[canonical(ids.Node, n.Target.NodeID)]}},
 			pl.fields(at, n.ID)); err != nil {
 			return err
 		}
 	}
 	for i, n := range c.Nodes {
+		// The branch is new, and its outputs are the ones that the paste
+		// creates, which it places itself, in their order, so that creating
+		// each reads none of the others (orderkey.Spread).
+		orders := orderkey.Spread(len(n.Outputs))
 		for j, o := range n.Outputs {
 			at := fmt.Sprintf("clipboard.nodes[%d].outputs[%d]", i, j)
-			payload := map[string]any{"id": p.IDs[o.ID], "node_id": p.IDs[n.ID]}
-			if o.Else {
-				payload["else"] = true
-			} else if payload["condition"], err = pl.source(at+".condition", o.Condition,
-				expr.ContextCondition); err != nil {
-				return err
+			payload := node.CreateOutputPayload{ID: p.IDs[o.ID], NodeID: p.IDs[n.ID], Else: o.Else}
+			if !o.Else {
+				payload.Order = orders[j]
+				if payload.Condition, err = pl.source(at+".condition", o.Condition, expr.ContextCondition); err != nil {
+					return err
+				}
 			}
 			fields := pl.fields(at, o.ID)
 			if err := tx.ApplyPart(ctx, node.CreateOutput, payload, func(f string) string {
@@ -191,9 +194,10 @@ func applyPaste(ctx context.Context, tx *commands.Tx, p pastePayload) error {
 			}
 		}
 	}
+	orders := portOrders(c.Connections)
 	for i, cn := range c.Connections {
 		at := fmt.Sprintf("clipboard.connections[%d]", i)
-		payload, err := pl.connection(at, cn)
+		payload, err := pl.connection(at, cn, orders[i])
 		if err != nil {
 			return err
 		}
@@ -269,30 +273,24 @@ func (pl *plan) fields(at, old string) func(string) string {
 }
 
 // node returns the payload of the node.create of the clipboard's node n, at
-// at, onto the board boardID, its position moved by offset.
-func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.NodePosition) (map[string]any, error) {
+// at, onto the board boardID, its position moved by offset, and whether n is
+// a jumper whose target is a node of the clipboard, which the payload leaves
+// out, as the target's copy may be created after the jumper, and which a
+// node.update gives it once every node is (applyPaste).
+func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.NodePosition) (node.CreatePayload,
+	bool, error) {
 	position, errs := node.Shifted(n.Position, offset)
 	if len(errs) > 0 {
-		return nil, commands.Refuse(at+".position."+errs[0].Field, errs[0].Message, nil)
+		return node.CreatePayload{}, false, commands.Refuse(at+".position."+errs[0].Field, errs[0].Message, nil)
 	}
-	p := map[string]any{"id": pl.ids[n.ID], "board_id": boardID, "type": n.Type, "position": position}
-	set := func(field string, v any, ok bool) {
-		if ok {
-			p[field] = v
-		}
-	}
-	set("kind", n.Kind, n.Kind != "")
-	set("title", n.Title, n.Title != "")
-	set("color", n.Color, n.Color != "")
-	set("tags", n.Tags, len(n.Tags) > 0)
-	set("size", n.Size, n.Size != nil)
-	set("is_ending", true, n.IsEnding)
+	p := node.CreatePayload{ID: pl.ids[n.ID], BoardID: boardID, Type: n.Type, Kind: n.Kind, Title: n.Title,
+		Color: n.Color, Tags: n.Tags, Position: position, Size: n.Size, IsEnding: n.IsEnding}
 	if len(n.Text) > 0 {
 		text, err := pl.text(n.Text)
 		if err != nil {
-			return nil, err
+			return node.CreatePayload{}, false, err
 		}
-		p["text"] = json.RawMessage(text)
+		p.Text = text
 	}
 	// A speaker that resolves to nothing, or that the clipboard does not
 	// declare, as one in the trash where it was copied, is kept where the
@@ -300,74 +298,95 @@ func (pl *plan) node(at string, n ClipboardNode, boardID string, offset node.Nod
 	if id := canonical(ids.Component, n.SpeakerComponentID); id != "" {
 		switch to := pl.r.components[id]; {
 		case to != "":
-			p["speaker_component_id"] = to
+			p.SpeakerComponentID = to
 		case pl.speakers[id]:
-			p["speaker_component_id"] = id
+			p.SpeakerComponentID = id
 		}
 	}
-	if id := n.CoverAssetID; id != "" {
-		set("cover_asset_id", id, pl.covers[canonical(ids.Asset, id)])
+	if id := n.CoverAssetID; id != "" && pl.covers[canonical(ids.Asset, id)] {
+		p.CoverAssetID = id
 	}
+	later := false
 	if t := n.Target; t != nil && t.NodeID != "" {
-		if to, ok := pl.moves.Nodes[canonical(ids.Node, t.NodeID)]; ok {
-			p["target"] = map[string]string{"board_id": boardID, "node_id": to}
-		} else if pl.targets[outside{id: t.NodeID, board: t.BoardID}.key()] {
-			p["target"] = map[string]string{"board_id": t.BoardID, "node_id": t.NodeID}
+		_, later = pl.moves.Nodes[canonical(ids.Node, t.NodeID)]
+		if !later && pl.targets[outside{id: t.NodeID, board: t.BoardID}.key()] {
+			p.Target = &node.NodeTarget{BoardID: t.BoardID, NodeID: t.NodeID}
 		}
 	}
 	for _, s := range []struct {
-		field, source string
-	}{{"on_enter", n.OnEnter}, {"on_exit", n.OnExit}} {
+		source, name string
+		field        *string
+	}{{n.OnEnter, "on_enter", &p.OnEnter}, {n.OnExit, "on_exit", &p.OnExit}} {
 		if s.source == "" {
 			continue
 		}
-		source, err := pl.source(at+"."+s.field, s.source, expr.ContextScript)
+		source, err := pl.source(at+"."+s.name, s.source, expr.ContextScript)
 		if err != nil {
-			return nil, err
+			return node.CreatePayload{}, false, err
 		}
-		p[s.field] = source
+		*s.field = source
 	}
-	return p, nil
+	return p, later, nil
 }
 
-// copied reports whether the jumper's target t is a node of the clipboard,
-// which the paste copies.
-func (pl *plan) copied(t *node.NodeTarget) bool {
-	if t == nil {
-		return false
+// portOrders returns the place of each of the clipboard's connections cs among
+// those that leave its port, in the order of cs, which holds each port's
+// connections in their order: the ports are new, and their connections the
+// ones that the paste creates, which it places itself, so that creating each
+// reads none of the others (orderkey.Spread).
+func portOrders(cs []ClipboardConnection) []string {
+	port := func(c ClipboardConnection) string {
+		if c.FromPort == "" || c.FromPort == portOut {
+			return canonical(ids.Node, c.FromNodeID) + " " + portOut
+		}
+		return canonical(ids.Node, c.FromNodeID) + " " + canonical(ids.BranchOutput, c.FromPort)
 	}
-	_, ok := pl.moves.Nodes[canonical(ids.Node, t.NodeID)]
-	return ok
+	counts := map[string]int{}
+	for _, c := range cs {
+		counts[port(c)]++
+	}
+	keys := make(map[string][]string, len(counts))
+	for p, n := range counts {
+		keys[p] = orderkey.Spread(n)
+	}
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		p := port(c)
+		out[i], keys[p] = keys[p][0], keys[p][1:]
+	}
+	return out
 }
 
 // connection returns the payload of the connection.create of the
-// clipboard's connection c, at at.
-func (pl *plan) connection(at string, c ClipboardConnection) (map[string]any, error) {
-	p := map[string]any{"id": pl.ids[c.ID], "from_node_id": pl.ids[c.FromNodeID], "to_node_id": pl.ids[c.ToNodeID]}
-	switch c.FromPort {
-	case "", portOut:
-	default:
-		p["from_port"] = pl.ids[c.FromPort]
+// clipboard's connection c, at at, at the place order among the connections
+// that leave its port.
+func (pl *plan) connection(at string, c ClipboardConnection, order string) (connection.CreatePayload, error) {
+	p := connection.CreatePayload{ID: pl.ids[c.ID], FromNodeID: pl.ids[c.FromNodeID], ToNodeID: pl.ids[c.ToNodeID],
+		Order: order}
+	if c.FromPort != "" && c.FromPort != portOut {
+		p.FromPort = pl.ids[c.FromPort]
 	}
 	if len(c.Label) > 0 {
 		label, err := pl.text(c.Label)
 		if err != nil {
-			return nil, err
+			return connection.CreatePayload{}, err
 		}
-		p["label"] = json.RawMessage(label)
+		p.Label = label
 	}
 	for _, s := range []struct {
-		field, source string
-		ctx           expr.Context
-	}{{"condition", c.Condition, expr.ContextCondition}, {"on_traverse", c.OnTraverse, expr.ContextScript}} {
+		source, name string
+		field        *string
+		ctx          expr.Context
+	}{{c.Condition, "condition", &p.Condition, expr.ContextCondition},
+		{c.OnTraverse, "on_traverse", &p.OnTraverse, expr.ContextScript}} {
 		if s.source == "" {
 			continue
 		}
-		source, err := pl.source(at+"."+s.field, s.source, s.ctx)
+		source, err := pl.source(at+"."+s.name, s.source, s.ctx)
 		if err != nil {
-			return nil, err
+			return connection.CreatePayload{}, err
 		}
-		p[s.field] = source
+		*s.field = source
 	}
 	return p, nil
 }
@@ -397,7 +416,7 @@ func (pl *plan) source(at, source string, ctx expr.Context) (string, error) {
 // text returns the text t of the clipboard, which Check took, as it is
 // pasted: with each value reference and mention of one of its declarations
 // naming what that resolves to, and the others as they are.
-func (pl *plan) text(t Text) (Text, error) {
+func (pl *plan) text(t Text) (*richtext.Doc, error) {
 	doc, err := richtext.Parse(t)
 	if err != nil {
 		return nil, fmt.Errorf("clipboard: a text that Check took: %w", err)
@@ -421,7 +440,7 @@ func (pl *plan) text(t Text) (Text, error) {
 			}
 		}
 	}
-	return textOf(*doc)
+	return doc, nil
 }
 
 // nullUUID returns id as a uuid column.

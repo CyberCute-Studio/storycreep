@@ -451,6 +451,26 @@ func TestClipboardAcrossProjects(t *testing.T) {
 		len(r.Assets) != 0 {
 		t.Errorf("the report is %+v", r)
 	}
+	// Dock, written two ways, as a client may write an ID without regard to
+	// case, by Away's target and by a node reference of a condition, is
+	// listed once.
+	spelled := c
+	spelled.Nodes, spelled.Connections = slices.Clone(c.Nodes), slices.Clone(c.Connections)
+	for i, n := range spelled.Nodes {
+		if n.ID == w.away {
+			target := *n.Target
+			target.NodeID = strings.ToLower(target.NodeID)
+			spelled.Nodes[i].Target = &target
+		}
+	}
+	for i, cn := range spelled.Connections {
+		if cn.ID == w.lampToBack {
+			spelled.Connections[i].Condition = `visited(node("` + w.dock + `"))`
+		}
+	}
+	if r := w.resolve(t, other, board, spelled); len(r.Nodes) != 1 || !strings.EqualFold(r.Nodes[0], w.dock) {
+		t.Errorf("the report of Dock written two ways lists the nodes %v", r.Nodes)
+	}
 	// Lantern's hero lacks fear, which a component created in Elara's place
 	// is of, and which the report lists with it, with what creating it takes.
 	if len(r.Attributes) != 1 || r.Attributes[0].ComponentTypeID != character ||
@@ -632,25 +652,36 @@ func TestClipboardResolvesEachComponent(t *testing.T) {
 }
 
 // TestClipboardPasteRefused checks that a paste is refused, and changes
-// nothing, for a clipboard of a newer version, for new IDs that lack one of
-// its entities or name one twice, for a board in the trash, for an offset
-// that takes a node beyond the bounds of a position, and for a script that the
-// names that it writes make longer than a source may be, each at its field;
-// and that the report is refused for a clipboard of a newer version, and for
-// a node that node.create would refuse.
+// nothing, for a clipboard of a newer version, which holds a field that this
+// version does not, at its version, for new IDs that lack one of its entities
+// or name one twice, for a board in the trash, for an offset that takes a
+// node beyond the bounds of a position, and for a script that the names that
+// it writes make longer than a source may be, each at its field; and that the
+// report is refused for a clipboard of a newer version, at its version, and
+// for a node that node.create would refuse.
 func TestClipboardPasteRefused(t *testing.T) {
 	t.Parallel()
 	w := newClipboardWorld(t)
 	c := w.copy(t, w.keeper, w.choice)
-	newer := c
-	newer.Version = clipboard.Version + 1
+	// A newer clipboard holds what this version does not, as a field of a
+	// node, which the schema refuses, at that field, with its version.
+	var newer map[string]any
+	data, _ := json.Marshal(c)
+	if err := json.Unmarshal(data, &newer); err != nil {
+		t.Fatal(err)
+	}
+	newer["version"] = clipboard.Version + 1
+	newer["nodes"].([]any)[0].(map[string]any)["locked"] = true
 	for _, bad := range []struct {
 		name string
 		make func() wireCommand
 		at   string
 	}{
-		{"a newer version", func() wireCommand { cmd, _ := paste(w.harbour, newer, 0, 0); return cmd },
-			"payload.clipboard.version"},
+		{"a newer version", func() wireCommand {
+			cmd, _ := paste(w.harbour, c, 0, 0)
+			cmd.Payload.(map[string]any)["clipboard"] = newer
+			return cmd
+		}, "payload.clipboard.version"},
 		{"a missing ID", func() wireCommand {
 			cmd, newIDs := paste(w.harbour, c, 0, 0)
 			delete(newIDs, w.ifOut)

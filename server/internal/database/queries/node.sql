@@ -90,34 +90,20 @@ WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id
         OR target_board_id IS DISTINCT FROM @target_board_id OR target_node_id IS DISTINCT FROM @target_node_id)
 RETURNING rev;
 
--- name: TrashNode :one
--- TrashNode deletes the node to the project's trash, unless it is there
--- already, and returns its new revision, or no row if it is.
-UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = @updated_by
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NULL
-RETURNING rev;
-
--- name: RestoreNode :one
--- RestoreNode takes the node out of the project's trash, unless it is not
--- there, and returns its new revision, or no row if it is not.
-UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = @updated_by
-WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NOT NULL
-RETURNING rev;
-
 -- name: TrashNodes :many
 -- TrashNodes deletes the project's nodes whose IDs are among ids to its
--- trash, as TrashNode deletes one, but for those that are there already, and
--- returns those that it deleted, with their new revisions, as node.delete_many
--- deletes a selection in one statement.
+-- trash, but for those that are there already, and returns those that it
+-- deleted, with their new revisions, as node.delete deletes one, and
+-- node.delete_many a selection, in one statement.
 UPDATE node SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = @updated_by
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[]) AND deleted_at IS NULL
 RETURNING id, rev;
 
 -- name: RestoreNodes :many
 -- RestoreNodes takes the project's nodes whose IDs are among ids out of its
--- trash, as RestoreNode takes one, but for those that are not there, and
--- returns those that it restored, with their new revisions, as
--- node.restore_many restores a selection in one statement.
+-- trash, but for those that are not there, and returns those that it
+-- restored, with their new revisions, as node.restore restores one, and
+-- node.restore_many a selection, in one statement.
 UPDATE node SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = @updated_by
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = ANY(@ids::uuid[])
     AND deleted_at IS NOT NULL

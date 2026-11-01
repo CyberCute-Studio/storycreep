@@ -284,11 +284,10 @@ func sourceOf(e *expression.Expression) string {
 // declare gives the clipboard c the declarations of the variables, the
 // components, and the attribute definitions of the project, not in its trash,
 // that its texts, its expressions' names at its board, and its speakers name.
+// What the project's expressions can name is read only for what needs it, the
+// expressions' names and the attribute definitions that the texts name, so
+// that a copy of nodes without them reads only what they name.
 func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID, c *Clipboard) error {
-	live, err := expression.Live(ctx, q, ws, projectID, nil)
-	if err != nil {
-		return err
-	}
 	variables, components := map[string]bool{}, map[string]bool{}
 	attributes := map[string]bool{} // by their components' IDs and their own (expr.AttributeRef)
 	use := func(variable, component, attribute string) {
@@ -301,15 +300,6 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 				attributes[expr.AttributeRef(component, attribute)] = true
 			}
 		}
-	}
-	if err := c.eachSource(func(_ string, source string, ctx expr.Context) error {
-		named, err := expr.Names(source, ctx, live.Project, c.BoardID)
-		for _, n := range named {
-			use(n.Variable, n.Component, n.Attribute)
-		}
-		return err
-	}); err != nil {
-		return err
 	}
 	texts := make([]Text, 0, len(c.Nodes)+len(c.Connections))
 	for _, n := range c.Nodes {
@@ -340,6 +330,28 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 			}
 		}
 	}
+	sources := 0
+	_ = c.eachSource(func(string, string, expr.Context) error {
+		sources++
+		return nil
+	})
+	var live expression.LiveNames
+	if sources > 0 || len(attributes) > 0 {
+		var err error
+		if live, err = expression.Live(ctx, q, ws, projectID, nil); err != nil {
+			return err
+		}
+	}
+	if err := c.eachSource(func(_ string, source string, ctx expr.Context) error {
+		named, err := expr.Names(source, ctx, live.Project, c.BoardID)
+		for _, n := range named {
+			use(n.Variable, n.Component, n.Attribute)
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	var err error
 	if c.Variables, err = declareVariables(ctx, q, ws, projectID, variables); err != nil {
 		return err
 	}
@@ -505,7 +517,7 @@ func (s *Service) Resolve(ctx context.Context, actor commands.Actor, projectID i
 		} else if err != nil {
 			return fmt.Errorf("clipboard: read the board: %w", err)
 		}
-		d, err := loadDestination(ctx, q, ws, project, nullUUID(b))
+		d, err := loadDestination(ctx, q, ws, project, nullUUID(b), c)
 		if err != nil {
 			return err
 		}

@@ -93,10 +93,12 @@ func registerClipboard(m *api.Mux, clipboards *clipboard.Service) {
 			"of the board; a component to the same component, and else to the one of its key; and an attribute " +
 			"definition of each component to the same one, of the type of the component that its component " +
 			"resolves to, and else to the one of its key of that type; none of them in the project's trash. It " +
-			"reads, and changes nothing." + projectNotFoundDoc + tokenNotFoundDoc + " A board that the project " +
+			"reads, and changes nothing. A clipboard of a newer version than the server reads is answered with 422 " +
+			"validation_failed at body.clipboard.version, with what else of it the schema of the version that " +
+			"the server reads refuses." + projectNotFoundDoc + tokenNotFoundDoc + " A board that the project " +
 			"does not have, or has in its trash, is answered with 422 validation_failed at body.board_id, and a " +
-			"clipboard that the server does not read, as one of a newer version, at its field of " +
-			"body.clipboard, once the project is found." + tokenAuthDoc(scope.ProjectRead),
+			"clipboard that the server does not read otherwise, at its field of body.clipboard, once the project " +
+			"is found." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Clipboard"},
 	}, func(ctx context.Context, in *clipboardResolveInput) (*clipboardResolveOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

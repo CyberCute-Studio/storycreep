@@ -52,8 +52,9 @@
           "type": "array"
         },
         "version": {
-          "description": "The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed.",
+          "description": "The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed at it, with what else of it the schema of the version that it writes refuses, as a field that a newer version adds.",
           "format": "int64",
+          "maximum": 1,
           "minimum": 1,
           "type": "integer"
         }

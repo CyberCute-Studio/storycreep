@@ -65,3 +65,28 @@ func After(k string) (string, bool) {
 	}
 	return k + "1", true
 }
+
+// Spread returns n keys in order, each of the fewest digits that n keys of one
+// length take, with a V after them, so that none ends in 0, as 0V, 1V, and on
+// to zV for 62 keys, and 00V and on for more: the places of n children of a
+// parent that has none, which a command that creates them all gives them,
+// rather than place each after the last (After), whose keys grow by a digit
+// every 61 children, as a paste places a branch's outputs and a port's
+// connections (package clipboard), so that creating each reads none of the
+// others.
+func Spread(n int) []string {
+	width := 1
+	for size := len(digits); size < n; size *= len(digits) {
+		width++
+	}
+	out := make([]string, n)
+	key := make([]byte, width+1)
+	key[width] = First[0]
+	for i := range out {
+		for j, v := width-1, i; j >= 0; j, v = j-1, v/len(digits) {
+			key[j] = digits[v%len(digits)]
+		}
+		out[i] = string(key)
+	}
+	return out
+}

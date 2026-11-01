@@ -25,40 +25,35 @@ const (
 // leaves.
 const portOut = "out"
 
-// Check returns what is wrong with the clipboard c that its schema cannot
-// say, each problem at its field, as nodes[2].text, once its schema has taken
-// it: a newer version than Version; an ID of the wrong kind, or one that two
-// of its entities of a kind share; what node.create would refuse of a node,
-// as a field that its type does not have, a size without a height, or a
-// title or a tag that a new node's may not be (node.CheckCreated), or that a
-// branch's outputs are set on a node of another type; a text that is no
-// document that Parse takes, at where in it the value that is wrong is; a
-// branch's outputs out of their order, or an else that the branch has no
-// conditional output for; a connection between nodes that it does not hold,
-// out of a jumper, or out of a port that its node does not have; a key that
-// is no identifier, a scope without its board, or a default of another type
-// than its variable's or its attribute definition's; and declarations that no
-// project could have, as two attributes of one definition that say different
+// Check returns what is wrong with the clipboard c that its schema cannot say,
+// each problem at its field, as nodes[2].text, once its schema has taken it,
+// which refuses a newer version than Version (Clipboard.Version): an ID of the
+// wrong kind, or one that two of its entities of a kind share; what node.create
+// would refuse of a node, as a field that its type does not have, a size
+// without a height, or a title or a tag that a new node's may not be
+// (node.CheckCreated), or that a branch's outputs are set on a node of another
+// type; a text that is no document that Parse takes, at where in it the value
+// that is wrong is; a branch's outputs out of their order, or an else that the
+// branch has no conditional output for; a connection between nodes that it does
+// not hold, out of a jumper, or out of a port that its node does not have; a
+// key that is no identifier, a scope without its board, or a default of another
+// type than its variable's or its attribute definition's; and declarations that
+// no project could have, as two attributes of one definition that say different
 // things of it (expr.ErrProject). What a paste writes it holds to the rules
-// that the commands that write it hold it to, but for what the board that it
-// is pasted onto makes of it, as a source that its names make longer than a
-// source may be once they are written there (plan.source), and what it does
-// not write, as a declaration's default and description, which what it
-// resolves to keeps, only to what reading it takes, as a value that the
-// database holds is read (value.Read), so that a clipboard of what a project
-// holds, which a rule that has changed since it was written may no longer
-// take, pastes all the same, though creating one in its place may be
-// refused. The variables and components that the content names, and the
-// nodes that its jumpers target, need not be declared, nor held: a paste
-// keeps or leaves out what they name as it is (package doc).
+// that the commands that write it hold it to, but for what the board that it is
+// pasted onto makes of it, as a source that its names make longer than a source
+// may be once they are written there (plan.source), and what it does not write,
+// as a declaration's default and description, which what it resolves to keeps,
+// only to what reading it takes, as a value that the database holds is read
+// (value.Read), so that a clipboard of what a project holds, which a rule that
+// has changed since it was written may no longer take, pastes all the same,
+// though creating one in its place may be refused. The variables and components
+// that the content names, and the nodes that its jumpers target, need not be
+// declared, nor held: a paste keeps or leaves out what they name as it is
+// (package doc).
 func Check(c Clipboard) input.FieldErrors {
 	var errs input.FieldErrors
 	add := func(at, msg string) { errs = append(errs, input.FieldError{Field: at, Message: msg}) }
-	if c.Version > Version {
-		add("version", fmt.Sprintf("is %d, a version of the clipboard newer than the one that this server reads, %d",
-			c.Version, Version))
-		return errs
-	}
 	errs = append(errs, entityID(ids.Project, "project_id", c.ProjectID)...)
 	errs = append(errs, entityID(ids.Board, "board_id", c.BoardID)...)
 	seen := map[ids.UUID]string{}

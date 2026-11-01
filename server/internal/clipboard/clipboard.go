@@ -21,11 +21,12 @@
 // resolve to by the shortest name that names it at the board, and what
 // resolves to nothing explicitly, as global.<key>, board.<key>, or
 // cmp.<component>.<attribute>, so that it names nothing of another scope or
-// kind meanwhile (expr.Relocate); a speaker that resolves to nothing, or that
-// the clipboard does not declare, as one in the trash where it was copied,
-// and a jumper's target outside the clipboard are kept where the project has
-// them, in its trash or not, as node.create takes them, and are left out
-// where it lacks them, and so is a cover that is not its asset.
+// kind meanwhile, but for <key>.<attribute> whose key names a variable,
+// which no name names explicitly (expr.Relocate); a speaker that resolves to
+// nothing, or that the clipboard does not declare, as one in the trash where
+// it was copied, and a jumper's target outside the clipboard are kept where
+// the project has them, in its trash or not, as node.create takes them, and
+// are left out where it lacks them, and so is a cover that is not its asset.
 package clipboard
 
 import (
@@ -47,6 +48,11 @@ const Format = "storycreep.clipboard"
 // and the newest that it reads. A change of what a clipboard holds, as a new
 // field of a node, increments it, as the published format's schemaVersion is
 // incremented (PRD §6.4), and schema/clipboard gains the version's schema.
+// Clipboard.Version's schema bounds it too, by its maximum, which
+// TestSchemaBounds holds to it, so that a newer clipboard is refused at its
+// version, which tells a client why, with whatever else of it the schema
+// refuses, as a field that a newer version adds, which the schema refuses
+// before Check would read the version.
 const Version = 1
 
 // The bounds of a clipboard: the most nodes, outputs of a branch, connections,
@@ -77,7 +83,7 @@ const (
 // them, and what their content names outside them.
 type Clipboard struct {
 	Format      string                `json:"format" enum:"storycreep.clipboard" doc:"What the JSON is, a Storycreep clipboard: always storycreep.clipboard"`
-	Version     int                   `json:"version" minimum:"1" doc:"The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed."`
+	Version     int                   `json:"version" minimum:"1" maximum:"1" doc:"The version of the clipboard's format, which a change of what a clipboard holds increments. A server reads the versions up to the one that it writes, 1, and answers a newer one with 422 validation_failed at it, with what else of it the schema of the version that it writes refuses, as a field that a newer version adds."`
 	ProjectID   string                `json:"project_id" doc:"The ID of the project that the nodes were copied from"`
 	BoardID     string                `json:"board_id" doc:"The ID of the board that the nodes were copied from, whose variables are those of the board scope that the clipboard declares, and at which its expressions' names were read"`
 	Nodes       []ClipboardNode       `json:"nodes" minItems:"1" maxItems:"1000" nullable:"false" doc:"The nodes, at most 1000, each once, in the order of their IDs"`
