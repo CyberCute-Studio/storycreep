@@ -40,9 +40,12 @@ const realtimePath = "/api/v1/ws"
 
 // connectionsRetryAfter is what the answer to a user who has
 // realtime.MaxConnectionsPerUser sockets open tells them to wait, in seconds:
-// as long as a socket takes to find that a tab that held it has gone, by a
-// heartbeat that it is not answered.
-const connectionsRetryAfter = "60"
+// as long as a socket takes, at most, to find that a tab that held it has
+// gone, the 75 seconds of silence after which it closes, and the 25 between
+// the heartbeats that find it, by the hub's defaults, so that a client whose
+// tabs lost their connections at once, as a laptop that slept, and that
+// waits as long, finds the old sockets closed.
+const connectionsRetryAfter = "100"
 
 // registerRealtime registers GET /api/v1/ws, which the hub serves.
 func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
@@ -66,19 +69,20 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 " +
 			"seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; " +
 			"the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, " +
-			"neither a message nor a pong, and with 1001 once a message to it takes longer than 30 seconds to " +
-			"write. A " +
-			"socket subscribes to 100 projects at most, each subscription counts in the " +
-			"rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is " +
+			"neither a message nor a pong, and drops the connection without a close, which the client sees as " +
+			"1006, once a message to it takes longer than 30 seconds to write. A socket subscribes to 100 projects " +
+			"at most, each subscription counts in the rate limit of reads, and a user has 50 sockets open to a " +
+			"server at most, past which the upgrade is " +
 			"answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, " +
 			"and the user's access to each project, are checked again before each subscription and each page of " +
 			"operations that it is sent, and not while it is sent nothing: a check that finds that the session " +
 			"has ended, or that the token no longer holds, closes the socket with 4001, and one that finds that " +
 			"the project can no longer be read ends its subscription, at the project's next operation. It closes " +
 			"with 1001 as the server stops, and 1011 when the server cannot read the database, after either of " +
-			"which a client connects again, with exponential backoff and jitter, and subscribes with the seqs " +
-			"that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened " +
-			"with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the " +
+			"which, as after a connection dropped, a client connects again, with exponential backoff and " +
+			"jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with " +
+			"426 upgrade_required. A socket opened with the session cookie whose Origin header names neither " +
+			"STORYCREEP_PUBLIC_URL's origin nor the " +
 			"request's host by that URL's scheme is refused with 403 csrf_failed." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Real time"},
 		Responses: map[string]*huma.Response{

@@ -23,34 +23,48 @@ type readyDB struct {
 	ready *readiness
 }
 
-func (d readyDB) InTx(ctx context.Context, scope database.Scope, fn func(pgx.Tx) error) error {
+// errNotOpened is what the server's database answers before the database
+// step of startup has opened it.
+var errNotOpened = errors.New("the database step of startup has not finished")
+
+// opened returns the server's database, or errNotOpened before the database
+// step of startup has opened it.
+func (d readyDB) opened() (*database.DB, error) {
 	db := d.ready.db.Load()
 	if db == nil {
-		return errors.New("the database step of startup has not finished")
+		return nil, errNotOpened
+	}
+	return db, nil
+}
+
+func (d readyDB) InTx(ctx context.Context, scope database.Scope, fn func(pgx.Tx) error) error {
+	db, err := d.opened()
+	if err != nil {
+		return err
 	}
 	return db.InTx(ctx, scope, fn)
 }
 
 func (d readyDB) InSnapshot(ctx context.Context, scope database.Scope, fn func(pgx.Tx) error) error {
-	db := d.ready.db.Load()
-	if db == nil {
-		return errors.New("the database step of startup has not finished")
+	db, err := d.opened()
+	if err != nil {
+		return err
 	}
 	return db.InSnapshot(ctx, scope, fn)
 }
 
 func (d readyDB) Dedicated(ctx context.Context) (*pgx.Conn, error) {
-	db := d.ready.db.Load()
-	if db == nil {
-		return nil, errors.New("the database step of startup has not finished")
+	db, err := d.opened()
+	if err != nil {
+		return nil, err
 	}
 	return db.Dedicated(ctx)
 }
 
 func (d readyDB) Notify(ctx context.Context, channel, payload string) error {
-	db := d.ready.db.Load()
-	if db == nil {
-		return errors.New("the database step of startup has not finished")
+	db, err := d.opened()
+	if err != nil {
+		return err
 	}
 	return db.Notify(ctx, channel, payload)
 }

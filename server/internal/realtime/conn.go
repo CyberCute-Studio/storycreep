@@ -55,14 +55,16 @@ func (e *LimitedError) Error() string {
 // CloseUnauthenticated is the code that a socket is closed with once its
 // credential no longer holds (Client.Check): its client signs in again, or
 // takes another API token, before it connects again. The other codes are
-// RFC 6455's: 1001 (going away) as the server shuts down, or a message to
-// the client cannot be written in time, 1008 (policy violation) for a client
-// that the socket has heard nothing from, neither a message nor a pong, for
-// the hub's SilenceTimeout, 1009 (message too big) for a message over 4 KiB,
-// and
-// 1011 (internal error) when the server cannot read the database; a client
-// connects again after each, with backoff, and subscribes with the seq that
-// it has.
+// RFC 6455's: 1001 (going away) as the server shuts down, 1008 (policy
+// violation) for a client that the socket has heard nothing from, neither a
+// message nor a pong, for the hub's SilenceTimeout, 1009 (message too big)
+// for a message over 4 KiB, and 1011 (internal error) when the server cannot
+// read the database; a client connects again after each, with backoff, and
+// subscribes with the seq that it has. A message to the client that cannot
+// be written within the hub's WriteTimeout drops the connection without a
+// close, which the client sees as 1006 (abnormal closure), since the close
+// would wait behind the message that the client does not read, and the
+// client connects again after that too.
 const CloseUnauthenticated websocket.StatusCode = 4001
 
 // closeError ends a socket with its code.
@@ -76,7 +78,8 @@ func (e *closeError) Error() string {
 }
 
 // gone ends a socket that could not be written to, as one whose client went
-// away, whose close cannot be sent either.
+// away, whose close cannot be sent either, since the write that ran out of
+// time has dropped the connection.
 var gone = &closeError{code: websocket.StatusGoingAway, reason: "the socket could not be written to"}
 
 // conn is a socket that the hub serves.
@@ -104,13 +107,22 @@ type conn struct {
 	// messages are the client's messages that the loop has not handled yet,
 	// at most maxQueued, past which the reader waits for the loop.
 	messages chan queuedMessage
+	// beat ticks when the loop, or a delivery that it runs, sends its next
+	// heartbeat (heartbeat), which only the loop reads.
+	beat *time.Ticker
 	// pinging is whether a ping waits for its pong.
 	pinging atomic.Bool
-	// heard is when the socket last heard from its client, in Unix
-	// nanoseconds: when it opened, read a message, or was answered a ping.
-	// waiting is whether the reader waits for the loop to take a message,
-	// while maxQueued wait already, when it reads nothing, pongs neither,
-	// which the library reads as the reader reads (heartbeat).
+	// heard is when the socket last heard from its client, as the time since
+	// born, when it opened, in nanoseconds: when it opened, read a message,
+	// or was answered a ping. It counts from born, rather than in Unix time,
+	// so that the silence (silence) is measured by the monotonic clock, which
+	// a step of the wall clock, as NTP's, or a virtual machine's as it
+	// resumes, does not move: a step forward would close every socket at
+	// once, and one back keep those of clients that have gone. waiting is
+	// whether the reader waits for the loop to take a message, while
+	// maxQueued wait already, when it reads nothing, pongs neither, which the
+	// library reads as the reader reads (heartbeat).
+	born    time.Time
 	heard   atomic.Int64
 	waiting atomic.Bool
 
@@ -159,7 +171,8 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 	defer stopWrites()
 	defer context.AfterFunc(h.ctx, func() { time.AfterFunc(shutdownWriteGrace, stopWrites) })()
 	c := &conn{hub: h, ws: ws, client: client, ctx: ctx, cancel: cancel, writes: writes, stopWrites: stopWrites,
-		subs: map[ids.UUID]*subscription{}, wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued)}
+		subs: map[ids.UUID]*subscription{}, wake: make(chan struct{}, 1), messages: make(chan queuedMessage, maxQueued),
+		born: time.Now()}
 	c.hear()
 	ws.SetReadLimit(maxMessageBytes)
 	// The reader has a context of its own, which the socket's end does not
@@ -172,22 +185,29 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 		defer close(read)
 		c.read(readCtx)
 	}()
-	code, reason := c.run()
-	for _, sub := range c.subs {
-		h.leave(sub)
-	}
-	_ = ws.Close(code, reason)
-	stopReading()
-	<-read
+	// The socket's end is deferred, so that a panic of its loop, which the
+	// server recovers from, still takes its subscriptions from the hub,
+	// closes its connection, with 1011, and stops its reader.
+	code, reason := websocket.StatusInternalError, "internal error"
+	defer func() {
+		for _, sub := range c.subs {
+			h.leave(sub)
+		}
+		_ = ws.Close(code, reason)
+		stopReading()
+		<-read
+	}()
+	code, reason = c.run()
 }
 
 // run is the socket's loop: it handles the client's messages, sends the
 // subscriptions what they have heard of, and sends the heartbeats, one at a
 // time, until the socket ends, and returns the code and reason that it
-// closes with.
+// closes with. A delivery sends a heartbeat that falls due as it runs too,
+// between its operations (beatIfDue).
 func (c *conn) run() (websocket.StatusCode, string) {
-	t := time.NewTicker(c.hub.heartbeat)
-	defer t.Stop()
+	c.beat = time.NewTicker(c.hub.heartbeat)
+	defer c.beat.Stop()
 	for {
 		var err error
 		select {
@@ -197,7 +217,7 @@ func (c *conn) run() (websocket.StatusCode, string) {
 			err = c.handle(m)
 		case <-c.wake:
 			err = c.deliverHeard()
-		case <-t.C:
+		case <-c.beat.C:
 			err = c.heartbeat()
 		}
 		if err != nil {
@@ -270,14 +290,22 @@ func (c *conn) read(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		}
-		c.waiting.Store(false)
+		// The socket hears the client before the reader stops waiting, so
+		// that a heartbeat between the two finds neither the silence from
+		// before the wait, nor the wait.
 		c.hear()
+		c.waiting.Store(false)
 	}
 }
 
 // hear records that the socket heard from its client now.
 func (c *conn) hear() {
-	c.heard.Store(time.Now().UnixNano())
+	c.heard.Store(int64(time.Since(c.born)))
+}
+
+// silence returns how long the socket has heard nothing from its client.
+func (c *conn) silence() time.Duration {
+	return time.Since(c.born) - time.Duration(c.heard.Load())
 }
 
 // signal wakes the loop to send the subscriptions what they heard of.
@@ -316,9 +344,13 @@ func (c *conn) send(msg any) error {
 // ping still waits for its pong. The ping waits for its pong as long as the
 // silence may last, since its pong comes after the messages that the socket
 // sent before it, which a slow client may take a while to read, each within
-// WriteTimeout.
+// WriteTimeout. coder/websocket gives a ping's frame 5 seconds of its own: a
+// ping that waits longer than that for a message still being written fails,
+// without harm to the socket, and the next heartbeat pings again; the frame,
+// a few bytes, once its turn comes, goes into the room that the message
+// before it left in the connection's buffers, at once.
 func (c *conn) heartbeat() error {
-	if !c.waiting.Load() && time.Since(time.Unix(0, c.heard.Load())) >= c.hub.silenceTimeout {
+	if !c.waiting.Load() && c.silence() >= c.hub.silenceTimeout {
 		return &closeError{code: websocket.StatusPolicyViolation, reason: "the client has answered nothing"}
 	}
 	if err := c.send(HeartbeatMessage{Type: typeHeartbeat}); err != nil {
@@ -338,6 +370,21 @@ func (c *conn) heartbeat() error {
 	return nil
 }
 
+// beatIfDue sends the heartbeat (heartbeat) if one is due, as a delivery
+// does before each operation that it sends, so that one that takes longer
+// than the heartbeat's interval, as to a slow client that catches up on many
+// operations, still pings its client, whose pongs it hears as the client
+// reads, rather than find, once it is done, that it has heard nothing for as
+// long as it took, and close a client that read it all.
+func (c *conn) beatIfDue() error {
+	select {
+	case <-c.beat.C:
+		return c.heartbeat()
+	default:
+		return nil
+	}
+}
+
 // check checks the socket's credential (Client.Check), in one of the hub's
 // slots of reads, and returns the closeError of CloseUnauthenticated if it no
 // longer holds.
@@ -346,8 +393,11 @@ func (c *conn) check() (commands.Actor, error) {
 	if err != nil {
 		return commands.Actor{}, err
 	}
+	// The slot is released however Check returns, so that a panic of it,
+	// which the server recovers from, does not keep one of the hub's slots,
+	// which every socket's deliveries share, for good.
+	defer release()
 	actor, err := c.client.Check(c.ctx)
-	release()
 	if errors.Is(err, ErrUnauthenticated) {
 		return commands.Actor{}, &closeError{code: CloseUnauthenticated,
 			reason: "the session has ended, or the API token no longer holds"}
@@ -361,7 +411,12 @@ var invalidMessage = ErrorMessage{Type: typeError, Code: "invalid_message"}
 // handle handles a message of the client: a subscription, or the end of
 // one, each a JSON object of exactly its fields, with those that it
 // requires, as the schema describes them (validMessage), and answers
-// anything else with an error message.
+// anything else with an error message. The message is decoded with
+// commands.DecodeObject, which holds its keys to its fields' exact spelling
+// of its own, where huma's validation does only while
+// huma.ValidateStrictCasing, a switch of the whole process, which packages
+// api and commands set, is set, and encoding/json takes a key of another
+// case for a field.
 func (c *conn) handle(m queuedMessage) error {
 	var head struct {
 		Type string `json:"type"`
@@ -528,7 +583,10 @@ func (c *conn) deliverHeard() error {
 // has sent what the project had when it read the first page: what commits
 // later wakes the socket again (Hub.dispatch), so that a project that commits
 // faster than the client reads keeps neither the socket's other
-// subscriptions, nor its client's messages, nor its heartbeats waiting. A
+// subscriptions, nor its client's messages, nor its heartbeats waiting, and
+// sends a heartbeat that falls due meanwhile before the operation that it
+// would wait behind (beatIfDue), so that a long one, as of a catch-up to a
+// slow client, keeps the client pinged, and heard, as it reads. A
 // project that the actor can no longer read ends the subscription, with
 // unsubscribed, and one whose log no longer has an operation that sub was not
 // sent, as once compaction (PRD FR-GDPR-03) dropped it, or of which more than
@@ -574,6 +632,9 @@ func (c *conn) deliver(sub *subscription, checked *commands.Actor) error {
 		for _, op := range ops {
 			if op.Seq != sub.sent+1 {
 				return c.resync(sub, projectID, seq)
+			}
+			if err := c.beatIfDue(); err != nil {
+				return err
 			}
 			if err := c.send(operationMessage(projectID, op)); err != nil {
 				return err

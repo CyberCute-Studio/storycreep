@@ -236,8 +236,12 @@ func TestDedicatedOutlivesIdleSessionTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// The timeout is a second, rather than less, since the dedicated
+	// connection's session has it from its start until Dedicated switches it
+	// off, a round trip later, which a test run that loads the machine could
+	// delay past a timeout of a tenth of a second.
 	if _, err := d.Admin(t).Exec(ctx, "ALTER ROLE "+pgx.Identifier{d.AppURL.User()}.Sanitize()+" IN DATABASE "+
-		pgx.Identifier{d.Name}.Sanitize()+" SET idle_session_timeout = '100ms'"); err != nil {
+		pgx.Identifier{d.Name}.Sanitize()+" SET idle_session_timeout = '1s'"); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := db.Dedicated(ctx)
@@ -248,7 +252,7 @@ func TestDedicatedOutlivesIdleSessionTimeout(t *testing.T) {
 	// Another session of the login, which keeps the timeout, shows that it
 	// ends a session as idle as the dedicated one.
 	other := dbtest.Connect(t, d.AppURL)
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1500 * time.Millisecond)
 	if _, err := other.Exec(ctx, "SELECT 1"); err == nil {
 		t.Fatal("a session of the login outlived its idle_session_timeout")
 	}

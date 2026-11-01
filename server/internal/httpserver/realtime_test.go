@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,7 +16,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
+	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/realtime"
 )
@@ -771,6 +774,57 @@ func TestRealtimePing(t *testing.T) {
 				"closed while its project still committed", len(boards))
 		}
 		return
+	}
+}
+
+// slowProjects resolves an actor's access to the projects as Projects does,
+// but takes delay longer for each of its reads of a project after the first,
+// as each page of a delivery would from a database under load.
+type slowProjects struct {
+	realtime.Projects
+	delay time.Duration
+	reads atomic.Int32
+}
+
+func (p *slowProjects) GetIn(ctx context.Context, tx pgx.Tx, actor commands.Actor, workspaceID,
+	projectID ids.UUID) (project.Visible, error) {
+	if p.reads.Add(1) > 1 {
+		time.Sleep(p.delay)
+	}
+	return p.Projects.GetIn(ctx, tx, actor, workspaceID, projectID)
+}
+
+// TestRealtimeHeartbeatWhileDelivering checks that a delivery that takes
+// longer than the silence's timeout, as a catch-up on many operations to a
+// slow client, pings the client between its operations, so that a client
+// that reads them, and sends nothing but its pongs, keeps its socket once it
+// has read them all, rather than be closed with 1008 for as long as the
+// delivery took: each of the catch-up's three pages takes longer to read
+// than the heartbeat's interval, but less than the silence's timeout, which
+// the three together take longer than.
+func TestRealtimeHeartbeatWhileDelivering(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	s.hub = realtime.New(realtime.Options{DB: readyDB{s.ready},
+		Projects:  &slowProjects{Projects: s.projects, delay: 500 * time.Millisecond},
+		Heartbeat: 50 * time.Millisecond, SilenceTimeout: 1200 * time.Millisecond})
+	srv := realtimeServer(t, s)
+	project := createProject(t, s.main, owner, ws, "Harbour").ID
+	// Three pages of the log, of 100 operations at most each.
+	createBoards(t, s.main, owner, project, 201)
+	sock := dialSocket(t, srv, owner.header(false))
+	sock.subscribe(project, 0)
+	seq := sock.next("subscribed").Seq
+	for want := int64(1); want <= seq; want++ {
+		if m := sock.next("operation"); m.Seq != want {
+			t.Fatalf("the catch-up's operation is of seq %d, want %d", m.Seq, want)
+		}
+	}
+	select {
+	case r := <-sock.received:
+		t.Errorf("once the catch-up was read, the socket sent %s (%v), want it open, with nothing to send", r.raw,
+			r.err)
+	case <-time.After(2 * time.Second):
 	}
 }
 
