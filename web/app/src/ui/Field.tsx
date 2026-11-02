@@ -137,10 +137,51 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
   );
 }
 
+export interface GroupFieldProps {
+  legend: string;
+  /** The classes of the legend, a field's label's unless they say otherwise. */
+  legendClassName?: string;
+  className?: string;
+  /** The error of the whole group, as of none of its boxes ticked. */
+  error?: string;
+  children: ReactNode;
+}
+
+/**
+ * A group of boxes to tick or buttons to choose one of, as a token's
+ * scopes, with its legend, and its error, which is the whole group's: its
+ * fieldset says data-invalid then, as ARIA has no aria-invalid of a group,
+ * and useFocusRefusal moves the focus to its first control.
+ */
+export function GroupField({
+  legend,
+  legendClassName = "font-medium",
+  className,
+  error,
+  children,
+}: GroupFieldProps) {
+  const errorId = useId();
+  return (
+    <fieldset
+      className={className}
+      aria-describedby={error === undefined ? undefined : errorId}
+      data-invalid={error === undefined ? undefined : true}
+    >
+      <legend className={legendClassName}>{legend}</legend>
+      {children}
+      {error !== undefined && (
+        <p id={errorId} className="text-sm text-danger">
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 /**
  * The selector of what useFocusRefusal moves the focus to: a field marked
- * invalid, or a control of a fieldset whose error is of the whole group, as
- * of boxes to tick, since ARIA has no aria-invalid of a group.
+ * invalid, or a control of a group whose error is the whole group's
+ * (GroupField).
  */
 const refusedField = '[aria-invalid="true"], fieldset[data-invalid] input';
 

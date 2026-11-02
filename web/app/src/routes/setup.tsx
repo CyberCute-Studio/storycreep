@@ -10,7 +10,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useId, useRef, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
 import {
@@ -21,7 +21,7 @@ import {
 import { type FieldOf, refusalOf } from "../auth/refusal";
 import { signIn } from "../auth/session";
 import { Button } from "../ui/Button";
-import { CheckboxField, SelectField, TextField } from "../ui/Field";
+import { CheckboxField, GroupField, SelectField, TextField } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
 
 /**
@@ -172,22 +172,23 @@ function SetupForm({ setup }: { setup: SetupBody }) {
         }
         throw error;
       }
-      // Setup has completed. What fails from here on is signing in, not
-      // setup: shown on the form, it would have the user set up again, which
-      // the server would answer as if someone else had completed it first.
-      try {
-        await client.fetchQuery({ ...instanceQuery, staleTime: 0 });
-        await signIn(client, {
+      // Setup has completed. What fails from here on is signing in, or
+      // reading the instance again, not setup: shown on the form, it would
+      // have the user set up again, which the server would answer as if
+      // someone else had completed it first. The two go at once.
+      const [instance, owner] = await Promise.allSettled([
+        client.fetchQuery({ ...instanceQuery, staleTime: 0 }),
+        signIn(client, {
           email: body.owner.email,
           password: body.owner.password,
-        });
-      } catch {
+        }),
+      ]);
+      if (instance.status === "rejected") {
         // The page reads the instance anew where it goes next, whose setup
-        // it may still hold as pending.
+        // it still holds as pending.
         client.removeQueries({ queryKey: instanceQuery.queryKey });
-        return "signed-out";
       }
-      return "signed-in";
+      return owner.status === "fulfilled" ? "signed-in" : "signed-out";
     },
     // Setup stays pending until the start page shows, so that its form,
     // shown until then, cannot be sent again, which would be refused.
@@ -343,7 +344,6 @@ function SetupForm({ setup }: { setup: SetupBody }) {
 /** The choice of who can register, unless the configuration sets it. */
 function SignupPolicy({ setup, error }: { setup: SetupBody; error?: string }) {
   const { t } = useTranslation();
-  const errorId = useId();
   const label = {
     closed: t("setup.signup.closed"),
     invite: t("setup.signup.invite"),
@@ -365,14 +365,12 @@ function SignupPolicy({ setup, error }: { setup: SetupBody; error?: string }) {
     );
   }
   return (
-    <fieldset
+    <GroupField
+      legend={t("setup.signup.title")}
+      legendClassName="mb-2 text-lg font-semibold"
       className="space-y-2"
-      aria-describedby={error === undefined ? undefined : errorId}
-      data-invalid={error === undefined ? undefined : true}
+      error={error}
     >
-      <legend className="mb-2 text-lg font-semibold">
-        {t("setup.signup.title")}
-      </legend>
       {policies.map((policy) => (
         <label key={policy} className="flex min-h-11 items-start gap-3 py-1">
           <input
@@ -388,12 +386,7 @@ function SignupPolicy({ setup, error }: { setup: SetupBody; error?: string }) {
           </span>
         </label>
       ))}
-      {error !== undefined && (
-        <p id={errorId} className="text-sm text-danger">
-          {error}
-        </p>
-      )}
-    </fieldset>
+    </GroupField>
   );
 }
 

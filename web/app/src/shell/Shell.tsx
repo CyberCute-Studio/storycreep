@@ -12,6 +12,7 @@ import { signOutFailure, useSignOut } from "../auth/signOut";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
+import { Alert } from "../ui/Page";
 import { CONTENT_ID, skipToContent } from "./focus";
 import { unencrypted } from "./transport";
 
@@ -47,13 +48,10 @@ export function Shell({ children }: { children: ReactNode }) {
               <ErrorConsoleButton />
             </div>
           </div>
-          <div role="alert">
-            {failure !== undefined && (
-              <p className="border-t border-border px-4 py-3 text-danger">
-                {failure}
-              </p>
-            )}
-          </div>
+          <Alert
+            message={failure}
+            className="border-t border-border px-4 py-3 text-danger"
+          />
         </header>
         <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
           {children}

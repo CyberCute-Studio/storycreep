@@ -13,6 +13,13 @@ export interface RouterContext {
   queryClient: QueryClient;
   /** The app's i18next instance, whose locale the root route resolves. */
   i18n: I18n;
+  /**
+   * Asks the server for the page's session now, and records what it says
+   * as the page does once its tab is shown again (followSession), as once
+   * a page has done what changes or ends the session in the server alone,
+   * as a change of the password or a reset of one.
+   */
+  checkSession: () => Promise<void>;
 }
 
 /** Returns the app's router. */

@@ -12,6 +12,14 @@ const content =
 export interface DialogFrameProps {
   title: string;
   description?: string;
+  /**
+   * Whether a click or a tap outside the dialog, as on the dimmed page,
+   * closes it, as it does unless it says false: a dialog that shows what
+   * closing it loses for good, as a token's secret, which is never shown
+   * again, closes only by its own controls, or Escape, which a user presses
+   * to close it.
+   */
+  closesOutside?: boolean;
   children: ReactNode;
 }
 
@@ -19,6 +27,7 @@ export interface DialogFrameProps {
 export function DialogFrame({
   title,
   description,
+  closesOutside = true,
   children,
 }: DialogFrameProps) {
   return (
@@ -26,6 +35,9 @@ export function DialogFrame({
       <Dialog.Overlay className={overlay} />
       <Dialog.Content
         className={content}
+        onInteractOutside={
+          closesOutside ? undefined : (event) => event.preventDefault()
+        }
         // Radix warns of a dialog without a description unless it is told
         // that it has none, with an aria-describedby of undefined.
         {...(description === undefined

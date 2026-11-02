@@ -15,9 +15,9 @@ import { fragmentToken } from "./fragment";
 import { refusalOf } from "./refusal";
 import {
   appPath,
+  endSession,
   followSession,
   signedIn,
-  signedOut,
   signInFor,
   signInReturn,
   signInSearch,
@@ -143,6 +143,14 @@ describe("refusalOf", () => {
     expect(refusalOf(refused(500, { code: "internal_error" }), t).message).toBe(
       "The server could not answer. Try again in a moment.",
     );
+    // A proxy's page of a refusal, as of a body too large, is no refusal
+    // of the server's, which trying again would mend.
+    expect(
+      refusalOf(
+        new ApiError(new Response("<html>", { status: 413 }), undefined),
+        t,
+      ).message,
+    ).toBe(t("error.unexpected"));
   });
 });
 
@@ -235,7 +243,7 @@ describe("fragmentToken", () => {
   });
 });
 
-describe("signedIn and signedOut", () => {
+describe("signedIn and endSession", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -286,7 +294,7 @@ describe("signedIn and signedOut", () => {
 
     client.setQueryData(["tokens"], []);
     client.setQueryData(accountQuery.queryKey, testAccount);
-    signedOut(client);
+    await endSession(client, { invalidate: async () => {} });
     expect(client.getQueryData(sessionQuery.queryKey)).toBeNull();
     expect(client.getQueryData(accountQuery.queryKey)).toBeUndefined();
     expect(client.getQueryData(["tokens"])).toBeUndefined();

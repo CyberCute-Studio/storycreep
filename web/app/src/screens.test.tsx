@@ -130,7 +130,7 @@ describe("signing out", () => {
     await user.click(within(header).getByRole("button", { name: "Sign out" }));
     expect(await within(header).findByRole("alert")).toHaveProperty(
       "textContent",
-      "Signing out failed, so you are still signed in. The server refused the request, because it did not seem to come from this page. Reload the page, and try again.",
+      "Signing out failed, so you are still signed in. The server refused the request, because it did not seem to come from this page. Try again.",
     );
     expect(screen.getByText("You are signed in as Jo.")).toBeDefined();
   });
@@ -558,6 +558,46 @@ describe("first-run setup", () => {
     await screen.findByRole("heading", { level: 1, name: "Sign in" });
   });
 
+  it("goes to the start page once it has signed in, though reading the instance again failed", async () => {
+    const user = userEvent.setup();
+    let instance = { ...testInstance, setup_pending: true };
+    let reads = 0;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "getSetup":
+          return pendingSetup;
+        case "completeSetup":
+          instance = { ...instance, setup_pending: false };
+          return undefined;
+        case "getInstance":
+          reads++;
+          if (reads === 1) {
+            throw refused(503, { code: "unavailable" });
+          }
+          return instance;
+        case "login":
+          return testSession;
+        case "getAccount":
+          return testAccount;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/setup", { instance });
+    await user.type(await screen.findByLabelText("Setup code"), "7K2M");
+    await user.type(screen.getByLabelText("Name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("New password"), "a passphrase!");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a passphrase!",
+    );
+    await user.type(screen.getByLabelText("Workspace name"), "Studio");
+    await user.click(screen.getByRole("button", { name: "Complete setup" }));
+    await screen.findByText("You are signed in as Jo.");
+    expect(router.state.location.pathname).toBe("/");
+    expect(reads).toBe(2);
+  });
+
   it("goes to signing in once setup has completed elsewhere", async () => {
     fakeApi((operation) => {
       if (operation === "getSetup") {
@@ -884,6 +924,45 @@ describe("resetting a password", () => {
     );
   });
 
+  it("shows the page anew for the account that another tab has signed in to since", async () => {
+    const user = userEvent.setup();
+    const sam = { ...testAccount, id: "usr_sam", display_name: "Sam" };
+    const samSession = { ...testSession, user_id: sam.id, csrf_token: "sam" };
+    fakeApi((operation) => {
+      switch (operation) {
+        case "resetPassword":
+          return undefined;
+        case "getSession":
+          return samSession;
+        case "getAccount":
+          return sam;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/reset-password#token=secret", {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("New password"),
+      "a new passphrase",
+    );
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Set the new password" }),
+    );
+    await screen.findByRole("link", { name: "Sam" });
+    expect(
+      screen.getByText(
+        "Your password is changed, and every session of your account is signed out. Sign in with the new password.",
+      ),
+    ).toBeDefined();
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(samSession);
+    expect(queryClient.getQueryData(accountQuery.queryKey)).toEqual(sam);
+  });
+
   it("stays signed in when the server cannot say whether the page's session still is", async () => {
     const user = userEvent.setup();
     fakeApi((operation) => {
@@ -916,6 +995,84 @@ describe("resetting a password", () => {
       testSession,
     );
     expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
+  });
+});
+
+describe("changing the password", () => {
+  it("records the session's new CSRF token, though a question of the session that went before the change's answer came took it for ended", async () => {
+    const user = userEvent.setup();
+    const renewed = { ...testSession, csrf_token: "renewed" };
+    let questions = 0;
+    let checkSession = async () => {};
+    fakeApi(async (operation) => {
+      switch (operation) {
+        case "changePassword":
+          // A question that went with the cookie before the change, as
+          // once the tab was shown again, is answered first.
+          await checkSession();
+          return undefined;
+        case "getSession":
+          questions++;
+          if (questions === 1) {
+            throw refused(401, { code: "unauthenticated" });
+          }
+          return renewed;
+        case "getAccount":
+          return testAccount;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const app = renderApp("/account", { session: testSession });
+    checkSession = app.checkSession;
+    await user.type(
+      await screen.findByLabelText("Current password"),
+      "the old passphrase",
+    );
+    await user.type(screen.getByLabelText("New password"), "a new passphrase");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Change the password" }),
+    );
+    await waitFor(() =>
+      expect(app.queryClient.getQueryData(sessionQuery.queryKey)).toEqual(
+        renewed,
+      ),
+    );
+    await screen.findByRole("heading", { level: 1, name: "Account" });
+    expect(app.router.state.location.pathname).toBe("/account");
+    expect(questions).toBe(2);
+  });
+});
+
+describe("the error page", () => {
+  it("asks no more for an account that the page could not read, until the user tries again", async () => {
+    const user = userEvent.setup();
+    let fails = true;
+    const call = fakeApi((operation) => {
+      if (operation === "getAccount") {
+        if (fails) {
+          throw refused(500, { code: "internal_error" });
+        }
+        return testAccount;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account", { session: testSession, account: null });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Something went wrong",
+    });
+    const reads = () =>
+      call.mock.calls.filter(([operation]) => operation === "getAccount");
+    expect(reads()).toHaveLength(1);
+
+    fails = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("heading", { level: 1, name: "Account" });
+    expect(reads()).toHaveLength(2);
   });
 });
 
@@ -1045,6 +1202,70 @@ describe("the API tokens", () => {
     listed = [workspace("wsp_a", "Studio A")];
     await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     await screen.findByRole("heading", { name: "Tokens of Studio A" });
+  });
+
+  it("shows the whole workspace's tokens once the project chosen is no longer listed", async () => {
+    const user = userEvent.setup();
+    let projects = [{ id: "prj_a", name: "Game A" }];
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: projects, next_cursor: null };
+        case "listWorkspaceTokens":
+        case "listProjectTokens":
+          return { items: [], next_cursor: null };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account/tokens", {
+      session: testSession,
+    });
+    const targets = await screen.findByRole("combobox", { name: "Tokens of" });
+    await waitFor(() =>
+      expect(options(targets)).toEqual(["The whole workspace", "Game A"]),
+    );
+    await user.selectOptions(targets, "prj_a");
+    await screen.findByRole("heading", { name: "Tokens of Game A" });
+
+    // It went to the trash, as the list says once it is read again.
+    projects = [];
+    await queryClient.invalidateQueries({
+      queryKey: ["workspaces", "wsp_a", "projects"],
+    });
+    await screen.findByRole("heading", { name: "Tokens of Studio A" });
+    expect(targets).toHaveProperty("value", "");
+  });
+
+  it("keeps the dialog of a new token's secret open when the page outside it is clicked", async () => {
+    // The dialog takes the pointer events of the page outside it, which a
+    // click there goes to all the same.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+        case "listWorkspaceTokens":
+          return { items: [], next_cursor: null };
+        case "createWorkspaceToken":
+          return made;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    const dialog = await makeToken(user);
+    await within(dialog).findByLabelText("Token");
+    await user.click(document.body);
+    expect(dialog.isConnected).toBe(true);
+    expect(within(dialog).getByLabelText("Token")).toHaveProperty(
+      "value",
+      made.secret,
+    );
+    // Escape, which a user presses to close it, does.
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("shows the secret of a token that it made, though the list then fails to be read again", async () => {

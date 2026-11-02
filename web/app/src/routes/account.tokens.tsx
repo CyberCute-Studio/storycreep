@@ -28,6 +28,7 @@ import { Button } from "../ui/Button";
 import { ConfirmFrame, DialogFrame } from "../ui/Dialog";
 import {
   CheckboxField,
+  GroupField,
   SelectField,
   TextField,
   useFocusRefusal,
@@ -215,14 +216,18 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
   // narrowed to one (§5.5).
   const guest = workspace.role === "guest";
   const [choice, setChoice] = useState("");
-  const projectId = choice || (guest ? (loaded[0]?.id ?? "") : "");
+  // The project chosen, while it is listed, as Tokens keeps the workspace
+  // chosen: once it is not, as once it has gone to the trash, or out of the
+  // pages read, the whole workspace, or a guest's first project.
+  const project =
+    loaded.find((p) => p.id === choice) ?? (guest ? loaded[0] : undefined);
+  const projectId = project?.id ?? "";
   const target: Target | undefined =
-    projectId !== ""
-      ? { kind: "project", projectId }
+    project !== undefined
+      ? { kind: "project", projectId: project.id }
       : guest
         ? undefined
         : { kind: "workspace", workspaceId: workspace.id };
-  const project = loaded.find((p) => p.id === projectId);
   return (
     <div className="space-y-6">
       <div className="max-w-md space-y-2">
@@ -476,6 +481,7 @@ function CreateToken({
       <DialogFrame
         title={t("tokens.create_title", { target: targetName })}
         description={create.isSuccess ? undefined : t("tokens.create_intro")}
+        closesOutside={!create.isSuccess}
       >
         {create.isSuccess ? (
           <Secret token={create.data} onDone={() => onOpenChange(false)} />
@@ -529,7 +535,6 @@ function CreateToken({
 /** The scopes to tick, each with what it grants. */
 function ScopeChoice({ error }: { error?: string }) {
   const { t } = useTranslation();
-  const errorId = useId();
   const grants: Record<Scope, string> = {
     "snapshot:read": t("tokens.scope.snapshot_read"),
     "project:read": t("tokens.scope.project_read"),
@@ -538,11 +543,7 @@ function ScopeChoice({ error }: { error?: string }) {
     "export:read": t("tokens.scope.export_read"),
   };
   return (
-    <fieldset
-      aria-describedby={error === undefined ? undefined : errorId}
-      data-invalid={error === undefined ? undefined : true}
-    >
-      <legend className="font-medium">{t("tokens.scopes")}</legend>
+    <GroupField legend={t("tokens.scopes")} error={error}>
       {scopes.map((scope) => (
         <CheckboxField
           key={scope}
@@ -552,12 +553,7 @@ function ScopeChoice({ error }: { error?: string }) {
           defaultChecked={scope === "snapshot:read"}
         />
       ))}
-      {error !== undefined && (
-        <p id={errorId} className="text-sm text-danger">
-          {error}
-        </p>
-      )}
-    </fieldset>
+    </GroupField>
   );
 }
 

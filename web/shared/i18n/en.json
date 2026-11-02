@@ -43,7 +43,7 @@
   "crash.body": "An error kept the app from being shown. Its details are below: you can copy them into a report of the problem. Reloading the page may help.",
   "crash.reload": "Reload the page",
   "crash.title": "Storycreep stopped working",
-  "error.csrf_failed": "The server refused the request, because it did not seem to come from this page. Reload the page, and try again.",
+  "error.csrf_failed": "The server refused the request, because it did not seem to come from this page. Try again.",
   "error.limit_exceeded": "{key, select, members {The workspace has as many members as it may have} projects {The workspace has as many projects as it may have} other {The workspace has reached one of its limits}}: {usage, number} of {limit, number}.",
   "error.network": "The server could not be reached. Check your connection, and try again.",
   "error.rate_limited": "Too many requests. Try again in {seconds, plural, one {# second} other {# seconds}}.",

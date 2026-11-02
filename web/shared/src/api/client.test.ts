@@ -317,6 +317,42 @@ describe("a client of generated operations", () => {
     await expect(aborted).rejects.toBe(reason);
   });
 
+  it("rejects with a NetworkError when the answer's body stops before it has all come, unless the call was aborted", async () => {
+    const failure = new TypeError("network error");
+    const stopping = () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.error(failure);
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    const c = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async () => stopping(),
+    });
+    const call = c.call("getThing", { path: { id: "1" } });
+    await expect(call).rejects.toThrow(NetworkError);
+    await expect(call).rejects.toHaveProperty("cause", failure);
+
+    const abort = new AbortController();
+    const aborted = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              abort.abort();
+              controller.error(abort.signal.reason);
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
+    await expect(aborted).rejects.not.toThrow(NetworkError);
+  });
+
   it("passes the call's options to fetch", async () => {
     const { client: c, calls } = client(() => json(200, {}));
     const abort = new AbortController();

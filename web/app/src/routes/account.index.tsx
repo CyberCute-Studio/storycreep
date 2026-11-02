@@ -14,7 +14,7 @@ import {
   usePasswordConfirmation,
 } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
-import { csrfHeaders, signedIn } from "../auth/session";
+import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
 import { applyLocale, supportedLocales } from "../i18n";
 import { Button } from "../ui/Button";
@@ -154,27 +154,31 @@ const passwordField = bodyField("current_password", "new_password");
 
 /**
  * Changing the password (PRD FR-AUTH-02 AC4), which signs out every other
- * session of the account, and gives this one a new secret and CSRF token.
+ * session of the account, and gives this one a new secret and CSRF token,
+ * which the page records by asking for its session, as it does once its
+ * tab is shown again (checkSession), rather than from the answer: a
+ * question of the session that went while the change was under way, with
+ * the cookie before it, is answered as if the session had ended, which may
+ * reach the page before the change's answer, and the page's own question,
+ * the latest, sets that right.
  */
 function Password() {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
-  const client = useQueryClient();
+  const { checkSession } = Route.useRouteContext();
   const form = useRef<HTMLFormElement>(null);
   const change = useMutation({
     mutationFn: async (body: {
       current_password: string;
       new_password: string;
     }) => {
-      return (
-        await api.call("changePassword", {
-          headers: csrfHeaders(session),
-          body,
-        })
-      ).body;
+      await api.call("changePassword", {
+        headers: csrfHeaders(session),
+        body,
+      });
     },
-    onSuccess: async (renewed) => {
-      await signedIn(client, renewed);
+    onSuccess: async () => {
+      await checkSession();
       form.current?.reset();
     },
   });

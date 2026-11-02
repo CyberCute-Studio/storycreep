@@ -1,7 +1,8 @@
 // What the app's tests of pages render them with: the app's router, in
 // memory, at a path, over a query client whose cache holds the instance, the
 // session, and the account that the test gives, so that the root route's
-// guards read them without a request.
+// guards read them without a request, and that follows the session as the
+// app does (followSession), once a page asks it to (checkSession).
 
 import type {
   AccountBody,
@@ -21,6 +22,7 @@ import type { i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { onTestFinished, vi } from "vitest";
 import { accountQuery, instanceQuery, sessionQuery } from "../api";
+import { followSession, sessionChanges } from "../auth/session";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
@@ -60,7 +62,11 @@ export interface RenderAppOptions {
   instance?: InstanceBody;
   /** The page's session, or null for a signed-out page. */
   session?: SignedInBody | null;
-  account?: AccountBody;
+  /**
+   * The account of the session, testAccount unless it says another, or
+   * null for one that the page has yet to read.
+   */
+  account?: AccountBody | null;
   /** Catalogs to show the app in, instead of the shared ones. */
   catalogs?: Readonly<Record<string, Catalog>>;
   /**
@@ -92,7 +98,7 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
   );
   const session = options.session === undefined ? null : options.session;
   queryClient.setQueryData(sessionQuery.queryKey, session);
-  if (session !== null) {
+  if (session !== null && options.account !== null) {
     queryClient.setQueryData(
       accountQuery.queryKey,
       options.account ?? testAccount,
@@ -103,13 +109,20 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     document.documentElement,
     options.catalogs,
   );
+  const checkSession = () => follower.check();
   const router = createRouter({
     routeTree: options.routes ?? routeTree,
     basepath: "/app",
     history: createMemoryHistory({ initialEntries: [`/app${path}`] }),
-    context: { queryClient, i18n },
+    context: { queryClient, i18n, checkSession },
     disableGlobalCatchBoundary: true,
   });
+  const follower = followSession(
+    queryClient,
+    document,
+    sessionChanges(queryClient, router),
+  );
+  onTestFinished(() => follower.stop());
   const view = render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
@@ -119,5 +132,5 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { ...view, queryClient, i18n, router };
+  return { ...view, queryClient, i18n, router, checkSession };
 }

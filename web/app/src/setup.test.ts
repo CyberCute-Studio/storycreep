@@ -66,7 +66,11 @@ describe("createQueryClient", () => {
     const log = createErrorLog();
     const client = createQueryClient(log);
     const answer = (status: number) =>
-      new ApiError(new Response(null, { status }), undefined);
+      new ApiError(new Response(null, { status }), {
+        code: "refused",
+        message: "refused",
+        request_id: "req",
+      });
     const run = (error: ApiError, meta?: { showsRefusals: boolean }) =>
       client
         .getMutationCache()
@@ -76,7 +80,12 @@ describe("createQueryClient", () => {
     await run(answer(422));
     await run(answer(409), { showsRefusals: false });
     await run(answer(500));
-    expect(log.entries().map((e) => e.request?.status)).toEqual([409, 500]);
+    // An answer without the error envelope, as a proxy's page, is no
+    // refusal of the server's.
+    await run(new ApiError(new Response(null, { status: 413 }), undefined));
+    expect(log.entries().map((e) => e.request?.status)).toEqual([
+      409, 500, 413,
+    ]);
   });
 
   it("asks for the session again once an answer tells that it may have changed elsewhere", async () => {

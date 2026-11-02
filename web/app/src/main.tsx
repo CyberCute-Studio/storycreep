@@ -39,7 +39,11 @@ requestsIn(i18n);
 const queryClient = createQueryClient(errorLog, {
   checkSession: () => void session.check(),
 });
-const router = createAppRouter({ queryClient, i18n });
+const router = createAppRouter({
+  queryClient,
+  i18n,
+  checkSession: () => session.check(),
+});
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of
 // its routes (sessionChanges).

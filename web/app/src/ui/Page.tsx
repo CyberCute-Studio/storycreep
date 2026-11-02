@@ -27,18 +27,21 @@ export function Page({ title, width = "narrow", children }: PageProps) {
 }
 
 /**
- * Where a form says that it was refused. The live region is on the page
- * before its message, so that a screen reader reads each message that
- * appears in it.
+ * Where a form says that it was refused, or the header that signing out
+ * failed, which sets the classes of the message, a box unless they say
+ * otherwise. The live region is on the page before its message, so that a
+ * screen reader reads each message that appears in it.
  */
-export function Alert({ message }: { message?: string }) {
+export function Alert({
+  message,
+  className = "rounded-md border border-danger px-4 py-3 text-danger",
+}: {
+  message?: string;
+  className?: string;
+}) {
   return (
     <div role="alert">
-      {message !== undefined && (
-        <p className="rounded-md border border-danger px-4 py-3 text-danger">
-          {message}
-        </p>
-      )}
+      {message !== undefined && <p className={className}>{message}</p>}
     </div>
   );
 }

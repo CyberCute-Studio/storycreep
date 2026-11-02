@@ -37,14 +37,17 @@ export const Route = createFileRoute("/invite")({
   component: Invite,
 });
 
-/** What the holder of the invitation's link sees of it. */
+/**
+ * What the holder of the invitation's link sees of it, which the page asks
+ * for again, as any query, if the server could not answer, since looking
+ * it up uses nothing of it.
+ */
 function inviteQuery(token: string) {
   return queryOptions({
     queryKey: ["invite", token],
     // A POST, so that the token travels in the body, never in a URL.
     queryFn: async ({ signal }): Promise<InvitePreviewBody> =>
       (await api.call("lookupInvite", { body: { token } }, { signal })).body,
-    retry: false,
     staleTime: Number.POSITIVE_INFINITY,
     meta: { showsRefusals: true },
   });

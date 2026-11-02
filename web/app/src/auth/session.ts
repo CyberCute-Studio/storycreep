@@ -53,18 +53,18 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
 
 /**
  * Records in client that the page signed in, or that its session has a new
- * secret, as after a change of the password: the session that the answer
- * body holds, with its CSRF token. Whatever the page held of another
- * account's is dropped, and the session's account is asked for first, so
- * that the page has both at once: a component that reads the account once
- * the page has a session, as an invitation's step that follows signing in
- * where the page is, has it, rather than waiting for it, which shows none
- * of the page's content (useSuspenseQuery). If the server cannot answer,
- * the components ask for it themselves. A session that the page only
- * learnt of, as followSession does, is recorded only if current still
- * says so once the account has come, after which the page may have changed
- * its session itself, as by signing in; signedIn resolves to whether it
- * recorded it.
+ * secret, as after a change of the password, which followSession learns:
+ * the session that the answer body holds, with its CSRF token. Whatever
+ * the page held of another account's is dropped, and the session's account
+ * is asked for first, so that the page has both at once: a component that
+ * reads the account once the page has a session, as an invitation's step
+ * that follows signing in where the page is, has it, rather than waiting
+ * for it, which shows none of the page's content (useSuspenseQuery). If
+ * the server cannot answer, the components ask for it themselves. A
+ * session that the page only learnt of, as followSession does, is recorded
+ * only if current still says so once the account has come, after which
+ * the page may have changed its session itself, as by signing in;
+ * signedIn resolves to whether it recorded it.
  */
 export async function signedIn(
   client: QueryClient,
@@ -107,17 +107,6 @@ export async function signIn(
   return session;
 }
 
-/**
- * Records in client that the page is signed out, and drops what it held of
- * the account. A component still shown reads the session as null until the
- * page that it is on goes, as the router's guards send it to the sign-in
- * screen.
- */
-export function signedOut(client: QueryClient): void {
-  client.setQueryData(sessionQuery.queryKey, null);
-  dropAccountData(client);
-}
-
 /** What endSession shows the page again with: the app's router. */
 interface Reloadable {
   invalidate: () => Promise<void>;
@@ -145,7 +134,7 @@ export async function endSession(
   try {
     await router.invalidate();
   } finally {
-    signedOut(client);
+    dropAccountData(client);
   }
 }
 
@@ -168,12 +157,17 @@ export interface SessionChanges {
 /** The page's following of its session (followSession). */
 export interface SessionFollower {
   /**
-   * Asks the server for the session now, as once it answered a request
-   * with 401 unauthenticated, which tells that the session may have ended,
-   * or that the request went with one that the page has replaced since, as
-   * by changing the password, whose session is still the page's, or with
-   * 403 csrf_failed, as once another tab changed the password, which gave
-   * the session a new CSRF token.
+   * Asks the server for the session now: once it answered a request with
+   * 401 unauthenticated, which tells that the session may have ended, or
+   * that the request went with one that the page has replaced since, as by
+   * changing the password, whose session is still the page's; once it
+   * answered one with 403 csrf_failed, as after another tab changed the
+   * password, which gave the session a new CSRF token; and once the page
+   * has done what changes the session in the server alone
+   * (RouterContext.checkSession), as changing the password, whose new
+   * secret it then records, or resetting one, which ends every session of
+   * its account. It resolves once the answer is recorded, or once a later
+   * question has made it one that no longer counts.
    */
   check: () => Promise<void>;
   /** Stops following the session. */

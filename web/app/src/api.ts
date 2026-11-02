@@ -58,7 +58,9 @@ export const api = createApiClient({
  * mutation is a user's request, whose refusal the form that made it shows,
  * so it does unless it says showsRefusals: false; a query does only if it
  * says showsRefusals: true. An answer of 500 or more is recorded all the
- * same.
+ * same, and so is one without the error envelope, as a proxy's page, which
+ * is no refusal of the server's, and which a form shows as unexpected
+ * (refusalOf).
  */
 interface Meta extends Record<string, unknown> {
   showsRefusals?: boolean;
@@ -130,18 +132,25 @@ export const sessionQuery = queryOptions({
   queryKey: ["session"],
   queryFn: ({ signal }): Promise<SignedInBody | null> => fetchSession(signal),
   staleTime: Number.POSITIVE_INFINITY,
+  // A page that could not read it shows the error page, whose header reads
+  // it too, and whose Retry asks for it again (loadSessionState): what
+  // reads it does not ask again as it mounts, which would record the
+  // failure twice.
+  retryOnMount: false,
 });
 
 /**
  * The signed-in account, which a page asks for only while it has a session.
  * The account's own screens change it, and set it in the cache with the
- * answer.
+ * answer. A page that could not read it shows the error page, as for the
+ * session.
  */
 export const accountQuery = queryOptions({
   queryKey: ["account"],
   queryFn: async ({ signal }): Promise<AccountBody> =>
     (await api.call("getAccount", {}, { signal })).body,
   staleTime: Number.POSITIVE_INFINITY,
+  retryOnMount: false,
 });
 
 /** What a list of the server answers a page at a time has of its next page. */
@@ -236,8 +245,8 @@ export interface QueryClientOptions {
 /**
  * Returns the app's query client, which records in log each request that
  * failed, but for an answer of 401 unauthenticated, which tells that the
- * page's session may have ended (checkSession), and a refusal that a form
- * shows (Meta.showsRefusals).
+ * page's session may have ended (checkSession), and a refusal of the
+ * server's that a form shows (Meta.showsRefusals).
  * A request that the server refused, with a status below 500, is not tried
  * again, since it would be refused again.
  */
@@ -255,7 +264,8 @@ export function createQueryClient(
     if (
       meta?.showsRefusals &&
       error instanceof ApiError &&
-      error.status < 500
+      error.status < 500 &&
+      error.error !== undefined
     ) {
       return;
     }

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { api, sessionQuery } from "../api";
+import { api } from "../api";
 import {
   bodyField,
   minPasswordLength,
@@ -10,7 +10,6 @@ import {
 } from "../auth/forms";
 import { linkOutcome, useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
-import { signedOut } from "../auth/session";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
@@ -50,6 +49,7 @@ function ResetPassword() {
 function ResetWith({ token }: { token: string }) {
   const { t } = useTranslation();
   const client = useQueryClient();
+  const { checkSession } = Route.useRouteContext();
   const form = useRef<HTMLFormElement>(null);
   const done = useQuery(resetOutcome(token)).data === true;
   const reset = useMutation({
@@ -59,18 +59,16 @@ function ResetWith({ token }: { token: string }) {
       });
     },
     // The server revoked every session of the account, which this page's
-    // may be one of, or not, as one of another account's: the page asks
-    // the server, and is signed out if the server says so. If the server
-    // cannot say, the page stays as it is, and the next request that needs
-    // the session finds out, as any does (checkSession).
+    // may be one of, or not, as one of another account's, or of one that
+    // another tab has signed in to since: the page asks the server, as it
+    // does once its tab is shown again, and is signed out where it is if
+    // its session has ended, or shown anew if it is another account's.
+    // What became of the link is kept first, which the page, shown anew,
+    // says. If the server cannot say, the page stays as it is, and the next
+    // request that needs the session finds out, as any does.
     onSuccess: async () => {
-      const session = await client
-        .fetchQuery({ ...sessionQuery, staleTime: 0 })
-        .catch(() => undefined);
-      if (session === null) {
-        signedOut(client);
-      }
       client.setQueryData(resetOutcome(token).queryKey, true);
+      await checkSession();
     },
   });
   const refusal =

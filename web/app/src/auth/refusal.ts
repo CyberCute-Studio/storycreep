@@ -56,8 +56,15 @@ export function refusalOf(
     };
   }
   const body = error.error;
-  if (body === undefined || error.status >= 500) {
+  if (error.status >= 500) {
     return { message: t("error.server"), fields: {} };
+  }
+  if (body === undefined) {
+    // An answer below 500 without the error envelope, as the page of a
+    // proxy that refuses a body too large, or a path that it does not pass
+    // on, is no refusal of the server's, which trying again would mend, but
+    // a fault of the instance's, which the error console records.
+    return { message: t("error.unexpected"), fields: {} };
   }
   const fields: Record<string, string> = {};
   const unplaced: string[] = [];
