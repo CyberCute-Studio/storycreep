@@ -11,6 +11,7 @@ export {
   type Client,
   type ClientOptions,
   createClient,
+  NetworkError,
 } from "./client";
 export * from "./v1.gen";
 

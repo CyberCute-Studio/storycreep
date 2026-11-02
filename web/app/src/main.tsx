@@ -10,7 +10,8 @@ import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { createQueryClient, requestVersion } from "./api";
+import { createQueryClient, requestsIn, requestVersion } from "./api";
+import { followSession, sessionChanges } from "./auth/session";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -28,10 +29,31 @@ if (nonce !== undefined) {
 }
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
-const queryClient = createQueryClient(errorLog);
+requestsIn(i18n);
+// A request that the server answers with 401 tells that the page's session
+// may have ended elsewhere, as when it was revoked, or that it went with a
+// session that the page has replaced since, as by changing the password,
+// and one answered with 403 csrf_failed that another tab gave the session
+// a new CSRF token, by changing the password: the page asks the server, as
+// it does whenever its tab is shown again (sessionDoubtedBy).
+const queryClient = createQueryClient(errorLog, {
+  checkSession: () => void session.check(),
+});
+const router = createAppRouter({
+  queryClient,
+  i18n,
+  checkSession: () => session.check(),
+});
+// A page whose session has ended elsewhere, or that another tab signed in
+// to another account, or to one, shows itself again, through the guards of
+// its routes (sessionChanges).
+const session = followSession(
+  queryClient,
+  document,
+  sessionChanges(queryClient, router),
+);
 // What the error console's reports name, asked for before anything is shown.
 requestVersion(queryClient);
-const router = createAppRouter({ queryClient });
 
 const container = document.getElementById("root");
 if (container === null) {

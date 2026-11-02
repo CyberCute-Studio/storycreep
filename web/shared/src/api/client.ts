@@ -3,9 +3,11 @@
 // response by hand: a call names an operation of Operations, passes the
 // input that the operation takes, and gets the status and body of the
 // answer, typed by status. An error, which the server answers with the error
-// envelope, is thrown as an ApiError. A body that is a file, as an image that
-// is uploaded, is a Blob, which is sent as it is, and the answer of an
-// operation that answers with a file is read as a Blob.
+// envelope, is thrown as an ApiError, and a call that no whole answer came
+// to, as one to a server that cannot be reached, rejects with a
+// NetworkError. A body that is a file, as an image that is uploaded, is a
+// Blob, which is sent as it is, and the answer of an operation that answers
+// with a file is read as a Blob.
 
 import type { ErrorBody } from "./v1.gen";
 
@@ -53,6 +55,12 @@ export interface ClientOptions {
   baseUrl: string;
   /** The fetch that calls the server; the global one if not set. */
   fetch?: typeof fetch;
+  /**
+   * Returns the headers that every call sends, as the locale that the
+   * server's messages are to be in, which it reads at each call: a call's
+   * own headers, and its operation's, replace them.
+   */
+  headers?: () => HeadersInit;
 }
 
 export interface CallOptions {
@@ -70,7 +78,9 @@ type CallArgs<Op extends OperationShape> =
 export interface Client<Ops extends Record<keyof Ops, OperationShape>> {
   /**
    * Calls an operation, and resolves to its answer, or rejects with an ApiError if the server answers with an
-   * error, and with an Error if it answers with a body that is not JSON.
+   * error, with a NetworkError if no answer comes, or its body stops before it has all come, and with an Error if
+   * it answers with a body that is not JSON.
+   * A call whose signal aborts it rejects as fetch does, with the signal's reason.
    */
   call<K extends keyof Ops>(
     operation: K,
@@ -99,6 +109,23 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * A call that no answer came to, as one to a server that cannot be reached,
+ * or whose answer's body stopped before it had all come, as once the
+ * connection dropped: fetch's own error, which each browser words as it
+ * will, is its cause. It tells such a call from a fault of the caller's, as
+ * a TypeError of a missing path parameter.
+ */
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `The server did not answer: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "NetworkError";
+  }
+}
+
 /** Returns a client of the operations that routes locates. */
 export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
   routes: Record<keyof Ops, Route>,
@@ -115,7 +142,10 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
     async call(operation, ...[input, callOptions]) {
       const route = routes[operation];
       const parts = (input ?? {}) as OperationShape["input"];
-      const headers = new Headers(callOptions?.headers);
+      const headers = new Headers(options.headers?.());
+      new Headers(callOptions?.headers).forEach((value, name) => {
+        headers.set(name, value);
+      });
       if (!route.blob) {
         headers.set("Accept", "application/json");
       }
@@ -137,22 +167,38 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
       }
       const url =
         baseUrl + fillPath(route.path, parts.path ?? {}) + search(parts.query);
-      const response = await doFetch(url, {
-        method: route.method,
-        headers,
-        body,
-        signal: callOptions?.signal,
-      });
+      const signal = callOptions?.signal;
+      const response = await received(
+        doFetch(url, { method: route.method, headers, body, signal }),
+        signal,
+      );
       if (response.status >= 400) {
-        throw new ApiError(response, await readEnvelope(response));
+        throw new ApiError(response, await readEnvelope(response, signal));
       }
       return {
         status: response.status,
-        body: route.blob ? await readFile(response) : await readBody(response),
+        body: route.blob
+          ? await readFile(response, signal)
+          : await readBody(response, signal),
         response,
       } as Answer<Ops[typeof operation]>;
     },
   };
+}
+
+/**
+ * Returns what fetch's promise, or a body's, resolves to, and rejects as it
+ * does if signal aborted it, and else with a NetworkError, since no whole
+ * answer came: a request that the browser could not send, or an answer
+ * whose body stopped as it came.
+ */
+function received<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  return promise.catch((error: unknown) => {
+    throw signal?.aborted ? error : new NetworkError(error);
+  });
 }
 
 /**
@@ -208,8 +254,11 @@ function isJSON(response: Response): boolean {
  * answers with for a path it does not pass on, is not an answer of the API,
  * so it is refused rather than taken for an answer without a body.
  */
-async function readBody(response: Response): Promise<unknown> {
-  const text = await response.text();
+async function readBody(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const text = await received(response.text(), signal);
   if (text === "") {
     return undefined;
   }
@@ -232,39 +281,49 @@ async function readBody(response: Response): Promise<unknown> {
  * CORS rules allow the application's origin; a page that only shows a file
  * points an img element at the operation's path instead, which needs no CORS.
  */
-async function readFile(response: Response): Promise<Blob | undefined> {
+async function readFile(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<Blob | undefined> {
   if (isJSON(response)) {
     throw new Error(
       `The server answered with the status ${response.status} and a body that is JSON, not a file.`,
     );
   }
-  const file = await response.blob();
+  const file = await received(response.blob(), signal);
   return file.size === 0 && response.status !== 200 ? undefined : file;
 }
 
 /**
  * Returns the error envelope's object, or undefined if the body is not the
  * envelope. The response's body stays unread, for the caller to read from
- * the ApiError, whatever it holds.
+ * the ApiError, whatever it holds. A body that stops as it comes rejects
+ * with a NetworkError, as readBody does, since no whole answer came.
  */
 async function readEnvelope(
   response: Response,
+  signal: AbortSignal | undefined,
 ): Promise<ErrorBody | undefined> {
   if (!isJSON(response)) {
     return undefined;
   }
+  let body: unknown;
   try {
-    const body = await readBody(response.clone());
-    const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;
-    if (
-      typeof error?.code === "string" &&
-      typeof error.message === "string" &&
-      typeof error.request_id === "string"
-    ) {
-      return error as ErrorBody;
+    body = await readBody(response.clone(), signal);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // A body that is not JSON is not the envelope.
+      return undefined;
     }
-  } catch {
-    // A body that is not JSON is not the envelope.
+    throw error;
+  }
+  const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;
+  if (
+    typeof error?.code === "string" &&
+    typeof error.message === "string" &&
+    typeof error.request_id === "string"
+  ) {
+    return error as ErrorBody;
   }
   return undefined;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, createApiClient, createClient } from "./index";
+import { ApiError, createApiClient, createClient, NetworkError } from "./index";
 import { type Operations, routes } from "./testdata/fixture.gen";
 
 /** A fetch that records its calls, and answers each with respond. */
@@ -293,6 +293,69 @@ describe("a client of generated operations", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("rejects with a NetworkError when no answer comes, unless the call was aborted", async () => {
+    const failure = new TypeError("Failed to fetch");
+    const c = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async () => {
+        throw failure;
+      },
+    });
+    const call = c.call("getThing", { path: { id: "1" } });
+    await expect(call).rejects.toThrow(NetworkError);
+    await expect(call).rejects.toHaveProperty("cause", failure);
+
+    const abort = new AbortController();
+    abort.abort();
+    const reason = abort.signal.reason;
+    const aborted = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async (_input, init) => {
+        throw init?.signal?.reason;
+      },
+    }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
+    await expect(aborted).rejects.toBe(reason);
+  });
+
+  it("rejects with a NetworkError when the answer's body stops before it has all come, unless the call was aborted", async () => {
+    const failure = new TypeError("network error");
+    // An error's body too, whose envelope never came whole.
+    for (const status of [200, 422]) {
+      const stopping = () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(failure);
+            },
+          }),
+          { status, headers: { "Content-Type": "application/json" } },
+        );
+      const c = createClient<Operations>(routes, {
+        baseUrl,
+        fetch: async () => stopping(),
+      });
+      const call = c.call("getThing", { path: { id: "1" } });
+      await expect(call).rejects.toThrow(NetworkError);
+      await expect(call).rejects.toHaveProperty("cause", failure);
+
+      const abort = new AbortController();
+      const aborted = createClient<Operations>(routes, {
+        baseUrl,
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                abort.abort();
+                controller.error(abort.signal.reason);
+              },
+            }),
+            { status, headers: { "Content-Type": "application/json" } },
+          ),
+      }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
+      await expect(aborted).rejects.toHaveProperty("name", "AbortError");
+    }
+  });
+
   it("passes the call's options to fetch", async () => {
     const { client: c, calls } = client(() => json(200, {}));
     const abort = new AbortController();
@@ -303,5 +366,25 @@ describe("a client of generated operations", () => {
     );
     expect(calls[0].init.signal).toBe(abort.signal);
     expect(new Headers(calls[0].init.headers).get("X-Test")).toBe("1");
+  });
+
+  it("sends the client's headers, as they are at each call, under the call's own", async () => {
+    const { fetch, calls } = fakeFetch(() => json(200, {}));
+    let locale = "en";
+    const c = createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+      headers: () => ({ "Accept-Language": locale, "X-Test": "client" }),
+    });
+    await c.call("getThing", { path: { id: "1" } });
+    locale = "cs";
+    await c.call(
+      "getThing",
+      { path: { id: "1" } },
+      { headers: { "X-Test": "call" } },
+    );
+    const sent = calls.map((call) => new Headers(call.init.headers));
+    expect(sent.map((h) => h.get("Accept-Language"))).toEqual(["en", "cs"]);
+    expect(sent.map((h) => h.get("X-Test"))).toEqual(["client", "call"]);
   });
 });

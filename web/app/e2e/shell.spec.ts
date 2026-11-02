@@ -1,77 +1,27 @@
-import { readFileSync } from "node:fs";
-import AxeBuilder from "@axe-core/playwright";
-import {
-  test as base,
-  expect,
-  type Locator,
-  type Page,
-} from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { en, expect, press, test, violations } from "./fixtures.ts";
 
 // The app's shell as the server serves it, in each project of
 // playwright.config.ts: on the tablet, every control is tapped, never
-// clicked, since a touch screen has no mouse.
+// clicked, since a touch screen has no mouse. A page that is signed out, as
+// these are, starts at the sign-in screen.
 
-const en = JSON.parse(
-  readFileSync(new URL("../../shared/i18n/en.json", import.meta.url), "utf8"),
-) as Record<string, string>;
-
-/**
- * Playwright's test, which fails on a violation of the Content-Security-Policy
- * on any page that it opens (PRD NFR-SEC-09), as a style that a library adds
- * without the page's nonce: refused holds those so far.
- */
-const test = base.extend<{ refused: string[] }>({
-  refused: [
-    async ({ page }, use) => {
-      const refused: string[] = [];
-      await page.addInitScript(() => {
-        document.addEventListener("securitypolicyviolation", (e) => {
-          console.error(
-            `CSP violation: ${e.violatedDirective} ${e.blockedURI}`,
-          );
-        });
-      });
-      page.on("console", (message) => {
-        if (/Content Security Policy|CSP violation/i.test(message.text())) {
-          refused.push(message.text());
-        }
-      });
-      await use(refused);
-      expect(refused, "violations of the Content-Security-Policy").toEqual([]);
-    },
-    { auto: true },
-  ],
-});
-
-/** Activates a control as the project's device does: a tap or a click. */
-async function press(locator: Locator): Promise<void> {
-  if (test.info().project.use.hasTouch) {
-    await locator.tap();
-  } else {
-    await locator.click();
-  }
-}
-
-/** The violations that axe finds of WCAG 2.2 AA (PRD NFR-A11Y-01). */
-async function violations(page: Page): Promise<string[]> {
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-    .analyze();
-  return results.violations.map(
-    (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
-  );
-}
+/** The title of the sign-in screen, where a signed-out page starts. */
+const signInTitle = `${en["login.title"]} – Storycreep`;
 
 /** The button that opens the error console, whose name says how many errors it has. */
 function consoleButton(page: Page): Locator {
   return page.getByRole("button", { name: /^Errors: / });
 }
 
-/** Opens the start page once the app has made its first requests. */
+/**
+ * Opens the app, which shows a signed-out page the sign-in screen, once it
+ * has made its first requests.
+ */
 async function openApp(page: Page): Promise<void> {
   await page.goto("/app/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Storycreep",
+    en["login.title"],
   );
   await page.waitForLoadState("networkidle");
 }
@@ -117,8 +67,8 @@ async function failTitles(
 test("the page of an error that kept a page from being shown offers the error console, and has no accessibility violations", async ({
   page,
 }) => {
-  // The start page fails, and its error page shows.
-  await failTitles(page, ["Storycreep"]);
+  // The sign-in screen fails, and its error page shows.
+  await failTitles(page, [signInTitle]);
   await page.goto("/app/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     en["route_error.title"],
@@ -181,7 +131,7 @@ test("the shell's pages and the error console have no accessibility violations",
 }) => {
   await openApp(page);
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page).toHaveTitle("Storycreep");
+  await expect(page).toHaveTitle(signInTitle);
   expect(await violations(page)).toEqual([]);
 
   await press(consoleButton(page));
@@ -294,9 +244,11 @@ test("a link into the app opens its page, and one that it does not have says so"
   );
   await expect(page).toHaveTitle(`${en["not_found.title"]} – Storycreep`);
   await press(page.getByRole("link", { name: en["not_found.home"] }));
-  await expect(page).toHaveURL(/\/app\/$/);
+  // The start page needs a session, so it leads to signing in, which comes
+  // back to it.
+  await expect(page).toHaveURL(/\/app\/login\?redirect=%2F$/);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Storycreep",
+    en["login.title"],
   );
   // The link went with its page, and the new page's content has the focus
   // that it had.
@@ -305,12 +257,11 @@ test("a link into the app opens its page, and one that it does not have says so"
   // With the public site off, as it is by default, / is the app's.
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Storycreep",
+    en["login.title"],
   );
-  await expect(page.getByText(en["home.body"])).toBeVisible();
 });
 
-test("the skip link moves the focus to the page's content", async ({
+test("the skip link moves the focus to the page's content, and keeps the token of a link's fragment", async ({
   page,
 }) => {
   test.skip(
@@ -323,4 +274,19 @@ test("the skip link moves the focus to the page's content", async ({
   await expect(skip).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("main")).toBeFocused();
+
+  // The page of a link keeps the token in its fragment, which a fragment
+  // of the skip link's own would have replaced.
+  await page.goto("/app/reset-password#token=e2e-token");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    en["reset.title"],
+  );
+  await page.keyboard.press("Tab");
+  await expect(skip).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+  expect(new URL(page.url()).hash).toBe("#token=e2e-token");
+  await expect(
+    page.getByLabel(en["auth.new_password"], { exact: true }),
+  ).toBeVisible();
 });

@@ -7,11 +7,13 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/text/language"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
 	"github.com/CyberCute-Studio/storycreep/server/internal/secret"
 )
@@ -124,6 +126,102 @@ func registerAccounts(m *api.Mux, accounts *account.Service) {
 		}
 		return &struct{}{}, nil
 	}, api.RateLimit(api.BucketAuth))
+}
+
+// accountBody is the signed-in account, as its own user sees it.
+type accountBody struct {
+	ID            string `json:"id" doc:"The account's ID"`
+	Email         string `json:"email" doc:"The account's email address, which signs in"`
+	DisplayName   string `json:"display_name" doc:"The name that other people see"`
+	Locale        string `json:"locale,omitempty" doc:"The locale that the user prefers, as a BCP 47 tag of a locale that the server has a catalog for, which the web app shows its pages in, and which the account's email is written in (PRD FR-I18N-02). Without it, the user prefers none, and the browser's languages choose, and then the instance's default."`
+	EmailVerified bool   `json:"email_verified" doc:"Whether the account's email address is verified, with a link that POST /api/v1/auth/verify-email uses"`
+}
+
+func newAccountBody(p account.Profile) accountBody {
+	b := accountBody{ID: ids.Encode(ids.User, p.ID), Email: p.Email, DisplayName: p.DisplayName,
+		EmailVerified: p.EmailVerified}
+	if p.Locale != language.Und {
+		b.Locale = p.Locale.String()
+	}
+	return b
+}
+
+type accountOutput struct {
+	Body accountBody
+}
+
+// updateAccountBody is the body of PATCH /api/v1/auth/account. A field that
+// it leaves out, or sets to null, which huma takes for a field left out,
+// stays as it is.
+type updateAccountBody struct {
+	Locale *string `json:"locale,omitempty" maxLength:"64" doc:"The locale that the user prefers, as a BCP 47 tag of a locale that the server has a catalog for, which is stored as the locale of the catalog that it asks for, as en for en-US; or the empty string for none, so that the browser's languages choose"`
+}
+
+type updateAccountInput struct {
+	CSRFInput
+	Body updateAccountBody
+}
+
+// registerOwnAccount registers the routes of the signed-in account's own
+// settings: what its user sees of it, and the locale that the user prefers
+// (PRD FR-I18N-02).
+func registerOwnAccount(m *api.Mux, accounts *account.Service, cookie sessionCookie) {
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "getAccount",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/auth/account",
+		Summary:     "Get the signed-in account",
+		Description: "Returns the signed-in account as its own user sees it: its email address, its display name, " +
+			"the locale that the user prefers, if any, and whether the address is verified." + sessionAuthDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, _ *struct{}) (*accountOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p, err := accounts.Profile(ctx, cur.session.UserID)
+		if errors.Is(err, account.ErrNoSession) {
+			// The account is no longer active, as one suspended meanwhile.
+			return nil, signedOut("", cookie)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &accountOutput{Body: newAccountBody(p)}, nil
+	}, api.SessionOnly())
+
+	api.Register(m, api.OwnAccount, huma.Operation{
+		OperationID: "updateAccount",
+		Method:      http.MethodPatch,
+		Path:        "/api/v1/auth/account",
+		Summary:     "Change the signed-in account's settings",
+		Description: "Changes the locale that the signed-in account's user prefers, and returns the account as " +
+			"GET /api/v1/auth/account does; a field that the body leaves out, or sets to null, stays as it is. A " +
+			"locale that is not a BCP 47 tag, or that no catalog of the server matches, is answered with 422 " +
+			"validation_failed." + csrfDoc,
+		Tags: []string{"Authentication"},
+	}, func(ctx context.Context, in *updateAccountInput) (*accountOutput, error) {
+		cur, err := currentFrom(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var p account.Profile
+		if in.Body.Locale != nil {
+			p, err = accounts.SetLocale(ctx, cur.session.UserID, *in.Body.Locale)
+		} else {
+			p, err = accounts.Profile(ctx, cur.session.UserID)
+		}
+		var fields input.FieldErrors
+		switch {
+		case errors.Is(err, account.ErrNoSession):
+			return nil, signedOut("", cookie)
+		case errors.As(err, &fields):
+			return nil, fieldErrors(fields)
+		case err != nil:
+			return nil, err
+		}
+		return &accountOutput{Body: newAccountBody(p)}, nil
+	}, api.SessionOnly())
 }
 
 // accountError returns the error that the API answers err with, an error

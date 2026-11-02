@@ -1,17 +1,8 @@
-import { createI18n } from "@storycreep/shared/i18n";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  createMemoryHistory,
-  createRoute,
-  createRouter,
-  notFound,
-  RouterProvider,
-} from "@tanstack/react-router";
-import { render, screen } from "@testing-library/react";
-import { I18nextProvider } from "react-i18next";
+import { createRoute, notFound } from "@tanstack/react-router";
+import { screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { Route as rootRoute } from "../routes/__root";
+import { renderApp } from "../test/app";
 
 // The page not found of the app's root route, which the router shows in the
 // route's Outlet, within the Shell, for a URL that no route matches and for
@@ -47,22 +38,7 @@ it("shows the page not found within the Shell, once, wherever the router finds n
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   for (const path of ["/nowhere", "/loaded", "/rendered"]) {
-    const queryClient = new QueryClient();
-    const router = createRouter({
-      routeTree,
-      history: createMemoryHistory({ initialEntries: [path] }),
-      context: { queryClient },
-      disableGlobalCatchBoundary: true,
-    });
-    const { unmount } = render(
-      <I18nextProvider i18n={createI18n("en")}>
-        <QueryClientProvider client={queryClient}>
-          <ErrorConsoleProvider>
-            <RouterProvider router={router} />
-          </ErrorConsoleProvider>
-        </QueryClientProvider>
-      </I18nextProvider>,
-    );
+    const { unmount } = renderApp(path, { routes: routeTree });
     await screen.findByRole("heading", { level: 1, name: "Page not found" });
     expect(screen.getAllByRole("main"), path).toHaveLength(1);
     expect(screen.getAllByRole("banner"), path).toHaveLength(1);

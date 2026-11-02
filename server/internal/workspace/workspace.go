@@ -298,7 +298,7 @@ func (s *Service) Check(ctx context.Context, in Settings) (Draft, error) {
 	}
 	locale, ok := i18n.FromContext(ctx).Locale(), true
 	if in.DefaultLocale != "" {
-		locale, ok = catalogLocale(in.DefaultLocale)
+		locale, ok = i18n.Default().MatchString(in.DefaultLocale)
 	}
 	if !ok {
 		errs = append(errs, input.FieldError{Field: "default_locale", Message: localeProblem})
@@ -471,27 +471,7 @@ func baseSlug(name string) string {
 
 // localeProblem says what is wrong with a default locale that the server
 // has no catalog for.
-var localeProblem = "is not a locale that the server has a catalog for: " + strings.Join(localeNames(), ", ")
-
-// localeNames returns the locales that the server has a catalog for.
-func localeNames() []string {
-	var names []string
-	for _, l := range i18n.Default().Locales() {
-		names = append(names, l.String())
-	}
-	return names
-}
-
-// catalogLocale returns the locale with a catalog that the BCP 47 tag v asks
-// for (i18n.Bundle.Match), and false if v is not a tag or no catalog matches
-// it.
-func catalogLocale(v string) (language.Tag, bool) {
-	tag, err := language.Parse(v)
-	if err != nil {
-		return language.Und, false
-	}
-	return i18n.Default().Match(tag)
-}
+var localeProblem = i18n.Default().UnmatchedProblem()
 
 // Get returns the workspace id, and the role that the user userID acts with
 // in it, or ErrNotFound if it does not exist, the user's role is none, or the
@@ -621,7 +601,7 @@ func (w *Workspace) apply(p Patch) (bool, error) {
 	}
 	if p.DefaultLocale != nil {
 		var ok bool
-		if next.DefaultLocale, ok = catalogLocale(*p.DefaultLocale); !ok {
+		if next.DefaultLocale, ok = i18n.Default().MatchString(*p.DefaultLocale); !ok {
 			errs = append(errs, input.FieldError{Field: "default_locale", Message: localeProblem})
 		}
 	}
@@ -679,7 +659,7 @@ func (s *Service) workspace(id pgtype.UUID, name, slug string, doc []byte,
 		UpdatedAt: updated.Time}
 	var set settings
 	if json.Unmarshal(doc, &set) == nil {
-		if locale, ok := catalogLocale(set.DefaultLocale); ok {
+		if locale, ok := i18n.Default().MatchString(set.DefaultLocale); ok {
 			w.DefaultLocale = locale
 		}
 	}

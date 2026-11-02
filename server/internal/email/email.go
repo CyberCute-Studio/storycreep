@@ -147,6 +147,13 @@ func (s *Service) Configured(ctx context.Context) (bool, error) {
 	return ok, err
 }
 
+// ConfiguredBy is Configured, for a caller that has read whether first-run
+// setup chose an SMTP server (chosen) with more of the instance's row, as
+// what the instance offers before anyone signs in is.
+func (s *Service) ConfiguredBy(chosen bool) bool {
+	return s.override != nil || chosen
+}
+
 // JobError returns err, the error of Deliver of a job's work, as the work
 // returns it to the queue (package jobs). If the job's context ended, it is
 // joined with the context's error: either the server is stopping, and the

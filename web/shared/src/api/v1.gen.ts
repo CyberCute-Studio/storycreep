@@ -23,6 +23,19 @@ export interface APITokenBody {
   workspace_id: string;
 }
 
+export interface AccountBody {
+  /** The name that other people see */
+  display_name: string;
+  /** The account's email address, which signs in */
+  email: string;
+  /** Whether the account's email address is verified, with a link that POST /api/v1/auth/verify-email uses */
+  email_verified: boolean;
+  /** The account's ID */
+  id: string;
+  /** The locale that the user prefers, as a BCP 47 tag of a locale that the server has a catalog for, which the web app shows its pages in, and which the account's email is written in (PRD FR-I18N-02). Without it, the user prefers none, and the browser's languages choose, and then the instance's default. */
+  locale?: string;
+}
+
 export interface Asset {
   /** The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow */
   bytes: number;
@@ -1734,8 +1747,14 @@ export interface GraphBoard {
 }
 
 export interface InstanceBody {
+  /** The instance's default locale, as a BCP 47 tag: the locale with a catalog that STORYCREEP_DEFAULT_LOCALE asks for, as en for en-GB, which a page is shown in when neither the user's preferred locale nor the browser's languages match a catalog of the page's (PRD FR-I18N-02) */
+  default_locale: string;
   /** Whether the instance sends email, through the SMTP server of STORYCREEP_SMTP_URL or of first-run setup. Without it, a page says that email is not configured: the links that reset a password and verify an email address are not emailed, and an instance admin gives them out as text. */
   email_configured: boolean;
+  /** Whether the instance's first-run setup is pending, until which nobody signs in or registers, and a page leads to the setup screen, which GET /api/v1/setup tells what to ask for (PRD FR-ADMIN-02) */
+  setup_pending: boolean;
+  /** Who can register an account once setup has completed: closed, no one; invite, only with an invitation's link, with POST /api/v1/invites/register; or open, anyone, with POST /api/v1/auth/register. It is the policy that STORYCREEP_SIGNUP sets, or else the one that first-run setup chose, and closed while setup is pending. A page offers registration only where it lets anyone register. */
+  signup_policy: "closed" | "invite" | "open";
 }
 
 export interface InviteBody {
@@ -2894,6 +2913,11 @@ export interface UnreconnectedBody {
   waiting_for: Array<string>;
 }
 
+export interface UpdateAccountBody {
+  /** The locale that the user prefers, as a BCP 47 tag of a locale that the server has a catalog for, which is stored as the locale of the catalog that it asks for, as en for en-US; or the empty string for none, so that the browser's languages choose */
+  locale?: string;
+}
+
 export interface UpdateProjectBody {
   /** The new locale of the project's text, as a BCP 47 tag of a language */
   default_locale?: string;
@@ -3547,6 +3571,17 @@ export interface Operations {
     };
   };
   /**
+   * Get the signed-in account
+   *
+   * Returns the signed-in account as its own user sees it: its email address, its display name, the locale that the user prefers, if any, and whether the address is verified. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getAccount: {
+    input: Record<string, never>;
+    responses: {
+      200: AccountBody;
+    };
+  };
+  /**
    * Get an asset
    *
    * Returns an asset of a project: its type, size, and hash. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An asset that the project does not have, as one of another project, is answered with 404 not_found too, whatever its ID. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -3722,7 +3757,7 @@ export interface Operations {
   /**
    * Get what the instance offers
    *
-   * Says whether the instance sends email, so that a page can say that email is not configured, and where the links that reset a password and verify an email address come from. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Says whether the instance sends email, so that a page can say that email is not configured, and where the links that reset a password and verify an email address come from; whether its first-run setup is pending; who can register an account; and the instance's default locale. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   getInstance: {
     input: Record<string, never>;
@@ -4943,6 +4978,23 @@ export interface Operations {
     };
   };
   /**
+   * Change the signed-in account's settings
+   *
+   * Changes the locale that the signed-in account's user prefers, and returns the account as GET /api/v1/auth/account does; a field that the body leaves out, or sets to null, stays as it is. A locale that is not a BCP 47 tag, or that no catalog of the server matches, is answered with 422 validation_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  updateAccount: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: UpdateAccountBody;
+    };
+    responses: {
+      200: AccountBody;
+    };
+  };
+  /**
    * Change a project's name, slug, description, or settings
    *
    * Changes a project's name, slug, description, default locale, publish_min_role, or entry, in one batch of the project's commands; a field that the body leaves out, or sets to null, stays as it is. Only an owner or an admin of the project may, and anyone else with a role on it is answered with 403 insufficient_role. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A field whose value it does not allow is answered with 422 validation_failed, and a slug that is not one with 422 slug_invalid. An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -5053,6 +5105,7 @@ export const routes = {
   createWorkspace: { method: "POST", path: "/api/v1/workspaces" },
   createWorkspaceToken: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/tokens" },
   deleteProject: { method: "DELETE", path: "/api/v1/projects/{project_id}" },
+  getAccount: { method: "GET", path: "/api/v1/auth/account" },
   getAsset: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}" },
   getAssetContent: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/content", blob: true },
   getAssetThumbnail: { method: "GET", path: "/api/v1/projects/{project_id}/assets/{asset_id}/thumbnail", blob: true },
@@ -5124,6 +5177,7 @@ export const routes = {
   searchProject: { method: "GET", path: "/api/v1/projects/{project_id}/search" },
   setProjectGrant: { method: "PUT", path: "/api/v1/projects/{project_id}/grants/{membership_id}" },
   unarchiveProject: { method: "POST", path: "/api/v1/projects/{project_id}/unarchive" },
+  updateAccount: { method: "PATCH", path: "/api/v1/auth/account" },
   updateProject: { method: "PATCH", path: "/api/v1/projects/{project_id}" },
   updateWorkspace: { method: "PATCH", path: "/api/v1/workspaces/{workspace_id}" },
   uploadAsset: { method: "POST", path: "/api/v1/projects/{project_id}/assets" },

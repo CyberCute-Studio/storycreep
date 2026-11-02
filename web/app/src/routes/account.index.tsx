@@ -1,0 +1,257 @@
+import type { AccountBody, InstanceBody } from "@storycreep/shared/api";
+import {
+  useMutation,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { type FormEvent, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
+import {
+  bodyField,
+  minPasswordLength,
+  usePasswordConfirmation,
+} from "../auth/forms";
+import { refusalOf } from "../auth/refusal";
+import { csrfHeaders } from "../auth/session";
+import { VerifyNotice } from "../auth/VerifyNotice";
+import { applyLocale, supportedLocales } from "../i18n";
+import { Button } from "../ui/Button";
+import { SelectField, TextField } from "../ui/Field";
+import { Alert, Page, Status } from "../ui/Page";
+
+export const Route = createFileRoute("/account/")({
+  component: Profile,
+});
+
+// The account's profile: its name and email address, whether the address
+// is verified, the language that the user prefers, and its password.
+function Profile() {
+  const { t } = useTranslation();
+  const account = useSuspenseQuery(accountQuery).data;
+  const instance = useSuspenseQuery(instanceQuery).data;
+  return (
+    <Page title={t("account.title")} width="wide">
+      <section className="space-y-3" aria-labelledby="account-profile">
+        <h2 id="account-profile" className="text-lg font-semibold">
+          {t("account.profile.title")}
+        </h2>
+        <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
+          <dt className="text-fg-muted">{t("auth.display_name")}</dt>
+          <dd>{account.display_name}</dd>
+          <dt className="text-fg-muted">{t("auth.email")}</dt>
+          <dd className="break-all">{account.email}</dd>
+          <dt className="text-fg-muted">{t("account.profile.verification")}</dt>
+          <dd>
+            {account.email_verified
+              ? t("account.profile.verified")
+              : instance.email_configured
+                ? t("account.profile.unverified")
+                : t("account.profile.unverified_no_email")}
+          </dd>
+        </dl>
+        <VerifyNotice account={account} instance={instance} />
+      </section>
+      <Language account={account} instance={instance} />
+      <Password />
+    </Page>
+  );
+}
+
+/** Returns the name of locale in its own language, as English for en. */
+function languageName(locale: string): string {
+  try {
+    return (
+      new Intl.DisplayNames([locale], { type: "language" }).of(locale) ?? locale
+    );
+  } catch {
+    return locale;
+  }
+}
+
+/**
+ * The language that the user prefers (PRD FR-I18N-02), which the account
+ * keeps, so that every page shows itself in it, on every device; saving it
+ * shows this page in it at once, without a reload (AC1).
+ */
+function Language({
+  account,
+  instance,
+}: {
+  account: AccountBody;
+  instance: InstanceBody;
+}) {
+  const { t, i18n } = useTranslation();
+  const session = useSuspenseQuery(sessionQuery).data;
+  const client = useQueryClient();
+  const save = useMutation({
+    mutationFn: async (locale: string) => {
+      return (
+        await api.call("updateAccount", {
+          headers: csrfHeaders(session),
+          body: { locale },
+        })
+      ).body;
+    },
+    onSuccess: (updated) => {
+      // An answer that comes once the page has signed in to another
+      // account, as another tab may have, is of the account before, whose
+      // profile and locale the page no longer shows.
+      if (client.getQueryData(sessionQuery.queryKey)?.user_id !== updated.id) {
+        return;
+      }
+      client.setQueryData(accountQuery.queryKey, updated);
+      applyLocale(i18n, {
+        preference: updated.locale,
+        instanceDefault: instance.default_locale,
+      });
+    },
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    save.mutate(String(new FormData(event.currentTarget).get("locale")));
+  };
+  // The server keeps a locale that it has a catalog of, which the app may
+  // have none of, as one that a later version of the app no longer has: it
+  // is listed all the same, so that it shows as the choice, and saving the
+  // form keeps it, rather than clearing it to the browser's language.
+  const locales = supportedLocales(i18n);
+  const kept = account.locale ?? "";
+  if (kept !== "" && !locales.includes(kept)) {
+    locales.push(kept);
+  }
+  return (
+    <section className="space-y-3" aria-labelledby="account-language">
+      <h2 id="account-language" className="text-lg font-semibold">
+        {t("account.language.title")}
+      </h2>
+      <form className="space-y-4" onSubmit={submit}>
+        <Alert message={refusalOf(save.error, t)?.message} />
+        <Status
+          message={save.isSuccess ? t("account.language.saved") : undefined}
+        />
+        {/* Shown anew once the account keeps another locale, as one saved
+            on another device, which the page reads once its tab is shown
+            again (followSession), rather than showing the choice before,
+            which saving would write back. */}
+        <SelectField
+          key={kept}
+          label={t("account.language.label")}
+          hint={t("account.language.hint")}
+          name="locale"
+          defaultValue={kept}
+        >
+          <option value="">{t("account.language.browser")}</option>
+          {locales.map((locale) => (
+            <option key={locale} value={locale} lang={locale}>
+              {languageName(locale)}
+            </option>
+          ))}
+        </SelectField>
+        <Button type="submit" disabled={save.isPending}>
+          {t("account.language.save")}
+        </Button>
+      </form>
+    </section>
+  );
+}
+
+const passwordField = bodyField("current_password", "new_password");
+
+/**
+ * Changing the password (PRD FR-AUTH-02 AC4), which signs out every other
+ * session of the account, and gives this one a new secret and CSRF token,
+ * which the page records by asking for its session, as it does once its
+ * tab is shown again (checkSession), rather than from the answer: a
+ * question of the session that went while the change was under way, with
+ * the cookie before it, is answered as if the session had ended, which may
+ * reach the page before the change's answer, and sign it out, and the
+ * page's own question, the latest, finds the session again, and shows the
+ * page anew, signed in, without saying that the password changed, which
+ * it has.
+ */
+function Password() {
+  const { t } = useTranslation();
+  const session = useSuspenseQuery(sessionQuery).data;
+  const { checkSession } = Route.useRouteContext();
+  const form = useRef<HTMLFormElement>(null);
+  const change = useMutation({
+    mutationFn: async (body: {
+      current_password: string;
+      new_password: string;
+    }) => {
+      await api.call("changePassword", {
+        headers: csrfHeaders(session),
+        body,
+      });
+    },
+    onSuccess: async () => {
+      await checkSession();
+      form.current?.reset();
+    },
+  });
+  const refusal = refusalOf(change.error, t, passwordField);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    change,
+    refusal?.fields,
+    "new_password",
+  );
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    if (confirmed(data)) {
+      change.mutate({
+        current_password: String(data.get("current_password")),
+        new_password: String(data.get("new_password")),
+      });
+    }
+  };
+  return (
+    <section className="space-y-3" aria-labelledby="account-password">
+      <h2 id="account-password" className="text-lg font-semibold">
+        {t("account.password.title")}
+      </h2>
+      <form
+        ref={form}
+        className="max-w-md space-y-4"
+        onSubmit={submit}
+        noValidate
+      >
+        <Alert message={refusal?.message} />
+        <Status
+          message={change.isSuccess ? t("account.password.changed") : undefined}
+        />
+        <TextField
+          label={t("account.password.current")}
+          name="current_password"
+          type="password"
+          autoComplete="current-password"
+          required
+          error={errors.current_password}
+        />
+        <TextField
+          label={t("auth.new_password")}
+          hint={t("auth.password_hint", { min: minPasswordLength })}
+          name="new_password"
+          type="password"
+          autoComplete="new-password"
+          required
+          error={errors.new_password}
+        />
+        <TextField
+          label={t("auth.confirm_password")}
+          name="confirm"
+          type="password"
+          autoComplete="new-password"
+          required
+          error={errors.confirm}
+        />
+        <Button type="submit" disabled={change.isPending}>
+          {t("account.password.submit")}
+        </Button>
+      </form>
+    </section>
+  );
+}
