@@ -51,11 +51,14 @@ export const api = createApiClient({
 });
 
 /**
- * What a query or a mutation tells the query client of itself. A form that
- * shows the server's refusals to the user, as a wrong password or a field
- * that the server does not take, says so with showsRefusals, and the error
- * console does not record them: they are the user's to mend, not errors of
- * the app. An answer of 500 or more is recorded all the same.
+ * What a query or a mutation tells the query client of itself: whether what
+ * reads it shows the server's refusals to the user, as a wrong password or
+ * a field that the server does not take, which the error console then does
+ * not record, since they are the user's to mend, not errors of the app. A
+ * mutation is a user's request, whose refusal the form that made it shows,
+ * so it does unless it says showsRefusals: false; a query does only if it
+ * says showsRefusals: true. An answer of 500 or more is recorded all the
+ * same.
  */
 interface Meta extends Record<string, unknown> {
   showsRefusals?: boolean;
@@ -117,10 +120,10 @@ export async function fetchSession(
 
 /**
  * The session of the page, or null if the page is signed out. Signing in
- * and out set it (auth/session.ts), and so does any answer of 401 to another
- * request, which tells that the session ended elsewhere, as when it was
- * revoked, and so does the page once it is shown again after another tab
- * changed it (followSession).
+ * and out set it (auth/session.ts), and so does the page once it asks the
+ * server for it again (followSession): when it is shown again after another
+ * tab may have changed it, or when an answer of 401 to another request
+ * tells that it may have ended elsewhere, as when it was revoked.
  */
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
@@ -205,17 +208,18 @@ export function signedOutBy(error: unknown): boolean {
 export interface QueryClientOptions {
   /**
    * Called when the server answers a request with 401 unauthenticated, as
-   * when the page's session was revoked or has ended: the page is then
-   * signed out.
+   * when the page's session was revoked or has ended, or when the request
+   * went with a session that the page has replaced since, as by changing
+   * the password: the page then asks the server for its session.
    */
   onUnauthenticated?: () => void;
 }
 
 /**
  * Returns the app's query client, which records in log each request that
- * failed, but for an answer of 401 unauthenticated, which ends the page's
- * session (onUnauthenticated), and a refusal that a form shows
- * (Meta.showsRefusals).
+ * failed, but for an answer of 401 unauthenticated, which tells that the
+ * page's session may have ended (onUnauthenticated), and a refusal that a
+ * form shows (Meta.showsRefusals).
  * A request that the server refused, with a status below 500, is not tried
  * again, since it would be refused again.
  */
@@ -243,7 +247,10 @@ export function createQueryClient(
     }),
     mutationCache: new MutationCache({
       onError: (error, _variables, _context, mutation) =>
-        failed(error, mutation.meta as MutationMeta),
+        failed(error, {
+          showsRefusals: true,
+          ...(mutation.meta as MutationMeta | undefined),
+        }),
     }),
     defaultOptions: {
       queries: {

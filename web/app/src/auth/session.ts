@@ -19,10 +19,12 @@ import type { RouterContext } from "../router";
 /**
  * The queries of the page that outlive its session, whose answers are the
  * same whoever asks: the server's version, the instance, what first-run
- * setup asks for, and an invitation that its link shows, which a page that
- * signs in with it keeps showing. Every other query is dropped once the
- * page signs in to another account or out, so that one that this list
- * misses is asked for again, rather than another account's answer shown.
+ * setup asks for, an invitation that its link shows, which a page that
+ * signs in with it keeps showing, and what became of a link that its page
+ * used (linkOutcome, and the verification of an address). Every other query
+ * is dropped once the page signs in to another account or out, so that one
+ * that this list misses is asked for again, rather than another account's
+ * answer shown.
  */
 const sessionless = new Set([
   "version",
@@ -30,6 +32,8 @@ const sessionless = new Set([
   "session",
   "setup",
   "invite",
+  "verify-email",
+  "reset-password",
 ]);
 
 /**
@@ -51,12 +55,27 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
  * Records in client that the page signed in, or that its session has a new
  * secret, as after a change of the password: the session that the answer
  * body holds, with its CSRF token. Whatever the page held of another
- * account's is dropped.
+ * account's is dropped, and the session's account is asked for first, so
+ * that the page has both at once: a component that reads the account once
+ * the page has a session, as an invitation's step that follows signing in
+ * where the page is, has it, rather than waiting for it, which shows none
+ * of the page's content (useSuspenseQuery). If the server cannot answer,
+ * the components ask for it themselves.
  */
-export function signedIn(client: QueryClient, session: SignedInBody): void {
+export async function signedIn(
+  client: QueryClient,
+  session: SignedInBody,
+): Promise<void> {
   const previous = client.getQueryData(sessionQuery.queryKey);
   if (previous?.user_id !== session.user_id) {
+    const account = await api.call("getAccount", {}).then(
+      (answer) => answer.body,
+      () => undefined,
+    );
     dropAccountData(client);
+    if (account?.id === session.user_id) {
+      client.setQueryData(accountQuery.queryKey, account);
+    }
   }
   client.setQueryData(sessionQuery.queryKey, session);
 }
@@ -72,7 +91,7 @@ export async function signIn(
   credentials: LoginBody,
 ): Promise<SignedInBody> {
   const session = (await api.call("login", { body: credentials })).body;
-  signedIn(client, session);
+  await signedIn(client, session);
   return session;
 }
 
@@ -90,22 +109,27 @@ export function signedOut(client: QueryClient): void {
 /**
  * Ends the page's signed-in state once its session has ended, by signing
  * out or elsewhere: the session is null for the components still shown,
- * which keep what they read of the account until the page goes to the
- * sign-in screen (toSignIn), so that none asks for it again, and what the
- * page held of the account is dropped once it is there.
+ * which keep what they read of the account until the page has shown what
+ * comes next (next): the sign-in screen, once the user signed out, or the
+ * page again, through its guards, once the session ended elsewhere
+ * (sessionChanges), so that none asks for it again, and what the page held
+ * of the account is dropped then.
  */
 export async function endSession(
   client: QueryClient,
-  toSignIn: () => Promise<void>,
+  next: () => Promise<void>,
 ): Promise<void> {
   client.setQueryData(sessionQuery.queryKey, null);
-  await toSignIn();
+  await next();
   signedOut(client);
 }
 
-/** What followSession does once another tab has changed the session. */
+/** What followSession does once the session has changed elsewhere. */
 export interface SessionChanges {
-  /** The page's session has ended, as when another tab signed out. */
+  /**
+   * The page's session has ended, as when another tab signed out, or it
+   * was revoked.
+   */
   ended: () => void;
   /**
    * The page is signed in to another account than it was, or to one where
@@ -116,16 +140,30 @@ export interface SessionChanges {
   replaced: () => void;
 }
 
+/** The page's following of its session (followSession). */
+export interface SessionFollower {
+  /**
+   * Asks the server for the session now, as once it answered a request
+   * with 401 unauthenticated, which tells that the session may have ended,
+   * or that the request went with one that the page has replaced since, as
+   * by changing the password, whose session is still the page's.
+   */
+  check: () => Promise<void>;
+  /** Stops following the session. */
+  stop: () => void;
+}
+
 /**
  * Keeps the page's session the one of the browser's cookie, which every tab
  * of the browser shares, and which another tab can change: by signing out,
  * by signing in to another account, or by changing the password, which
  * gives the session a new CSRF token (PRD FR-AUTH-02). Whenever doc is
- * shown again, as when the user comes back to its tab, the page asks the
- * server for the session, records it in client, and tells changes if the
- * session is no longer the account's that it was. An answer to a question
- * asked before the page changed its session itself, as by signing in, is
- * of the one before, and changes nothing. Returns a function that stops it.
+ * shown again, as when the user comes back to its tab, and whenever the
+ * follower's check is called, the page asks the server for the session,
+ * records it in client, and tells changes if the session is no longer the
+ * account's that it was. An answer to a question asked before the page
+ * changed its session itself, as by signing in, is of the one before, and
+ * changes nothing, and so does a question asked while one is under way.
  */
 export function followSession(
   client: QueryClient,
@@ -134,7 +172,7 @@ export function followSession(
     "visibilityState" | "addEventListener" | "removeEventListener"
   >,
   changes: SessionChanges,
-): () => void {
+): SessionFollower {
   let asking = false;
   const ask = async () => {
     const known = client.getQueryData(sessionQuery.queryKey);
@@ -153,7 +191,7 @@ export function followSession(
         }
         return;
       }
-      signedIn(client, session);
+      await signedIn(client, session);
       if (known?.user_id !== session.user_id) {
         changes.replaced();
       }
@@ -170,7 +208,36 @@ export function followSession(
     }
   };
   doc.addEventListener("visibilitychange", shown);
-  return () => doc.removeEventListener("visibilitychange", shown);
+  return {
+    check: ask,
+    stop: () => doc.removeEventListener("visibilitychange", shown),
+  };
+}
+
+/** What sessionChanges shows the page again with: the app's router. */
+interface Reloadable {
+  invalidate: () => Promise<void>;
+}
+
+/**
+ * What the page does once its session has changed elsewhere (followSession):
+ * it shows itself again, through the guards of its routes, which decide
+ * whether it needs a session. A page whose session has ended goes to the
+ * sign-in screen if it needs one (requireSession), which comes back to it,
+ * with the token of a link's fragment, if it has one, still in a fragment,
+ * and stays where it is, signed out, if it needs none, as a link's page,
+ * which shows what became of the link (linkOutcome). A page signed in to
+ * another account shows itself anew, as the root route keys it on the
+ * account that it loaded for.
+ */
+export function sessionChanges(
+  client: QueryClient,
+  router: Reloadable,
+): SessionChanges {
+  return {
+    ended: () => void endSession(client, () => router.invalidate()),
+    replaced: () => void router.invalidate(),
+  };
 }
 
 function dropAccountData(client: QueryClient): void {

@@ -13,20 +13,11 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
-import {
-  type Mismatch,
-  minPasswordLength,
-  passwordMismatch,
-} from "../auth/forms";
+import { minPasswordLength, usePasswordConfirmation } from "../auth/forms";
 import { type FieldOf, refusalOf } from "../auth/refusal";
 import { signIn } from "../auth/session";
 import { Button } from "../ui/Button";
-import {
-  CheckboxField,
-  SelectField,
-  TextField,
-  useFocusRefusal,
-} from "../ui/Field";
+import { CheckboxField, SelectField, TextField } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
 
 /**
@@ -165,7 +156,6 @@ function SetupForm({ setup }: { setup: SetupBody }) {
   const form = useRef<HTMLFormElement>(null);
   const [smtp, setSmtp] = useState(false);
   const [storage, setStorage] = useState(false);
-  const [mismatch, setMismatch] = useState<Mismatch>();
   const complete = useMutation({
     mutationFn: async (body: CompleteSetupBody): Promise<Completed> => {
       try {
@@ -199,17 +189,18 @@ function SetupForm({ setup }: { setup: SetupBody }) {
     // shown until then, cannot be sent again, which would be refused.
     onSuccess: (completed) =>
       completed === "signed-in" ? navigate({ to: "/" }) : undefined,
-    meta: { showsRefusals: true },
   });
   const refusal =
     complete.error === null
       ? undefined
       : refusalOf(complete.error, t, setupField);
-  const errors: Record<string, string | undefined> = {
-    ...refusal?.fields,
-    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
-  };
-  useFocusRefusal(form, mismatch ?? complete.error);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    complete,
+    refusal?.fields,
+    "owner_password",
+    "owner_confirm",
+  );
 
   if (complete.data === "signed-out") {
     return (
@@ -235,9 +226,7 @@ function SetupForm({ setup }: { setup: SetupBody }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordMismatch(data, "owner_password", "owner_confirm");
-    setMismatch(differ);
-    if (differ === undefined) {
+    if (confirmed(data)) {
       complete.mutate(setupBody(data, setup));
     }
   };

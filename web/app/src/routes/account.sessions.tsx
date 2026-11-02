@@ -42,7 +42,6 @@ function Sessions() {
     },
     onSuccess: () =>
       client.invalidateQueries({ queryKey: sessionsQuery.queryKey }),
-    meta: { showsRefusals: true },
   });
   const sessions = list.data?.pages.flatMap((page) => page.items) ?? [];
   return (
@@ -103,7 +102,6 @@ function SessionItem({ item }: { item: SessionBody }) {
       item.current
         ? endSession(client, () => router.navigate({ to: "/login" }))
         : client.invalidateQueries({ queryKey: sessionsQuery.queryKey }),
-    meta: { showsRefusals: true },
   });
   const locale = i18n.language;
   return (

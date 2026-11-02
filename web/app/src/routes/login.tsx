@@ -49,7 +49,6 @@ function Login() {
   const login = useMutation({
     mutationFn: (credentials: LoginBody) => signIn(client, credentials),
     onSuccess: () => navigate({ href: signInReturn(search, hash) }),
-    meta: { showsRefusals: true },
   });
   const refusal = login.error === null ? undefined : refusalOf(login.error, t);
   useFocusRefusal(form, login.error);

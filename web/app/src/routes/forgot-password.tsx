@@ -24,7 +24,6 @@ function ForgotPassword() {
     mutationFn: async (email: string) => {
       await api.call("requestPasswordReset", { body: { email } });
     },
-    meta: { showsRefusals: true },
   });
   const refusal =
     request.error === null ? undefined : refusalOf(request.error, t);

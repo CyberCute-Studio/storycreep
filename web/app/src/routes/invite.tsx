@@ -19,13 +19,12 @@ import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
 import {
-  type Mismatch,
   minPasswordLength,
-  passwordMismatch,
   registrationField,
   signInRegistered,
+  usePasswordConfirmation,
 } from "../auth/forms";
-import { useFragmentToken } from "../auth/fragment";
+import { linkOutcome, useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
 import { roleName } from "../auth/roles";
 import { csrfHeaders, signedIn } from "../auth/session";
@@ -50,6 +49,10 @@ function inviteQuery(token: string) {
     meta: { showsRefusals: true },
   });
 }
+
+/** The membership that accepting the invitation of a token made. */
+const joinedOutcome = (token: string) =>
+  linkOutcome<MembershipBody>("invite", token);
 
 /** Accepts the invitation of token in session, and returns the membership. */
 async function accept(
@@ -85,9 +88,12 @@ function Invite() {
 
 function InviteOf({ token }: { token: string }) {
   const { t, i18n } = useTranslation();
+  const client = useQueryClient();
   const lookup = useQuery(inviteQuery(token));
   const session = useQuery(sessionQuery).data;
-  const [joined, setJoined] = useState<MembershipBody>();
+  const joined = useQuery(joinedOutcome(token)).data;
+  const setJoined = (membership: MembershipBody) =>
+    client.setQueryData(joinedOutcome(token).queryKey, membership);
   // The refusal of an acceptance that signed in first, which the signed-in
   // step that follows shows, since the step that made it is gone.
   const [refused, setRefused] = useState<unknown>(null);
@@ -171,10 +177,11 @@ interface AcceptProps {
 
 /**
  * Accepting the invitation as the signed-in user, which shows refused, the
- * refusal of an acceptance that signed in first, until it accepts again.
- * Signing out of an account that the invitation is not for stays on the
- * invitation, to sign in with the one that it is for, or says why it
- * failed, which leaves the page signed in.
+ * refusal of an acceptance that signed in first, until it accepts again:
+ * the focus, which the control of the step that made it had, goes to this
+ * step's first control. Signing out of an account that the invitation is
+ * not for stays on the invitation, to sign in with the one that it is for,
+ * or says why it failed, which leaves the page signed in.
  */
 function AcceptSignedIn({
   token,
@@ -185,30 +192,30 @@ function AcceptSignedIn({
 }: AcceptProps & { session: SignedInBody; refused: unknown }) {
   const { t } = useTranslation();
   const account = useSuspenseQuery(accountQuery).data;
+  const step = useRef<HTMLElement>(null);
   const signOut = useSignOut({ stay: true });
   const join = useMutation({
     mutationFn: () => accept(token, session),
     onSuccess: onJoined,
-    meta: { showsRefusals: true },
   });
   const error = join.isIdle ? refused : join.error;
+  useFocusRefusal(step, error instanceof Error ? error : null);
   const mismatch =
     error instanceof ApiError && error.error?.code === "invite_email_mismatch";
   return (
-    <section className="space-y-4" aria-labelledby="invite-accept">
+    <section ref={step} className="space-y-4" aria-labelledby="invite-accept">
       <h2 id="invite-accept" className="text-lg font-semibold">
         {t("invite.accept_title")}
       </h2>
       <p>{t("invite.signed_in_as", { email: account.email })}</p>
       <Alert
         message={
-          signOut.error !== null
-            ? signOutFailure(signOut.error, t)
-            : error === null
-              ? undefined
-              : mismatch
-                ? mismatchMessage(t, invite, account)
-                : refusalOf(error, t).message
+          signOutFailure(signOut, session, t) ??
+          (error === null
+            ? undefined
+            : mismatch
+              ? mismatchMessage(t, invite, account)
+              : refusalOf(error, t).message)
         }
       />
       <div className="flex flex-wrap gap-2">
@@ -271,7 +278,7 @@ function AcceptSignedOut({
       onRefused(error);
       throw error;
     } finally {
-      signedIn(client, session);
+      await signedIn(client, session);
     }
   };
   return (
@@ -311,7 +318,6 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
     mutationFn: (c: { email: string; password: string }) =>
       signInThenAccept(c.email, c.password),
     onSuccess: onJoined,
-    meta: { showsRefusals: true },
   });
   const refusal = join.error === null ? undefined : refusalOf(join.error, t);
   useFocusRefusal(form, join.error);
@@ -364,7 +370,6 @@ function RegisterAndAccept({
 }: StepProps & { token: string }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState<Mismatch>();
   const join = useMutation({
     mutationFn: async (c: {
       email: string;
@@ -387,23 +392,20 @@ function RegisterAndAccept({
         onJoined(registered);
       }
     },
-    meta: { showsRefusals: true },
   });
   const refusal =
     join.error === null
       ? undefined
       : refusalOf(join.error, t, registrationField);
-  const errors: Record<string, string | undefined> = {
-    ...refusal?.fields,
-    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
-  };
-  useFocusRefusal(form, mismatch ?? join.error);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    join,
+    refusal?.fields,
+  );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordMismatch(data);
-    setMismatch(differ);
-    if (differ === undefined) {
+    if (confirmed(data)) {
       join.mutate({
         email: invite.email ?? String(data.get("email")),
         display_name: String(data.get("display_name")),

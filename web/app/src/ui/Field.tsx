@@ -144,6 +144,10 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
  */
 const refusedField = '[aria-invalid="true"], fieldset[data-invalid] input';
 
+/** The selector of a control that the focus can go to. */
+const enabledControl =
+  "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)";
+
 /**
  * Moves the focus to the first field of form that is marked invalid, once
  * for each refused attempt, as a form that the server refused shows its
@@ -154,18 +158,34 @@ const refusedField = '[aria-invalid="true"], fieldset[data-invalid] input';
  * passwords that differ, made anew for each, or null or undefined if the
  * last attempt was not refused. Whatever else shows the form again, as the
  * user ticking a box of it, leaves the focus where it is, and so does a
- * refusal of the whole form: its alert is read out.
+ * refusal of the whole form, whose alert is read out, unless the focus is
+ * nowhere, as when the control that made the attempt went with the step
+ * that showed it, and form, the step that replaced it, shows the refusal:
+ * the focus goes to form's first control then, rather than to the top of
+ * the page, where the next Tab would start again. form need not be a
+ * form: a section of controls is one too.
  */
 export function useFocusRefusal(
-  form: RefObject<HTMLFormElement | null>,
+  form: RefObject<HTMLElement | null>,
   attempt: object | null | undefined,
 ): void {
-  const focused = useRef(new WeakSet<object>());
+  const focused = useRef<WeakSet<object>>(null);
   useEffect(() => {
+    focused.current ??= new WeakSet();
     if (attempt == null || focused.current.has(attempt)) {
       return;
     }
     focused.current.add(attempt);
-    form.current?.querySelector<HTMLElement>(refusedField)?.focus();
+    const within = form.current;
+    const field = within?.querySelector<HTMLElement>(refusedField);
+    const doc = within?.ownerDocument;
+    if (field) {
+      field.focus();
+    } else if (
+      doc &&
+      (doc.activeElement === null || doc.activeElement === doc.body)
+    ) {
+      within?.querySelector<HTMLElement>(enabledControl)?.focus();
+    }
   }, [form, attempt]);
 }

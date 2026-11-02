@@ -1,19 +1,18 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import {
   bodyField,
-  type Mismatch,
   minPasswordLength,
-  passwordMismatch,
+  usePasswordConfirmation,
 } from "../auth/forms";
-import { useFragmentToken } from "../auth/fragment";
+import { linkOutcome, useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
 import { signedOut } from "../auth/session";
 import { Button } from "../ui/Button";
-import { TextField, useFocusRefusal } from "../ui/Field";
+import { TextField } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/reset-password")({
@@ -21,6 +20,10 @@ export const Route = createFileRoute("/reset-password")({
 });
 
 const resetField = bodyField("new_password");
+
+/** Whether the page has reset the password with the link of a token. */
+const resetOutcome = (token: string) =>
+  linkOutcome<true>("reset-password", token);
 
 // The page of a link that resets a password (PRD FR-AUTH-03), whose token
 // is in the URL's fragment. The reset signs the account out everywhere, in
@@ -48,7 +51,7 @@ function ResetWith({ token }: { token: string }) {
   const { t } = useTranslation();
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState<Mismatch>();
+  const done = useQuery(resetOutcome(token)).data === true;
   const reset = useMutation({
     mutationFn: async (password: string) => {
       await api.call("resetPassword", {
@@ -67,18 +70,19 @@ function ResetWith({ token }: { token: string }) {
       if (session === null) {
         signedOut(client);
       }
+      client.setQueryData(resetOutcome(token).queryKey, true);
     },
-    meta: { showsRefusals: true },
   });
   const refusal =
     reset.error === null ? undefined : refusalOf(reset.error, t, resetField);
-  const errors: Record<string, string | undefined> = {
-    ...refusal?.fields,
-    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
-  };
-  useFocusRefusal(form, mismatch ?? reset.error);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    reset,
+    refusal?.fields,
+    "new_password",
+  );
 
-  if (reset.isSuccess) {
+  if (done) {
     return (
       <Page title={t("reset.title")}>
         <Status message={t("reset.done")} />
@@ -91,9 +95,7 @@ function ResetWith({ token }: { token: string }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordMismatch(data, "new_password");
-    setMismatch(differ);
-    if (differ === undefined) {
+    if (confirmed(data)) {
       reset.mutate(String(data.get("new_password")));
     }
   };

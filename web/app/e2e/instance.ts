@@ -169,7 +169,8 @@ export async function startInstance(
   createDatabase(options.database);
   const children: ChildProcess[] = [];
   const stop = async () => {
-    for (const child of children.reverse()) {
+    // The last started first, as the server before its proxy.
+    for (const child of [...children].reverse()) {
       await end(child);
     }
     dropDatabase(options.database);
@@ -263,7 +264,14 @@ export async function startInstance(
     ]);
     return { url, setupCode, stop };
   } catch (error) {
-    await stop();
+    // What kept the instance from starting is what fails the test, though
+    // stopping what it started fails too, which is told beside it.
+    await stop().catch((cleanup: unknown) => {
+      console.error(
+        "stopping the instance that did not start failed:",
+        cleanup,
+      );
+    });
     throw error;
   }
 }

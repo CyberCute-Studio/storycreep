@@ -28,7 +28,6 @@ export function VerifyNotice({
         headers: csrfHeaders(session),
       });
     },
-    meta: { showsRefusals: true },
   });
   if (account.email_verified || !instance.email_configured) {
     return null;

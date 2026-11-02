@@ -61,4 +61,21 @@ describe("createQueryClient", () => {
       ["request", 404],
     ]);
   });
+
+  it("records no refusal of a mutation, which the form that made it shows, unless it says it shows none", async () => {
+    const log = createErrorLog();
+    const client = createQueryClient(log);
+    const answer = (status: number) =>
+      new ApiError(new Response(null, { status }), undefined);
+    const run = (error: ApiError, meta?: { showsRefusals: boolean }) =>
+      client
+        .getMutationCache()
+        .build(client, { mutationFn: () => Promise.reject(error), meta })
+        .execute(undefined)
+        .catch(() => {});
+    await run(answer(422));
+    await run(answer(409), { showsRefusals: false });
+    await run(answer(500));
+    expect(log.entries().map((e) => e.request?.status)).toEqual([409, 500]);
+  });
 });

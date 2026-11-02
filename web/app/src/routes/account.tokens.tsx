@@ -19,7 +19,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, pagedQuery, sessionQuery } from "../api";
+import { api, type PageQuery, pagedQuery, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
@@ -71,29 +71,76 @@ type Target =
   | { kind: "workspace"; workspaceId: string }
   | { kind: "project"; projectId: string };
 
+/** The headers of a request that changes a target's tokens. */
+type ChangeHeaders = ReturnType<typeof csrfHeaders>;
+
+/** The requests of a target's tokens, which the server has of each kind. */
+interface TokenRequests {
+  list: (query: PageQuery, signal: AbortSignal) => Promise<PageAPITokenBody>;
+  create: (
+    body: CreateTokenBody,
+    headers: ChangeHeaders,
+  ) => Promise<CreatedAPITokenBody>;
+  revoke: (tokenId: string, headers: ChangeHeaders) => Promise<void>;
+}
+
+/** Returns the requests of the tokens of target, a workspace or a project. */
+function tokenRequests(target: Target): TokenRequests {
+  if (target.kind === "workspace") {
+    const workspace = { workspace_id: target.workspaceId };
+    return {
+      list: async (query, signal) =>
+        (
+          await api.call(
+            "listWorkspaceTokens",
+            { path: workspace, query },
+            { signal },
+          )
+        ).body,
+      create: async (body, headers) =>
+        (
+          await api.call("createWorkspaceToken", {
+            path: workspace,
+            headers,
+            body,
+          })
+        ).body,
+      revoke: async (tokenId, headers) => {
+        await api.call("revokeWorkspaceToken", {
+          path: { ...workspace, token_id: tokenId },
+          headers,
+        });
+      },
+    };
+  }
+  const project = { project_id: target.projectId };
+  return {
+    list: async (query, signal) =>
+      (
+        await api.call(
+          "listProjectTokens",
+          { path: project, query },
+          { signal },
+        )
+      ).body,
+    create: async (body, headers) =>
+      (await api.call("createProjectToken", { path: project, headers, body }))
+        .body,
+    revoke: async (tokenId, headers) => {
+      await api.call("revokeProjectToken", {
+        path: { ...project, token_id: tokenId },
+        headers,
+      });
+    },
+  };
+}
+
 /** The tokens of a target, a page at a time. */
 function tokensQuery(target: Target) {
-  return pagedQuery(
-    ["tokens", target],
-    async (query, signal): Promise<PageAPITokenBody> =>
-      target.kind === "workspace"
-        ? (
-            await api.call(
-              "listWorkspaceTokens",
-              { path: { workspace_id: target.workspaceId }, query },
-              { signal },
-            )
-          ).body
-        : (
-            await api.call(
-              "listProjectTokens",
-              { path: { project_id: target.projectId }, query },
-              { signal },
-            )
-          ).body,
+  return pagedQuery(["tokens", target], tokenRequests(target).list, {
     // A role that may not see the tokens is refused, which the page shows.
-    { meta: { showsRefusals: true } },
-  );
+    meta: { showsRefusals: true },
+  });
 }
 
 /** The scopes of a token (PRD FR-AUTH-04), in the order that the form lists them. */
@@ -273,25 +320,12 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const locale = i18n.language;
   const [confirming, setConfirming] = useState(false);
   const revoke = useMutation({
-    mutationFn: async () => {
-      const headers = csrfHeaders(session);
-      if (target.kind === "workspace") {
-        await api.call("revokeWorkspaceToken", {
-          path: { workspace_id: target.workspaceId, token_id: token.id },
-          headers,
-        });
-      } else {
-        await api.call("revokeProjectToken", {
-          path: { project_id: target.projectId, token_id: token.id },
-          headers,
-        });
-      }
-    },
+    mutationFn: () =>
+      tokenRequests(target).revoke(token.id, csrfHeaders(session)),
     onSuccess: () => {
       setConfirming(false);
       return client.invalidateQueries({ queryKey: ["tokens", target] });
     },
-    meta: { showsRefusals: true },
   });
   const expired =
     token.expires_at !== undefined &&
@@ -400,29 +434,12 @@ function CreateToken({
   const [open, setOpen] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   const create = useMutation({
-    mutationFn: async (body: CreateTokenBody): Promise<CreatedAPITokenBody> => {
-      const headers = csrfHeaders(session);
-      return target.kind === "workspace"
-        ? (
-            await api.call("createWorkspaceToken", {
-              path: { workspace_id: target.workspaceId },
-              headers,
-              body,
-            })
-          ).body
-        : (
-            await api.call("createProjectToken", {
-              path: { project_id: target.projectId },
-              headers,
-              body,
-            })
-          ).body;
-    },
+    mutationFn: (body: CreateTokenBody) =>
+      tokenRequests(target).create(body, csrfHeaders(session)),
     // The secret shows at once, while the list is read again.
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["tokens", target] });
     },
-    meta: { showsRefusals: true },
   });
   const refusal =
     create.error === null ? undefined : refusalOf(create.error, t, tokenField);

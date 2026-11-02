@@ -5,21 +5,20 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
 import {
   bodyField,
-  type Mismatch,
   minPasswordLength,
-  passwordMismatch,
+  usePasswordConfirmation,
 } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, signedIn } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
 import { applyLocale, supportedLocales } from "../i18n";
 import { Button } from "../ui/Button";
-import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
+import { SelectField, TextField } from "../ui/Field";
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/account/")({
@@ -102,12 +101,20 @@ function Language({
         instanceDefault: instance.default_locale,
       });
     },
-    meta: { showsRefusals: true },
   });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     save.mutate(String(new FormData(event.currentTarget).get("locale")));
   };
+  // The server keeps a locale that it has a catalog of, which the app may
+  // have none of, as one that a later version of the app no longer has: it
+  // is listed all the same, so that it shows as the choice, and saving the
+  // form keeps it, rather than clearing it to the browser's language.
+  const locales = supportedLocales(i18n);
+  const kept = account.locale ?? "";
+  if (kept !== "" && !locales.includes(kept)) {
+    locales.push(kept);
+  }
   return (
     <section className="space-y-3" aria-labelledby="account-language">
       <h2 id="account-language" className="text-lg font-semibold">
@@ -126,10 +133,10 @@ function Language({
           label={t("account.language.label")}
           hint={t("account.language.hint")}
           name="locale"
-          defaultValue={account.locale ?? ""}
+          defaultValue={kept}
         >
           <option value="">{t("account.language.browser")}</option>
-          {supportedLocales(i18n).map((locale) => (
+          {locales.map((locale) => (
             <option key={locale} value={locale} lang={locale}>
               {languageName(locale)}
             </option>
@@ -154,7 +161,6 @@ function Password() {
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState<Mismatch>();
   const change = useMutation({
     mutationFn: async (body: {
       current_password: string;
@@ -167,27 +173,25 @@ function Password() {
         })
       ).body;
     },
-    onSuccess: (renewed) => {
-      signedIn(client, renewed);
+    onSuccess: async (renewed) => {
+      await signedIn(client, renewed);
       form.current?.reset();
     },
-    meta: { showsRefusals: true },
   });
   const refusal =
     change.error === null
       ? undefined
       : refusalOf(change.error, t, passwordField);
-  const errors: Record<string, string | undefined> = {
-    ...refusal?.fields,
-    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
-  };
-  useFocusRefusal(form, mismatch ?? change.error);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    change,
+    refusal?.fields,
+    "new_password",
+  );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordMismatch(data, "new_password");
-    setMismatch(differ);
-    if (differ === undefined) {
+    if (confirmed(data)) {
       change.mutate({
         current_password: String(data.get("current_password")),
         new_password: String(data.get("new_password")),

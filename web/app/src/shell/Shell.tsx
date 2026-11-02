@@ -20,7 +20,9 @@ const Framed = createContext(false);
 
 export function Shell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const session = useQuery(sessionQuery).data;
   const signOut = useSignOut();
+  const failure = signOutFailure(signOut, session, t);
   return (
     <Framed.Provider value={true}>
       <div className="flex min-h-dvh flex-col">
@@ -46,9 +48,9 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div role="alert">
-            {signOut.error !== null && (
+            {failure !== undefined && (
               <p className="border-t border-border px-4 py-3 text-danger">
-                {signOutFailure(signOut.error, t)}
+                {failure}
               </p>
             )}
           </div>

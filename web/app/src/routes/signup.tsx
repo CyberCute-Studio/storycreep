@@ -5,20 +5,19 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
 import {
-  type Mismatch,
   minPasswordLength,
-  passwordMismatch,
   registrationField,
   signInRegistered,
+  usePasswordConfirmation,
 } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { requireSignedOut, signIn } from "../auth/session";
 import { Button } from "../ui/Button";
-import { TextField, useFocusRefusal } from "../ui/Field";
+import { TextField } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/signup")({
@@ -40,7 +39,6 @@ function Signup() {
   const navigate = useNavigate();
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState<Mismatch>();
   const register = useMutation({
     mutationFn: async (body: RegisterBody): Promise<Registered> => {
       await api.call("registerAccount", { body });
@@ -53,17 +51,16 @@ function Signup() {
     // form, shown until then, cannot be sent again.
     onSuccess: (registered) =>
       registered === "signed-in" ? navigate({ to: "/" }) : undefined,
-    meta: { showsRefusals: true },
   });
   const refusal =
     register.error === null
       ? undefined
       : refusalOf(register.error, t, registrationField);
-  const errors: Record<string, string | undefined> = {
-    ...refusal?.fields,
-    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
-  };
-  useFocusRefusal(form, mismatch ?? register.error);
+  const { errors, confirmed } = usePasswordConfirmation(
+    form,
+    register,
+    refusal?.fields,
+  );
 
   if (instance.signup_policy !== "open") {
     return (
@@ -93,9 +90,7 @@ function Signup() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordMismatch(data);
-    setMismatch(differ);
-    if (differ !== undefined) {
+    if (!confirmed(data)) {
       return;
     }
     register.mutate({

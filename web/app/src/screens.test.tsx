@@ -8,7 +8,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { accountQuery, api, sessionQuery } from "./api";
-import { signedIn } from "./auth/session";
+import { sessionChanges, signedIn } from "./auth/session";
 import { renderApp, testAccount, testInstance, testSession } from "./test/app";
 
 // The account screens as the router shows them, over a fake of the API's
@@ -134,6 +134,27 @@ describe("signing out", () => {
     expect(screen.getByText("You are signed in as Jo.")).toBeDefined();
   });
 
+  it("says no more that it failed once the session has ended otherwise", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "logout") {
+        throw new TypeError("Failed to fetch");
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, router } = renderApp("/", { session: testSession });
+    const header = await screen.findByRole("banner");
+    await user.click(within(header).getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(within(header).getByRole("alert").textContent).not.toBe(""),
+    );
+
+    // Another tab signed out, which this one finds once it is shown again.
+    sessionChanges(queryClient, router).ended();
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    expect(within(header).getByRole("alert").textContent).toBe("");
+  });
+
   it("goes to signing in when the session had ended already", async () => {
     const user = userEvent.setup();
     fakeApi((operation) => {
@@ -174,13 +195,59 @@ describe("another tab", () => {
     ).toHaveProperty("value", "en");
 
     // What the page does once its tab is shown again (followSession).
-    signedIn(queryClient, { ...testSession, user_id: sam.id });
+    await signedIn(queryClient, { ...testSession, user_id: sam.id });
     await router.invalidate();
     await screen.findByText("sam@example.com");
     expect(screen.getByRole("combobox", { name: "Language" })).toHaveProperty(
       "value",
       "",
     );
+  });
+});
+
+describe("a session that ends elsewhere", () => {
+  it("sends a page that needs one to signing in, which comes back to it", async () => {
+    const { queryClient, router } = renderApp("/account", {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Account" });
+    sessionChanges(queryClient, router).ended();
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    expect(router.state.location.search).toEqual({ redirect: "/account" });
+    expect(queryClient.getQueryData(accountQuery.queryKey)).toBeUndefined();
+  });
+
+  it("leaves a link's page where it is, which says what became of the link, rather than using it again, as it shows itself anew", async () => {
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "verifyEmail":
+          return undefined;
+        case "getAccount":
+          return testAccount;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, router } = renderApp("/verify-email#token=secret", {
+      session: testSession,
+    });
+    await screen.findByText("Your email address is verified.");
+
+    sessionChanges(queryClient, router).ended();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull(),
+    );
+    expect(router.state.location.pathname).toBe("/verify-email");
+    expect(router.state.location.hash).toBe("token=secret");
+    await screen.findByText("Your email address is verified.");
+
+    // Another tab signed in, and the page shows itself anew again.
+    await signedIn(queryClient, testSession);
+    await router.invalidate();
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(screen.getByText("Your email address is verified.")).toBeDefined();
+    expect(
+      call.mock.calls.filter(([operation]) => operation === "verifyEmail"),
+    ).toHaveLength(1);
   });
 });
 
@@ -310,6 +377,16 @@ describe("the language", () => {
     expect(screen.getByRole("heading", { name: "Password" })).toBeDefined();
   });
 
+  it("keeps a language that the account prefers, which the app has no catalog of, as the choice", async () => {
+    renderApp("/account", {
+      session: testSession,
+      account: { ...testAccount, locale: "cs" },
+    });
+    expect(
+      await screen.findByRole("combobox", { name: "Language" }),
+    ).toHaveProperty("value", "cs");
+  });
+
   it("shows the page in the browser's language where the account prefers none", async () => {
     renderApp("/account", {
       session: testSession,
@@ -359,6 +436,37 @@ describe("a refused form", () => {
     await user.click(save);
     await screen.findByText("Saved.");
     expect(document.activeElement).toBe(save);
+  });
+
+  it("drops the server's refusal of the attempt before once it refuses passwords that differ itself", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "changePassword") {
+        throw refused(403, {
+          code: "wrong_password",
+          details: {
+            errors: [{ location: "body.current_password", message: "is not" }],
+          },
+        });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account", { session: testSession });
+    const current = await screen.findByLabelText("Current password");
+    const repeat = screen.getByLabelText("Repeat the new password");
+    await user.type(current, "not it");
+    await user.type(screen.getByLabelText("New password"), "a new passphrase");
+    await user.type(repeat, "a new passphrase");
+    const submit = screen.getByRole("button", { name: "Change the password" });
+    await user.click(submit);
+    await screen.findByText("This is not your current password.");
+
+    await user.clear(repeat);
+    await user.type(repeat, "another passphrase");
+    await user.click(submit);
+    await screen.findByText("The two passwords are not the same.");
+    expect(screen.queryByText("This is not your current password.")).toBeNull();
+    expect(document.activeElement).toBe(repeat);
   });
 });
 
@@ -466,8 +574,13 @@ describe("an invitation", () => {
       "textContent",
       "This invitation is for jo@example.com, but you are signed in as sam@example.com. Sign out, and sign in with jo@example.com.",
     );
-
+    // The control that signed in went with its step: the focus is on the
+    // first of the step that shows the refusal.
     const accept = screen.getByRole("region", { name: "Accept" });
+    expect(document.activeElement).toBe(
+      within(accept).getByRole("button", { name: "Accept the invitation" }),
+    );
+
     await user.click(within(accept).getByRole("button", { name: "Sign out" }));
     await screen.findByRole("region", { name: "Have an account? Sign in" });
     expect(router.state.location.pathname).toBe("/invite");
@@ -616,6 +729,45 @@ describe("the skip link", () => {
 });
 
 describe("resetting a password", () => {
+  it("says that the password is reset once the page shows itself anew, as when another tab signs in", async () => {
+    const user = userEvent.setup();
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "resetPassword":
+          return undefined;
+        case "getSession":
+          throw refused(401, { code: "unauthenticated" });
+        case "getAccount":
+          return testAccount;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, router } = renderApp("/reset-password#token=secret");
+    await user.type(
+      await screen.findByLabelText("New password"),
+      "a new passphrase",
+    );
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Set the new password" }),
+    );
+    const done =
+      "Your password is changed, and every session of your account is signed out. Sign in with the new password.";
+    await screen.findByText(done);
+
+    await signedIn(queryClient, testSession);
+    await router.invalidate();
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(screen.getByText(done)).toBeDefined();
+    expect(screen.queryByLabelText("New password")).toBeNull();
+    expect(
+      call.mock.calls.filter(([operation]) => operation === "resetPassword"),
+    ).toHaveLength(1);
+  });
+
   it("leaves the page signed in to another account than the one that it reset", async () => {
     const user = userEvent.setup();
     fakeApi((operation) => {

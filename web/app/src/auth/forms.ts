@@ -4,6 +4,9 @@
 // server's refusals name.
 
 import { ApiError } from "@storycreep/shared/api";
+import { type RefObject, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useFocusRefusal } from "../ui/Field";
 import type { FieldOf } from "./refusal";
 
 /**
@@ -36,6 +39,50 @@ export function passwordMismatch(
   return data.get(password) === data.get(confirm)
     ? undefined
     : { field: confirm };
+}
+
+/** What usePasswordConfirmation reads of the form's mutation. */
+interface Attempt {
+  error: Error | null;
+  reset: () => void;
+}
+
+/**
+ * The errors of form, which asks for a new password twice, in the fields
+ * password and confirm, and the check that its submit makes before it asks
+ * the server, with mutation, that the two are the same (Mismatch): errors
+ * are the server's refusal of the form's fields, refused, with the
+ * mismatch, and the focus goes to the first of them once for each refused
+ * attempt (useFocusRefusal). confirmed(data) records whether the passwords
+ * of data, what the form holds, differ, and returns whether to send it. A
+ * form that refuses itself so drops what its mutation had of the attempt
+ * before (reset): a refusal of fields that the user may have mended since,
+ * which the form would show still, and whose field the focus would go to,
+ * rather than to the confirmation, or the attempt's success.
+ */
+export function usePasswordConfirmation(
+  form: RefObject<HTMLFormElement | null>,
+  mutation: Attempt,
+  refused: Readonly<Record<string, string>> | undefined,
+  password = "password",
+  confirm = "confirm",
+) {
+  const { t } = useTranslation();
+  const [mismatch, setMismatch] = useState<Mismatch>();
+  useFocusRefusal(form, mismatch ?? mutation.error);
+  const errors: Record<string, string | undefined> = {
+    ...refused,
+    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
+  };
+  const confirmed = (data: FormData): boolean => {
+    const differ = passwordMismatch(data, password, confirm);
+    setMismatch(differ);
+    if (differ !== undefined) {
+      mutation.reset();
+    }
+    return differ === undefined;
+  };
+  return { errors, confirmed };
 }
 
 /**
