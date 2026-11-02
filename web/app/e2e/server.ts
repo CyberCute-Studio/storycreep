@@ -55,3 +55,11 @@ child.on("exit", (code, signal) => {
   rmSync(dir, { recursive: true, force: true });
   process.exit(code ?? (signal === null ? 0 : 1));
 });
+// A binary that cannot be started, as one that the system refuses to run,
+// never exits, so this process says why and ends, rather than crash on the
+// event and leave Playwright to wait for a server that never comes.
+child.on("error", (error) => {
+  console.error(`e2e/server.ts: cannot start ${binary}: ${error.message}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.exit(1);
+});

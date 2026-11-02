@@ -39,7 +39,7 @@ function readColours(): Record<string, Record<Mode, string>> {
   const css = readFileSync(new URL("tokens.css", import.meta.url), "utf8");
   const colours: Record<string, Record<Mode, string>> = {};
   const declaration =
-    /--color-([a-z-]+):\s*light-dark\(\s*(#[0-9a-f]{6})\s*,\s*(#[0-9a-f]{6})\s*\)\s*;/g;
+    /--color-([\w-]+)\s*:\s*light-dark\(\s*(#[0-9a-f]{6})\s*,\s*(#[0-9a-f]{6})\s*\)\s*;/g;
   for (const [, name, light, dark] of css.matchAll(declaration)) {
     colours[name] = { light, dark };
   }
@@ -91,7 +91,9 @@ it("the tokens' colours contrast enough in both modes", () => {
 
 it("every colour of tokens.css has a light and a dark value", () => {
   const css = readFileSync(new URL("tokens.css", import.meta.url), "utf8");
-  const named = [...css.matchAll(/--color-([a-z-]+):/g)].map((m) => m[1]);
+  // Every name, as accent-2 too, but Tailwind's --color-*, which clears its
+  // palette.
+  const named = [...css.matchAll(/--color-([\w-]+)\s*:/g)].map((m) => m[1]);
   expect(named.length).toBeGreaterThan(0);
   expect(Object.keys(readColours()).sort()).toEqual(named.sort());
 });

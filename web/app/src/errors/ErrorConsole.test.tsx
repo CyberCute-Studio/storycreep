@@ -206,7 +206,7 @@ it("names its button with the label that it shows, and the number of errors", as
 function ShowButton() {
   const { show } = useErrorConsole();
   return (
-    <button type="button" onClick={show}>
+    <button type="button" onClick={(event) => show(event.currentTarget)}>
       Show
     </button>
   );
@@ -221,6 +221,20 @@ it("gives the focus back to the control that opened it", async () => {
   const dialog = screen.getByRole("dialog", { name: "Error console" });
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   await waitFor(() => expect(document.activeElement).toBe(show));
+
+  // Even when the click did not focus it, as Safari's does not, and the
+  // focus was elsewhere, as on the page's content.
+  const content = document.createElement("main");
+  content.tabIndex = -1;
+  document.body.append(content);
+  try {
+    content.focus();
+    act(() => show.click());
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(document.activeElement).toBe(show));
+  } finally {
+    content.remove();
+  }
 
   // The header's button gets it back when it opened the console.
   const button = screen.getByRole("button", { name: /^Errors: / });

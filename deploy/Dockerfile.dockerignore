@@ -24,3 +24,4 @@ web/**/testdata/
 web/app/e2e/
 web/app/test-results/
 web/app/playwright-report/
+web/app/.tanstack/

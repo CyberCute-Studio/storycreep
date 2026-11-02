@@ -6,19 +6,24 @@
 // to the app's source, but for its tests, and CI runs it with the rest of
 // Biome's checks.
 //
-// It reports the browser's ways for a script to make a request: fetch,
-// XMLHttpRequest, EventSource, WebSocket, and sendBeacon, named as a global,
-// as in fetch(url) or new WebSocket(url), as a property, as in window.fetch,
-// globalThis["fetch"], or navigator.sendBeacon(url), or as a property that
-// is destructured, as in const { fetch: get } = window. A type that is named
-// so, as in a parameter of the type WebSocket, is not reported. It reads
-// names, as a lint rule does, not values that a script computes, so a name
-// that is only a string that a call is given, as in
-// Reflect.get(globalThis, "fetch"), or a key that is not a literal, as in
-// window[name], is for review to catch. Code that rightly makes such a
-// request, as the real-time channel's client will, is marked with a comment
-// that says why, as in // biome-ignore lint/plugin: the real-time channel's
-// socket.
+// It reports the browser's interfaces that a script calls the server's API
+// with, over HTTP or a WebSocket, which the server speaks: fetch,
+// XMLHttpRequest, EventSource, WebSocket, and sendBeacon, a closed list,
+// named as a global, as in fetch(url) or new WebSocket(url), as a property,
+// as in window.fetch, globalThis["fetch"], or navigator.sendBeacon(url), or
+// as a property that is destructured, as in const { fetch: get } = window.
+// A type that is named so, as in a parameter of the type WebSocket, is not
+// reported. The other requests that a page can make, as for an image's or a
+// script's source, or a form's submission, which do not call the API as a
+// script does, and WebTransport and WebRTC, which the server does not
+// speak, are not on the list: they are for review to catch, as one that
+// sends an error's details away would be. It reads names, as a lint rule
+// does, not values that a script computes, so a name that is only a string
+// that a call is given, as in Reflect.get(globalThis, "fetch"), or a key
+// that is not a literal, as in window[name], is for review to catch too.
+// Code that rightly makes such a request, as the real-time channel's client
+// will, is marked with a comment that says why, as in
+// // biome-ignore lint/plugin: the real-time channel's socket.
 
 language js
 

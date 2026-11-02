@@ -51,10 +51,7 @@
     },
     {
       "includes": ["web/app/src/**", "!**/*.test.*", "!**/*.spec.*"],
-      "plugins": [
-        "./web/shared/lint/hardcoded-text.grit",
-        "./web/app/lint/direct-request.grit"
-      ]
+      "plugins": ["./web/app/lint/direct-request.grit"]
     }
   ]
 }

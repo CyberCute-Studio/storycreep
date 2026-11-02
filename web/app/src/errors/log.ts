@@ -115,7 +115,9 @@ export function createErrorLog(options: ErrorLogOptions = {}): ErrorLog {
         ];
       } else {
         next++;
-        entries = [...entries, entry].slice(-limit);
+        // A limit of 0 keeps none, which slice(-0), the whole array, would
+        // not.
+        entries = limit > 0 ? [...entries, entry].slice(-limit) : [];
       }
       changed();
     },

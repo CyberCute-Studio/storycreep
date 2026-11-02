@@ -29,7 +29,9 @@ export function RouteError({ reset }: ErrorComponentProps) {
           >
             {t("route_error.retry")}
           </Button>
-          <Button onClick={show}>{t("route_error.show_console")}</Button>
+          <Button onClick={(event) => show(event.currentTarget)}>
+            {t("route_error.show_console")}
+          </Button>
         </div>
       </div>
     </Shell>

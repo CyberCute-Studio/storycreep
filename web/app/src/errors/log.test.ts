@@ -78,6 +78,9 @@ describe("createErrorLog", () => {
       l.record("error", new Error(message));
     }
     expect(l.entries().map((e) => e.message)).toEqual(["2", "3", "4"]);
+    const none = log(0);
+    none.record("error", new Error("1"));
+    expect(none.entries()).toEqual([]);
   });
 
   it("tells its subscribers of each change until they leave", () => {

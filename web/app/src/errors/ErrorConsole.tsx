@@ -26,8 +26,14 @@ import { errorHeading, formatEntry, formatReport, sourceLabel } from "./report";
 
 interface ErrorConsoleContext {
   log: ErrorLog;
-  /** Opens the console. */
-  show(): void;
+  /**
+   * Opens the console. opener, the control that opened it, as the button of
+   * an event's currentTarget, gets the focus back when the console closes;
+   * without it, the control that has the focus does. A control that opens
+   * it passes itself: Safari does not focus a button that is clicked or
+   * tapped, so the focus is then elsewhere, as on the page's content.
+   */
+  show(opener?: HTMLElement): void;
 }
 
 const Context = createContext<ErrorConsoleContext>({
@@ -52,15 +58,15 @@ export function ErrorConsoleProvider({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  // The control that had the focus when show opened the console, as the
-  // error page's button, which gets the focus back when the console closes,
-  // as the header's button does when it opened the console (WCAG 2.4.3).
+  // The control that show opened the console from, as the error page's
+  // button, which gets the focus back when the console closes, as the
+  // header's button does when it opened the console (WCAG 2.4.3).
   const opener = useRef<HTMLElement | null>(null);
   const context = useMemo(
     () => ({
       log,
-      show: () => {
-        const focused = document.activeElement;
+      show: (from?: HTMLElement) => {
+        const focused = from ?? document.activeElement;
         opener.current =
           focused instanceof HTMLElement && focused !== document.body
             ? focused
