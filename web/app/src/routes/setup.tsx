@@ -13,7 +13,11 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
-import { minPasswordLength, usePasswordConfirmation } from "../auth/forms";
+import {
+  bodyPath,
+  minPasswordLength,
+  usePasswordConfirmation,
+} from "../auth/forms";
 import { type FieldOf, refusalOf } from "../auth/refusal";
 import { signIn } from "../auth/session";
 import { Button } from "../ui/Button";
@@ -63,7 +67,7 @@ const policies = ["closed", "invite", "open"] as const;
 
 /** The form's fields that the server's locations under the body name. */
 const setupField: FieldOf = (location) => {
-  const path = location.replace(/^body\./, "");
+  const path = bodyPath(location);
   const owner: Record<string, string> = {
     "owner.email": "owner_email",
     "owner.display_name": "owner_name",

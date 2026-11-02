@@ -2,6 +2,7 @@ import {
   type AccountBody,
   ApiError,
   type ErrorBody,
+  NetworkError,
 } from "@storycreep/shared/api";
 import { catalogs } from "@storycreep/shared/i18n";
 import { screen, waitFor, within } from "@testing-library/react";
@@ -138,7 +139,7 @@ describe("signing out", () => {
     const user = userEvent.setup();
     fakeApi((operation) => {
       if (operation === "logout") {
-        throw new TypeError("Failed to fetch");
+        throw new NetworkError(new TypeError("Failed to fetch"));
       }
       throw new Error(`unexpected ${operation}`);
     });
@@ -169,6 +170,49 @@ describe("signing out", () => {
     await screen.findByRole("heading", { level: 1, name: "Sign in" });
     expect(router.state.location.pathname).toBe("/login");
     expect(within(header).getByRole("alert").textContent).toBe("");
+  });
+
+  it("leaves a page that needs no session where it is, as an invitation's, whose link it keeps", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "lookupInvite":
+          return {
+            workspace_name: "Studio",
+            kind: "link",
+            role: "editor",
+            expires_at: "2026-12-01T10:00:00Z",
+          };
+        case "logout":
+          return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/invite#token=secret", {
+      session: testSession,
+    });
+    const header = await screen.findByRole("banner");
+    await screen.findByRole("region", { name: "Accept" });
+    await user.click(within(header).getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("region", { name: "Have an account? Sign in" });
+    expect(router.state.location.pathname).toBe("/invite");
+    expect(router.state.location.hash).toBe("token=secret");
+  });
+
+  it("sends a page that needs a session to signing in, which comes back to it", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "logout") {
+        return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/account", { session: testSession });
+    const header = await screen.findByRole("banner");
+    await screen.findByRole("heading", { level: 1, name: "Account" });
+    await user.click(within(header).getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    expect(router.state.location.search).toEqual({ redirect: "/account" });
   });
 });
 
@@ -492,7 +536,7 @@ describe("first-run setup", () => {
         case "getInstance":
           return instance;
         case "login":
-          throw new TypeError("Failed to fetch");
+          throw new NetworkError(new TypeError("Failed to fetch"));
       }
       throw new Error(`unexpected ${operation}`);
     });
@@ -601,7 +645,7 @@ describe("an invitation", () => {
         case "acceptInvite":
           throw refused(403, { code: "invite_email_mismatch" });
         case "logout":
-          throw new TypeError("Failed to fetch");
+          throw new NetworkError(new TypeError("Failed to fetch"));
       }
       throw new Error(`unexpected ${operation}`);
     });
@@ -685,6 +729,42 @@ describe("an invitation", () => {
     expect(
       screen.getByRole("button", { name: "Accept the invitation" }),
     ).toBeDefined();
+  });
+
+  it("says only that it was accepted to another account than the one that joined", async () => {
+    const user = userEvent.setup();
+    const sam = { ...testAccount, id: "usr_sam", email: "sam@example.com" };
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "lookupInvite":
+          return invite;
+        case "acceptInvite":
+          return { id: "wsp_studio", name: "Studio", role: "editor" };
+        case "getAccount":
+          return sam;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, router } = renderApp("/invite#token=secret", {
+      session: testSession,
+    });
+    const accept = await screen.findByRole("region", { name: "Accept" });
+    await user.click(
+      within(accept).getByRole("button", { name: "Accept the invitation" }),
+    );
+    await screen.findByText("You have joined Studio as editor.");
+
+    // Another account signed in to in this tab, as after signing out.
+    await signedIn(queryClient, { ...testSession, user_id: sam.id });
+    await router.invalidate();
+    expect(await content().findByRole("alert")).toHaveProperty(
+      "textContent",
+      "This invitation has been accepted already.",
+    );
+    expect(screen.queryByText("You have joined Studio as editor.")).toBeNull();
+    expect(
+      call.mock.calls.filter(([operation]) => operation === "acceptInvite"),
+    ).toHaveLength(1);
   });
 });
 

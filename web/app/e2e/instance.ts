@@ -74,7 +74,12 @@ export async function freePort(host: string): Promise<number> {
   });
 }
 
-/** The environment of a server of the database name, at address. */
+/**
+ * The environment of a server of the database name, at address: this
+ * process's, without a variable of the server's configuration, so that the
+ * server's is what options name alone, rather than what a developer's
+ * shell has, as a setup owner or an SMTP server of their own.
+ */
 export function serverEnv(options: {
   database: string;
   address: string;
@@ -82,8 +87,11 @@ export function serverEnv(options: {
   env?: Record<string, string>;
 }): NodeJS.ProcessEnv {
   const urls = databaseURLs(options.database);
+  const inherited = Object.entries(process.env).filter(
+    ([name]) => !name.toUpperCase().startsWith("STORYCREEP_"),
+  );
   return {
-    ...process.env,
+    ...Object.fromEntries(inherited),
     STORYCREEP_HTTP_ADDR: options.address,
     STORYCREEP_PUBLIC_URL: options.publicURL,
     STORYCREEP_ADMIN_ADDR: "off",

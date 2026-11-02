@@ -62,7 +62,7 @@ function ResetWith({ token }: { token: string }) {
     // may be one of, or not, as one of another account's: the page asks
     // the server, and is signed out if the server says so. If the server
     // cannot say, the page stays as it is, and the next request that needs
-    // the session finds out, as any does (onUnauthenticated).
+    // the session finds out, as any does (checkSession).
     onSuccess: async () => {
       const session = await client
         .fetchQuery({ ...sessionQuery, staleTime: 0 })

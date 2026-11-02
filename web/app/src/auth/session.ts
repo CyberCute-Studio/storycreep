@@ -60,24 +60,36 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
  * the page has a session, as an invitation's step that follows signing in
  * where the page is, has it, rather than waiting for it, which shows none
  * of the page's content (useSuspenseQuery). If the server cannot answer,
- * the components ask for it themselves.
+ * the components ask for it themselves. A session that the page only
+ * learnt of, as followSession does, is recorded only if current still
+ * says so once the account has come, after which the page may have changed
+ * its session itself, as by signing in; signedIn resolves to whether it
+ * recorded it.
  */
 export async function signedIn(
   client: QueryClient,
   session: SignedInBody,
-): Promise<void> {
-  const previous = client.getQueryData(sessionQuery.queryKey);
-  if (previous?.user_id !== session.user_id) {
-    const account = await api.call("getAccount", {}).then(
-      (answer) => answer.body,
-      () => undefined,
-    );
+  current: () => boolean = () => true,
+): Promise<boolean> {
+  const changed =
+    client.getQueryData(sessionQuery.queryKey)?.user_id !== session.user_id;
+  const account = changed
+    ? await api.call("getAccount", {}).then(
+        (answer) => answer.body,
+        () => undefined,
+      )
+    : undefined;
+  if (!current()) {
+    return false;
+  }
+  if (changed) {
     dropAccountData(client);
     if (account?.id === session.user_id) {
       client.setQueryData(accountQuery.queryKey, account);
     }
   }
   client.setQueryData(sessionQuery.queryKey, session);
+  return true;
 }
 
 /**
@@ -106,22 +118,35 @@ export function signedOut(client: QueryClient): void {
   dropAccountData(client);
 }
 
+/** What endSession shows the page again with: the app's router. */
+interface Reloadable {
+  invalidate: () => Promise<void>;
+}
+
 /**
- * Ends the page's signed-in state once its session has ended, by signing
- * out or elsewhere: the session is null for the components still shown,
- * which keep what they read of the account until the page has shown what
- * comes next (next): the sign-in screen, once the user signed out, or the
- * page again, through its guards, once the session ended elsewhere
- * (sessionChanges), so that none asks for it again, and what the page held
- * of the account is dropped then.
+ * Ends the page's signed-in state once its session has ended, as once the
+ * page signed out, or once the session ended elsewhere (sessionChanges):
+ * the page shows itself again, through the guards of its routes, which
+ * decide whether it needs a session. A page that needs one goes to the
+ * sign-in screen (requireSession), which comes back to it, with the token
+ * of a link's fragment, if it has one, still in a fragment, and one that
+ * needs none, as a link's page, stays where it is, signed out, as an
+ * invitation's does, to sign in with another account. The session is null
+ * for the components still shown, which keep what they read of the
+ * account until the page has shown itself again, so that none asks for it
+ * again, and what the page held of the account is dropped then, or if the
+ * page cannot show itself again.
  */
 export async function endSession(
   client: QueryClient,
-  next: () => Promise<void>,
+  router: Reloadable,
 ): Promise<void> {
   client.setQueryData(sessionQuery.queryKey, null);
-  await next();
-  signedOut(client);
+  try {
+    await router.invalidate();
+  } finally {
+    signedOut(client);
+  }
 }
 
 /** What followSession does once the session has changed elsewhere. */
@@ -146,7 +171,9 @@ export interface SessionFollower {
    * Asks the server for the session now, as once it answered a request
    * with 401 unauthenticated, which tells that the session may have ended,
    * or that the request went with one that the page has replaced since, as
-   * by changing the password, whose session is still the page's.
+   * by changing the password, whose session is still the page's, or with
+   * 403 csrf_failed, as once another tab changed the password, which gave
+   * the session a new CSRF token.
    */
   check: () => Promise<void>;
   /** Stops following the session. */
@@ -161,9 +188,11 @@ export interface SessionFollower {
  * shown again, as when the user comes back to its tab, and whenever the
  * follower's check is called, the page asks the server for the session,
  * records it in client, and tells changes if the session is no longer the
- * account's that it was. An answer to a question asked before the page
- * changed its session itself, as by signing in, is of the one before, and
- * changes nothing, and so does a question asked while one is under way.
+ * account's that it was. Only the answer to the latest question counts,
+ * since one asked before it may be of a session that has changed since,
+ * as one that ended while the question was under way, and so only if the
+ * page has not changed its session itself since it asked, as by signing
+ * in, which makes the answer one of the session before.
  */
 export function followSession(
   client: QueryClient,
@@ -173,33 +202,33 @@ export function followSession(
   >,
   changes: SessionChanges,
 ): SessionFollower {
-  let asking = false;
+  let asked = 0;
   const ask = async () => {
     const known = client.getQueryData(sessionQuery.queryKey);
-    if (asking || known === undefined) {
+    if (known === undefined) {
       return;
     }
-    asking = true;
+    const question = ++asked;
+    const current = () =>
+      question === asked &&
+      client.getQueryData(sessionQuery.queryKey) === known;
     try {
       const session = await fetchSession();
-      if (client.getQueryData(sessionQuery.queryKey) !== known) {
-        return;
-      }
       if (session === null) {
-        if (known !== null) {
+        if (known !== null && current()) {
           changes.ended();
         }
         return;
       }
-      await signedIn(client, session);
-      if (known?.user_id !== session.user_id) {
+      if (
+        (await signedIn(client, session, current)) &&
+        known?.user_id !== session.user_id
+      ) {
         changes.replaced();
       }
     } catch {
       // The server could not say: the next request that needs the session
       // finds out, as any does.
-    } finally {
-      asking = false;
     }
   };
   const shown = () => {
@@ -214,28 +243,21 @@ export function followSession(
   };
 }
 
-/** What sessionChanges shows the page again with: the app's router. */
-interface Reloadable {
-  invalidate: () => Promise<void>;
-}
-
 /**
  * What the page does once its session has changed elsewhere (followSession):
  * it shows itself again, through the guards of its routes, which decide
- * whether it needs a session. A page whose session has ended goes to the
- * sign-in screen if it needs one (requireSession), which comes back to it,
- * with the token of a link's fragment, if it has one, still in a fragment,
- * and stays where it is, signed out, if it needs none, as a link's page,
- * which shows what became of the link (linkOutcome). A page signed in to
- * another account shows itself anew, as the root route keys it on the
- * account that it loaded for.
+ * whether it needs a session. A page whose session has ended is signed out
+ * (endSession), and a link's page, which stays where it is, shows what
+ * became of the link (linkOutcome). A page signed in to another account
+ * shows itself anew, as the root route keys it on the account that it
+ * loaded for.
  */
 export function sessionChanges(
   client: QueryClient,
   router: Reloadable,
 ): SessionChanges {
   return {
-    ended: () => void endSession(client, () => router.invalidate()),
+    ended: () => void endSession(client, router),
     replaced: () => void router.invalidate(),
   };
 }
@@ -246,19 +268,29 @@ function dropAccountData(client: QueryClient): void {
   });
 }
 
+/** An origin that path resolves against, for appPath. */
+const pageOrigin = "http://app.invalid";
+
 /**
  * Returns path if it is a path of the app, as the sign-in screen's redirect
  * holds, and undefined otherwise: a URL of another origin, or a path that a
- * browser reads as one, as //example.com or /\example.com, whose redirect
- * would take the user off the instance once they had signed in.
+ * browser reads as one, as //example.com or /\example.com, with or without
+ * a tab or a newline between the two, which a browser drops, whose
+ * redirect would take the user off the instance once they had signed in,
+ * and which the router refuses to go to. A path is the app's if a browser
+ * resolves it to the page's own origin.
  */
 export function appPath(path: unknown): string | undefined {
   if (typeof path !== "string" || !path.startsWith("/")) {
     return undefined;
   }
-  // A browser reads a backslash as a slash in the path of an http URL.
-  const second = path.charAt(1);
-  return second === "/" || second === "\\" ? undefined : path;
+  try {
+    return new URL(path, pageOrigin).origin === pageOrigin ? path : undefined;
+  } catch {
+    // A path that a browser reads as a URL of another host that it cannot
+    // parse, as //[x.
+    return undefined;
+  }
 }
 
 /** The search of the sign-in screen: the page to go back to. */

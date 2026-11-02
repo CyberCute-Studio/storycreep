@@ -43,12 +43,12 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function Root() {
   useAccountLocale();
   // A page that loads again for another account, or for none, as once
-  // another tab has signed in to it, or out (sessionChanges), shows itself
-  // anew, as it would loaded anew, without what its components held of the
-  // account before, as a choice of a list, a field's value, or a refusal;
-  // what became of a link that it used is kept by the link's token
-  // (linkOutcome). A page that signs in or out where it is, as an
-  // invitation's, loads nothing, and keeps them.
+  // another tab has signed in to it, or once it or another tab has signed
+  // out (endSession), shows itself anew, as it would loaded anew, without
+  // what its components held of the account before, as a choice of a list,
+  // a field's value, or a refusal; what became of a link that it used is
+  // kept by the link's token (linkOutcome). A page that signs in where it
+  // is, as an invitation's, loads nothing, and keeps them.
   const { loadedFor } = Route.useRouteContext();
   return (
     <Shell>

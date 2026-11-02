@@ -122,8 +122,9 @@ export async function fetchSession(
  * The session of the page, or null if the page is signed out. Signing in
  * and out set it (auth/session.ts), and so does the page once it asks the
  * server for it again (followSession): when it is shown again after another
- * tab may have changed it, or when an answer of 401 to another request
- * tells that it may have ended elsewhere, as when it was revoked.
+ * tab may have changed it, or when the answer to another request tells
+ * that it may have changed elsewhere (sessionDoubtedBy), as when it was
+ * revoked.
  */
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
@@ -173,10 +174,10 @@ export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
       pageParam,
       signal,
     }: {
-      pageParam: string;
+      pageParam: string | undefined;
       signal: AbortSignal;
-    }) => fetchPage({ cursor: pageParam || undefined, limit }, signal),
-    initialPageParam: "",
+    }) => fetchPage({ cursor: pageParam, limit }, signal),
+    initialPageParam: undefined,
     getNextPageParam: (page: TPage) => page.next_cursor ?? undefined,
     meta,
   });
@@ -204,22 +205,39 @@ export function signedOutBy(error: unknown): boolean {
   );
 }
 
+/**
+ * Reports whether error is an answer that tells that the page's session may
+ * not be the one that the page holds: 401 unauthenticated (signedOutBy), as
+ * of a session that was revoked or has ended, or that the page has replaced
+ * since, as by changing the password, and 403 csrf_failed, as of a request
+ * with the CSRF token of the session before another tab changed the
+ * password, which gave the session a new one, since the app sends the
+ * token of its session with every request that changes something.
+ */
+export function sessionDoubtedBy(error: unknown): boolean {
+  return (
+    signedOutBy(error) ||
+    (error instanceof ApiError &&
+      error.status === 403 &&
+      error.error?.code === "csrf_failed")
+  );
+}
+
 /** Options of createQueryClient. */
 export interface QueryClientOptions {
   /**
-   * Called when the server answers a request with 401 unauthenticated, as
-   * when the page's session was revoked or has ended, or when the request
-   * went with a session that the page has replaced since, as by changing
-   * the password: the page then asks the server for its session.
+   * Called when the server's answer to a request tells that the page's
+   * session may not be the one that the page holds (sessionDoubtedBy): the
+   * page then asks the server for its session.
    */
-  onUnauthenticated?: () => void;
+  checkSession?: () => void;
 }
 
 /**
  * Returns the app's query client, which records in log each request that
  * failed, but for an answer of 401 unauthenticated, which tells that the
- * page's session may have ended (onUnauthenticated), and a refusal that a
- * form shows (Meta.showsRefusals).
+ * page's session may have ended (checkSession), and a refusal that a form
+ * shows (Meta.showsRefusals).
  * A request that the server refused, with a status below 500, is not tried
  * again, since it would be refused again.
  */
@@ -228,8 +246,10 @@ export function createQueryClient(
   options: QueryClientOptions = {},
 ): QueryClient {
   const failed = (error: Error, meta: Meta | undefined) => {
+    if (sessionDoubtedBy(error)) {
+      options.checkSession?.();
+    }
     if (signedOutBy(error)) {
-      options.onUnauthenticated?.();
       return;
     }
     if (

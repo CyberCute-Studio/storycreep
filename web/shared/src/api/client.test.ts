@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, createApiClient, createClient } from "./index";
+import { ApiError, createApiClient, createClient, NetworkError } from "./index";
 import { type Operations, routes } from "./testdata/fixture.gen";
 
 /** A fetch that records its calls, and answers each with respond. */
@@ -291,6 +291,30 @@ describe("a client of generated operations", () => {
       );
     }
     expect(calls).toHaveLength(0);
+  });
+
+  it("rejects with a NetworkError when no answer comes, unless the call was aborted", async () => {
+    const failure = new TypeError("Failed to fetch");
+    const c = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async () => {
+        throw failure;
+      },
+    });
+    const call = c.call("getThing", { path: { id: "1" } });
+    await expect(call).rejects.toThrow(NetworkError);
+    await expect(call).rejects.toHaveProperty("cause", failure);
+
+    const abort = new AbortController();
+    abort.abort();
+    const reason = abort.signal.reason;
+    const aborted = createClient<Operations>(routes, {
+      baseUrl,
+      fetch: async (_input, init) => {
+        throw init?.signal?.reason;
+      },
+    }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
+    await expect(aborted).rejects.toBe(reason);
   });
 
   it("passes the call's options to fetch", async () => {

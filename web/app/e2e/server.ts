@@ -4,13 +4,14 @@
 // the container image does (instance.ts). It runs on a database of its own,
 // made anew for the run, as the binary of the image runs, migrating it at
 // startup, and its first-run setup is completed from the configuration,
-// unattended, with the owner of environment.ts. It stops when Playwright
+// unattended, with the owner of environment.ts, whose configuration is
+// this file's alone (serverEnv). It stops when Playwright
 // stops this process's group, which it is in. Node runs this file as it is,
 // without a build.
 
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
-import { binaries, binary, port } from "./environment.ts";
+import { baseURL, binaries, binary, owner, port } from "./environment.ts";
 import { build, createDatabase, dropDatabase, serverEnv } from "./instance.ts";
 
 // The run starts the directory of the binaries and of the uploaded files
@@ -34,8 +35,23 @@ const child = spawn(binary("storycreep"), ["serve"], {
   stdio: "inherit",
   env: serverEnv({
     database,
-    address: process.env.STORYCREEP_HTTP_ADDR ?? `127.0.0.1:${port}`,
-    publicURL: process.env.STORYCREEP_PUBLIC_URL ?? `http://127.0.0.1:${port}`,
+    address: `127.0.0.1:${port}`,
+    publicURL: baseURL,
+    env: {
+      // First-run setup completes unattended, with the owner whom the tests
+      // sign in as to take the links that an instance admin gives out, and
+      // anyone may register, with an invitation or without.
+      STORYCREEP_SETUP_OWNER_EMAIL: owner.email,
+      STORYCREEP_SETUP_OWNER_NAME: owner.name,
+      STORYCREEP_SETUP_OWNER_PASSWORD: owner.password,
+      STORYCREEP_SETUP_WORKSPACE_NAME: owner.workspace,
+      STORYCREEP_SIGNUP: "open",
+      // Each test is a client of an address of its own, which its
+      // X-Forwarded-For names (fixtures.ts), so that the tests, which all
+      // come from 127.0.0.1, do not share the rate limits of one address, as
+      // the 20 requests a minute of signing in (PRD NFR-SEC-06).
+      STORYCREEP_TRUSTED_PROXIES: "127.0.0.1",
+    },
   }),
 });
 // Playwright stops the server by signalling this process's whole group, as

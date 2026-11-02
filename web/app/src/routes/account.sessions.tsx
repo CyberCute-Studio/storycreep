@@ -100,7 +100,7 @@ function SessionItem({ item }: { item: SessionBody }) {
     onSuccess: () =>
       // Revoking this page's own session signs it out.
       item.current
-        ? endSession(client, () => router.navigate({ to: "/login" }))
+        ? endSession(client, router)
         : client.invalidateQueries({ queryKey: sessionsQuery.queryKey }),
   });
   const locale = i18n.language;

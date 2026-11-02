@@ -110,12 +110,20 @@ export async function signInRegistered<T>(
 }
 
 /**
+ * Returns the path under the body that a location of the server's names,
+ * as email of body.email, or owner.email of body.owner.email.
+ */
+export function bodyPath(location: string): string {
+  return location.replace(/^body\./, "");
+}
+
+/**
  * Returns the field of a form that a location of the server's names, as
  * body.email, from the fields that the form has under the body.
  */
 export function bodyField(...fields: string[]): FieldOf {
   return (location) => {
-    const field = location.replace(/^body\./, "");
+    const field = bodyPath(location);
     return fields.includes(field) ? field : undefined;
   };
 }

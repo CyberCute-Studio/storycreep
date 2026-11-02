@@ -3,7 +3,8 @@
 // response by hand: a call names an operation of Operations, passes the
 // input that the operation takes, and gets the status and body of the
 // answer, typed by status. An error, which the server answers with the error
-// envelope, is thrown as an ApiError. A body that is a file, as an image that
+// envelope, is thrown as an ApiError, and a call that no answer came to, as
+// one to a server that cannot be reached, rejects with a NetworkError. A body that is a file, as an image that
 // is uploaded, is a Blob, which is sent as it is, and the answer of an
 // operation that answers with a file is read as a Blob.
 
@@ -76,7 +77,8 @@ type CallArgs<Op extends OperationShape> =
 export interface Client<Ops extends Record<keyof Ops, OperationShape>> {
   /**
    * Calls an operation, and resolves to its answer, or rejects with an ApiError if the server answers with an
-   * error, and with an Error if it answers with a body that is not JSON.
+   * error, with a NetworkError if no answer comes, and with an Error if it answers with a body that is not JSON.
+   * A call whose signal aborts it rejects as fetch does, with the signal's reason.
    */
   call<K extends keyof Ops>(
     operation: K,
@@ -102,6 +104,22 @@ export class ApiError extends Error {
     this.status = response.status;
     this.error = error;
     this.response = response;
+  }
+}
+
+/**
+ * A call that no answer came to, as one to a server that cannot be reached:
+ * fetch's own error, which each browser words as it will, is its cause. It
+ * tells such a call from a fault of the caller's, as a TypeError of a
+ * missing path parameter.
+ */
+export class NetworkError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `The server did not answer: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
+    );
+    this.name = "NetworkError";
   }
 }
 
@@ -151,6 +169,8 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
         headers,
         body,
         signal: callOptions?.signal,
+      }).catch((error: unknown) => {
+        throw callOptions?.signal?.aborted ? error : new NetworkError(error);
       });
       if (response.status >= 400) {
         throw new ApiError(response, await readEnvelope(response));

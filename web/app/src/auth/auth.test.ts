@@ -1,4 +1,4 @@
-import { ApiError, type ErrorBody } from "@storycreep/shared/api";
+import { ApiError, type ErrorBody, NetworkError } from "@storycreep/shared/api";
 import { createI18n } from "@storycreep/shared/i18n";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -125,9 +125,15 @@ describe("refusalOf", () => {
   });
 
   it("says when the server could not be reached or could not answer", () => {
-    expect(refusalOf(new TypeError("Failed to fetch"), t).message).toBe(
+    expect(
+      refusalOf(new NetworkError(new TypeError("Failed to fetch")), t).message,
+    ).toBe(
       "The server could not be reached. Check your connection, and try again.",
     );
+    // A fault of the app's own is no network's.
+    expect(
+      refusalOf(new TypeError("The path parameter id is missing."), t).message,
+    ).toBe(t("error.unexpected"));
     expect(
       refusalOf(
         new ApiError(new Response("<html>", { status: 502 }), undefined),
@@ -147,6 +153,10 @@ describe("appPath", () => {
       "https://example.com/",
       "//example.com/",
       "/\\example.com",
+      "/\t/example.com",
+      "/\n\\example.com",
+      "/\r\n//example.com",
+      "//[x",
       "account",
       "",
       undefined,
@@ -399,7 +409,11 @@ describe("followSession", () => {
     const ended = vi.fn();
     const replaced = vi.fn();
     const { doc } = tab();
-    const call = sessions({ ...testSession, csrf_token: "renewed" }, null);
+    const call = sessions(
+      { ...testSession, csrf_token: "renewed" },
+      { ...testSession, csrf_token: "stale" },
+      null,
+    );
     const { check } = followSession(client, doc, { ended, replaced });
 
     // A request that went with the session before the password changed:
@@ -410,12 +424,16 @@ describe("followSession", () => {
     );
     expect(ended).not.toHaveBeenCalled();
 
-    // The session ended, and the requests that were under way together
-    // ask once.
+    // A request was answered with 401 while the page was asking already,
+    // whose answer the server gave before the session ended: the latest
+    // answer counts, and the one before records nothing.
     await Promise.all([check(), check()]);
     expect(ended).toHaveBeenCalledOnce();
     expect(replaced).not.toHaveBeenCalled();
-    expect(asked(call)).toBe(2);
+    expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
+      "renewed",
+    );
+    expect(asked(call)).toBe(3);
   });
 
   it("takes no answer for the page's own session that it asked for before the page changed it", async () => {
@@ -451,6 +469,47 @@ describe("followSession", () => {
     });
     await new Promise((resolve) => setTimeout(resolve));
     expect(client.getQueryData(sessionQuery.queryKey)).toEqual(testSession);
+    expect(replaced).not.toHaveBeenCalled();
+    expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("takes no answer whose account came once the page had changed its session itself", async () => {
+    const client = new QueryClient();
+    client.setQueryData(sessionQuery.queryKey, null);
+    const ended = vi.fn();
+    const replaced = vi.fn();
+    const { doc, show } = tab();
+    const other = { ...testSession, user_id: "usr_other" };
+    const accounts: ((value: unknown) => void)[] = [];
+    const call = vi.spyOn(api, "call").mockImplementation(((
+      operation: string,
+    ) =>
+      operation === "getSession"
+        ? Promise.resolve({
+            status: 200,
+            body: other,
+            response: new Response(),
+          })
+        : new Promise<unknown>((resolve) => {
+            accounts.push(resolve);
+          })) as typeof api.call);
+    followSession(client, doc, { ended, replaced });
+
+    // Another tab signed in, whose account the page asks for.
+    show();
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(2));
+    // The page signs in itself meanwhile, and has its account first.
+    const own = signedIn(client, testSession);
+    accounts[1]?.({ status: 200, body: testAccount, response: new Response() });
+    await own;
+    accounts[0]?.({
+      status: 200,
+      body: { ...testAccount, id: "usr_other" },
+      response: new Response(),
+    });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(client.getQueryData(sessionQuery.queryKey)).toEqual(testSession);
+    expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
     expect(replaced).not.toHaveBeenCalled();
     expect(ended).not.toHaveBeenCalled();
   });

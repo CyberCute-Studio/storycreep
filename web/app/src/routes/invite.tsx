@@ -50,21 +50,25 @@ function inviteQuery(token: string) {
   });
 }
 
-/** The membership that accepting the invitation of a token made. */
-const joinedOutcome = (token: string) =>
-  linkOutcome<MembershipBody>("invite", token);
+/** What accepting an invitation made: a membership, of the account by. */
+interface Joined {
+  membership: MembershipBody;
+  /** The ID of the account that joined. */
+  by: string;
+}
 
-/** Accepts the invitation of token in session, and returns the membership. */
-async function accept(
-  token: string,
-  session: SignedInBody,
-): Promise<MembershipBody> {
-  return (
+/** What accepting the invitation of a token made. */
+const joinedOutcome = (token: string) => linkOutcome<Joined>("invite", token);
+
+/** Accepts the invitation of token in session, as the session's account. */
+async function accept(token: string, session: SignedInBody): Promise<Joined> {
+  const membership = (
     await api.call("acceptInvite", {
       headers: csrfHeaders(session),
       body: { token },
     })
   ).body;
+  return { membership, by: session.user_id };
 }
 
 // The page of an invitation's link (PRD FR-TEN-02, plan note N27), whose
@@ -92,21 +96,26 @@ function InviteOf({ token }: { token: string }) {
   const lookup = useQuery(inviteQuery(token));
   const session = useQuery(sessionQuery).data;
   const joined = useQuery(joinedOutcome(token)).data;
-  const setJoined = (membership: MembershipBody) =>
-    client.setQueryData(joinedOutcome(token).queryKey, membership);
+  const setJoined = (outcome: Joined) =>
+    client.setQueryData(joinedOutcome(token).queryKey, outcome);
   // The refusal of an acceptance that signed in first, which the signed-in
   // step that follows shows, since the step that made it is gone.
   const [refused, setRefused] = useState<unknown>(null);
-  // Once joined, the page shows the membership, whatever it reads of the
-  // invitation since, which its acceptance used, and which answers 410 if
-  // it is asked for again.
+  // Once joined, the page shows the membership to the account that joined,
+  // whatever it reads of the invitation since, which its acceptance used,
+  // and which answers 410 if it is asked for again, and says to any other,
+  // as one signed in to in this tab since, what the server would say.
   if (joined !== undefined) {
+    if (joined.by !== session?.user_id) {
+      return <Unusable message={t("invite.error.accepted")} />;
+    }
+    const { name, role } = joined.membership;
     return (
-      <Page title={t("invite.joined_title", { workspace: joined.name })}>
+      <Page title={t("invite.joined_title", { workspace: name })}>
         <Status
           message={t("invite.joined", {
-            workspace: joined.name,
-            role: roleName(t, joined.role),
+            workspace: name,
+            role: roleName(t, role),
           })}
         />
         <p>
@@ -123,14 +132,7 @@ function InviteOf({ token }: { token: string }) {
     );
   }
   if (lookup.isError) {
-    return (
-      <Page title={t("invite.title")}>
-        <Alert message={refusalOf(lookup.error, t).message} />
-        <p>
-          <TextLink to="/">{t("invite.home")}</TextLink>
-        </p>
-      </Page>
-    );
+    return <Unusable message={refusalOf(lookup.error, t).message} />;
   }
   const invite = lookup.data;
   const workspace = invite.workspace_name;
@@ -169,10 +171,23 @@ function InviteOf({ token }: { token: string }) {
   );
 }
 
+/** The page of an invitation that cannot be accepted, which says why. */
+function Unusable({ message }: { message: string | undefined }) {
+  const { t } = useTranslation();
+  return (
+    <Page title={t("invite.title")}>
+      <Alert message={message} />
+      <p>
+        <TextLink to="/">{t("invite.home")}</TextLink>
+      </p>
+    </Page>
+  );
+}
+
 interface AcceptProps {
   token: string;
   invite: InvitePreviewBody;
-  onJoined: (membership: MembershipBody) => void;
+  onJoined: (joined: Joined) => void;
 }
 
 /**
@@ -193,7 +208,7 @@ function AcceptSignedIn({
   const { t } = useTranslation();
   const account = useSuspenseQuery(accountQuery).data;
   const step = useRef<HTMLElement>(null);
-  const signOut = useSignOut({ stay: true });
+  const signOut = useSignOut();
   const join = useMutation({
     mutationFn: () => accept(token, session),
     onSuccess: onJoined,
@@ -304,11 +319,8 @@ function AcceptSignedOut({
 
 interface StepProps {
   invite: InvitePreviewBody;
-  signInThenAccept: (
-    email: string,
-    password: string,
-  ) => Promise<MembershipBody>;
-  onJoined: (membership: MembershipBody) => void;
+  signInThenAccept: (email: string, password: string) => Promise<Joined>;
+  onJoined: (joined: Joined) => void;
 }
 
 function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
@@ -359,8 +371,8 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
   );
 }
 
-/** How registering with the invitation ended, if it did not join. */
-type Registered = MembershipBody | "registered";
+/** How registering with the invitation ended: joined, or not yet. */
+type Registered = Joined | "registered";
 
 function RegisterAndAccept({
   token,
@@ -450,6 +462,7 @@ function RegisterAndAccept({
             type="email"
             value={invite.email}
             readOnly
+            error={errors.email}
           />
         )}
         <TextField

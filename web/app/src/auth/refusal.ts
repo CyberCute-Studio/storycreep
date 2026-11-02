@@ -5,7 +5,7 @@
 // does not know is shown in the server's own words, which it writes in the
 // locale that the request asks for, the page's (api.ts, PRD FR-I18N-01).
 
-import { ApiError } from "@storycreep/shared/api";
+import { ApiError, NetworkError } from "@storycreep/shared/api";
 import type { TFunction } from "i18next";
 import { minPasswordLength } from "./forms";
 
@@ -45,10 +45,13 @@ export function refusalOf(
   fieldOf: FieldOf = () => undefined,
 ): Refusal {
   if (!(error instanceof ApiError)) {
-    // fetch rejects with a TypeError when the server cannot be reached.
+    // A fault of the app's, as a TypeError, is unexpected, and the error
+    // console records it.
     return {
       message:
-        error instanceof TypeError ? t("error.network") : t("error.unexpected"),
+        error instanceof NetworkError
+          ? t("error.network")
+          : t("error.unexpected"),
       fields: {},
     };
   }

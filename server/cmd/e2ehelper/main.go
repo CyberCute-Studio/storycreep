@@ -4,14 +4,17 @@
 // database of its own, whose first-run setup is pending, and it runs a proxy
 // that terminates TLS in front of an instance, with a certificate that it
 // makes, as a reverse proxy in front of a self-hosted instance does (PRD
-// FR-AUTH-02 AC6). It reads its flags alone, never the environment.
+// FR-AUTH-02 AC6). Its flags say what it does; as any client of PostgreSQL
+// does, its connection takes what the admin URL leaves out, as the TLS
+// mode, from the PG* variables of the environment.
 //
 //	e2ehelper createdb -admin-url postgres://postgres:…@localhost:5432/storycreep -name storycreep_e2e_8788
 //	e2ehelper dropdb -admin-url postgres://postgres:…@localhost:5432/storycreep -name storycreep_e2e_8788
 //	e2ehelper tlsproxy -listen 127.0.0.1:8443 -upstream http://127.0.0.1:8790 -host localhost
 //
-// createdb makes an empty database, in place of one of the name that an
-// earlier run left; dropdb drops it, and sessions still connected to it with
+// createdb makes an empty database, from template0, in place of one of the
+// name that an earlier run left, as the server's tests make theirs, so that
+// nothing added to template1 is in it; dropdb drops it, and sessions still connected to it with
 // it. The admin URL is a superuser's, of any database of the server.
 //
 // tlsproxy listens for HTTPS on -listen, with a certificate for -host, a DNS
@@ -102,7 +105,7 @@ func database(ctx context.Context, cmd string, args []string) error {
 		return err
 	}
 	if cmd == "createdb" {
-		_, err = conn.Exec(ctx, "CREATE DATABASE "+ident)
+		_, err = conn.Exec(ctx, "CREATE DATABASE "+ident+" TEMPLATE template0")
 	}
 	return err
 }

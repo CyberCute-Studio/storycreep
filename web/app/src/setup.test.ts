@@ -1,5 +1,5 @@
 import { ApiError } from "@storycreep/shared/api";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "./api";
 import { createErrorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -77,5 +77,34 @@ describe("createQueryClient", () => {
     await run(answer(409), { showsRefusals: false });
     await run(answer(500));
     expect(log.entries().map((e) => e.request?.status)).toEqual([409, 500]);
+  });
+
+  it("asks for the session again once an answer tells that it may have changed elsewhere", async () => {
+    const log = createErrorLog();
+    const checkSession = vi.fn();
+    const client = createQueryClient(log, { checkSession });
+    const answer = (status: number, code: string) =>
+      new ApiError(new Response(null, { status }), {
+        code,
+        message: code,
+        request_id: "req",
+      });
+    const run = (error: ApiError) =>
+      client
+        .getMutationCache()
+        .build(client, { mutationFn: () => Promise.reject(error) })
+        .execute(undefined)
+        .catch(() => {});
+    // A session that ended, and one that another tab gave a new CSRF token
+    // by changing the password.
+    await run(answer(401, "unauthenticated"));
+    await run(answer(403, "csrf_failed"));
+    expect(checkSession).toHaveBeenCalledTimes(2);
+    // A wrong password, and a refusal of the account's rights, tell
+    // nothing of the session.
+    await run(answer(401, "invalid_credentials"));
+    await run(answer(403, "insufficient_role"));
+    expect(checkSession).toHaveBeenCalledTimes(2);
+    expect(log.entries()).toEqual([]);
   });
 });
