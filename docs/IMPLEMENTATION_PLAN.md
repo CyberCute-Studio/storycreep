@@ -588,7 +588,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone H — Web app foundation
 
 ### 53. Web app foundation
-**Status:** todo · **Depends on:** 7, 10
+**Status:** done ([#66](https://github.com/CyberCute-Studio/storycreep/pull/66)) · **Depends on:** 7, 10
 **PRD:** §10.6, FR-API-02 (AC2), FR-I18N-01 (app), FR-EDIT-09 (AC2), NFR-A11Y-01, NFR-A11Y-06 (tokens), NFR-A11Y-08, NFR-OBS-06, NFR-SEC-09 (entry page), ADR-012
 - Vite and React 19, TanStack Router and Query, the generated API client, Tailwind v4 with shared design tokens, and Radix primitives, in `web/app`, with the tokens as a Tailwind theme in `web/shared/src/tokens`, whose colours a test holds to NFR-A11Y-06's contrast in both modes (N60).
 - Served by the Go binary at `/app/*` with CSP nonces: Vite writes the build to `server/internal/webassets/dist/app`, which a binary built with the `webdist` tag embeds, as the image's is (`deploy/Dockerfile`), and the entry page has a nonce of its own in each response, at every path that the app's router answers (N60).
