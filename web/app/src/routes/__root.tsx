@@ -61,15 +61,22 @@ function Root() {
  * Shows the page in the locale of the account that it is signed in to, as
  * beforeLoad does, once the account changes while the page stays: signing
  * in or out on a page that stays where it is, as an invitation's, or
- * another tab's signing in to another account (followSession).
+ * another tab's signing in to another account (followSession). While the
+ * page has a session whose account it has not read yet, as one that
+ * another tab signed in to, whose account the page could not read with it,
+ * the page stays in the locale that it is in until the account comes,
+ * rather than showing itself in the browser's language in between.
  */
 function useAccountLocale(): void {
   const { i18n } = useTranslation();
   const instanceDefault = useQuery(instanceQuery).data?.default_locale;
   const session = useQuery(sessionQuery).data;
   const account = useQuery({ ...accountQuery, enabled: !!session }).data;
+  const unread = !!session && account === undefined;
   const preference = session ? account?.locale : undefined;
   useEffect(() => {
-    applyLocale(i18n, { preference, instanceDefault });
-  }, [i18n, preference, instanceDefault]);
+    if (!unread) {
+      applyLocale(i18n, { preference, instanceDefault });
+    }
+  }, [i18n, unread, preference, instanceDefault]);
 }

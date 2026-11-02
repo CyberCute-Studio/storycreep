@@ -464,6 +464,55 @@ describe("followSession", () => {
     expect(asked(call)).toBe(3);
   });
 
+  it("resolves a check once the answer to the latest question is recorded, as of one asked while it was under way", async () => {
+    const client = new QueryClient();
+    client.setQueryData(sessionQuery.queryKey, testSession);
+    client.setQueryData(accountQuery.queryKey, testAccount);
+    const { doc, show } = tab();
+    const answers: ((value: unknown) => void)[] = [];
+    vi.spyOn(api, "call").mockImplementation(((operation: string) =>
+      operation === "getAccount"
+        ? Promise.resolve({
+            status: 200,
+            body: testAccount,
+            response: new Response(),
+          })
+        : new Promise<unknown>((resolve) => {
+            answers.push(resolve);
+          })) as typeof api.call);
+    const { check } = followSession(client, doc, {
+      ended: vi.fn(),
+      replaced: vi.fn(),
+    });
+
+    // A change of the password asks for the session, and the tab is shown
+    // again while it does, whose question is the latest.
+    let checked = false;
+    const done = check().then(() => {
+      checked = true;
+    });
+    show();
+    expect(answers).toHaveLength(2);
+    answers[0]?.({
+      status: 200,
+      body: { ...testSession, csrf_token: "before" },
+      response: new Response(),
+    });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(checked).toBe(false);
+    expect(client.getQueryData(sessionQuery.queryKey)).toBe(testSession);
+
+    answers[1]?.({
+      status: 200,
+      body: { ...testSession, csrf_token: "renewed" },
+      response: new Response(),
+    });
+    await done;
+    expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
+      "renewed",
+    );
+  });
+
   it("takes no answer for the page's own session that it asked for before the page changed it", async () => {
     const client = new QueryClient();
     client.setQueryData(sessionQuery.queryKey, null);

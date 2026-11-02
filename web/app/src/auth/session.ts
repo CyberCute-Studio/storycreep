@@ -183,8 +183,11 @@ export interface SessionFollower {
    * has done what changes the session in the server alone
    * (RouterContext.checkSession), as changing the password, whose new
    * secret it then records, or resetting one, which ends every session of
-   * its account. It resolves once the answer is recorded, or once a later
-   * question has made it one that no longer counts.
+   * its account. It resolves once the answer to the latest question is
+   * recorded, as of one asked while this one was under way, which makes
+   * this one's answer one that no longer counts, or once the server could
+   * not give it, so that what waits for it, as a change of the password
+   * that then says that it changed, has the session's new CSRF token.
    */
   check: () => Promise<void>;
   /** Stops following the session. */
@@ -243,14 +246,31 @@ export function followSession(
       // finds out, as any does.
     }
   };
+  // The latest question, which check waits for, whatever asked it.
+  let latest: Promise<void> = Promise.resolve();
+  const start = () => {
+    latest = ask();
+  };
+  // Resolves once the latest question has been answered, which may have
+  // been asked while the one before was under way, whose answer then no
+  // longer counts.
+  const answered = async () => {
+    for (let waited: Promise<void> | undefined; waited !== latest; ) {
+      waited = latest;
+      await waited;
+    }
+  };
   const shown = () => {
     if (doc.visibilityState === "visible") {
-      void ask();
+      start();
     }
   };
   doc.addEventListener("visibilitychange", shown);
   return {
-    check: ask,
+    check: () => {
+      start();
+      return answered();
+    },
     stop: () => doc.removeEventListener("visibilitychange", shown),
   };
 }

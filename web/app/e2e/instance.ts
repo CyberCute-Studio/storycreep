@@ -158,9 +158,10 @@ export interface InstanceOptions {
   /** The host that the server listens on: a loopback or a LAN address. */
   host: string;
   /**
-   * With tls, a proxy listens on a port of 127.0.0.1, terminates TLS with a
-   * certificate for localhost, and passes the requests on to the server, on
-   * another port of 127.0.0.1, whose public URL is the proxy's.
+   * With tls, a proxy listens on a port of 127.0.0.1 that it chooses itself,
+   * terminates TLS with a certificate for localhost, and passes the requests
+   * on to the server, on another port of 127.0.0.1, whose public URL is the
+   * proxy's.
    */
   tls?: boolean;
   env?: Record<string, string>;
@@ -187,14 +188,14 @@ export async function startInstance(
     const serverPort = await freePort(options.host);
     let url = `http://${options.host}:${serverPort}`;
     if (options.tls) {
-      const proxyPort = await freePort("127.0.0.1");
-      url = `https://localhost:${proxyPort}`;
+      // The proxy listens on a port that the system gives it, which no other
+      // process can take between, and says its URL once it does.
       const proxy = spawn(
         binary("e2ehelper"),
         [
           "tlsproxy",
           "-listen",
-          `127.0.0.1:${proxyPort}`,
+          "127.0.0.1:0",
           "-upstream",
           `http://${options.host}:${serverPort}`,
           "-host",
@@ -206,7 +207,7 @@ export async function startInstance(
       // A proxy that never says that it is ready fails the test, which stops
       // it, rather than leaving the test to wait for its own timeout.
       let timer: NodeJS.Timeout | undefined;
-      await new Promise<void>((resolve, reject) => {
+      url = await new Promise<string>((resolve, reject) => {
         timer = setTimeout(
           () => reject(new Error("the TLS proxy was not ready in 30 s")),
           30_000,
@@ -219,7 +220,7 @@ export async function startInstance(
           "line",
           (line) => {
             if (line.startsWith("ready ")) {
-              resolve();
+              resolve(line.slice("ready ".length).trim());
             }
           },
         );

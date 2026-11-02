@@ -212,17 +212,26 @@ function answered(error: unknown): boolean {
 }
 
 /**
- * Reports whether the page may ask again for what query holds, as it would
- * any query's: unless the server answered it with an error (answered),
- * within credentialsKept.
+ * Reports whether the page may ask again, of its own accord, for what query
+ * holds, as it would any query's: unless the server answered it with an
+ * error (answered), within credentialsKept, and unless it is a list of
+ * which the page holds more than one page, every one of which TanStack
+ * Query would ask for again, each a request about credentials of its own.
  */
 function mayAskAgain(query: {
-  state: { status: string; error: unknown; errorUpdatedAt: number };
+  state: {
+    status: string;
+    error: unknown;
+    errorUpdatedAt: number;
+    data: unknown;
+  };
 }): boolean {
+  const pages = (query.state.data as { pages?: unknown[] } | undefined)?.pages;
   return (
-    query.state.status !== "error" ||
-    !answered(query.state.error) ||
-    Date.now() - query.state.errorUpdatedAt >= credentialsKept
+    (pages?.length ?? 0) <= 1 &&
+    (query.state.status !== "error" ||
+      !answered(query.state.error) ||
+      Date.now() - query.state.errorUpdatedAt >= credentialsKept)
   );
 }
 
@@ -238,10 +247,13 @@ function mayAskAgain(query: {
  * and the account may still do, and it does not try again at once what the
  * server failed to answer itself, as with 500. A request that did not reach
  * the server, as one that no answer came to, is tried again, and asked
- * again, as any query's is, since the server counted nothing of it. A
- * query whose answer keeps for longer says so (staleTime), and the page
- * asks again at once where it knows that the answer has changed, as once
- * it has made a token.
+ * again, as any query's is, since the server counted nothing of it. A list
+ * of which the user has had the page show more than its first page is not
+ * asked for again of the page's own accord, since each of its pages would
+ * be a request of its own (mayAskAgain). A query whose answer keeps for
+ * longer says so (staleTime), and the page asks again at once where it
+ * knows that the answer has changed, as once it has made a token, a list
+ * its first page alone.
  */
 export const askedSparingly = {
   staleTime: credentialsKept,
@@ -337,6 +349,30 @@ export function sessionDoubtedBy(error: unknown): boolean {
       error.status === 403 &&
       error.error?.code === "csrf_failed")
   );
+}
+
+/**
+ * Waits for request, which revokes something that the page lists, as a
+ * session or an API token, and takes the server's 404 not_found for done:
+ * what the page listed has been revoked elsewhere since, as on another
+ * device, which is what the user asked for, and the page reads its list
+ * again, without it, rather than showing a refusal under an item that
+ * every attempt again would be refused for.
+ */
+export async function revoking(request: Promise<unknown>): Promise<void> {
+  try {
+    await request;
+  } catch (error) {
+    if (
+      !(
+        error instanceof ApiError &&
+        error.status === 404 &&
+        error.error?.code === "not_found"
+      )
+    ) {
+      throw error;
+    }
+  }
 }
 
 /** Options of createQueryClient. */

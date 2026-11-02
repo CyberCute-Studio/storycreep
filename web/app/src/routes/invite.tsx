@@ -2,6 +2,7 @@ import {
   type AccountBody,
   ApiError,
   type InvitePreviewBody,
+  type LoginBody,
   type MembershipBody,
   type SignedInBody,
 } from "@storycreep/shared/api";
@@ -33,6 +34,7 @@ import {
 import { linkOutcome, useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
 import { roleName } from "../auth/roles";
+import { credentialsOf, SignInFields } from "../auth/SignInFields";
 import { csrfHeaders, signedIn } from "../auth/session";
 import { signOutFailure, useSignOut } from "../auth/signOut";
 import { Button } from "../ui/Button";
@@ -337,19 +339,14 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const join = useMutation({
-    mutationFn: (c: { email: string; password: string }) =>
-      signInThenAccept(c.email, c.password),
+    mutationFn: (c: LoginBody) => signInThenAccept(c.email, c.password),
     onSuccess: onJoined,
   });
   const refusal = refusalOf(join.error, t);
   useFocusRefusal(form, join.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    join.mutate({
-      email: String(data.get("email")),
-      password: String(data.get("password")),
-    });
+    join.mutate(credentialsOf(new FormData(event.currentTarget)));
   };
   return (
     <section className="space-y-4" aria-labelledby="invite-sign-in">
@@ -358,21 +355,7 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
       </h2>
       <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
         <Alert message={refusal?.message} />
-        <TextField
-          label={t("auth.email")}
-          name="email"
-          type="email"
-          autoComplete="username"
-          defaultValue={invite.email}
-          required
-        />
-        <TextField
-          label={t("auth.password")}
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
+        <SignInFields email={invite.email} />
         <Button type="submit" variant="primary" disabled={join.isPending}>
           {t("invite.sign_in_submit")}
         </Button>

@@ -107,6 +107,22 @@ describe("keepFocusOnPage", () => {
     expect(document.activeElement).toBe(get(CONTENT_ID));
   });
 
+  // Verifies: NFR-A11Y-04
+  it("gives a dialog's control that lost the focus as it was disabled the focus back once it is enabled again, and the page's content none", async () => {
+    const get = page();
+    get("revoke").focus();
+    // The confirmation that the item's button opened, whose button is
+    // disabled while its request is answered.
+    get("confirm").focus();
+    disable(get("confirm"));
+    await settle();
+    expect(document.activeElement).toBe(document.body);
+    // The request was refused.
+    (get("confirm") as HTMLButtonElement).disabled = false;
+    await settle();
+    expect(document.activeElement).toBe(get("confirm"));
+  });
+
   it("leaves the focus where the browser puts it before the user has moved it", async () => {
     const get = page();
     get("item").remove();

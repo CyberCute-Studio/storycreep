@@ -8,10 +8,10 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, pagedQuery, sessionQuery } from "../api";
+import { api, pagedQuery, revoking, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, endSession } from "../auth/session";
-import { Button } from "../ui/Button";
+import { Button, MoreButton } from "../ui/Button";
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/account/sessions")({
@@ -56,8 +56,11 @@ function Sessions() {
         }
       />
       <div>
+        {/* Disabled once the list shows this session alone, rather than
+            while it is read, or could not be: signing out everywhere else
+            needs nothing of it. */}
         <Button
-          disabled={others.isPending || sessions.length < 2}
+          disabled={others.isPending || (list.isSuccess && sessions.length < 2)}
           onClick={() => others.mutate()}
         >
           {t("sessions.revoke_others")}
@@ -69,14 +72,7 @@ function Sessions() {
           <SessionItem key={s.id} item={s} />
         ))}
       </ul>
-      {list.hasNextPage && (
-        <Button
-          disabled={list.isFetchingNextPage}
-          onClick={() => void list.fetchNextPage()}
-        >
-          {t("sessions.more")}
-        </Button>
-      )}
+      <MoreButton list={list}>{t("sessions.more")}</MoreButton>
     </Page>
   );
 }
@@ -87,12 +83,15 @@ function SessionItem({ item }: { item: SessionBody }) {
   const client = useQueryClient();
   const router = useRouter();
   const revoke = useMutation({
-    mutationFn: async () => {
-      await api.call("revokeSession", {
-        path: { session_id: item.id },
-        headers: csrfHeaders(session),
-      });
-    },
+    // A session that has ended elsewhere since the page listed it, as one
+    // signed out on its device, is revoked, as asked.
+    mutationFn: () =>
+      revoking(
+        api.call("revokeSession", {
+          path: { session_id: item.id },
+          headers: csrfHeaders(session),
+        }),
+      ),
     onSuccess: () =>
       // Revoking this page's own session signs it out.
       item.current

@@ -39,8 +39,10 @@ export function focusContentIfLost(doc: Document): void {
  * enabled again, unless the user has moved it since. A dialog's controls,
  * which are outside frame, are the dialog's: the control of the page that
  * opened it gets the focus back as it closes, or the content, if that
- * control has gone meanwhile, as a revoked token's Revoke. It returns what
- * stops it.
+ * control has gone meanwhile, as a revoked token's Revoke, and a control
+ * of the dialog that was disabled gets it back once it is enabled again,
+ * as a confirmation's button once its request has been refused. It returns
+ * what stops it.
  */
 export function keepFocusOnPage(frame: HTMLElement): () => void {
   const doc = frame.ownerDocument;
@@ -48,16 +50,20 @@ export function keepFocusOnPage(frame: HTMLElement): () => void {
   // opened has it of now.
   let focused: Element | null = null;
   // The control that was disabled while it had the focus, until it is
-  // enabled again, or goes.
+  // enabled again, or goes, or the user moves the focus: one of the page's,
+  // or one of a dialog's, as its button while the request that it made is
+  // answered, which Radix leaves the focus of on the body.
   let disabled: HTMLElement | null = null;
   const onFocusIn = (event: FocusEvent) => {
     const target = event.target;
-    if (!(target instanceof Element) || !frame.contains(target)) {
+    if (!(target instanceof Element)) {
       return;
     }
-    focused = target;
     if (target.id !== CONTENT_ID) {
       disabled = null;
+    }
+    if (frame.contains(target)) {
+      focused = target;
     }
   };
   const onFocusOut = (event: FocusEvent) => {
@@ -65,12 +71,15 @@ export function keepFocusOnPage(frame: HTMLElement): () => void {
     if (
       event.relatedTarget === null &&
       target instanceof HTMLElement &&
-      frame.contains(target) &&
       target.matches(":disabled")
     ) {
       disabled = target;
-      // Once the browser has moved the focus to the body.
-      queueMicrotask(() => focusContentIfLost(doc));
+      // Once the browser has moved the focus to the body, the page's
+      // content has it, unless the control is a dialog's, whose content is
+      // all that the user can reach while it is open.
+      if (frame.contains(target)) {
+        queueMicrotask(() => focusContentIfLost(doc));
+      }
     }
   };
   // A control goes with an element that the page removes, as one of a

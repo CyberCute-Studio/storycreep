@@ -25,6 +25,7 @@ import {
   askedSparingly,
   type PageQuery,
   pagedQuery,
+  revoking,
   sessionQuery,
 } from "../api";
 import { bodyField } from "../auth/forms";
@@ -32,7 +33,7 @@ import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { copyText } from "../errors/copy";
 import { focusContentIfLost } from "../shell/focus";
-import { Button } from "../ui/Button";
+import { Button, MoreButton } from "../ui/Button";
 import { ConfirmFrame, DialogFrame } from "../ui/Dialog";
 import {
   CheckboxField,
@@ -159,7 +160,8 @@ function tokenRequests(target: Target): TokenRequests {
  * The tokens of a target, a page at a time, which the server counts among
  * the requests about credentials: the page reads them again once it has
  * made or revoked one (readTokensAgain), and else at most once a minute, as
- * when a target is chosen again, whether they were read or refused.
+ * when a target is chosen again, whether they were read or refused, while
+ * it shows their first page alone (askedSparingly).
  */
 function tokensQuery(target: Target) {
   return pagedQuery(["tokens", target], tokenRequests(target).list, {
@@ -243,14 +245,7 @@ function Tokens() {
                   </option>
                 ))}
               </SelectField>
-              {list.hasNextPage && (
-                <Button
-                  disabled={list.isFetchingNextPage}
-                  onClick={() => void list.fetchNextPage()}
-                >
-                  {t("tokens.more_workspaces")}
-                </Button>
-              )}
+              <MoreButton list={list}>{t("tokens.more_workspaces")}</MoreButton>
             </div>
           )}
           <WorkspaceTokens
@@ -312,14 +307,7 @@ function WorkspaceTokens({
             </option>
           ))}
         </SelectField>
-        {projects.hasNextPage && (
-          <Button
-            disabled={projects.isFetchingNextPage}
-            onClick={() => void projects.fetchNextPage()}
-          >
-            {t("tokens.more_projects")}
-          </Button>
-        )}
+        <MoreButton list={projects}>{t("tokens.more_projects")}</MoreButton>
       </div>
       {projects.isError && (
         <Alert message={refusalOf(projects.error, t)?.message} />
@@ -383,14 +371,7 @@ function TokenList({
           <TokenItem key={token.id} token={token} target={target} />
         ))}
       </ul>
-      {list.hasNextPage && (
-        <Button
-          disabled={list.isFetchingNextPage}
-          onClick={() => void list.fetchNextPage()}
-        >
-          {t("tokens.more")}
-        </Button>
-      )}
+      <MoreButton list={list}>{t("tokens.more")}</MoreButton>
     </section>
   );
 }
@@ -403,8 +384,10 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const locale = i18n.language;
   const [confirming, setConfirming] = useState(false);
   const revoke = useMutation({
+    // A token that has been revoked elsewhere since the page listed it, as
+    // by another admin, is revoked, as asked.
     mutationFn: () =>
-      tokenRequests(target).revoke(token.id, csrfHeaders(session)),
+      revoking(tokenRequests(target).revoke(token.id, csrfHeaders(session))),
     onSuccess: () => {
       setConfirming(false);
       return readTokensAgain(client, target);

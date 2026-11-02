@@ -575,6 +575,45 @@ describe("the language", () => {
     expect(document.documentElement.lang).toBe("cs");
   });
 
+  it("keeps the language that it shows while the account of a session that another tab signed in to is read", async () => {
+    let read: (account: AccountBody) => void = () => {};
+    let reads = 0;
+    fakeApi((operation) => {
+      if (operation === "getAccount") {
+        reads++;
+        // The page could not read it with the session (signedIn), and its
+        // components ask for it themselves.
+        if (reads === 1) {
+          throw refused(503, { code: "unavailable" });
+        }
+        return new Promise<AccountBody>((resolve) => {
+          read = resolve;
+        });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, i18n } = renderApp("/account", {
+      session: testSession,
+      account: { ...testAccount, locale: "cs" },
+      catalogs: testCatalogs,
+      languages: ["en-US"],
+    });
+    await screen.findByRole("heading", { level: 1, name: "Účet" });
+    const shown: string[] = [];
+    i18n.on("languageChanged", (locale: string) => shown.push(locale));
+
+    // What the page does once its tab is shown again (followSession).
+    await signedIn(queryClient, { ...testSession, user_id: "usr_other" });
+    await waitFor(() => expect(reads).toBe(2));
+    await settle();
+    expect(document.documentElement.lang).toBe("cs");
+    read({ ...testAccount, id: "usr_other", locale: "cs" });
+    await screen.findByRole("heading", { level: 1, name: "Účet" });
+    await settle();
+    // Not the browser's language in between.
+    expect(shown).toEqual([]);
+  });
+
   // Verifies: FR-I18N-02/AC1
   it("shows every page in the language that the account keeps, before the browser's", async () => {
     renderApp("/account", {
@@ -1418,6 +1457,59 @@ describe("the sessions", () => {
       expect(document.activeElement).toBe(screen.getByRole("main")),
     );
   });
+
+  it("takes a session that has ended elsewhere since it was listed for revoked, and reads the list again without it", async () => {
+    const user = userEvent.setup();
+    const other = {
+      ...testSession.session,
+      id: "ses_other",
+      current: false,
+      user_agent: "Another browser",
+    };
+    // Signed out on its device, after the page listed it.
+    let ended = false;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listSessions":
+          return {
+            items: ended ? [testSession.session] : [testSession.session, other],
+            next_cursor: null,
+          };
+        case "revokeSession":
+          ended = true;
+          throw refused(404, { code: "not_found", message: "Not found." });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/sessions", { session: testSession });
+    await screen.findByText("Another browser");
+    await user.click(content().getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Another browser")).toBeNull(),
+    );
+    expect(screen.queryByText("Not found.")).toBeNull();
+  });
+
+  it("signs out of every other session though the list of them could not be read", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listSessions":
+          throw refused(503, { code: "unavailable" });
+        case "revokeOtherSessions":
+          return { revoked: 1 };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/sessions", { session: testSession });
+    await screen.findByText(
+      "The server could not answer. Try again in a moment.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Sign out of every other session" }),
+    );
+    await screen.findByText("Signed out of 1 other session.");
+  });
 });
 
 describe("the error page", () => {
@@ -1782,6 +1874,93 @@ describe("the API tokens", () => {
     // The pages after the first come again as the user asks for them.
     expect(screen.queryByText("Nightly build")).toBeNull();
     expect(screen.getByRole("button", { name: "Show more" })).toBeDefined();
+  });
+
+  it("asks no more of its own accord for a target's tokens of which it shows more than the first page, each a request about credentials", async () => {
+    const user = userEvent.setup();
+    const token = (id: string, name: string) => ({
+      id,
+      name,
+      scopes: ["snapshot:read"],
+      user_id: testSession.user_id,
+      workspace_id: "wsp_a",
+      created_at: "2026-11-01T10:00:00Z",
+    });
+    const call = fakeApi((operation, input) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          return (input as { query?: { cursor?: string } }).query?.cursor ===
+            undefined
+            ? { items: [token("tok_a", "Release pipeline")], next_cursor: "a" }
+            : { items: [token("tok_b", "Nightly build")], next_cursor: null };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const lists = () =>
+      call.mock.calls.filter(
+        ([operation]) => operation === "listWorkspaceTokens",
+      ).length;
+    renderApp("/account/tokens", { session: testSession });
+    await screen.findByText("Release pipeline");
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Nightly build");
+    expect(lists()).toBe(2);
+
+    aMinuteLater();
+    focusAgain();
+    await settle();
+    expect(lists()).toBe(2);
+    expect(screen.getByText("Nightly build")).toBeDefined();
+  });
+
+  it("takes a token that has been revoked elsewhere since it was listed for revoked, and reads the list again without it", async () => {
+    const user = userEvent.setup();
+    // Revoked by another admin, after the page listed it.
+    let gone = false;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          return {
+            items: gone
+              ? []
+              : [
+                  {
+                    id: "tok_a",
+                    name: "Release pipeline",
+                    scopes: ["snapshot:read"],
+                    user_id: testSession.user_id,
+                    workspace_id: "wsp_a",
+                    created_at: "2026-11-01T10:00:00Z",
+                  },
+                ],
+            next_cursor: null,
+          };
+        case "revokeWorkspaceToken":
+          gone = true;
+          throw refused(404, { code: "not_found", message: "Not found." });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    await screen.findByText("Release pipeline");
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(
+      within(confirm).getByRole("button", { name: "Revoke the token" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Release pipeline")).toBeNull(),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByText("Not found.")).toBeNull();
   });
 
   it("gives the page's content the focus once the item of a token of a later page that it revoked goes", async () => {

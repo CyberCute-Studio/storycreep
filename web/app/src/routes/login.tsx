@@ -13,6 +13,7 @@ import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { instanceQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { credentialsOf, SignInFields } from "../auth/SignInFields";
 import {
   requireSignedOut,
   signIn,
@@ -20,7 +21,7 @@ import {
   signInSearch,
 } from "../auth/session";
 import { Button } from "../ui/Button";
-import { TextField, useFocusRefusal } from "../ui/Field";
+import { useFocusRefusal } from "../ui/Field";
 import { Alert, Page, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/login")({
@@ -55,30 +56,13 @@ function Login() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    login.mutate({
-      email: String(data.get("email")),
-      password: String(data.get("password")),
-    });
+    login.mutate(credentialsOf(new FormData(event.currentTarget)));
   };
   return (
     <Page title={t("login.title")}>
       <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
         <Alert message={refusal?.message} />
-        <TextField
-          label={t("auth.email")}
-          name="email"
-          type="email"
-          autoComplete="username"
-          required
-        />
-        <TextField
-          label={t("auth.password")}
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
+        <SignInFields />
         <Button type="submit" variant="primary" disabled={login.isPending}>
           {t("login.submit")}
         </Button>
