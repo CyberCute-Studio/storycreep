@@ -12,7 +12,7 @@ import {
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, instanceQuery } from "../api";
+import { api, instanceQuery, readInstanceAgain } from "../api";
 import {
   bodyPath,
   minPasswordLength,
@@ -55,7 +55,7 @@ export const Route = createFileRoute("/setup")({
     const setup = await context.queryClient.ensureQueryData(setupQuery);
     if (setup === null) {
       // Setup completed since the instance was read, as by another tab.
-      await context.queryClient.fetchQuery({ ...instanceQuery, staleTime: 0 });
+      await readInstanceAgain(context.queryClient);
       throw redirect({ to: "/login" });
     }
   },
@@ -160,14 +160,6 @@ function SetupForm({ setup }: { setup: SetupBody }) {
   const form = useRef<HTMLFormElement>(null);
   const [smtp, setSmtp] = useState(false);
   const [storage, setStorage] = useState(false);
-  // Reads the instance again, whose setup has completed: if the server
-  // cannot answer, the page reads it anew where it goes next, rather than
-  // holding its setup as pending.
-  const readInstance = () =>
-    client.fetchQuery({ ...instanceQuery, staleTime: 0 }).then(
-      () => undefined,
-      () => client.removeQueries({ queryKey: instanceQuery.queryKey }),
-    );
   const complete = useMutation({
     mutationFn: async (body: CompleteSetupBody): Promise<Completed> => {
       try {
@@ -175,7 +167,7 @@ function SetupForm({ setup }: { setup: SetupBody }) {
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           // Another setup completed first.
-          await readInstance();
+          await readInstanceAgain(client);
           return "taken";
         }
         throw error;
@@ -185,7 +177,7 @@ function SetupForm({ setup }: { setup: SetupBody }) {
       // have the user set up again, which the server would answer as if
       // someone else had completed it first. The two go at once.
       const [, owner] = await Promise.allSettled([
-        readInstance(),
+        readInstanceAgain(client),
         signIn(client, {
           email: body.owner.email,
           password: body.owner.password,

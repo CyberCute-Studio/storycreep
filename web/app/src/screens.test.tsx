@@ -5,9 +5,10 @@ import {
   NetworkError,
 } from "@storycreep/shared/api";
 import { catalogs } from "@storycreep/shared/i18n";
+import { focusManager } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { accountQuery, api, sessionQuery } from "./api";
 import { sessionChanges, signedIn } from "./auth/session";
 import { renderApp, testAccount, testInstance, testSession } from "./test/app";
@@ -33,6 +34,22 @@ function fakeApi(answer: (operation: Call[0], input: unknown) => unknown) {
     response: new Response(),
   })) as typeof api.call);
 }
+
+/** What the query client does once the tab gets the focus again. */
+function focusAgain() {
+  onTestFinished(() => focusManager.setFocused(undefined));
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+}
+
+/** Makes it a minute and a second later, as Date.now tells the time. */
+function aMinuteLater() {
+  const now = Date.now() + 61_000;
+  vi.spyOn(Date, "now").mockReturnValue(now);
+}
+
+/** Lets the page do what it does next, as ask for what it shows. */
+const settle = () => new Promise((resolve) => setTimeout(resolve));
 
 /**
  * Queries the page's content, its main landmark, rather than the header,
@@ -437,6 +454,66 @@ describe("the language", () => {
     await new Promise((resolve) => setTimeout(resolve));
     expect(queryClient.getQueryData(accountQuery.queryKey)).toEqual(other);
     expect(document.documentElement.lang).toBe("en");
+  });
+
+  it("shows the language that the account keeps once another device has saved another", async () => {
+    fakeApi((operation) => {
+      if (operation === "getAccount") {
+        return { ...testAccount, locale: "cs" } satisfies AccountBody;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account", {
+      session: testSession,
+      account: { ...testAccount, locale: "en" },
+      catalogs: testCatalogs,
+      languages: ["en-US"],
+    });
+    expect(
+      await screen.findByRole("combobox", { name: "Language" }),
+    ).toHaveProperty("value", "en");
+
+    // What the page does once its tab is shown again (followSession).
+    await signedIn(queryClient, testSession);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Jazyk" })).toHaveProperty(
+        "value",
+        "cs",
+      ),
+    );
+  });
+
+  it("keeps the language that the user saved while the page read the account again", async () => {
+    const user = userEvent.setup();
+    let read: (account: AccountBody) => void = () => {};
+    fakeApi((operation, input) => {
+      if (operation === "getAccount") {
+        return new Promise<AccountBody>((resolve) => {
+          read = resolve;
+        });
+      }
+      if (operation === "updateAccount") {
+        const { body } = input as { body: { locale: string } };
+        return { ...testAccount, locale: body.locale } satisfies AccountBody;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account", {
+      session: testSession,
+      catalogs: testCatalogs,
+      languages: ["en-US"],
+    });
+    const select = await screen.findByRole("combobox", { name: "Language" });
+    // The page asks for its account again, as once its tab is shown again
+    // (followSession), and the answer comes once the language is saved.
+    const asked = signedIn(queryClient, testSession);
+    await user.selectOptions(select, "cs");
+    await user.click(screen.getByRole("button", { name: "Save the language" }));
+    await screen.findByText("Uloženo.");
+    read(testAccount);
+    expect(await asked).toBe(true);
+    expect(queryClient.getQueryData(accountQuery.queryKey)?.locale).toBe("cs");
+    expect(document.documentElement.lang).toBe("cs");
   });
 
   // Verifies: FR-I18N-02/AC1
@@ -911,6 +988,29 @@ describe("an invitation", () => {
       call.mock.calls.filter(([operation]) => operation === "acceptInvite"),
     ).toHaveLength(1);
   });
+
+  it("asks no more for an invitation that the server refused, as the tab is shown again, for a minute", async () => {
+    const call = fakeApi((operation) => {
+      if (operation === "lookupInvite") {
+        throw refused(410, { code: "invite_revoked" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    // The server counts these among the requests about credentials.
+    const lookups = () =>
+      call.mock.calls.filter(([operation]) => operation === "lookupInvite")
+        .length;
+    renderApp("/invite#token=secret");
+    await screen.findByText("This invitation has been revoked.");
+    expect(lookups()).toBe(1);
+    focusAgain();
+    await settle();
+    expect(lookups()).toBe(1);
+
+    aMinuteLater();
+    focusAgain();
+    await waitFor(() => expect(lookups()).toBe(2));
+  });
 });
 
 describe("verifying an email address", () => {
@@ -1173,6 +1273,10 @@ describe("the error page", () => {
     const reads = () =>
       call.mock.calls.filter(([operation]) => operation === "getAccount");
     expect(reads()).toHaveLength(1);
+    // Nor as the tab gets the focus again.
+    focusAgain();
+    await settle();
+    expect(reads()).toHaveLength(1);
 
     fails = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -1382,6 +1486,132 @@ describe("the API tokens", () => {
     const dialog = await makeToken(user);
     await within(dialog).findByLabelText("Token");
     await waitFor(() => expect(lists()).toBe(2));
+  });
+
+  it("asks no more for tokens that the server refused, as the target is chosen again or the tab is shown again, for a minute", async () => {
+    const user = userEvent.setup();
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return {
+            items: [{ ...workspace("wsp_a", "Studio A"), role: "viewer" }],
+            next_cursor: null,
+          };
+        case "listProjects":
+          return {
+            items: [{ id: "prj_a", name: "Game A" }],
+            next_cursor: null,
+          };
+        case "listWorkspaceTokens":
+        case "listProjectTokens":
+          throw refused(403, {
+            code: "insufficient_role",
+            message: "Your role cannot see the tokens.",
+          });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    // The server counts these among the requests about credentials.
+    const lists = (of: string) =>
+      call.mock.calls.filter(([operation]) => operation === of).length;
+    renderApp("/account/tokens", { session: testSession });
+    const targets = await screen.findByRole("combobox", { name: "Tokens of" });
+    await content().findByText("Your role cannot see the tokens.");
+    await waitFor(() =>
+      expect(options(targets)).toEqual(["The whole workspace", "Game A"]),
+    );
+    await user.selectOptions(targets, "prj_a");
+    await waitFor(() => expect(lists("listProjectTokens")).toBe(1));
+    await user.selectOptions(targets, "");
+    focusAgain();
+    await settle();
+    expect(
+      content().getByText("Your role cannot see the tokens."),
+    ).toBeDefined();
+    expect(lists("listWorkspaceTokens")).toBe(1);
+
+    aMinuteLater();
+    focusAgain();
+    await waitFor(() => expect(lists("listWorkspaceTokens")).toBe(2));
+  });
+
+  it("says that a guest's projects could not be read, and not that they have none", async () => {
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return {
+            items: [{ ...workspace("wsp_a", "Studio A"), role: "guest" }],
+            next_cursor: null,
+          };
+        case "listProjects":
+          throw refused(503, { code: "unavailable" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    await screen.findByText(
+      "The server could not answer. Try again in a moment.",
+    );
+    expect(
+      screen.queryByText("No project of this workspace is shared with you."),
+    ).toBeNull();
+  });
+
+  it("reads the first page of a target's tokens alone again once it has revoked one", async () => {
+    const user = userEvent.setup();
+    const token = (id: string, name: string) => ({
+      id,
+      name,
+      scopes: ["snapshot:read"],
+      user_id: testSession.user_id,
+      workspace_id: "wsp_a",
+      created_at: "2026-11-01T10:00:00Z",
+    });
+    let revoked = false;
+    const call = fakeApi((operation, input) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          return (input as { query?: { cursor?: string } }).query?.cursor ===
+            undefined
+            ? {
+                items: revoked ? [] : [token("tok_a", "Release pipeline")],
+                next_cursor: "a",
+              }
+            : { items: [token("tok_b", "Nightly build")], next_cursor: null };
+        case "revokeWorkspaceToken":
+          revoked = true;
+          return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    // The server counts each page among the requests about credentials.
+    const lists = () =>
+      call.mock.calls.filter(
+        ([operation]) => operation === "listWorkspaceTokens",
+      );
+    renderApp("/account/tokens", { session: testSession });
+    await screen.findByText("Release pipeline");
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Nightly build");
+    expect(lists()).toHaveLength(2);
+
+    await user.click(screen.getAllByRole("button", { name: "Revoke" })[0]);
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(
+      within(confirm).getByRole("button", { name: "Revoke the token" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Release pipeline")).toBeNull(),
+    );
+    expect(lists()).toHaveLength(3);
+    expect(lists()[2][1]).toMatchObject({ query: { cursor: undefined } });
+    // The pages after the first come again as the user asks for them.
+    expect(screen.queryByText("Nightly build")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show more" })).toBeDefined();
   });
 
   it("keeps the dialog of a new token's secret open when the page outside it is clicked", async () => {

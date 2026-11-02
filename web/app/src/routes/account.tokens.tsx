@@ -9,6 +9,7 @@ import type {
 } from "@storycreep/shared/api";
 import { formatDate, formatRelativeTime } from "@storycreep/shared/i18n";
 import {
+  type QueryClient,
   useInfiniteQuery,
   useMutation,
   useQueryClient,
@@ -19,7 +20,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, type PageQuery, pagedQuery, sessionQuery } from "../api";
+import {
+  api,
+  askedSparingly,
+  type PageQuery,
+  pagedQuery,
+  sessionQuery,
+} from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
@@ -136,19 +143,38 @@ function tokenRequests(target: Target): TokenRequests {
   };
 }
 
-/** The tokens of a target, a page at a time. */
+/**
+ * The tokens of a target, a page at a time, which the server counts among
+ * the requests about credentials: the page reads them again once it has
+ * made or revoked one (readTokensAgain), and else at most once a minute, as
+ * when a target is chosen again, whether they were read or refused.
+ */
 function tokensQuery(target: Target) {
   return pagedQuery(["tokens", target], tokenRequests(target).list, {
     // A role that may not see the tokens is refused, which the page shows.
     meta: { showsRefusals: true },
-    // The server counts reading the tokens among the requests about
-    // credentials, of which it allows an account 10 a minute (FR-AUTH-05):
-    // the page reads them again once it has made or revoked one, and else
-    // at most once a minute, as when a target is chosen again, or the tab
-    // is shown again, rather than each time, which would use up what the
-    // account may still make and revoke.
-    staleTime: 60_000,
+    ...askedSparingly,
   });
+}
+
+/**
+ * Reads the tokens of target again, as once one has been made or revoked:
+ * the first page alone, since the server counts each page among the
+ * requests about credentials, rather than each that the user had asked
+ * for, which a list of more than a page would spend the account's minute
+ * on.
+ */
+function readTokensAgain(client: QueryClient, target: Target): Promise<void> {
+  const { queryKey } = tokensQuery(target);
+  client.setQueryData(
+    queryKey,
+    (data) =>
+      data && {
+        pages: data.pages.slice(0, 1),
+        pageParams: data.pageParams.slice(0, 1),
+      },
+  );
+  return client.invalidateQueries({ queryKey });
 }
 
 /** The scopes of a token (PRD FR-AUTH-04), in the order that the form lists them. */
@@ -264,8 +290,9 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
         <Alert message={refusalOf(projects.error, t).message} />
       )}
       {target === undefined ? (
-        // A guest's projects that are still loading may hold one.
-        !projects.isPending && <p>{t("tokens.no_project")}</p>
+        // A guest's projects that are still loading, or that could not be
+        // read, may hold one.
+        projects.isSuccess && <p>{t("tokens.no_project")}</p>
       ) : (
         <TokenList
           key={JSON.stringify(target)}
@@ -336,7 +363,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
       tokenRequests(target).revoke(token.id, csrfHeaders(session)),
     onSuccess: () => {
       setConfirming(false);
-      return client.invalidateQueries({ queryKey: ["tokens", target] });
+      return readTokensAgain(client, target);
     },
   });
   const expired =
@@ -450,7 +477,7 @@ function CreateToken({
       tokenRequests(target).create(body, csrfHeaders(session)),
     // The secret shows at once, while the list is read again.
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["tokens", target] });
+      void readTokensAgain(client, target);
     },
   });
   const refusal =

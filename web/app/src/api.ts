@@ -34,13 +34,19 @@ let pageLocale: string | undefined;
  * refusals that a form shows in the server's own words, and the emails that
  * a request asks for, where the account prefers no locale. The browser's
  * own Accept-Language names its languages alone, which the user's
- * preference comes before (PRD FR-I18N-02).
+ * preference comes before (PRD FR-I18N-02). It returns what stops it, after
+ * which the requests ask for no locale, as before it.
  */
-export function requestsIn(i18n: I18n): void {
-  pageLocale = i18n.language;
-  i18n.on("languageChanged", (locale: string) => {
+export function requestsIn(i18n: I18n): () => void {
+  const follow = (locale: string) => {
     pageLocale = locale;
-  });
+  };
+  follow(i18n.language);
+  i18n.on("languageChanged", follow);
+  return () => {
+    i18n.off("languageChanged", follow);
+    pageLocale = undefined;
+  };
 }
 
 /** The client of the API of the server that serves the app. */
@@ -104,6 +110,35 @@ export const instanceQuery = queryOptions({
 });
 
 /**
+ * Reads the instance again, as once its first-run setup has completed: if
+ * the server cannot answer, the page drops it, and reads it anew where it
+ * goes next, rather than holding its setup as pending.
+ */
+export function readInstanceAgain(client: QueryClient): Promise<void> {
+  return client.fetchQuery({ ...instanceQuery, staleTime: 0 }).then(
+    () => undefined,
+    () => client.removeQueries({ queryKey: instanceQuery.queryKey }),
+  );
+}
+
+/**
+ * How the page reads its session and its account: for as long as it is
+ * open, and asked for again by the page itself alone, as it loads
+ * (loadSessionState), once its tab is shown again (followSession), and
+ * once the error page's Retry asks. A page that could not read them shows
+ * the error page, whose header reads them too: what reads them does not ask
+ * again as it mounts, nor as the tab gets the focus again, nor as the
+ * browser gets its connection again, which would record the failure again
+ * each time.
+ */
+const readByThePage = {
+  staleTime: Number.POSITIVE_INFINITY,
+  retryOnMount: false,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+} as const;
+
+/**
  * Asks the server for the session of the browser's cookie, and returns null
  * if it has none: the server answers 401 unauthenticated then, which is no
  * error of the app (signedOutBy). A 401 without the error envelope, as a
@@ -134,27 +169,61 @@ export async function fetchSession(
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
   queryFn: ({ signal }): Promise<SignedInBody | null> => fetchSession(signal),
-  staleTime: Number.POSITIVE_INFINITY,
-  // A page that could not read it shows the error page, whose header reads
-  // it too, and whose Retry asks for it again (loadSessionState): what
-  // reads it does not ask again as it mounts, which would record the
-  // failure twice.
-  retryOnMount: false,
+  ...readByThePage,
 });
 
 /**
  * The signed-in account, which a page asks for only while it has a session.
  * The account's own screens change it, and set it in the cache with the
- * answer. A page that could not read it shows the error page, as for the
- * session.
+ * answer. It is read as the session is (readByThePage).
  */
 export const accountQuery = queryOptions({
   queryKey: ["account"],
   queryFn: async ({ signal }): Promise<AccountBody> =>
     (await api.call("getAccount", {}, { signal })).body,
-  staleTime: Number.POSITIVE_INFINITY,
-  retryOnMount: false,
+  ...readByThePage,
 });
+
+/**
+ * How long the page keeps what it was answered to a request about
+ * credentials, or how it was refused, before it asks again (askedSparingly).
+ */
+const credentialsKept = 60_000;
+
+/**
+ * Reports whether the page may ask again for what query holds, as it would
+ * any query's: unless the server refused it, or could not answer, within
+ * credentialsKept.
+ */
+function mayAskAgain(query: {
+  state: { status: string; errorUpdatedAt: number };
+}): boolean {
+  return (
+    query.state.status !== "error" ||
+    Date.now() - query.state.errorUpdatedAt >= credentialsKept
+  );
+}
+
+/**
+ * The options of a query that the server counts among the requests about
+ * credentials, as reading a target's tokens, or an invitation by its link,
+ * of which it allows an address 20 a minute, and an account 10, signing in
+ * and changing the password among them (FR-AUTH-05): the page asks for it
+ * again at most once a minute, as a component that reads it mounts again,
+ * the tab is shown again, or the browser gets its connection again, whether
+ * the server answered or refused it, as it refuses a role that may not see
+ * the tokens, rather than each time, which would use up what the address
+ * and the account may still do. A query whose answer keeps for longer says
+ * so (staleTime), and the page asks again at once where it knows that the
+ * answer has changed, as once it has made a token.
+ */
+export const askedSparingly = {
+  staleTime: credentialsKept,
+  retryOnMount: mayAskAgain,
+  refetchOnMount: mayAskAgain,
+  refetchOnWindowFocus: mayAskAgain,
+  refetchOnReconnect: mayAskAgain,
+};
 
 /** What a list of the server answers a page at a time has of its next page. */
 interface Paged {
@@ -173,7 +242,9 @@ export interface PageQuery {
  * The query of a list that the server answers a page at a time, from a
  * cursor, as the sessions and the tokens: fetchPage asks for one page,
  * the first once the page shows the list, and the next whenever the user
- * asks for more (fetchNextPage), until the last.
+ * asks for more (fetchNextPage), until the last. A list that the server
+ * counts among the requests about credentials, as the tokens, is read
+ * askedSparingly.
  */
 export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
   queryKey: TKey,
@@ -181,8 +252,8 @@ export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
   {
     limit = 100,
     meta,
-    staleTime,
-  }: { limit?: number; meta?: Meta; staleTime?: number } = {},
+    ...asked
+  }: { limit?: number; meta?: Meta } & Partial<typeof askedSparingly> = {},
 ) {
   return infiniteQueryOptions({
     queryKey,
@@ -196,7 +267,7 @@ export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
     initialPageParam: undefined,
     getNextPageParam: (page: TPage) => page.next_cursor ?? undefined,
     meta,
-    staleTime,
+    ...asked,
   });
 }
 

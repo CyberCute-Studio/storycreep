@@ -135,7 +135,12 @@ function Language({
         <Status
           message={save.isSuccess ? t("account.language.saved") : undefined}
         />
+        {/* Shown anew once the account keeps another locale, as one saved
+            on another device, which the page reads once its tab is shown
+            again (followSession), rather than showing the choice before,
+            which saving would write back. */}
         <SelectField
+          key={kept}
           label={t("account.language.label")}
           hint={t("account.language.hint")}
           name="locale"

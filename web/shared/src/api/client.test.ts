@@ -319,38 +319,41 @@ describe("a client of generated operations", () => {
 
   it("rejects with a NetworkError when the answer's body stops before it has all come, unless the call was aborted", async () => {
     const failure = new TypeError("network error");
-    const stopping = () =>
-      new Response(
-        new ReadableStream({
-          pull(controller) {
-            controller.error(failure);
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    const c = createClient<Operations>(routes, {
-      baseUrl,
-      fetch: async () => stopping(),
-    });
-    const call = c.call("getThing", { path: { id: "1" } });
-    await expect(call).rejects.toThrow(NetworkError);
-    await expect(call).rejects.toHaveProperty("cause", failure);
-
-    const abort = new AbortController();
-    const aborted = createClient<Operations>(routes, {
-      baseUrl,
-      fetch: async () =>
+    // An error's body too, whose envelope never came whole.
+    for (const status of [200, 422]) {
+      const stopping = () =>
         new Response(
           new ReadableStream({
             pull(controller) {
-              abort.abort();
-              controller.error(abort.signal.reason);
+              controller.error(failure);
             },
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-    }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
-    await expect(aborted).rejects.not.toThrow(NetworkError);
+          { status, headers: { "Content-Type": "application/json" } },
+        );
+      const c = createClient<Operations>(routes, {
+        baseUrl,
+        fetch: async () => stopping(),
+      });
+      const call = c.call("getThing", { path: { id: "1" } });
+      await expect(call).rejects.toThrow(NetworkError);
+      await expect(call).rejects.toHaveProperty("cause", failure);
+
+      const abort = new AbortController();
+      const aborted = createClient<Operations>(routes, {
+        baseUrl,
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              pull(controller) {
+                abort.abort();
+                controller.error(abort.signal.reason);
+              },
+            }),
+            { status, headers: { "Content-Type": "application/json" } },
+          ),
+      }).call("getThing", { path: { id: "1" } }, { signal: abort.signal });
+      await expect(aborted).rejects.toHaveProperty("name", "AbortError");
+    }
   });
 
   it("passes the call's options to fetch", async () => {

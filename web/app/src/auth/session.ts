@@ -70,17 +70,19 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
  * is shown again: an address that another tab verified, as the emailed
  * link's does, or a language saved elsewhere. If the server cannot answer,
  * the page keeps what it had of the account, or, for another account, the
- * components ask for it themselves. A session that the page only learnt
- * of, as followSession does, is recorded only if current still says so
- * once the account has come, after which the page may have changed its
- * session itself, as by signing in; signedIn resolves to whether it
- * recorded it.
+ * components ask for it themselves, and so it does if it has recorded the
+ * account itself while it asked, as the answer to saving the language,
+ * which is newer. A session that the page only learnt of, as followSession
+ * does, is recorded only if current still says so once the account has
+ * come, after which the page may have changed its session itself, as by
+ * signing in; signedIn resolves to whether it recorded it.
  */
 export async function signedIn(
   client: QueryClient,
   session: SignedInBody,
   current: () => boolean = () => true,
 ): Promise<boolean> {
+  const held = client.getQueryData(accountQuery.queryKey);
   const account = await api.call("getAccount", {}).then(
     (answer) => answer.body,
     () => undefined,
@@ -88,10 +90,14 @@ export async function signedIn(
   if (!current()) {
     return false;
   }
-  if (client.getQueryData(sessionQuery.queryKey)?.user_id !== session.user_id) {
+  const switched =
+    client.getQueryData(sessionQuery.queryKey)?.user_id !== session.user_id;
+  if (switched) {
     dropAccountData(client);
   }
-  if (account?.id === session.user_id) {
+  const newer =
+    !switched && client.getQueryData(accountQuery.queryKey) !== held;
+  if (account?.id === session.user_id && !newer) {
     client.setQueryData(accountQuery.queryKey, account);
   }
   client.setQueryData(sessionQuery.queryKey, session);

@@ -17,7 +17,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
+import {
+  accountQuery,
+  api,
+  askedSparingly,
+  instanceQuery,
+  sessionQuery,
+} from "../api";
 import {
   minPasswordLength,
   registrationField,
@@ -40,7 +46,9 @@ export const Route = createFileRoute("/invite")({
 /**
  * What the holder of the invitation's link sees of it, which the page asks
  * for again, as any query, if the server could not answer, since looking
- * it up uses nothing of it.
+ * it up uses nothing of it, or refused it, as a link that has expired, at
+ * most once a minute, since the server counts it among the requests about
+ * credentials (askedSparingly).
  */
 function inviteQuery(token: string) {
   return queryOptions({
@@ -48,6 +56,7 @@ function inviteQuery(token: string) {
     // A POST, so that the token travels in the body, never in a URL.
     queryFn: async ({ signal }): Promise<InvitePreviewBody> =>
       (await api.call("lookupInvite", { body: { token } }, { signal })).body,
+    ...askedSparingly,
     staleTime: Number.POSITIVE_INFINITY,
     meta: { showsRefusals: true },
   });

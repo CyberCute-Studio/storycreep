@@ -173,7 +173,7 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
         signal,
       );
       if (response.status >= 400) {
-        throw new ApiError(response, await readEnvelope(response));
+        throw new ApiError(response, await readEnvelope(response, signal));
       }
       return {
         status: response.status,
@@ -297,26 +297,33 @@ async function readFile(
 /**
  * Returns the error envelope's object, or undefined if the body is not the
  * envelope. The response's body stays unread, for the caller to read from
- * the ApiError, whatever it holds.
+ * the ApiError, whatever it holds. A body that stops as it comes rejects
+ * with a NetworkError, as readBody does, since no whole answer came.
  */
 async function readEnvelope(
   response: Response,
+  signal: AbortSignal | undefined,
 ): Promise<ErrorBody | undefined> {
   if (!isJSON(response)) {
     return undefined;
   }
+  let body: unknown;
   try {
-    const body = await readBody(response.clone());
-    const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;
-    if (
-      typeof error?.code === "string" &&
-      typeof error.message === "string" &&
-      typeof error.request_id === "string"
-    ) {
-      return error as ErrorBody;
+    body = await readBody(response.clone(), signal);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      // A body that is not JSON is not the envelope.
+      return undefined;
     }
-  } catch {
-    // A body that is not JSON is not the envelope.
+    throw error;
+  }
+  const error = (body as { error?: Partial<ErrorBody> } | undefined)?.error;
+  if (
+    typeof error?.code === "string" &&
+    typeof error.message === "string" &&
+    typeof error.request_id === "string"
+  ) {
+    return error as ErrorBody;
   }
   return undefined;
 }

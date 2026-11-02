@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { api, fetchSession, requestsIn } from "./api";
 import { createAppI18n } from "./i18n";
 
@@ -21,15 +21,20 @@ describe("requestsIn", () => {
       en: { "x.y": "x" },
       cs: { "x.y": "x" },
     });
-    requestsIn(i18n);
+    const stop = requestsIn(i18n);
+    onTestFinished(stop);
     await api.call("getVersion");
     await i18n.changeLanguage("cs");
+    await api.call("getVersion");
+    // Once stopped, as after this test, it asks for no locale.
+    stop();
+    await i18n.changeLanguage("en");
     await api.call("getVersion");
     expect(
       fetch.mock.calls.map(([, init]) =>
         new Headers(init?.headers).get("Accept-Language"),
       ),
-    ).toEqual(["en", "cs"]);
+    ).toEqual(["en", "cs", null]);
   });
 });
 
