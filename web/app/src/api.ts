@@ -5,20 +5,43 @@
 // §10.6), whose failed requests the error console records.
 
 import {
+  type AccountBody,
   ApiError,
   createApiClient,
+  type InstanceBody,
+  type SignedInBody,
   type VersionBody,
 } from "@storycreep/shared/api";
 import {
   MutationCache,
+  type MutationMeta,
   QueryCache,
   QueryClient,
+  type QueryMeta,
   queryOptions,
 } from "@tanstack/react-query";
 import type { ErrorLog } from "./errors/log";
 
 /** The client of the API of the server that serves the app. */
 export const api = createApiClient({ baseUrl: "" });
+
+/**
+ * What a query or a mutation tells the query client of itself. A form that
+ * shows the server's refusals to the user, as a wrong password or a field
+ * that the server does not take, says so with showsRefusals, and the error
+ * console does not record them: they are the user's to mend, not errors of
+ * the app. An answer of 500 or more is recorded all the same.
+ */
+interface Meta extends Record<string, unknown> {
+  showsRefusals?: boolean;
+}
+
+declare module "@tanstack/react-query" {
+  interface Register {
+    queryMeta: Meta;
+    mutationMeta: Meta;
+  }
+}
 
 /**
  * The server's version, which the error console's reports name. The app asks
@@ -38,6 +61,52 @@ export const versionQuery = queryOptions({
 });
 
 /**
+ * What the instance offers before anyone signs in: whether its first-run
+ * setup is pending, who can register, whether it sends email, and its
+ * default locale. It changes only with the instance's configuration, or
+ * when setup completes, which the setup screen tells the cache.
+ */
+export const instanceQuery = queryOptions({
+  queryKey: ["instance"],
+  queryFn: async ({ signal }): Promise<InstanceBody> =>
+    (await api.call("getInstance", {}, { signal })).body,
+  staleTime: Number.POSITIVE_INFINITY,
+});
+
+/**
+ * The session of the page, or null if the page is signed out: the server
+ * answers 401 then, which is no error of the app. Signing in and out set it
+ * (auth/session.ts), and so does any answer of 401 to another request, which
+ * tells that the session ended elsewhere, as when it was revoked.
+ */
+export const sessionQuery = queryOptions({
+  queryKey: ["session"],
+  queryFn: async ({ signal }): Promise<SignedInBody | null> => {
+    try {
+      return (await api.call("getSession", {}, { signal })).body;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        return null;
+      }
+      throw error;
+    }
+  },
+  staleTime: Number.POSITIVE_INFINITY,
+});
+
+/**
+ * The signed-in account, which a page asks for only while it has a session.
+ * The account's own screens change it, and set it in the cache with the
+ * answer.
+ */
+export const accountQuery = queryOptions({
+  queryKey: ["account"],
+  queryFn: async ({ signal }): Promise<AccountBody> =>
+    (await api.call("getAccount", {}, { signal })).body,
+  staleTime: Number.POSITIVE_INFINITY,
+});
+
+/**
  * Asks for the server's version, once. A failure is recorded as any
  * request's is, and the version is then unknown until the page loads again:
  * nothing asks for it again, as when the tab gets the focus back.
@@ -47,17 +116,61 @@ export function requestVersion(client: QueryClient): void {
 }
 
 /**
- * Returns the app's query client, which records in log each request that
- * failed. A request that the server refused, with a status below 500, is not
- * tried again, since it would be refused again.
+ * Reports whether error is the server's answer to a request that needs a
+ * session, made without one: 401 unauthenticated, which a wrong password's
+ * 401 invalid_credentials is not.
  */
-export function createQueryClient(log: ErrorLog): QueryClient {
+export function signedOutBy(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 401 &&
+    error.error?.code === "unauthenticated"
+  );
+}
+
+/** Options of createQueryClient. */
+export interface QueryClientOptions {
+  /**
+   * Called when the server answers a request with 401 unauthenticated, as
+   * when the page's session was revoked or has ended: the page is then
+   * signed out.
+   */
+  onUnauthenticated?: () => void;
+}
+
+/**
+ * Returns the app's query client, which records in log each request that
+ * failed, but for an answer of 401 unauthenticated, which ends the page's
+ * session (onUnauthenticated), and a refusal that a form shows
+ * (Meta.showsRefusals).
+ * A request that the server refused, with a status below 500, is not tried
+ * again, since it would be refused again.
+ */
+export function createQueryClient(
+  log: ErrorLog,
+  options: QueryClientOptions = {},
+): QueryClient {
+  const failed = (error: Error, meta: Meta | undefined) => {
+    if (signedOutBy(error)) {
+      options.onUnauthenticated?.();
+      return;
+    }
+    if (
+      meta?.showsRefusals &&
+      error instanceof ApiError &&
+      error.status < 500
+    ) {
+      return;
+    }
+    log.record("request", error);
+  };
   return new QueryClient({
     queryCache: new QueryCache({
-      onError: (error) => log.record("request", error),
+      onError: (error, query) => failed(error, query.meta as QueryMeta),
     }),
     mutationCache: new MutationCache({
-      onError: (error) => log.record("request", error),
+      onError: (error, _variables, _context, mutation) =>
+        failed(error, mutation.meta as MutationMeta),
     }),
     defaultOptions: {
       queries: {

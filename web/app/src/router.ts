@@ -4,12 +4,15 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
+import type { i18n as I18n } from "i18next";
 import { routeTree } from "./routeTree.gen";
 import { focusContentIfLost } from "./shell/focus";
 
 /** What every route can read. */
 export interface RouterContext {
   queryClient: QueryClient;
+  /** The app's i18next instance, whose locale the root route resolves. */
+  i18n: I18n;
 }
 
 /** Returns the app's router. */

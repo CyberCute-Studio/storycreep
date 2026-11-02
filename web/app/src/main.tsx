@@ -10,7 +10,8 @@ import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { createQueryClient, requestVersion } from "./api";
+import { createQueryClient, requestVersion, sessionQuery } from "./api";
+import { endSession } from "./auth/session";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -28,10 +29,27 @@ if (nonce !== undefined) {
 }
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
-const queryClient = createQueryClient(errorLog);
+const queryClient = createQueryClient(errorLog, {
+  // A request that the server answers with 401 tells that the page's
+  // session has ended elsewhere, as when it was revoked: the page goes to
+  // the sign-in screen, which comes back to it once it has signed in again.
+  // The first such answer does; those of the requests that were under way
+  // with it find the page signed out already.
+  onUnauthenticated: () => {
+    if (!queryClient.getQueryData(sessionQuery.queryKey)) {
+      return;
+    }
+    void endSession(queryClient, () =>
+      router.navigate({
+        to: "/login",
+        search: { redirect: router.state.location.href },
+      }),
+    );
+  },
+});
 // What the error console's reports name, asked for before anything is shown.
 requestVersion(queryClient);
-const router = createAppRouter({ queryClient });
+const router = createAppRouter({ queryClient, i18n });
 
 const container = document.getElementById("root");
 if (container === null) {
