@@ -598,7 +598,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-API-02 AC2 and FR-EDIT-09 AC2 pass, and axe runs on the shell.
 
 ### 54. Auth and account screens
-**Status:** todo · **Depends on:** 18, 26, 53
+**Status:** done ([#67](https://github.com/CyberCute-Studio/storycreep/pull/67)) · **Depends on:** 18, 26, 53
 **PRD:** FR-AUTH-02 (AC6), FR-ADMIN-02 (UI), FR-AUTH-04 (UI), FR-I18N-02 (AC1), NFR-SEC-15
 - Screens: login, logout, first-run setup, signup, verification, password reset, and invite acceptance. The verification and reset screens read the link's token from the URL's fragment (N26), and so does invite acceptance, from `/app/invite`, which shows the invitation, and signs in or registers with it before it accepts (N27). The root route reads the instance, which `GET /api/v1/instance` now tells whether setup is pending and who can register, the session, and the account before a page shows, sends every page to setup while it is pending, and a signed-out page to sign-in, which comes back to it (N61).
 - Session list and revocation. API token management, of a workspace or of one of its projects, whose secret is shown once. Locale preference that applies without reload, which `GET` and `PATCH /api/v1/auth/account` read and save (N61).
