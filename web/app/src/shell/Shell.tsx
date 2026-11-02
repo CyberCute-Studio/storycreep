@@ -1,11 +1,18 @@
 // The frame of every page of the app: a link that skips to the page's
 // content, the header, which warns of a page that travels unencrypted (PRD
 // NFR-SEC-15), names the signed-in account, and signs it out, and the
-// content, as the page's main landmark.
+// content, as the page's main landmark, which gets the focus once the
+// control that had it goes (keepFocusOnPage).
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, sessionQuery } from "../api";
 import { signOutFailure, useSignOut } from "../auth/signOut";
@@ -13,7 +20,7 @@ import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
-import { CONTENT_ID, skipToContent } from "./focus";
+import { CONTENT_ID, keepFocusOnPage, skipToContent } from "./focus";
 import { unencrypted } from "./transport";
 
 /** Whether a component is within the Shell. */
@@ -24,9 +31,14 @@ export function Shell({ children }: { children: ReactNode }) {
   const session = useQuery(sessionQuery).data;
   const signOut = useSignOut();
   const failure = signOutFailure(signOut, session, t);
+  const frame = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = frame.current;
+    return element === null ? undefined : keepFocusOnPage(element);
+  }, []);
   return (
     <Framed.Provider value={true}>
-      <div className="flex min-h-dvh flex-col">
+      <div ref={frame} className="flex min-h-dvh flex-col">
         <a
           href={`#${CONTENT_ID}`}
           onClick={skipToContent}

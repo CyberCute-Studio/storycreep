@@ -144,7 +144,7 @@ function InviteOf({ token }: { token: string }) {
     );
   }
   if (lookup.isError) {
-    return <Unusable message={refusalOf(lookup.error, t).message} />;
+    return <Unusable message={refusalOf(lookup.error, t)?.message} />;
   }
   const invite = lookup.data;
   const workspace = invite.workspace_name;
@@ -238,11 +238,9 @@ function AcceptSignedIn({
       <Alert
         message={
           signOutFailure(signOut, session, t) ??
-          (error === null
-            ? undefined
-            : mismatch
-              ? mismatchMessage(t, invite, account)
-              : refusalOf(error, t).message)
+          (mismatch
+            ? mismatchMessage(t, invite, account)
+            : refusalOf(error, t)?.message)
         }
       />
       <div className="flex flex-wrap gap-2">
@@ -343,7 +341,7 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
       signInThenAccept(c.email, c.password),
     onSuccess: onJoined,
   });
-  const refusal = join.error === null ? undefined : refusalOf(join.error, t);
+  const refusal = refusalOf(join.error, t);
   useFocusRefusal(form, join.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -417,10 +415,7 @@ function RegisterAndAccept({
       }
     },
   });
-  const refusal =
-    join.error === null
-      ? undefined
-      : refusalOf(join.error, t, registrationField);
+  const refusal = refusalOf(join.error, t, registrationField);
   const { errors, confirmed } = usePasswordConfirmation(
     form,
     join,

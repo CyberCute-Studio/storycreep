@@ -127,11 +127,7 @@ function Language({
         {t("account.language.title")}
       </h2>
       <form className="space-y-4" onSubmit={submit}>
-        <Alert
-          message={
-            save.error === null ? undefined : refusalOf(save.error, t).message
-          }
-        />
+        <Alert message={refusalOf(save.error, t)?.message} />
         <Status
           message={save.isSuccess ? t("account.language.saved") : undefined}
         />
@@ -195,10 +191,7 @@ function Password() {
       form.current?.reset();
     },
   });
-  const refusal =
-    change.error === null
-      ? undefined
-      : refusalOf(change.error, t, passwordField);
+  const refusal = refusalOf(change.error, t, passwordField);
   const { errors, confirmed } = usePasswordConfirmation(
     form,
     change,

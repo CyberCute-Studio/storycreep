@@ -1784,6 +1784,54 @@ describe("the API tokens", () => {
     expect(screen.getByRole("button", { name: "Show more" })).toBeDefined();
   });
 
+  it("gives the page's content the focus once the item of a token of a later page that it revoked goes", async () => {
+    const user = userEvent.setup();
+    const token = (id: string, name: string) => ({
+      id,
+      name,
+      scopes: ["snapshot:read"],
+      user_id: testSession.user_id,
+      workspace_id: "wsp_a",
+      created_at: "2026-11-01T10:00:00Z",
+    });
+    let revoked = false;
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          return (input as { query?: { cursor?: string } }).query?.cursor ===
+            undefined
+            ? { items: [token("tok_a", "Release pipeline")], next_cursor: "a" }
+            : {
+                items: revoked ? [] : [token("tok_b", "Nightly build")],
+                next_cursor: null,
+              };
+        case "revokeWorkspaceToken":
+          revoked = true;
+          return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    await screen.findByText("Release pipeline");
+    await user.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText("Nightly build");
+    await user.click(screen.getAllByRole("button", { name: "Revoke" })[1]);
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(
+      within(confirm).getByRole("button", { name: "Revoke the token" }),
+    );
+    // The list is read again from its first page, so the item goes as the
+    // confirmation closes, before it could give its Revoke the focus back.
+    await waitFor(() => expect(screen.queryByText("Nightly build")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("main")),
+    );
+  });
+
   it("gives the page's content the focus once the item of a token that it revoked goes", async () => {
     const user = userEvent.setup();
     let revoked = false;
@@ -1867,9 +1915,106 @@ describe("the API tokens", () => {
       "value",
       made.secret,
     );
-    // Escape, which a user presses to close it, does.
+    // Escape, which a user presses to close it, does, and the control that
+    // opened it gets the focus back.
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Make a token" }),
+      ),
+    );
+  });
+
+  it("shows the secret of a token that it made while the list was read, though the list then fails to be read", async () => {
+    const user = userEvent.setup();
+    let fail: (error: unknown) => void = () => {};
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          return new Promise((_, reject) => {
+            fail = reject;
+          });
+        case "createWorkspaceToken":
+          return made;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    const dialog = await makeToken(user);
+    await within(dialog).findByLabelText("Token");
+    fail(refused(503, { code: "unavailable" }));
+    // The list says why alone, without the control that opened the dialog,
+    // which the page keeps.
+    await screen.findByText(
+      "The server could not answer. Try again in a moment.",
+    );
+    expect(screen.queryByRole("button", { name: "Make a token" })).toBeNull();
+    expect(dialog.isConnected).toBe(true);
+    expect(within(dialog).getByLabelText("Token")).toHaveProperty(
+      "value",
+      made.secret,
+    );
+    // The page's content gets the focus once it closes.
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("main")),
+    );
+  });
+
+  it("shows the secret of a project's token that it made, though the project is then no longer listed", async () => {
+    const user = userEvent.setup();
+    let projects = [{ id: "prj_a", name: "Game A" }];
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: projects, next_cursor: null };
+        case "listWorkspaceTokens":
+        case "listProjectTokens":
+          return { items: [], next_cursor: null };
+        case "createProjectToken":
+          return made;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account/tokens", {
+      session: testSession,
+    });
+    const targets = await screen.findByRole("combobox", { name: "Tokens of" });
+    await waitFor(() =>
+      expect(options(targets)).toEqual(["The whole workspace", "Game A"]),
+    );
+    await user.selectOptions(targets, "prj_a");
+    await screen.findByRole("heading", { name: "Tokens of Game A" });
+    const dialog = await makeToken(user);
+    await within(dialog).findByLabelText("Token");
+
+    // Another tab put it in the trash, as the list says once it is read
+    // again, as when this tab is shown again.
+    projects = [];
+    await queryClient.invalidateQueries({
+      queryKey: ["workspaces", "wsp_a", "projects"],
+    });
+    // Behind the dialog, which hides the page from a screen reader.
+    await screen.findByRole("heading", {
+      name: "Tokens of Studio A",
+      hidden: true,
+    });
+    expect(dialog.isConnected).toBe(true);
+    expect(
+      within(dialog).getByRole("heading", { name: "New token of Game A" }),
+    ).toBeDefined();
+    expect(within(dialog).getByLabelText("Token")).toHaveProperty(
+      "value",
+      made.secret,
+    );
   });
 
   it("shows the secret of a token that it made, though the list then fails to be read again", async () => {

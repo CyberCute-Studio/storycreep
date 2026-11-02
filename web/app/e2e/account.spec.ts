@@ -93,6 +93,9 @@ test("the account's sessions, each of which, or all but this one, it signs out",
       page.getByText("Signed out of 1 other session."),
     ).toBeVisible();
     await expect(items).toHaveCount(1);
+    // The button is disabled now, which Chromium takes the focus from: the
+    // page's content has it, rather than the document's body.
+    await expect(page.getByRole("main")).toBeFocused();
     expect((await other.get("/api/v1/auth/session")).status()).toBe(401);
   } finally {
     await other.dispose();
@@ -137,6 +140,9 @@ test("an API token, whose secret the page shows once, which works until it is re
   await expect(dialog.getByText(en["tokens.copied"])).toBeVisible();
   await press(dialog.getByRole("button", { name: en["tokens.done"] }));
   await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: en["tokens.create"] }),
+  ).toBeFocused();
 
   const item = page
     .getByRole("list", { name: /^Tokens of / })
@@ -167,6 +173,8 @@ test("an API token, whose secret the page shows once, which works until it is re
     );
     await expect(confirm).toBeHidden();
     await expect(page.getByText(en["tokens.empty"])).toBeVisible();
+    // The token's item went with its Revoke, which had the focus.
+    await expect(page.getByRole("main")).toBeFocused();
     expect((await program.get("/api/v1/workspaces")).status()).toBe(401);
   } finally {
     await program.dispose();

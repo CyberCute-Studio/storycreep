@@ -50,7 +50,7 @@ function Login() {
     mutationFn: (credentials: LoginBody) => signIn(client, credentials),
     onSuccess: () => navigate({ href: signInReturn(search, hash) }),
   });
-  const refusal = login.error === null ? undefined : refusalOf(login.error, t);
+  const refusal = refusalOf(login.error, t);
   useFocusRefusal(form, login.error);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {

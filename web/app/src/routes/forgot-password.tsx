@@ -25,8 +25,7 @@ function ForgotPassword() {
       await api.call("requestPasswordReset", { body: { email } });
     },
   });
-  const refusal =
-    request.error === null ? undefined : refusalOf(request.error, t);
+  const refusal = refusalOf(request.error, t);
   useFocusRefusal(form, request.error);
 
   if (!instance.email_configured) {

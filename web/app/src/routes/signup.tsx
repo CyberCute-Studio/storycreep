@@ -52,10 +52,7 @@ function Signup() {
     onSuccess: (registered) =>
       registered === "signed-in" ? navigate({ to: "/" }) : undefined,
   });
-  const refusal =
-    register.error === null
-      ? undefined
-      : refusalOf(register.error, t, registrationField);
+  const refusal = refusalOf(register.error, t, registrationField);
   const { errors, confirmed } = usePasswordConfirmation(
     form,
     register,

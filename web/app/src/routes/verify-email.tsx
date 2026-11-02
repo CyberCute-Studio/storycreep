@@ -83,11 +83,7 @@ function VerifyToken({ token }: { token: string }) {
   const verify = useQuery(verifyQuery(client, token));
   return (
     <Page title={t("verify.title")}>
-      <Alert
-        message={
-          verify.error === null ? undefined : refusalOf(verify.error, t).message
-        }
-      />
+      <Alert message={refusalOf(verify.error, t)?.message} />
       <Status
         message={
           verify.isSuccess

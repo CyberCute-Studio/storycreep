@@ -71,8 +71,7 @@ function ResetWith({ token }: { token: string }) {
       await checkSession();
     },
   });
-  const refusal =
-    reset.error === null ? undefined : refusalOf(reset.error, t, resetField);
+  const refusal = refusalOf(reset.error, t, resetField);
   const { errors, confirmed } = usePasswordConfirmation(
     form,
     reset,

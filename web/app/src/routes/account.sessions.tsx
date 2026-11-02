@@ -7,12 +7,10 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, endSession } from "../auth/session";
-import { useFocusContentOnRemoval } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { Alert, Page, Status } from "../ui/Page";
 
@@ -49,11 +47,7 @@ function Sessions() {
   return (
     <Page title={t("sessions.title")} width="wide">
       <p>{t("sessions.intro")}</p>
-      <Alert
-        message={
-          others.error === null ? undefined : refusalOf(others.error, t).message
-        }
-      />
+      <Alert message={refusalOf(others.error, t)?.message} />
       <Status
         message={
           others.isSuccess
@@ -69,7 +63,7 @@ function Sessions() {
           {t("sessions.revoke_others")}
         </Button>
       </div>
-      {list.isError && <Alert message={refusalOf(list.error, t).message} />}
+      {list.isError && <Alert message={refusalOf(list.error, t)?.message} />}
       <ul className="space-y-3" aria-label={t("sessions.title")}>
         {sessions.map((s) => (
           <SessionItem key={s.id} item={s} />
@@ -92,9 +86,6 @@ function SessionItem({ item }: { item: SessionBody }) {
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const router = useRouter();
-  // The item goes once its session is revoked, and with it its button.
-  const element = useRef<HTMLLIElement>(null);
-  useFocusContentOnRemoval(element);
   const revoke = useMutation({
     mutationFn: async () => {
       await api.call("revokeSession", {
@@ -110,7 +101,7 @@ function SessionItem({ item }: { item: SessionBody }) {
   });
   const locale = i18n.language;
   return (
-    <li ref={element} className="space-y-2 rounded-md border border-border p-4">
+    <li className="space-y-2 rounded-md border border-border p-4">
       <p className="font-medium break-words">
         {item.user_agent ?? t("sessions.unknown_browser")}
         {item.current && (
@@ -134,11 +125,7 @@ function SessionItem({ item }: { item: SessionBody }) {
           </time>
         </dd>
       </dl>
-      <Alert
-        message={
-          revoke.error === null ? undefined : refusalOf(revoke.error, t).message
-        }
-      />
+      <Alert message={refusalOf(revoke.error, t)?.message} />
       <Button
         variant="danger"
         disabled={revoke.isPending}

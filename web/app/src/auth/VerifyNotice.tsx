@@ -35,11 +35,7 @@ export function VerifyNotice({
   return (
     <div className="space-y-2">
       <p>{t("verify_notice.body", { email: account.email })}</p>
-      <Alert
-        message={
-          resend.error === null ? undefined : refusalOf(resend.error, t).message
-        }
-      />
+      <Alert message={refusalOf(resend.error, t)?.message} />
       <Status
         message={resend.isSuccess ? t("verify_notice.sent") : undefined}
       />

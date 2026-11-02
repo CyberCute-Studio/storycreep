@@ -31,7 +31,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { copyText } from "../errors/copy";
-import { useFocusContentOnRemoval } from "../shell/focus";
+import { focusContentIfLost } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { ConfirmFrame, DialogFrame } from "../ui/Dialog";
 import {
@@ -79,6 +79,17 @@ function projectsQuery(workspaceId: string) {
 type Target =
   | { kind: "workspace"; workspaceId: string }
   | { kind: "project"; projectId: string };
+
+/**
+ * A token that the user is making: of what, and the control that they made
+ * it from, which gets the focus back once the dialog closes.
+ */
+interface Making {
+  target: Target;
+  /** The name of target, which the dialog's title says. */
+  targetName: string;
+  opener: HTMLElement;
+}
 
 /** The headers of a request that changes a target's tokens. */
 type ChangeHeaders = ReturnType<typeof csrfHeaders>;
@@ -201,6 +212,13 @@ function Tokens() {
   const list = useSuspenseInfiniteQuery(workspacesQuery);
   const workspaces = list.data.pages.flatMap((page) => page.items);
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
+  // The dialog that makes a token is the page's, rather than its list's, so
+  // that it stays, with the secret that it shows once, whatever becomes of
+  // what is behind it: a list that then fails to be read, or a target that
+  // is no longer listed, as a project that another tab put in the trash,
+  // whose list goes with it. It makes the token of the target that it was
+  // opened for.
+  const [making, setMaking] = useState<Making>();
   // The first, until the user chooses another, or once the one chosen is no
   // longer listed, as when the user has left it.
   const workspace =
@@ -235,14 +253,30 @@ function Tokens() {
               )}
             </div>
           )}
-          <WorkspaceTokens key={workspace.id} workspace={workspace} />
+          <WorkspaceTokens
+            key={workspace.id}
+            workspace={workspace}
+            onMake={setMaking}
+          />
         </>
+      )}
+      {making !== undefined && (
+        <CreateToken making={making} onClose={() => setMaking(undefined)} />
       )}
     </Page>
   );
 }
 
-function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
+/** What opens the page's dialog that makes a token. */
+type OnMake = (making: Making) => void;
+
+function WorkspaceTokens({
+  workspace,
+  onMake,
+}: {
+  workspace: MembershipBody;
+  onMake: OnMake;
+}) {
   const { t } = useTranslation();
   const projects = useInfiniteQuery(projectsQuery(workspace.id));
   const loaded = projects.data?.pages.flatMap((page) => page.items) ?? [];
@@ -288,7 +322,7 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
         )}
       </div>
       {projects.isError && (
-        <Alert message={refusalOf(projects.error, t).message} />
+        <Alert message={refusalOf(projects.error, t)?.message} />
       )}
       {target === undefined ? (
         // A guest's projects that are still loading, or that could not be
@@ -299,6 +333,7 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
           key={JSON.stringify(target)}
           target={target}
           targetName={project?.name ?? workspace.name}
+          onMake={onMake}
         />
       )}
     </div>
@@ -308,18 +343,20 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
 function TokenList({
   target,
   targetName,
+  onMake,
 }: {
   target: Target;
   targetName: string;
+  onMake: OnMake;
 }) {
   const { t } = useTranslation();
   const list = useInfiniteQuery(tokensQuery(target));
   const tokens = list.data?.pages.flatMap((page) => page.items) ?? [];
-  // A list that was never read shows why alone. One that fails to be read
-  // again, as once a token has been made, shows why with what it had, and
-  // keeps the dialog that shows the new token's secret.
+  // A list that was never read shows why alone, as to a role that may not
+  // see the tokens, nor make one. One that fails to be read again, as once a
+  // token has been made, shows why with what it had.
   if (list.isError && list.data === undefined) {
-    return <Alert message={refusalOf(list.error, t).message} />;
+    return <Alert message={refusalOf(list.error, t)?.message} />;
   }
   return (
     <section className="space-y-4" aria-labelledby="tokens-list">
@@ -327,11 +364,17 @@ function TokenList({
         <h2 id="tokens-list" className="flex-1 text-lg font-semibold">
           {t("tokens.list_title", { target: targetName })}
         </h2>
-        <CreateToken target={target} targetName={targetName} />
+        <Button
+          variant="primary"
+          aria-haspopup="dialog"
+          onClick={(event) =>
+            onMake({ target, targetName, opener: event.currentTarget })
+          }
+        >
+          {t("tokens.create")}
+        </Button>
       </div>
-      <Alert
-        message={list.isError ? refusalOf(list.error, t).message : undefined}
-      />
+      <Alert message={refusalOf(list.error, t)?.message} />
       {list.isSuccess && tokens.length === 0 && (
         <p className="text-fg-muted">{t("tokens.empty")}</p>
       )}
@@ -358,10 +401,6 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const client = useQueryClient();
   const nameId = useId();
   const locale = i18n.language;
-  // The item goes once its token is revoked, and with it its Revoke, which
-  // the focus is given back to as the confirmation closes.
-  const item = useRef<HTMLLIElement>(null);
-  useFocusContentOnRemoval(item);
   const [confirming, setConfirming] = useState(false);
   const revoke = useMutation({
     mutationFn: () =>
@@ -386,7 +425,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
     }
   };
   return (
-    <li ref={item} className="space-y-2 rounded-md border border-border p-4">
+    <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">
         {token.name}
       </p>
@@ -435,13 +474,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
           title={t("tokens.revoke_title", { name: token.name })}
           description={t("tokens.revoke_body")}
         >
-          <Alert
-            message={
-              revoke.error === null
-                ? undefined
-                : refusalOf(revoke.error, t).message
-            }
-          />
+          <Alert message={refusalOf(revoke.error, t)?.message} />
           <div className="flex flex-wrap justify-end gap-2">
             <AlertDialog.Cancel asChild>
               <Button disabled={revoke.isPending}>{t("tokens.cancel")}</Button>
@@ -464,18 +497,20 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
 
 const tokenField = bodyField("name", "scopes", "expires_at");
 
-/** Making a token of target, and showing its secret, once. */
+/**
+ * The dialog that makes a token of making's target, and shows its secret,
+ * once: the secret goes with the dialog, and is never shown again.
+ */
 function CreateToken({
-  target,
-  targetName,
+  making: { target, targetName, opener },
+  onClose,
 }: {
-  target: Target;
-  targetName: string;
+  making: Making;
+  onClose: () => void;
 }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
-  const [open, setOpen] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   const create = useMutation({
     mutationFn: (body: CreateTokenBody) =>
@@ -485,19 +520,23 @@ function CreateToken({
       void readTokensAgain(client, target);
     },
   });
-  const refusal =
-    create.error === null ? undefined : refusalOf(create.error, t, tokenField);
+  const refusal = refusalOf(create.error, t, tokenField);
   useFocusRefusal(form, create.error);
   const onOpenChange = (next: boolean) => {
     // The dialog stays open while the token is being made, whose secret
     // only it shows.
-    if (!next && create.isPending) {
-      return;
+    if (!next && !create.isPending) {
+      onClose();
     }
-    setOpen(next);
-    if (!next) {
-      // The secret goes with the dialog: it is never shown again.
-      create.reset();
+  };
+  // The control that opened the dialog gets the focus back, or the page's
+  // content, once that control has gone with its list.
+  const onCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    if (opener.isConnected) {
+      opener.focus();
+    } else {
+      focusContentIfLost(document);
     }
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -513,17 +552,15 @@ function CreateToken({
     });
   };
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Trigger asChild>
-        <Button variant="primary">{t("tokens.create")}</Button>
-      </Dialog.Trigger>
+    <Dialog.Root open onOpenChange={onOpenChange}>
       <DialogFrame
         title={t("tokens.create_title", { target: targetName })}
         description={create.isSuccess ? undefined : t("tokens.create_intro")}
         closesOutside={!create.isSuccess}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         {create.isSuccess ? (
-          <Secret token={create.data} onDone={() => onOpenChange(false)} />
+          <Secret token={create.data} onDone={onClose} />
         ) : (
           <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
             <Alert message={refusal?.message} />

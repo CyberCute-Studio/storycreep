@@ -20,6 +20,12 @@ export interface DialogFrameProps {
    * to close it.
    */
   closesOutside?: boolean;
+  /**
+   * Called as the dialog closes, before the focus goes back to the control
+   * that opened it, which a dialog without a Dialog.Trigger, as one that
+   * outlives the control, has to give it itself (event.preventDefault).
+   */
+  onCloseAutoFocus?: (event: Event) => void;
   children: ReactNode;
 }
 
@@ -28,6 +34,7 @@ export function DialogFrame({
   title,
   description,
   closesOutside = true,
+  onCloseAutoFocus,
   children,
 }: DialogFrameProps) {
   return (
@@ -35,6 +42,7 @@ export function DialogFrame({
       <Dialog.Overlay className={overlay} />
       <Dialog.Content
         className={content}
+        onCloseAutoFocus={onCloseAutoFocus}
         onInteractOutside={
           closesOutside ? undefined : (event) => event.preventDefault()
         }

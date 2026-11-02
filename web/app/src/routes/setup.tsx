@@ -190,10 +190,7 @@ function SetupForm({ setup }: { setup: SetupBody }) {
     onSuccess: (completed) =>
       completed === "signed-in" ? navigate({ to: "/" }) : undefined,
   });
-  const refusal =
-    complete.error === null
-      ? undefined
-      : refusalOf(complete.error, t, setupField);
+  const refusal = refusalOf(complete.error, t, setupField);
   const { errors, confirmed } = usePasswordConfirmation(
     form,
     complete,

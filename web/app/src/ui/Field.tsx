@@ -14,6 +14,7 @@ import {
   useId,
   useRef,
 } from "react";
+import { focusIsNowhere } from "../shell/focus";
 
 /** The classes of a control's box: its boundary at 3:1 against the page. */
 const control =
@@ -199,12 +200,12 @@ const enabledControl =
  * passwords that differ, made anew for each, or null or undefined if the
  * last attempt was not refused. Whatever else shows the form again, as the
  * user ticking a box of it, leaves the focus where it is, and so does a
- * refusal of the whole form, whose alert is read out, unless the focus is
- * nowhere, as when the control that made the attempt went with the step
- * that showed it, and form, the step that replaced it, shows the refusal:
- * the focus goes to form's first control then, rather than to the top of
- * the page, where the next Tab would start again. form need not be a
- * form: a section of controls is one too.
+ * refusal of the whole form, whose alert is read out, unless no control
+ * has the focus (focusIsNowhere), as when the control that made the attempt
+ * went with the step that showed it, and form, the step that replaced it,
+ * shows the refusal: the focus goes to form's first control then, rather
+ * than to the page's content, or its top, where the next Tab would start
+ * again. form need not be a form: a section of controls is one too.
  */
 export function useFocusRefusal(
   form: RefObject<HTMLElement | null>,
@@ -222,10 +223,7 @@ export function useFocusRefusal(
     const doc = within?.ownerDocument;
     if (field) {
       field.focus();
-    } else if (
-      doc &&
-      (doc.activeElement === null || doc.activeElement === doc.body)
-    ) {
+    } else if (doc && focusIsNowhere(doc)) {
       within?.querySelector<HTMLElement>(enabledControl)?.focus();
     }
   }, [form, attempt]);

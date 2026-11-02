@@ -37,13 +37,28 @@ const codeLocations: Readonly<Record<string, string>> = {
 
 /**
  * Returns what a form shows of error, which a request of the form failed
- * with. fieldOf names the form's fields that the server's locations name.
+ * with, or undefined if there was none, as the error of null of a mutation
+ * that has not failed. fieldOf names the form's fields that the server's
+ * locations name.
  */
+export function refusalOf(
+  error: Error,
+  t: TFunction,
+  fieldOf?: FieldOf,
+): Refusal;
+export function refusalOf(
+  error: unknown,
+  t: TFunction,
+  fieldOf?: FieldOf,
+): Refusal | undefined;
 export function refusalOf(
   error: unknown,
   t: TFunction,
   fieldOf: FieldOf = () => undefined,
-): Refusal {
+): Refusal | undefined {
+  if (error === null || error === undefined) {
+    return undefined;
+  }
   if (!(error instanceof ApiError)) {
     // A fault of the app's, as a TypeError, is unexpected, and the error
     // console records it.

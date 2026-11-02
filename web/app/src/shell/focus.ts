@@ -1,48 +1,110 @@
-// Where the keyboard's focus goes when the app shows another page, when an
-// item of a list goes with the control that had it, and when the skip link
-// is followed.
-
-import { type RefObject, useLayoutEffect } from "react";
+// Where the keyboard's focus goes when the app shows another page, when the
+// control that has it goes or is disabled, and when the skip link is
+// followed.
 
 /** The ID of the page's content, its main landmark, where the skip link leads. */
 export const CONTENT_ID = "main";
 
 /**
- * Gives the page's content the focus if nothing has it, as when the control
- * that had it, as a link, went with the page that it was on: the focus is
- * then on the document's body, from where a screen reader says nothing of
- * the new page, and the next Tab starts again from the top (WCAG 2.4.3). A
- * control that is still there, as the header's link, keeps it.
+ * Reports whether no control of doc has the focus: the document's body has
+ * it, as once the control that had it went, or the page's content itself,
+ * which gets it then (focusContentIfLost).
+ */
+export function focusIsNowhere(doc: Document): boolean {
+  const focused = doc.activeElement;
+  return focused === null || focused === doc.body || focused.id === CONTENT_ID;
+}
+
+/**
+ * Gives the page's content the focus if no control has it, as when the
+ * control that had it, as a link, went with the page that it was on: the
+ * focus is then on the document's body, from where a screen reader says
+ * nothing of the new page, and the next Tab starts again from the top (WCAG
+ * 2.4.3). A control that is still there, as the header's link, keeps it.
  */
 export function focusContentIfLost(doc: Document): void {
-  const focused = doc.activeElement;
-  if (focused === null || focused === doc.body) {
+  if (focusIsNowhere(doc)) {
     // The router restores the scroll position of the page.
     doc.getElementById(CONTENT_ID)?.focus({ preventScroll: true });
   }
 }
 
 /**
- * Gives the page's content the focus once the element of item goes, if the
- * focus was in it, as on a token's Revoke, whose item goes once the token
- * is revoked and the list read again (focusContentIfLost), rather than
- * leaving it on the document's body, from where the next Tab starts again
- * from the top.
+ * Keeps the keyboard's focus on the page that frame shows, its header and
+ * its content, once the control of it that has the focus goes, as a revoked
+ * session's item with its button, or is disabled, as a button while the
+ * request that it made is answered, which Chromium takes the focus from: the
+ * page's content gets the focus then (focusContentIfLost), rather than the
+ * document's body, and a control that was disabled gets it back once it is
+ * enabled again, unless the user has moved it since. A dialog's controls,
+ * which are outside frame, are the dialog's: the control of the page that
+ * opened it gets the focus back as it closes, or the content, if that
+ * control has gone meanwhile, as a revoked token's Revoke. It returns what
+ * stops it.
  */
-export function useFocusContentOnRemoval(
-  item: RefObject<HTMLElement | null>,
-): void {
-  useLayoutEffect(() => {
-    const element = item.current;
-    return () => {
-      const doc = element?.ownerDocument;
-      if (doc && element?.contains(doc.activeElement)) {
-        // The element is still in the document as its component unmounts:
-        // the focus is on the body once React has removed it.
-        queueMicrotask(() => focusContentIfLost(doc));
-      }
-    };
-  }, [item]);
+export function keepFocusOnPage(frame: HTMLElement): () => void {
+  const doc = frame.ownerDocument;
+  // The control of the page that had the focus last, which a dialog that it
+  // opened has it of now.
+  let focused: Element | null = null;
+  // The control that was disabled while it had the focus, until it is
+  // enabled again, or goes.
+  let disabled: HTMLElement | null = null;
+  const onFocusIn = (event: FocusEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !frame.contains(target)) {
+      return;
+    }
+    focused = target;
+    if (target.id !== CONTENT_ID) {
+      disabled = null;
+    }
+  };
+  const onFocusOut = (event: FocusEvent) => {
+    const target = event.target;
+    if (
+      event.relatedTarget === null &&
+      target instanceof HTMLElement &&
+      frame.contains(target) &&
+      target.matches(":disabled")
+    ) {
+      disabled = target;
+      // Once the browser has moved the focus to the body.
+      queueMicrotask(() => focusContentIfLost(doc));
+    }
+  };
+  // A control goes with an element that the page removes, as one of a
+  // dialog that its item took with it, and is enabled again as an attribute
+  // changes.
+  const observer = new MutationObserver(() => {
+    if (focused !== null && !focused.isConnected && focusIsNowhere(doc)) {
+      focused = null;
+      focusContentIfLost(doc);
+    }
+    if (disabled === null) {
+      return;
+    }
+    if (!disabled.isConnected) {
+      disabled = null;
+    } else if (!disabled.matches(":disabled") && focusIsNowhere(doc)) {
+      const control = disabled;
+      disabled = null;
+      control.focus({ preventScroll: true });
+    }
+  });
+  observer.observe(doc.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["disabled"],
+  });
+  doc.addEventListener("focusin", onFocusIn);
+  doc.addEventListener("focusout", onFocusOut);
+  return () => {
+    observer.disconnect();
+    doc.removeEventListener("focusin", onFocusIn);
+    doc.removeEventListener("focusout", onFocusOut);
+  };
 }
 
 /**
