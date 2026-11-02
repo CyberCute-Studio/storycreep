@@ -39,6 +39,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 	"github.com/CyberCute-Studio/storycreep/server/internal/version"
+	"github.com/CyberCute-Studio/storycreep/server/internal/webassets"
 	"github.com/CyberCute-Studio/storycreep/server/internal/workspace"
 )
 
@@ -278,7 +279,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerSetup(s.main, s.setups)
 	registerEmail(s.main, s.accounts)
 	registerDocument(s.main)
-	registerPages(s.main, cfg.Capabilities.PublicSite)
+	registerPages(s.main, webassets.App(), webassets.Site(), cfg.Capabilities.PublicSite)
 
 	switch {
 	case cfg.AdminAddr == "":

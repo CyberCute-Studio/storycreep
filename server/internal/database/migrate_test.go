@@ -267,16 +267,20 @@ func TestMigrateWaitsForTheLock(t *testing.T) {
 // database's sessions neither end Migrate's wait for the migration lock nor
 // end the idle session that holds the lock while goose migrates on
 // connections of its own, which would release the lock to another instance.
-// Each timeout is shorter than the wait. The database has the embedded
-// migrations before the timeouts are set, so that only the test's slow
-// migration, which switches them off for itself, runs under them: the
-// migrations keep the session's timeouts (gooseLocker), and on a busy runner
-// a real migration can take longer than the transaction_timeout below. For
-// the same reason the application login is exempt from them: once it has
-// migrated, Migrate connects as that login to check it (checkAppDatabase),
-// as the server does, with the login's own settings and not under the lock,
-// and on a busy runner the check of its roles' catalog can take longer than
-// the statement_timeout below.
+// The timeouts of a statement, a lock, and a transaction are shorter than the
+// wait for the lock, and the idle session's is shorter than the slow
+// migration, during which the session that holds the lock idles. The database
+// has the embedded migrations before the timeouts are set, so that only the
+// test's slow migration, which switches them off for itself, runs under them:
+// the migrations keep the session's timeouts (gooseLocker), and on a busy
+// runner a real migration can take longer than the transaction_timeout below.
+// goose's own statements still run under them, as its check that its version
+// table exists, which on a busy runner has taken longer than 200ms, so the
+// statement_timeout leaves them a second. For the same reason the application
+// login is exempt from them: once it has migrated, Migrate connects as that
+// login to check it (checkAppDatabase), as the server does, with the login's
+// own settings and not under the lock, and on a busy runner the check of its
+// roles' catalog can take longer than the statement_timeout below.
 func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -284,12 +288,15 @@ func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	ident := pgx.Identifier{d.Name}.Sanitize()
 	app := pgx.Identifier{d.AppURL.User()}.Sanitize()
 	admin := d.Admin(t)
+	// The wait for the lock is lockWait, and the slow migration sleeps for
+	// slowMigration.
+	const lockWait, slowMigration = 2 * time.Second, 3 * time.Second
 	timeouts := map[string]string{
-		"lock_timeout":         "100ms",
-		"statement_timeout":    "200ms",
-		"idle_session_timeout": "300ms",
+		"lock_timeout":         "250ms",
+		"statement_timeout":    "1s",
+		"idle_session_timeout": "1500ms",
 		// PostgreSQL 17 and later only.
-		"transaction_timeout": "400ms",
+		"transaction_timeout": "1500ms",
 	}
 	for name, value := range timeouts {
 		var exists bool
@@ -322,7 +329,9 @@ func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", database.MigrationLock); err != nil {
 		t.Fatal(err)
 	}
-	slow := withMigrations(t, map[string]string{"90001_slow.sql": noTimeouts(true) + "\nSELECT pg_sleep(1);"})
+	slow := withMigrations(t, map[string]string{
+		"90001_slow.sql": noTimeouts(true) + fmt.Sprintf("\nSELECT pg_sleep(%g);", slowMigration.Seconds()),
+	})
 	done := make(chan error, 1)
 	go func() {
 		_, err := database.Migrate(ctx, d.AdminURL, d.AppURL, database.MigrateOptions{Migrations: slow})
@@ -332,7 +341,7 @@ func TestMigrateLockIgnoresSessionTimeouts(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("Migrate stopped waiting for the lock: %v", err)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(lockWait):
 	}
 	if _, err := holder.Exec(ctx, "SELECT pg_advisory_unlock($1)", database.MigrationLock); err != nil {
 		t.Fatal(err)

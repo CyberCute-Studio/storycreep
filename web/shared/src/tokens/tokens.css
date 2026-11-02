@@ -1,0 +1,59 @@
+/*
+ * The design tokens of the web app and the public site (PRD §10.6, ADR-012),
+ * as a Tailwind CSS v4 theme: each bundle's stylesheet imports this file
+ * after Tailwind, as @storycreep/shared/tokens.css, and its utilities name
+ * the tokens, as bg-surface or text-fg-muted.
+ *
+ * The theme replaces Tailwind's palette, so that a colour is always one of
+ * these, which are named for what they are used for rather than for how they
+ * look. Each colour is light-dark(light, dark), and the page follows the
+ * system's light or dark mode (color-scheme below). tokens.test.ts holds the
+ * pairs that are shown together to the contrast of PRD NFR-A11Y-06 in both
+ * modes: 4.5:1 for text, and 3:1 for the boundaries of controls and for the
+ * focus ring. A colour is written as #rrggbb, which the test reads.
+ */
+
+@theme {
+  --color-*: initial;
+
+  /* The page's background, and the text on it. */
+  --color-canvas: light-dark(#ffffff, #121419);
+  --color-fg: light-dark(#15171c, #eceef2);
+  /* Secondary text, as a hint or a timestamp. */
+  --color-fg-muted: light-dark(#4b5260, #a8afbc);
+
+  /* A panel, a bar, or a control on the page, and the same under the pointer. */
+  --color-surface: light-dark(#f3f4f6, #1c1f26);
+  --color-surface-hover: light-dark(#e5e7eb, #272b34);
+
+  /* The boundary of a control or a panel. */
+  --color-border: light-dark(#7c8494, #727b8c);
+
+  /* The primary action, a link, and the text on a primary action. */
+  --color-accent: light-dark(#2b50c8, #8fa8ff);
+  --color-accent-hover: light-dark(#203f9e, #b3c4ff);
+  --color-accent-fg: light-dark(#ffffff, #0b1230);
+
+  /* The focus ring of the control that has the keyboard's focus. */
+  --color-focus: light-dark(#2b50c8, #8fa8ff);
+
+  /* What a dialog dims the page behind it with. */
+  --color-backdrop: light-dark(#0b0d12, #000000);
+
+  /* An error, and the text on a destructive action. */
+  --color-danger: light-dark(#b3261e, #ff8b80);
+  --color-danger-fg: light-dark(#ffffff, #2b0806);
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+}

@@ -4,6 +4,11 @@ node_modules/
 # Build and test output
 dist/
 coverage/
+test-results/
+playwright-report/
+# The TanStack router generator's temporary files, which it can leave
+# behind, as when a build is stopped while it writes the route tree.
+.tanstack/
 *.tsbuildinfo
 /server/storycreep
 /server/storycreep.exe

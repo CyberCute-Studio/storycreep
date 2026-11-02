@@ -1,6 +1,8 @@
 # The build context of deploy/Dockerfile is the repository's root. Only the
-# server's sources go into it, without the tests and their data, which the
-# binary does not need, so that a change elsewhere does not rebuild it.
+# sources of the server and of the web app go into it, without their tests
+# and their data, which the image does not need, so that a change elsewhere
+# does not rebuild it, nor the bundle that a local build of the app left in
+# the server's tree, which the image builds anew.
 *
 !server/go.mod
 !server/go.sum
@@ -8,3 +10,18 @@
 !server/internal/
 server/**/*_test.go
 server/**/testdata/
+server/internal/webassets/dist/
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!web/app/
+!web/shared/
+!web/site/package.json
+web/**/node_modules/
+web/**/*.test.*
+web/**/*.spec.*
+web/**/testdata/
+web/app/e2e/
+web/app/test-results/
+web/app/playwright-report/
+web/app/.tanstack/

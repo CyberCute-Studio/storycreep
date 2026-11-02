@@ -1,0 +1,73 @@
+// A Biome lint rule that the web app calls the server only through the API
+// client of @storycreep/shared/api, whose types are generated from the
+// server's OpenAPI document, so that the app describes no request or answer
+// by hand (PRD FR-API-02 AC2), and that it sends nothing that way that the
+// client would not, as an error report (NFR-OBS-06). biome.json applies it
+// to the app's source, but for its tests, and CI runs it with the rest of
+// Biome's checks.
+//
+// It reports the browser's interfaces that a script calls the server's API
+// with, over HTTP or a WebSocket, which the server speaks: fetch,
+// XMLHttpRequest, EventSource, WebSocket, and sendBeacon, a closed list,
+// named as a global, as in fetch(url) or new WebSocket(url), or in an
+// object's shorthand, as in client({ fetch }), as a property, as in
+// window.fetch, globalThis["fetch"], or navigator.sendBeacon(url), or as a
+// property that is destructured, as in const { fetch: get } = window, or
+// const { fetch } = window.
+// A type that is named so, as in a parameter of the type WebSocket, is not
+// reported. The other requests that a page can make, as for an image's or a
+// script's source, or a form's submission, which do not call the API as a
+// script does, and WebTransport and WebRTC, which the server does not
+// speak, are not on the list: they are for review to catch, as one that
+// sends an error's details away would be. It reads names, as a lint rule
+// does, not values that a script computes, so a name that is only a string
+// that a call is given, as in Reflect.get(globalThis, "fetch"), or a key
+// that is not a literal, as in window[name], is for review to catch too.
+// Code that rightly makes such a request, as the real-time channel's client
+// will, is marked with a comment that says why, as in
+// // biome-ignore lint/plugin: the real-time channel's socket.
+
+language js
+
+pattern request_api() {
+  r"^(?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)$"
+}
+
+or {
+  JsIdentifierExpression() as $name where {
+    $name <: request_api(),
+    register_diagnostic(span=$name, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  // A global in an object's shorthand, as { fetch }, which names it as a
+  // reference rather than as an expression.
+  JsShorthandPropertyObjectMember(name=$name) where {
+    $name <: request_api(),
+    register_diagnostic(span=$name, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  JsStaticMemberExpression(member=$member) where {
+    $member <: request_api(),
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  JsComputedMemberExpression(member=$member) where {
+    $member <: r"^[\"'`](?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)[\"'`]$",
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  // A destructured property, as const { fetch: get } = window, or
+  // ({ "fetch": get } = window), whose key may be a literal or computed.
+  or {
+    JsObjectBindingPatternProperty(member=$member),
+    JsObjectAssignmentPatternProperty(member=$member)
+  } where {
+    $member <: r"^\[?[\"'`]?(?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)[\"'`]?\]?$",
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  // A destructured property in shorthand, as const { fetch } = window, or
+  // ({ fetch } = window), whose key is the name that it binds.
+  or {
+    JsObjectBindingPatternShorthandProperty(identifier=$name),
+    JsObjectAssignmentPatternShorthandProperty(identifier=$name)
+  } where {
+    $name <: request_api(),
+    register_diagnostic(span=$name, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  }
+}

@@ -146,8 +146,8 @@ func (s *server) recoverPanics(next http.Handler) http.Handler {
 
 // contentSecurityPolicy allows the page's own scripts, styles, images, and
 // connections, and no inline script, plugin, or framing (PRD NFR-SEC-09).
-// The tool's bundle (plan item 53) adds nonces where an inline script is
-// unavoidable.
+// The tool's entry page adds a nonce of its own to it, which its scripts and
+// styles carry (entryPolicy).
 const contentSecurityPolicy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; " +
 	"object-src 'none'"
 

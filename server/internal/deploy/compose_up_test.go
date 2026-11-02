@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -151,7 +152,7 @@ func cleanEnvironment() []string {
 }
 
 // checkServing checks that the instance at base is ready and serves the
-// tool's entry page at /.
+// tool's entry page at /, which is the web app's.
 func checkServing(t *testing.T, base string) {
 	t.Helper()
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -166,6 +167,51 @@ func checkServing(t *testing.T, base string) {
 		if err != nil || res.StatusCode != http.StatusOK || !bytes.HasPrefix(body, []byte(want)) {
 			t.Errorf("GET %s: %d %s, %v; want 200 and %s", path, res.StatusCode, body, err, want)
 		}
+	}
+	checkBundle(t, client, base)
+}
+
+// entryScript is the script that the web app's entry page loads, which Vite
+// names after a hash of its content.
+var entryScript = regexp.MustCompile(`<script type="module" crossorigin src="(/app/assets/[^"]+\.js)"`)
+
+// checkBundle checks that the image's binary embeds the web app's build,
+// rather than the page that a binary built without it serves (package
+// webassets, deploy/Dockerfile): its entry page holds a nonce of the
+// response's Content-Security-Policy in place of the placeholder that the
+// build writes, and loads its script, which the server serves for a year.
+func checkBundle(t *testing.T, client *http.Client, base string) {
+	t.Helper()
+	res, err := client.Get(base + "/app/")
+	if err != nil {
+		t.Fatalf("GET /app/: %v", err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /app/: %d, %v", res.StatusCode, err)
+	}
+	m := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(res.Header.Get("Content-Security-Policy"))
+	switch {
+	case m == nil:
+		t.Errorf("GET /app/: the Content-Security-Policy %q has no nonce", res.Header.Get("Content-Security-Policy"))
+	case bytes.Contains(body, []byte("__STORYCREEP_CSP_NONCE__")) || !bytes.Contains(body, []byte(`nonce="`+m[1]+`"`)):
+		t.Errorf("GET /app/: the page's nonces are not the response's, %s:\n%s", m[1], body)
+	}
+	script := entryScript.FindSubmatch(body)
+	if script == nil {
+		t.Fatalf("GET /app/: the page loads no script of the web app's build, as a binary built without it "+
+			"does not:\n%s", body)
+	}
+	res, err = client.Get(base + string(script[1]))
+	if err != nil {
+		t.Fatalf("GET %s: %v", script[1], err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/javascript; charset=utf-8" ||
+		res.Header.Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Errorf("GET %s: %d, Content-Type %q, Cache-Control %q; want 200, the script, kept for a year", script[1],
+			res.StatusCode, res.Header.Get("Content-Type"), res.Header.Get("Cache-Control"))
 	}
 }
 
