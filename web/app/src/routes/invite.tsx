@@ -45,10 +45,10 @@ export const Route = createFileRoute("/invite")({
 
 /**
  * What the holder of the invitation's link sees of it, which the page asks
- * for again, as any query, if the server could not answer, since looking
- * it up uses nothing of it, or refused it, as a link that has expired, at
- * most once a minute, since the server counts it among the requests about
- * credentials (askedSparingly).
+ * for again, as any query, if the request did not reach the server, since
+ * looking it up uses nothing of it, and at most once a minute if the server
+ * refused it, as a link that has expired, or failed to answer it, since the
+ * server counts it among the requests about credentials (askedSparingly).
  */
 function inviteQuery(token: string) {
   return queryOptions({

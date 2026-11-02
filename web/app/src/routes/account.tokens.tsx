@@ -31,6 +31,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { copyText } from "../errors/copy";
+import { useFocusContentOnRemoval } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { ConfirmFrame, DialogFrame } from "../ui/Dialog";
 import {
@@ -357,6 +358,10 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const client = useQueryClient();
   const nameId = useId();
   const locale = i18n.language;
+  // The item goes once its token is revoked, and with it its Revoke, which
+  // the focus is given back to as the confirmation closes.
+  const item = useRef<HTMLLIElement>(null);
+  useFocusContentOnRemoval(item);
   const [confirming, setConfirming] = useState(false);
   const revoke = useMutation({
     mutationFn: () =>
@@ -381,7 +386,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
     }
   };
   return (
-    <li className="space-y-2 rounded-md border border-border p-4">
+    <li ref={item} className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">
         {token.name}
       </p>

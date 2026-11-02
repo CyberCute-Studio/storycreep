@@ -1,8 +1,9 @@
 // What the app's tests of pages render them with: the app's router, in
-// memory, at a path, over a query client whose cache holds the instance, the
-// session, and the account that the test gives, so that the root route's
-// guards read them without a request, and that follows the session as the
-// app does (followSession), once a page asks it to (checkSession).
+// memory, at a path, over the app's query client (createQueryClient), whose
+// cache holds the instance, the session, and the account that the test
+// gives, so that the root route's guards read them without a request, and
+// that follows the session as the app does (followSession), once a page, or
+// an answer that doubts the session, asks it to (checkSession).
 
 import type {
   AccountBody,
@@ -10,7 +11,7 @@ import type {
   SignedInBody,
 } from "@storycreep/shared/api";
 import type { Catalog } from "@storycreep/shared/i18n";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   type AnyRoute,
   createMemoryHistory,
@@ -21,7 +22,12 @@ import { render } from "@testing-library/react";
 import type { i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { onTestFinished, vi } from "vitest";
-import { accountQuery, instanceQuery, sessionQuery } from "../api";
+import {
+  accountQuery,
+  createQueryClient,
+  instanceQuery,
+  sessionQuery,
+} from "../api";
 import { followSession, sessionChanges } from "../auth/session";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
@@ -89,8 +95,16 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     .spyOn(navigator, "languages", "get")
     .mockReturnValue([...languages]);
   onTestFinished(() => browser.mockRestore());
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+  const log = createErrorLog();
+  const queryClient = createQueryClient(log, {
+    checkSession: () => void follower.check(),
+  });
+  // A request that the app tries again is tried again at once, rather than
+  // seconds later, which a test would wait for.
+  const defaults = queryClient.getDefaultOptions();
+  queryClient.setDefaultOptions({
+    ...defaults,
+    queries: { ...defaults.queries, retryDelay: 0 },
   });
   queryClient.setQueryData(
     instanceQuery.queryKey,
@@ -126,11 +140,11 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
   const view = render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>
-        <ErrorConsoleProvider log={createErrorLog()}>
+        <ErrorConsoleProvider log={log}>
           <RouterProvider router={router} />
         </ErrorConsoleProvider>
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { ...view, queryClient, i18n, router, checkSession };
+  return { ...view, queryClient, i18n, router, checkSession, log };
 }

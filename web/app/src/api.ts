@@ -185,21 +185,43 @@ export const accountQuery = queryOptions({
 });
 
 /**
- * How long the page keeps what it was answered to a request about
- * credentials, or how it was refused, before it asks again (askedSparingly).
+ * How long the page keeps what the server answered to a request about
+ * credentials, or how it refused it, before it asks again (askedSparingly).
  */
 const credentialsKept = 60_000;
 
 /**
+ * Reports whether the page tries again a query that has failed failures
+ * times: up to three times more, unless the server refused it, with a
+ * status below 500, which it would refuse again.
+ */
+function retried(failures: number, error: unknown): boolean {
+  return failures < 3 && !(error instanceof ApiError && error.status < 500);
+}
+
+/**
+ * Reports whether error is the server's own answer, with the error
+ * envelope, as a refusal, or a fault of the server's, as 500, which its
+ * rate limits counted as they count any request that reaches it, rather
+ * than a request that did not reach it: one that no answer came to
+ * (NetworkError), or one that a proxy answered with a page of its own, as
+ * 502 while the server restarts.
+ */
+function answered(error: unknown): boolean {
+  return error instanceof ApiError && error.error !== undefined;
+}
+
+/**
  * Reports whether the page may ask again for what query holds, as it would
- * any query's: unless the server refused it, or could not answer, within
- * credentialsKept.
+ * any query's: unless the server answered it with an error (answered),
+ * within credentialsKept.
  */
 function mayAskAgain(query: {
-  state: { status: string; errorUpdatedAt: number };
+  state: { status: string; error: unknown; errorUpdatedAt: number };
 }): boolean {
   return (
     query.state.status !== "error" ||
+    !answered(query.state.error) ||
     Date.now() - query.state.errorUpdatedAt >= credentialsKept
   );
 }
@@ -213,12 +235,18 @@ function mayAskAgain(query: {
  * the tab is shown again, or the browser gets its connection again, whether
  * the server answered or refused it, as it refuses a role that may not see
  * the tokens, rather than each time, which would use up what the address
- * and the account may still do. A query whose answer keeps for longer says
- * so (staleTime), and the page asks again at once where it knows that the
- * answer has changed, as once it has made a token.
+ * and the account may still do, and it does not try again at once what the
+ * server failed to answer itself, as with 500. A request that did not reach
+ * the server, as one that no answer came to, is tried again, and asked
+ * again, as any query's is, since the server counted nothing of it. A
+ * query whose answer keeps for longer says so (staleTime), and the page
+ * asks again at once where it knows that the answer has changed, as once
+ * it has made a token.
  */
 export const askedSparingly = {
   staleTime: credentialsKept,
+  retry: (failures: number, error: unknown) =>
+    retried(failures, error) && !answered(error),
   retryOnMount: mayAskAgain,
   refetchOnMount: mayAskAgain,
   refetchOnWindowFocus: mayAskAgain,
@@ -362,10 +390,7 @@ export function createQueryClient(
         }),
     }),
     defaultOptions: {
-      queries: {
-        retry: (failures, error) =>
-          failures < 3 && !(error instanceof ApiError && error.status < 500),
-      },
+      queries: { retry: retried },
       // A mutation holds what it sent and what it was answered, as a
       // password or a new token's secret: it is dropped once the form that
       // made it is gone, as when the page signs out, rather than kept for

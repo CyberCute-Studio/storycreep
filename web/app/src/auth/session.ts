@@ -72,17 +72,18 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
  * the page keeps what it had of the account, or, for another account, the
  * components ask for it themselves, and so it does if it has recorded the
  * account itself while it asked, as the answer to saving the language,
- * which is newer. A session that the page only learnt of, as followSession
- * does, is recorded only if current still says so once the account has
- * come, after which the page may have changed its session itself, as by
- * signing in; signedIn resolves to whether it recorded it.
+ * which is newer, even if it is what the page held, which the cache then
+ * keeps as the same object. A session that the page only learnt of, as
+ * followSession does, is recorded only if current still says so once the
+ * account has come, after which the page may have changed its session
+ * itself, as by signing in; signedIn resolves to whether it recorded it.
  */
 export async function signedIn(
   client: QueryClient,
   session: SignedInBody,
   current: () => boolean = () => true,
 ): Promise<boolean> {
-  const held = client.getQueryData(accountQuery.queryKey);
+  const held = accountWrites(client);
   const account = await api.call("getAccount", {}).then(
     (answer) => answer.body,
     () => undefined,
@@ -95,13 +96,17 @@ export async function signedIn(
   if (switched) {
     dropAccountData(client);
   }
-  const newer =
-    !switched && client.getQueryData(accountQuery.queryKey) !== held;
+  const newer = !switched && accountWrites(client) !== held;
   if (account?.id === session.user_id && !newer) {
     client.setQueryData(accountQuery.queryKey, account);
   }
   client.setQueryData(sessionQuery.queryKey, session);
   return true;
+}
+
+/** Returns how many times the page has recorded an account so far. */
+function accountWrites(client: QueryClient): number {
+  return client.getQueryState(accountQuery.queryKey)?.dataUpdateCount ?? 0;
 }
 
 /**

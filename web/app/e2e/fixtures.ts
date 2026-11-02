@@ -153,8 +153,9 @@ export async function apiSignIn(
 /**
  * Takes, as the instance's owner, an instance admin, a link that resets the
  * password of the account of email, or verifies its address, which an
- * instance that sends no email gives out (PRD FR-AUTH-03), through a request
- * context of its own.
+ * instance that sends no email gives out (PRD FR-AUTH-03), through request,
+ * which is signed in as the owner from then on: a test that goes on to make
+ * requests as another account signs request in as that account first.
  */
 export async function adminLink(
   request: APIRequestContext,
