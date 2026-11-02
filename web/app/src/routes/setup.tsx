@@ -13,7 +13,11 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
-import { passwordsDiffer } from "../auth/forms";
+import {
+  type Mismatch,
+  minPasswordLength,
+  passwordMismatch,
+} from "../auth/forms";
 import { type FieldOf, refusalOf } from "../auth/refusal";
 import { signIn } from "../auth/session";
 import { Button } from "../ui/Button";
@@ -23,13 +27,25 @@ import {
   TextField,
   useFocusRefusal,
 } from "../ui/Field";
-import { Alert, Page, TextLink } from "../ui/Page";
+import { Alert, Page, Status, TextLink } from "../ui/Page";
 
-/** What first-run setup asks for, while it is pending. */
+/**
+ * What first-run setup asks for, while it is pending, or null once it has
+ * completed, as by another tab since the page read the instance, which the
+ * server answers with 404: no error, but where the page goes to sign in.
+ */
 const setupQuery = queryOptions({
   queryKey: ["setup"],
-  queryFn: async ({ signal }): Promise<SetupBody> =>
-    (await api.call("getSetup", {}, { signal })).body,
+  queryFn: async ({ signal }): Promise<SetupBody | null> => {
+    try {
+      return (await api.call("getSetup", {}, { signal })).body;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
   staleTime: Number.POSITIVE_INFINITY,
 });
 
@@ -41,18 +57,11 @@ export const Route = createFileRoute("/setup")({
     }
   },
   loader: async ({ context }) => {
-    try {
-      await context.queryClient.ensureQueryData(setupQuery);
-    } catch (error) {
+    const setup = await context.queryClient.ensureQueryData(setupQuery);
+    if (setup === null) {
       // Setup completed since the instance was read, as by another tab.
-      if (error instanceof ApiError && error.status === 404) {
-        await context.queryClient.fetchQuery({
-          ...instanceQuery,
-          staleTime: 0,
-        });
-        throw redirect({ to: "/login" });
-      }
-      throw error;
+      await context.queryClient.fetchQuery({ ...instanceQuery, staleTime: 0 });
+      throw redirect({ to: "/login" });
     }
   },
   component: Setup,
@@ -131,8 +140,11 @@ function setupBody(data: FormData, setup: SetupBody): CompleteSetupBody {
   return body;
 }
 
-/** How a setup ended. */
-type Completed = "signed-in" | "taken";
+/**
+ * How a setup ended: signed in as the owner, or completed without, as when
+ * signing in then failed, or completed first by someone else.
+ */
+type Completed = "signed-in" | "signed-out" | "taken";
 
 // First-run setup (PRD FR-ADMIN-02): the first account, which administers
 // the instance, its first workspace, who can register, and, optionally, the
@@ -141,14 +153,19 @@ type Completed = "signed-in" | "taken";
 // log, so that whoever reaches a new instance first cannot make themselves
 // its administrator. Once it completes, the page signs in as the owner.
 function Setup() {
-  const { t } = useTranslation();
   const setup = useSuspenseQuery(setupQuery).data;
+  // Once setup has completed, the loader has gone to sign in.
+  return setup === null ? null : <SetupForm setup={setup} />;
+}
+
+function SetupForm({ setup }: { setup: SetupBody }) {
+  const { t } = useTranslation();
   const client = useQueryClient();
   const navigate = useNavigate();
   const form = useRef<HTMLFormElement>(null);
   const [smtp, setSmtp] = useState(false);
   const [storage, setStorage] = useState(false);
-  const [mismatch, setMismatch] = useState(false);
+  const [mismatch, setMismatch] = useState<Mismatch>();
   const complete = useMutation({
     mutationFn: async (body: CompleteSetupBody): Promise<Completed> => {
       try {
@@ -161,11 +178,21 @@ function Setup() {
         }
         throw error;
       }
-      await client.fetchQuery({ ...instanceQuery, staleTime: 0 });
-      await signIn(client, {
-        email: body.owner.email,
-        password: body.owner.password,
-      });
+      // Setup has completed. What fails from here on is signing in, not
+      // setup: shown on the form, it would have the user set up again, which
+      // the server would answer as if someone else had completed it first.
+      try {
+        await client.fetchQuery({ ...instanceQuery, staleTime: 0 });
+        await signIn(client, {
+          email: body.owner.email,
+          password: body.owner.password,
+        });
+      } catch {
+        // The page reads the instance anew where it goes next, whose setup
+        // it may still hold as pending.
+        client.removeQueries({ queryKey: instanceQuery.queryKey });
+        return "signed-out";
+      }
       return "signed-in";
     },
     onSuccess: (completed) => {
@@ -181,10 +208,20 @@ function Setup() {
       : refusalOf(complete.error, t, setupField);
   const errors: Record<string, string | undefined> = {
     ...refusal?.fields,
-    ...(mismatch ? { owner_confirm: t("auth.error.passwords_differ") } : {}),
+    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
   };
-  useFocusRefusal(form, mismatch ? errors : refusal);
+  useFocusRefusal(form, mismatch ?? complete.error);
 
+  if (complete.data === "signed-out") {
+    return (
+      <Page title={t("setup.title")}>
+        <Status message={t("setup.completed")} />
+        <p>
+          <TextLink to="/login">{t("setup.sign_in")}</TextLink>
+        </p>
+      </Page>
+    );
+  }
   if (complete.data === "taken") {
     return (
       <Page title={t("setup.title")}>
@@ -199,9 +236,9 @@ function Setup() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordsDiffer(data, "owner_password", "owner_confirm");
+    const differ = passwordMismatch(data, "owner_password", "owner_confirm");
     setMismatch(differ);
-    if (!differ) {
+    if (differ === undefined) {
       complete.mutate(setupBody(data, setup));
     }
   };
@@ -243,7 +280,7 @@ function Setup() {
           />
           <TextField
             label={t("auth.new_password")}
-            hint={t("auth.password_hint", { min: 12 })}
+            hint={t("auth.password_hint", { min: minPasswordLength })}
             name="owner_password"
             type="password"
             autoComplete="new-password"

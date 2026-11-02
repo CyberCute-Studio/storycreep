@@ -4,10 +4,10 @@ import {
   type ErrorBody,
 } from "@storycreep/shared/api";
 import { catalogs } from "@storycreep/shared/i18n";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { accountQuery, api, sessionQuery } from "./api";
 import { renderApp, testAccount, testInstance, testSession } from "./test/app";
 
 // The account screens as the router shows them, over a fake of the API's
@@ -212,5 +212,197 @@ describe("the language", () => {
     expect(document.documentElement.lang).toBe("cs");
     // A language whose catalog lacks a message shows it in English.
     expect(screen.getByRole("heading", { name: "Password" })).toBeDefined();
+  });
+});
+
+describe("a refused form", () => {
+  it("moves the focus to the field that the server refused once, not again whenever it shows anew", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation, input) => {
+      if (operation === "changePassword") {
+        throw refused(403, {
+          code: "wrong_password",
+          details: {
+            errors: [{ location: "body.current_password", message: "is not" }],
+          },
+        });
+      }
+      if (operation === "updateAccount") {
+        const { body } = input as { body: { locale: string } };
+        return { ...testAccount, locale: body.locale } satisfies AccountBody;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account", { session: testSession });
+    const current = await screen.findByLabelText("Current password");
+    await user.type(current, "not it");
+    await user.type(screen.getByLabelText("New password"), "a new passphrase");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Change the password" }),
+    );
+    await screen.findByText("This is not your current password.");
+    expect(document.activeElement).toBe(current);
+
+    // Saving the language shows the account's page anew, the refused form
+    // too, which leaves the focus on what the user pressed.
+    const save = screen.getByRole("button", { name: "Save the language" });
+    await user.click(save);
+    await screen.findByText("Saved.");
+    expect(document.activeElement).toBe(save);
+  });
+});
+
+describe("first-run setup", () => {
+  /** What setup asks for, of a configuration that sets SMTP and storage. */
+  const pendingSetup = {
+    signup_policy: "closed",
+    signup_policy_fixed: false,
+    smtp_fixed: true,
+    storage_fixed: true,
+  };
+
+  it("says that setup completed, and leads to signing in, when signing in after it fails", async () => {
+    const user = userEvent.setup();
+    let instance = { ...testInstance, setup_pending: true };
+    fakeApi((operation) => {
+      switch (operation) {
+        case "getSetup":
+          return pendingSetup;
+        case "completeSetup":
+          instance = { ...instance, setup_pending: false };
+          return undefined;
+        case "getInstance":
+          return instance;
+        case "login":
+          throw new TypeError("Failed to fetch");
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/setup", { instance });
+    await user.type(await screen.findByLabelText("Setup code"), "7K2M");
+    await user.type(screen.getByLabelText("Name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("New password"), "a passphrase!");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a passphrase!",
+    );
+    await user.type(screen.getByLabelText("Workspace name"), "Studio");
+    await user.click(screen.getByRole("button", { name: "Complete setup" }));
+    await screen.findByText(
+      "This instance is set up. Sign in with the email address and the password of the account that you created.",
+    );
+    await user.click(screen.getByRole("link", { name: "Sign in" }));
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+  });
+
+  it("goes to signing in once setup has completed elsewhere", async () => {
+    fakeApi((operation) => {
+      if (operation === "getSetup") {
+        throw refused(404, { code: "not_found" });
+      }
+      if (operation === "getInstance") {
+        return testInstance;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/setup", {
+      instance: { ...testInstance, setup_pending: true },
+    });
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    expect(router.state.location.pathname).toBe("/login");
+  });
+});
+
+describe("an invitation", () => {
+  const invite = {
+    kind: "email",
+    email: "jo@example.com",
+    workspace_name: "Studio",
+    role: "editor",
+    expires_at: "2026-12-01T10:00:00Z",
+  } as const;
+  const other = { ...testAccount, email: "sam@example.com" };
+
+  it("says why accepting it refused the account that signed in with it, and signing out stays on it", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "lookupInvite":
+          return invite;
+        case "login":
+          return testSession;
+        case "acceptInvite":
+          throw refused(403, { code: "invite_email_mismatch" });
+        case "getAccount":
+          return other;
+        case "logout":
+          return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/invite#token=secret");
+    const signIn = await screen.findByRole("region", {
+      name: "Have an account? Sign in",
+    });
+    await user.type(
+      within(signIn).getByLabelText("Password"),
+      "a passphrase of sam",
+    );
+    await user.click(
+      within(signIn).getByRole("button", { name: "Sign in and accept" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "This invitation is for jo@example.com, but you are signed in as sam@example.com. Sign out, and sign in with jo@example.com.",
+    );
+
+    const accept = screen.getByRole("region", { name: "Accept" });
+    await user.click(within(accept).getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("region", { name: "Have an account? Sign in" });
+    expect(router.state.location.pathname).toBe("/invite");
+    expect(router.state.location.hash).toBe("token=secret");
+  });
+});
+
+describe("resetting a password", () => {
+  it("leaves the page signed in to another account than the one that it reset", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "resetPassword":
+          return undefined;
+        case "getSession":
+          return testSession;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/reset-password#token=secret", {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("New password"),
+      "a new passphrase",
+    );
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Set the new password" }),
+    );
+    await screen.findByText(
+      "Your password is changed, and every session of your account is signed out. Sign in with the new password.",
+    );
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(
+      testSession,
+    );
+    expect(queryClient.getQueryData(accountQuery.queryKey)).toEqual(
+      testAccount,
+    );
   });
 });

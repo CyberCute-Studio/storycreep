@@ -304,4 +304,24 @@ describe("a client of generated operations", () => {
     expect(calls[0].init.signal).toBe(abort.signal);
     expect(new Headers(calls[0].init.headers).get("X-Test")).toBe("1");
   });
+
+  it("sends the client's headers, as they are at each call, under the call's own", async () => {
+    const { fetch, calls } = fakeFetch(() => json(200, {}));
+    let locale = "en";
+    const c = createClient<Operations>(routes, {
+      baseUrl,
+      fetch,
+      headers: () => ({ "Accept-Language": locale, "X-Test": "client" }),
+    });
+    await c.call("getThing", { path: { id: "1" } });
+    locale = "cs";
+    await c.call(
+      "getThing",
+      { path: { id: "1" } },
+      { headers: { "X-Test": "call" } },
+    );
+    const sent = calls.map((call) => new Headers(call.init.headers));
+    expect(sent.map((h) => h.get("Accept-Language"))).toEqual(["en", "cs"]);
+    expect(sent.map((h) => h.get("X-Test"))).toEqual(["client", "call"]);
+  });
 });

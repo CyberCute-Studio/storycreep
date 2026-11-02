@@ -28,7 +28,7 @@ function ForgotPassword() {
   });
   const refusal =
     request.error === null ? undefined : refusalOf(request.error, t);
-  useFocusRefusal(form, refusal);
+  useFocusRefusal(form, request.error);
 
   if (!instance.email_configured) {
     return (

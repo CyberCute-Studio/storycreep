@@ -7,6 +7,14 @@
 -- signup policy that it chose, or null if it chose none.
 SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_policy FROM instance;
 
+-- name: InstanceOffer :one
+-- InstanceOffer returns what the instance offers before anyone signs in
+-- (package account): InstanceSetup's columns, and whether first-run setup
+-- chose an SMTP server.
+SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_policy,
+    (smtp_host IS NOT NULL)::boolean AS smtp_chosen
+FROM instance;
+
 -- name: LockInstanceSetup :one
 -- LockInstanceSetup is InstanceSetup, and locks the row until the
 -- transaction ends, so that of two setups at once, the second waits for the

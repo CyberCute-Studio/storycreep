@@ -2,7 +2,7 @@
 // error that a screen reader reads with it (aria-describedby), and is at
 // least 44 pixels high, the size of a fingertip (PRD FR-EDIT-09). An error
 // marks its field invalid, and useFocusRefusal moves the focus to the first
-// such field once a form is refused.
+// such field once for each time that a form is refused.
 
 import {
   type ComponentProps,
@@ -10,6 +10,7 @@ import {
   type RefObject,
   useEffect,
   useId,
+  useRef,
 } from "react";
 
 /** The classes of a control's box: its boundary at 3:1 against the page. */
@@ -136,18 +137,26 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
 
 /**
  * Moves the focus to the first field of form that is marked invalid, once
- * refusal changes, as a form that the server refused shows its errors, so
- * that a keyboard or screen-reader user lands on what to mend. A refusal of
- * the whole form leaves the focus where it is: its alert is read out.
+ * for each refused attempt, as a form that the server refused shows its
+ * errors, so that a keyboard or screen-reader user lands on what to mend.
+ * attempt tells the attempt apart from the one before: the error that the
+ * form's mutation failed with, which stays the same object until the next
+ * attempt, or a mark of a submission that the form refused itself, as of
+ * passwords that differ, made anew for each, or null or undefined if the
+ * last attempt was not refused. Whatever else shows the form again, as the
+ * user ticking a box of it, leaves the focus where it is, and so does a
+ * refusal of the whole form: its alert is read out.
  */
 export function useFocusRefusal(
   form: RefObject<HTMLFormElement | null>,
-  refusal: unknown,
+  attempt: object | null | undefined,
 ): void {
+  const focused = useRef(new WeakSet<object>());
   useEffect(() => {
-    if (refusal === undefined) {
+    if (attempt == null || focused.current.has(attempt)) {
       return;
     }
+    focused.current.add(attempt);
     form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
-  }, [form, refusal]);
+  }, [form, attempt]);
 }

@@ -10,8 +10,13 @@ import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { createQueryClient, requestVersion, sessionQuery } from "./api";
-import { endSession } from "./auth/session";
+import {
+  createQueryClient,
+  requestsIn,
+  requestVersion,
+  sessionQuery,
+} from "./api";
+import { endSession, signInFor } from "./auth/session";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -29,10 +34,12 @@ if (nonce !== undefined) {
 }
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
+requestsIn(i18n);
 const queryClient = createQueryClient(errorLog, {
   // A request that the server answers with 401 tells that the page's
   // session has ended elsewhere, as when it was revoked: the page goes to
-  // the sign-in screen, which comes back to it once it has signed in again.
+  // the sign-in screen, which comes back to it once it has signed in again,
+  // with the token of a link's fragment, if it has one, still in a fragment.
   // The first such answer does; those of the requests that were under way
   // with it find the page signed out already.
   onUnauthenticated: () => {
@@ -40,10 +47,7 @@ const queryClient = createQueryClient(errorLog, {
       return;
     }
     void endSession(queryClient, () =>
-      router.navigate({
-        to: "/login",
-        search: { redirect: router.state.location.href },
-      }),
+      router.navigate(signInFor(router.state.location)),
     );
   },
 });

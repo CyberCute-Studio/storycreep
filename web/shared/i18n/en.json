@@ -155,6 +155,7 @@
   "sessions.unknown_ip": "Unknown",
   "setup.code.hint": "The server writes it to its log while setup is pending, as setup_code, such as 7K2M-Q9XD-4RTB-H8VW. With Docker Compose, docker compose logs app shows it.",
   "setup.code.label": "Setup code",
+  "setup.completed": "This instance is set up. Sign in with the email address and the password of the account that you created.",
   "setup.error.code": "This is not the setup code of this instance. Copy it from the server's log.",
   "setup.error.slug_taken": "Another workspace has the address that this name gives. Choose another name.",
   "setup.intro": "This instance is new. Create its first account, which administers the instance, and its first workspace.",

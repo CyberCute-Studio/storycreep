@@ -111,6 +111,36 @@ export function signInSearch(search: Record<string, unknown>): SignInSearch {
   return path === undefined ? {} : { redirect: path };
 }
 
+/**
+ * Returns where the sign-in screen is that comes back to location once the
+ * page has signed in: the screen's redirect holds the location's path and
+ * query, and the screen's own fragment holds the location's, so that the
+ * token of a link, as an invitation's, stays in a fragment, which a browser
+ * sends to no server, nor writes in a Referer or a query (plan note N26),
+ * and comes back with it (signInReturn).
+ */
+export function signInFor(location: Pick<ParsedLocation, "href" | "hash">) {
+  return {
+    to: "/login",
+    // The path and the query of href, whose fragment is the only part of it
+    // with a #: the query that the router writes encodes one.
+    search: { redirect: location.href.split("#", 1)[0] },
+    hash: location.hash,
+  } as const;
+}
+
+/**
+ * Returns the page that the sign-in screen goes to once it has signed in:
+ * its redirect, with the screen's fragment (signInFor), or else the start
+ * page.
+ */
+export function signInReturn(search: SignInSearch, hash: string): string {
+  if (search.redirect === undefined) {
+    return "/";
+  }
+  return hash === "" ? search.redirect : `${search.redirect}#${hash}`;
+}
+
 /** What a route's beforeLoad is given that the guards read. */
 interface GuardArgs {
   context: RouterContext;
@@ -126,7 +156,7 @@ interface GuardArgs {
 export async function requireSession({ context, location }: GuardArgs) {
   const session = await context.queryClient.ensureQueryData(sessionQuery);
   if (session === null) {
-    throw redirect({ to: "/login", search: { redirect: location.href } });
+    throw redirect(signInFor(location));
   }
   await context.queryClient.ensureQueryData(accountQuery);
   return { session };

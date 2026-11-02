@@ -142,22 +142,29 @@ test.describe("the session over each transport", () => {
     try {
       expect(instance.url).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/);
       const { context, page } = await open(browser, instance, refused);
-      await setUpAndSignIn(page, instance);
-      await keepsSession(page);
-      const cookie = await sessionCookie(context);
-      expect(cookie).toMatchObject({
-        name: "sc_session",
-        secure: false,
-        httpOnly: true,
-        sameSite: "Lax",
-        path: "/",
-      });
-      // Every page says that it travels unencrypted, signed in or not.
-      await expect(page.getByText(en["shell.unencrypted.title"])).toBeVisible();
-      expect(await violations(page)).toEqual([]);
-      await page.goto("/app/login");
-      await expect(page.getByText(en["shell.unencrypted.title"])).toBeVisible();
-      await context.close();
+      try {
+        await setUpAndSignIn(page, instance);
+        await keepsSession(page);
+        const cookie = await sessionCookie(context);
+        expect(cookie).toMatchObject({
+          name: "sc_session",
+          secure: false,
+          httpOnly: true,
+          sameSite: "Lax",
+          path: "/",
+        });
+        // Every page says that it travels unencrypted, signed in or not.
+        await expect(
+          page.getByText(en["shell.unencrypted.title"]),
+        ).toBeVisible();
+        expect(await violations(page)).toEqual([]);
+        await page.goto("/app/login");
+        await expect(
+          page.getByText(en["shell.unencrypted.title"]),
+        ).toBeVisible();
+      } finally {
+        await context.close();
+      }
     } finally {
       await instance.stop();
     }
@@ -178,21 +185,24 @@ test.describe("the session over each transport", () => {
     try {
       expect(instance.url).toMatch(/^https:\/\/localhost:\d+$/);
       const { context, page } = await open(browser, instance, refused);
-      await setUpAndSignIn(page, instance);
-      await keepsSession(page);
-      const cookie = await sessionCookie(context);
-      expect(cookie).toMatchObject({
-        name: "__Host-sc_session",
-        secure: true,
-        httpOnly: true,
-        sameSite: "Lax",
-        path: "/",
-      });
-      expect(cookie.domain).toBe("localhost");
-      await expect(page.getByText(en["shell.unencrypted.title"])).toHaveCount(
-        0,
-      );
-      await context.close();
+      try {
+        await setUpAndSignIn(page, instance);
+        await keepsSession(page);
+        const cookie = await sessionCookie(context);
+        expect(cookie).toMatchObject({
+          name: "__Host-sc_session",
+          secure: true,
+          httpOnly: true,
+          sameSite: "Lax",
+          path: "/",
+        });
+        expect(cookie.domain).toBe("localhost");
+        await expect(page.getByText(en["shell.unencrypted.title"])).toHaveCount(
+          0,
+        );
+      } finally {
+        await context.close();
+      }
     } finally {
       await instance.stop();
     }

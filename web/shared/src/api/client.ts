@@ -53,6 +53,12 @@ export interface ClientOptions {
   baseUrl: string;
   /** The fetch that calls the server; the global one if not set. */
   fetch?: typeof fetch;
+  /**
+   * Returns the headers that every call sends, as the locale that the
+   * server's messages are to be in, which it reads at each call: a call's
+   * own headers, and its operation's, replace them.
+   */
+  headers?: () => HeadersInit;
 }
 
 export interface CallOptions {
@@ -115,7 +121,10 @@ export function createClient<Ops extends Record<keyof Ops, OperationShape>>(
     async call(operation, ...[input, callOptions]) {
       const route = routes[operation];
       const parts = (input ?? {}) as OperationShape["input"];
-      const headers = new Headers(callOptions?.headers);
+      const headers = new Headers(options.headers?.());
+      new Headers(callOptions?.headers).forEach((value, name) => {
+        headers.set(name, value);
+      });
       if (!route.blob) {
         headers.set("Accept", "application/json");
       }

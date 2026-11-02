@@ -115,9 +115,13 @@ async function ready(url: string, timeout: number): Promise<void> {
   }
 }
 
-/** Ends child, and resolves once it has exited. */
+/** Ends child, and resolves once it has exited, or at once if it never ran. */
 async function end(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) {
+  if (
+    child.pid === undefined ||
+    child.exitCode !== null ||
+    child.signalCode !== null
+  ) {
     return;
   }
   const exited = new Promise<void>((resolve) =>
@@ -190,7 +194,7 @@ export async function startInstance(
       );
       children.push(proxy);
       await new Promise<void>((resolve, reject) => {
-        proxy.once("error", reject);
+        proxy.on("error", reject);
         proxy.once("exit", (code) =>
           reject(new Error(`the TLS proxy exited with ${code}`)),
         );
@@ -214,7 +218,17 @@ export async function startInstance(
       stdio: ["ignore", "pipe", "pipe"],
     });
     children.push(server);
-    const setupCode = new Promise<string>((resolve) => {
+    // Rejects if the server cannot be started, or stops before it is
+    // stopped, which fails what waits for it, not the test's worker. Its
+    // rejection once the instance is stopped is no one's to handle.
+    const failed = new Promise<never>((_, reject) => {
+      server.on("error", reject);
+      server.once("exit", (code, signal) =>
+        reject(new Error(`the server exited with ${code ?? signal}`)),
+      );
+    });
+    failed.catch(() => {});
+    const logged = new Promise<string>((resolve) => {
       for (const stream of [server.stdout, server.stderr]) {
         createInterface({ input: stream as NodeJS.ReadableStream }).on(
           "line",
@@ -231,9 +245,14 @@ export async function startInstance(
         );
       }
     });
+    const setupCode = Promise.race([logged, failed]);
+    setupCode.catch(() => {});
     // The server checks its readiness on its own address, which the proxy
     // passes it on to.
-    await ready(`http://${options.host}:${serverPort}/readyz`, 120_000);
+    await Promise.race([
+      ready(`http://${options.host}:${serverPort}/readyz`, 120_000),
+      failed,
+    ]);
     return { url, setupCode, stop };
   } catch (error) {
     await stop();

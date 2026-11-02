@@ -82,6 +82,28 @@ func (q *Queries) DatabaseIdentity(ctx context.Context) (string, error) {
 	return identity, err
 }
 
+const instanceOffer = `-- name: InstanceOffer :one
+SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, signup_policy,
+    (smtp_host IS NOT NULL)::boolean AS smtp_chosen
+FROM instance
+`
+
+type InstanceOfferRow struct {
+	SetupCompleted bool
+	SignupPolicy   pgtype.Text
+	SmtpChosen     bool
+}
+
+// InstanceOffer returns what the instance offers before anyone signs in
+// (package account): InstanceSetup's columns, and whether first-run setup
+// chose an SMTP server.
+func (q *Queries) InstanceOffer(ctx context.Context) (InstanceOfferRow, error) {
+	row := q.db.QueryRow(ctx, instanceOffer)
+	var i InstanceOfferRow
+	err := row.Scan(&i.SetupCompleted, &i.SignupPolicy, &i.SmtpChosen)
+	return i, err
+}
+
 const instanceS3 = `-- name: InstanceS3 :one
 SELECT (setup_completed_at IS NOT NULL)::boolean AS setup_completed, s3_host, s3_port, s3_security, s3_bucket,
     s3_region, s3_access_key_id, s3_secret_access_key

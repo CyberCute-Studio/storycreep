@@ -8,7 +8,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
-import { bodyField, passwordsDiffer } from "../auth/forms";
+import {
+  bodyField,
+  type Mismatch,
+  minPasswordLength,
+  passwordMismatch,
+} from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, signedIn } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
@@ -152,7 +157,7 @@ function Password() {
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState(false);
+  const [mismatch, setMismatch] = useState<Mismatch>();
   const change = useMutation({
     mutationFn: async (body: {
       current_password: string;
@@ -180,15 +185,15 @@ function Password() {
       : refusalOf(change.error, t, passwordField);
   const errors: Record<string, string | undefined> = {
     ...refusal?.fields,
-    ...(mismatch ? { confirm: t("auth.error.passwords_differ") } : {}),
+    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
   };
-  useFocusRefusal(form, mismatch ? errors : refusal);
+  useFocusRefusal(form, mismatch ?? change.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordsDiffer(data, "new_password");
+    const differ = passwordMismatch(data, "new_password");
     setMismatch(differ);
-    if (!differ) {
+    if (differ === undefined) {
       change.mutate({
         current_password: String(data.get("current_password")),
         new_password: String(data.get("new_password")),
@@ -220,7 +225,7 @@ function Password() {
         />
         <TextField
           label={t("auth.new_password")}
-          hint={t("auth.password_hint", { min: 12 })}
+          hint={t("auth.password_hint", { min: minPasswordLength })}
           name="new_password"
           type="password"
           autoComplete="new-password"

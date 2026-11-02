@@ -41,15 +41,12 @@ func registerInstance(m *api.Mux, accounts *account.Service, defaultLocale langu
 			"locale.",
 		Tags: []string{"Instance"},
 	}, func(ctx context.Context, _ *struct{}) (*instanceOutput, error) {
-		configured, err := accounts.EmailConfigured(ctx)
+		offer, err := accounts.Offer(ctx)
 		if err != nil {
 			return nil, err
 		}
-		policy, completed, err := accounts.Signup(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return &instanceOutput{Body: instanceBody{EmailConfigured: configured, SetupPending: !completed,
-			SignupPolicy: string(policy), DefaultLocale: defaultLocale.String()}}, nil
+		return &instanceOutput{Body: instanceBody{EmailConfigured: offer.EmailConfigured,
+			SetupPending: !offer.SetupCompleted, SignupPolicy: string(offer.Signup),
+			DefaultLocale: defaultLocale.String()}}, nil
 	})
 }

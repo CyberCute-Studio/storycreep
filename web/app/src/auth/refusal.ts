@@ -3,10 +3,11 @@
 // field that the server names, as a password that is too short, or for the
 // whole form, as a wrong password at sign-in. A refusal whose code the app
 // does not know is shown in the server's own words, which it writes in the
-// request's locale (PRD FR-I18N-01).
+// locale that the request asks for, the page's (api.ts, PRD FR-I18N-01).
 
 import { ApiError } from "@storycreep/shared/api";
 import type { TFunction } from "i18next";
+import { minPasswordLength } from "./forms";
 
 /** What a form shows of a failed request. */
 export interface Refusal {
@@ -108,7 +109,7 @@ function problemMessage(
   switch (code) {
     case "weak_password":
       return details.reason === "too_short"
-        ? t("auth.error.password_too_short", { min: 12 })
+        ? t("auth.error.password_too_short", { min: minPasswordLength })
         : t("auth.error.password_common");
     case "wrong_password":
       return t("auth.error.wrong_password");

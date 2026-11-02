@@ -18,7 +18,13 @@ import type { TFunction } from "i18next";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
-import { passwordsDiffer, registrationField } from "../auth/forms";
+import {
+  type Mismatch,
+  minPasswordLength,
+  passwordMismatch,
+  registrationField,
+  signInRegistered,
+} from "../auth/forms";
 import { useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
 import { roleName } from "../auth/roles";
@@ -80,6 +86,9 @@ function InviteOf({ token }: { token: string }) {
   const lookup = useQuery(inviteQuery(token));
   const session = useQuery(sessionQuery).data;
   const [joined, setJoined] = useState<MembershipBody>();
+  // The refusal of an acceptance that signed in first, which the signed-in
+  // step that follows shows, since the step that made it is gone.
+  const [refused, setRefused] = useState<unknown>(null);
   // Once joined, the page shows the membership, whatever it reads of the
   // invitation since, which its acceptance used: signing in with it drops
   // the page's queries, the invitation's too, which then answers 410.
@@ -137,10 +146,16 @@ function InviteOf({ token }: { token: string }) {
           token={token}
           invite={invite}
           session={session}
+          refused={refused}
           onJoined={setJoined}
         />
       ) : (
-        <AcceptSignedOut token={token} invite={invite} onJoined={setJoined} />
+        <AcceptSignedOut
+          token={token}
+          invite={invite}
+          onJoined={setJoined}
+          onRefused={setRefused}
+        />
       )}
     </Page>
   );
@@ -152,24 +167,30 @@ interface AcceptProps {
   onJoined: (membership: MembershipBody) => void;
 }
 
-/** Accepting the invitation as the signed-in user. */
+/**
+ * Accepting the invitation as the signed-in user, which shows refused, the
+ * refusal of an acceptance that signed in first, until it accepts again.
+ * Signing out of an account that the invitation is not for stays on the
+ * invitation, to sign in with the one that it is for.
+ */
 function AcceptSignedIn({
   token,
   invite,
   session,
+  refused,
   onJoined,
-}: AcceptProps & { session: SignedInBody }) {
+}: AcceptProps & { session: SignedInBody; refused: unknown }) {
   const { t } = useTranslation();
   const account = useSuspenseQuery(accountQuery).data;
-  const signOut = useSignOut();
+  const signOut = useSignOut({ stay: true });
   const join = useMutation({
     mutationFn: () => accept(token, session),
     onSuccess: onJoined,
     meta: { showsRefusals: true },
   });
+  const error = join.isIdle ? refused : join.error;
   const mismatch =
-    join.error instanceof ApiError &&
-    join.error.error?.code === "invite_email_mismatch";
+    error instanceof ApiError && error.error?.code === "invite_email_mismatch";
   return (
     <section className="space-y-4" aria-labelledby="invite-accept">
       <h2 id="invite-accept" className="text-lg font-semibold">
@@ -178,11 +199,11 @@ function AcceptSignedIn({
       <p>{t("invite.signed_in_as", { email: account.email })}</p>
       <Alert
         message={
-          join.error === null
+          error === null
             ? undefined
             : mismatch
               ? mismatchMessage(t, invite, account)
-              : refusalOf(join.error, t).message
+              : refusalOf(error, t).message
         }
       />
       <div className="flex flex-wrap gap-2">
@@ -220,9 +241,16 @@ function mismatchMessage(
 /**
  * Signing in, or registering, and accepting the invitation, in one step:
  * the page records its session once the invitation is accepted, or refused,
- * so that it does not show the signed-in step in between.
+ * so that it does not show the signed-in step in between. A refusal is told
+ * to onRefused first, since the signed-in step, which shows it, replaces
+ * this one.
  */
-function AcceptSignedOut({ token, invite, onJoined }: AcceptProps) {
+function AcceptSignedOut({
+  token,
+  invite,
+  onJoined,
+  onRefused,
+}: AcceptProps & { onRefused: (error: unknown) => void }) {
   const { t } = useTranslation();
   const instance = useSuspenseQuery(instanceQuery).data;
   const client = useQueryClient();
@@ -231,6 +259,9 @@ function AcceptSignedOut({ token, invite, onJoined }: AcceptProps) {
       .body;
     try {
       return await accept(token, session);
+    } catch (error) {
+      onRefused(error);
+      throw error;
     } finally {
       signedIn(client, session);
     }
@@ -275,7 +306,7 @@ function SignInAndAccept({ invite, signInThenAccept, onJoined }: StepProps) {
     meta: { showsRefusals: true },
   });
   const refusal = join.error === null ? undefined : refusalOf(join.error, t);
-  useFocusRefusal(form, refusal);
+  useFocusRefusal(form, join.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -325,7 +356,7 @@ function RegisterAndAccept({
 }: StepProps & { token: string }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState(false);
+  const [mismatch, setMismatch] = useState<Mismatch>();
   const join = useMutation({
     mutationFn: async (c: {
       email: string;
@@ -341,20 +372,7 @@ function RegisterAndAccept({
           ...(invite.kind === "link" ? { email: c.email } : {}),
         },
       });
-      try {
-        return await signInThenAccept(c.email, c.password);
-      } catch (error) {
-        // The server answers a registration alike whether or not the
-        // address has an account; one that had, with another password,
-        // stays as it was.
-        if (
-          error instanceof ApiError &&
-          error.error?.code === "invalid_credentials"
-        ) {
-          return "registered";
-        }
-        throw error;
-      }
+      return signInRegistered(() => signInThenAccept(c.email, c.password));
     },
     onSuccess: (registered) => {
       if (registered !== "registered") {
@@ -369,15 +387,15 @@ function RegisterAndAccept({
       : refusalOf(join.error, t, registrationField);
   const errors: Record<string, string | undefined> = {
     ...refusal?.fields,
-    ...(mismatch ? { confirm: t("auth.error.passwords_differ") } : {}),
+    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
   };
-  useFocusRefusal(form, mismatch ? errors : refusal);
+  useFocusRefusal(form, mismatch ?? join.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordsDiffer(data);
+    const differ = passwordMismatch(data);
     setMismatch(differ);
-    if (!differ) {
+    if (differ === undefined) {
       join.mutate({
         email: invite.email ?? String(data.get("email")),
         display_name: String(data.get("display_name")),
@@ -426,7 +444,7 @@ function RegisterAndAccept({
         )}
         <TextField
           label={t("auth.new_password")}
-          hint={t("auth.password_hint", { min: 12 })}
+          hint={t("auth.password_hint", { min: minPasswordLength })}
           name="password"
           type="password"
           autoComplete="new-password"

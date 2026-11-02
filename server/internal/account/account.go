@@ -225,33 +225,55 @@ func (s *Service) CheckInvitedSignup(ctx context.Context) error {
 // signupPolicy returns the signup policy that applies, once first-run setup
 // has completed, or ErrSetupRequired until then.
 func (s *Service) signupPolicy(ctx context.Context) (config.SignupPolicy, error) {
-	policy, completed, err := s.Signup(ctx)
-	switch {
-	case err != nil:
-		return "", err
-	case !completed:
-		return "", ErrSetupRequired
-	}
-	return policy, nil
-}
-
-// Signup returns the signup policy that applies, the policy of the Signup
-// capability or else the one that first-run setup chose
-// (config.SignupPolicy.Resolve), closed while setup has chosen none, and
-// whether setup has completed, until which nobody registers, whatever the
-// policy. A page reads them to offer registration where the policy lets
-// anyone register.
-func (s *Service) Signup(ctx context.Context) (policy config.SignupPolicy, completed bool, err error) {
 	var row queries.InstanceSetupRow
-	err = s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
 		var err error
 		row, err = queries.New(tx).InstanceSetup(ctx)
 		return err
 	})
-	if err != nil {
-		return "", false, fmt.Errorf("account: read the instance's setup: %w", err)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("account: read the instance's setup: %w", err)
+	case !row.SetupCompleted:
+		return "", ErrSetupRequired
 	}
-	return s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String)), row.SetupCompleted, nil
+	return s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String)), nil
+}
+
+// Offer is what the instance offers before anyone signs in, which a page
+// reads to lead to first-run setup while it is pending, and to offer
+// registration where the policy lets anyone register.
+type Offer struct {
+	// SetupCompleted is whether first-run setup has completed, until which
+	// nobody signs in or registers.
+	SetupCompleted bool
+	// Signup is the signup policy that applies: closed until setup has
+	// completed, whatever the configuration sets, and then the policy of
+	// the Signup capability or else the one that setup chose
+	// (config.SignupPolicy.Resolve).
+	Signup config.SignupPolicy
+	// EmailConfigured is whether the instance sends email (EmailConfigured).
+	EmailConfigured bool
+}
+
+// Offer returns what the instance offers before anyone signs in, from one
+// read of the instance's row.
+func (s *Service) Offer(ctx context.Context) (Offer, error) {
+	var row queries.InstanceOfferRow
+	err := s.db.InTx(ctx, database.Scope{}, func(tx pgx.Tx) error {
+		var err error
+		row, err = queries.New(tx).InstanceOffer(ctx)
+		return err
+	})
+	if err != nil {
+		return Offer{}, fmt.Errorf("account: read what the instance offers: %w", err)
+	}
+	offer := Offer{SetupCompleted: row.SetupCompleted, Signup: config.SignupClosed,
+		EmailConfigured: s.email != nil && s.email.ConfiguredBy(row.SmtpChosen)}
+	if row.SetupCompleted {
+		offer.Signup = s.signup.Resolve(config.SignupPolicy(row.SignupPolicy.String))
+	}
+	return offer, nil
 }
 
 // Registration is what an account is registered with.

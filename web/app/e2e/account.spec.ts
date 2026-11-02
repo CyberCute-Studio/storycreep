@@ -61,33 +61,42 @@ test("the language that the user saves stays the account's, after a reload too",
 test("the account's sessions, each of which, or all but this one, it signs out", async ({
   page,
   playwright,
+  baseURL,
+  extraHTTPHeaders,
 }) => {
   const email = await signedIn(page, "Sid Sessions");
-  // A second session, as of another device.
+  // A second session, as of another device, from the test's own address.
   const other = await playwright.request.newContext({
-    baseURL: test.info().project.use.baseURL,
-    extraHTTPHeaders: test.info().project.use.extraHTTPHeaders,
+    baseURL,
+    extraHTTPHeaders,
     userAgent: "e2e another device",
   });
-  await apiSignIn(other, email);
+  try {
+    await apiSignIn(other, email);
 
-  await page.goto("/app/account/sessions");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    en["sessions.title"],
-  );
-  const items = page
-    .getByRole("list", { name: en["sessions.title"] })
-    .getByRole("listitem");
-  await expect(items).toHaveCount(2);
-  await expect(page.getByText("e2e another device")).toBeVisible();
-  await expect(page.getByText(en["sessions.current"])).toBeVisible();
-  expect(await violations(page)).toEqual([]);
+    await page.goto("/app/account/sessions");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      en["sessions.title"],
+    );
+    const items = page
+      .getByRole("list", { name: en["sessions.title"] })
+      .getByRole("listitem");
+    await expect(items).toHaveCount(2);
+    await expect(page.getByText("e2e another device")).toBeVisible();
+    await expect(page.getByText(en["sessions.current"])).toBeVisible();
+    expect(await violations(page)).toEqual([]);
 
-  await press(page.getByRole("button", { name: en["sessions.revoke_others"] }));
-  await expect(page.getByText("Signed out of 1 other session.")).toBeVisible();
-  await expect(items).toHaveCount(1);
-  expect((await other.get("/api/v1/auth/session")).status()).toBe(401);
-  await other.dispose();
+    await press(
+      page.getByRole("button", { name: en["sessions.revoke_others"] }),
+    );
+    await expect(
+      page.getByText("Signed out of 1 other session."),
+    ).toBeVisible();
+    await expect(items).toHaveCount(1);
+    expect((await other.get("/api/v1/auth/session")).status()).toBe(401);
+  } finally {
+    await other.dispose();
+  }
 
   // Signing out this one goes to signing in.
   await press(page.getByRole("button", { name: en["sessions.sign_out_here"] }));
@@ -100,6 +109,8 @@ test("the account's sessions, each of which, or all but this one, it signs out",
 test("an API token, whose secret the page shows once, which works until it is revoked", async ({
   page,
   playwright,
+  baseURL,
+  extraHTTPHeaders,
 }) => {
   await signedIn(page, "Tia Tokens");
   await page.goto("/app/account/tokens");
@@ -136,26 +147,30 @@ test("an API token, whose secret the page shows once, which works until it is re
   // The secret is shown nowhere else.
   await expect(page.getByText(value)).toHaveCount(0);
 
+  // A program that holds the token, from the test's own address.
   const program = await playwright.request.newContext({
-    baseURL: test.info().project.use.baseURL,
+    baseURL,
     extraHTTPHeaders: {
-      ...test.info().project.use.extraHTTPHeaders,
+      ...extraHTTPHeaders,
       Authorization: `Bearer ${value}`,
     },
   });
-  expect((await program.get("/api/v1/workspaces")).status()).toBe(200);
+  try {
+    expect((await program.get("/api/v1/workspaces")).status()).toBe(200);
 
-  await press(item.getByRole("button", { name: en["tokens.revoke"] }));
-  const confirm = page.getByRole("alertdialog");
-  await expect(confirm).toBeVisible();
-  expect(await violations(page)).toEqual([]);
-  await press(
-    confirm.getByRole("button", { name: en["tokens.revoke_confirm"] }),
-  );
-  await expect(confirm).toBeHidden();
-  await expect(page.getByText(en["tokens.empty"])).toBeVisible();
-  expect((await program.get("/api/v1/workspaces")).status()).toBe(401);
-  await program.dispose();
+    await press(item.getByRole("button", { name: en["tokens.revoke"] }));
+    const confirm = page.getByRole("alertdialog");
+    await expect(confirm).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await press(
+      confirm.getByRole("button", { name: en["tokens.revoke_confirm"] }),
+    );
+    await expect(confirm).toBeHidden();
+    await expect(page.getByText(en["tokens.empty"])).toBeVisible();
+    expect((await program.get("/api/v1/workspaces")).status()).toBe(401);
+  } finally {
+    await program.dispose();
+  }
 });
 
 test("changing the password, after which the new one signs in", async ({

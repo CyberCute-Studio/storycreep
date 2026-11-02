@@ -20,10 +20,33 @@ import {
   type QueryMeta,
   queryOptions,
 } from "@tanstack/react-query";
+import type { i18n as I18n } from "i18next";
 import type { ErrorLog } from "./errors/log";
 
+/** The locale that the page is shown in, once requestsIn has been told it. */
+let pageLocale: string | undefined;
+
+/**
+ * Makes every request ask for the server's messages in the locale that i18n
+ * shows the page in, from then on, as the locale changes too: the
+ * refusals that a form shows in the server's own words, and the emails that
+ * a request asks for, where the account prefers no locale. The browser's
+ * own Accept-Language names its languages alone, which the user's
+ * preference comes before (PRD FR-I18N-02).
+ */
+export function requestsIn(i18n: I18n): void {
+  pageLocale = i18n.language;
+  i18n.on("languageChanged", (locale: string) => {
+    pageLocale = locale;
+  });
+}
+
 /** The client of the API of the server that serves the app. */
-export const api = createApiClient({ baseUrl: "" });
+export const api = createApiClient({
+  baseUrl: "",
+  headers: (): Record<string, string> =>
+    pageLocale === undefined ? {} : { "Accept-Language": pageLocale },
+});
 
 /**
  * What a query or a mutation tells the query client of itself. A form that

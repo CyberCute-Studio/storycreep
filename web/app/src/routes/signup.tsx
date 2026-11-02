@@ -1,4 +1,4 @@
-import { ApiError, type RegisterBody } from "@storycreep/shared/api";
+import type { RegisterBody } from "@storycreep/shared/api";
 import {
   useMutation,
   useQueryClient,
@@ -8,7 +8,13 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, instanceQuery } from "../api";
-import { passwordsDiffer, registrationField } from "../auth/forms";
+import {
+  type Mismatch,
+  minPasswordLength,
+  passwordMismatch,
+  registrationField,
+  signInRegistered,
+} from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { requireSignedOut, signIn } from "../auth/session";
 import { Button } from "../ui/Button";
@@ -34,22 +40,14 @@ function Signup() {
   const navigate = useNavigate();
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
-  const [mismatch, setMismatch] = useState(false);
+  const [mismatch, setMismatch] = useState<Mismatch>();
   const register = useMutation({
     mutationFn: async (body: RegisterBody): Promise<Registered> => {
       await api.call("registerAccount", { body });
-      try {
+      return signInRegistered(async () => {
         await signIn(client, { email: body.email, password: body.password });
-        return "signed-in";
-      } catch (error) {
-        if (
-          error instanceof ApiError &&
-          error.error?.code === "invalid_credentials"
-        ) {
-          return "registered";
-        }
-        throw error;
-      }
+        return "signed-in" as const;
+      });
     },
     onSuccess: (registered) => {
       if (registered === "signed-in") {
@@ -64,9 +62,9 @@ function Signup() {
       : refusalOf(register.error, t, registrationField);
   const errors: Record<string, string | undefined> = {
     ...refusal?.fields,
-    ...(mismatch ? { confirm: t("auth.error.passwords_differ") } : {}),
+    ...(mismatch && { [mismatch.field]: t("auth.error.passwords_differ") }),
   };
-  useFocusRefusal(form, mismatch ? errors : refusal);
+  useFocusRefusal(form, mismatch ?? register.error);
 
   if (instance.signup_policy !== "open") {
     return (
@@ -96,9 +94,9 @@ function Signup() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const differ = passwordsDiffer(data);
+    const differ = passwordMismatch(data);
     setMismatch(differ);
-    if (differ) {
+    if (differ !== undefined) {
       return;
     }
     register.mutate({
@@ -129,7 +127,7 @@ function Signup() {
         />
         <TextField
           label={t("auth.new_password")}
-          hint={t("auth.password_hint", { min: 12 })}
+          hint={t("auth.password_hint", { min: minPasswordLength })}
           name="password"
           type="password"
           autoComplete="new-password"

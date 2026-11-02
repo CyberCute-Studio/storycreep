@@ -9,10 +9,17 @@ import {
   versionQuery,
 } from "../api";
 import { testAccount, testInstance, testSession } from "../test/app";
-import { bodyField } from "./forms";
+import { bodyField, passwordMismatch, signInRegistered } from "./forms";
 import { fragmentToken } from "./fragment";
 import { refusalOf } from "./refusal";
-import { appPath, signedIn, signedOut, signInSearch } from "./session";
+import {
+  appPath,
+  signedIn,
+  signedOut,
+  signInFor,
+  signInReturn,
+  signInSearch,
+} from "./session";
 
 const t = createI18n("en").t;
 
@@ -149,6 +156,61 @@ describe("appPath", () => {
     expect(signInSearch({ redirect: "/account" })).toEqual({
       redirect: "/account",
     });
+  });
+});
+
+describe("signInFor and signInReturn", () => {
+  it("keep a link's token in a fragment on the way to signing in and back", () => {
+    const to = signInFor({
+      href: "/invite?x=%23y#token=abc",
+      hash: "token=abc",
+    });
+    expect(to).toEqual({
+      to: "/login",
+      search: { redirect: "/invite?x=%23y" },
+      hash: "token=abc",
+    });
+    expect(signInReturn(to.search, to.hash)).toBe("/invite?x=%23y#token=abc");
+    expect(signInFor({ href: "/account", hash: "" })).toEqual({
+      to: "/login",
+      search: { redirect: "/account" },
+      hash: "",
+    });
+    expect(signInReturn({ redirect: "/account" }, "")).toBe("/account");
+    // A fragment without a page to go back to stays on the sign-in screen.
+    expect(signInReturn({}, "token=abc")).toBe("/");
+  });
+});
+
+describe("passwordMismatch", () => {
+  it("marks each submission whose passwords differ anew", () => {
+    const data = (password: string, confirm: string) => {
+      const d = new FormData();
+      d.set("password", password);
+      d.set("confirm", confirm);
+      return d;
+    };
+    expect(passwordMismatch(data("a", "a"))).toBeUndefined();
+    const first = passwordMismatch(data("a", "b"));
+    expect(first).toEqual({ field: "confirm" });
+    expect(passwordMismatch(data("a", "b"))).not.toBe(first);
+  });
+});
+
+describe("signInRegistered", () => {
+  it("takes refused credentials for an address that had an account", async () => {
+    expect(await signInRegistered(async () => "signed-in")).toBe("signed-in");
+    expect(
+      await signInRegistered(async () => {
+        throw refused(401, { code: "invalid_credentials" });
+      }),
+    ).toBe("registered");
+    const limited = refused(429, { code: "rate_limited" });
+    await expect(
+      signInRegistered(async () => {
+        throw limited;
+      }),
+    ).rejects.toBe(limited);
   });
 });
 

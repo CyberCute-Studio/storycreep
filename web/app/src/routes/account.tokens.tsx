@@ -309,6 +309,17 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const expired =
     token.expires_at !== undefined &&
     Date.parse(token.expires_at) <= Date.now();
+  // The confirmation stays open while the token is being revoked, and opens
+  // again without the refusal of the attempt before.
+  const onOpenChange = (next: boolean) => {
+    if (!next && revoke.isPending) {
+      return;
+    }
+    setConfirming(next);
+    if (!next) {
+      revoke.reset();
+    }
+  };
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">
@@ -349,7 +360,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
               : formatDate(locale, new Date(token.expires_at))}
         </dd>
       </dl>
-      <AlertDialog.Root open={confirming} onOpenChange={setConfirming}>
+      <AlertDialog.Root open={confirming} onOpenChange={onOpenChange}>
         <AlertDialog.Trigger asChild>
           <Button variant="danger" aria-describedby={nameId}>
             {t("tokens.revoke")}
@@ -368,7 +379,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
           />
           <div className="flex flex-wrap justify-end gap-2">
             <AlertDialog.Cancel asChild>
-              <Button>{t("tokens.cancel")}</Button>
+              <Button disabled={revoke.isPending}>{t("tokens.cancel")}</Button>
             </AlertDialog.Cancel>
             {/* Not an AlertDialog.Action, which would close the dialog
                 before the request has answered. */}
@@ -428,8 +439,13 @@ function CreateToken({
   });
   const refusal =
     create.error === null ? undefined : refusalOf(create.error, t, tokenField);
-  useFocusRefusal(form, refusal);
+  useFocusRefusal(form, create.error);
   const onOpenChange = (next: boolean) => {
+    // The dialog stays open while the token is being made, whose secret
+    // only it shows.
+    if (!next && create.isPending) {
+      return;
+    }
     setOpen(next);
     if (!next) {
       // The secret goes with the dialog: it is never shown again.
@@ -487,7 +503,9 @@ function CreateToken({
             </SelectField>
             <div className="flex flex-wrap justify-end gap-2">
               <Dialog.Close asChild>
-                <Button>{t("tokens.cancel")}</Button>
+                <Button disabled={create.isPending}>
+                  {t("tokens.cancel")}
+                </Button>
               </Dialog.Close>
               <Button
                 type="submit"
