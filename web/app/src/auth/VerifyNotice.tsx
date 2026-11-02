@@ -24,9 +24,6 @@ export function VerifyNotice({
   const session = useQuery(sessionQuery).data;
   const resend = useMutation({
     mutationFn: async () => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       await api.call("requestEmailVerification", {
         headers: csrfHeaders(session),
       });

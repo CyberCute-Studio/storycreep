@@ -1,9 +1,10 @@
 import { ApiError, type ErrorBody } from "@storycreep/shared/api";
 import { createI18n } from "@storycreep/shared/i18n";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   accountQuery,
+  api,
   instanceQuery,
   sessionQuery,
   versionQuery,
@@ -14,6 +15,7 @@ import { fragmentToken } from "./fragment";
 import { refusalOf } from "./refusal";
 import {
   appPath,
+  followSession,
   signedIn,
   signedOut,
   signInFor,
@@ -256,5 +258,127 @@ describe("signedIn and signedOut", () => {
     expect(client.getQueryData(["tokens"])).toBeUndefined();
     expect(client.getQueryData(instanceQuery.queryKey)).toEqual(testInstance);
     expect(client.getQueryData(versionQuery.queryKey)).toBeDefined();
+  });
+});
+
+describe("followSession", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** A document whose tab the test hides and shows. */
+  function tab() {
+    const doc = Object.assign(new EventTarget(), {
+      visibilityState: "visible" as DocumentVisibilityState,
+    });
+    const show = () => {
+      doc.visibilityState = "visible";
+      doc.dispatchEvent(new Event("visibilitychange"));
+    };
+    return { doc, show };
+  }
+
+  /** Answers getSession with each of answers in turn, as the server would. */
+  function sessions(...answers: (typeof testSession | null | Error)[]) {
+    return vi.spyOn(api, "call").mockImplementation((async (
+      operation: string,
+    ) => {
+      if (operation !== "getSession") {
+        throw new Error(`unexpected ${operation}`);
+      }
+      const answer = answers.shift();
+      if (answer === null) {
+        throw refused(401, { code: "unauthenticated" });
+      }
+      if (answer instanceof Error || answer === undefined) {
+        throw answer ?? new Error("no answer left");
+      }
+      return { status: 200, body: answer, response: new Response() };
+    }) as typeof api.call);
+  }
+
+  it("asks for the session whenever the tab is shown again, and tells what another tab changed of it", async () => {
+    const client = new QueryClient();
+    client.setQueryData(sessionQuery.queryKey, testSession);
+    client.setQueryData(accountQuery.queryKey, testAccount);
+    const ended = vi.fn();
+    const replaced = vi.fn();
+    const { doc, show } = tab();
+    const other = { ...testSession, user_id: "usr_other" };
+    const call = sessions(
+      { ...testSession, csrf_token: "renewed" },
+      new Error("Failed to fetch"),
+      other,
+      null,
+    );
+    const stop = followSession(client, doc, { ended, replaced });
+
+    // A hidden tab asks nothing.
+    doc.visibilityState = "hidden";
+    doc.dispatchEvent(new Event("visibilitychange"));
+    expect(call).not.toHaveBeenCalled();
+
+    // Another tab changed the password: the session's new CSRF token.
+    show();
+    await vi.waitFor(() =>
+      expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
+        "renewed",
+      ),
+    );
+    expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
+
+    // A server that cannot say changes nothing.
+    show();
+    await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
+      "renewed",
+    );
+
+    // Another tab signed in to another account.
+    show();
+    await vi.waitFor(() => expect(replaced).toHaveBeenCalledOnce());
+    expect(client.getQueryData(sessionQuery.queryKey)).toEqual(other);
+    expect(client.getQueryData(accountQuery.queryKey)).toBeUndefined();
+
+    // Another tab signed out.
+    show();
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledOnce());
+    expect(replaced).toHaveBeenCalledOnce();
+
+    stop();
+    show();
+    expect(call).toHaveBeenCalledTimes(4);
+  });
+
+  it("takes no answer for the page's own session that it asked for before the page changed it", async () => {
+    const client = new QueryClient();
+    client.setQueryData(sessionQuery.queryKey, null);
+    const ended = vi.fn();
+    const replaced = vi.fn();
+    const { doc, show } = tab();
+    let answer: (value: unknown) => void = () => {};
+    const call = vi.spyOn(api, "call").mockImplementation(
+      (() =>
+        new Promise<unknown>((resolve) => {
+          answer = resolve;
+        })) as typeof api.call,
+    );
+    followSession(client, doc, { ended, replaced });
+
+    show();
+    expect(call).toHaveBeenCalledOnce();
+    // The page signs in while the question is under way, whose answer is
+    // of the session before.
+    signedIn(client, testSession);
+    answer({
+      status: 200,
+      body: { ...testSession, user_id: "usr_other" },
+      response: new Response(),
+    });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(client.getQueryData(sessionQuery.queryKey)).toEqual(testSession);
+    expect(replaced).not.toHaveBeenCalled();
+    expect(ended).not.toHaveBeenCalled();
   });
 });

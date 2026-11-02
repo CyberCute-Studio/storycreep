@@ -238,6 +238,8 @@
   "tokens.lifetime_never": "Never",
   "tokens.list_title": "Tokens of {target}",
   "tokens.more": "Show more",
+  "tokens.more_projects": "Show more projects",
+  "tokens.more_workspaces": "Show more workspaces",
   "tokens.name": "Name",
   "tokens.name_hint": "What the token is for, as Release pipeline.",
   "tokens.never_used": "Never",

@@ -12,7 +12,7 @@ import { useSignOut } from "../auth/signOut";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
-import { CONTENT_ID } from "./focus";
+import { CONTENT_ID, skipToContent } from "./focus";
 import { unencrypted } from "./transport";
 
 /** Whether a component is within the Shell. */
@@ -25,6 +25,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <div className="flex min-h-dvh flex-col">
         <a
           href={`#${CONTENT_ID}`}
+          onClick={skipToContent}
           className="sr-only rounded-md bg-accent px-4 py-2 text-accent-fg focus:not-sr-only focus:fixed focus:start-2 focus:top-2 focus:z-10"
         >
           {t("shell.skip_to_content")}

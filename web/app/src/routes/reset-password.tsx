@@ -29,25 +29,41 @@ const resetField = bodyField("new_password");
 function ResetPassword() {
   const { t } = useTranslation();
   const token = useFragmentToken();
+  if (token === undefined) {
+    return (
+      <Page title={t("reset.title")}>
+        <p>{t("reset.no_token")}</p>
+        <p>
+          <TextLink to="/forgot-password">{t("reset.new_link")}</TextLink>
+        </p>
+      </Page>
+    );
+  }
+  // Another link opened in the same page, whose fragment alone changes,
+  // resets with its own token, from an empty form.
+  return <ResetWith key={token} token={token} />;
+}
+
+function ResetWith({ token }: { token: string }) {
+  const { t } = useTranslation();
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
   const [mismatch, setMismatch] = useState<Mismatch>();
   const reset = useMutation({
     mutationFn: async (password: string) => {
-      if (token === undefined) {
-        throw new Error("The page has no token.");
-      }
       await api.call("resetPassword", {
         body: { token, new_password: password },
       });
     },
     // The server revoked every session of the account, which this page's
     // may be one of, or not, as one of another account's: the page asks
-    // the server, and else takes itself to be signed out.
+    // the server, and is signed out if the server says so. If the server
+    // cannot say, the page stays as it is, and the next request that needs
+    // the session finds out, as any does (onUnauthenticated).
     onSuccess: async () => {
       const session = await client
         .fetchQuery({ ...sessionQuery, staleTime: 0 })
-        .catch(() => null);
+        .catch(() => undefined);
       if (session === null) {
         signedOut(client);
       }
@@ -62,16 +78,6 @@ function ResetPassword() {
   };
   useFocusRefusal(form, mismatch ?? reset.error);
 
-  if (token === undefined) {
-    return (
-      <Page title={t("reset.title")}>
-        <p>{t("reset.no_token")}</p>
-        <p>
-          <TextLink to="/forgot-password">{t("reset.new_link")}</TextLink>
-        </p>
-      </Page>
-    );
-  }
   if (reset.isSuccess) {
     return (
       <Page title={t("reset.title")}>

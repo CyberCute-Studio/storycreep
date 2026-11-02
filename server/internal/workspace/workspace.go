@@ -298,7 +298,7 @@ func (s *Service) Check(ctx context.Context, in Settings) (Draft, error) {
 	}
 	locale, ok := i18n.FromContext(ctx).Locale(), true
 	if in.DefaultLocale != "" {
-		locale, ok = catalogLocale(in.DefaultLocale)
+		locale, ok = i18n.Default().MatchString(in.DefaultLocale)
 	}
 	if !ok {
 		errs = append(errs, input.FieldError{Field: "default_locale", Message: localeProblem})
@@ -473,13 +473,6 @@ func baseSlug(name string) string {
 // has no catalog for.
 var localeProblem = i18n.Default().UnmatchedProblem()
 
-// catalogLocale returns the locale with a catalog that the BCP 47 tag v asks
-// for (i18n.Bundle.MatchString), and false if v is not a tag or no catalog
-// matches it.
-func catalogLocale(v string) (language.Tag, bool) {
-	return i18n.Default().MatchString(v)
-}
-
 // Get returns the workspace id, and the role that the user userID acts with
 // in it, or ErrNotFound if it does not exist, the user's role is none, or the
 // request is made with the API token tok, nil for a session, of another
@@ -608,7 +601,7 @@ func (w *Workspace) apply(p Patch) (bool, error) {
 	}
 	if p.DefaultLocale != nil {
 		var ok bool
-		if next.DefaultLocale, ok = catalogLocale(*p.DefaultLocale); !ok {
+		if next.DefaultLocale, ok = i18n.Default().MatchString(*p.DefaultLocale); !ok {
 			errs = append(errs, input.FieldError{Field: "default_locale", Message: localeProblem})
 		}
 	}
@@ -666,7 +659,7 @@ func (s *Service) workspace(id pgtype.UUID, name, slug string, doc []byte,
 		UpdatedAt: updated.Time}
 	var set settings
 	if json.Unmarshal(doc, &set) == nil {
-		if locale, ok := catalogLocale(set.DefaultLocale); ok {
+		if locale, ok := i18n.Default().MatchString(set.DefaultLocale); ok {
 			w.DefaultLocale = locale
 		}
 	}

@@ -4,16 +4,16 @@ import type {
   CreateTokenBody,
   MembershipBody,
   PageAPITokenBody,
-  ProjectBody,
+  PageMembershipBody,
+  PageProjectBody,
 } from "@storycreep/shared/api";
 import { formatDate, formatRelativeTime } from "@storycreep/shared/i18n";
 import {
   infiniteQueryOptions,
-  queryOptions,
   useInfiniteQuery,
   useMutation,
-  useQuery,
   useQueryClient,
+  useSuspenseInfiniteQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -36,67 +36,47 @@ import {
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/account/tokens")({
-  loader: ({ context }) => context.queryClient.ensureQueryData(workspacesQuery),
+  loader: ({ context }) =>
+    context.queryClient.ensureInfiniteQueryData(workspacesQuery),
   component: Tokens,
 });
 
-/** The most pages of a list that the page reads, of 100 items each. */
-const maxPages = 20;
-
-/** Returns every item of a paged list, from its first page on. */
-async function allPages<T>(
-  page: (cursor: string | undefined) => Promise<{
-    items: T[];
-    next_cursor: string | null;
-  }>,
-): Promise<T[]> {
-  const items: T[] = [];
-  let cursor: string | undefined;
-  for (let i = 0; i < maxPages; i++) {
-    const p = await page(cursor);
-    items.push(...p.items);
-    if (p.next_cursor === null) {
-      break;
-    }
-    cursor = p.next_cursor;
-  }
-  return items;
-}
-
-/** The workspaces that the user is a member of. */
-const workspacesQuery = queryOptions({
+/**
+ * The workspaces that the user is a member of, a page at a time: the page
+ * shows itself once it has the first, and the rest come as the user asks
+ * for them, as the tokens do.
+ */
+const workspacesQuery = infiniteQueryOptions({
   queryKey: ["workspaces"],
-  queryFn: ({ signal }): Promise<MembershipBody[]> =>
-    allPages(
-      async (cursor) =>
-        (
-          await api.call(
-            "listWorkspaces",
-            { query: { cursor, limit: 100 } },
-            { signal },
-          )
-        ).body,
-    ),
+  queryFn: async ({ pageParam, signal }): Promise<PageMembershipBody> =>
+    (
+      await api.call(
+        "listWorkspaces",
+        { query: { cursor: pageParam || undefined, limit: 100 } },
+        { signal },
+      )
+    ).body,
+  initialPageParam: "",
+  getNextPageParam: (page) => page.next_cursor ?? undefined,
 });
 
-/** The projects of a workspace that the user can see. */
+/** The projects of a workspace that the user can see, a page at a time. */
 function projectsQuery(workspaceId: string) {
-  return queryOptions({
+  return infiniteQueryOptions({
     queryKey: ["workspaces", workspaceId, "projects"],
-    queryFn: ({ signal }): Promise<ProjectBody[]> =>
-      allPages(
-        async (cursor) =>
-          (
-            await api.call(
-              "listProjects",
-              {
-                path: { workspace_id: workspaceId },
-                query: { cursor, limit: 100 },
-              },
-              { signal },
-            )
-          ).body,
-      ),
+    queryFn: async ({ pageParam, signal }): Promise<PageProjectBody> =>
+      (
+        await api.call(
+          "listProjects",
+          {
+            path: { workspace_id: workspaceId },
+            query: { cursor: pageParam || undefined, limit: 100 },
+          },
+          { signal },
+        )
+      ).body,
+    initialPageParam: "",
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
 }
 
@@ -154,7 +134,8 @@ const lifetimes = [0, 7, 30, 90, 365] as const;
 // owner's role. Its secret is shown once, when it is made.
 function Tokens() {
   const { t } = useTranslation();
-  const workspaces = useSuspenseQuery(workspacesQuery).data;
+  const list = useSuspenseInfiniteQuery(workspacesQuery);
+  const workspaces = list.data.pages.flatMap((page) => page.items);
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
   const workspace = workspaces.find((w) => w.id === workspaceId);
   return (
@@ -164,8 +145,8 @@ function Tokens() {
         <p>{t("tokens.no_workspace")}</p>
       ) : (
         <>
-          {workspaces.length > 1 && (
-            <div className="max-w-md">
+          {(workspaces.length > 1 || list.hasNextPage) && (
+            <div className="max-w-md space-y-2">
               <SelectField
                 label={t("tokens.workspace")}
                 value={workspace.id}
@@ -177,6 +158,14 @@ function Tokens() {
                   </option>
                 ))}
               </SelectField>
+              {list.hasNextPage && (
+                <Button
+                  disabled={list.isFetchingNextPage}
+                  onClick={() => void list.fetchNextPage()}
+                >
+                  {t("tokens.more_workspaces")}
+                </Button>
+              )}
             </div>
           )}
           <WorkspaceTokens key={workspace.id} workspace={workspace} />
@@ -188,22 +177,23 @@ function Tokens() {
 
 function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
   const { t } = useTranslation();
-  const projects = useQuery(projectsQuery(workspace.id));
+  const projects = useInfiniteQuery(projectsQuery(workspace.id));
+  const loaded = projects.data?.pages.flatMap((page) => page.items) ?? [];
   // A guest acts on the projects granted to them alone, so their tokens are
   // narrowed to one (§5.5).
   const guest = workspace.role === "guest";
   const [choice, setChoice] = useState("");
-  const projectId = choice || (guest ? (projects.data?.[0]?.id ?? "") : "");
+  const projectId = choice || (guest ? (loaded[0]?.id ?? "") : "");
   const target: Target | undefined =
     projectId !== ""
       ? { kind: "project", projectId }
       : guest
         ? undefined
         : { kind: "workspace", workspaceId: workspace.id };
-  const project = projects.data?.find((p) => p.id === projectId);
+  const project = loaded.find((p) => p.id === projectId);
   return (
     <div className="space-y-6">
-      <div className="max-w-md">
+      <div className="max-w-md space-y-2">
         <SelectField
           label={t("tokens.target")}
           hint={t("tokens.target_hint")}
@@ -211,18 +201,27 @@ function WorkspaceTokens({ workspace }: { workspace: MembershipBody }) {
           onChange={(event) => setChoice(event.currentTarget.value)}
         >
           {!guest && <option value="">{t("tokens.whole_workspace")}</option>}
-          {(projects.data ?? []).map((p) => (
+          {loaded.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
             </option>
           ))}
         </SelectField>
+        {projects.hasNextPage && (
+          <Button
+            disabled={projects.isFetchingNextPage}
+            onClick={() => void projects.fetchNextPage()}
+          >
+            {t("tokens.more_projects")}
+          </Button>
+        )}
       </div>
       {projects.isError && (
         <Alert message={refusalOf(projects.error, t).message} />
       )}
       {target === undefined ? (
-        <p>{t("tokens.no_project")}</p>
+        // A guest's projects that are still loading may hold one.
+        !projects.isPending && <p>{t("tokens.no_project")}</p>
       ) : (
         <TokenList
           key={JSON.stringify(target)}
@@ -284,9 +283,6 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
   const [confirming, setConfirming] = useState(false);
   const revoke = useMutation({
     mutationFn: async () => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       const headers = csrfHeaders(session);
       if (target.kind === "workspace") {
         await api.call("revokeWorkspaceToken", {
@@ -414,9 +410,6 @@ function CreateToken({
   const form = useRef<HTMLFormElement>(null);
   const create = useMutation({
     mutationFn: async (body: CreateTokenBody): Promise<CreatedAPITokenBody> => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       const headers = csrfHeaders(session);
       return target.kind === "workspace"
         ? (

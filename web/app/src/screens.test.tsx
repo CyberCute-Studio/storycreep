@@ -367,6 +367,114 @@ describe("an invitation", () => {
     expect(router.state.location.pathname).toBe("/invite");
     expect(router.state.location.hash).toBe("token=secret");
   });
+
+  it("shows itself in the language of the account that signs in on it", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "lookupInvite":
+          return invite;
+        case "login":
+          return testSession;
+        case "acceptInvite":
+          throw refused(409, { code: "already_member" });
+        case "getAccount":
+          return { ...testAccount, locale: "cs" };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/invite#token=secret", {
+      catalogs: { en: catalogs.en, cs: { "invite.accept_title": "Přijetí" } },
+      languages: ["en-US"],
+    });
+    const signIn = await screen.findByRole("region", {
+      name: "Have an account? Sign in",
+    });
+    expect(document.documentElement.lang).toBe("en");
+    await user.type(
+      within(signIn).getByLabelText("Password"),
+      "a passphrase of jo",
+    );
+    await user.click(
+      within(signIn).getByRole("button", { name: "Sign in and accept" }),
+    );
+    await screen.findByRole("region", { name: "Přijetí" });
+    expect(document.documentElement.lang).toBe("cs");
+  });
+
+  it("shows another invitation opened in the same page, not what it had of the one before", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "lookupInvite": {
+          const { body } = input as { body: { token: string } };
+          return body.token === "first"
+            ? invite
+            : { ...invite, workspace_name: "Another studio" };
+        }
+        case "acceptInvite":
+          return { id: "wsp_studio", name: "Studio", role: "editor" };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/invite#token=first", {
+      session: testSession,
+    });
+    const accept = await screen.findByRole("region", { name: "Accept" });
+    await user.click(
+      within(accept).getByRole("button", { name: "Accept the invitation" }),
+    );
+    await screen.findByText("You have joined Studio as editor.");
+
+    await router.navigate({ to: "/invite", hash: "token=second" });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Join Another studio",
+    });
+    expect(
+      screen.getByRole("button", { name: "Accept the invitation" }),
+    ).toBeDefined();
+  });
+});
+
+describe("verifying an email address", () => {
+  it("verifies another link opened in the same page, and says what became of it", async () => {
+    const call = fakeApi((operation, input) => {
+      if (operation === "verifyEmail") {
+        const { body } = input as { body: { token: string } };
+        if (body.token === "first") {
+          throw refused(410, { code: "token_expired" });
+        }
+        return undefined;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/verify-email#token=first");
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).not.toBe(""),
+    );
+
+    await router.navigate({ to: "/verify-email", hash: "token=second" });
+    await screen.findByText("Your email address is verified.");
+    expect(screen.getByRole("alert").textContent).toBe("");
+    expect(call).toHaveBeenLastCalledWith("verifyEmail", {
+      body: { token: "second" },
+    });
+  });
+});
+
+describe("the skip link", () => {
+  it("moves the focus to the page's content, and leaves the URL and its token as they are", async () => {
+    const user = userEvent.setup();
+    const { router } = renderApp("/reset-password#token=secret");
+    const skip = await screen.findByRole("link", { name: "Skip to content" });
+    const before = window.location.href;
+    await user.click(skip);
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+    expect(window.location.href).toBe(before);
+    expect(router.state.location.hash).toBe("token=secret");
+    expect(screen.getByLabelText("New password")).toBeDefined();
+  });
 });
 
 describe("resetting a password", () => {
@@ -403,6 +511,106 @@ describe("resetting a password", () => {
     );
     expect(queryClient.getQueryData(accountQuery.queryKey)).toEqual(
       testAccount,
+    );
+  });
+
+  it("stays signed in when the server cannot say whether the page's session still is", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "resetPassword":
+          return undefined;
+        case "getSession":
+          throw refused(503, { code: "unavailable" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/reset-password#token=secret", {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("New password"),
+      "a new passphrase",
+    );
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a new passphrase",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Set the new password" }),
+    );
+    await screen.findByText(
+      "Your password is changed, and every session of your account is signed out. Sign in with the new password.",
+    );
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(
+      testSession,
+    );
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
+  });
+});
+
+describe("the API tokens", () => {
+  /** The names of the options of select. */
+  const options = (select: HTMLElement) =>
+    within(select)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+  it("list more workspaces and projects to choose from as the user asks for them", async () => {
+    const user = userEvent.setup();
+    const workspace = (id: string, name: string) => ({
+      id,
+      name,
+      role: "owner",
+      membership_id: `mem_${id}`,
+      default_locale: "en",
+      created_at: "2026-11-01T10:00:00Z",
+    });
+    fakeApi((operation, input) => {
+      const first =
+        (input as { query?: { cursor?: string } }).query?.cursor === undefined;
+      switch (operation) {
+        case "listWorkspaces":
+          return first
+            ? { items: [workspace("wsp_a", "Studio A")], next_cursor: "a" }
+            : { items: [workspace("wsp_b", "Studio B")], next_cursor: null };
+        case "listProjects":
+          return first
+            ? { items: [{ id: "prj_a", name: "Game A" }], next_cursor: "a" }
+            : { items: [{ id: "prj_b", name: "Game B" }], next_cursor: null };
+        case "listWorkspaceTokens":
+          return { items: [], next_cursor: null };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    const workspaces = await screen.findByRole("combobox", {
+      name: "Workspace",
+    });
+    expect(options(workspaces)).toEqual(["Studio A"]);
+    await user.click(
+      screen.getByRole("button", { name: "Show more workspaces" }),
+    );
+    await waitFor(() =>
+      expect(options(workspaces)).toEqual(["Studio A", "Studio B"]),
+    );
+    expect(screen.queryByRole("button", { name: "Show more workspaces" })).toBe(
+      null,
+    );
+
+    const targets = screen.getByRole("combobox", { name: "Tokens of" });
+    await user.click(
+      await screen.findByRole("button", { name: "Show more projects" }),
+    );
+    await waitFor(() =>
+      expect(options(targets)).toEqual([
+        "The whole workspace",
+        "Game A",
+        "Game B",
+      ]),
+    );
+    expect(screen.queryByRole("button", { name: "Show more projects" })).toBe(
+      null,
     );
   });
 });

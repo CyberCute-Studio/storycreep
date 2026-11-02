@@ -16,7 +16,7 @@ import {
   requestVersion,
   sessionQuery,
 } from "./api";
-import { endSession, signInFor } from "./auth/session";
+import { endSession, followSession, signInFor } from "./auth/session";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -35,25 +35,32 @@ if (nonce !== undefined) {
 
 const i18n = createAppI18n(navigator.languages, document.documentElement);
 requestsIn(i18n);
+// A request that the server answers with 401 tells that the page's session
+// has ended elsewhere, as when it was revoked, and so does another tab's
+// signing out: the page goes to the sign-in screen, which comes back to it
+// once it has signed in again, with the token of a link's fragment, if it
+// has one, still in a fragment. The first such answer does; those of the
+// requests that were under way with it find the page signed out already.
+const sessionEnded = () => {
+  if (!queryClient.getQueryData(sessionQuery.queryKey)) {
+    return;
+  }
+  void endSession(queryClient, () =>
+    router.navigate(signInFor(router.state.location)),
+  );
+};
 const queryClient = createQueryClient(errorLog, {
-  // A request that the server answers with 401 tells that the page's
-  // session has ended elsewhere, as when it was revoked: the page goes to
-  // the sign-in screen, which comes back to it once it has signed in again,
-  // with the token of a link's fragment, if it has one, still in a fragment.
-  // The first such answer does; those of the requests that were under way
-  // with it find the page signed out already.
-  onUnauthenticated: () => {
-    if (!queryClient.getQueryData(sessionQuery.queryKey)) {
-      return;
-    }
-    void endSession(queryClient, () =>
-      router.navigate(signInFor(router.state.location)),
-    );
-  },
+  onUnauthenticated: sessionEnded,
 });
 // What the error console's reports name, asked for before anything is shown.
 requestVersion(queryClient);
 const router = createAppRouter({ queryClient, i18n });
+// A page that another tab signed in to another account, or to one, shows
+// itself anew, as it would loaded anew: its guards, its data, its locale.
+followSession(queryClient, document, {
+  ended: sessionEnded,
+  replaced: () => void router.invalidate(),
+});
 
 const container = document.getElementById("root");
 if (container === null) {

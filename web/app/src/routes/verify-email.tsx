@@ -18,8 +18,34 @@ export const Route = createFileRoute("/verify-email")({
 function VerifyEmail() {
   const { t } = useTranslation();
   const token = useFragmentToken();
+  if (token === undefined) {
+    return (
+      <Page title={t("verify.title")}>
+        <p>{t("verify.no_token")}</p>
+        <p>
+          <Next />
+        </p>
+      </Page>
+    );
+  }
+  // Another link opened in the same page, whose fragment alone changes, is
+  // verified in its turn, and shows its own outcome.
+  return <VerifyToken key={token} token={token} />;
+}
+
+/** Where the page leads once it has said what became of the link. */
+function Next() {
+  const { t } = useTranslation();
+  return useQuery(sessionQuery).data ? (
+    <TextLink to="/">{t("verify.home")}</TextLink>
+  ) : (
+    <TextLink to="/login">{t("verify.sign_in")}</TextLink>
+  );
+}
+
+function VerifyToken({ token }: { token: string }) {
+  const { t } = useTranslation();
   const client = useQueryClient();
-  const signedIn = !!useQuery(sessionQuery).data;
   const verify = useMutation({
     mutationFn: async (value: string) => {
       await api.call("verifyEmail", { body: { token: value } });
@@ -33,25 +59,12 @@ function VerifyEmail() {
   const sent = useRef(false);
   const { mutate } = verify;
   useEffect(() => {
-    if (token !== undefined && !sent.current) {
+    if (!sent.current) {
       sent.current = true;
       mutate(token);
     }
   }, [token, mutate]);
 
-  const next = signedIn ? (
-    <TextLink to="/">{t("verify.home")}</TextLink>
-  ) : (
-    <TextLink to="/login">{t("verify.sign_in")}</TextLink>
-  );
-  if (token === undefined) {
-    return (
-      <Page title={t("verify.title")}>
-        <p>{t("verify.no_token")}</p>
-        <p>{next}</p>
-      </Page>
-    );
-  }
   return (
     <Page title={t("verify.title")}>
       <Alert
@@ -68,7 +81,11 @@ function VerifyEmail() {
               : undefined
         }
       />
-      {(verify.isSuccess || verify.isError) && <p>{next}</p>}
+      {(verify.isSuccess || verify.isError) && (
+        <p>
+          <Next />
+        </p>
+      )}
     </Page>
   );
 }

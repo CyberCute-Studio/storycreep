@@ -44,9 +44,6 @@ function Sessions() {
   const list = useInfiniteQuery(sessionsQuery);
   const others = useMutation({
     mutationFn: async () => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       return (
         await api.call("revokeOtherSessions", { headers: csrfHeaders(session) })
       ).body.revoked;
@@ -104,9 +101,6 @@ function SessionItem({ item }: { item: SessionBody }) {
   const router = useRouter();
   const revoke = useMutation({
     mutationFn: async () => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       await api.call("revokeSession", {
         path: { session_id: item.id },
         headers: csrfHeaders(session),

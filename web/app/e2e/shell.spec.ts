@@ -261,7 +261,7 @@ test("a link into the app opens its page, and one that it does not have says so"
   );
 });
 
-test("the skip link moves the focus to the page's content", async ({
+test("the skip link moves the focus to the page's content, and keeps the token of a link's fragment", async ({
   page,
 }) => {
   test.skip(
@@ -274,4 +274,19 @@ test("the skip link moves the focus to the page's content", async ({
   await expect(skip).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("main")).toBeFocused();
+
+  // The page of a link keeps the token in its fragment, which a fragment
+  // of the skip link's own would have replaced.
+  await page.goto("/app/reset-password#token=e2e-token");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    en["reset.title"],
+  );
+  await page.keyboard.press("Tab");
+  await expect(skip).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+  expect(new URL(page.url()).hash).toBe("#token=e2e-token");
+  await expect(
+    page.getByLabel(en["auth.new_password"], { exact: true }),
+  ).toBeVisible();
 });

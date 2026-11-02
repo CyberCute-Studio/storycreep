@@ -97,23 +97,32 @@ export const instanceQuery = queryOptions({
 });
 
 /**
- * The session of the page, or null if the page is signed out: the server
- * answers 401 then, which is no error of the app. Signing in and out set it
- * (auth/session.ts), and so does any answer of 401 to another request, which
- * tells that the session ended elsewhere, as when it was revoked.
+ * Asks the server for the session of the browser's cookie, and returns null
+ * if it has none: the server answers 401 then, which is no error of the app.
+ */
+export async function fetchSession(
+  signal?: AbortSignal,
+): Promise<SignedInBody | null> {
+  try {
+    return (await api.call("getSession", {}, { signal })).body;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * The session of the page, or null if the page is signed out. Signing in
+ * and out set it (auth/session.ts), and so does any answer of 401 to another
+ * request, which tells that the session ended elsewhere, as when it was
+ * revoked, and so does the page once it is shown again after another tab
+ * changed it (followSession).
  */
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
-  queryFn: async ({ signal }): Promise<SignedInBody | null> => {
-    try {
-      return (await api.call("getSession", {}, { signal })).body;
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        return null;
-      }
-      throw error;
-    }
-  },
+  queryFn: ({ signal }): Promise<SignedInBody | null> => fetchSession(signal),
   staleTime: Number.POSITIVE_INFINITY,
 });
 
@@ -200,6 +209,11 @@ export function createQueryClient(
         retry: (failures, error) =>
           failures < 3 && !(error instanceof ApiError && error.status < 500),
       },
+      // A mutation holds what it sent and what it was answered, as a
+      // password or a new token's secret: it is dropped once the form that
+      // made it is gone, as when the page signs out, rather than kept for
+      // minutes after.
+      mutations: { gcTime: 0 },
     },
   });
 }

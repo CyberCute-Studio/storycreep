@@ -88,9 +88,6 @@ function Language({
   const client = useQueryClient();
   const save = useMutation({
     mutationFn: async (locale: string) => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       return (
         await api.call("updateAccount", {
           headers: csrfHeaders(session),
@@ -163,9 +160,6 @@ function Password() {
       current_password: string;
       new_password: string;
     }) => {
-      if (!session) {
-        throw new Error("The page is signed out.");
-      }
       return (
         await api.call("changePassword", {
           headers: csrfHeaders(session),

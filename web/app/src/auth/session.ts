@@ -7,7 +7,13 @@
 import type { LoginBody, SignedInBody } from "@storycreep/shared/api";
 import type { QueryClient } from "@tanstack/react-query";
 import { type ParsedLocation, redirect } from "@tanstack/react-router";
-import { accountQuery, api, instanceQuery, sessionQuery } from "../api";
+import {
+  accountQuery,
+  api,
+  fetchSession,
+  instanceQuery,
+  sessionQuery,
+} from "../api";
 import type { RouterContext } from "../router";
 
 /** The queries of the page that outlive its session, as the server's version. */
@@ -15,11 +21,16 @@ const sessionless = new Set(["version", "instance", "session"]);
 
 /**
  * The headers of a request that changes something: the session's CSRF
- * token, without which the server refuses it with csrf_failed.
+ * token, without which the server refuses it with csrf_failed. It throws
+ * if the page is signed out, as a form still shown may be once its session
+ * has ended, whose request would be refused.
  */
-export function csrfHeaders(session: SignedInBody): {
+export function csrfHeaders(session: SignedInBody | null | undefined): {
   "X-CSRF-Token": string;
 } {
+  if (!session) {
+    throw new Error("The page is signed out.");
+  }
   return { "X-CSRF-Token": session.csrf_token };
 }
 
@@ -77,6 +88,76 @@ export async function endSession(
   client.setQueryData(sessionQuery.queryKey, null);
   await toSignIn();
   signedOut(client);
+}
+
+/** What followSession does once another tab has changed the session. */
+export interface SessionChanges {
+  /** The page's session has ended, as when another tab signed out. */
+  ended: () => void;
+  /**
+   * The page is signed in to another account than it was, or to one where
+   * it was signed out, as when another tab signed in: the session is
+   * recorded in the client already, and what the page held of the account
+   * before is dropped, so the page shows itself anew.
+   */
+  replaced: () => void;
+}
+
+/**
+ * Keeps the page's session the one of the browser's cookie, which every tab
+ * of the browser shares, and which another tab can change: by signing out,
+ * by signing in to another account, or by changing the password, which
+ * gives the session a new CSRF token (PRD FR-AUTH-02). Whenever doc is
+ * shown again, as when the user comes back to its tab, the page asks the
+ * server for the session, records it in client, and tells changes if the
+ * session is no longer the account's that it was. An answer to a question
+ * asked before the page changed its session itself, as by signing in, is
+ * of the one before, and changes nothing. Returns a function that stops it.
+ */
+export function followSession(
+  client: QueryClient,
+  doc: Pick<
+    Document,
+    "visibilityState" | "addEventListener" | "removeEventListener"
+  >,
+  changes: SessionChanges,
+): () => void {
+  let asking = false;
+  const ask = async () => {
+    const known = client.getQueryData(sessionQuery.queryKey);
+    if (asking || known === undefined) {
+      return;
+    }
+    asking = true;
+    try {
+      const session = await fetchSession();
+      if (client.getQueryData(sessionQuery.queryKey) !== known) {
+        return;
+      }
+      if (session === null) {
+        if (known !== null) {
+          changes.ended();
+        }
+        return;
+      }
+      signedIn(client, session);
+      if (known?.user_id !== session.user_id) {
+        changes.replaced();
+      }
+    } catch {
+      // The server could not say: the next request that needs the session
+      // finds out, as any does.
+    } finally {
+      asking = false;
+    }
+  };
+  const shown = () => {
+    if (doc.visibilityState === "visible") {
+      void ask();
+    }
+  };
+  doc.addEventListener("visibilitychange", shown);
+  return () => doc.removeEventListener("visibilitychange", shown);
 }
 
 function dropAccountData(client: QueryClient): void {

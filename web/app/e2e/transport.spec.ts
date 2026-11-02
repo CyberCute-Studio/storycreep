@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
+import { port } from "./environment.ts";
 import {
   en,
   expect,
@@ -115,9 +115,16 @@ async function open(browser: Browser, instance: Instance, refused: string[]) {
   return { context, page };
 }
 
-/** A database's name of a test's instance, which no other run uses. */
+/**
+ * The name of the database of a test's instance: one for each kind of
+ * instance, project, and port of the run, as server.ts names its own, so
+ * that runs on other ports keep apart, and a run that was stopped before it
+ * could drop it, as Playwright's on Windows, leaves it for the next run on
+ * the port to replace, rather than one more each run.
+ */
 function databaseName(kind: string): string {
-  return `storycreep_e2e_${kind}_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const project = test.info().project.name.toLowerCase().replace(/\W+/g, "_");
+  return `storycreep_e2e_${port}_${project}_${kind}`;
 }
 
 test.describe("the session over each transport", () => {

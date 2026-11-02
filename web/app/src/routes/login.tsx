@@ -9,7 +9,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { instanceQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -34,9 +34,8 @@ export const Route = createFileRoute("/login")({
 function Login() {
   const { t } = useTranslation();
   const search = Route.useSearch();
-  // The fragment of the page to go back to (signInFor), as the screen opened
-  // with it, whatever its skip link has made of it since.
-  const [hash] = useState(useLocation({ select: (location) => location.hash }));
+  // The fragment of the page to go back to (signInFor).
+  const hash = useLocation({ select: (location) => location.hash });
   const navigate = useNavigate();
   const client = useQueryClient();
   const instance = useSuspenseQuery(instanceQuery).data;

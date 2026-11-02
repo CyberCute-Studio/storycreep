@@ -1,8 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   createRootRouteWithContext,
   Outlet,
   redirect,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { accountQuery, instanceQuery, sessionQuery } from "../api";
 import { loadSessionState } from "../auth/session";
 import { applyLocale } from "../i18n";
 import type { RouterContext } from "../router";
@@ -26,11 +30,33 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       throw redirect({ to: "/setup" });
     }
   },
-  component: () => (
-    <Shell>
-      <Outlet />
-    </Shell>
-  ),
+  component: Root,
   notFoundComponent: NotFound,
   errorComponent: RouteError,
 });
+
+function Root() {
+  useAccountLocale();
+  return (
+    <Shell>
+      <Outlet />
+    </Shell>
+  );
+}
+
+/**
+ * Shows the page in the locale of the account that it is signed in to, as
+ * beforeLoad does, once the account changes while the page stays: signing
+ * in or out on a page that stays where it is, as an invitation's, or
+ * another tab's signing in to another account (followSession).
+ */
+function useAccountLocale(): void {
+  const { i18n } = useTranslation();
+  const instanceDefault = useQuery(instanceQuery).data?.default_locale;
+  const session = useQuery(sessionQuery).data;
+  const account = useQuery({ ...accountQuery, enabled: !!session }).data;
+  const preference = session ? account?.locale : undefined;
+  useEffect(() => {
+    applyLocale(i18n, { preference, instanceDefault });
+  }, [i18n, preference, instanceDefault]);
+}

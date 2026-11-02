@@ -78,7 +78,9 @@ function Invite() {
       </Page>
     );
   }
-  return <InviteOf token={token} />;
+  // Another link opened in the same page, whose fragment alone changes,
+  // shows its own invitation, not what the page had of the one before.
+  return <InviteOf key={token} token={token} />;
 }
 
 function InviteOf({ token }: { token: string }) {
