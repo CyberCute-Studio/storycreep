@@ -134,6 +134,12 @@ test.describe("the session over each transport", () => {
     ({ hasTouch }) => hasTouch,
     "the desktop project covers the transports",
   );
+  // Starting the instance, which migrates its new database, counts against
+  // the test's time, and takes longer on a busy machine, as a CI runner,
+  // than the 30 seconds that a test has by default.
+  test.beforeEach(() => {
+    test.setTimeout(180_000);
+  });
 
   // Verifies: FR-AUTH-02/AC6, NFR-SEC-15
   test("first-run setup and signing in over plain HTTP at a LAN address keep the session, and every page warns", async ({
