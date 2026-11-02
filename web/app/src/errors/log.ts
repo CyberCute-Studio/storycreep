@@ -163,24 +163,34 @@ function same(a: LoggedError, b: LoggedError): boolean {
 /**
  * Returns what is known of a thrown value, which may be anything, as text: an
  * error's name, message, or stack may be any value too, as a library's
- * subclass may set it, which the console could not show.
+ * subclass may set it, which the console could not show, and reading one, or
+ * asking what the value is an instance of, may throw, as a getter of a
+ * library's error, or a proxy's trap, may, which leaves it unknown rather
+ * than lose the error.
  */
 export function describeError(error: unknown): ErrorDetails {
-  if (error instanceof Error) {
+  if (attempt(() => error instanceof Error)) {
+    const e = error as Error;
     const details: ErrorDetails = {
-      name: text(error.name),
-      message: text(error.message),
+      name: attempt(() => text(e.name)) ?? "",
+      message: attempt(() => text(e.message)) ?? "",
     };
-    if (typeof error.stack === "string") {
-      details.stack = error.stack;
+    const stack = attempt(() => e.stack);
+    if (typeof stack === "string") {
+      details.stack = stack;
     }
-    if (error instanceof ApiError) {
-      details.request = {
-        url: withoutQuery(error.response.url),
-        status: error.status,
-        code: error.error?.code,
-        requestId: error.error?.request_id,
-      };
+    const request = attempt((): RequestDetails | undefined =>
+      e instanceof ApiError
+        ? {
+            url: withoutQuery(e.response.url),
+            status: e.status,
+            code: e.error?.code,
+            requestId: e.error?.request_id,
+          }
+        : undefined,
+    );
+    if (request !== undefined) {
+      details.request = request;
     }
     return details;
   }
@@ -194,6 +204,15 @@ export function describeError(error: unknown): ErrorDetails {
     message = text(error);
   }
   return { name: typeof error, message };
+}
+
+/** Returns what read returns, or undefined if it throws. */
+function attempt<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
 }
 
 /** Returns url without its query or fragment. */

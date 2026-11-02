@@ -13,12 +13,19 @@
 // at-rule newer than it knows, which it would otherwise skip, with any rule
 // there that applies on hover, which a browser may still apply. hoverCheck
 // runs the check when Vite builds the app, and fails the build on what it
-// refuses.
+// refuses. It reads every stylesheet that the build has: those that Vite
+// writes, the <style> elements of the build's pages, as index.html's, and
+// the stylesheets of public/, which Vite copies to the build as they are.
+// CSS that a script imports as a string, with ?inline or ?raw, goes into the
+// script, where the check cannot read it, so the build refuses it too.
 //
 // The check cannot tell a colour that tints a control from one that makes it
 // visible, as from transparent, so a control is never transparent, nor the
-// colour of what is behind it, until hover: that is for review to catch.
+// colour of what is behind it, until hover: that is for review to catch, as
+// CSS that a script writes itself is.
 
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import {
   type DeclarationBlock,
   type Rule,
@@ -233,26 +240,106 @@ function propertyName(declaration: {
 }
 
 /**
+ * Returns the problems of the <style> elements of the page html, at their
+ * lines and columns in it.
+ */
+export function checkStyleElements(html: string, file: string): HoverProblem[] {
+  const problems: HoverProblem[] = [];
+  for (const element of html.matchAll(
+    /(<style\b[^>]*>)([\s\S]*?)<\/style\s*>/gi,
+  )) {
+    const start = element.index + (element[1] ?? "").length;
+    // The page before the element's CSS, as blanks, keeps the lines and
+    // columns of the CSS as they are in the page.
+    const before = html.slice(0, start).replace(/[^\n]/g, " ");
+    problems.push(...checkHover(before + (element[2] ?? ""), file));
+  }
+  return problems;
+}
+
+/**
+ * Returns the problems of the stylesheets in dir, the app's public/, and its
+ * subdirectories, which Vite copies to the build as they are, each named by
+ * its path from root, the app's.
+ */
+function checkPublic(dir: string, root: string): HoverProblem[] {
+  if (dir === "" || !existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir, { recursive: true, encoding: "utf8" })
+    .filter((name) => /\.css$/i.test(name))
+    .sort()
+    .map((name) => join(dir, name))
+    .filter((path) => statSync(path).isFile())
+    .flatMap((path) =>
+      checkHover(
+        readFileSync(path, "utf8"),
+        relative(root, path).replaceAll("\\", "/"),
+      ),
+    );
+}
+
+/**
+ * Reports whether id, a module's, imports a file of CSS, or of a language
+ * that Vite builds as CSS, as a string, as Vite reads ?inline and ?raw: a
+ * script then has it, where the check cannot read it.
+ */
+export function importsCssAsString(id: string): boolean {
+  const query = id.indexOf("?");
+  return (
+    query >= 0 &&
+    /\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)$/.test(
+      id.slice(0, query),
+    ) &&
+    /[?&](?:inline|raw)\b/.test(id.slice(query))
+  );
+}
+
+/**
  * Returns the Vite plugin that checks the CSS of the app's build, and fails
  * the build on a rule that applies on hover and sets a property that
- * hoverProperties does not list, or on CSS that the check cannot read.
+ * hoverProperties does not list, on CSS that the check cannot read, or on
+ * CSS that a script imports as a string.
  */
 export function hoverCheck(): Plugin {
+  let root = "";
+  let publicDir = "";
   return {
     name: "storycreep:hover-check",
     apply: "build",
     enforce: "post",
+    configResolved(config) {
+      root = config.root;
+      publicDir = config.publicDir;
+    },
+    transform(_, id) {
+      if (importsCssAsString(id)) {
+        const file = relative(root, id).replaceAll("\\", "/");
+        this.error(
+          `${file}: CSS that a script imports as a string, with ?inline or ?raw, goes into the script, ` +
+            "where the hover check cannot read it, so a rule there that applies on hover would go " +
+            "unchecked (PRD FR-EDIT-09). Import it as a stylesheet, which the check reads. See " +
+            "web/app/lint/hover.ts.",
+        );
+      }
+    },
     generateBundle(_, bundle) {
       const problems: HoverProblem[] = [];
       for (const output of Object.values(bundle)) {
-        if (output.type === "asset" && output.fileName.endsWith(".css")) {
-          const source =
-            typeof output.source === "string"
-              ? output.source
-              : new TextDecoder().decode(output.source);
+        if (output.type !== "asset") {
+          continue;
+        }
+        const source =
+          typeof output.source === "string"
+            ? output.source
+            : new TextDecoder().decode(output.source);
+        if (/\.css$/i.test(output.fileName)) {
           problems.push(...checkHover(source, output.fileName));
+        } else if (/\.html$/i.test(output.fileName)) {
+          problems.push(...checkStyleElements(source, output.fileName));
         }
       }
+      problems.push(...checkPublic(publicDir, root));
       if (problems.length > 0) {
         this.error(problems.map(formatHoverProblem).join("\n"));
       }

@@ -28,9 +28,12 @@ const cspNonce = "__STORYCREEP_CSP_NONCE__";
 
 /**
  * The server that the development server passes the API's requests to, as
- * deploy/README.md runs it.
+ * deploy/README.md runs it, unless STORYCREEP_DEV_API_URL names another. An
+ * empty one, as an environment file's template leaves, names none, rather
+ * than a URL that every command of Vite, the build and the tests too, would
+ * fail on as the configuration loads.
  */
-const apiServer = process.env.STORYCREEP_DEV_API_URL ?? "http://localhost:8080";
+const apiServer = process.env.STORYCREEP_DEV_API_URL || "http://localhost:8080";
 
 /**
  * The server's origin, which a URL with a path, even only a /, as

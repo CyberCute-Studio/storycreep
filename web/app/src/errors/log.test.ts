@@ -160,4 +160,24 @@ describe("describeError", () => {
       message: "[object Object]",
     });
   });
+
+  it("describes an error whose name, message, or stack throws as it is read, or that is a proxy that throws", () => {
+    const fail = () => {
+      throw new Error("getter");
+    };
+    const error = new TypeError("x");
+    Object.defineProperties(error, {
+      message: { get: fail },
+      stack: { get: fail },
+    });
+    expect(describeError(error)).toEqual({ name: "TypeError", message: "" });
+    const proxy = new Proxy(new Error("y"), { get: fail });
+    expect(describeError(proxy)).toEqual({ name: "", message: "" });
+    // Asking what it is an instance of throws too.
+    const opaque = new Proxy({}, { getPrototypeOf: fail, get: fail });
+    expect(describeError(opaque)).toEqual({ name: "object", message: "" });
+    const log = createErrorLog();
+    log.record("error", opaque);
+    expect(log.entries()).toHaveLength(1);
+  });
 });

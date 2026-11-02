@@ -46,7 +46,13 @@ export function rootErrorOptions(
   "onUncaughtError" | "onCaughtError" | "onRecoverableError"
 > {
   const record = (error: unknown, info: { componentStack?: string }) => {
-    if (ignore(error)) {
+    // Asking of a thrown value may throw, as a proxy's trap may, which would
+    // lose the error: it is recorded then.
+    let ignored = false;
+    try {
+      ignored = ignore(error);
+    } catch {}
+    if (ignored) {
       return;
     }
     // React gives an error of a view transition that it started null as its

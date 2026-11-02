@@ -71,4 +71,27 @@ describe("rootErrorOptions", () => {
       ["render", "transition", undefined],
     ]);
   });
+
+  it("records an error that throws as it is asked of, as a proxy may, and still logs it", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = createErrorLog();
+    const options = rootErrorOptions(
+      log,
+      (e) => (e as { ignored?: boolean }).ignored === true,
+    );
+    const error = new Proxy(new Error("trapped"), {
+      get() {
+        throw new Error("trap");
+      },
+    });
+    options.onCaughtError?.(error, {
+      componentStack: "\n    at Page",
+      errorBoundary: undefined,
+    });
+    expect(log.entries().map((e) => [e.source, e.componentStack])).toEqual([
+      ["render", "\n    at Page"],
+    ]);
+    // Compared as it is, since a matcher would read it, which throws.
+    expect(logged.mock.calls[0]?.[0] === error).toBe(true);
+  });
 });

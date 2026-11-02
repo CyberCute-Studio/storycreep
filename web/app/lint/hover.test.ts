@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Rolldown } from "vite";
 import { describe, expect, it } from "vitest";
 import config from "../vite.config";
@@ -124,9 +127,24 @@ describe("checkHover", () => {
 });
 
 describe("hoverCheck", () => {
-  // The build fails with the problems of every stylesheet of the bundle.
-  function build(bundle: Record<string, string>): string | undefined {
+  // The context of a hook, whose error fails the build.
+  const context = {
+    error(message: string): never {
+      throw new Error(message);
+    },
+  };
+
+  // The build fails with the problems of every stylesheet of the bundle, and
+  // of the app's public/, in root, if it is given.
+  function build(
+    bundle: Record<string, string>,
+    root?: string,
+  ): string | undefined {
     const plugin = hoverCheck();
+    if (root !== undefined) {
+      const resolved = plugin.configResolved as (config: unknown) => void;
+      resolved({ root, publicDir: join(root, "public") });
+    }
     const outputs = Object.fromEntries(
       Object.entries(bundle).map(([fileName, source]) => [
         fileName,
@@ -139,15 +157,7 @@ describe("hoverCheck", () => {
       bundle: Rolldown.OutputBundle,
     ) => void;
     try {
-      generate.call(
-        {
-          error(message: string): never {
-            throw new Error(message);
-          },
-        },
-        {},
-        outputs,
-      );
+      generate.call(context, {}, outputs);
       return undefined;
     } catch (error) {
       return (error as Error).message;
@@ -165,6 +175,66 @@ describe("hoverCheck", () => {
     expect(build({ "assets/a.css": ".a:hover { color: red }" })).toBe(
       undefined,
     );
+  });
+
+  it("fails the build on a hover rule that it refuses in a page's <style>, or in a stylesheet of public/", () => {
+    const page =
+      '<!doctype html>\n<html><head><style nonce="n">.a:hover{color:red}</style>\n' +
+      "  <style>\n    .row:hover .delete { opacity: 1 }\n  </style></head></html>";
+    expect(build({ "index.html": page })).toMatch(
+      /^index\.html:4:5: \.row:hover \.delete applies on hover and sets opacity/,
+    );
+    expect(
+      build({ "index.html": "<style>.a:hover { color: red }</style>" }),
+    ).toBe(undefined);
+
+    // Vite copies public/ to the build as it is, outside the bundle.
+    const root = mkdtempSync(join(tmpdir(), "storycreep-hover-"));
+    try {
+      mkdirSync(join(root, "public", "styles"), { recursive: true });
+      writeFileSync(
+        join(root, "public", "styles", "ok.css"),
+        ".a:hover{color:red}",
+      );
+      writeFileSync(join(root, "public", "icon.svg"), "<svg></svg>");
+      expect(build({}, root)).toBe(undefined);
+      writeFileSync(
+        join(root, "public", "styles", "menu.css"),
+        ".menu:hover .actions { display: block }",
+      );
+      expect(build({}, root)).toMatch(
+        /^public\/styles\/menu\.css:1:1: \.menu:hover \.actions applies on hover and sets display/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the build on CSS that a script imports as a string, where the check cannot read it", () => {
+    const transform = hoverCheck().transform as (
+      this: typeof context,
+      code: string,
+      id: string,
+    ) => void;
+    for (const id of [
+      "/app/src/menu.css?inline",
+      "/app/src/menu.module.scss?inline",
+      "/app/src/menu.css?raw",
+      "/app/src/menu.css?used&inline",
+    ]) {
+      expect(() => transform.call(context, "", id), id).toThrow(
+        /imports as a string/,
+      );
+    }
+    for (const id of [
+      "/app/src/menu.css",
+      "/app/src/menu.css?url",
+      "/app/src/main.tsx",
+      "/app/src/notes.txt?raw",
+      "/app/index.html?html-proxy&inline-css&index=0.css",
+    ]) {
+      expect(() => transform.call(context, "", id), id).not.toThrow();
+    }
   });
 
   it("runs when Vite builds the app", () => {

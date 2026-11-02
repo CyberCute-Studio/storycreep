@@ -111,12 +111,21 @@ func TestPages(t *testing.T) {
 			}
 			if tt.publicSite == "on" {
 				for _, path := range []string{"/", "/?from=somewhere"} {
-					res := do(s.main, http.MethodGet, path, nil)
-					if res.status != http.StatusOK || !bytes.Equal(res.body, siteIndex) {
-						t.Errorf("GET %s: status %d, want 200 and the site's home page: %s", path, res.status, res.body)
-					}
-					if csp := res.header.Get("Content-Security-Policy"); csp != contentSecurityPolicy {
-						t.Errorf("GET %s: Content-Security-Policy %q, want the server's", path, csp)
+					for _, method := range []string{http.MethodGet, http.MethodHead} {
+						res := do(s.main, method, path, nil)
+						if res.status != http.StatusOK {
+							t.Errorf("%s %s: status %d, want 200: %s", method, path, res.status, res.body)
+							continue
+						}
+						if ct := res.header.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+							t.Errorf("%s %s: Content-Type %q, want text/html; charset=utf-8", method, path, ct)
+						}
+						if csp := res.header.Get("Content-Security-Policy"); csp != contentSecurityPolicy {
+							t.Errorf("%s %s: Content-Security-Policy %q, want the server's", method, path, csp)
+						}
+						if method == http.MethodGet && !bytes.Equal(res.body, siteIndex) {
+							t.Errorf("GET %s: the body is not the site's home page:\n%s", path, res.body)
+						}
 					}
 				}
 			}

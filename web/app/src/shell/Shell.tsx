@@ -2,36 +2,50 @@
 // content, the header, and the content, as the page's main landmark.
 
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import { useTranslation } from "react-i18next";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { CONTENT_ID } from "./focus";
 
+/** Whether a component is within the Shell. */
+const Framed = createContext(false);
+
 export function Shell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   return (
-    <div className="flex min-h-dvh flex-col">
-      <a
-        href={`#${CONTENT_ID}`}
-        className="sr-only rounded-md bg-accent px-4 py-2 text-accent-fg focus:not-sr-only focus:fixed focus:start-2 focus:top-2 focus:z-10"
-      >
-        {t("shell.skip_to_content")}
-      </a>
-      <header className="flex min-h-14 items-center gap-4 border-b border-border bg-surface px-4">
-        <Link
-          to="/"
-          className="flex min-h-11 items-center text-lg font-semibold text-fg"
+    <Framed.Provider value={true}>
+      <div className="flex min-h-dvh flex-col">
+        <a
+          href={`#${CONTENT_ID}`}
+          className="sr-only rounded-md bg-accent px-4 py-2 text-accent-fg focus:not-sr-only focus:fixed focus:start-2 focus:top-2 focus:z-10"
         >
-          {PRODUCT_NAME}
-        </Link>
-        <div className="ms-auto">
-          <ErrorConsoleButton />
-        </div>
-      </header>
-      <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
-        {children}
-      </main>
-    </div>
+          {t("shell.skip_to_content")}
+        </a>
+        <header className="flex min-h-14 items-center gap-4 border-b border-border bg-surface px-4">
+          <Link
+            to="/"
+            className="flex min-h-11 items-center text-lg font-semibold text-fg"
+          >
+            {PRODUCT_NAME}
+          </Link>
+          <div className="ms-auto">
+            <ErrorConsoleButton />
+          </div>
+        </header>
+        <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
+          {children}
+        </main>
+      </div>
+    </Framed.Provider>
   );
+}
+
+/**
+ * Shows children within the Shell, which frames them already if they are
+ * within it, or else around them, as for a page that a route's boundary
+ * shows in place of the root route's component, the Shell itself.
+ */
+export function InShell({ children }: { children: ReactNode }) {
+  return useContext(Framed) ? children : <Shell>{children}</Shell>;
 }
