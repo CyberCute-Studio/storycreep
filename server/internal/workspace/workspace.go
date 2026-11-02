@@ -471,26 +471,13 @@ func baseSlug(name string) string {
 
 // localeProblem says what is wrong with a default locale that the server
 // has no catalog for.
-var localeProblem = "is not a locale that the server has a catalog for: " + strings.Join(localeNames(), ", ")
-
-// localeNames returns the locales that the server has a catalog for.
-func localeNames() []string {
-	var names []string
-	for _, l := range i18n.Default().Locales() {
-		names = append(names, l.String())
-	}
-	return names
-}
+var localeProblem = i18n.Default().UnmatchedProblem()
 
 // catalogLocale returns the locale with a catalog that the BCP 47 tag v asks
-// for (i18n.Bundle.Match), and false if v is not a tag or no catalog matches
-// it.
+// for (i18n.Bundle.MatchString), and false if v is not a tag or no catalog
+// matches it.
 func catalogLocale(v string) (language.Tag, bool) {
-	tag, err := language.Parse(v)
-	if err != nil {
-		return language.Und, false
-	}
-	return i18n.Default().Match(tag)
+	return i18n.Default().MatchString(v)
 }
 
 // Get returns the workspace id, and the role that the user userID acts with

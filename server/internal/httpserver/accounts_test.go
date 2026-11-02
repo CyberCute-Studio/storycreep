@@ -405,3 +405,89 @@ func TestRegisterBodyLimits(t *testing.T) {
 		}
 	}
 }
+
+// accountPath is the path of the signed-in account's own settings.
+const accountPath = "/api/v1/auth/account"
+
+// accountOf returns what a request made with si reads of its account.
+func accountOf(t *testing.T, s *server, si signedIn) accountBody {
+	t.Helper()
+	res := send(s.main, http.MethodGet, accountPath, nil, "", si.header(false))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET %s: %d %s", accountPath, res.status, res.body)
+	}
+	var b accountBody
+	if err := json.Unmarshal(res.body, &b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestAccountLocale checks the locale that a user prefers: the account has
+// none at first; setting one stores the locale of the catalog that it asks
+// for, which every later read of the account returns, as a page that loads
+// again reads it, and which the account's email is written in; the empty
+// string sets none again; a body without the field changes nothing; and a
+// locale that is not a tag, or that no catalog matches, is refused at its
+// field, and changes nothing. A change needs the session's CSRF token.
+//
+// Verifies: FR-I18N-02/AC1
+func TestAccountLocale(t *testing.T) {
+	t.Parallel()
+	s, d := readyServer(t, openSignup)
+	newAccount(t, s.main, "jo@example.com")
+	si := signIn(t, s.main, "jo@example.com")
+	stored := func() string {
+		t.Helper()
+		var locale *string
+		if err := d.Admin(t).QueryRow(context.Background(), `SELECT locale FROM "user" WHERE email = $1`,
+			"jo@example.com").Scan(&locale); err != nil {
+			t.Fatal(err)
+		}
+		if locale == nil {
+			return "<null>"
+		}
+		return *locale
+	}
+	patch := func(body string, csrf bool) response {
+		t.Helper()
+		return send(s.main, http.MethodPatch, accountPath, []byte(body), "", si.header(csrf))
+	}
+
+	if got, want := accountOf(t, s, si), (accountBody{ID: si.body.UserID, Email: "jo@example.com",
+		DisplayName: "Jo"}); got != want {
+		t.Fatalf("GET %s: %+v, want %+v", accountPath, got, want)
+	}
+	if res := patch(`{"locale":"en-US"}`, true); res.status != http.StatusOK {
+		t.Fatalf("PATCH en-US: %d %s", res.status, res.body)
+	}
+	if got := accountOf(t, s, si).Locale; got != "en" || stored() != "en" {
+		t.Errorf("after en-US: locale %q, stored %q, want en", got, stored())
+	}
+	if res := patch(`{}`, true); res.status != http.StatusOK || stored() != "en" {
+		t.Errorf("PATCH {}: %d %s, stored %q, want en", res.status, res.body, stored())
+	}
+	for _, body := range []string{`{"locale":"not a tag"}`, `{"locale":"tlh"}`} {
+		res := patch(body, true)
+		if got := problems(t, res); !slices.Equal(got, []string{"body.locale"}) || stored() != "en" {
+			t.Errorf("PATCH %s: problems at %v, stored %q", body, got, stored())
+		}
+	}
+	if res := patch(`{"locale":""}`, false); res.status != http.StatusForbidden ||
+		res.code() != api.CodeCSRFFailed || stored() != "en" {
+		t.Errorf("PATCH without the CSRF token: %d %s, stored %q", res.status, res.body, stored())
+	}
+	res := patch(`{"locale":""}`, true)
+	var cleared accountBody
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &cleared) != nil || cleared.Locale != "" ||
+		stored() != "<null>" {
+		t.Errorf("PATCH the empty locale: %d %s, stored %q", res.status, res.body, stored())
+	}
+
+	for _, method := range []string{http.MethodGet, http.MethodPatch} {
+		if res := send(s.main, method, accountPath, []byte(`{}`), "", nil); res.status != http.StatusUnauthorized ||
+			res.code() != api.CodeUnauthenticated {
+			t.Errorf("%s %s signed out: %d %s", method, accountPath, res.status, res.body)
+		}
+	}
+}

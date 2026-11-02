@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const accountProfile = `-- name: AccountProfile :one
+SELECT id, email, display_name, locale, (email_verified_at IS NOT NULL)::boolean AS email_verified
+FROM "user" WHERE id = $1 AND status = 'active'
+`
+
+type AccountProfileRow struct {
+	ID            pgtype.UUID
+	Email         string
+	DisplayName   string
+	Locale        pgtype.Text
+	EmailVerified bool
+}
+
+// AccountProfile returns what an active account's own user sees of it
+// (package account): its address, its display name, its preferred locale,
+// or null if it has none, and whether its address is verified.
+func (q *Queries) AccountProfile(ctx context.Context, id pgtype.UUID) (AccountProfileRow, error) {
+	row := q.db.QueryRow(ctx, accountProfile, id)
+	var i AccountProfileRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.Locale,
+		&i.EmailVerified,
+	)
+	return i, err
+}
+
 const insertUser = `-- name: InsertUser :execrows
 INSERT INTO "user" (id, email, password_hash, display_name, is_instance_admin, personal_workspace_created_at)
 VALUES ($1, $2, $3, $4, $5,
@@ -102,6 +131,41 @@ func (q *Queries) SetInstanceAdmin(ctx context.Context, arg SetInstanceAdminPara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setUserLocale = `-- name: SetUserLocale :one
+UPDATE "user" SET locale = $1, updated_at = now()
+WHERE id = $2 AND status = 'active'
+RETURNING id, email, display_name, locale, (email_verified_at IS NOT NULL)::boolean AS email_verified
+`
+
+type SetUserLocaleParams struct {
+	Locale pgtype.Text
+	ID     pgtype.UUID
+}
+
+type SetUserLocaleRow struct {
+	ID            pgtype.UUID
+	Email         string
+	DisplayName   string
+	Locale        pgtype.Text
+	EmailVerified bool
+}
+
+// SetUserLocale sets an active account's preferred locale, as a BCP 47 tag,
+// or null to have none, so that each request's own languages choose (PRD
+// FR-I18N-02), and returns the account as AccountProfile does.
+func (q *Queries) SetUserLocale(ctx context.Context, arg SetUserLocaleParams) (SetUserLocaleRow, error) {
+	row := q.db.QueryRow(ctx, setUserLocale, arg.Locale, arg.ID)
+	var i SetUserLocaleRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.Locale,
+		&i.EmailVerified,
+	)
+	return i, err
 }
 
 const updatePasswordHash = `-- name: UpdatePasswordHash :execrows

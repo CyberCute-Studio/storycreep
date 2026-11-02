@@ -38,15 +38,6 @@ func (r *queueRef) Enqueue(ctx context.Context, tx pgx.Tx, args jobs.Args, opts 
 	return q.Enqueue(ctx, tx, args, opts)
 }
 
-// instanceBody is the body of GET /api/v1/instance.
-type instanceBody struct {
-	EmailConfigured bool `json:"email_configured" doc:"Whether the instance sends email, through the SMTP server of STORYCREEP_SMTP_URL or of first-run setup. Without it, a page says that email is not configured: the links that reset a password and verify an email address are not emailed, and an instance admin gives them out as text."`
-}
-
-type instanceOutput struct {
-	Body instanceBody
-}
-
 // passwordResetBody is the body of POST /api/v1/auth/password-reset.
 type passwordResetBody struct {
 	Email string `json:"email" maxLength:"254" doc:"The email address of the account whose password to reset, in any case"`
@@ -112,8 +103,7 @@ const adminLinkDoc = " It is for an instance that sends no email, whose links an
 	"answered with 403 instance_admin_required, whatever the request holds. An address that belongs to no " +
 	"active account is answered with 404 not_found. The audit log records the issue."
 
-// registerEmail registers the routes of email links (PRD FR-AUTH-03), and
-// GET /api/v1/instance.
+// registerEmail registers the routes of email links (PRD FR-AUTH-03).
 func registerEmail(m *api.Mux, accounts *account.Service) {
 	// emailConfigured refuses a request on an instance that sends no email,
 	// before the operation reads its body.
@@ -146,22 +136,6 @@ func registerEmail(m *api.Mux, accounts *account.Service) {
 			return api.NewError(api.CodeEmailConfigured)
 		}
 		return nil
-	})
-
-	api.Register(m, api.Public, huma.Operation{
-		OperationID: "getInstance",
-		Method:      http.MethodGet,
-		Path:        "/api/v1/instance",
-		Summary:     "Get what the instance offers",
-		Description: "Says whether the instance sends email, so that a page can say that email is not " +
-			"configured, and where the links that reset a password and verify an email address come from.",
-		Tags: []string{"Instance"},
-	}, func(ctx context.Context, _ *struct{}) (*instanceOutput, error) {
-		configured, err := accounts.EmailConfigured(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return &instanceOutput{Body: instanceBody{EmailConfigured: configured}}, nil
 	})
 
 	api.Register(m, api.Public, huma.Operation{

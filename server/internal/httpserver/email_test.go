@@ -132,24 +132,23 @@ func setUpWithAdmin(t *testing.T, env map[string]string) (*server, *dbtest.Datab
 // SMTP server that first-run setup chose.
 func TestInstanceSaysWhetherEmailIsConfigured(t *testing.T) {
 	t.Parallel()
-	check := func(s *server, want string) {
+	check := func(s *server, want bool) {
 		t.Helper()
-		res := send(s.main, http.MethodGet, instancePath, nil, "", nil)
-		if res.status != http.StatusOK || strings.TrimSpace(string(res.body)) != want {
-			t.Errorf("GET %s: %d %s, want %s", instancePath, res.status, res.body, want)
+		if got := instanceOf(t, s).EmailConfigured; got != want {
+			t.Errorf("GET %s: email_configured %v, want %v", instancePath, got, want)
 		}
 	}
 	none, _ := readyServer(t, nil)
-	check(none, `{"email_configured":false}`)
+	check(none, false)
 	fixed, _ := readyServer(t, map[string]string{"STORYCREEP_SMTP_URL": "smtp://smtp.example.com",
 		"STORYCREEP_SMTP_FROM": "noreply@example.com"})
-	check(fixed, `{"email_configured":true}`)
+	check(fixed, true)
 
 	chosen, d := pendingServer(t, nil)
-	check(chosen, `{"email_configured":false}`)
+	check(chosen, false)
 	completeSetup(t, chosen, "jo@example.com", map[string]any{"smtp": map[string]any{"host": "SMTP.example.com",
 		"port": 2525, "security": "tls", "username": "jo", "password": "pw", "from": "Storycreep <noreply@example.com>"}})
-	check(chosen, `{"email_configured":true}`)
+	check(chosen, true)
 	var settings string
 	if err := d.Admin(t).QueryRow(context.Background(), `SELECT format('%s %s %s %s %s %s', smtp_host, smtp_port,
 		smtp_security, smtp_username, smtp_password, smtp_from) FROM instance`).Scan(&settings); err != nil {

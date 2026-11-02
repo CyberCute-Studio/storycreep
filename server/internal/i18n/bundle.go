@@ -261,6 +261,28 @@ func (b *Bundle) Match(tag language.Tag) (language.Tag, bool) {
 	return language.Und, false
 }
 
+// MatchString is Match for v, a BCP 47 tag as a request names a locale, as a
+// workspace's default locale or an account's preferred one: it reports false
+// for a v that is not a tag, too.
+func (b *Bundle) MatchString(v string) (language.Tag, bool) {
+	tag, err := language.Parse(v)
+	if err != nil {
+		return language.Und, false
+	}
+	return b.Match(tag)
+}
+
+// UnmatchedProblem says what is wrong with a locale of a request that
+// MatchString reports false for, as the message of the field's error: that
+// it is not one that the server has a catalog for, and which those are.
+func (b *Bundle) UnmatchedProblem() string {
+	names := make([]string, len(b.locales))
+	for i, l := range b.locales {
+		names[i] = l.String()
+	}
+	return "is not a locale that the server has a catalog for: " + strings.Join(names, ", ")
+}
+
 // likely is a tag with its likely script and region filled in, as
 // Intl.Locale's maximize fills them in, from CLDR's likely subtags.
 type likely struct {

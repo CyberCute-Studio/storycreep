@@ -256,6 +256,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.registerOperational(s.main)
 	registerAccounts(s.main, s.accounts)
 	registerSessions(s.main, s.accounts, cookie)
+	registerOwnAccount(s.main, s.accounts, cookie)
 	registerWorkspaces(s.main, s.workspaces)
 	registerUsage(s.main, s.workspaces)
 	registerProjects(s.main, s.projects)
@@ -278,6 +279,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerInvites(s.main, s.workspaces, s.invites, s.accounts)
 	registerSetup(s.main, s.setups)
 	registerEmail(s.main, s.accounts)
+	registerInstance(s.main, s.accounts, cfg.DefaultLocale)
 	registerDocument(s.main)
 	registerPages(s.main, webassets.App(), webassets.Site(), cfg.Capabilities.PublicSite)
 

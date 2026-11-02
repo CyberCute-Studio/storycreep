@@ -62,3 +62,18 @@ SELECT password_hash FROM "user" WHERE id = @id AND status = 'active' FOR SHARE;
 -- change of the password, which revokes them too, run one after the other,
 -- and cannot deadlock over the sessions' rows (FR-AUTH-02).
 SELECT id FROM "user" WHERE id = @id FOR SHARE;
+
+-- name: AccountProfile :one
+-- AccountProfile returns what an active account's own user sees of it
+-- (package account): its address, its display name, its preferred locale,
+-- or null if it has none, and whether its address is verified.
+SELECT id, email, display_name, locale, (email_verified_at IS NOT NULL)::boolean AS email_verified
+FROM "user" WHERE id = @id AND status = 'active';
+
+-- name: SetUserLocale :one
+-- SetUserLocale sets an active account's preferred locale, as a BCP 47 tag,
+-- or null to have none, so that each request's own languages choose (PRD
+-- FR-I18N-02), and returns the account as AccountProfile does.
+UPDATE "user" SET locale = sqlc.narg(locale), updated_at = now()
+WHERE id = @id AND status = 'active'
+RETURNING id, email, display_name, locale, (email_verified_at IS NOT NULL)::boolean AS email_verified;
