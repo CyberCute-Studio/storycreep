@@ -105,7 +105,10 @@ export const instanceQuery = queryOptions({
 
 /**
  * Asks the server for the session of the browser's cookie, and returns null
- * if it has none: the server answers 401 then, which is no error of the app.
+ * if it has none: the server answers 401 unauthenticated then, which is no
+ * error of the app (signedOutBy). A 401 without the error envelope, as a
+ * proxy's page, is no answer of the server's, which the error console
+ * records, rather than a page that seems signed out.
  */
 export async function fetchSession(
   signal?: AbortSignal,
@@ -113,7 +116,7 @@ export async function fetchSession(
   try {
     return (await api.call("getSession", {}, { signal })).body;
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
+    if (signedOutBy(error)) {
       return null;
     }
     throw error;
@@ -175,7 +178,11 @@ export interface PageQuery {
 export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
   queryKey: TKey,
   fetchPage: (query: PageQuery, signal: AbortSignal) => Promise<TPage>,
-  { limit = 100, meta }: { limit?: number; meta?: Meta } = {},
+  {
+    limit = 100,
+    meta,
+    staleTime,
+  }: { limit?: number; meta?: Meta; staleTime?: number } = {},
 ) {
   return infiniteQueryOptions({
     queryKey,
@@ -189,6 +196,7 @@ export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
     initialPageParam: undefined,
     getNextPageParam: (page: TPage) => page.next_cursor ?? undefined,
     meta,
+    staleTime,
   });
 }
 

@@ -3,7 +3,6 @@
 // account just registered, and the fields of a registration that the
 // server's refusals name.
 
-import { ApiError } from "@storycreep/shared/api";
 import { type RefObject, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFocusRefusal } from "../ui/Field";
@@ -87,25 +86,22 @@ export function usePasswordConfirmation(
 
 /**
  * Signs in with an account that the page has just registered (signIn), and
- * resolves to "registered" instead if the server refuses the credentials:
- * it answers a registration alike whether or not the address had an
- * account, so as not to tell which, and one that had, with another
- * password, stays as it was, which the page then asks the user to sign in
- * to.
+ * resolves to "registered" instead if signing in fails, however it fails:
+ * the server answers a registration alike whether or not the address had
+ * an account, so as not to tell which, and one that had, with another
+ * password, stays as it was, so the credentials may be refused; and the
+ * registration stands whatever else refuses signing in, as rate_limited,
+ * or a server that cannot be reached, which the form, shown with the
+ * refusal, would have the user send again. The page then asks the user to
+ * sign in, where such a refusal shows, as first-run setup does.
  */
 export async function signInRegistered<T>(
   signIn: () => Promise<T>,
 ): Promise<T | "registered"> {
   try {
     return await signIn();
-  } catch (error) {
-    if (
-      error instanceof ApiError &&
-      error.error?.code === "invalid_credentials"
-    ) {
-      return "registered";
-    }
-    throw error;
+  } catch {
+    return "registered";
   }
 }
 

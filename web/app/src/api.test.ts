@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, requestsIn } from "./api";
+import { api, fetchSession, requestsIn } from "./api";
 import { createAppI18n } from "./i18n";
 
 afterEach(() => {
@@ -30,5 +30,33 @@ describe("requestsIn", () => {
         new Headers(init?.headers).get("Accept-Language"),
       ),
     ).toEqual(["en", "cs"]);
+  });
+});
+
+describe("fetchSession", () => {
+  it("takes the server's 401 for a signed-out page, and no other", async () => {
+    const answer = (body: string, type: string) =>
+      new Response(body, { status: 401, headers: { "Content-Type": type } });
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        answer(
+          JSON.stringify({
+            error: {
+              code: "unauthenticated",
+              message: "Sign in.",
+              request_id: "req",
+            },
+          }),
+          "application/json",
+        ),
+      )
+      // A proxy's page, which asks for its own credentials.
+      .mockResolvedValueOnce(answer("<h1>Sign in</h1>", "text/html"));
+    expect(await fetchSession()).toBeNull();
+    await expect(fetchSession()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 401,
+      error: undefined,
+    });
   });
 });

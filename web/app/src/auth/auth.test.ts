@@ -17,6 +17,7 @@ import {
   appPath,
   endSession,
   followSession,
+  loadSessionState,
   signedIn,
   signInFor,
   signInReturn,
@@ -218,19 +219,25 @@ describe("passwordMismatch", () => {
 });
 
 describe("signInRegistered", () => {
-  it("takes refused credentials for an address that had an account", async () => {
+  it("takes signing in that fails for a registration that stands, whatever refused it", async () => {
     expect(await signInRegistered(async () => "signed-in")).toBe("signed-in");
+    // An address that had an account, with another password.
     expect(
       await signInRegistered(async () => {
         throw refused(401, { code: "invalid_credentials" });
       }),
     ).toBe("registered");
-    const limited = refused(429, { code: "rate_limited" });
-    await expect(
-      signInRegistered(async () => {
-        throw limited;
+    // A refusal that the sign-in screen shows, where the page leads.
+    expect(
+      await signInRegistered(async () => {
+        throw refused(429, { code: "rate_limited" });
       }),
-    ).rejects.toBe(limited);
+    ).toBe("registered");
+    expect(
+      await signInRegistered(async () => {
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }),
+    ).toBe("registered");
   });
 });
 
@@ -249,14 +256,16 @@ describe("signedIn and endSession", () => {
   });
 
   it("keep what outlives a session, and drop the account's data", async () => {
+    const verified = { ...testAccount, email_verified: true };
     const other = { ...testAccount, id: "usr_other", display_name: "Sam" };
+    let account: typeof testAccount = verified;
     const call = vi.spyOn(api, "call").mockImplementation((async (
       operation: string,
     ) => {
       if (operation !== "getAccount") {
         throw new Error(`unexpected ${operation}`);
       }
-      return { status: 200, body: other, response: new Response() };
+      return { status: 200, body: account, response: new Response() };
     }) as typeof api.call);
     const client = new QueryClient();
     client.setQueryData(versionQuery.queryKey, {
@@ -269,18 +278,23 @@ describe("signedIn and endSession", () => {
     client.setQueryData(["tokens"], []);
 
     // Another session of the same account, as after a change of the
-    // password, keeps the account's data, and asks for nothing.
+    // password, keeps the account's data, with the account as the server
+    // has it now, as once another tab verified its address.
     await signedIn(client, { ...testSession, csrf_token: "renewed" });
-    expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
+    expect(client.getQueryData(accountQuery.queryKey)).toEqual(verified);
+    expect(client.getQueryData(["tokens"])).toEqual([]);
+    // One whose account the server cannot say keeps what it had of it.
+    call.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     await signedIn(client, { ...testSession, csrf_token: "again" });
-    expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
+    expect(client.getQueryData(accountQuery.queryKey)).toEqual(verified);
     expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
       "again",
     );
-    expect(call).not.toHaveBeenCalled();
+    expect(call).toHaveBeenCalledTimes(2);
 
     // Another account's does not, and the page has the other account with
     // its session.
+    account = other;
     await signedIn(client, { ...testSession, user_id: "usr_other" });
     expect(client.getQueryData(accountQuery.queryKey)).toEqual(other);
     expect(client.getQueryData(["tokens"])).toBeUndefined();
@@ -322,7 +336,8 @@ describe("followSession", () => {
 
   /**
    * Answers getSession with each of answers in turn, as the server would,
-   * and getAccount with the account of the last session that it answered.
+   * and getAccount with the account of the last session that it answered,
+   * whose address is verified, as another tab may have verified it.
    */
   function sessions(...answers: (typeof testSession | null | Error)[]) {
     let last: typeof testSession | undefined;
@@ -332,7 +347,7 @@ describe("followSession", () => {
       if (operation === "getAccount" && last !== undefined) {
         return {
           status: 200,
-          body: { ...testAccount, id: last.user_id },
+          body: { ...testAccount, id: last.user_id, email_verified: true },
           response: new Response(),
         };
       }
@@ -376,14 +391,19 @@ describe("followSession", () => {
     doc.dispatchEvent(new Event("visibilitychange"));
     expect(call).not.toHaveBeenCalled();
 
-    // Another tab changed the password: the session's new CSRF token.
+    // Another tab changed the password: the session's new CSRF token, with
+    // the account as the server has it now, whose address another tab
+    // verified.
     show();
     await vi.waitFor(() =>
       expect(client.getQueryData(sessionQuery.queryKey)?.csrf_token).toBe(
         "renewed",
       ),
     );
-    expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
+    expect(client.getQueryData(accountQuery.queryKey)).toEqual({
+      ...testAccount,
+      email_verified: true,
+    });
 
     // A server that cannot say changes nothing.
     show();
@@ -520,5 +540,36 @@ describe("followSession", () => {
     expect(client.getQueryData(accountQuery.queryKey)).toEqual(testAccount);
     expect(replaced).not.toHaveBeenCalled();
     expect(ended).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadSessionState", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("signs the page out when its account is answered as signed out, as once the session was revoked since", async () => {
+    vi.spyOn(api, "call").mockImplementation((async (operation: string) => {
+      if (operation === "getAccount") {
+        throw refused(401, { code: "unauthenticated" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    }) as typeof api.call);
+    const client = new QueryClient();
+    client.setQueryData(instanceQuery.queryKey, testInstance);
+    client.setQueryData(sessionQuery.queryKey, testSession);
+    expect(await loadSessionState(client)).toEqual({
+      instance: testInstance,
+      session: null,
+      account: null,
+    });
+    expect(client.getQueryData(sessionQuery.queryKey)).toBeNull();
+
+    // Any other failure is the error page's.
+    const failed = refused(500, { code: "internal_error" });
+    vi.spyOn(api, "call").mockRejectedValue(failed);
+    client.setQueryData(sessionQuery.queryKey, testSession);
+    await expect(loadSessionState(client)).rejects.toBe(failed);
+    expect(client.getQueryData(sessionQuery.queryKey)).toEqual(testSession);
   });
 });

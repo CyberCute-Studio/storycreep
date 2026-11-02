@@ -141,6 +141,13 @@ function tokensQuery(target: Target) {
   return pagedQuery(["tokens", target], tokenRequests(target).list, {
     // A role that may not see the tokens is refused, which the page shows.
     meta: { showsRefusals: true },
+    // The server counts reading the tokens among the requests about
+    // credentials, of which it allows an account 10 a minute (FR-AUTH-05):
+    // the page reads them again once it has made or revoked one, and else
+    // at most once a minute, as when a target is chosen again, or the tab
+    // is shown again, rather than each time, which would use up what the
+    // account may still make and revoke.
+    staleTime: 60_000,
   });
 }
 

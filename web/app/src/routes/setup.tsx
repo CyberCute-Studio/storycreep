@@ -160,6 +160,14 @@ function SetupForm({ setup }: { setup: SetupBody }) {
   const form = useRef<HTMLFormElement>(null);
   const [smtp, setSmtp] = useState(false);
   const [storage, setStorage] = useState(false);
+  // Reads the instance again, whose setup has completed: if the server
+  // cannot answer, the page reads it anew where it goes next, rather than
+  // holding its setup as pending.
+  const readInstance = () =>
+    client.fetchQuery({ ...instanceQuery, staleTime: 0 }).then(
+      () => undefined,
+      () => client.removeQueries({ queryKey: instanceQuery.queryKey }),
+    );
   const complete = useMutation({
     mutationFn: async (body: CompleteSetupBody): Promise<Completed> => {
       try {
@@ -167,7 +175,7 @@ function SetupForm({ setup }: { setup: SetupBody }) {
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           // Another setup completed first.
-          await client.fetchQuery({ ...instanceQuery, staleTime: 0 });
+          await readInstance();
           return "taken";
         }
         throw error;
@@ -176,18 +184,13 @@ function SetupForm({ setup }: { setup: SetupBody }) {
       // reading the instance again, not setup: shown on the form, it would
       // have the user set up again, which the server would answer as if
       // someone else had completed it first. The two go at once.
-      const [instance, owner] = await Promise.allSettled([
-        client.fetchQuery({ ...instanceQuery, staleTime: 0 }),
+      const [, owner] = await Promise.allSettled([
+        readInstance(),
         signIn(client, {
           email: body.owner.email,
           password: body.owner.password,
         }),
       ]);
-      if (instance.status === "rejected") {
-        // The page reads the instance anew where it goes next, whose setup
-        // it still holds as pending.
-        client.removeQueries({ queryKey: instanceQuery.queryKey });
-      }
       return owner.status === "fulfilled" ? "signed-in" : "signed-out";
     },
     // Setup stays pending until the start page shows, so that its form,

@@ -4,7 +4,11 @@
 // signed-out page to the sign-in screen and back again once it has signed
 // in.
 
-import type { LoginBody, SignedInBody } from "@storycreep/shared/api";
+import type {
+  AccountBody,
+  LoginBody,
+  SignedInBody,
+} from "@storycreep/shared/api";
 import type { QueryClient } from "@tanstack/react-query";
 import { type ParsedLocation, redirect } from "@tanstack/react-router";
 import {
@@ -13,6 +17,7 @@ import {
   fetchSession,
   instanceQuery,
   sessionQuery,
+  signedOutBy,
 } from "../api";
 import type { RouterContext } from "../router";
 
@@ -59,34 +64,35 @@ export function csrfHeaders(session: SignedInBody | null | undefined): {
  * is asked for first, so that the page has both at once: a component that
  * reads the account once the page has a session, as an invitation's step
  * that follows signing in where the page is, has it, rather than waiting
- * for it, which shows none of the page's content (useSuspenseQuery). If
- * the server cannot answer, the components ask for it themselves. A
- * session that the page only learnt of, as followSession does, is recorded
- * only if current still says so once the account has come, after which
- * the page may have changed its session itself, as by signing in;
- * signedIn resolves to whether it recorded it.
+ * for it, which shows none of the page's content (useSuspenseQuery). It is
+ * asked for again of the same account too, so that what another tab has
+ * changed of it shows once the page asks for its session, as once its tab
+ * is shown again: an address that another tab verified, as the emailed
+ * link's does, or a language saved elsewhere. If the server cannot answer,
+ * the page keeps what it had of the account, or, for another account, the
+ * components ask for it themselves. A session that the page only learnt
+ * of, as followSession does, is recorded only if current still says so
+ * once the account has come, after which the page may have changed its
+ * session itself, as by signing in; signedIn resolves to whether it
+ * recorded it.
  */
 export async function signedIn(
   client: QueryClient,
   session: SignedInBody,
   current: () => boolean = () => true,
 ): Promise<boolean> {
-  const changed =
-    client.getQueryData(sessionQuery.queryKey)?.user_id !== session.user_id;
-  const account = changed
-    ? await api.call("getAccount", {}).then(
-        (answer) => answer.body,
-        () => undefined,
-      )
-    : undefined;
+  const account = await api.call("getAccount", {}).then(
+    (answer) => answer.body,
+    () => undefined,
+  );
   if (!current()) {
     return false;
   }
-  if (changed) {
+  if (client.getQueryData(sessionQuery.queryKey)?.user_id !== session.user_id) {
     dropAccountData(client);
-    if (account?.id === session.user_id) {
-      client.setQueryData(accountQuery.queryKey, account);
-    }
+  }
+  if (account?.id === session.user_id) {
+    client.setQueryData(accountQuery.queryKey, account);
   }
   client.setQueryData(sessionQuery.queryKey, session);
   return true;
@@ -181,8 +187,9 @@ export interface SessionFollower {
  * gives the session a new CSRF token (PRD FR-AUTH-02). Whenever doc is
  * shown again, as when the user comes back to its tab, and whenever the
  * follower's check is called, the page asks the server for the session,
- * records it in client, and tells changes if the session is no longer the
- * account's that it was. Only the answer to the latest question counts,
+ * records it in client, with its account as the server has it now
+ * (signedIn), and tells changes if the session is no longer the account's
+ * that it was. Only the answer to the latest question counts,
  * since one asked before it may be of a session that has changed since,
  * as one that ended while the question was under way, and so only if the
  * page has not changed its session itself since it asked, as by signing
@@ -336,16 +343,15 @@ interface GuardArgs {
 
 /**
  * The guard of a route that needs a session: a signed-out page goes to the
- * sign-in screen, which comes back to the page once it has signed in. It
- * makes sure that the account is in the cache, which the route's components
- * read.
+ * sign-in screen, which comes back to the page once it has signed in. The
+ * root route has read the account, which the route's components read,
+ * before (loadSessionState).
  */
 export async function requireSession({ context, location }: GuardArgs) {
   const session = await context.queryClient.ensureQueryData(sessionQuery);
   if (session === null) {
     throw redirect(signInFor(location));
   }
-  await context.queryClient.ensureQueryData(accountQuery);
   return { session };
 }
 
@@ -368,14 +374,30 @@ export async function requireSignedOut(
 
 /**
  * Makes sure that the instance, the session, and, with a session, the
- * account are in the cache, which every page reads, and returns them.
+ * account are in the cache, which every page reads, and returns them. A
+ * session whose account is answered with 401 unauthenticated has ended
+ * since the server answered for it, as one revoked meanwhile, or of an
+ * account suspended meanwhile: the page is signed out then, as the
+ * question of the session that the answer asks for would find
+ * (sessionDoubtedBy), rather than showing the error page until it has.
  */
 export async function loadSessionState(client: QueryClient) {
-  const [instance, session] = await Promise.all([
+  const [instance, known] = await Promise.all([
     client.ensureQueryData(instanceQuery),
     client.ensureQueryData(sessionQuery),
   ]);
-  const account =
-    session === null ? null : await client.ensureQueryData(accountQuery);
+  let session = known;
+  let account: AccountBody | null = null;
+  if (session !== null) {
+    try {
+      account = await client.ensureQueryData(accountQuery);
+    } catch (error) {
+      if (!signedOutBy(error)) {
+        throw error;
+      }
+      session = null;
+      client.setQueryData(sessionQuery.queryKey, null);
+    }
+  }
   return { instance, session, account };
 }

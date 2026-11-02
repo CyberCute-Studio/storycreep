@@ -407,6 +407,38 @@ describe("the language", () => {
     });
   });
 
+  it("keeps the account that another tab has signed in to since the language was saved, rather than the one before", async () => {
+    const user = userEvent.setup();
+    const other = { ...testAccount, id: "usr_other", email: "sam@example.com" };
+    let answer: (account: AccountBody) => void = () => {};
+    fakeApi((operation) => {
+      if (operation === "updateAccount") {
+        return new Promise<AccountBody>((resolve) => {
+          answer = resolve;
+        });
+      }
+      if (operation === "getAccount") {
+        return other;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account", {
+      session: testSession,
+      catalogs: testCatalogs,
+      languages: ["en-US"],
+    });
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Language" }),
+      "cs",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the language" }));
+    await signedIn(queryClient, { ...testSession, user_id: other.id });
+    answer({ ...testAccount, locale: "cs" });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(queryClient.getQueryData(accountQuery.queryKey)).toEqual(other);
+    expect(document.documentElement.lang).toBe("en");
+  });
+
   // Verifies: FR-I18N-02/AC1
   it("shows every page in the language that the account keeps, before the browser's", async () => {
     renderApp("/account", {
@@ -613,6 +645,79 @@ describe("first-run setup", () => {
     });
     await screen.findByRole("heading", { level: 1, name: "Sign in" });
     expect(router.state.location.pathname).toBe("/login");
+  });
+
+  it("says that someone else completed it first, though reading the instance again then fails", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "getSetup":
+          return pendingSetup;
+        case "completeSetup":
+          throw refused(404, { code: "not_found" });
+        case "getInstance":
+          reads++;
+          if (reads === 1) {
+            throw new NetworkError(new TypeError("Failed to fetch"));
+          }
+          return testInstance;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/setup", { instance: { ...testInstance, setup_pending: true } });
+    await user.type(await screen.findByLabelText("Setup code"), "7K2M");
+    await user.type(screen.getByLabelText("Name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("New password"), "a passphrase!");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a passphrase!",
+    );
+    await user.type(screen.getByLabelText("Workspace name"), "Studio");
+    await user.click(screen.getByRole("button", { name: "Complete setup" }));
+    await screen.findByText(
+      "Someone completed the setup of this instance first. Sign in with the account that it created.",
+    );
+    await user.click(screen.getByRole("link", { name: "Sign in" }));
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+  });
+});
+
+describe("registering", () => {
+  it("leads to signing in once signing in with the new account fails, as when the server limits it, rather than asking to register again", async () => {
+    const user = userEvent.setup();
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "registerAccount":
+          return undefined;
+        case "login":
+          throw refused(429, { code: "rate_limited" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/signup");
+    await user.type(await screen.findByLabelText("Name"), "Ada");
+    await user.type(screen.getByLabelText("Email address"), "ada@example.com");
+    await user.type(screen.getByLabelText("New password"), "a passphrase!");
+    await user.type(
+      screen.getByLabelText("Repeat the new password"),
+      "a passphrase!",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Create the account" }),
+    );
+    await screen.findByText(
+      "If this email address had no account, it has one now. Sign in to continue.",
+    );
+    expect(screen.queryByRole("button", { name: "Create the account" })).toBe(
+      null,
+    );
+    expect(
+      call.mock.calls.filter(([operation]) => operation === "registerAccount"),
+    ).toHaveLength(1);
+    await user.click(screen.getByRole("link", { name: "Sign in" }));
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
   });
 });
 
@@ -1236,6 +1341,47 @@ describe("the API tokens", () => {
     });
     await screen.findByRole("heading", { name: "Tokens of Studio A" });
     expect(targets).toHaveProperty("value", "");
+  });
+
+  it("reads a target's tokens again once it has made one, not each time the target is chosen again", async () => {
+    const user = userEvent.setup();
+    const call = fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return {
+            items: [{ id: "prj_a", name: "Game A" }],
+            next_cursor: null,
+          };
+        case "listWorkspaceTokens":
+        case "listProjectTokens":
+          return { items: [], next_cursor: null };
+        case "createWorkspaceToken":
+          return made;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    // The server counts these among the requests about credentials.
+    const lists = () =>
+      call.mock.calls.filter(
+        ([operation]) => operation === "listWorkspaceTokens",
+      ).length;
+    renderApp("/account/tokens", { session: testSession });
+    const targets = await screen.findByRole("combobox", { name: "Tokens of" });
+    await screen.findByText("No tokens yet.");
+    await waitFor(() =>
+      expect(options(targets)).toEqual(["The whole workspace", "Game A"]),
+    );
+    await user.selectOptions(targets, "prj_a");
+    await screen.findByRole("heading", { name: "Tokens of Game A" });
+    await user.selectOptions(targets, "");
+    await screen.findByRole("heading", { name: "Tokens of Studio A" });
+    expect(lists()).toBe(1);
+
+    const dialog = await makeToken(user);
+    await within(dialog).findByLabelText("Token");
+    await waitFor(() => expect(lists()).toBe(2));
   });
 
   it("keeps the dialog of a new token's secret open when the page outside it is clicked", async () => {

@@ -95,6 +95,12 @@ function Language({
       ).body;
     },
     onSuccess: (updated) => {
+      // An answer that comes once the page has signed in to another
+      // account, as another tab may have, is of the account before, whose
+      // profile and locale the page no longer shows.
+      if (client.getQueryData(sessionQuery.queryKey)?.user_id !== updated.id) {
+        return;
+      }
       client.setQueryData(accountQuery.queryKey, updated);
       applyLocale(i18n, {
         preference: updated.locale,
@@ -159,8 +165,10 @@ const passwordField = bodyField("current_password", "new_password");
  * tab is shown again (checkSession), rather than from the answer: a
  * question of the session that went while the change was under way, with
  * the cookie before it, is answered as if the session had ended, which may
- * reach the page before the change's answer, and the page's own question,
- * the latest, sets that right.
+ * reach the page before the change's answer, and sign it out, and the
+ * page's own question, the latest, finds the session again, and shows the
+ * page anew, signed in, without saying that the password changed, which
+ * it has.
  */
 function Password() {
   const { t } = useTranslation();
