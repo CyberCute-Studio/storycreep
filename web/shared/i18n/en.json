@@ -31,6 +31,7 @@
   "auth.error.password_too_short": "Use at least {min, plural, one {# character} other {# characters}}.",
   "auth.error.passwords_differ": "The two passwords are not the same.",
   "auth.error.setup_required": "This instance is not set up yet.",
+  "auth.error.sign_out": "Signing out failed, so you are still signed in. {reason}",
   "auth.error.signup_closed": "Registration is closed on this instance. Ask its administrator for an account.",
   "auth.error.token_expired": "This link has expired. Ask for a new one.",
   "auth.error.token_invalid": "This link does not work. It may be incomplete, or a newer link may have replaced it.",

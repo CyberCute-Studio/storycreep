@@ -1,8 +1,10 @@
 // The fields of the app's forms. Each has a visible label, a hint and an
 // error that a screen reader reads with it (aria-describedby), and is at
 // least 44 pixels high, the size of a fingertip (PRD FR-EDIT-09). An error
-// marks its field invalid, and useFocusRefusal moves the focus to the first
-// such field once for each time that a form is refused.
+// marks its field invalid, or the fieldset of a group of boxes or buttons
+// that it is of (data-invalid), and useFocusRefusal moves the focus to the
+// first such field, or the group's first control, once for each time that a
+// form is refused.
 
 import {
   type ComponentProps,
@@ -136,6 +138,13 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
 }
 
 /**
+ * The selector of what useFocusRefusal moves the focus to: a field marked
+ * invalid, or a control of a fieldset whose error is of the whole group, as
+ * of boxes to tick, since ARIA has no aria-invalid of a group.
+ */
+const refusedField = '[aria-invalid="true"], fieldset[data-invalid] input';
+
+/**
  * Moves the focus to the first field of form that is marked invalid, once
  * for each refused attempt, as a form that the server refused shows its
  * errors, so that a keyboard or screen-reader user lands on what to mend.
@@ -157,6 +166,6 @@ export function useFocusRefusal(
       return;
     }
     focused.current.add(attempt);
-    form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    form.current?.querySelector<HTMLElement>(refusedField)?.focus();
   }, [form, attempt]);
 }

@@ -25,7 +25,13 @@ import { Alert, Page, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/login")({
   validateSearch: signInSearch,
-  beforeLoad: requireSignedOut,
+  // A page that has signed in since, as in another tab, goes where signing
+  // in here would have, with the fragment, as a link's token, that it kept.
+  beforeLoad: ({ context, location, search }) =>
+    requireSignedOut(
+      { context, location },
+      signInReturn(search, location.hash),
+    ),
   component: Login,
 });
 

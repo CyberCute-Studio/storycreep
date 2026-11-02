@@ -101,7 +101,8 @@ async function ready(url: string, timeout: number): Promise<void> {
   const until = Date.now() + timeout;
   for (;;) {
     try {
-      const response = await fetch(url);
+      // A request that hangs is given up, so that the deadline is checked.
+      const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
       if (response.ok) {
         return;
       }
@@ -193,7 +194,14 @@ export async function startInstance(
         { stdio: ["pipe", "pipe", "inherit"] },
       );
       children.push(proxy);
+      // A proxy that never says that it is ready fails the test, which stops
+      // it, rather than leaving the test to wait for its own timeout.
+      let timer: NodeJS.Timeout | undefined;
       await new Promise<void>((resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("the TLS proxy was not ready in 30 s")),
+          30_000,
+        );
         proxy.on("error", reject);
         proxy.once("exit", (code) =>
           reject(new Error(`the TLS proxy exited with ${code}`)),
@@ -206,7 +214,7 @@ export async function startInstance(
             }
           },
         );
-      });
+      }).finally(() => clearTimeout(timer));
     }
     const server = spawn(binary("storycreep"), ["serve"], {
       env: serverEnv({

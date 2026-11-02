@@ -19,6 +19,7 @@ import {
 import { render } from "@testing-library/react";
 import type { i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
+import { onTestFinished, vi } from "vitest";
 import { accountQuery, instanceQuery, sessionQuery } from "../api";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
@@ -62,13 +63,26 @@ export interface RenderAppOptions {
   account?: AccountBody;
   /** Catalogs to show the app in, instead of the shared ones. */
   catalogs?: Readonly<Record<string, Catalog>>;
+  /**
+   * The browser's languages, most preferred first, which the page reads as
+   * navigator.languages for the test, as the root route's locale does.
+   */
   languages?: readonly string[];
   /** The routes, instead of the app's. */
   routes?: AnyRoute;
 }
 
-/** Renders the app at path, and returns what the test reads of it. */
+/**
+ * Renders the app at path, and returns what the test reads of it. It must
+ * be called within a test, after which the browser's languages are as they
+ * were again.
+ */
 export function renderApp(path: string, options: RenderAppOptions = {}) {
+  const languages = options.languages ?? ["en"];
+  const browser = vi
+    .spyOn(navigator, "languages", "get")
+    .mockReturnValue([...languages]);
+  onTestFinished(() => browser.mockRestore());
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -85,7 +99,7 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     );
   }
   const i18n: I18n = createAppI18n(
-    options.languages ?? ["en"],
+    languages,
     document.documentElement,
     options.catalogs,
   );

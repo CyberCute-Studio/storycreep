@@ -21,7 +21,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   // pending has no account to sign in to, so every page leads to setup
   // (FR-ADMIN-02).
   beforeLoad: async ({ context, location }) => {
-    const { instance, account } = await loadSessionState(context.queryClient);
+    const { instance, session, account } = await loadSessionState(
+      context.queryClient,
+    );
     applyLocale(context.i18n, {
       preference: account?.locale,
       instanceDefault: instance.default_locale,
@@ -29,6 +31,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     if (instance.setup_pending && location.pathname !== "/setup") {
       throw redirect({ to: "/setup" });
     }
+    // The account that the page loaded for, or null if it loaded signed
+    // out, which Root keys the page on.
+    return { loadedFor: session?.user_id ?? null };
   },
   component: Root,
   notFoundComponent: NotFound,
@@ -37,9 +42,15 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function Root() {
   useAccountLocale();
+  // A page that loads again for another account, as once another tab has
+  // signed in to it (followSession), shows itself anew, as it would loaded
+  // anew, without what its components held of the account before, as a
+  // choice of a list, a field's value, or a refusal. A page that signs in or
+  // out where it is, as an invitation's, loads nothing, and keeps them.
+  const { loadedFor } = Route.useRouteContext();
   return (
     <Shell>
-      <Outlet />
+      <Outlet key={loadedFor ?? ""} />
     </Shell>
   );
 }

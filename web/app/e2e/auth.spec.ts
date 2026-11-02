@@ -66,7 +66,7 @@ test("registering, signing out, and signing in again, with a wrong password firs
     en["login.title"],
   );
   await signIn(page, email, "not the passphrase");
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(
     en["auth.error.invalid_credentials"],
   );
   expect(await violations(page)).toEqual([]);
@@ -102,7 +102,9 @@ test("a link that resets a password, which an instance admin gives out where the
   await field(page, en["auth.new_password"]).fill(replacement);
   await field(page, en["auth.confirm_password"]).fill(replacement);
   await press(page.getByRole("button", { name: en["reset.submit"] }));
-  await expect(page.getByRole("alert")).toHaveText(en["auth.error.token_used"]);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(
+    en["auth.error.token_used"],
+  );
 
   await signIn(page, account.email, replacement);
   await atStart(page, "Riley Reset");
@@ -198,7 +200,9 @@ test("an invitation's link registers an account and accepts the invitation", asy
 
   // The link is used.
   await page.reload();
-  await expect(page.getByRole("alert")).toHaveText(en["invite.error.accepted"]);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(
+    en["invite.error.accepted"],
+  );
 });
 
 test("an invitation's link accepted by a user who is signed in", async ({

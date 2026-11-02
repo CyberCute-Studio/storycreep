@@ -56,7 +56,9 @@ const queryClient = createQueryClient(errorLog, {
 requestVersion(queryClient);
 const router = createAppRouter({ queryClient, i18n });
 // A page that another tab signed in to another account, or to one, shows
-// itself anew, as it would loaded anew: its guards, its data, its locale.
+// itself anew, as it would loaded anew: its guards, its data, its locale,
+// and its components, which the root route keys on the account that the
+// page loaded for.
 followSession(queryClient, document, {
   ended: sessionEnded,
   replaced: () => void router.invalidate(),

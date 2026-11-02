@@ -49,11 +49,10 @@ function Signup() {
         return "signed-in" as const;
       });
     },
-    onSuccess: (registered) => {
-      if (registered === "signed-in") {
-        void navigate({ to: "/" });
-      }
-    },
+    // Registering stays pending until the start page shows, so that its
+    // form, shown until then, cannot be sent again.
+    onSuccess: (registered) =>
+      registered === "signed-in" ? navigate({ to: "/" }) : undefined,
     meta: { showsRefusals: true },
   });
   const refusal =

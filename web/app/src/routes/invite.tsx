@@ -29,7 +29,7 @@ import { useFragmentToken } from "../auth/fragment";
 import { refusalOf } from "../auth/refusal";
 import { roleName } from "../auth/roles";
 import { csrfHeaders, signedIn } from "../auth/session";
-import { useSignOut } from "../auth/signOut";
+import { signOutFailure, useSignOut } from "../auth/signOut";
 import { Button } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page, Status, TextLink } from "../ui/Page";
@@ -92,8 +92,8 @@ function InviteOf({ token }: { token: string }) {
   // step that follows shows, since the step that made it is gone.
   const [refused, setRefused] = useState<unknown>(null);
   // Once joined, the page shows the membership, whatever it reads of the
-  // invitation since, which its acceptance used: signing in with it drops
-  // the page's queries, the invitation's too, which then answers 410.
+  // invitation since, which its acceptance used, and which answers 410 if
+  // it is asked for again.
   if (joined !== undefined) {
     return (
       <Page title={t("invite.joined_title", { workspace: joined.name })}>
@@ -173,7 +173,8 @@ interface AcceptProps {
  * Accepting the invitation as the signed-in user, which shows refused, the
  * refusal of an acceptance that signed in first, until it accepts again.
  * Signing out of an account that the invitation is not for stays on the
- * invitation, to sign in with the one that it is for.
+ * invitation, to sign in with the one that it is for, or says why it
+ * failed, which leaves the page signed in.
  */
 function AcceptSignedIn({
   token,
@@ -201,18 +202,23 @@ function AcceptSignedIn({
       <p>{t("invite.signed_in_as", { email: account.email })}</p>
       <Alert
         message={
-          error === null
-            ? undefined
-            : mismatch
-              ? mismatchMessage(t, invite, account)
-              : refusalOf(error, t).message
+          signOut.error !== null
+            ? signOutFailure(signOut.error, t)
+            : error === null
+              ? undefined
+              : mismatch
+                ? mismatchMessage(t, invite, account)
+                : refusalOf(error, t).message
         }
       />
       <div className="flex flex-wrap gap-2">
         <Button
           variant="primary"
           disabled={join.isPending}
-          onClick={() => join.mutate()}
+          onClick={() => {
+            signOut.reset();
+            join.mutate();
+          }}
         >
           {t("invite.accept")}
         </Button>

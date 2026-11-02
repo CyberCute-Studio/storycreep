@@ -9,7 +9,6 @@ import type {
 } from "@storycreep/shared/api";
 import { formatDate, formatRelativeTime } from "@storycreep/shared/i18n";
 import {
-  infiniteQueryOptions,
   useInfiniteQuery,
   useMutation,
   useQueryClient,
@@ -20,7 +19,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, sessionQuery } from "../api";
+import { api, pagedQuery, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
@@ -46,38 +45,25 @@ export const Route = createFileRoute("/account/tokens")({
  * shows itself once it has the first, and the rest come as the user asks
  * for them, as the tokens do.
  */
-const workspacesQuery = infiniteQueryOptions({
-  queryKey: ["workspaces"],
-  queryFn: async ({ pageParam, signal }): Promise<PageMembershipBody> =>
-    (
-      await api.call(
-        "listWorkspaces",
-        { query: { cursor: pageParam || undefined, limit: 100 } },
-        { signal },
-      )
-    ).body,
-  initialPageParam: "",
-  getNextPageParam: (page) => page.next_cursor ?? undefined,
-});
+const workspacesQuery = pagedQuery(
+  ["workspaces"],
+  async (query, signal): Promise<PageMembershipBody> =>
+    (await api.call("listWorkspaces", { query }, { signal })).body,
+);
 
 /** The projects of a workspace that the user can see, a page at a time. */
 function projectsQuery(workspaceId: string) {
-  return infiniteQueryOptions({
-    queryKey: ["workspaces", workspaceId, "projects"],
-    queryFn: async ({ pageParam, signal }): Promise<PageProjectBody> =>
+  return pagedQuery(
+    ["workspaces", workspaceId, "projects"],
+    async (query, signal): Promise<PageProjectBody> =>
       (
         await api.call(
           "listProjects",
-          {
-            path: { workspace_id: workspaceId },
-            query: { cursor: pageParam || undefined, limit: 100 },
-          },
+          { path: { workspace_id: workspaceId }, query },
           { signal },
         )
       ).body,
-    initialPageParam: "",
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-  });
+  );
 }
 
 /** What a token acts on: a whole workspace, or one project of it. */
@@ -87,11 +73,10 @@ type Target =
 
 /** The tokens of a target, a page at a time. */
 function tokensQuery(target: Target) {
-  return infiniteQueryOptions({
-    queryKey: ["tokens", target],
-    queryFn: async ({ pageParam, signal }): Promise<PageAPITokenBody> => {
-      const query = { cursor: pageParam || undefined, limit: 100 };
-      return target.kind === "workspace"
+  return pagedQuery(
+    ["tokens", target],
+    async (query, signal): Promise<PageAPITokenBody> =>
+      target.kind === "workspace"
         ? (
             await api.call(
               "listWorkspaceTokens",
@@ -105,13 +90,10 @@ function tokensQuery(target: Target) {
               { path: { project_id: target.projectId }, query },
               { signal },
             )
-          ).body;
-    },
-    initialPageParam: "",
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
+          ).body,
     // A role that may not see the tokens is refused, which the page shows.
-    meta: { showsRefusals: true },
-  });
+    { meta: { showsRefusals: true } },
+  );
 }
 
 /** The scopes of a token (PRD FR-AUTH-04), in the order that the form lists them. */
@@ -137,7 +119,10 @@ function Tokens() {
   const list = useSuspenseInfiniteQuery(workspacesQuery);
   const workspaces = list.data.pages.flatMap((page) => page.items);
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "");
-  const workspace = workspaces.find((w) => w.id === workspaceId);
+  // The first, until the user chooses another, or once the one chosen is no
+  // longer listed, as when the user has left it.
+  const workspace =
+    workspaces.find((w) => w.id === workspaceId) ?? workspaces[0];
   return (
     <Page title={t("tokens.title")} width="wide">
       <p>{t("tokens.intro")}</p>
@@ -243,7 +228,10 @@ function TokenList({
   const { t } = useTranslation();
   const list = useInfiniteQuery(tokensQuery(target));
   const tokens = list.data?.pages.flatMap((page) => page.items) ?? [];
-  if (list.isError) {
+  // A list that was never read shows why alone. One that fails to be read
+  // again, as once a token has been made, shows why with what it had, and
+  // keeps the dialog that shows the new token's secret.
+  if (list.isError && list.data === undefined) {
     return <Alert message={refusalOf(list.error, t).message} />;
   }
   return (
@@ -254,6 +242,9 @@ function TokenList({
         </h2>
         <CreateToken target={target} targetName={targetName} />
       </div>
+      <Alert
+        message={list.isError ? refusalOf(list.error, t).message : undefined}
+      />
       {list.isSuccess && tokens.length === 0 && (
         <p className="text-fg-muted">{t("tokens.empty")}</p>
       )}
@@ -427,7 +418,10 @@ function CreateToken({
             })
           ).body;
     },
-    onSuccess: () => client.invalidateQueries({ queryKey: ["tokens", target] }),
+    // The secret shows at once, while the list is read again.
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["tokens", target] });
+    },
     meta: { showsRefusals: true },
   });
   const refusal =
@@ -527,7 +521,10 @@ function ScopeChoice({ error }: { error?: string }) {
     "export:read": t("tokens.scope.export_read"),
   };
   return (
-    <fieldset aria-describedby={error === undefined ? undefined : errorId}>
+    <fieldset
+      aria-describedby={error === undefined ? undefined : errorId}
+      data-invalid={error === undefined ? undefined : true}
+    >
       <legend className="font-medium">{t("tokens.scopes")}</legend>
       {scopes.map((scope) => (
         <CheckboxField

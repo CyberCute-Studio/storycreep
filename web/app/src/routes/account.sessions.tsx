@@ -1,7 +1,6 @@
 import type { SessionBody } from "@storycreep/shared/api";
 import { formatDateTime, formatRelativeTime } from "@storycreep/shared/i18n";
 import {
-  infiniteQueryOptions,
   useInfiniteQuery,
   useMutation,
   useQueryClient,
@@ -9,7 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, sessionQuery } from "../api";
+import { api, pagedQuery, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders, endSession } from "../auth/session";
 import { Button } from "../ui/Button";
@@ -20,19 +19,12 @@ export const Route = createFileRoute("/account/sessions")({
 });
 
 /** The account's active sessions, newest first, a page at a time. */
-const sessionsQuery = infiniteQueryOptions({
-  queryKey: ["sessions"],
-  queryFn: async ({ pageParam, signal }) =>
-    (
-      await api.call(
-        "listSessions",
-        { query: { cursor: pageParam || undefined, limit: 50 } },
-        { signal },
-      )
-    ).body,
-  initialPageParam: "",
-  getNextPageParam: (page) => page.next_cursor ?? undefined,
-});
+const sessionsQuery = pagedQuery(
+  ["sessions"],
+  async (query, signal) =>
+    (await api.call("listSessions", { query }, { signal })).body,
+  { limit: 50 },
+);
 
 // The account's sessions (PRD FR-AUTH-02): where it is signed in, with the
 // address and the browser that each started from, and when it was last

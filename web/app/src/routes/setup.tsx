@@ -195,11 +195,10 @@ function SetupForm({ setup }: { setup: SetupBody }) {
       }
       return "signed-in";
     },
-    onSuccess: (completed) => {
-      if (completed === "signed-in") {
-        void navigate({ to: "/" });
-      }
-    },
+    // Setup stays pending until the start page shows, so that its form,
+    // shown until then, cannot be sent again, which would be refused.
+    onSuccess: (completed) =>
+      completed === "signed-in" ? navigate({ to: "/" }) : undefined,
     meta: { showsRefusals: true },
   });
   const refusal =
@@ -376,6 +375,7 @@ function SignupPolicy({ setup, error }: { setup: SetupBody; error?: string }) {
     <fieldset
       className="space-y-2"
       aria-describedby={error === undefined ? undefined : errorId}
+      data-invalid={error === undefined ? undefined : true}
     >
       <legend className="mb-2 text-lg font-semibold">
         {t("setup.signup.title")}

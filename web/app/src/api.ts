@@ -13,10 +13,12 @@ import {
   type VersionBody,
 } from "@storycreep/shared/api";
 import {
+  infiniteQueryOptions,
   MutationCache,
   type MutationMeta,
   QueryCache,
   QueryClient,
+  type QueryKey,
   type QueryMeta,
   queryOptions,
 } from "@tanstack/react-query";
@@ -137,6 +139,45 @@ export const accountQuery = queryOptions({
     (await api.call("getAccount", {}, { signal })).body,
   staleTime: Number.POSITIVE_INFINITY,
 });
+
+/** What a list of the server answers a page at a time has of its next page. */
+interface Paged {
+  /** The cursor of the next page, or null on the last. */
+  next_cursor: string | null;
+}
+
+/** What pagedQuery asks fetchPage for: a page of at most limit items. */
+export interface PageQuery {
+  /** Where the page starts, or undefined for the first. */
+  cursor?: string;
+  limit: number;
+}
+
+/**
+ * The query of a list that the server answers a page at a time, from a
+ * cursor, as the sessions and the tokens: fetchPage asks for one page,
+ * the first once the page shows the list, and the next whenever the user
+ * asks for more (fetchNextPage), until the last.
+ */
+export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
+  queryKey: TKey,
+  fetchPage: (query: PageQuery, signal: AbortSignal) => Promise<TPage>,
+  { limit = 100, meta }: { limit?: number; meta?: Meta } = {},
+) {
+  return infiniteQueryOptions({
+    queryKey,
+    queryFn: ({
+      pageParam,
+      signal,
+    }: {
+      pageParam: string;
+      signal: AbortSignal;
+    }) => fetchPage({ cursor: pageParam || undefined, limit }, signal),
+    initialPageParam: "",
+    getNextPageParam: (page: TPage) => page.next_cursor ?? undefined,
+    meta,
+  });
+}
 
 /**
  * Asks for the server's version, once. A failure is recorded as any

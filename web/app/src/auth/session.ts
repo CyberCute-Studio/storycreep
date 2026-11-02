@@ -16,8 +16,21 @@ import {
 } from "../api";
 import type { RouterContext } from "../router";
 
-/** The queries of the page that outlive its session, as the server's version. */
-const sessionless = new Set(["version", "instance", "session"]);
+/**
+ * The queries of the page that outlive its session, whose answers are the
+ * same whoever asks: the server's version, the instance, what first-run
+ * setup asks for, and an invitation that its link shows, which a page that
+ * signs in with it keeps showing. Every other query is dropped once the
+ * page signs in to another account or out, so that one that this list
+ * misses is asked for again, rather than another account's answer shown.
+ */
+const sessionless = new Set([
+  "version",
+  "instance",
+  "session",
+  "setup",
+  "invite",
+]);
 
 /**
  * The headers of a request that changes something: the session's CSRF
@@ -245,12 +258,18 @@ export async function requireSession({ context, location }: GuardArgs) {
 
 /**
  * The guard of a screen for a signed-out page, as signing in or
- * registering: a page that has a session goes to the start page instead.
+ * registering: a page that has a session goes to href instead, the start
+ * page unless the screen names another, as the sign-in screen names the
+ * page to go back to (signInReturn), as when another tab has signed in
+ * since it was shown (followSession).
  */
-export async function requireSignedOut({ context }: GuardArgs) {
+export async function requireSignedOut(
+  { context }: GuardArgs,
+  href = "/",
+): Promise<void> {
   const session = await context.queryClient.ensureQueryData(sessionQuery);
   if (session !== null) {
-    throw redirect({ to: "/" });
+    throw redirect({ href });
   }
 }
 

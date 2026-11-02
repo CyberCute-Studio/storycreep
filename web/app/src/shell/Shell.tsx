@@ -1,14 +1,14 @@
 // The frame of every page of the app: a link that skips to the page's
 // content, the header, which warns of a page that travels unencrypted (PRD
-// NFR-SEC-15) and names the signed-in account, and the content, as the
-// page's main landmark.
+// NFR-SEC-15), names the signed-in account, and signs it out, and the
+// content, as the page's main landmark.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext } from "react";
 import { useTranslation } from "react-i18next";
 import { accountQuery, sessionQuery } from "../api";
-import { useSignOut } from "../auth/signOut";
+import { signOutFailure, useSignOut } from "../auth/signOut";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
@@ -20,6 +20,7 @@ const Framed = createContext(false);
 
 export function Shell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const signOut = useSignOut();
   return (
     <Framed.Provider value={true}>
       <div className="flex min-h-dvh flex-col">
@@ -40,9 +41,16 @@ export function Shell({ children }: { children: ReactNode }) {
               {PRODUCT_NAME}
             </Link>
             <div className="ms-auto flex flex-wrap items-center gap-2">
-              <SignedInControls />
+              <SignedInControls signOut={signOut} />
               <ErrorConsoleButton />
             </div>
+          </div>
+          <div role="alert">
+            {signOut.error !== null && (
+              <p className="border-t border-border px-4 py-3 text-danger">
+                {signOutFailure(signOut.error, t)}
+              </p>
+            )}
           </div>
         </header>
         <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
@@ -69,12 +77,18 @@ function UnencryptedWarning() {
   );
 }
 
-/** The signed-in account's link to its settings, and signing out. */
-function SignedInControls() {
+/**
+ * The signed-in account's link to its settings, and signing out, whose
+ * failure the header says under them.
+ */
+function SignedInControls({
+  signOut,
+}: {
+  signOut: ReturnType<typeof useSignOut>;
+}) {
   const { t } = useTranslation();
   const session = useQuery(sessionQuery).data;
   const account = useQuery({ ...accountQuery, enabled: !!session }).data;
-  const signOut = useSignOut();
   if (!session) {
     return null;
   }

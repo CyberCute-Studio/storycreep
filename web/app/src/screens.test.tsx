@@ -8,6 +8,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { accountQuery, api, sessionQuery } from "./api";
+import { signedIn } from "./auth/session";
 import { renderApp, testAccount, testInstance, testSession } from "./test/app";
 
 // The account screens as the router shows them, over a fake of the API's
@@ -31,6 +32,12 @@ function fakeApi(answer: (operation: Call[0], input: unknown) => unknown) {
     response: new Response(),
   })) as typeof api.call);
 }
+
+/**
+ * Queries the page's content, its main landmark, rather than the header,
+ * which has an alert of its own, of signing out.
+ */
+const content = () => within(screen.getByRole("main"));
 
 /** Returns the ApiError of an answer of status with the error envelope of error. */
 function refused(
@@ -86,6 +93,95 @@ describe("the guards", () => {
     renderApp("/login", { session: testSession });
     await screen.findByText("You are signed in as Jo.");
   });
+
+  it("send a sign-in screen that has signed in since where signing in would have, with its fragment", async () => {
+    fakeApi((operation) => {
+      if (operation === "lookupInvite") {
+        return {
+          kind: "link",
+          workspace_name: "Studio",
+          role: "editor",
+          expires_at: "2026-12-01T10:00:00Z",
+        };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/login?redirect=%2Finvite#token=secret", {
+      session: testSession,
+    });
+    await screen.findByRole("region", { name: "Accept" });
+    expect(router.state.location.pathname).toBe("/invite");
+    expect(router.state.location.hash).toBe("token=secret");
+  });
+});
+
+describe("signing out", () => {
+  it("says so when it fails, which leaves the page signed in", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "logout") {
+        throw refused(403, { code: "csrf_failed" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/", { session: testSession });
+    const header = await screen.findByRole("banner");
+    await user.click(within(header).getByRole("button", { name: "Sign out" }));
+    expect(await within(header).findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Signing out failed, so you are still signed in. The server refused the request, because it did not seem to come from this page. Reload the page, and try again.",
+    );
+    expect(screen.getByText("You are signed in as Jo.")).toBeDefined();
+  });
+
+  it("goes to signing in when the session had ended already", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "logout") {
+        throw refused(401, { code: "unauthenticated" });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { router } = renderApp("/", { session: testSession });
+    const header = await screen.findByRole("banner");
+    await user.click(within(header).getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("heading", { level: 1, name: "Sign in" });
+    expect(router.state.location.pathname).toBe("/login");
+    expect(within(header).getByRole("alert").textContent).toBe("");
+  });
+});
+
+describe("another tab", () => {
+  it("signing in to another account shows the page anew, not what it held of the one before", async () => {
+    const sam = {
+      ...testAccount,
+      id: "usr_sam",
+      email: "sam@example.com",
+      display_name: "Sam",
+    };
+    fakeApi((operation) => {
+      if (operation === "getAccount") {
+        return sam;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient, router } = renderApp("/account", {
+      session: testSession,
+      account: { ...testAccount, locale: "en" },
+    });
+    expect(
+      await screen.findByRole("combobox", { name: "Language" }),
+    ).toHaveProperty("value", "en");
+
+    // What the page does once its tab is shown again (followSession).
+    signedIn(queryClient, { ...testSession, user_id: sam.id });
+    await router.invalidate();
+    await screen.findByText("sam@example.com");
+    expect(screen.getByRole("combobox", { name: "Language" })).toHaveProperty(
+      "value",
+      "",
+    );
+  });
 });
 
 describe("signing in", () => {
@@ -124,7 +220,7 @@ describe("signing in", () => {
     const submit = screen.getByRole("button", { name: "Sign in" });
 
     await user.click(submit);
-    expect(await screen.findByRole("alert")).toHaveProperty(
+    expect(await content().findByRole("alert")).toHaveProperty(
       "textContent",
       "The email address or the password is wrong.",
     );
@@ -212,6 +308,16 @@ describe("the language", () => {
     expect(document.documentElement.lang).toBe("cs");
     // A language whose catalog lacks a message shows it in English.
     expect(screen.getByRole("heading", { name: "Password" })).toBeDefined();
+  });
+
+  it("shows the page in the browser's language where the account prefers none", async () => {
+    renderApp("/account", {
+      session: testSession,
+      catalogs: testCatalogs,
+      languages: ["cs-CZ", "en"],
+    });
+    await screen.findByRole("heading", { level: 1, name: "Účet" });
+    expect(document.documentElement.lang).toBe("cs");
   });
 });
 
@@ -330,7 +436,7 @@ describe("an invitation", () => {
 
   it("says why accepting it refused the account that signed in with it, and signing out stays on it", async () => {
     const user = userEvent.setup();
-    fakeApi((operation) => {
+    const call = fakeApi((operation) => {
       switch (operation) {
         case "lookupInvite":
           return invite;
@@ -356,7 +462,7 @@ describe("an invitation", () => {
     await user.click(
       within(signIn).getByRole("button", { name: "Sign in and accept" }),
     );
-    expect(await screen.findByRole("alert")).toHaveProperty(
+    expect(await content().findByRole("alert")).toHaveProperty(
       "textContent",
       "This invitation is for jo@example.com, but you are signed in as sam@example.com. Sign out, and sign in with jo@example.com.",
     );
@@ -366,6 +472,38 @@ describe("an invitation", () => {
     await screen.findByRole("region", { name: "Have an account? Sign in" });
     expect(router.state.location.pathname).toBe("/invite");
     expect(router.state.location.hash).toBe("token=secret");
+    // What the invitation's link shows is the same for every account, so
+    // signing in and out did not ask for it again.
+    expect(
+      call.mock.calls.filter(([operation]) => operation === "lookupInvite"),
+    ).toHaveLength(1);
+  });
+
+  it("says why signing out of an account that it is not for failed", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "lookupInvite":
+          return invite;
+        case "acceptInvite":
+          throw refused(403, { code: "invite_email_mismatch" });
+        case "logout":
+          throw new TypeError("Failed to fetch");
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/invite#token=secret", { session: testSession, account: other });
+    const accept = await screen.findByRole("region", { name: "Accept" });
+    await user.click(
+      within(accept).getByRole("button", { name: "Accept the invitation" }),
+    );
+    await user.click(
+      await within(accept).findByRole("button", { name: "Sign out" }),
+    );
+    expect(await within(accept).findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Signing out failed, so you are still signed in. The server could not be reached. Check your connection, and try again.",
+    );
   });
 
   it("shows itself in the language of the account that signs in on it", async () => {
@@ -451,12 +589,12 @@ describe("verifying an email address", () => {
     });
     const { router } = renderApp("/verify-email#token=first");
     await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).not.toBe(""),
+      expect(content().getByRole("alert").textContent).not.toBe(""),
     );
 
     await router.navigate({ to: "/verify-email", hash: "token=second" });
     await screen.findByText("Your email address is verified.");
-    expect(screen.getByRole("alert").textContent).toBe("");
+    expect(content().getByRole("alert").textContent).toBe("");
     expect(call).toHaveBeenLastCalledWith("verifyEmail", {
       body: { token: "second" },
     });
@@ -556,16 +694,48 @@ describe("the API tokens", () => {
       .getAllByRole("option")
       .map((option) => option.textContent);
 
+  /** A membership of the workspace id, as its owner. */
+  const workspace = (id: string, name: string) => ({
+    id,
+    name,
+    role: "owner",
+    membership_id: `mem_${id}`,
+    default_locale: "en",
+    created_at: "2026-11-01T10:00:00Z",
+  });
+
+  /** A token of workspace wsp_a, as the server answers its making. */
+  const made = {
+    id: "tok_new",
+    name: "Release pipeline",
+    scopes: ["snapshot:read"],
+    user_id: testSession.user_id,
+    workspace_id: "wsp_a",
+    created_at: "2026-11-02T10:00:00Z",
+    secret: "sct_shown_once",
+  };
+
+  /** Makes a token named name in the dialog, with the scopes as it ticks them. */
+  async function makeToken(
+    user: ReturnType<typeof userEvent.setup>,
+    untick: string[] = [],
+  ) {
+    await user.click(
+      await screen.findByRole("button", { name: "Make a token" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), made.name);
+    for (const scope of untick) {
+      await user.click(within(dialog).getByRole("checkbox", { name: scope }));
+    }
+    await user.click(
+      within(dialog).getByRole("button", { name: "Make the token" }),
+    );
+    return dialog;
+  }
+
   it("list more workspaces and projects to choose from as the user asks for them", async () => {
     const user = userEvent.setup();
-    const workspace = (id: string, name: string) => ({
-      id,
-      name,
-      role: "owner",
-      membership_id: `mem_${id}`,
-      default_locale: "en",
-      created_at: "2026-11-01T10:00:00Z",
-    });
     fakeApi((operation, input) => {
       const first =
         (input as { query?: { cursor?: string } }).query?.cursor === undefined;
@@ -611,6 +781,107 @@ describe("the API tokens", () => {
     );
     expect(screen.queryByRole("button", { name: "Show more projects" })).toBe(
       null,
+    );
+  });
+
+  it("shows the first workspace once the one chosen is no longer listed", async () => {
+    const user = userEvent.setup();
+    let listed = [
+      workspace("wsp_a", "Studio A"),
+      workspace("wsp_b", "Studio B"),
+    ];
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: listed, next_cursor: null };
+        case "listProjects":
+        case "listWorkspaceTokens":
+          return { items: [], next_cursor: null };
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    const { queryClient } = renderApp("/account/tokens", {
+      session: testSession,
+    });
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Workspace" }),
+      "wsp_b",
+    );
+    await screen.findByRole("heading", { name: "Tokens of Studio B" });
+
+    // The user has left it, as the list says once it is read again.
+    listed = [workspace("wsp_a", "Studio A")];
+    await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    await screen.findByRole("heading", { name: "Tokens of Studio A" });
+  });
+
+  it("shows the secret of a token that it made, though the list then fails to be read again", async () => {
+    const user = userEvent.setup();
+    let lists = 0;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+          return { items: [], next_cursor: null };
+        case "listWorkspaceTokens":
+          lists++;
+          if (lists > 1) {
+            throw refused(503, { code: "unavailable" });
+          }
+          return { items: [], next_cursor: null };
+        case "createWorkspaceToken":
+          return made;
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    const dialog = await makeToken(user);
+    expect(await within(dialog).findByLabelText("Token")).toHaveProperty(
+      "value",
+      made.secret,
+    );
+    await waitFor(() => expect(lists).toBe(2));
+    // The list says why, behind the dialog, which the page keeps.
+    await screen.findByText(
+      "The server could not answer. Try again in a moment.",
+    );
+    expect(dialog.isConnected).toBe(true);
+    expect(within(dialog).getByLabelText("Token")).toHaveProperty(
+      "value",
+      made.secret,
+    );
+  });
+
+  it("moves the focus to the scopes when the server refuses them", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listWorkspaces":
+          return { items: [workspace("wsp_a", "Studio A")], next_cursor: null };
+        case "listProjects":
+        case "listWorkspaceTokens":
+          return { items: [], next_cursor: null };
+        case "createWorkspaceToken":
+          throw refused(422, {
+            code: "validation_failed",
+            details: {
+              errors: [
+                {
+                  location: "body.scopes",
+                  message: "expected array length >= 1",
+                },
+              ],
+            },
+          });
+      }
+      throw new Error(`unexpected ${operation}`);
+    });
+    renderApp("/account/tokens", { session: testSession });
+    const dialog = await makeToken(user, ["snapshot:read"]);
+    await within(dialog).findByText("Expected array length >= 1.");
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole("checkbox", { name: "snapshot:read" }),
     );
   });
 });
