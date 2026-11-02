@@ -49,6 +49,11 @@ describe("checkHover", () => {
       ".a:hover { .b { display: block } }": ["display"],
       ".a:hover { @media (min-width: 1px) { position: static } }": ["position"],
       ".a:hover { color: red; scale: 1.1 }": ["scale"],
+      // A scope that hover brings its rules into, or takes them out of.
+      "@scope (.card:hover) { .actions { display: block } }": ["display"],
+      "@scope (.a) to (.b:hover) { .c { display: none } }": ["display"],
+      "@media (min-width: 1px) { @scope (:is(.a:hover)) { .b { opacity: 1 } } }":
+        ["opacity"],
     };
     for (const [css, want] of Object.entries(cases)) {
       expect(reported(css), css).toEqual(want);
@@ -70,6 +75,11 @@ describe("checkHover", () => {
       // Other states than hover.
       ".a { opacity: 0 } .a:focus-visible { opacity: 1 } .a:active { display: block }",
       ".a:hover { color: red } .b { display: none }",
+      // A scope without hover, and one with it that only colours.
+      "@scope (.card) to (.b) { .actions { display: block } }",
+      "@scope (.card:hover) { .actions { color: red } }",
+      // A condition, which holds whether anything is hovered or not.
+      "@supports selector(:hover) { .a { display: block } }",
     ]) {
       expect(reported(css), css).toEqual([]);
     }

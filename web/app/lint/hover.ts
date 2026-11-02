@@ -4,15 +4,16 @@
 // built CSS, Tailwind's utilities and every other rule alike, and refuses a
 // rule that applies on hover, whose selector mentions :hover anywhere,
 // within :is(), :where(), :not(), or :has() too, or that is nested in such a
-// rule, unless every declaration of it sets one of the properties of
-// hoverProperties, which change how an element looks, never whether it is
-// shown or where it is. So hover may colour a control, underline it, or
-// shadow it, but not reveal it, move it, or make it larger, which would leave
-// a touch screen's user without it. It refuses, too, CSS that lightningcss
-// cannot read, as a selector or an at-rule newer than it knows, which it
-// would otherwise skip, with any rule there that applies on hover, which a
-// browser may still apply. hoverCheck runs the check when Vite builds the
-// app, and fails the build on what it refuses.
+// rule, or in a @scope whose bounds mention it, unless every declaration of
+// it sets one of the properties of hoverProperties, which change how an
+// element looks, never whether it is shown or where it is. So hover may
+// colour a control, underline it, or shadow it, but not reveal it, move it,
+// or make it larger, which would leave a touch screen's user without it. It
+// refuses, too, CSS that lightningcss cannot read, as a selector or an
+// at-rule newer than it knows, which it would otherwise skip, with any rule
+// there that applies on hover, which a browser may still apply. hoverCheck
+// runs the check when Vite builds the app, and fails the build on what it
+// refuses.
 //
 // The check cannot tell a colour that tints a control from one that makes it
 // visible, as from transparent, so a control is never transparent, nor the
@@ -123,20 +124,31 @@ export function checkHover(css: string, file: string): HoverProblem[] {
         walk(style.rules ?? [], hover);
         continue;
       }
-      const value = ("value" in rule ? rule.value : {}) as {
+      const {
+        rules: nested,
+        declarations,
+        loc,
+        ...prelude
+      } = ("value" in rule ? rule.value : {}) as {
         rules?: Rule[];
         declarations?: DeclarationBlock;
         loc?: StyleRule["loc"];
       };
-      if (onHover && value.declarations !== undefined) {
+      // An at-rule whose prelude has a selector that mentions :hover, as
+      // @scope (.card:hover), or @scope (.a) to (.b:hover), whose rules a
+      // hover brings into the scope or out of it, applies its rules on
+      // hover. A condition, as @media (hover: hover), or @supports
+      // selector(:hover), has no selector, and a conditional group, as
+      // @media, @supports, @layer, or @container, applies its rules as they
+      // are.
+      const hover = onHover || mentionsHover(prelude);
+      if (hover && declarations !== undefined) {
         // Declarations nested in a rule that applies on hover, after its
         // nested rules, as CSS nesting allows.
-        check(value.declarations, value.loc ?? { line: 0, column: 1 });
+        check(declarations, loc ?? { line: 0, column: 1 });
       }
-      // A conditional group, as @media, @supports, @layer, or @container,
-      // applies its rules as they are.
-      if (Array.isArray(value.rules)) {
-        walk(value.rules, onHover);
+      if (Array.isArray(nested)) {
+        walk(nested, hover);
       }
     }
   };

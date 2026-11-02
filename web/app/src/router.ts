@@ -5,6 +5,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
+import { focusContentIfLost } from "./shell/focus";
 
 /** What every route can read. */
 export interface RouterContext {
@@ -13,7 +14,7 @@ export interface RouterContext {
 
 /** Returns the app's router. */
 export function createAppRouter(context: RouterContext) {
-  return createRouter({
+  const router = createRouter({
     routeTree,
     basepath: "/app",
     context,
@@ -24,6 +25,17 @@ export function createAppRouter(context: RouterContext) {
     // English alone and has no console.
     disableGlobalCatchBoundary: true,
   });
+  // Once a page is shown in place of another, as a link's or the error
+  // page's retry, the page's content gets the focus that the control that
+  // went with the other had. The first page that the tab shows, which has
+  // no other before it, leaves the focus where the browser puts it, before
+  // the skip link.
+  router.subscribe("onRendered", ({ fromLocation }) => {
+    if (fromLocation !== undefined) {
+      focusContentIfLost(document);
+    }
+  });
+  return router;
 }
 
 declare module "@tanstack/react-router" {

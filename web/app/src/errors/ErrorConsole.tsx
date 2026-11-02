@@ -9,7 +9,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
 import {
   createContext,
+  memo,
   type ReactNode,
+  useCallback,
   useContext,
   useMemo,
   useRef,
@@ -161,12 +163,29 @@ function ErrorConsoleDialog({
 }
 
 /**
+ * What the console last said of what it did, as its status. Each message has
+ * a key of its own, so that its node is a new one, which a screen reader
+ * says even when its text is the last one's, as when a second copy
+ * succeeds: a live region's text that does not change is not announced.
+ */
+interface Status {
+  text: string;
+  key: number;
+}
+
+/** Returns the update of a status that says text. */
+function saying(text: string): (status: Status) => Status {
+  return (status) => ({ text, key: status.key + 1 });
+}
+
+/**
  * The console's errors, with the buttons that copy their details and clear
  * them: the dialog's content, and what the page shows instead of the app
  * when the app could not be shown at all.
  */
 export function ErrorConsoleBody() {
   const { t, i18n } = useTranslation();
+  const locale = i18n.language;
   const { log } = useErrorConsole();
   const logged = useErrorLog(log);
   // Newest first, as the list shows them and a report of all of them holds
@@ -176,27 +195,34 @@ export function ErrorConsoleBody() {
   // As the app asked for it when it started (requestVersion), without asking
   // again.
   const { data: server } = useQuery({ ...versionQuery, enabled: false });
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<Status>({ text: "", key: 0 });
   const body = useRef<HTMLDivElement>(null);
 
-  const copy = async (selected: readonly LoggedError[]) => {
-    const report = formatReport(
-      selected,
-      {
-        time: new Date(),
-        userAgent: navigator.userAgent,
-        locale: i18n.language,
-        server,
-      },
-      t,
-    );
-    const container = body.current ?? document.body;
-    setStatus(
-      (await copyText(report, container))
-        ? t("error_console.copied")
-        : t("error_console.copy_failed"),
-    );
-  };
+  // The same function from one render to the next, so that an entry that
+  // has not changed is not rendered again when the log records an error.
+  const copy = useCallback(
+    async (selected: readonly LoggedError[]) => {
+      const report = formatReport(
+        selected,
+        {
+          time: new Date(),
+          userAgent: navigator.userAgent,
+          locale,
+          server,
+        },
+        t,
+      );
+      const container = body.current ?? document.body;
+      setStatus(
+        saying(
+          (await copyText(report, container))
+            ? t("error_console.copied")
+            : t("error_console.copy_failed"),
+        ),
+      );
+    },
+    [locale, server, t],
+  );
 
   return (
     <div ref={body} className="flex min-h-0 flex-1 flex-col gap-4">
@@ -208,11 +234,7 @@ export function ErrorConsoleBody() {
           className="min-h-0 flex-1 space-y-2 overflow-y-auto"
         >
           {entries.map((entry) => (
-            <ErrorEntry
-              key={entry.id}
-              entry={entry}
-              onCopy={() => copy([entry])}
-            />
+            <ErrorEntry key={entry.id} entry={entry} onCopy={copy} />
           ))}
         </ol>
       )}
@@ -236,33 +258,37 @@ export function ErrorConsoleBody() {
           onClick={() => {
             if (!empty) {
               log.clear();
-              setStatus(t("error_console.cleared"));
+              setStatus(saying(t("error_console.cleared")));
             }
           }}
         >
           {t("error_console.clear")}
         </Button>
         <p role="status" className="text-fg-muted">
-          {status}
+          <span key={status.key}>{status.text}</span>
         </p>
       </div>
     </div>
   );
 }
 
-/** An error of the console's list, whose details open below it. */
-function ErrorEntry({
+/**
+ * An error of the console's list, whose details open below it. It is
+ * rendered again only when it changes, as when its error happens again, or
+ * the locale does, rather than for each entry whenever the log records an
+ * error.
+ */
+const ErrorEntry = memo(function ErrorEntry({
   entry,
   onCopy,
 }: {
   entry: LoggedError;
-  onCopy: () => void;
+  /** Copies the details of the entries given. */
+  onCopy: (entries: readonly LoggedError[]) => void;
 }) {
   const { t, i18n } = useTranslation();
   // The error's own details, which a copy of them gives with the report's
-  // heading, made as it is copied. They are made again only when the entry
-  // changes, as when its error happens again, rather than for each entry
-  // whenever the log records an error.
+  // heading, made as it is copied.
   const details = useMemo(() => formatEntry(entry, t), [entry, t]);
   return (
     <li className="rounded-md border border-border bg-surface">
@@ -299,9 +325,11 @@ function ErrorEntry({
           <pre className="max-w-full overflow-x-auto font-mono text-sm whitespace-pre-wrap break-words">
             {details}
           </pre>
-          <Button onClick={onCopy}>{t("error_console.copy_one")}</Button>
+          <Button onClick={() => onCopy([entry])}>
+            {t("error_console.copy_one")}
+          </Button>
         </div>
       </details>
     </li>
   );
-}
+});

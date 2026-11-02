@@ -37,7 +37,7 @@ beforeAll(() => {
 it("reports a request that the app's source makes around the generated API client", () => {
   expect(
     reportedLines(diagnostics, "web/app/src/board/requests.ts", message),
-  ).toEqual([9, 10, 11, 12, 13, 15, 16, 17, 19]);
+  ).toEqual([9, 10, 11, 12, 13, 15, 16, 17, 19, 21, 23]);
   expect(
     reportedLines(diagnostics, "web/app/src/board/client.ts", message),
   ).toEqual([]);

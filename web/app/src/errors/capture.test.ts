@@ -54,6 +54,10 @@ describe("rootErrorOptions", () => {
     options.onRecoverableError?.(new Error("recovered"), {
       componentStack: "",
     });
+    // As React 19 reports an error of a view transition, against its types.
+    options.onRecoverableError?.(new Error("transition"), {
+      componentStack: null as unknown as string,
+    });
     options.onCaughtError?.("ignored", {
       componentStack: "",
       errorBoundary: undefined,
@@ -64,6 +68,7 @@ describe("rootErrorOptions", () => {
       ["render", "caught", "\n    at Page"],
       ["render", "uncaught", "\n    at Root"],
       ["render", "recovered", ""],
+      ["render", "transition", undefined],
     ]);
   });
 });

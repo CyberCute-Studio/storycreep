@@ -49,7 +49,13 @@ export function rootErrorOptions(
     if (ignore(error)) {
       return;
     }
-    log.record("render", error, { componentStack: info.componentStack });
+    // React gives an error of a view transition that it started null as its
+    // components, though its types say a string, which is all that the
+    // console can show: the log has none then.
+    const components: unknown = info.componentStack;
+    log.record("render", error, {
+      componentStack: typeof components === "string" ? components : undefined,
+    });
     // The developer tools' console is the browser's, on this machine.
     console.error(error);
   };

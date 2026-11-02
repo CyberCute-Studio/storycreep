@@ -10,6 +10,7 @@ import { ErrorConsoleBody, ErrorConsoleProvider } from "./errors/ErrorConsole";
 import type { ErrorLog } from "./errors/log";
 import type { createAppRouter } from "./router";
 import { Button } from "./ui/Button";
+import { useDocumentTitle } from "./ui/title";
 
 export interface AppProps {
   i18n: I18n;
@@ -56,6 +57,7 @@ class CrashBoundary extends Component<
 
 function Crashed() {
   const { t } = useTranslation();
+  useDocumentTitle(t("crash.title"));
   return (
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-4 px-4 py-8">
       <h1 className="text-2xl font-semibold">{t("crash.title")}</h1>

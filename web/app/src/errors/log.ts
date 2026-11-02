@@ -21,7 +21,10 @@ export interface RequestDetails {
   status: number;
   /** The error code of the error envelope, if the answer has one. */
   code?: string;
-  /** The ID that the server logged the request under. */
+  /**
+   * The ID that the server logged the request under: the last request's, of
+   * an entry of a request that failed again.
+   */
   requestId?: string;
 }
 
@@ -103,11 +106,12 @@ export function createErrorLog(options: ErrorLogOptions = {}): ErrorLog {
       };
       const last = entries.at(-1);
       if (last !== undefined && same(last, entry)) {
-        // An error that happens again and again, as in a loop, is one entry
-        // rather than a flood that pushes the others out.
+        // An error that happens again and again, as in a loop, or a request
+        // that fails again, is one entry rather than a flood that pushes the
+        // others out, with the time and the request ID of the last time.
         entries = [
           ...entries.slice(0, -1),
-          { ...last, time: entry.time, count: last.count + 1 },
+          { ...entry, id: last.id, count: last.count + 1 },
         ];
       } else {
         next++;
@@ -135,7 +139,11 @@ function currentPage(): string {
   return location === undefined ? "" : location.origin + location.pathname;
 }
 
-/** Reports whether two entries are the same error on the same page. */
+/**
+ * Reports whether two entries are the same error on the same page. A request
+ * that failed as another did is the same error, though the server logged
+ * each under an ID of its own.
+ */
 function same(a: LoggedError, b: LoggedError): boolean {
   return (
     a.source === b.source &&
@@ -146,8 +154,7 @@ function same(a: LoggedError, b: LoggedError): boolean {
     a.page === b.page &&
     a.request?.url === b.request?.url &&
     a.request?.status === b.request?.status &&
-    a.request?.code === b.request?.code &&
-    a.request?.requestId === b.request?.requestId
+    a.request?.code === b.request?.code
   );
 }
 

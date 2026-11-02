@@ -170,13 +170,23 @@ it("copies one error's details", async () => {
   expect(details).toMatch(/^Error 2, at /);
   expect(details).toContain("Error: second");
   expect(details).not.toContain("Report made at");
-  await user.click(
-    within(newest).getByRole("button", { name: "Copy these details" }),
-  );
+  const copyThese = within(newest).getByRole("button", {
+    name: "Copy these details",
+  });
+  await user.click(copyThese);
   const copied = await navigator.clipboard.readText();
   expect(copied).toMatch(/^Storycreep error report\nReport made at: /);
   expect(copied).toContain(details);
   expect(copied).not.toContain("Error: first");
+
+  // A second copy says so again, in a node of its own, which a screen
+  // reader announces though its text is the same.
+  const status = within(dialog).getByRole("status");
+  const said = status.firstElementChild;
+  expect(said?.textContent).toBe("Copied.");
+  await user.click(copyThese);
+  await waitFor(() => expect(status.firstElementChild).not.toBe(said));
+  expect(status.textContent).toBe("Copied.");
 });
 
 // Verifies: NFR-A11Y-01

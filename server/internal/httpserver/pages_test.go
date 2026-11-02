@@ -3,10 +3,14 @@ package httpserver
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -153,10 +157,9 @@ func TestPages(t *testing.T) {
 // of its extension in the server's table, whatever the operating system's
 // tables say, or, for an extension that the table lacks,
 // application/octet-stream, even for a PDF, whose type Go's own table names;
-// a path of a
-// file that the bundle does not have, as one of an older bundle, with
-// not_found; /app/index.html with a redirect to /app/; and any other path
-// with the entry page, whose route the app's router shows.
+// a path of a file that the bundle does not have, as one of an older bundle,
+// with not_found; /app/index.html with a redirect to /app/; and any other
+// path with the entry page, whose route the app's router shows.
 func TestPagesOfBundle(t *testing.T) {
 	page := []byte(`<!doctype html><meta property="csp-nonce" nonce="` + noncePlaceholder + `">` +
 		`<script type="module" src="/app/assets/index-abc.js" nonce="` + noncePlaceholder + `"></script>`)
@@ -209,6 +212,33 @@ func TestPagesOfBundle(t *testing.T) {
 		if strings.Contains(string(res.body), "<script") {
 			t.Errorf("GET %s: the entry page, which a browser would not run as the script it asked for", path)
 		}
+	}
+}
+
+// TestBundleFileTypes checks that fileTypes names the type of the extension
+// of every file of the web app's build, which pnpm build writes to the
+// directory that a binary built with the webdist tag embeds, as CI's test job
+// does before it runs these tests: a file of a new kind, which the server
+// would send as application/octet-stream, without gzip, fails here, rather
+// than in a browser. Without a build, as from the Go toolchain alone, there
+// is nothing to check.
+func TestBundleFileTypes(t *testing.T) {
+	dist := filepath.Join("..", "webassets", "dist", "app")
+	if _, err := os.Stat(dist); errors.Is(err, fs.ErrNotExist) {
+		t.Skip("the web app is not built: pnpm build writes it to " + dist)
+	}
+	err := fs.WalkDir(os.DirFS(dist), ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if _, ok := fileTypes[strings.ToLower(path.Ext(name))]; !ok {
+			t.Errorf("%s: fileTypes, in pages.go, names no type of its extension, so the server sends it as "+
+				"application/octet-stream; add the type there", name)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

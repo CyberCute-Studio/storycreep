@@ -51,7 +51,8 @@ type fileType struct {
 // Windows registry may name any type for .css, which a browser then refuses
 // as a stylesheet, under nosniff. A file of another extension is
 // application/octet-stream, whatever the host, and does not compress: a type
-// that a bundle needs joins the table.
+// that a bundle needs joins the table, as TestBundleFileTypes, which checks
+// each file of the web app's build, says.
 var fileTypes = map[string]fileType{
 	".avif":        {"image/avif", false},
 	".css":         {"text/css; charset=utf-8", true},

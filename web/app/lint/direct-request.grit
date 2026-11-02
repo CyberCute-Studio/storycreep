@@ -8,12 +8,17 @@
 //
 // It reports the browser's ways for a script to make a request: fetch,
 // XMLHttpRequest, EventSource, WebSocket, and sendBeacon, named as a global,
-// as in fetch(url) or new WebSocket(url), or as a property, as in
-// window.fetch, globalThis["fetch"], or navigator.sendBeacon(url). A type
-// that is named so, as in a parameter of the type WebSocket, is not
-// reported. Code that rightly makes such a request, as the real-time
-// channel's client will, is marked with a comment that says why, as in
-// // biome-ignore lint/plugin: the real-time channel's socket.
+// as in fetch(url) or new WebSocket(url), as a property, as in window.fetch,
+// globalThis["fetch"], or navigator.sendBeacon(url), or as a property that
+// is destructured, as in const { fetch: get } = window. A type that is named
+// so, as in a parameter of the type WebSocket, is not reported. It reads
+// names, as a lint rule does, not values that a script computes, so a name
+// that is only a string that a call is given, as in
+// Reflect.get(globalThis, "fetch"), or a key that is not a literal, as in
+// window[name], is for review to catch. Code that rightly makes such a
+// request, as the real-time channel's client will, is marked with a comment
+// that says why, as in // biome-ignore lint/plugin: the real-time channel's
+// socket.
 
 language js
 
@@ -32,6 +37,15 @@ or {
   },
   JsComputedMemberExpression(member=$member) where {
     $member <: r"^[\"'`](?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)[\"'`]$",
+    register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
+  },
+  // A destructured property, as const { fetch: get } = window, or
+  // ({ "fetch": get } = window), whose key may be a literal or computed.
+  or {
+    JsObjectBindingPatternProperty(member=$member),
+    JsObjectAssignmentPatternProperty(member=$member)
+  } where {
+    $member <: r"^\[?[\"'`]?(?:fetch|XMLHttpRequest|EventSource|WebSocket|sendBeacon)[\"'`]?\]?$",
     register_diagnostic(span=$member, message="Call the server through the API client of @storycreep/shared/api, whose types are generated from its OpenAPI document, not with fetch, XMLHttpRequest, EventSource, WebSocket, or sendBeacon. See The web app in CONTRIBUTING.md.")
   }
 }

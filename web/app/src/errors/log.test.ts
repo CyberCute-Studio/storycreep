@@ -51,6 +51,27 @@ describe("createErrorLog", () => {
     ]);
   });
 
+  it("counts a request that fails again in a row as one entry, with the last request's ID", () => {
+    const l = log();
+    const response = new Response(null, { status: 503 });
+    Object.defineProperty(response, "url", { value: "http://x/version" });
+    // The same request, which fails the same way each time, as a query
+    // asked for again does, but which the server logs under another ID.
+    for (const id of ["req_1", "req_2", "req_3"]) {
+      l.record(
+        "request",
+        new ApiError(response, {
+          code: "not_ready",
+          message: "The server is starting.",
+          request_id: id,
+        }),
+      );
+    }
+    expect(
+      l.entries().map((e) => [e.id, e.count, e.request?.requestId]),
+    ).toEqual([[1, 3, "req_3"]]);
+  });
+
   it("keeps the newest errors up to its limit", () => {
     const l = log(3);
     for (const message of ["1", "2", "3", "4"]) {

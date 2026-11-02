@@ -1,5 +1,5 @@
 // Requests made around the API client, each of which the lint rule in
-// ../direct-request.grit reports, on the lines 9 to 19 (lint.test.ts).
+// ../direct-request.grit reports, on the lines 9 to 23 (lint.test.ts).
 
 export function requests(url: string): unknown[] {
   const made: unknown[] = [];
@@ -17,5 +17,10 @@ export function requests(url: string): unknown[] {
   send(globalThis.XMLHttpRequest);
   // biome-ignore lint/complexity/useLiteralKeys: the rule is tested with a computed key
   send(g["fetch"]);
+  // The same as properties that are destructured.
+  const { fetch: get } = window;
+  const into: { beacon?: unknown } = {};
+  ({ sendBeacon: into.beacon } = navigator);
+  send([get, into]);
   return made;
 }

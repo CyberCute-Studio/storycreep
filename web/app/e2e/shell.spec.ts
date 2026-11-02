@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import {
+  test as base,
+  expect,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 // The app's shell as the server serves it, in each project of
 // playwright.config.ts: on the tablet, every control is tapped, never
@@ -9,6 +14,34 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 const en = JSON.parse(
   readFileSync(new URL("../../shared/i18n/en.json", import.meta.url), "utf8"),
 ) as Record<string, string>;
+
+/**
+ * Playwright's test, which fails on a violation of the Content-Security-Policy
+ * on any page that it opens (PRD NFR-SEC-09), as a style that a library adds
+ * without the page's nonce: refused holds those so far.
+ */
+const test = base.extend<{ refused: string[] }>({
+  refused: [
+    async ({ page }, use) => {
+      const refused: string[] = [];
+      await page.addInitScript(() => {
+        document.addEventListener("securitypolicyviolation", (e) => {
+          console.error(
+            `CSP violation: ${e.violatedDirective} ${e.blockedURI}`,
+          );
+        });
+      });
+      page.on("console", (message) => {
+        if (/Content Security Policy|CSP violation/i.test(message.text())) {
+          refused.push(message.text());
+        }
+      });
+      await use(refused);
+      expect(refused, "violations of the Content-Security-Policy").toEqual([]);
+    },
+    { auto: true },
+  ],
+});
 
 /** Activates a control as the project's device does: a tap or a click. */
 async function press(locator: Locator): Promise<void> {
@@ -135,6 +168,7 @@ test("an error that the error page could not show shows the error console in pla
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     en["crash.title"],
   );
+  await expect(page).toHaveTitle(`${en["crash.title"]} – Storycreep`);
   await expect(
     page.getByRole("list", { name: en["error_console.list"] }),
   ).toContainText("Error: e2e: a header that fails");
@@ -176,18 +210,8 @@ test("the shell's pages and the error console have no accessibility violations",
 // Verifies: NFR-SEC-09
 test("the shell runs under its Content-Security-Policy, whose nonce its own styles carry", async ({
   page,
+  refused,
 }) => {
-  const refused: string[] = [];
-  await page.addInitScript(() => {
-    document.addEventListener("securitypolicyviolation", (e) => {
-      console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`);
-    });
-  });
-  page.on("console", (message) => {
-    if (/Content Security Policy|CSP violation/i.test(message.text())) {
-      refused.push(message.text());
-    }
-  });
   const response = await page.goto("/app/");
   const policy = response?.headers()["content-security-policy"] ?? "";
   const nonce = /'nonce-([^']+)'/.exec(policy)?.[1];
@@ -274,6 +298,9 @@ test("a link into the app opens its page, and one that it does not have says so"
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Storycreep",
   );
+  // The link went with its page, and the new page's content has the focus
+  // that it had.
+  await expect(page.getByRole("main")).toBeFocused();
 
   // With the public site off, as it is by default, / is the app's.
   await page.goto("/");
