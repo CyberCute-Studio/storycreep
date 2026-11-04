@@ -1,8 +1,9 @@
-import type {
-  CreateInviteBody,
-  InviteBody,
-  MemberBody,
-  ProjectBody,
+import {
+  ApiError,
+  type CreateInviteBody,
+  type InviteBody,
+  type MemberBody,
+  type ProjectBody,
 } from "@storycreep/shared/api";
 import { formatDate } from "@storycreep/shared/i18n";
 import {
@@ -17,7 +18,7 @@ import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, instanceQuery, revoking, sessionQuery } from "../api";
+import { api, instanceQuery, notFoundBy, revoking, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { type Role, roleLabel, roleName, rolesGivenBy } from "../auth/roles";
@@ -28,8 +29,10 @@ import { CopyField } from "../ui/CopyField";
 import {
   ConfirmButtons,
   ConfirmFrame,
+  closesBy,
   closesUnlessPending,
   DialogFrame,
+  FormButtons,
   focusBackTo,
 } from "../ui/Dialog";
 import {
@@ -250,14 +253,11 @@ function ChangeRole({
               </option>
             ))}
           </SelectField>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Dialog.Close asChild>
-              <Button disabled={change.isPending}>{t("members.cancel")}</Button>
-            </Dialog.Close>
-            <Button type="submit" variant="primary" disabled={change.isPending}>
-              {t("members.change_role_submit")}
-            </Button>
-          </div>
+          <FormButtons
+            cancel={t("members.cancel")}
+            submit={t("members.change_role_submit")}
+            pending={change.isPending}
+          />
         </form>
       </DialogFrame>
     </Dialog.Root>
@@ -366,6 +366,9 @@ function Invites({ workspace }: { workspace: Workspace }) {
   // its item's, so that it stays, with the link that the server keeps no
   // copy of, whatever becomes of the list behind it.
   const [shown, setShown] = useState<ShownLink>();
+  // So is what became of an invitation that was no longer open when the
+  // user sent it anew or revoked it, which goes from the list with its item.
+  const [gone, setGone] = useState<string>();
   return (
     <section className="space-y-4" aria-labelledby="invites-list">
       <div className="flex flex-wrap items-center gap-4">
@@ -374,6 +377,7 @@ function Invites({ workspace }: { workspace: Workspace }) {
         </h2>
         <Invite workspace={workspace} />
       </div>
+      <Alert message={gone} />
       {invites.length === 0 && (
         <p className="text-fg-muted">{t("invites.empty")}</p>
       )}
@@ -384,6 +388,7 @@ function Invites({ workspace }: { workspace: Workspace }) {
             invite={invite}
             workspace={workspace}
             onLink={setShown}
+            onGone={setGone}
           />
         ))}
       </ul>
@@ -399,10 +404,13 @@ function InviteItem({
   invite,
   workspace,
   onLink,
+  onGone,
 }: {
   invite: InviteBody;
   workspace: Workspace;
   onLink: (shown: ShownLink) => void;
+  /** Says what became of the invitation, once it is no longer open. */
+  onGone: (message: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
@@ -411,8 +419,33 @@ function InviteItem({
   const nameId = useId();
   const locale = i18n.language;
   const [confirming, setConfirming] = useState(false);
+  const who = invite.email ?? t("invites.anyone");
   const readAgain = () =>
     client.invalidateQueries({ queryKey: invitesQuery(workspace.id).queryKey });
+  // An invitation that has been accepted or revoked elsewhere since the page
+  // listed it, or that the workspace no longer has, is no longer open, and
+  // one to an address that belongs to a member by now has made the list of
+  // members old too: the page reads both again, rather than keep offering
+  // what every attempt again would be refused for, or leave out whoever has
+  // joined, and says what became of an invitation that goes with its item.
+  const listsAgain = (error: Error) => {
+    const code = error instanceof ApiError ? error.error?.code : undefined;
+    const gone =
+      code === "invite_accepted" ||
+      code === "invite_revoked" ||
+      notFoundBy(error);
+    if (gone) {
+      onGone(t("invites.gone", { who }));
+    }
+    if (gone || code === "already_member") {
+      return Promise.all([
+        readAgain(),
+        client.invalidateQueries({
+          queryKey: membersQuery(workspace.id).queryKey,
+        }),
+      ]);
+    }
+  };
   const resend = useMutation({
     mutationFn: async (_opener: HTMLElement) =>
       (
@@ -427,6 +460,7 @@ function InviteItem({
       }
       return readAgain();
     },
+    onError: listsAgain,
   });
   const revoke = useMutation({
     // An invitation that has been revoked elsewhere since the page listed
@@ -442,8 +476,8 @@ function InviteItem({
       setConfirming(false);
       return readAgain();
     },
+    onError: listsAgain,
   });
-  const who = invite.email ?? t("invites.anyone");
   // Only an owner sends an invitation as owner anew (PRD FR-TEN-03 AC4).
   const resends = workspace.role === "owner" || invite.role !== "owner";
   return (
@@ -480,7 +514,13 @@ function InviteItem({
             : undefined
         }
       />
-      <Alert message={refusalOf(resend.error, t)?.message} />
+      <Alert
+        message={
+          refusalOf(resend.error, t, undefined, {
+            already_member: t("invites.error.already_member"),
+          })?.message
+        }
+      />
       <div className="flex flex-wrap gap-2">
         {resends && (
           <Button
@@ -620,20 +660,11 @@ function Invite({ workspace }: { workspace: Workspace }) {
                 </option>
               ))}
             </SelectField>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Dialog.Close asChild>
-                <Button disabled={create.isPending}>
-                  {t("invites.cancel")}
-                </Button>
-              </Dialog.Close>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={create.isPending}
-              >
-                {t("invites.create_submit")}
-              </Button>
-            </div>
+            <FormButtons
+              cancel={t("invites.cancel")}
+              submit={t("invites.create_submit")}
+              pending={create.isPending}
+            />
           </form>
         ) : made.url === undefined ? (
           <div className="space-y-4">
@@ -704,14 +735,7 @@ function LinkDialog({
 }) {
   const { t } = useTranslation();
   return (
-    <Dialog.Root
-      open
-      onOpenChange={(next) => {
-        if (!next) {
-          onClose();
-        }
-      }}
-    >
+    <Dialog.Root open onOpenChange={closesBy(onClose)}>
       <DialogFrame
         title={t("invites.link_title")}
         closesOutside={false}

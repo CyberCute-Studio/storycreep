@@ -125,6 +125,34 @@ export function ConfirmButtons({
   );
 }
 
+/**
+ * The buttons of a dialog's form: Cancel, a Dialog.Close, unless cancel is
+ * undefined, as for a form that is not always in a dialog, and the one that
+ * submits the form, both disabled while its request is under way (pending).
+ */
+export function FormButtons({
+  cancel,
+  submit,
+  pending,
+}: {
+  cancel?: string;
+  submit: string;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      {cancel !== undefined && (
+        <Dialog.Close asChild>
+          <Button disabled={pending}>{cancel}</Button>
+        </Dialog.Close>
+      )}
+      <Button type="submit" variant="primary" disabled={pending}>
+        {submit}
+      </Button>
+    </div>
+  );
+}
+
 /** What a dialog's request, as a mutation, is to the dialog. */
 interface DialogRequest {
   /** Whether the request is under way, while which the dialog stays open. */
@@ -153,6 +181,24 @@ export function closesUnlessPending(
     if (!next) {
       request.reset();
       onClosed?.();
+    }
+  };
+}
+
+/**
+ * Returns the onOpenChange of a dialog that is open for as long as the page
+ * shows it, as one that a menu's item opens, and closes by onClose, which
+ * stops showing it, and with it its request, whose attempt goes with it: as
+ * closesUnlessPending's, it stays open while the request is under way
+ * (pending), if it has one.
+ */
+export function closesBy(
+  onClose: () => void,
+  pending = false,
+): (open: boolean) => void {
+  return (next) => {
+    if (!next && !pending) {
+      onClose();
     }
   };
 }

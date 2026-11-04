@@ -17,7 +17,7 @@ import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
-import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
 import { Page, RefusalAlert, textLink } from "../ui/Page";
 import {
@@ -199,20 +199,11 @@ function NewProject({ workspace }: { workspace: Workspace }) {
               maxLength={2000}
               error={refusal?.fields.description}
             />
-            <div className="flex flex-wrap justify-end gap-2">
-              <Dialog.Close asChild>
-                <Button disabled={create.isPending}>
-                  {t("projects.cancel")}
-                </Button>
-              </Dialog.Close>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={create.isPending}
-              >
-                {t("projects.create_submit")}
-              </Button>
-            </div>
+            <FormButtons
+              cancel={t("projects.cancel")}
+              submit={t("projects.create_submit")}
+              pending={create.isPending}
+            />
           </form>
         </DialogFrame>
       </Dialog.Root>

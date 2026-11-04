@@ -219,6 +219,7 @@
   "invites.error.already_member": "This email address belongs to a member of the workspace already.",
   "invites.expired": "Expired on {date}",
   "invites.expires": "Expires",
+  "invites.gone": "The invitation of {who} is no longer open: someone accepted or revoked it in the meantime.",
   "invites.kind": "Who is invited",
   "invites.kind_email": "An email address",
   "invites.kind_link": "Anyone with the link",

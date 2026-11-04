@@ -323,6 +323,92 @@ describe("the members", () => {
       "This email address belongs to a member of the workspace already.",
     );
   });
+
+  it("read the invitations and the members again once an invitation that an admin sends anew has been accepted elsewhere", async () => {
+    const user = userEvent.setup();
+    let accepted = false;
+    fakeApi((operation) => {
+      switch (operation) {
+        case "listMembers":
+          return {
+            items: [
+              member("mem_o", "Olga Owner", "owner"),
+              ...(accepted ? [member("mem_j", "Jo Joiner", "editor")] : []),
+            ],
+            next_cursor: null,
+          };
+        case "listInvites":
+          return {
+            items: accepted
+              ? []
+              : [
+                  {
+                    id: "inv_jo",
+                    kind: "email",
+                    email: "jo@example.com",
+                    role: "editor",
+                    status: "pending",
+                    expires_at: "2026-11-18T10:00:00Z",
+                    created_at: "2026-11-04T10:00:00Z",
+                  },
+                ],
+            next_cursor: null,
+          };
+        case "resendInvite":
+          // Jo accepted the invitation once the page had listed it.
+          accepted = true;
+          throw refused(410, { code: "invite_accepted" });
+      }
+      return expected(startPage(operation), operation);
+    });
+    renderApp("/workspaces/ws_studio/members", { session: testSession });
+    await user.click(await screen.findByRole("button", { name: "Send again" }));
+    await screen.findByText(
+      "The invitation of jo@example.com is no longer open: someone accepted or revoked it in the meantime.",
+    );
+    await screen.findByText("No open invitations.");
+    const members = screen.getByRole("list", { name: "Members" });
+    expect(within(members).getByText("Jo Joiner")).toBeDefined();
+  });
+});
+
+describe("the access to a project", () => {
+  it("takes away a grant that another admin gave since the page read the grants", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation) => {
+      switch (operation) {
+        case "getProject":
+          return testProject;
+        case "listProjectGrants":
+          return { items: [], next_cursor: null };
+        case "listMembers":
+          return {
+            items: [member("mem_e", "Ed Editor", "editor")],
+            next_cursor: null,
+          };
+        case "removeProjectGrant":
+          return undefined;
+      }
+      return expected(startPage(operation), operation);
+    });
+    renderApp(`/projects/${testProject.id}/access`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Change access" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByLabelText("Role on this project"),
+    ).toHaveProperty("value", "");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Save the access" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      calls.mock.calls.filter(
+        ([operation]) => operation === "removeProjectGrant",
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 describe("the tree of boards", () => {
@@ -464,6 +550,67 @@ describe("the tree of boards", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sent).toHaveLength(2);
     expect(sent[1]).toBe(sent[0]);
+  });
+
+  it("sends a rename again with the IDs of its commands once no answer came to it, though another was sent meanwhile", async () => {
+    const user = userEvent.setup();
+    const sent: { name: string; id: string }[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { command_id: string; payload: unknown }[] };
+        };
+        const [command] = body.commands;
+        sent.push({
+          name: (command.payload as { name: string }).name,
+          id: command.command_id,
+        });
+        if (sent.length < 3) {
+          throw new NetworkError(new TypeError("Failed to fetch"));
+        }
+        return {
+          status: "already_applied",
+          seq: 2,
+          revisions: [],
+          not_reconnected: [],
+          undo: [],
+        };
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("New name");
+    const rename = async (to: string) => {
+      await user.clear(name);
+      await user.type(name, to);
+      await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    };
+    await rename("Harbour at night");
+    await within(dialog).findByRole("alert");
+    await rename("Harbour at dawn");
+    await waitFor(() => expect(sent).toHaveLength(2));
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Rename" }),
+      ).toHaveProperty("disabled", false),
+    );
+    await rename("Harbour at night");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(sent.map((s) => s.name)).toEqual([
+      "Harbour at night",
+      "Harbour at dawn",
+      "Harbour at night",
+    ]);
+    expect(sent[1].id).not.toBe(sent[0].id);
+    expect(sent[2].id).toBe(sent[0].id);
   });
 
   it("sends a rename refused for a revision again with the revision that the tree read since", async () => {

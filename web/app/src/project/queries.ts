@@ -17,13 +17,14 @@ import {
 } from "@storycreep/shared/api";
 import { formatUuid, newUuid } from "@storycreep/shared/ids";
 import {
+  type Query,
   type QueryClient,
   queryOptions,
   useMutation,
   useQueryClient,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { useRef } from "react";
+import { useState } from "react";
 import { allAtOnce, api, everyPage, pagedQuery, sessionQuery } from "../api";
 import { csrfHeaders } from "../auth/session";
 
@@ -199,17 +200,50 @@ function newCommandId(): string {
  * Reads again what a change of projectId's content may have changed: the
  * project, its tree, its boards, and its trash, but not the jumpers that a
  * board's deletion lists (referrersQuery), which its confirmation reads as
- * it opens, and which, read again once the board is in the trash, the
- * server would refuse, as of a board that it does not have.
+ * it opens, nor what the page read of the boards deleted, the IDs that
+ * deleted lists, which, read again once the boards are in the trash, the
+ * server would refuse, as of boards that it does not have. What it read of
+ * those that no page shows is dropped, so that a page of one that the user
+ * goes back to asks the server, which answers as for a board that does not
+ * exist, rather than shows what the page read; the page that shows one,
+ * the board's own, drops it once it has gone (dropBoard).
  */
 export function readProjectAgain(
   client: QueryClient,
   projectId: string,
+  deleted: readonly string[] = [],
 ): Promise<void> {
+  const ofDeleted = (query: Query) =>
+    query.queryKey[2] === "boards" &&
+    deleted.includes(String(query.queryKey[3]));
+  client.removeQueries({
+    queryKey: ["projects", projectId, "boards"],
+    type: "inactive",
+    predicate: ofDeleted,
+  });
   return client.invalidateQueries({
     queryKey: ["projects", projectId],
-    predicate: (query) => query.queryKey.at(-1) !== "referrers",
+    predicate: (query) =>
+      query.queryKey.at(-1) !== "referrers" && !ofDeleted(query),
   });
+}
+
+/** Drops what the page read of a board of projectId, once no page shows it, as after its deletion. */
+export function dropBoard(
+  client: QueryClient,
+  projectId: string,
+  boardId: string,
+): void {
+  client.removeQueries({
+    queryKey: ["projects", projectId, "boards", boardId],
+  });
+}
+
+/** Returns the IDs of the boards that commands delete. */
+function deletedBoards(commands: readonly Command[]): string[] {
+  return commands.flatMap((command) =>
+    command.type === "board.delete" ? [command.payload.id] : [],
+  );
 }
 
 /**
@@ -219,28 +253,25 @@ export function readProjectAgain(
  * elsewhere since the page read it. A batch sent again as it was, as once
  * no answer came to it, has the IDs that its commands had, so that the
  * server answers it as the batch that it applied already, if it did, rather
- * than apply it again, until the server answers it; a batch of other
- * commands has IDs of its own.
+ * than apply it again, until the server answers it, whatever batches the
+ * page has sent meanwhile; a batch of other commands has IDs of its own.
  */
 export function useCommands(projectId: string) {
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
-  const last = useRef<{ sent: string; ids: string[] }>(null);
-  // The IDs of a batch that the server has answered are forgotten, but not
-  // those of another batch that the page has sent since, which may be under
-  // way still, as a drag after another.
+  // The IDs of each batch that the page has sent and the server has not
+  // answered, by what it sent. Those of a batch that the server has
+  // answered are forgotten, but not those of another batch that the page
+  // has sent since, which may be under way still, as a drag after another.
+  const [unanswered] = useState(() => new Map<string, string[]>());
   const forget = (commands: Command[]) => {
-    if (last.current?.sent === JSON.stringify(commands)) {
-      last.current = null;
-    }
+    unanswered.delete(JSON.stringify(commands));
   };
   return useMutation({
     mutationFn: async (commands: Command[]): Promise<CommandResultBody> => {
       const sent = JSON.stringify(commands);
-      if (last.current?.sent !== sent) {
-        last.current = { sent, ids: commands.map(newCommandId) };
-      }
-      const { ids } = last.current;
+      const ids = unanswered.get(sent) ?? commands.map(newCommandId);
+      unanswered.set(sent, ids);
       const body = {
         commands: commands.map(
           (command, i) => ({ ...command, command_id: ids[i] }) as CommandBody,
@@ -261,7 +292,7 @@ export function useCommands(projectId: string) {
     },
     onSuccess: (_answer, commands) => {
       forget(commands);
-      return readProjectAgain(client, projectId);
+      return readProjectAgain(client, projectId, deletedBoards(commands));
     },
     onError: (error, commands) => {
       // A batch that the server answered, applied or not, is one that it

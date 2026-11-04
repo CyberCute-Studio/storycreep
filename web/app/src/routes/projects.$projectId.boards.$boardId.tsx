@@ -1,5 +1,5 @@
 import type { Board } from "@storycreep/shared/api";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,7 @@ import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import {
   boardQuery,
   type Command,
+  dropBoard,
   editsProject,
   projectQuery,
   treeQuery,
@@ -271,6 +272,7 @@ function DeleteBoard({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const client = useQueryClient();
   const boards = useSuspenseQuery(treeQuery(projectId)).data.boards;
   const [opener, setOpener] = useState<HTMLElement | null>();
   return (
@@ -293,12 +295,16 @@ function DeleteBoard({
           boards={boards}
           opener={opener}
           onClose={() => setOpener(undefined)}
+          // The page goes before what it read of the board, which is in the
+          // trash now, is dropped, so that a page of it that the user goes
+          // back to asks the server, which answers as for one that does
+          // not exist, rather than shows it.
           onDeleted={() =>
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },
               replace: true,
-            })
+            }).then(() => dropBoard(client, projectId, board.id))
           }
         />
       )}

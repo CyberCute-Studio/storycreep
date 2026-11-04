@@ -19,11 +19,12 @@ import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { Button } from "../ui/Button";
 import {
   ConfirmButtons,
   ConfirmFrame,
+  closesBy,
   DialogFrame,
+  FormButtons,
   focusBackTo,
   type Opener,
 } from "../ui/Dialog";
@@ -113,14 +114,7 @@ function TreeDialog({
   children,
 }: FrameProps) {
   return (
-    <Dialog.Root
-      open
-      onOpenChange={(next) => {
-        if (!next && !pending) {
-          onClose();
-        }
-      }}
-    >
+    <Dialog.Root open onOpenChange={closesBy(onClose, pending)}>
       <DialogFrame
         title={title}
         description={description}
@@ -129,27 +123,6 @@ function TreeDialog({
         {children}
       </DialogFrame>
     </Dialog.Root>
-  );
-}
-
-/** The buttons of a dialog's form: Cancel, and the one that submits it. */
-function FormButtons({
-  pending,
-  submit,
-}: {
-  pending: boolean;
-  submit: string;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex flex-wrap justify-end gap-2">
-      <Dialog.Close asChild>
-        <Button disabled={pending}>{t("boards.cancel")}</Button>
-      </Dialog.Close>
-      <Button type="submit" variant="primary" disabled={pending}>
-        {submit}
-      </Button>
-    </div>
   );
 }
 
@@ -211,7 +184,15 @@ export function CreateDialog({
 }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  const [folder, setFolder] = useState(parentId ?? top);
+  const [chosen, setFolder] = useState(parentId ?? top);
+  // The folder chosen, as the tree has it now: one that has gone from it
+  // since it was chosen, as once the tree was read again, shows as the
+  // first choice, the top, as a select shows a value that none of its
+  // options has, and the dialog creates what it creates there, as it shows,
+  // as MoveDialog does.
+  const folder = folderChoices(tree).some((c) => c.id === chosen)
+    ? chosen
+    : top;
   // The ID of what the dialog creates, the same for each attempt, so that
   // an attempt sent again once no answer came to it creates nothing more.
   const [id] = useState(() => newId(kind));
@@ -277,6 +258,7 @@ export function CreateDialog({
           onChange={setFolder}
         />
         <FormButtons
+          cancel={t("boards.cancel")}
           pending={commands.isPending}
           submit={
             kind === "board"
@@ -342,6 +324,7 @@ export function RenameDialog({
           error={refusal?.fields.name}
         />
         <FormButtons
+          cancel={t("boards.cancel")}
           pending={commands.isPending}
           submit={t("boards.rename_submit")}
         />
@@ -439,6 +422,7 @@ export function MoveDialog({
           ))}
         </SelectField>
         <FormButtons
+          cancel={t("boards.cancel")}
           pending={commands.isPending}
           submit={t("boards.move_submit")}
         />
@@ -658,14 +642,7 @@ function Confirm({
 }) {
   const { t } = useTranslation();
   return (
-    <AlertDialog.Root
-      open
-      onOpenChange={(next) => {
-        if (!next && !pending) {
-          onClose();
-        }
-      }}
-    >
+    <AlertDialog.Root open onOpenChange={closesBy(onClose, pending)}>
       <ConfirmFrame
         title={title}
         description={description}

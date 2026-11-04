@@ -275,6 +275,31 @@ test("the tree of boards makes folders and boards, moves a board by dragging it 
   await press(rename.getByRole("button", { name: en["boards.rename_submit"] }));
   await expect(rename).toBeHidden();
   await expect(page.getByRole("link", { name: "Opening night" })).toBeVisible();
+
+  // Dragged onto the lower edge of the open folder, where the line that
+  // marks the drop shows above its first child, a board goes there, first
+  // in the folder, rather than after the folder, below its children.
+  await create(
+    en["boards.new_board"],
+    en["boards.board_name"],
+    "Prologue",
+    en["boards.create_board"],
+  );
+  await drag(
+    page,
+    row(page, "Prologue").locator("[data-drag-handle]"),
+    row(page, "Act one"),
+    0.9,
+  );
+  await expect
+    .poll(async () => {
+      const { boards, folders } = await treeOf(page.request, projectId);
+      return boards
+        .filter((b) => b.folder_id === folders[0]?.id)
+        .sort((a, b) => (a.order < b.order ? -1 : 1))
+        .map((b) => b.name);
+    })
+    .toEqual(["Prologue", "Finale", "Opening night"]);
 });
 
 // Verifies: NFR-A11Y-08

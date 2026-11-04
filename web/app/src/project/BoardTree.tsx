@@ -116,7 +116,7 @@ export function BoardTree({
   };
   // A drag waits for the move before it, whose batch, once it has applied,
   // has the tree read again, with the revisions that the next one expects.
-  const drag = useTreeDrag(tree, move.isPending, (node, placement) => {
+  const drag = useTreeDrag(tree, closed, move.isPending, (node, placement) => {
     void dropped(node, placement);
   });
   const toggle = (id: string) =>
@@ -506,23 +506,24 @@ const scrollEdge = 48;
  * Follows a drag of a child of tree by its handle, with the pointer that
  * went down on it, which the handle captures, so that a touch that moves
  * does not scroll the page instead: once it has moved dragThreshold pixels,
- * the row at its height says where the child would land, before or after
- * the row's child, by the row's top or bottom quarter, or, for a folder,
- * its middle half, inside it, and onDrop is told where it landed once the
- * pointer goes up. Escape, or a pointer that the browser takes back, as for
- * a gesture of its own, or once the handle has gone from the page, cancels
- * it. While busy, as while the move of the drag before is under way, no
- * drag starts.
+ * the row at its height says where the child would land (dropAt), and
+ * onDrop is told where it landed once the pointer goes up. Escape, or a
+ * pointer that the browser takes back, as for a gesture of its own, or once
+ * the handle has gone from the page, as when the tree, read again, shows
+ * the child elsewhere, cancels it. While busy, as while the move of the
+ * drag before is under way, no drag starts. closed holds the folders that
+ * the tree shows closed.
  */
 function useTreeDrag(
   tree: Tree,
+  closed: ReadonlySet<string>,
   busy: boolean,
   onDrop: (node: TreeNode, placement: Placement) => void,
 ): TreeDrag {
   const [dragging, setDragging] = useState<Dragging>();
   const current = useRef<DragUnderWay>(null);
-  const latest = useRef({ tree, busy, onDrop });
-  latest.current = { tree, busy, onDrop };
+  const latest = useRef({ tree, closed, busy, onDrop });
+  latest.current = { tree, closed, busy, onDrop };
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => {
       if (event.key === "Escape" && current.current !== null) {
@@ -531,15 +532,19 @@ function useTreeDrag(
       }
     };
     document.addEventListener("keydown", cancel);
-    return () => document.removeEventListener("keydown", cancel);
+    // A drag of a tree that has gone, as with its page, drops nothing.
+    return () => {
+      document.removeEventListener("keydown", cancel);
+      current.current = null;
+    };
   }, []);
   const start = (event: ReactPointerEvent<HTMLElement>, node: TreeNode) => {
     if (event.button !== 0 || latest.current.busy) {
       return;
     }
     event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
+    const { pointerId } = event;
+    event.currentTarget.setPointerCapture(pointerId);
     // This drag, which Escape, or another drag, as of a second finger, ends
     // by putting another in its place.
     const drag: DragUnderWay = {
@@ -550,7 +555,7 @@ function useTreeDrag(
     };
     current.current = drag;
     const move = (e: PointerEvent) => {
-      if (current.current !== drag) {
+      if (e.pointerId !== pointerId || current.current !== drag) {
         return;
       }
       if (
@@ -566,7 +571,13 @@ function useTreeDrag(
       } else if (e.clientY > window.innerHeight - scrollEdge) {
         window.scrollBy(0, scrollEdge / 4);
       }
-      const drop = dropAt(latest.current.tree, drag.node, e.clientX, e.clientY);
+      const drop = dropAt(
+        latest.current.tree,
+        latest.current.closed,
+        drag.node,
+        e.clientX,
+        e.clientY,
+      );
       // The tree shows the drag anew once it starts, and then once where it
       // would drop changes, rather than at every move of the pointer, which
       // would draw every row of the tree again, many times a second.
@@ -579,10 +590,13 @@ function useTreeDrag(
     // back, for a gesture of its own, or since the handle went from the
     // page, which cancels the drag.
     const end = (e: PointerEvent) => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
-      handle.removeEventListener("lostpointercapture", end);
+      if (e.pointerId !== pointerId) {
+        return;
+      }
+      for (const type of ends) {
+        document.removeEventListener(type, end);
+      }
+      document.removeEventListener("pointermove", move);
       if (current.current !== drag) {
         return;
       }
@@ -596,13 +610,21 @@ function useTreeDrag(
         latest.current.onDrop(drag.node, placement);
       }
     };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
-    handle.addEventListener("lostpointercapture", end);
+    // The document hears the pointer, rather than the handle: the handle's
+    // events, which its capture sends it, reach the document too, while a
+    // handle that has gone from the page, which the tree draws anew where
+    // it shows the child once it has been read again, hears nothing, and
+    // the browser tells the document that it lost the pointer instead.
+    document.addEventListener("pointermove", move);
+    for (const type of ends) {
+      document.addEventListener(type, end);
+    }
   };
   return { dragging, busy, start, area: { "data-tree-area": true } };
 }
+
+/** The events that end a drag: the pointer goes up, or the handle loses it. */
+const ends = ["pointerup", "pointercancel", "lostpointercapture"] as const;
 
 /** Reports whether a and b drop a child in the same place, or both nowhere. */
 function sameDrop(a: Drop | undefined, b: Drop | undefined): boolean {
@@ -619,14 +641,20 @@ function sameDrop(a: Drop | undefined, b: Drop | undefined): boolean {
 /**
  * Returns where node would land if dropped at the point x, y of the window,
  * within the tree, or undefined if nowhere it can go: before or after the
- * child of the row at the point's height, or inside a folder. The row is
- * the one whose height the point is at, whatever its indent, as over the
- * space before a folder's children, so that a pointer that goes straight
- * down from a handle meets every row on its way, or else the nearest, as
- * across the gap between two rows, rather than a place that no row shows.
+ * child of the row at the point's height, by the row's top or bottom half,
+ * or, for a folder, its middle half, inside it, at the end. The row is the
+ * one whose height the point is at, whatever its indent, as over the space
+ * before a folder's children, so that a pointer that goes straight down
+ * from a handle meets every row on its way, or else the nearest, as across
+ * the gap between two rows, rather than a place that no row shows. The
+ * bottom quarter of a folder whose children show under it, as it is not
+ * closed, is before its first child, where the mark of the drop shows,
+ * between the two rows, rather than after the folder, below its last child,
+ * far from that mark.
  */
 function dropAt(
   tree: Tree,
+  closed: ReadonlySet<string>,
   node: TreeNode,
   x: number,
   y: number,
@@ -653,9 +681,18 @@ function dropAt(
   }
   const { id, box } = row;
   const at = (y - box.top) / Math.max(box.height, 1);
+  const target = tree.byId.get(id);
+  const first =
+    target?.kind === "folder" && !closed.has(target.id)
+      ? target.children[0]
+      : undefined;
   const drop: Drop =
-    tree.byId.get(id)?.kind === "folder" && at >= 0.25 && at <= 0.75
+    target?.kind === "folder" && at >= 0.25 && at <= 0.75
       ? { position: "inside", folderId: id }
-      : { position: at < 0.5 ? "before" : "after", targetId: id };
+      : at < 0.5
+        ? { position: "before", targetId: id }
+        : first !== undefined
+          ? { position: "before", targetId: first.id }
+          : { position: "after", targetId: id };
   return placementOf(tree, node, drop) !== undefined ? drop : undefined;
 }

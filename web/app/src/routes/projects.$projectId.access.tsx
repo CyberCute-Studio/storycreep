@@ -16,7 +16,7 @@ import { csrfHeaders } from "../auth/session";
 import { grantsQuery, projectQuery } from "../project/queries";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
-import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
 import { SelectField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page } from "../ui/Page";
 import {
@@ -165,11 +165,11 @@ function ChangeGrant({
     mutationFn: async (role: string) => {
       const headers = csrfHeaders(session);
       if (role === noGrant) {
-        // A grant that has been taken away elsewhere since the page read it
-        // is taken away, as asked.
-        if (grant !== undefined) {
-          await revoking(api.call("removeProjectGrant", { path, headers }));
-        }
+        // The grant is taken away whether or not the page read one, since
+        // another admin may have given one since, which the user asks to be
+        // gone, and one that has been taken away elsewhere since the page
+        // read it is taken away, as asked.
+        await revoking(api.call("removeProjectGrant", { path, headers }));
         return;
       }
       await api.call("setProjectGrant", {
@@ -221,14 +221,11 @@ function ChangeGrant({
               </option>
             ))}
           </SelectField>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Dialog.Close asChild>
-              <Button disabled={save.isPending}>{t("access.cancel")}</Button>
-            </Dialog.Close>
-            <Button type="submit" variant="primary" disabled={save.isPending}>
-              {t("access.save")}
-            </Button>
-          </div>
+          <FormButtons
+            cancel={t("access.cancel")}
+            submit={t("access.save")}
+            pending={save.isPending}
+          />
         </form>
       </DialogFrame>
     </Dialog.Root>

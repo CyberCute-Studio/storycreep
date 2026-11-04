@@ -20,7 +20,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { Button } from "../ui/Button";
-import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame, FormButtons } from "../ui/Dialog";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import { Menu, MenuItem } from "../ui/Menu";
 import { Alert } from "../ui/Page";
@@ -240,16 +240,11 @@ export function CreateWorkspaceForm({
         maxLength={100}
         error={refusal?.fields.name}
       />
-      <div className="flex flex-wrap justify-end gap-2">
-        {inDialog && (
-          <Dialog.Close asChild>
-            <Button disabled={create.isPending}>{t("workspace.cancel")}</Button>
-          </Dialog.Close>
-        )}
-        <Button type="submit" variant="primary" disabled={create.isPending}>
-          {t("workspace.create_submit")}
-        </Button>
-      </div>
+      <FormButtons
+        cancel={inDialog ? t("workspace.cancel") : undefined}
+        submit={t("workspace.create_submit")}
+        pending={create.isPending}
+      />
     </form>
   );
 }

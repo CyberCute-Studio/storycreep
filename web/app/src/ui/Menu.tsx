@@ -8,9 +8,15 @@
 import { DropdownMenu } from "radix-ui";
 import type { ComponentProps, ReactNode } from "react";
 
-/** The classes of a menu's items, the one that the keyboard or the pointer is on marked. */
+/**
+ * The classes of a menu's items, the one that the keyboard or the pointer is
+ * on marked, but for the colour of their text, which MenuItem gives each
+ * item alone: Tailwind writes the utilities of one property in the order of
+ * their names, not of the classes, so of text-fg and text-danger on one
+ * item, text-fg would win.
+ */
 const item =
-  "flex min-h-11 cursor-pointer items-center gap-2 rounded px-3 text-fg outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 data-[highlighted]:bg-surface-hover";
+  "flex min-h-11 cursor-pointer items-center gap-2 rounded px-3 outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 data-[highlighted]:bg-surface-hover";
 
 export interface MenuProps {
   /** The trigger, a Button, which the menu opens from. */
@@ -47,7 +53,7 @@ export interface MenuItemProps
 export function MenuItem({ danger = false, ...props }: MenuItemProps) {
   return (
     <DropdownMenu.Item
-      className={`${item} ${danger ? "text-danger" : ""}`}
+      className={`${item} ${danger ? "text-danger" : "text-fg"}`}
       {...props}
     />
   );
