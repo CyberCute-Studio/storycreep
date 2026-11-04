@@ -364,15 +364,26 @@ export async function revoking(request: Promise<unknown>): Promise<void> {
     await request;
   } catch (error) {
     if (
-      !(
-        error instanceof ApiError &&
-        error.status === 404 &&
-        error.error?.code === "not_found"
-      )
+      !(error instanceof ApiError && error.status === 404 && notFoundBy(error))
     ) {
       throw error;
     }
   }
+}
+
+/**
+ * Reports whether error is the server's answer that what a request names is
+ * not there for the user, as a workspace that they are not a member of, or a
+ * project in the trash, which the server does not tell from one that does
+ * not exist: 404 not_found, or 400 invalid_id, of an ID that a page's
+ * address holds that is none.
+ */
+export function notFoundBy(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 404 && error.error?.code === "not_found") ||
+      (error.status === 400 && error.error?.code === "invalid_id"))
+  );
 }
 
 /** Options of createQueryClient. */

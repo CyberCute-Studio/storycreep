@@ -2,9 +2,9 @@ import { networkInterfaces } from "node:os";
 import type { Browser, BrowserContext, Page } from "@playwright/test";
 import { port } from "./environment.ts";
 import {
+  atStart,
   en,
   expect,
-  message,
   press,
   signIn,
   test,
@@ -60,18 +60,14 @@ async function setUpAndSignIn(page: Page, instance: Instance): Promise<void> {
   await field(en["auth.confirm_password"]).fill(setupOwner.password);
   await field(en["setup.workspace.label"]).fill("Ada's studio");
   await press(page.getByRole("button", { name: en["setup.submit"] }));
-  await expect(
-    page.getByText(message("home.signed_in", { name: setupOwner.name })),
-  ).toBeVisible();
+  await atStart(page, setupOwner.name);
 
   await press(page.getByRole("button", { name: en["shell.sign_out"] }));
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     en["login.title"],
   );
   await signIn(page, setupOwner.email, setupOwner.password);
-  await expect(
-    page.getByText(message("home.signed_in", { name: setupOwner.name })),
-  ).toBeVisible();
+  await atStart(page, setupOwner.name);
 }
 
 /**
@@ -81,9 +77,7 @@ async function setUpAndSignIn(page: Page, instance: Instance): Promise<void> {
  */
 async function keepsSession(page: Page): Promise<void> {
   await page.reload();
-  await expect(
-    page.getByText(message("home.signed_in", { name: setupOwner.name })),
-  ).toBeVisible();
+  await atStart(page, setupOwner.name);
   await page.goto("/app/account/sessions");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     en["sessions.title"],

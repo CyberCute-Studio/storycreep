@@ -2,6 +2,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import {
   adminLink,
   apiSignIn,
+  atStart,
   en,
   expect,
   message,
@@ -24,13 +25,6 @@ import {
 /** The field of a form whose label is label, exactly. */
 function field(page: Page, label: string) {
   return page.getByLabel(label, { exact: true });
-}
-
-/** Waits until the page shows the start page of the user name. */
-async function atStart(page: Page, name: string): Promise<void> {
-  await expect(
-    page.getByText(message("home.signed_in", { name })),
-  ).toBeVisible();
 }
 
 // Verifies: NFR-A11Y-08

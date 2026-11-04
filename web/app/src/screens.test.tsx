@@ -1,17 +1,13 @@
-import {
-  type AccountBody,
-  ApiError,
-  type ErrorBody,
-  NetworkError,
-} from "@storycreep/shared/api";
+import { type AccountBody, NetworkError } from "@storycreep/shared/api";
 import { catalogs } from "@storycreep/shared/i18n";
 import { focusManager } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { accountQuery, api, sessionQuery } from "./api";
+import { accountQuery, sessionQuery } from "./api";
 import { sessionChanges, signedIn } from "./auth/session";
 import { renderApp, testAccount, testInstance, testSession } from "./test/app";
+import { fakeApi, refused, startPage } from "./test/fake";
 
 // The account screens as the router shows them, over a fake of the API's
 // client: what each guard leads to, what signing in shows of a refusal, and
@@ -20,20 +16,6 @@ import { renderApp, testAccount, testInstance, testSession } from "./test/app";
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-type Call = Parameters<typeof api.call>;
-
-/** Answers the client's calls with answer, which returns an operation's body. */
-function fakeApi(answer: (operation: Call[0], input: unknown) => unknown) {
-  return vi.spyOn(api, "call").mockImplementation((async (
-    operation: Call[0],
-    input: unknown,
-  ) => ({
-    status: 200,
-    body: await answer(operation, input),
-    response: new Response(),
-  })) as typeof api.call);
-}
 
 /** What the query client does once the tab gets the focus again. */
 function focusAgain() {
@@ -56,22 +38,6 @@ const settle = () => new Promise((resolve) => setTimeout(resolve));
  * which has an alert of its own, of signing out.
  */
 const content = () => within(screen.getByRole("main"));
-
-/** Returns the ApiError of an answer of status with the error envelope of error. */
-function refused(
-  status: number,
-  error: Partial<ErrorBody> & { code: string },
-  headers: Record<string, string> = {},
-): ApiError {
-  const body = { message: error.code, request_id: "req", ...error };
-  return new ApiError(
-    new Response(JSON.stringify({ error: body }), {
-      status,
-      headers: { "Content-Type": "application/json", ...headers },
-    }),
-    body,
-  );
-}
 
 describe("the guards", () => {
   it("send a signed-out page to signing in, which comes back to it", async () => {
@@ -107,9 +73,17 @@ describe("the guards", () => {
     expect(screen.getByRole("heading", { name: "File storage" })).toBeDefined();
   });
 
-  it("send a signed-in page away from signing in", async () => {
-    renderApp("/login", { session: testSession });
-    await screen.findByText("You are signed in as Jo.");
+  it("send a signed-in page away from signing in, to the project list of the account's workspace", async () => {
+    fakeApi((operation) => {
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
+    });
+    const { router } = renderApp("/login", { session: testSession });
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    expect(router.state.location.pathname).toBe("/workspaces/ws_studio");
   });
 
   it("send a sign-in screen that has signed in since where signing in would have, with its fragment", async () => {
@@ -140,16 +114,23 @@ describe("signing out", () => {
       if (operation === "logout") {
         throw refused(403, { code: "csrf_failed" });
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     renderApp("/", { session: testSession });
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
     const header = await screen.findByRole("banner");
     await user.click(within(header).getByRole("button", { name: "Sign out" }));
     expect(await within(header).findByRole("alert")).toHaveProperty(
       "textContent",
       "Signing out failed, so you are still signed in. The server refused the request, because it did not seem to come from this page. Try again.",
     );
-    expect(screen.getByText("You are signed in as Jo.")).toBeDefined();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Projects" }),
+    ).toBeDefined();
   });
 
   it("says no more that it failed once the session has ended otherwise", async () => {
@@ -158,7 +139,11 @@ describe("signing out", () => {
       if (operation === "logout") {
         throw new NetworkError(new TypeError("Failed to fetch"));
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     const { queryClient, router } = renderApp("/", { session: testSession });
     const header = await screen.findByRole("banner");
@@ -179,7 +164,11 @@ describe("signing out", () => {
       if (operation === "logout") {
         throw refused(401, { code: "unauthenticated" });
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     const { router } = renderApp("/", { session: testSession });
     const header = await screen.findByRole("banner");
@@ -203,7 +192,11 @@ describe("signing out", () => {
         case "logout":
           return undefined;
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     const { router } = renderApp("/invite#token=secret", {
       session: testSession,
@@ -222,7 +215,11 @@ describe("signing out", () => {
       if (operation === "logout") {
         return undefined;
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     const { router } = renderApp("/account", { session: testSession });
     const header = await screen.findByRole("banner");
@@ -787,7 +784,11 @@ describe("first-run setup", () => {
         case "getAccount":
           return testAccount;
       }
-      throw new Error(`unexpected ${operation}`);
+      const answer = startPage(operation);
+      if (answer === undefined) {
+        throw new Error(`unexpected ${operation}`);
+      }
+      return answer;
     });
     const { router } = renderApp("/setup", { instance });
     await user.type(await screen.findByLabelText("Setup code"), "7K2M");
@@ -800,8 +801,8 @@ describe("first-run setup", () => {
     );
     await user.type(screen.getByLabelText("Workspace name"), "Studio");
     await user.click(screen.getByRole("button", { name: "Complete setup" }));
-    await screen.findByText("You are signed in as Jo.");
-    expect(router.state.location.pathname).toBe("/");
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    expect(router.state.location.pathname).toBe("/workspaces/ws_studio");
     expect(reads).toBe(2);
   });
 

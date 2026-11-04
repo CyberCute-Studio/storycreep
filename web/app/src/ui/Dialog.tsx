@@ -4,6 +4,7 @@
 
 import { AlertDialog, Dialog } from "radix-ui";
 import type { ReactNode } from "react";
+import { focusContentIfLost } from "../shell/focus";
 
 const overlay = "fixed inset-0 bg-backdrop/50";
 const content =
@@ -72,12 +73,16 @@ export function DialogFrame({
 export function ConfirmFrame({
   title,
   description,
+  onCloseAutoFocus,
   children,
 }: DialogFrameProps) {
   return (
     <AlertDialog.Portal>
       <AlertDialog.Overlay className={overlay} />
-      <AlertDialog.Content className={content}>
+      <AlertDialog.Content
+        className={content}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <AlertDialog.Title className="text-xl font-semibold">
           {title}
         </AlertDialog.Title>
@@ -88,4 +93,22 @@ export function ConfirmFrame({
       </AlertDialog.Content>
     </AlertDialog.Portal>
   );
+}
+
+/**
+ * Returns the onCloseAutoFocus of a dialog without a Dialog.Trigger, as one
+ * that a menu's item opens, or one that outlives the control that opened
+ * it: the focus goes back to opener, the control that opened the dialog, or
+ * to the page's content once opener has gone, as with its list's item,
+ * rather than to the document's body.
+ */
+export function focusBackTo(opener: HTMLElement | null | undefined) {
+  return (event: Event) => {
+    event.preventDefault();
+    if (opener?.isConnected) {
+      opener.focus();
+    } else {
+      focusContentIfLost(document);
+    }
+  };
 }

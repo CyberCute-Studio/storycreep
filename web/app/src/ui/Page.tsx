@@ -4,18 +4,30 @@
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { Refusal } from "../auth/refusal";
 import { useDocumentTitle } from "./title";
 
 export interface PageProps {
   title: string;
+  /**
+   * What the browser's title names the page, if more than title, as a
+   * workspace's members with the workspace's name.
+   */
+  documentTitle?: string;
   /** narrow for a form, as signing in; wide for a list, as the sessions. */
   width?: "narrow" | "wide";
   children: ReactNode;
 }
 
 /** A page of the app, with its heading. */
-export function Page({ title, width = "narrow", children }: PageProps) {
-  useDocumentTitle(title);
+export function Page({
+  title,
+  documentTitle,
+  width = "narrow",
+  children,
+}: PageProps) {
+  useDocumentTitle(documentTitle ?? title);
   return (
     <div
       className={`mx-auto space-y-6 ${width === "narrow" ? "max-w-md" : "max-w-3xl"}`}
@@ -42,6 +54,33 @@ export function Alert({
   return (
     <div role="alert">
       {message !== undefined && <p className={className}>{message}</p>}
+    </div>
+  );
+}
+
+/**
+ * Where a form says that the server refused it, as Alert does, with a link
+ * to the page that offers the plans beside a refusal of a limit that a
+ * higher plan allows more of, which only a server that bills for plans
+ * names (Refusal.upgrade): a self-hosted instance's refusal has none, and
+ * the form offers no upgrade (PRD FR-ENT-03 AC2).
+ */
+export function RefusalAlert({ refusal }: { refusal?: Refusal }) {
+  const { t } = useTranslation();
+  return (
+    <div role="alert">
+      {refusal?.message !== undefined && (
+        <div className="space-y-1 rounded-md border border-danger px-4 py-3 text-danger">
+          <p>{refusal.message}</p>
+          {refusal.upgrade !== undefined && (
+            <p>
+              <a href={refusal.upgrade} className={textLink}>
+                {t("limit.upgrade")}
+              </a>
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

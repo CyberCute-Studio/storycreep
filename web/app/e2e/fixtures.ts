@@ -193,3 +193,16 @@ export function message(
 ): string {
   return en[key].replace(/\{(\w+)\}/g, (_, name: string) => args[name] ?? "");
 }
+
+/**
+ * Waits until the page shows the start page of the account named name: the
+ * project list of its workspace, under the header that names the account.
+ */
+export async function atStart(page: Page, name: string): Promise<void> {
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    en["projects.title"],
+  );
+  await expect(
+    page.getByRole("banner").getByRole("link", { name, exact: true }),
+  ).toBeVisible();
+}

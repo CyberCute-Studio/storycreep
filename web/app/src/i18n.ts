@@ -71,3 +71,14 @@ export function applyLocale(
     void i18n.changeLanguage(locale);
   }
 }
+
+/** Returns the name of locale in its own language, as English for en. */
+export function languageName(locale: string): string {
+  try {
+    return (
+      new Intl.DisplayNames([locale], { type: "language" }).of(locale) ?? locale
+    );
+  } catch {
+    return locale;
+  }
+}

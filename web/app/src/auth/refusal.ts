@@ -15,7 +15,24 @@ export interface Refusal {
   message?: string;
   /** What it shows at each of its fields, by the field's name. */
   fields: Record<string, string>;
+  /**
+   * The page that offers the plans, of a refusal of a limit of the
+   * workspace's plan that a higher plan allows more of, which the server
+   * names where it bills for plans, as hosted mode does, and never on a
+   * self-hosted instance (PRD FR-ENT-03 AC2): the form links to it beside
+   * its message, and to nothing where the server names none.
+   */
+  upgrade?: string;
 }
+
+/**
+ * The messages of error codes that a form gives in place of the app's
+ * general ones, by code, where the form's own words say better what was
+ * refused, as already_member of an invitation, which is the invited
+ * address's and not the user's, or slug_taken of a board's slug, which is
+ * not a workspace's.
+ */
+export type OwnMessages = Readonly<Record<string, string>>;
 
 /**
  * Returns the field of a form that a location of the server's names, as
@@ -45,16 +62,19 @@ export function refusalOf(
   error: Error,
   t: TFunction,
   fieldOf?: FieldOf,
+  own?: OwnMessages,
 ): Refusal;
 export function refusalOf(
   error: unknown,
   t: TFunction,
   fieldOf?: FieldOf,
+  own?: OwnMessages,
 ): Refusal | undefined;
 export function refusalOf(
   error: unknown,
   t: TFunction,
   fieldOf: FieldOf = () => undefined,
+  own: OwnMessages = {},
 ): Refusal | undefined {
   if (error === null || error === undefined) {
     return undefined;
@@ -83,12 +103,15 @@ export function refusalOf(
   }
   const fields: Record<string, string> = {};
   const unplaced: string[] = [];
-  const own = codeMessage(body.code, body.details ?? {}, error.response, t);
+  const formOwn = Object.hasOwn(own, body.code) ? own[body.code] : undefined;
+  const placedOwn = formOwn ?? problemMessage(body.code, body.details ?? {}, t);
+  const whole =
+    placedOwn === undefined
+      ? codeMessage(body.code, body.details ?? {}, error.response, t)
+      : undefined;
   for (const problem of problemsOf(body.details, codeLocations[body.code])) {
     const field = fieldOf(problem.location);
-    const message =
-      problemMessage(body.code, body.details ?? {}, t) ??
-      sentence(problem.message);
+    const message = placedOwn ?? sentence(problem.message);
     if (field === undefined) {
       unplaced.push(message);
     } else {
@@ -96,14 +119,48 @@ export function refusalOf(
     }
   }
   const placed = Object.keys(fields).length > 0;
+  // A code of the form's own that the server places at no field of it, as
+  // already_member, which has none, is the form's message.
   const message =
-    own ??
+    whole ??
     (unplaced.length > 0
-      ? unplaced.join(" ")
+      ? [...new Set(unplaced)].join(" ")
       : placed
         ? undefined
-        : body.message);
-  return message === undefined ? { fields } : { message, fields };
+        : (formOwn ?? body.message));
+  const upgrade = upgradeOf(body.code, body.details);
+  return {
+    ...(message === undefined ? {} : { message }),
+    fields,
+    ...(upgrade === undefined ? {} : { upgrade }),
+  };
+}
+
+/**
+ * Returns the page that offers the plans of a refusal of a limit, if the
+ * server names one, as details.upgrade_url, and it is a page that the
+ * browser can open: an address of http or https, or a path of the
+ * instance's own, never a script's, as javascript: would be.
+ */
+function upgradeOf(
+  code: string,
+  details: Record<string, unknown> | undefined,
+): string | undefined {
+  if (code !== "limit_exceeded" && code !== "storage_limit_exceeded") {
+    return undefined;
+  }
+  const url = details?.upgrade_url;
+  if (typeof url !== "string") {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.protocol === "https:" || parsed.protocol === "http:"
+      ? parsed.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Returns the problems of an answer's details, or one at location if it has none. */
