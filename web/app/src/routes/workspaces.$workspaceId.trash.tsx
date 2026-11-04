@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
+import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { Page, RefusalAlert, Status } from "../ui/Page";
 import {
@@ -23,8 +24,8 @@ import {
 
 export const Route = createFileRoute("/workspaces/$workspaceId/trash")({
   loader: async ({ context: { queryClient }, params }) => {
-    const workspace = await queryClient.ensureQueryData(
-      workspaceQuery(params.workspaceId),
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
     );
     // Only its owners and admins list a workspace's trash (§5.6).
     if (!managesWorkspace(workspace.role)) {

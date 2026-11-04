@@ -13,6 +13,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { managesProject, projectQuery } from "../project/queries";
+import { found } from "../shell/found";
 import { Button } from "../ui/Button";
 import { ConfirmFrame } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
@@ -25,11 +26,11 @@ import {
 
 export const Route = createFileRoute("/projects/$projectId/settings")({
   loader: async ({ context: { queryClient }, params }) => {
-    const project = await queryClient.ensureQueryData(
-      projectQuery(params.projectId),
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
-    const workspace = await queryClient.ensureQueryData(
-      workspaceQuery(project.workspace_id),
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(project.workspace_id)),
     );
     if (!managesProject(project.role) && !managesWorkspace(workspace.role)) {
       throw notFound();

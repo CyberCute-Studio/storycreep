@@ -236,7 +236,8 @@ export function readProjectAgain(
  * elsewhere since the page read it. A batch sent again as it was, as once
  * no answer came to it, has the IDs that its commands had, so that the
  * server answers it as the batch that it applied already, if it did, rather
- * than apply it again; a batch of other commands has IDs of its own.
+ * than apply it again, until the server answers it; a batch of other
+ * commands has IDs of its own.
  */
 export function useCommands(projectId: string) {
   const session = useSuspenseQuery(sessionQuery).data;
@@ -272,11 +273,28 @@ export function useCommands(projectId: string) {
       return readProjectAgain(client, projectId);
     },
     onError: (error) => {
+      // A batch that the server answered, applied or not, is one that it
+      // will answer alike if it is sent again with these IDs, as with a
+      // refusal of the project's archiving that has ended since (N36), so
+      // the next batch has IDs of its own.
+      if (answered(error)) {
+        last.current = null;
+      }
       if (conflictOf(error)) {
         return readProjectAgain(client, projectId);
       }
     },
   });
+}
+
+/**
+ * Reports whether error is the server's own answer, with the error envelope,
+ * rather than none, as a request that no answer came to (NetworkError), or a
+ * proxy's page of its own, of which the page cannot tell whether the batch
+ * applied.
+ */
+function answered(error: unknown): boolean {
+  return error instanceof ApiError && error.error !== undefined;
 }
 
 /** Reports whether error is a refusal of a revision that a batch expected (revision_conflict). */

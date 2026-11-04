@@ -4,15 +4,22 @@ import { useEffect } from "react";
 import { sessionQuery } from "../api";
 import { requireSession } from "../auth/session";
 import { found } from "../shell/found";
-import { rememberWorkspace, workspaceQuery } from "../workspace/queries";
+import {
+  rememberWorkspace,
+  workspaceQuery,
+  workspacesQuery,
+} from "../workspace/queries";
 import { WorkspaceBar } from "../workspace/WorkspaceBar";
 
 export const Route = createFileRoute("/workspaces/$workspaceId")({
   beforeLoad: requireSession,
-  loader: ({ context, params }) =>
-    found(
-      context.queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
-    ),
+  // The account's workspaces too, so that the switcher shows as it will
+  // stay, rather than the name alone until they come.
+  loader: ({ context: { queryClient }, params }) =>
+    Promise.all([
+      found(queryClient.ensureQueryData(workspaceQuery(params.workspaceId))),
+      queryClient.ensureInfiniteQueryData(workspacesQuery),
+    ]),
   component: WorkspaceLayout,
 });
 

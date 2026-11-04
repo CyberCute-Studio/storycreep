@@ -2,11 +2,19 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { BoardTree } from "../project/BoardTree";
 import { editsProject, projectQuery, treeQuery } from "../project/queries";
+import { found } from "../shell/found";
 import { Page } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/")({
-  loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData(treeQuery(params.projectId)),
+  // The project, which the layout's loader reads at once with this one,
+  // comes first, so that a project that the account may not see shows the
+  // page of no page before its tree is asked for.
+  loader: async ({ context: { queryClient }, params }) => {
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
+    );
+    await found(queryClient.ensureQueryData(treeQuery(project.id)));
+  },
   component: Boards,
 });
 

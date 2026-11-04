@@ -16,12 +16,18 @@ import {
   trashQuery,
   useCommands,
 } from "../project/queries";
+import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/trash")({
-  loader: ({ context, params }) =>
-    context.queryClient.ensureInfiniteQueryData(trashQuery(params.projectId)),
+  // The project comes first, as for the tree of its boards.
+  loader: async ({ context: { queryClient }, params }) => {
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
+    );
+    await found(queryClient.ensureInfiniteQueryData(trashQuery(project.id)));
+  },
   component: Trash,
 });
 

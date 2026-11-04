@@ -24,15 +24,19 @@ import {
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
-  loader: ({ context: { queryClient }, params }) =>
-    found(
+  // The project comes first, as for the tree of its boards, and then the
+  // board, which is not there once it is in the trash.
+  loader: async ({ context: { queryClient }, params }) => {
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
+    );
+    await found(
       Promise.all([
-        queryClient.ensureQueryData(
-          boardQuery(params.projectId, params.boardId),
-        ),
-        queryClient.ensureQueryData(treeQuery(params.projectId)),
+        queryClient.ensureQueryData(boardQuery(project.id, params.boardId)),
+        queryClient.ensureQueryData(treeQuery(project.id)),
       ]),
-    ),
+    );
+  },
   component: BoardPage,
 });
 

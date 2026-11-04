@@ -17,6 +17,7 @@ import { refusalOf } from "../auth/refusal";
 import { roleLabel } from "../auth/roles";
 import { csrfHeaders } from "../auth/session";
 import { languageName, supportedLocales } from "../i18n";
+import { found } from "../shell/found";
 import { Button } from "../ui/Button";
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page, Status } from "../ui/Page";
@@ -30,8 +31,8 @@ import { UsageTable } from "../workspace/Usage";
 
 export const Route = createFileRoute("/workspaces/$workspaceId/settings")({
   loader: async ({ context: { queryClient }, params }) => {
-    const workspace = await queryClient.ensureQueryData(
-      workspaceQuery(params.workspaceId),
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
     );
     // A guest has no role in the workspace, and sees nothing of it but the
     // projects granted to them (§5.5).

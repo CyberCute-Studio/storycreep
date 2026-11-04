@@ -15,6 +15,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
+import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { DialogFrame } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
@@ -29,10 +30,18 @@ import {
 import { LimitNote } from "../workspace/Usage";
 
 export const Route = createFileRoute("/workspaces/$workspaceId/")({
-  loader: ({ context, params }) =>
-    context.queryClient.ensureInfiniteQueryData(
-      projectsQuery(params.workspaceId),
-    ),
+  // The layout's loader, which runs at once with this one, reads the
+  // workspace too, which the list waits for, so that a workspace that the
+  // account may not see shows the page of no page before the list is asked
+  // for, whose refusal would be no error of the app's either.
+  loader: async ({ context: { queryClient }, params }) => {
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
+    );
+    await found(
+      queryClient.ensureInfiniteQueryData(projectsQuery(workspace.id)),
+    );
+  },
   component: Projects,
 });
 

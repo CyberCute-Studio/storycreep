@@ -44,8 +44,8 @@ import { LimitNote } from "../workspace/Usage";
 
 export const Route = createFileRoute("/workspaces/$workspaceId/members")({
   loader: async ({ context: { queryClient }, params }) => {
-    const workspace = await queryClient.ensureQueryData(
-      workspaceQuery(params.workspaceId),
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
     );
     // A guest, whose role in the workspace is none, may not list its
     // members, and is answered as for a workspace that does not exist.

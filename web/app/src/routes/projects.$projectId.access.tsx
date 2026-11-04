@@ -14,6 +14,7 @@ import { refusalOf } from "../auth/refusal";
 import { type GrantRole, grantRoles, roleLabel, roleName } from "../auth/roles";
 import { csrfHeaders } from "../auth/session";
 import { grantsQuery, projectQuery } from "../project/queries";
+import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { DialogFrame } from "../ui/Dialog";
 import { SelectField, useFocusRefusal } from "../ui/Field";
@@ -27,11 +28,11 @@ import {
 
 export const Route = createFileRoute("/projects/$projectId/access")({
   loader: async ({ context: { queryClient }, params }) => {
-    const project = await queryClient.ensureQueryData(
-      projectQuery(params.projectId),
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
-    const workspace = await queryClient.ensureQueryData(
-      workspaceQuery(project.workspace_id),
+    const workspace = await found(
+      queryClient.ensureQueryData(workspaceQuery(project.workspace_id)),
     );
     // A grant never authorises an operation of the workspace, as managing
     // grants is (PRD FR-TEN-04 AC4).

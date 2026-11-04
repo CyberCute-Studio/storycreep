@@ -380,7 +380,6 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
               <Button
                 data-tree-actions={node.id}
                 aria-label={t("boards.actions", { name })}
-                aria-describedby={nameId}
               >
                 <span aria-hidden="true">⋯</span>
               </Button>
@@ -451,6 +450,17 @@ interface TreeDrag {
   area: { "data-tree-area": true };
 }
 
+/** A drag that a pointer went down for, which has started once it has moved. */
+interface DragUnderWay {
+  node: TreeNode;
+  /** Where the pointer went down. */
+  x: number;
+  y: number;
+  /** Whether the pointer has moved dragThreshold pixels, which starts the drag. */
+  moving: boolean;
+  drop?: Drop;
+}
+
 /** How near to the window's top or bottom edge, in pixels, a drag scrolls the page. */
 const scrollEdge = 48;
 
@@ -462,20 +472,15 @@ const scrollEdge = 48;
  * row's child, by the row's top or bottom quarter, or, for a folder, its
  * middle half, inside it, and onDrop is told where it landed once the
  * pointer goes up. Escape, or a pointer that the browser takes back, as for
- * a gesture of its own, cancels it.
+ * a gesture of its own, or once the handle has gone from the page, cancels
+ * it.
  */
 function useTreeDrag(
   tree: Tree,
   onDrop: (node: TreeNode, placement: Placement) => void,
 ): TreeDrag {
   const [dragging, setDragging] = useState<Dragging>();
-  const current = useRef<{
-    node: TreeNode;
-    x: number;
-    y: number;
-    moving: boolean;
-    drop?: Drop;
-  }>(null);
+  const current = useRef<DragUnderWay>(null);
   const latest = useRef({ tree, onDrop });
   latest.current = { tree, onDrop };
   useEffect(() => {
@@ -495,15 +500,17 @@ function useTreeDrag(
     event.preventDefault();
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
-    current.current = {
+    // This drag, which Escape, or another drag, as of a second finger, ends
+    // by putting another in its place.
+    const drag: DragUnderWay = {
       node,
       x: event.clientX,
       y: event.clientY,
       moving: false,
     };
+    current.current = drag;
     const move = (e: PointerEvent) => {
-      const drag = current.current;
-      if (drag === null) {
+      if (current.current !== drag) {
         return;
       }
       if (
@@ -518,23 +525,23 @@ function useTreeDrag(
       } else if (e.clientY > window.innerHeight - scrollEdge) {
         window.scrollBy(0, scrollEdge / 4);
       }
-      const drop = dropAt(latest.current.tree, drag.node, e.clientX, e.clientY);
-      drag.drop = drop;
-      setDragging({ node: drag.node, drop });
+      drag.drop = dropAt(latest.current.tree, drag.node, e.clientX, e.clientY);
+      setDragging({ node: drag.node, drop: drag.drop });
     };
+    // The pointer went up, which drops the child, or the browser took it
+    // back, for a gesture of its own, or since the handle went from the
+    // page, which cancels the drag.
     const end = (e: PointerEvent) => {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", end);
       handle.removeEventListener("pointercancel", end);
-      const drag = current.current;
+      handle.removeEventListener("lostpointercapture", end);
+      if (current.current !== drag) {
+        return;
+      }
       current.current = null;
       setDragging(undefined);
-      if (
-        e.type !== "pointerup" ||
-        drag === null ||
-        !drag.moving ||
-        drag.drop === undefined
-      ) {
+      if (e.type !== "pointerup" || !drag.moving || drag.drop === undefined) {
         return;
       }
       const placement = placementOf(latest.current.tree, drag.node, drag.drop);
@@ -545,6 +552,7 @@ function useTreeDrag(
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", end);
+    handle.addEventListener("lostpointercapture", end);
   };
   return { dragging, start, area: { "data-tree-area": true } };
 }
