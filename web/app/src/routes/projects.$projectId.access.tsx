@@ -11,7 +11,13 @@ import { type FormEvent, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, revoking, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { type GrantRole, grantRoles, roleLabel, roleName } from "../auth/roles";
+import {
+  actsOn,
+  type GrantRole,
+  grantRoles,
+  roleLabel,
+  roleName,
+} from "../auth/roles";
 import { csrfHeaders } from "../auth/session";
 import { grantsQuery, projectQuery } from "../project/queries";
 import { found } from "../shell/found";
@@ -39,10 +45,15 @@ export const Route = createFileRoute("/projects/$projectId/access")({
     if (!managesWorkspace(workspace.role)) {
       throw notFound();
     }
-    await Promise.all([
-      queryClient.ensureQueryData(grantsQuery(project.id)),
-      queryClient.ensureInfiniteQueryData(membersQuery(workspace.id)),
-    ]);
+    // A project that went to the trash since the page read it, or a
+    // workspace that the user was removed from, is answered as one that
+    // does not exist.
+    await found(
+      Promise.all([
+        queryClient.ensureQueryData(grantsQuery(project.id)),
+        queryClient.ensureInfiniteQueryData(membersQuery(workspace.id)),
+      ]),
+    );
   },
   component: Access,
 });
@@ -119,7 +130,7 @@ function AccessItem({
   const nameId = useId();
   // Only an owner sets or removes an owner's grant, which replaces their
   // role on the project (PRD FR-TEN-04).
-  const changes = workspace.role === "owner" || member.role !== "owner";
+  const changes = actsOn(workspace.role, member.role);
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">

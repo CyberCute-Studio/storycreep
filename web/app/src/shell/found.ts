@@ -3,6 +3,7 @@
 // none for the user (notFoundBy), as the server does not tell a workspace
 // that the user may not see from one that does not exist.
 
+import { decodeId, encodeId, type IdKind } from "@storycreep/shared/ids";
 import { notFound } from "@tanstack/react-router";
 import { notFoundBy } from "../api";
 
@@ -15,5 +16,22 @@ export async function found<T>(read: Promise<T>): Promise<T> {
       throw notFound();
     }
     throw error;
+  }
+}
+
+/**
+ * Returns the ID of kind that a page's address holds as the server writes
+ * it (encodeId), which the page's queries are keyed by, as are those that a
+ * change reads again, and which the account's memberships hold: the server
+ * takes an ID in either case, as one typed by hand in lowercase, which would
+ * otherwise key queries of its own, which no change reads again, and match
+ * none of the memberships. One that is no ID of kind is kept as it is, which
+ * the server refuses as none (notFoundBy), which shows the page of no page.
+ */
+export function canonicalId(kind: IdKind, id: string): string {
+  try {
+    return encodeId(kind, decodeId(kind, id));
+  } catch {
+    return id;
   }
 }

@@ -3,12 +3,19 @@ import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { managesProject, projectQuery } from "../project/queries";
-import { found } from "../shell/found";
+import { canonicalId, found } from "../shell/found";
 import { textLink } from "../ui/Page";
 import { managesWorkspace, workspaceQuery } from "../workspace/queries";
 import { navLink } from "../workspace/WorkspaceBar";
 
 export const Route = createFileRoute("/projects/$projectId")({
+  // The project's ID as the server writes it, which its pages and theirs
+  // read, however the address spells it (canonicalId).
+  params: {
+    parse: ({ projectId }) => ({
+      projectId: canonicalId("project", projectId),
+    }),
+  },
   beforeLoad: requireSession,
   loader: async ({ context: { queryClient }, params }) => {
     const project = await found(

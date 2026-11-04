@@ -105,7 +105,10 @@ export function BoardTree({
       // A move that was refused for a revision has the project read again
       // by useCommands. One refused otherwise, or that no answer came to,
       // shows the child where it was, until the project, read again, shows
-      // where it is, rather than where it was dropped.
+      // where it is, rather than where it was dropped. It is read again once
+      // the child shows where it was, which begins anew the read that
+      // useCommands began once no answer came, so that the child where it
+      // was is not shown over what that read answered.
       onError: (error) => {
         if (!conflictOf(error)) {
           client.setQueryData(key, before);
@@ -605,9 +608,14 @@ function useTreeDrag(
       if (e.type !== "pointerup" || !drag.moving || drag.drop === undefined) {
         return;
       }
-      const placement = placementOf(latest.current.tree, drag.node, drag.drop);
+      // The child as the tree has it now, with the revision that it read
+      // last, as once it was read again while the child was dragged, which
+      // the move expects, rather than as it was when the drag began.
+      const { tree } = latest.current;
+      const node = tree.byId.get(drag.node.id) ?? drag.node;
+      const placement = placementOf(tree, node, drag.drop);
       if (placement !== undefined) {
-        latest.current.onDrop(drag.node, placement);
+        latest.current.onDrop(node, placement);
       }
     };
     // The document hears the pointer, rather than the handle: the handle's
@@ -650,7 +658,10 @@ function sameDrop(a: Drop | undefined, b: Drop | undefined): boolean {
  * bottom quarter of a folder whose children show under it, as it is not
  * closed, is before its first child, where the mark of the drop shows,
  * between the two rows, rather than after the folder, below its last child,
- * far from that mark.
+ * far from that mark. The row under the point is the one at its height, so
+ * the page reads the boxes of every row of the tree only when the point is
+ * over none, as between two rows, rather than at every move of the pointer,
+ * which would be hundreds of them, many times a second.
  */
 function dropAt(
   tree: Tree,
@@ -659,21 +670,26 @@ function dropAt(
   x: number,
   y: number,
 ): Drop | undefined {
-  const area = document
-    .elementFromPoint(x, y)
-    ?.closest<HTMLElement>("[data-tree-area]");
-  if (!area) {
+  const hit = document.elementFromPoint(x, y);
+  const area = hit?.closest<HTMLElement>("[data-tree-area]");
+  if (!hit || !area) {
     return undefined;
   }
-  let row: { id: string; box: DOMRect } | undefined;
-  let nearest = Number.POSITIVE_INFINITY;
-  for (const r of area.querySelectorAll<HTMLElement>("[data-tree-id]")) {
-    const id = r.dataset.treeId;
-    const box = r.getBoundingClientRect();
-    const distance = Math.max(box.top - y, y - box.bottom, 0);
-    if (id !== undefined && distance < nearest) {
-      nearest = distance;
-      row = { id, box };
+  const under = hit.closest<HTMLElement>("[data-tree-id]");
+  let row: { id: string; box: DOMRect } | undefined =
+    under?.dataset.treeId === undefined
+      ? undefined
+      : { id: under.dataset.treeId, box: under.getBoundingClientRect() };
+  if (row === undefined) {
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const r of area.querySelectorAll<HTMLElement>("[data-tree-id]")) {
+      const id = r.dataset.treeId;
+      const box = r.getBoundingClientRect();
+      const distance = Math.max(box.top - y, y - box.bottom, 0);
+      if (id !== undefined && distance < nearest) {
+        nearest = distance;
+        row = { id, box };
+      }
     }
   }
   if (row === undefined) {

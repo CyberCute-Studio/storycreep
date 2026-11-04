@@ -64,12 +64,20 @@ export const grantRoles = ["admin", "editor", "commenter", "viewer"] as const;
 export type GrantRole = (typeof grantRoles)[number];
 
 /**
+ * Reports whether a member whose role is actor's, who manages the
+ * workspace, acts on what has the role role: a member's role, removal, or
+ * grant, an invitation's sending anew, or a role given. Only an owner acts
+ * on an owner's (PRD FR-TEN-03 AC4).
+ */
+export function actsOn(actor: Role, role: Role): boolean {
+  return actor === "owner" || role !== "owner";
+}
+
+/**
  * Returns the roles that a member whose role is actor's may give, of
  * workspaceRoles: every one for an owner, and all but owner for an admin,
- * since only an owner grants owner (PRD FR-TEN-03 AC4).
+ * since only an owner grants owner (actsOn).
  */
 export function rolesGivenBy(actor: Role): readonly Role[] {
-  return actor === "owner"
-    ? workspaceRoles
-    : workspaceRoles.filter((r) => r !== "owner");
+  return workspaceRoles.filter((r) => actsOn(actor, r));
 }

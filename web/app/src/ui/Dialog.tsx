@@ -100,17 +100,23 @@ export function ConfirmFrame({
  * The buttons of a confirmation (ConfirmFrame): Cancel, which has the focus
  * first, and the one that confirms, which is not an AlertDialog.Action,
  * which would close the dialog before its request has answered, both
- * disabled while it is under way (pending).
+ * disabled while it is under way (pending). The one that confirms is
+ * disabled too until the confirmation is ready, as while it reads what it
+ * lists of what the action breaks, while Cancel still closes it, as a
+ * read that is slow, or that waits for the browser's connection, may take
+ * long.
  */
 export function ConfirmButtons({
   cancel,
   confirm,
   pending,
+  ready = true,
   onConfirm,
 }: {
   cancel: string;
   confirm: string;
   pending: boolean;
+  ready?: boolean;
   onConfirm: () => void;
 }) {
   return (
@@ -118,7 +124,7 @@ export function ConfirmButtons({
       <AlertDialog.Cancel asChild>
         <Button disabled={pending}>{cancel}</Button>
       </AlertDialog.Cancel>
-      <Button variant="danger" disabled={pending} onClick={onConfirm}>
+      <Button variant="danger" disabled={pending || !ready} onClick={onConfirm}>
         {confirm}
       </Button>
     </div>

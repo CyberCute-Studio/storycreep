@@ -23,6 +23,7 @@ import { Page, RefusalAlert, textLink } from "../ui/Page";
 import {
   managesWorkspace,
   projectsQuery,
+  readListsAgain,
   usageQuery,
   type Workspace,
   workspaceQuery,
@@ -148,14 +149,10 @@ function NewProject({ workspace }: { workspace: Workspace }) {
       // and its usage, of one more, is read again once the page has gone
       // to the project, which waits for neither, and read although no page
       // shows it now, so that the list has it once the user goes back.
-      await Promise.all(
-        [
-          projectsQuery(workspace.id).queryKey,
-          usageQuery(workspace.id).queryKey,
-        ].map((queryKey) =>
-          client.invalidateQueries({ queryKey, refetchType: "all" }),
-        ),
-      );
+      await readListsAgain(client, [
+        projectsQuery(workspace.id).queryKey,
+        usageQuery(workspace.id).queryKey,
+      ]);
     },
     // A refusal of the limit changes what the dialog says of it.
     onError: () => usage.refetch(),

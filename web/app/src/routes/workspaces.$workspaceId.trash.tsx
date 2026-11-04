@@ -31,8 +31,10 @@ export const Route = createFileRoute("/workspaces/$workspaceId/trash")({
     if (!managesWorkspace(workspace.role)) {
       throw notFound();
     }
-    await queryClient.ensureInfiniteQueryData(
-      trashedProjectsQuery(workspace.id),
+    // A user whom another removed from the workspace since the page read it
+    // is answered as for a workspace that does not exist.
+    await found(
+      queryClient.ensureInfiniteQueryData(trashedProjectsQuery(workspace.id)),
     );
   },
   component: Trash,

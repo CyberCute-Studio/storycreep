@@ -8,13 +8,14 @@ import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import {
   boardQuery,
   type Command,
+  conflictOf,
   dropBoard,
   editsProject,
   projectQuery,
   treeQuery,
   useCommands,
 } from "../project/queries";
-import { found } from "../shell/found";
+import { canonicalId, found } from "../shell/found";
 import { Button } from "../ui/Button";
 import {
   SelectField,
@@ -25,6 +26,11 @@ import {
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
+  // The board's ID as the server writes it, however the address spells it
+  // (canonicalId), as the project's.
+  params: {
+    parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
+  },
   // The project comes first, as for the tree of its boards, and then the
   // board, which is not there once it is in the trash.
   loader: async ({ context: { queryClient }, params }) => {
@@ -129,15 +135,21 @@ const boardField = payloadField("name", "slug", "description", "color");
 
 /**
  * The form of a board's settings, which sends what of them changed in one
- * batch, each command expecting the revision that the page read, so that a
+ * batch, each command expecting the revision that the form shows, so that a
  * board that changed elsewhere since is not changed over (PRD FR-API-03
- * AC3).
+ * AC3). It shows the board as the page has it until the user changes
+ * something in it, and then as it was, so that a change made elsewhere,
+ * which the page reads as its tab is shown again, does not take away what
+ * the user typed, until the form is saved, or refused for that change, when
+ * it shows the board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
+  const [held, setHeld] = useState<Board>();
+  const shown = held ?? board;
   const refusal = refusalOf(commands.error, t, boardField, {
     slug_taken: t("board.error.slug_taken"),
   });
@@ -145,45 +157,45 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const expected_rev = { [board.id]: board.rev };
+    const expected_rev = { [shown.id]: shown.rev };
     const name = String(data.get("name"));
     const slug = String(data.get("slug"));
     const description = String(data.get("description"));
     const color = String(data.get("color")) as Board["color"];
     const changes: Command[] = [
-      ...(name === board.name
+      ...(name === shown.name
         ? []
         : [
             {
               type: "board.rename" as const,
-              payload: { id: board.id, name },
+              payload: { id: shown.id, name },
               expected_rev,
             },
           ]),
-      ...(slug === board.slug
+      ...(slug === shown.slug
         ? []
         : [
             {
               type: "board.set_slug" as const,
-              payload: { id: board.id, slug },
+              payload: { id: shown.id, slug },
               expected_rev,
             },
           ]),
-      ...(description === board.description
+      ...(description === shown.description
         ? []
         : [
             {
               type: "board.describe" as const,
-              payload: { id: board.id, description },
+              payload: { id: shown.id, description },
               expected_rev,
             },
           ]),
-      ...(color === board.color
+      ...(color === shown.color
         ? []
         : [
             {
               type: "board.set_color" as const,
-              payload: { id: board.id, color },
+              payload: { id: shown.id, color },
               expected_rev,
             },
           ]),
@@ -191,9 +203,17 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     setUnchanged(changes.length === 0);
     if (changes.length === 0) {
       commands.reset();
+      setHeld(undefined);
       return;
     }
-    commands.mutate(changes);
+    commands.mutate(changes, {
+      onSuccess: () => setHeld(undefined),
+      onError: (error) => {
+        if (conflictOf(error)) {
+          setHeld(undefined);
+        }
+      },
+    });
   };
   return (
     <div className="max-w-md space-y-4">
@@ -207,13 +227,14 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               : undefined
         }
       />
-      {/* Shown anew once the board has changed, as by this form or
-          elsewhere, rather than showing what it was. */}
+      {/* Shown anew once the board that it shows has changed, as once
+          this form saved it, rather than showing what it was. */}
       <form
-        key={board.rev}
+        key={shown.rev}
         ref={form}
         className="space-y-4"
         onSubmit={submit}
+        onChange={() => setHeld((before) => before ?? board)}
         noValidate
       >
         <TextField
@@ -222,7 +243,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
           autoComplete="off"
           required
           maxLength={100}
-          defaultValue={board.name}
+          defaultValue={shown.name}
           error={refusal?.fields.name}
         />
         <TextField
@@ -233,19 +254,19 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
           spellCheck={false}
           required
           maxLength={64}
-          defaultValue={board.slug}
+          defaultValue={shown.slug}
           error={refusal?.fields.slug}
         />
         <TextAreaField
           label={t("board.description")}
           name="description"
-          defaultValue={board.description}
+          defaultValue={shown.description}
           error={refusal?.fields.description}
         />
         <SelectField
           label={t("board.color")}
           name="color"
-          defaultValue={board.color}
+          defaultValue={shown.color}
           error={refusal?.fields.color}
         >
           {colors.map((color) => (

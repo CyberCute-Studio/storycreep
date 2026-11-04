@@ -9,7 +9,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { type FormEvent, useRef } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
@@ -79,11 +79,23 @@ function Settings() {
 
 const settingsField = bodyField("name", "slug", "default_locale");
 
+/**
+ * The form of a workspace's settings, which sends what of them changed, and
+ * nothing else, so that a setting that another admin changed since the page
+ * read the workspace is not set back to what it was: the server's change of
+ * a workspace expects no revision. It shows the workspace as the page has
+ * it until the user changes something in it, and then as it was, so that a
+ * change made elsewhere, which the page reads as its tab is shown again,
+ * does not take away what the user typed, until the form is saved.
+ */
 function SettingsForm({ workspace }: { workspace: Workspace }) {
   const { t, i18n } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
+  const [unchanged, setUnchanged] = useState(false);
+  const [held, setHeld] = useState<Workspace>();
+  const shown = held ?? workspace;
   const save = useMutation({
     mutationFn: async (body: UpdateWorkspaceBody): Promise<WorkspaceBody> =>
       (
@@ -102,31 +114,49 @@ function SettingsForm({ workspace }: { workspace: Workspace }) {
   // A locale that the workspace keeps, which the app may have no catalog
   // of, stays a choice, so that saving the form keeps it.
   const locales = supportedLocales(i18n);
-  if (!locales.includes(workspace.default_locale)) {
-    locales.push(workspace.default_locale);
+  if (!locales.includes(shown.default_locale)) {
+    locales.push(shown.default_locale);
   }
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    save.mutate({
-      name: String(data.get("name")),
-      slug: String(data.get("slug")),
-      default_locale: String(data.get("default_locale")),
-    });
+    const name = String(data.get("name"));
+    const slug = String(data.get("slug"));
+    const locale = String(data.get("default_locale"));
+    const body: UpdateWorkspaceBody = {
+      ...(name === shown.name ? {} : { name }),
+      ...(slug === shown.slug ? {} : { slug }),
+      ...(locale === shown.default_locale ? {} : { default_locale: locale }),
+    };
+    const changed = Object.keys(body).length > 0;
+    setUnchanged(!changed);
+    if (!changed) {
+      save.reset();
+      setHeld(undefined);
+      return;
+    }
+    save.mutate(body, { onSuccess: () => setHeld(undefined) });
   };
   return (
     <div className="max-w-md space-y-4">
       <Alert message={refusal?.message} />
       <Status
-        message={save.isSuccess ? t("workspace_settings.saved") : undefined}
+        message={
+          unchanged
+            ? t("workspace_settings.unchanged")
+            : save.isSuccess
+              ? t("workspace_settings.saved")
+              : undefined
+        }
       />
-      {/* Shown anew once the workspace has changed, as elsewhere, rather
-          than showing what it was, which saving would write back. */}
+      {/* Shown anew once the workspace that it shows has changed, as once
+          this form saved it, rather than showing what it was. */}
       <form
-        key={`${workspace.name}\n${workspace.slug}\n${workspace.default_locale}`}
+        key={`${shown.name}\n${shown.slug}\n${shown.default_locale}`}
         ref={form}
         className="space-y-4"
         onSubmit={submit}
+        onChange={() => setHeld((before) => before ?? workspace)}
         noValidate
       >
         <TextField
@@ -135,7 +165,7 @@ function SettingsForm({ workspace }: { workspace: Workspace }) {
           autoComplete="off"
           required
           maxLength={100}
-          defaultValue={workspace.name}
+          defaultValue={shown.name}
           error={refusal?.fields.name}
         />
         <TextField
@@ -145,14 +175,14 @@ function SettingsForm({ workspace }: { workspace: Workspace }) {
           autoComplete="off"
           spellCheck={false}
           required
-          defaultValue={workspace.slug}
+          defaultValue={shown.slug}
           error={refusal?.fields.slug}
         />
         <SelectField
           label={t("workspace_settings.default_locale")}
           hint={t("workspace_settings.default_locale_hint")}
           name="default_locale"
-          defaultValue={workspace.default_locale}
+          defaultValue={shown.default_locale}
           error={refusal?.fields.default_locale}
         >
           {locales.map((locale) => (

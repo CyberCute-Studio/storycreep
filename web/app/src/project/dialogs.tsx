@@ -531,9 +531,12 @@ export function DeleteBoardDialog({
           : t("boards.delete_board")
       }
       opener={opener}
+      pending={commands.isPending}
       // The list is read before the deletion, so that it is confirmed only
-      // once what it breaks is shown.
-      pending={commands.isPending || referrers.isPending}
+      // once what it breaks is shown, while Cancel closes the dialog all the
+      // same, as while a read that is slow, or that waits for the browser's
+      // connection, is under way.
+      ready={!referrers.isPending}
       onClose={onClose}
       onConfirm={() =>
         commands.mutate(
@@ -620,13 +623,17 @@ function referencedBy(
   return { jumpers, count };
 }
 
-/** A confirmation of a destructive change, which stays open while it is under way. */
+/**
+ * A confirmation of a destructive change, which stays open while it is
+ * under way, and is confirmed once it is ready (ConfirmButtons).
+ */
 function Confirm({
   title,
   description,
   confirm,
   opener,
   pending,
+  ready,
   onClose,
   onConfirm,
   children,
@@ -636,6 +643,7 @@ function Confirm({
   confirm: string;
   opener: Opener;
   pending: boolean;
+  ready?: boolean;
   onClose: () => void;
   onConfirm: () => void;
   children: ReactNode;
@@ -653,6 +661,7 @@ function Confirm({
           cancel={t("boards.cancel")}
           confirm={confirm}
           pending={pending}
+          ready={ready}
           onConfirm={onConfirm}
         />
       </ConfirmFrame>

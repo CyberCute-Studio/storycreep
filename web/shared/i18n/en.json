@@ -527,5 +527,6 @@
   "workspace_settings.slug": "Slug",
   "workspace_settings.slug_hint": "The workspace's name in addresses: lowercase letters and digits, joined by single hyphens.",
   "workspace_settings.title": "Settings",
+  "workspace_settings.unchanged": "Nothing has changed, so nothing was saved.",
   "workspace_settings.your_role": "Your role"
 }

@@ -55,6 +55,13 @@ export function editsProject(role: ProjectBody["role"]): boolean {
   return role === "owner" || role === "admin" || role === "editor";
 }
 
+/**
+ * What a list of a project tells the query client, which a page's loader
+ * reads with found(), so that the page of no page shows once the user may
+ * no longer see the project, as once it is in the trash.
+ */
+const shownAsNotFound = { showsNotFound: true };
+
 /** What the tree of a project's boards is built from. */
 export interface TreeData {
   folders: Folder[];
@@ -68,6 +75,7 @@ export interface TreeData {
 export function treeQuery(projectId: string) {
   return queryOptions({
     queryKey: ["projects", projectId, "tree"],
+    meta: shownAsNotFound,
     queryFn: async ({ signal }): Promise<TreeData> => {
       const path = { project_id: projectId };
       const [folders, boards] = await Promise.all([
@@ -125,6 +133,8 @@ export const referrersShown = 100;
 export function referrersQuery(projectId: string, boardId: string) {
   return queryOptions({
     queryKey: ["projects", projectId, "boards", boardId, "referrers"],
+    // The confirmation shows a refusal of it.
+    meta: { showsRefusals: true },
     queryFn: async ({ signal }): Promise<{ items: Node[]; more: boolean }> => {
       const page = (
         await api.call(
@@ -156,6 +166,7 @@ export function trashQuery(projectId: string) {
           { signal },
         )
       ).body,
+    { meta: shownAsNotFound },
   );
 }
 
@@ -167,6 +178,7 @@ export function trashQuery(projectId: string) {
 export function grantsQuery(projectId: string) {
   return queryOptions({
     queryKey: ["projects", projectId, "grants"],
+    meta: shownAsNotFound,
     queryFn: async ({ signal }): Promise<GrantBody[]> =>
       everyPage(
         async (cursor) =>
@@ -248,9 +260,10 @@ function deletedBoards(commands: readonly Command[]): string[] {
 
 /**
  * The mutation that applies a batch of commands to projectId, which it reads
- * again once the batch has applied (readProjectAgain), and once it was
- * refused for a revision that it expected, as of a board that changed
- * elsewhere since the page read it. A batch sent again as it was, as once
+ * again once the batch has applied (readProjectAgain), once it was refused
+ * for a revision that it expected, as of a board that changed elsewhere
+ * since the page read it, and once no answer came to it, since it may have
+ * applied all the same. A batch sent again as it was, as once
  * no answer came to it, has the IDs that its commands had, so that the
  * server answers it as the batch that it applied already, if it did, rather
  * than apply it again, until the server answers it, whatever batches the
@@ -304,6 +317,15 @@ export function useCommands(projectId: string) {
       }
       if (conflictOf(error)) {
         return readProjectAgain(client, projectId);
+      }
+      // A batch that no answer came to may have applied, as a board that a
+      // dialog created, which the page shows once it has read the project
+      // again, rather than offer to create anew, with an ID of its own,
+      // which would create another. The mutation does not wait for it,
+      // which, with the browser's connection gone, would wait for its
+      // return, while its dialog stays open.
+      if (!answered(error)) {
+        void readProjectAgain(client, projectId);
       }
     },
   });

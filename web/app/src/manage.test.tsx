@@ -4,6 +4,7 @@ import {
   type MembershipBody,
   NetworkError,
 } from "@storycreep/shared/api";
+import { newId } from "@storycreep/shared/ids";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,6 +123,72 @@ describe("the project list", () => {
     expect(router.state.location.pathname).toBe("/workspaces/ws_studio");
     // Not finding it is no error of the app's.
     expect(log.entries()).toEqual([]);
+  });
+});
+
+describe("a workspace's pages", () => {
+  it("show the account's membership whatever the case that the address spells the workspace's ID in", async () => {
+    const id = newId("workspace");
+    fakeApi((operation) =>
+      expected(
+        startPage(operation, [{ ...testWorkspace, id, slug: "studio" }]),
+        operation,
+      ),
+    );
+    renderApp(`/workspaces/${id.toLowerCase()}`, { session: testSession });
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    // The project list opens it next, by its ID as the server writes it.
+    await waitFor(() =>
+      expect(localStorage.getItem("storycreep.workspace.usr_test")).toBe(id),
+    );
+  });
+
+  it("are the page of no page once the user has been removed from the workspace since the page read it, which is no error of the app's", async () => {
+    fakeApi((operation) => {
+      if (operation === "listTrashedProjects") {
+        throw refused(404, { code: "not_found" });
+      }
+      return expected(startPage(operation), operation);
+    });
+    const { log } = renderApp("/workspaces/ws_studio/trash", {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Page not found" });
+    expect(log.entries()).toEqual([]);
+  });
+
+  it("send only the settings that changed, and keep what the user typed once the workspace has changed elsewhere", async () => {
+    const user = userEvent.setup();
+    let studio = testWorkspace;
+    const calls = fakeApi((operation, input) => {
+      if (operation === "updateWorkspace") {
+        studio = { ...studio, ...(input as { body: object }).body };
+        return studio;
+      }
+      return expected(startPage(operation, [studio]), operation);
+    });
+    const { queryClient } = renderApp("/workspaces/ws_studio/settings", {
+      session: testSession,
+    });
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "North");
+    // Another admin changes the slug, which the page reads again.
+    studio = { ...studio, slug: "harbour-studio" };
+    await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+    expect(screen.getByLabelText("Name")).toHaveProperty("value", "North");
+    await user.click(screen.getByRole("button", { name: "Save the settings" }));
+    await screen.findByText("Saved.");
+    expect(
+      calls.mock.calls
+        .filter(([operation]) => operation === "updateWorkspace")
+        .map(([, input]) => (input as { body: unknown }).body),
+    ).toEqual([{ name: "North" }]);
+    // Saved, the form shows the workspace as it is now.
+    expect(screen.getByLabelText("Slug")).toHaveProperty(
+      "value",
+      "harbour-studio",
+    );
   });
 });
 
@@ -655,5 +722,113 @@ describe("the tree of boards", () => {
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
+  });
+
+  it("lets a board's deletion be cancelled while it reads the jumpers that the deletion would break", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "listBoardReferrers") {
+        // No answer comes, as while the browser has no connection.
+        return new Promise(() => {});
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByRole("button", { name: "Delete the board" }),
+    ).toHaveProperty("disabled", true);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("reads the tree again once no answer came to a board's creation, which shows the board if it was created", async () => {
+    const user = userEvent.setup();
+    const boards = [board("bd_a", "Harbour")];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { payload: { id: string; name: string } }[] };
+        };
+        // The server created the board, but its answer did not come.
+        const [{ payload }] = body.commands;
+        boards.push(board(payload.id, payload.name));
+        throw new NetworkError(new TypeError("Failed to fetch"));
+      }
+      return expected(projectPages(operation, boards), operation);
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(await screen.findByRole("button", { name: "New board" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(
+      within(dialog).getByLabelText("Name of the board"),
+      "Lighthouse",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Create the board" }),
+    );
+    await within(dialog).findByRole("alert");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(
+      await screen.findByRole("link", { name: "Lighthouse" }),
+    ).toBeDefined();
+  });
+});
+
+describe("a board's page", () => {
+  it("keeps what the user typed once the board has changed elsewhere, and sends it expecting the revision that the form shows", async () => {
+    const user = userEvent.setup();
+    let harbour = board("bd_a", "Harbour");
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "getBoard":
+          return harbour;
+        case "applyCommands":
+          sent.push((input as { body: { commands: unknown[] } }).body.commands);
+          throw refused(409, { code: "revision_conflict" });
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/boards/bd_a`,
+      {
+        session: testSession,
+      },
+    );
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    // Another editor gives the board a colour, which the page reads again.
+    harbour = { ...harbour, color: "blue", rev: 4 };
+    await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    // Refused for that change, the form shows the board as it is now.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+    expect(sent).toEqual([
+      [
+        {
+          type: "board.describe",
+          payload: { id: "bd_a", description: "Where the story starts" },
+          expected_rev: { bd_a: 3 },
+          command_id: expect.any(String),
+        },
+      ],
+    ]);
   });
 });

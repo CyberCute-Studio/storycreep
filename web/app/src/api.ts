@@ -66,10 +66,16 @@ export const api = createApiClient({
  * says showsRefusals: true. An answer of 500 or more is recorded all the
  * same, and so is one without the error envelope, as a proxy's page, which
  * is no refusal of the server's, and which a form shows as unexpected
- * (refusalOf).
+ * (refusalOf). A query that says showsNotFound: true is one whose answer
+ * that what it names is not there (notFoundBy) a route's loader shows as
+ * the page of no page (found), as a list of a workspace that the user has
+ * left since the page read it, which the console then does not record
+ * either, while it records the query's other refusals, which no page shows,
+ * as a refusal of the user's role, which shows the page of an error.
  */
 interface Meta extends Record<string, unknown> {
   showsRefusals?: boolean;
+  showsNotFound?: boolean;
 }
 
 declare module "@tanstack/react-query" {
@@ -424,10 +430,13 @@ export interface QueryClientOptions {
 /**
  * Returns the app's query client, which records in log each request that
  * failed, but for an answer of 401 unauthenticated, which tells that the
- * page's session may have ended (checkSession), and a refusal of the
- * server's that a form shows (Meta.showsRefusals).
+ * page's session may have ended (checkSession), a refusal of the server's
+ * that a form shows (Meta.showsRefusals), and an answer that what a list
+ * names is not there, which a loader shows as the page of no page
+ * (Meta.showsNotFound).
  * A request that the server refused, with a status below 500, is not tried
- * again, since it would be refused again.
+ * again, since it would be refused again. A mutation is sent whatever the
+ * browser says of its connection.
  */
 export function createQueryClient(
   log: ErrorLog,
@@ -448,6 +457,9 @@ export function createQueryClient(
     ) {
       return;
     }
+    if (meta?.showsNotFound && notFoundBy(error)) {
+      return;
+    }
     log.record("request", error);
   };
   return new QueryClient({
@@ -463,11 +475,21 @@ export function createQueryClient(
     }),
     defaultOptions: {
       queries: { retry: retried },
-      // A mutation holds what it sent and what it was answered, as a
-      // password or a new token's secret: it is dropped once the form that
-      // made it is gone, as when the page signs out, rather than kept for
-      // minutes after.
-      mutations: { gcTime: 0 },
+      mutations: {
+        // A mutation holds what it sent and what it was answered, as a
+        // password or a new token's secret: it is dropped once the form that
+        // made it is gone, as when the page signs out, rather than kept for
+        // minutes after.
+        gcTime: 0,
+        // A request that the user makes while the browser says that it has
+        // no connection is sent all the same, and fails, as one that no
+        // answer came to (NetworkError), which its form shows, rather than
+        // waits, unsent, for the connection, as TanStack Query's mutations
+        // do by default, with their forms' buttons disabled, and their
+        // dialogs, which stay open while their request is under way, open
+        // until the connection comes back, without a word of why.
+        networkMode: "always",
+      },
     },
   });
 }

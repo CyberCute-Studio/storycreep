@@ -21,7 +21,13 @@ import { useTranslation } from "react-i18next";
 import { api, instanceQuery, notFoundBy, revoking, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
-import { type Role, roleLabel, roleName, rolesGivenBy } from "../auth/roles";
+import {
+  actsOn,
+  type Role,
+  roleLabel,
+  roleName,
+  rolesGivenBy,
+} from "../auth/roles";
 import { csrfHeaders } from "../auth/session";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
@@ -124,10 +130,10 @@ function MemberList({ workspace }: { workspace: Workspace }) {
 /**
  * Reports whether a member whose role is actor's changes the role of a
  * member whose role is role, or removes them: an owner or an admin does,
- * but only an owner an owner's (PRD FR-TEN-03 AC4).
+ * but only an owner an owner's (actsOn).
  */
 function managesMember(actor: Role, role: Role): boolean {
-  return managesWorkspace(actor) && (actor === "owner" || role !== "owner");
+  return managesWorkspace(actor) && actsOn(actor, role);
 }
 
 function MemberItem({
@@ -479,7 +485,7 @@ function InviteItem({
     onError: listsAgain,
   });
   // Only an owner sends an invitation as owner anew (PRD FR-TEN-03 AC4).
-  const resends = workspace.role === "owner" || invite.role !== "owner";
+  const resends = actsOn(workspace.role, invite.role);
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">

@@ -12,7 +12,12 @@ import { api, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
-import { managesProject, projectQuery } from "../project/queries";
+import {
+  conflictOf,
+  managesProject,
+  projectQuery,
+  readProjectAgain,
+} from "../project/queries";
 import { found } from "../shell/found";
 import { Button } from "../ui/Button";
 import {
@@ -25,6 +30,7 @@ import { Alert, Page, RefusalAlert, Status } from "../ui/Page";
 import {
   managesWorkspace,
   projectsQuery,
+  readListsAgain,
   trashedProjectsQuery,
   usageQuery,
   type Workspace,
@@ -77,12 +83,23 @@ function Settings() {
 
 const detailsField = bodyField("name", "slug", "description");
 
+/**
+ * The form of a project's details, which sends what of them changed,
+ * expecting the revision that the form shows, so that a project that
+ * changed elsewhere since is not changed over. It shows the project as the
+ * page has it until the user changes something in it, and then as it was,
+ * so that a change made elsewhere, which the page reads as its tab is shown
+ * again, does not take away what the user typed, until the form is saved,
+ * or refused for that change, when it shows the project as it is now.
+ */
 function DetailsForm({ project }: { project: ProjectBody }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const form = useRef<HTMLFormElement>(null);
   const [unchanged, setUnchanged] = useState(false);
+  const [held, setHeld] = useState<ProjectBody>();
+  const shown = held ?? project;
   const save = useMutation({
     mutationFn: (body: UpdateProjectBody) =>
       api.call("updateProject", {
@@ -90,10 +107,10 @@ function DetailsForm({ project }: { project: ProjectBody }) {
         headers: csrfHeaders(session),
         body,
       }),
-    onSuccess: () => readProjectsAgain(client, project),
+    onSuccess: () => readProjectAndListAgain(client, project),
     // A project that changed elsewhere since the page read it shows as it
     // is now.
-    onError: () => readProjectsAgain(client, project),
+    onError: () => readProjectAndListAgain(client, project),
   });
   const refusal = refusalOf(save.error, t, detailsField, {
     slug_taken: t("project_settings.error.slug_taken"),
@@ -106,17 +123,28 @@ function DetailsForm({ project }: { project: ProjectBody }) {
     const slug = String(data.get("slug"));
     const description = String(data.get("description"));
     const body: UpdateProjectBody = {
-      ...(name === project.name ? {} : { name }),
-      ...(slug === project.slug ? {} : { slug }),
-      ...(description === project.description ? {} : { description }),
+      ...(name === shown.name ? {} : { name }),
+      ...(slug === shown.slug ? {} : { slug }),
+      ...(description === shown.description ? {} : { description }),
     };
     const changed = Object.keys(body).length > 0;
     setUnchanged(!changed);
     if (!changed) {
       save.reset();
+      setHeld(undefined);
       return;
     }
-    save.mutate({ ...body, expected_rev: project.rev });
+    save.mutate(
+      { ...body, expected_rev: shown.rev },
+      {
+        onSuccess: () => setHeld(undefined),
+        onError: (error) => {
+          if (conflictOf(error)) {
+            setHeld(undefined);
+          }
+        },
+      },
+    );
   };
   return (
     <section className="max-w-md space-y-4" aria-labelledby="project-details">
@@ -133,13 +161,14 @@ function DetailsForm({ project }: { project: ProjectBody }) {
               : undefined
         }
       />
-      {/* Shown anew once the project has changed, by this form or
-          elsewhere, rather than showing what it was. */}
+      {/* Shown anew once the project that it shows has changed, as once
+          this form saved it, rather than showing what it was. */}
       <form
-        key={project.rev}
+        key={shown.rev}
         ref={form}
         className="space-y-4"
         onSubmit={submit}
+        onChange={() => setHeld((before) => before ?? project)}
         noValidate
       >
         <TextField
@@ -148,7 +177,7 @@ function DetailsForm({ project }: { project: ProjectBody }) {
           autoComplete="off"
           required
           maxLength={100}
-          defaultValue={project.name}
+          defaultValue={shown.name}
           error={refusal?.fields.name}
         />
         <TextField
@@ -159,14 +188,14 @@ function DetailsForm({ project }: { project: ProjectBody }) {
           spellCheck={false}
           required
           maxLength={64}
-          defaultValue={project.slug}
+          defaultValue={shown.slug}
           error={refusal?.fields.slug}
         />
         <TextAreaField
           label={t("project_settings.description")}
           name="description"
           maxLength={2000}
-          defaultValue={project.description}
+          defaultValue={shown.description}
           error={refusal?.fields.description}
         />
         <Button type="submit" variant="primary" disabled={save.isPending}>
@@ -177,15 +206,19 @@ function DetailsForm({ project }: { project: ProjectBody }) {
   );
 }
 
-/** Reads again the project, and its workspace's list of projects, which shows it. */
-function readProjectsAgain(
+/**
+ * Reads again what a change of the project's settings changed: the project,
+ * as a change of its content does (readProjectAgain), and its workspace's
+ * list of projects, which shows it.
+ */
+function readProjectAndListAgain(
   client: ReturnType<typeof useQueryClient>,
   project: ProjectBody,
 ) {
   return Promise.all([
-    client.invalidateQueries({ queryKey: ["projects", project.id] }),
+    readProjectAgain(client, project.id),
     client.invalidateQueries({
-      queryKey: ["workspaces", project.workspace_id, "projects"],
+      queryKey: projectsQuery(project.workspace_id).queryKey,
     }),
   ]);
 }
@@ -206,7 +239,7 @@ function Archive({ project }: { project: ProjectBody }) {
         path: { project_id: project.id },
         headers: csrfHeaders(session),
       }),
-    onSettled: () => readProjectsAgain(client, project),
+    onSettled: () => readProjectAndListAgain(client, project),
   });
   return (
     <section className="space-y-2" aria-labelledby="project-archive">
@@ -252,15 +285,11 @@ function DeleteProject({
       // What the deletion changed of the workspace, rather than all that
       // the page read of it: its projects, which the page goes to, without
       // this one, its trash, with it, and its usage.
-      await Promise.all(
-        [
-          projectsQuery(workspace.id).queryKey,
-          trashedProjectsQuery(workspace.id).queryKey,
-          usageQuery(workspace.id).queryKey,
-        ].map((queryKey) =>
-          client.invalidateQueries({ queryKey, refetchType: "all" }),
-        ),
-      );
+      await readListsAgain(client, [
+        projectsQuery(workspace.id).queryKey,
+        trashedProjectsQuery(workspace.id).queryKey,
+        usageQuery(workspace.id).queryKey,
+      ]);
       // The project is in the trash, where nothing of it but its restore
       // answers, so the page goes before what it read of it is dropped.
       await navigate({

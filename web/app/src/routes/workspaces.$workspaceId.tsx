@@ -3,7 +3,7 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { sessionQuery } from "../api";
 import { requireSession } from "../auth/session";
-import { found } from "../shell/found";
+import { canonicalId, found } from "../shell/found";
 import {
   rememberWorkspace,
   workspaceQuery,
@@ -12,6 +12,13 @@ import {
 import { WorkspaceBar } from "../workspace/WorkspaceBar";
 
 export const Route = createFileRoute("/workspaces/$workspaceId")({
+  // The workspace's ID as the server writes it, which its pages and theirs
+  // read, however the address spells it (canonicalId).
+  params: {
+    parse: ({ workspaceId }) => ({
+      workspaceId: canonicalId("workspace", workspaceId),
+    }),
+  },
   beforeLoad: requireSession,
   // The account's workspaces too, so that the switcher shows as it will
   // stay, rather than the name alone until they come.

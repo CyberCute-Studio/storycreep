@@ -12,7 +12,11 @@ import type {
   PageProjectBody,
   UsageBody,
 } from "@storycreep/shared/api";
-import { queryOptions } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type QueryKey,
+  queryOptions,
+} from "@tanstack/react-query";
 import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import type { Role } from "../auth/roles";
 
@@ -105,6 +109,13 @@ export function managesWorkspace(role: Role): boolean {
 }
 
 /**
+ * What a list of a workspace tells the query client, which a page's loader
+ * reads with found(), so that the page of no page shows once the user may
+ * no longer see the workspace, as once they have left it.
+ */
+const shownAsNotFound = { showsNotFound: true };
+
+/**
  * The projects of a workspace that the user can see, a page at a time,
  * archived ones included, each with the role that the user acts with on it:
  * a guest's, those granted to them alone.
@@ -120,6 +131,7 @@ export function projectsQuery(workspaceId: string) {
           { signal },
         )
       ).body,
+    { meta: shownAsNotFound },
   );
 }
 
@@ -135,6 +147,7 @@ export function trashedProjectsQuery(workspaceId: string) {
           { signal },
         )
       ).body,
+    { meta: shownAsNotFound },
   );
 }
 
@@ -153,6 +166,7 @@ export function membersQuery(workspaceId: string) {
           { signal },
         )
       ).body,
+    { meta: shownAsNotFound },
   );
 }
 
@@ -168,6 +182,7 @@ export function invitesQuery(workspaceId: string) {
           { signal },
         )
       ).body,
+    { meta: shownAsNotFound },
   );
 }
 
@@ -179,6 +194,10 @@ export function invitesQuery(workspaceId: string) {
 export function usageQuery(workspaceId: string) {
   return queryOptions({
     queryKey: ["workspaces", workspaceId, "usage"],
+    // A refusal of it, as of a role that may no longer read it, which the
+    // settings show, and the dialogs that say how much of a limit is left
+    // leave their note out for, is no error of the app's.
+    meta: { showsRefusals: true },
     queryFn: async ({ signal }): Promise<UsageBody> =>
       (
         await api.call(
@@ -188,6 +207,24 @@ export function usageQuery(workspaceId: string) {
         )
       ).body,
   });
+}
+
+/**
+ * Reads again the queries of queryKeys, as the lists of a workspace that a
+ * change of its projects changed, at once, whether a page shows them now or
+ * not, as once the page has gone elsewhere, as to the project that it made,
+ * so that the page that the user goes back to shows them as they are, rather
+ * than as they were until it has read them again.
+ */
+export async function readListsAgain(
+  client: QueryClient,
+  queryKeys: readonly QueryKey[],
+): Promise<void> {
+  await Promise.all(
+    queryKeys.map((queryKey) =>
+      client.invalidateQueries({ queryKey, refetchType: "all" }),
+    ),
+  );
 }
 
 /** Where the device keeps the workspace that an account last showed on it. */
