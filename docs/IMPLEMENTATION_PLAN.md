@@ -608,7 +608,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-AUTH-02 AC6 (plain HTTP on a LAN address, and a TLS proxy) and FR-I18N-02 AC1 pass.
 
 ### 55. Workspace, member, and project management UI
-**Status:** todo · **Depends on:** 25, 31, 54
+**Status:** done ([#68](https://github.com/CyberCute-Studio/storycreep/pull/68)) · **Depends on:** 25, 31, 54
 **PRD:** FR-TEN-02/03/04 (UI), FR-PROJ-01/02/06 (UI), FR-ENT-03 (UI, AC2)
 - Workspace switcher (hidden when the user has one workspace), creation, and settings, under `/app/workspaces/{id}`, and the project list at `/app/projects`, of the workspace that the device last showed the account (N62). Members, invites with copyable links, roles, and project grants (N27, N62).
 - Project list, create, archive, and delete, under `/app/projects/{id}`. Board tree with folders and drag-and-drop, whose keys the client picks between its neighbours' (`web/app/src/project/orderkey.ts`), and a Move dialog for a keyboard or a single tap. A board's page. Trash, of the workspace's projects and of a project's content (N62).
