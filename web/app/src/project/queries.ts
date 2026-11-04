@@ -24,7 +24,7 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useRef } from "react";
-import { api, pagedQuery, sessionQuery } from "../api";
+import { allAtOnce, api, everyPage, pagedQuery, sessionQuery } from "../api";
 import { csrfHeaders } from "../auth/session";
 
 /** The project of projectId, with the role that the user acts with on it. */
@@ -52,29 +52,6 @@ export function managesProject(role: ProjectBody["role"]): boolean {
 /** Reports whether role creates, renames, moves, and deletes a project's boards and folders (§5.6). */
 export function editsProject(role: ProjectBody["role"]): boolean {
   return role === "owner" || role === "admin" || role === "editor";
-}
-
-/** The most items that a page of a list holds, which the server allows. */
-const allAtOnce = 200;
-
-/**
- * Reads every page of a list, from the first, with fetchPage, and returns
- * their items: a list that a page shows whole, as a tree, whose items are
- * few enough, as a project's boards are hundreds at most (PRD §9.1).
- */
-async function everyPage<T>(
-  fetchPage: (
-    cursor: string | undefined,
-  ) => Promise<{ items: T[]; next_cursor: string | null }>,
-): Promise<T[]> {
-  const items: T[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await fetchPage(cursor);
-    items.push(...page.items);
-    cursor = page.next_cursor ?? undefined;
-  } while (cursor !== undefined);
-  return items;
 }
 
 /** What the tree of a project's boards is built from. */
@@ -220,13 +197,19 @@ function newCommandId(): string {
 
 /**
  * Reads again what a change of projectId's content may have changed: the
- * project, its tree, its boards, and its trash.
+ * project, its tree, its boards, and its trash, but not the jumpers that a
+ * board's deletion lists (referrersQuery), which its confirmation reads as
+ * it opens, and which, read again once the board is in the trash, the
+ * server would refuse, as of a board that it does not have.
  */
 export function readProjectAgain(
   client: QueryClient,
   projectId: string,
 ): Promise<void> {
-  return client.invalidateQueries({ queryKey: ["projects", projectId] });
+  return client.invalidateQueries({
+    queryKey: ["projects", projectId],
+    predicate: (query) => query.queryKey.at(-1) !== "referrers",
+  });
 }
 
 /**
@@ -243,6 +226,14 @@ export function useCommands(projectId: string) {
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
   const last = useRef<{ sent: string; ids: string[] }>(null);
+  // The IDs of a batch that the server has answered are forgotten, but not
+  // those of another batch that the page has sent since, which may be under
+  // way still, as a drag after another.
+  const forget = (commands: Command[]) => {
+    if (last.current?.sent === JSON.stringify(commands)) {
+      last.current = null;
+    }
+  };
   return useMutation({
     mutationFn: async (commands: Command[]): Promise<CommandResultBody> => {
       const sent = JSON.stringify(commands);
@@ -268,17 +259,17 @@ export function useCommands(projectId: string) {
       }
       return answer;
     },
-    onSuccess: () => {
-      last.current = null;
+    onSuccess: (_answer, commands) => {
+      forget(commands);
       return readProjectAgain(client, projectId);
     },
-    onError: (error) => {
+    onError: (error, commands) => {
       // A batch that the server answered, applied or not, is one that it
       // will answer alike if it is sent again with these IDs, as with a
       // refusal of the project's archiving that has ended since (N36), so
       // the next batch has IDs of its own.
       if (answered(error)) {
-        last.current = null;
+        forget(commands);
       }
       if (conflictOf(error)) {
         return readProjectAgain(client, projectId);
@@ -298,6 +289,6 @@ function answered(error: unknown): boolean {
 }
 
 /** Reports whether error is a refusal of a revision that a batch expected (revision_conflict). */
-function conflictOf(error: unknown): boolean {
+export function conflictOf(error: unknown): boolean {
   return error instanceof ApiError && error.error?.code === "revision_conflict";
 }

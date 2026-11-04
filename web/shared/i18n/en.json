@@ -106,6 +106,7 @@
   "boards.in_folder": "In the folder",
   "boards.jumper": "{title}, on {board}",
   "boards.jumpers_intro": "{count, plural, one {# jumper on another board leads} other {# jumpers on other boards lead}} to this board's nodes. Deleting the board leaves them broken, and the project's validation reports them.",
+  "boards.jumpers_intro_more": "More than {count, number} jumpers on other boards lead to this board's nodes. Deleting the board leaves them broken, and the project's validation reports them.",
   "boards.jumpers_more": "Only the first {shown, number} are listed.",
   "boards.move": "Move…",
   "boards.move_failed": "Moving {name} failed. {reason}",

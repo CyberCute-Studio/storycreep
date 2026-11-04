@@ -5,6 +5,7 @@
 import { AlertDialog, Dialog } from "radix-ui";
 import type { ReactNode } from "react";
 import { focusContentIfLost } from "../shell/focus";
+import { Button } from "./Button";
 
 const overlay = "fixed inset-0 bg-backdrop/50";
 const content =
@@ -93,6 +94,67 @@ export function ConfirmFrame({
       </AlertDialog.Content>
     </AlertDialog.Portal>
   );
+}
+
+/**
+ * The buttons of a confirmation (ConfirmFrame): Cancel, which has the focus
+ * first, and the one that confirms, which is not an AlertDialog.Action,
+ * which would close the dialog before its request has answered, both
+ * disabled while it is under way (pending).
+ */
+export function ConfirmButtons({
+  cancel,
+  confirm,
+  pending,
+  onConfirm,
+}: {
+  cancel: string;
+  confirm: string;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      <AlertDialog.Cancel asChild>
+        <Button disabled={pending}>{cancel}</Button>
+      </AlertDialog.Cancel>
+      <Button variant="danger" disabled={pending} onClick={onConfirm}>
+        {confirm}
+      </Button>
+    </div>
+  );
+}
+
+/** What a dialog's request, as a mutation, is to the dialog. */
+interface DialogRequest {
+  /** Whether the request is under way, while which the dialog stays open. */
+  isPending: boolean;
+  /** Forgets the request's attempt, as its refusal. */
+  reset: () => void;
+}
+
+/**
+ * Returns the onOpenChange of a dialog whose open state setOpen sets, and
+ * whose request is request: the dialog stays open while the request is
+ * under way, and, once it closes, forgets the request's attempt, so that it
+ * opens again without the refusal of the attempt before, and then does
+ * onClosed, as to forget the rest of what the dialog was given.
+ */
+export function closesUnlessPending(
+  setOpen: (open: boolean) => void,
+  request: DialogRequest,
+  onClosed?: () => void,
+): (open: boolean) => void {
+  return (next) => {
+    if (!next && request.isPending) {
+      return;
+    }
+    setOpen(next);
+    if (!next) {
+      request.reset();
+      onClosed?.();
+    }
+  };
 }
 
 /**

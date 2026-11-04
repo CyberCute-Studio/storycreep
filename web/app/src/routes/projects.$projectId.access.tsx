@@ -16,7 +16,7 @@ import { csrfHeaders } from "../auth/session";
 import { grantsQuery, projectQuery } from "../project/queries";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
-import { DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
 import { SelectField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page } from "../ui/Page";
 import {
@@ -186,21 +186,12 @@ function ChangeGrant({
   });
   const refusal = refusalOf(save.error, t);
   useFocusRefusal(form, save.error);
-  const onOpenChange = (next: boolean) => {
-    if (!next && save.isPending) {
-      return;
-    }
-    setOpen(next);
-    if (!next) {
-      save.reset();
-    }
-  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     save.mutate(String(new FormData(event.currentTarget).get("role")));
   };
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={closesUnlessPending(setOpen, save)}>
       <Dialog.Trigger asChild>
         <Button aria-haspopup="dialog" aria-describedby={nameId}>
           {t("access.change")}

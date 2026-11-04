@@ -13,7 +13,7 @@ import type {
   UsageBody,
 } from "@storycreep/shared/api";
 import { queryOptions } from "@tanstack/react-query";
-import { api, pagedQuery } from "../api";
+import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import type { Role } from "../auth/roles";
 
 /**
@@ -34,6 +34,12 @@ export interface Workspace {
   slug: string;
   default_locale: string;
   role: Role;
+  /**
+   * Whether the workspace is one of the user's memberships, rather than one
+   * that an instance admin acts as the owner of (PRD §5.5), which the
+   * switcher does not list, nor the project list opens again.
+   */
+  membership: boolean;
 }
 
 /**
@@ -52,21 +58,20 @@ export function workspaceQuery(workspaceId: string) {
     meta: { showsRefusals: true },
     queryFn: async ({ signal }): Promise<Workspace> => {
       // A user is a member of few workspaces, so the pages are few too.
-      let cursor: string | undefined;
-      do {
-        const page = (
-          await api.call(
-            "listWorkspaces",
-            { query: { cursor, limit: 200 } },
-            { signal },
-          )
-        ).body;
-        const membership = page.items.find((m) => m.id === workspaceId);
-        if (membership !== undefined) {
-          return workspaceOf(membership);
-        }
-        cursor = page.next_cursor ?? undefined;
-      } while (cursor !== undefined);
+      const memberships = await everyPage(
+        async (cursor) =>
+          (
+            await api.call(
+              "listWorkspaces",
+              { query: { cursor, limit: allAtOnce } },
+              { signal },
+            )
+          ).body,
+      );
+      const membership = memberships.find((m) => m.id === workspaceId);
+      if (membership !== undefined) {
+        return workspaceOf(membership, true);
+      }
       const workspace = (
         await api.call(
           "getWorkspace",
@@ -74,14 +79,15 @@ export function workspaceQuery(workspaceId: string) {
           { signal },
         )
       ).body;
-      return workspaceOf(workspace);
+      return workspaceOf(workspace, false);
     },
   });
 }
 
-/** Returns the fields of a membership, or a workspace, that its pages show. */
+/** Returns the fields of a membership, or of a workspace that is none of the user's, that its pages show. */
 function workspaceOf(
   w: Omit<MembershipBody, "membership_id" | "created_at" | "updated_at">,
+  membership: boolean,
 ): Workspace {
   return {
     id: w.id,
@@ -89,6 +95,7 @@ function workspaceOf(
     slug: w.slug,
     default_locale: w.default_locale,
     role: w.role,
+    membership,
   };
 }
 
@@ -205,7 +212,7 @@ export function rememberWorkspace(userId: string, workspaceId: string): void {
 /**
  * Returns the workspace that the device last showed the account userId, if
  * it kept it: a hint, never more, since the user may have left it since,
- * which the project list checks against the workspaces that it lists.
+ * which the project list checks against the user's memberships.
  */
 export function lastWorkspace(userId: string): string | undefined {
   try {

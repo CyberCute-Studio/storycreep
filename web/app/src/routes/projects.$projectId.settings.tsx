@@ -15,11 +15,18 @@ import { csrfHeaders } from "../auth/session";
 import { managesProject, projectQuery } from "../project/queries";
 import { found } from "../shell/found";
 import { Button } from "../ui/Button";
-import { ConfirmFrame } from "../ui/Dialog";
+import {
+  ConfirmButtons,
+  ConfirmFrame,
+  closesUnlessPending,
+} from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, Page, RefusalAlert, Status } from "../ui/Page";
 import {
   managesWorkspace,
+  projectsQuery,
+  trashedProjectsQuery,
+  usageQuery,
   type Workspace,
   workspaceQuery,
 } from "../workspace/queries";
@@ -242,12 +249,18 @@ function DeleteProject({
       }),
     onSuccess: async () => {
       setConfirming(false);
-      // The workspace's projects, which the page goes to, without this one,
-      // and its trash, with it.
-      await client.invalidateQueries({
-        queryKey: ["workspaces", workspace.id],
-        refetchType: "all",
-      });
+      // What the deletion changed of the workspace, rather than all that
+      // the page read of it: its projects, which the page goes to, without
+      // this one, its trash, with it, and its usage.
+      await Promise.all(
+        [
+          projectsQuery(workspace.id).queryKey,
+          trashedProjectsQuery(workspace.id).queryKey,
+          usageQuery(workspace.id).queryKey,
+        ].map((queryKey) =>
+          client.invalidateQueries({ queryKey, refetchType: "all" }),
+        ),
+      );
       // The project is in the trash, where nothing of it but its restore
       // answers, so the page goes before what it read of it is dropped.
       await navigate({
@@ -258,22 +271,16 @@ function DeleteProject({
       client.removeQueries({ queryKey: ["projects", project.id] });
     },
   });
-  const onOpenChange = (next: boolean) => {
-    if (!next && remove.isPending) {
-      return;
-    }
-    setConfirming(next);
-    if (!next) {
-      remove.reset();
-    }
-  };
   return (
     <section className="space-y-2" aria-labelledby="project-delete">
       <h2 id="project-delete" className="text-lg font-semibold">
         {t("project_settings.delete_title")}
       </h2>
       <p>{t("project_settings.delete_intro")}</p>
-      <AlertDialog.Root open={confirming} onOpenChange={onOpenChange}>
+      <AlertDialog.Root
+        open={confirming}
+        onOpenChange={closesUnlessPending(setConfirming, remove)}
+      >
         <AlertDialog.Trigger asChild>
           <Button variant="danger">{t("project_settings.delete")}</Button>
         </AlertDialog.Trigger>
@@ -284,20 +291,12 @@ function DeleteProject({
           description={t("project_settings.delete_confirm_body")}
         >
           <Alert message={refusalOf(remove.error, t)?.message} />
-          <div className="flex flex-wrap justify-end gap-2">
-            <AlertDialog.Cancel asChild>
-              <Button disabled={remove.isPending}>
-                {t("project_settings.cancel")}
-              </Button>
-            </AlertDialog.Cancel>
-            <Button
-              variant="danger"
-              disabled={remove.isPending}
-              onClick={() => remove.mutate()}
-            >
-              {t("project_settings.delete_confirm")}
-            </Button>
-          </div>
+          <ConfirmButtons
+            cancel={t("project_settings.cancel")}
+            confirm={t("project_settings.delete_confirm")}
+            pending={remove.isPending}
+            onConfirm={() => remove.mutate()}
+          />
         </ConfirmFrame>
       </AlertDialog.Root>
     </section>

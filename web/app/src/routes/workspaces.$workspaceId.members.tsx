@@ -2,16 +2,18 @@ import type {
   CreateInviteBody,
   InviteBody,
   MemberBody,
+  ProjectBody,
 } from "@storycreep/shared/api";
 import { formatDate } from "@storycreep/shared/i18n";
 import {
+  type Query,
   useMutation,
   useQuery,
   useQueryClient,
   useSuspenseInfiniteQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { AlertDialog, Dialog } from "radix-ui";
 import { type FormEvent, type ReactNode, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,7 +25,13 @@ import { csrfHeaders } from "../auth/session";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
 import { CopyField } from "../ui/CopyField";
-import { ConfirmFrame, DialogFrame, focusBackTo } from "../ui/Dialog";
+import {
+  ConfirmButtons,
+  ConfirmFrame,
+  closesUnlessPending,
+  DialogFrame,
+  focusBackTo,
+} from "../ui/Dialog";
 import {
   GroupField,
   RadioField,
@@ -48,7 +56,13 @@ export const Route = createFileRoute("/workspaces/$workspaceId/members")({
       queryClient.ensureQueryData(workspaceQuery(params.workspaceId)),
     );
     // A guest, whose role in the workspace is none, may not list its
-    // members, and is answered as for a workspace that does not exist.
+    // members, which the server answers as for a workspace that does not
+    // exist, so the page asks for no list that it knows to be refused.
+    if (workspace.role === "guest") {
+      throw notFound();
+    }
+    // A user whom another removed from the workspace since the page read it
+    // is answered alike.
     await found(
       Promise.all([
         queryClient.ensureInfiniteQueryData(membersQuery(workspace.id)),
@@ -180,11 +194,20 @@ function ChangeRole({
         headers: csrfHeaders(session),
         body: { role },
       }),
-    onSuccess: async () => {
+    onSuccess: async (_answer, role) => {
       setOpen(false);
       // The user's own role may be the one that changed, and with it what
-      // the workspace's pages show them.
-      await client.invalidateQueries({ queryKey: ["workspaces"] });
+      // the workspace's pages show them. A role that no longer manages the
+      // workspace may not list its invitations, which the page stops
+      // showing, so they are not read again, which would be refused.
+      const demoted =
+        member.user_id === session?.user_id && !managesWorkspace(role);
+      const invites = invitesQuery(workspace.id).queryKey;
+      await client.invalidateQueries({
+        queryKey: ["workspaces"],
+        predicate: (query: Query) =>
+          !(demoted && invites.every((part, i) => query.queryKey[i] === part)),
+      });
     },
   });
   const refusal = refusalOf(change.error, t, bodyField("role"));
@@ -195,15 +218,7 @@ function ChangeRole({
   const roles = offered.includes(member.role)
     ? offered
     : [...offered, member.role];
-  const onOpenChange = (next: boolean) => {
-    if (!next && change.isPending) {
-      return;
-    }
-    setOpen(next);
-    if (!next) {
-      change.reset();
-    }
-  };
+  const onOpenChange = closesUnlessPending(setOpen, change);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     change.mutate(
@@ -285,23 +300,27 @@ function RemoveMember({
       setConfirming(false);
       if (you) {
         // The workspace is no longer the user's, so the page goes before
-        // what it read of the workspace is read again.
+        // what it read of the workspace is read again, and then drops what
+        // it read of the workspace and of its projects, so that a page of
+        // them that the user goes back to asks the server, which answers
+        // as for one that does not exist, rather than shows what it read.
         await navigate({ to: "/projects", replace: true });
+        client.removeQueries({ queryKey: ["workspaces", workspace.id] });
+        client.removeQueries({
+          predicate: (query: Query) =>
+            query.queryKey[0] === "projects" &&
+            client.getQueryData<ProjectBody>(["projects", query.queryKey[1]])
+              ?.workspace_id === workspace.id,
+        });
       }
       await client.invalidateQueries({ queryKey: ["workspaces"] });
     },
   });
-  const onOpenChange = (next: boolean) => {
-    if (!next && remove.isPending) {
-      return;
-    }
-    setConfirming(next);
-    if (!next) {
-      remove.reset();
-    }
-  };
   return (
-    <AlertDialog.Root open={confirming} onOpenChange={onOpenChange}>
+    <AlertDialog.Root
+      open={confirming}
+      onOpenChange={closesUnlessPending(setConfirming, remove)}
+    >
       <AlertDialog.Trigger asChild>
         <Button variant="danger" aria-describedby={nameId}>
           {t("members.remove")}
@@ -316,20 +335,14 @@ function RemoveMember({
         description={you ? t("members.leave_body") : t("members.remove_body")}
       >
         <Alert message={refusalOf(remove.error, t)?.message} />
-        <div className="flex flex-wrap justify-end gap-2">
-          <AlertDialog.Cancel asChild>
-            <Button disabled={remove.isPending}>{t("members.cancel")}</Button>
-          </AlertDialog.Cancel>
-          {/* Not an AlertDialog.Action, which would close the dialog
-              before the request has answered. */}
-          <Button
-            variant="danger"
-            disabled={remove.isPending}
-            onClick={() => remove.mutate()}
-          >
-            {you ? t("members.leave_confirm") : t("members.remove_confirm")}
-          </Button>
-        </div>
+        <ConfirmButtons
+          cancel={t("members.cancel")}
+          confirm={
+            you ? t("members.leave_confirm") : t("members.remove_confirm")
+          }
+          pending={remove.isPending}
+          onConfirm={() => remove.mutate()}
+        />
       </ConfirmFrame>
     </AlertDialog.Root>
   );
@@ -430,15 +443,6 @@ function InviteItem({
       return readAgain();
     },
   });
-  const onOpenChange = (next: boolean) => {
-    if (!next && revoke.isPending) {
-      return;
-    }
-    setConfirming(next);
-    if (!next) {
-      revoke.reset();
-    }
-  };
   const who = invite.email ?? t("invites.anyone");
   // Only an owner sends an invitation as owner anew (PRD FR-TEN-03 AC4).
   const resends = workspace.role === "owner" || invite.role !== "owner";
@@ -487,7 +491,10 @@ function InviteItem({
             {t("invites.resend")}
           </Button>
         )}
-        <AlertDialog.Root open={confirming} onOpenChange={onOpenChange}>
+        <AlertDialog.Root
+          open={confirming}
+          onOpenChange={closesUnlessPending(setConfirming, revoke)}
+        >
           <AlertDialog.Trigger asChild>
             <Button variant="danger" aria-describedby={nameId}>
               {t("invites.revoke")}
@@ -498,20 +505,12 @@ function InviteItem({
             description={t("invites.revoke_body")}
           >
             <Alert message={refusalOf(revoke.error, t)?.message} />
-            <div className="flex flex-wrap justify-end gap-2">
-              <AlertDialog.Cancel asChild>
-                <Button disabled={revoke.isPending}>
-                  {t("invites.cancel")}
-                </Button>
-              </AlertDialog.Cancel>
-              <Button
-                variant="danger"
-                disabled={revoke.isPending}
-                onClick={() => revoke.mutate()}
-              >
-                {t("invites.revoke_confirm")}
-              </Button>
-            </div>
+            <ConfirmButtons
+              cancel={t("invites.cancel")}
+              confirm={t("invites.revoke_confirm")}
+              pending={revoke.isPending}
+              onConfirm={() => revoke.mutate()}
+            />
           </ConfirmFrame>
         </AlertDialog.Root>
       </div>
@@ -555,16 +554,9 @@ function Invite({ workspace }: { workspace: Workspace }) {
     already_member: t("invites.error.already_member"),
   });
   useFocusRefusal(form, create.error);
-  const onOpenChange = (next: boolean) => {
-    if (!next && create.isPending) {
-      return;
-    }
-    setOpen(next);
-    if (!next) {
-      create.reset();
-      setKind("email");
-    }
-  };
+  const onOpenChange = closesUnlessPending(setOpen, create, () =>
+    setKind("email"),
+  );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);

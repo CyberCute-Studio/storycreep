@@ -17,7 +17,7 @@ import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
 import { found } from "../shell/found";
 import { Button, MoreButton } from "../ui/Button";
-import { DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
 import { Page, RefusalAlert, textLink } from "../ui/Page";
 import {
@@ -139,29 +139,30 @@ function NewProject({ workspace }: { workspace: Workspace }) {
         })
       ).body,
     onSuccess: async (project) => {
-      await client.invalidateQueries({
-        queryKey: ["workspaces", workspace.id],
-      });
       setOpen(false);
       await navigate({
         to: "/projects/$projectId",
         params: { projectId: project.id },
       });
+      // What the project changed of the workspace, its projects, with it,
+      // and its usage, of one more, is read again once the page has gone
+      // to the project, which waits for neither, and read although no page
+      // shows it now, so that the list has it once the user goes back.
+      await Promise.all(
+        [
+          projectsQuery(workspace.id).queryKey,
+          usageQuery(workspace.id).queryKey,
+        ].map((queryKey) =>
+          client.invalidateQueries({ queryKey, refetchType: "all" }),
+        ),
+      );
     },
     // A refusal of the limit changes what the dialog says of it.
     onError: () => usage.refetch(),
   });
   const refusal = refusalOf(create.error, t, projectField);
   useFocusRefusal(form, create.error);
-  const onOpenChange = (next: boolean) => {
-    if (!next && create.isPending) {
-      return;
-    }
-    setOpen(next);
-    if (!next) {
-      create.reset();
-    }
-  };
+  const onOpenChange = closesUnlessPending(setOpen, create);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);

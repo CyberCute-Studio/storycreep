@@ -122,9 +122,14 @@ function TrashItem({
   const locale = i18n.language;
   const commands = useCommands(projectId);
   const name = item.name === "" ? t("trash.untitled") : item.name;
-  const restore = () =>
-    commands.mutate([restoreCommand(item)], {
-      onSuccess: (result) => {
+  // The page says what became of the item once its batch has applied, from
+  // mutateAsync's promise, rather than from mutate's onSuccess, which does
+  // not come once the item has gone, as the trash, read again after the
+  // batch, no longer lists it. The item shows a refusal itself
+  // (commands.error).
+  const restore = () => {
+    commands.mutateAsync([restoreCommand(item)]).then(
+      (result) => {
         // A node's connections whose node at the other end is still in the
         // trash come back once that node does (PRD FR-PROJ-06 AC1).
         const waiting = result.not_reconnected?.length ?? 0;
@@ -134,7 +139,9 @@ function TrashItem({
             : t("trash.restored_waiting", { name, count: waiting }),
         );
       },
-    });
+      () => undefined,
+    );
+  };
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">

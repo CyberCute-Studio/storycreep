@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { Button } from "../ui/Button";
 import {
+  ConfirmButtons,
   ConfirmFrame,
   DialogFrame,
   focusBackTo,
@@ -36,6 +37,7 @@ import {
 } from "./queries";
 import {
   childrenOf,
+  type Drop,
   folderChoices,
   type Placement,
   placementOf,
@@ -375,21 +377,28 @@ export function MoveDialog({
   const [folder, setFolder] = useState(node.parentId ?? top);
   const [place, setPlace] = useState(atEnd);
   const commands = useCommands(projectId);
-  const parentId = folder === top ? undefined : folder;
+  // Where the choices say, as the tree has them now: a folder, or a child
+  // to go after, that has gone from them since it was chosen, as once the
+  // tree was read again, shows as the first choice, as a select shows a
+  // value that none of its options has, and the dialog moves the child to
+  // what it shows, rather than after a child that went elsewhere, or
+  // nowhere.
+  const parentId = folderChoices(tree, node).some((c) => c.id === folder)
+    ? folder
+    : undefined;
   const siblings = childrenOf(tree, parentId).filter((c) => c.id !== node.id);
+  const first = siblings[0];
+  const after = siblings.find((c) => c.id === place);
+  const drop: Drop =
+    after !== undefined
+      ? { position: "after", targetId: after.id }
+      : place === atStart && first !== undefined
+        ? { position: "before", targetId: first.id }
+        : { position: "inside", folderId: parentId };
+  const shown = after?.id ?? (drop.position === "before" ? atStart : atEnd);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const first = siblings[0];
-    const placement =
-      place === atEnd || (place === atStart && first === undefined)
-        ? placementOf(tree, node, { position: "inside", folderId: parentId })
-        : placementOf(
-            tree,
-            node,
-            place === atStart
-              ? { position: "before", targetId: first?.id ?? "" }
-              : { position: "after", targetId: place },
-          );
+    const placement = placementOf(tree, node, drop);
     if (placement !== undefined) {
       commands.mutate(moveCommands(node, placement), { onSuccess: onClose });
     }
@@ -407,7 +416,7 @@ export function MoveDialog({
           tree={tree}
           node={node}
           label={t("boards.move_to")}
-          value={folder}
+          value={parentId ?? top}
           onChange={(value) => {
             setFolder(value);
             setPlace(atEnd);
@@ -416,7 +425,7 @@ export function MoveDialog({
         <SelectField
           label={t("boards.place")}
           name="place"
-          value={place}
+          value={shown}
           onChange={(event) => setPlace(event.currentTarget.value)}
         >
           <option value={atEnd}>{t("boards.place_end")}</option>
@@ -568,7 +577,13 @@ export function DeleteBoardDialog({
       )}
       {jumpers !== undefined && jumpers.length > 0 && (
         <div className="space-y-2">
-          <p className="font-medium">{t("boards.jumpers_intro", { count })}</p>
+          <p className="font-medium">
+            {/* The first page of the list says that there are more, but
+                not how many, which a refusal alone counts. */}
+            {refused === undefined && more
+              ? t("boards.jumpers_intro_more", { count })
+              : t("boards.jumpers_intro", { count })}
+          </p>
           <ul className="max-h-48 list-disc space-y-1 overflow-y-auto ps-6">
             {jumpers.map((jumper) => (
               <li key={jumper.id} className="break-words">
@@ -657,16 +672,12 @@ function Confirm({
         onCloseAutoFocus={focusBackTo(opener)}
       >
         {children}
-        <div className="flex flex-wrap justify-end gap-2">
-          <AlertDialog.Cancel asChild>
-            <Button disabled={pending}>{t("boards.cancel")}</Button>
-          </AlertDialog.Cancel>
-          {/* Not an AlertDialog.Action, which would close the dialog
-              before the request has answered. */}
-          <Button variant="danger" disabled={pending} onClick={onConfirm}>
-            {confirm}
-          </Button>
-        </div>
+        <ConfirmButtons
+          cancel={t("boards.cancel")}
+          confirm={confirm}
+          pending={pending}
+          onConfirm={onConfirm}
+        />
       </ConfirmFrame>
     </AlertDialog.Root>
   );

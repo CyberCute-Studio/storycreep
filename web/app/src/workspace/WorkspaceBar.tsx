@@ -1,5 +1,5 @@
 // What every page of a workspace shows above its own content (PRD FR-TEN-01):
-// the workspace's name, which, for a user of more than one workspace,
+// the workspace's name, which, for a user with a workspace other than it,
 // switches to another (WorkspaceSwitcher), a hidden switcher otherwise, as
 // an instance of one workspace never shows one (§5.4); a way to create
 // another workspace; and the links to the workspace's pages that the user's
@@ -20,7 +20,7 @@ import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { Button } from "../ui/Button";
-import { DialogFrame } from "../ui/Dialog";
+import { closesUnlessPending, DialogFrame } from "../ui/Dialog";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import { Menu, MenuItem } from "../ui/Menu";
 import { Alert } from "../ui/Page";
@@ -95,17 +95,18 @@ export function WorkspaceBar({ workspace }: { workspace: Workspace }) {
 
 /**
  * The name of the workspace that the page shows, which opens a menu of the
- * user's other workspaces to switch to, once they have more than one: a
- * menu of links, rather than a choice that goes to another page as it
- * changes, which would take the user somewhere that they only meant to look
- * at (WCAG 3.2.2).
+ * user's other workspaces to switch to, once they have one other than it,
+ * as an instance admin does of their own in a workspace that they act in
+ * without being a member of it: a menu of links, rather than a choice that
+ * goes to another page as it changes, which would take the user somewhere
+ * that they only meant to look at (WCAG 3.2.2).
  */
 function WorkspaceSwitcher({ current }: { current: Workspace }) {
   const { t } = useTranslation();
   const list = useInfiniteQuery(workspacesQuery);
   const workspaces = list.data?.pages.flatMap((page) => page.items) ?? [];
   const name = <span className="min-w-0 truncate">{current.name}</span>;
-  if (workspaces.length <= 1 && !list.hasNextPage) {
+  if (!workspaces.some((w) => w.id !== current.id) && !list.hasNextPage) {
     return (
       <p className="flex min-h-11 min-w-0 items-center text-lg font-semibold">
         {name}
@@ -162,17 +163,11 @@ function NewWorkspace() {
   // The dialog stays open while the workspace is being created, which the
   // page then goes to, and opens again without the refusal of the attempt
   // before.
-  const onOpenChange = (next: boolean) => {
-    if (!next && create.isPending) {
-      return;
-    }
-    setOpen(next);
-    if (!next) {
-      create.reset();
-    }
-  };
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={closesUnlessPending(setOpen, create)}
+    >
       <Dialog.Trigger asChild>
         <Button aria-haspopup="dialog">{t("workspace.create")}</Button>
       </Dialog.Trigger>

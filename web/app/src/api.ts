@@ -311,6 +311,31 @@ export function pagedQuery<TPage extends Paged, TKey extends QueryKey>(
   });
 }
 
+/** The most items that a page of a list holds, which the server allows. */
+export const allAtOnce = 200;
+
+/**
+ * Reads every page of a list, from the first, with fetchPage, which asks
+ * for allAtOnce items a page, and returns their items: a list that a page
+ * shows whole, as the tree of a project's boards, or looks through whole,
+ * as the user's workspaces for the one that it shows, whose items are few
+ * enough, as a project's boards are hundreds at most (PRD §9.1).
+ */
+export async function everyPage<T>(
+  fetchPage: (
+    cursor: string | undefined,
+  ) => Promise<{ items: T[]; next_cursor: string | null }>,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await fetchPage(cursor);
+    items.push(...page.items);
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+  return items;
+}
+
 /**
  * Asks for the server's version, once. A failure is recorded as any
  * request's is, and the version is then unknown until the page loads again:

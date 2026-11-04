@@ -163,9 +163,44 @@ describe("the workspace switcher", () => {
     });
     expect(router.state.location.pathname).toBe("/workspaces/ws_b");
   });
+
+  it("lists an instance admin's own workspace in one that they act in without being a member, which the project list does not open again", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) => {
+      if (operation === "getWorkspace") {
+        return { ...testWorkspace, id: "ws_other", name: "Other" };
+      }
+      return expected(startPage(operation), operation);
+    });
+    renderApp("/workspaces/ws_other", { session: testSession });
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Other, switch to another workspace",
+      }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: "Studio" }),
+    ).toBeDefined();
+    expect(localStorage.getItem("storycreep.workspace.usr_test")).toBeNull();
+  });
 });
 
 describe("the members", () => {
+  it("are the page of no page to a guest, without asking for them", async () => {
+    fakeApi((operation) =>
+      expected(
+        startPage(operation, [workspace("ws_inn", "Inn", "guest")]),
+        operation,
+      ),
+    );
+    const { log } = renderApp("/workspaces/ws_inn/members", {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Page not found" });
+    expect(log.entries()).toEqual([]);
+  });
+
   it("offer an admin roles up to admin, and nothing to change of an owner", async () => {
     const user = userEvent.setup();
     fakeApi((operation) => {
@@ -429,5 +464,49 @@ describe("the tree of boards", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(sent).toHaveLength(2);
     expect(sent[1]).toBe(sent[0]);
+  });
+
+  it("sends a rename refused for a revision again with the revision that the tree read since", async () => {
+    const user = userEvent.setup();
+    let rev = 3;
+    const revisions: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { expected_rev: unknown }[] };
+        };
+        revisions.push(body.commands[0].expected_rev);
+        if (revisions.length === 1) {
+          // The board changed elsewhere since the tree read it.
+          rev = 4;
+          throw refused(409, { code: "revision_conflict" });
+        }
+        return {
+          status: "applied",
+          seq: 3,
+          revisions: [],
+          not_reconnected: [],
+          undo: [],
+        };
+      }
+      return expected(
+        projectPages(operation, [{ ...board("bd_a", "Harbour"), rev }]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("New name");
+    await user.clear(name);
+    await user.type(name, "Harbour at night");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await within(dialog).findByRole("alert");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
   });
 });

@@ -49,7 +49,11 @@ function limitMessage(
     : t("usage.members_of", { used: of.used, limit: of.limit });
 }
 
-/** The units of a size, each a thousand of the one before. */
+/**
+ * The units of a size, each 1,024 of the one before, as the server and the
+ * plans count them, whose 10 MB is 10 << 20 bytes, and whose storage limits
+ * are whole numbers of them, as 100 MB is 104,857,600 bytes.
+ */
 const byteUnits = [
   "byte",
   "kilobyte",
@@ -63,8 +67,8 @@ const byteUnits = [
 export function formatBytes(locale: string, bytes: number): string {
   let unit = 0;
   let value = bytes;
-  while (value >= 1000 && unit < byteUnits.length - 1) {
-    value /= 1000;
+  while (value >= 1024 && unit < byteUnits.length - 1) {
+    value /= 1024;
     unit++;
   }
   return formatNumber(locale, value, {

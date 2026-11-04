@@ -27,7 +27,12 @@ export const Route = createFileRoute("/projects/")({
     let workspaceId: string | undefined;
     if (last !== undefined) {
       try {
-        workspaceId = (await queryClient.fetchQuery(workspaceQuery(last))).id;
+        const workspace = await queryClient.fetchQuery(workspaceQuery(last));
+        // One that an instance admin acts in, without being a member of it,
+        // is no workspace of theirs to go back to.
+        if (workspace.membership) {
+          workspaceId = workspace.id;
+        }
       } catch (error) {
         // A workspace that the user has left since goes for the first.
         if (!notFoundBy(error)) {

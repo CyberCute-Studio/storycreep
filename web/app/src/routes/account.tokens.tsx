@@ -31,7 +31,13 @@ import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { Button, MoreButton } from "../ui/Button";
 import { CopyField } from "../ui/CopyField";
-import { ConfirmFrame, DialogFrame, focusBackTo } from "../ui/Dialog";
+import {
+  ConfirmButtons,
+  ConfirmFrame,
+  closesUnlessPending,
+  DialogFrame,
+  focusBackTo,
+} from "../ui/Dialog";
 import {
   CheckboxField,
   GroupField,
@@ -370,15 +376,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
     Date.parse(token.expires_at) <= Date.now();
   // The confirmation stays open while the token is being revoked, and opens
   // again without the refusal of the attempt before.
-  const onOpenChange = (next: boolean) => {
-    if (!next && revoke.isPending) {
-      return;
-    }
-    setConfirming(next);
-    if (!next) {
-      revoke.reset();
-    }
-  };
+  const onOpenChange = closesUnlessPending(setConfirming, revoke);
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">
@@ -430,20 +428,12 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
           description={t("tokens.revoke_body")}
         >
           <Alert message={refusalOf(revoke.error, t)?.message} />
-          <div className="flex flex-wrap justify-end gap-2">
-            <AlertDialog.Cancel asChild>
-              <Button disabled={revoke.isPending}>{t("tokens.cancel")}</Button>
-            </AlertDialog.Cancel>
-            {/* Not an AlertDialog.Action, which would close the dialog
-                before the request has answered. */}
-            <Button
-              variant="danger"
-              disabled={revoke.isPending}
-              onClick={() => revoke.mutate()}
-            >
-              {t("tokens.revoke_confirm")}
-            </Button>
-          </div>
+          <ConfirmButtons
+            cancel={t("tokens.cancel")}
+            confirm={t("tokens.revoke_confirm")}
+            pending={revoke.isPending}
+            onConfirm={() => revoke.mutate()}
+          />
         </ConfirmFrame>
       </AlertDialog.Root>
     </li>

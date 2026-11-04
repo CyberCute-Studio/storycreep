@@ -30,12 +30,14 @@ function WorkspaceLayout() {
   const { workspaceId } = Route.useParams();
   const workspace = useSuspenseQuery(workspaceQuery(workspaceId)).data;
   const userId = useSuspenseQuery(sessionQuery).data?.user_id;
-  // The project list opens this workspace next on this device.
+  // The project list opens this workspace next on this device, if it is one
+  // of the user's memberships, rather than one that an instance admin acts
+  // in, which the switcher does not list, and so would not leave.
   useEffect(() => {
-    if (userId !== undefined) {
+    if (userId !== undefined && workspace.membership) {
       rememberWorkspace(userId, workspace.id);
     }
-  }, [userId, workspace.id]);
+  }, [userId, workspace.id, workspace.membership]);
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <WorkspaceBar workspace={workspace} />
