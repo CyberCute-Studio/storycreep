@@ -96,17 +96,29 @@ export function ConfirmFrame({
 }
 
 /**
+ * The control that opened a dialog, or what finds it as the dialog closes,
+ * as the control of an item that the dialog moved, which the page shows
+ * anew where the item went.
+ */
+export type Opener =
+  | HTMLElement
+  | null
+  | undefined
+  | (() => HTMLElement | null);
+
+/**
  * Returns the onCloseAutoFocus of a dialog without a Dialog.Trigger, as one
  * that a menu's item opens, or one that outlives the control that opened
  * it: the focus goes back to opener, the control that opened the dialog, or
  * to the page's content once opener has gone, as with its list's item,
  * rather than to the document's body.
  */
-export function focusBackTo(opener: HTMLElement | null | undefined) {
+export function focusBackTo(opener: Opener) {
   return (event: Event) => {
     event.preventDefault();
-    if (opener?.isConnected) {
-      opener.focus();
+    const control = typeof opener === "function" ? opener() : opener;
+    if (control?.isConnected) {
+      control.focus();
     } else {
       focusContentIfLost(document);
     }

@@ -153,6 +153,75 @@ describe("refusalOf", () => {
       ).message,
     ).toBe(t("error.unexpected"));
   });
+
+  // Verifies: FR-ENT-03/AC2
+  it("names the page that offers the plans only where the server's refusal of a limit names it", () => {
+    const limit = (details: Record<string, unknown>) =>
+      refusalOf(
+        refused(409, {
+          code: "limit_exceeded",
+          details: { key: "projects", usage: 3, limit: 3, ...details },
+        }),
+        t,
+      );
+    // A self-hosted instance names none, so the form offers no upgrade.
+    expect(limit({})).toEqual({
+      message: "The workspace has as many projects as it may have: 3 of 3.",
+      fields: {},
+    });
+    expect(
+      limit({ upgrade_url: "https://storycreep.example/pricing" }).upgrade,
+    ).toBe("https://storycreep.example/pricing");
+    expect(limit({ upgrade_url: "/pricing" }).upgrade).toBe(
+      `${window.location.origin}/pricing`,
+    );
+    // Nothing but a page that the browser opens, never a script.
+    expect(
+      limit({ upgrade_url: "javascript:alert(1)" }).upgrade,
+    ).toBeUndefined();
+    expect(limit({ upgrade_url: 3 }).upgrade).toBeUndefined();
+    // Only a refusal of a limit names one.
+    expect(
+      refusalOf(
+        refused(409, {
+          code: "invite_exists",
+          details: { upgrade_url: "https://storycreep.example/pricing" },
+        }),
+        t,
+      ).upgrade,
+    ).toBeUndefined();
+  });
+
+  it("says a code in the form's own words where it gives them, at its field or for the whole form", () => {
+    const own = { slug_taken: "Another board has this slug." };
+    expect(
+      refusalOf(
+        refused(409, {
+          code: "slug_taken",
+          details: {
+            errors: [
+              {
+                location: "body.commands[0].payload.slug",
+                message: "is taken",
+              },
+            ],
+          },
+        }),
+        t,
+        (location) => (location.endsWith(".slug") ? "slug" : undefined),
+        own,
+      ),
+    ).toEqual({ fields: { slug: "Another board has this slug." } });
+    // A code without a location is the form's message.
+    expect(
+      refusalOf(refused(409, { code: "already_member" }), t, undefined, {
+        already_member: "This address belongs to a member already.",
+      }),
+    ).toEqual({
+      message: "This address belongs to a member already.",
+      fields: {},
+    });
+  });
 });
 
 describe("appPath", () => {

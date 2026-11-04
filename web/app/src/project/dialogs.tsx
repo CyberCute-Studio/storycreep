@@ -20,7 +20,12 @@ import { type FormEvent, type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { Button } from "../ui/Button";
-import { ConfirmFrame, DialogFrame, focusBackTo } from "../ui/Dialog";
+import {
+  ConfirmFrame,
+  DialogFrame,
+  focusBackTo,
+  type Opener,
+} from "../ui/Dialog";
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, RefusalAlert } from "../ui/Page";
 import {
@@ -89,7 +94,7 @@ export function nameOf(node: TreeNode): string {
 interface FrameProps {
   title: string;
   description?: string;
-  opener: HTMLElement | null;
+  opener: Opener;
   /** Whether the dialog's request is under way, while which it stays open. */
   pending: boolean;
   onClose: () => void;
@@ -198,7 +203,7 @@ export function CreateDialog({
   tree: Tree;
   kind: "board" | "folder";
   parentId: string | undefined;
-  opener: HTMLElement | null;
+  opener: Opener;
   onClose: () => void;
   onCreated: (name: string) => void;
 }) {
@@ -291,7 +296,7 @@ export function RenameDialog({
 }: {
   projectId: string;
   node: TreeNode;
-  opener: HTMLElement | null;
+  opener: Opener;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -363,7 +368,7 @@ export function MoveDialog({
   projectId: string;
   tree: Tree;
   node: TreeNode;
-  opener: HTMLElement | null;
+  opener: Opener;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -442,7 +447,7 @@ export function DeleteFolderDialog({
 }: {
   projectId: string;
   folder: Folder;
-  opener: HTMLElement | null;
+  opener: Opener;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -500,7 +505,7 @@ export function DeleteBoardDialog({
   board: Board;
   /** The project's boards, whose names the list of jumpers shows. */
   boards: readonly Board[];
-  opener: HTMLElement | null;
+  opener: Opener;
   onClose: () => void;
   onDeleted?: () => void;
 }) {
@@ -630,7 +635,7 @@ function Confirm({
   title: string;
   description: string;
   confirm: string;
-  opener: HTMLElement | null;
+  opener: Opener;
   pending: boolean;
   onClose: () => void;
   onConfirm: () => void;

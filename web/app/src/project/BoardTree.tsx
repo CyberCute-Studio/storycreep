@@ -23,6 +23,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { Button } from "../ui/Button";
+import type { Opener } from "../ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Alert, Status, textLink } from "../ui/Page";
 import {
@@ -52,12 +53,12 @@ type Open =
       dialog: "create";
       kind: "board" | "folder";
       parentId: string | undefined;
-      opener: HTMLElement | null;
+      opener: Opener;
     }
   | {
       dialog: "rename" | "move" | "delete";
       node: TreeNode;
-      opener: HTMLElement | null;
+      opener: Opener;
     };
 
 /** How far, in pixels, a handle moves before it drags, so that a tap does not (PRD NFR-TOUCH-04). */
@@ -312,7 +313,6 @@ const dropMarks: Record<Drop["position"], string> = {
 function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
   const { t } = useTranslation();
   const { projectId, editable, closed, onToggle, onOpen, drag } = props;
-  const menu = useRef<HTMLButtonElement>(null);
   const nameId = useId();
   const name = nameOf(node);
   const isOpen = node.kind === "folder" && !closed.has(node.id);
@@ -328,7 +328,12 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
           ? dropMarks[target.position]
           : "";
   const dragged = drag.dragging?.node.id === node.id;
-  const opener = () => menu.current;
+  // The item's menu, where the tree shows it once a dialog has closed: in
+  // another place, once the dialog moved it, whose button is another.
+  const opener = () =>
+    document.querySelector<HTMLElement>(
+      `[data-tree-actions="${CSS.escape(node.id)}"]`,
+    );
   return (
     <li>
       <div
@@ -373,7 +378,7 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
           <Menu
             trigger={
               <Button
-                ref={menu}
+                data-tree-actions={node.id}
                 aria-label={t("boards.actions", { name })}
                 aria-describedby={nameId}
               >
@@ -389,7 +394,7 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
                       dialog: "create",
                       kind: "board",
                       parentId: node.id,
-                      opener: opener(),
+                      opener,
                     })
                   }
                 >
@@ -401,7 +406,7 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
                       dialog: "create",
                       kind: "folder",
                       parentId: node.id,
-                      opener: opener(),
+                      opener,
                     })
                   }
                 >
@@ -411,25 +416,17 @@ function TreeItem({ node, ...props }: ItemProps & { node: TreeNode }) {
               </>
             )}
             <MenuItem
-              onSelect={() =>
-                onOpen({ dialog: "rename", node, opener: opener() })
-              }
+              onSelect={() => onOpen({ dialog: "rename", node, opener })}
             >
               {t("boards.rename")}
             </MenuItem>
-            <MenuItem
-              onSelect={() =>
-                onOpen({ dialog: "move", node, opener: opener() })
-              }
-            >
+            <MenuItem onSelect={() => onOpen({ dialog: "move", node, opener })}>
               {t("boards.move")}
             </MenuItem>
             <MenuSeparator />
             <MenuItem
               danger
-              onSelect={() =>
-                onOpen({ dialog: "delete", node, opener: opener() })
-              }
+              onSelect={() => onOpen({ dialog: "delete", node, opener })}
             >
               {t("boards.delete")}
             </MenuItem>

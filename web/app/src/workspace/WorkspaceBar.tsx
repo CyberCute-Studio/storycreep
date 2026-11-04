@@ -129,8 +129,9 @@ function WorkspaceSwitcher({ current }: { current: Workspace }) {
           <Link
             to="/workspaces/$workspaceId"
             params={{ workspaceId: w.id }}
-            aria-current={w.id === current.id ? "true" : undefined}
-            className="aria-[current]:font-semibold"
+            // The router marks the link of the workspace that the page
+            // shows as the current page (aria-current).
+            className="data-[status=active]:font-semibold"
           >
             <span className="min-w-0 flex-1 truncate">{w.name}</span>
             {w.id === current.id && <span aria-hidden="true">✓</span>}
