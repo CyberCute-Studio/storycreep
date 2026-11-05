@@ -261,9 +261,27 @@ interface Entry {
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
   captured?: Captured;
+  /**
+   * What the batch's operation left, once the document has followed it, as
+   * of a batch whose commands have the IDs of one that no answer came to,
+   * which applied (unanswered): what an answer of already_applied does not
+   * give, whose revisions are those that the entities have now (Sent).
+   */
+  followed?: Followed;
   shown?: Shown;
-  resolve: (answer: CommandResultBody) => void;
+  /** Settles the batch with its answer, which it applied after as many restores as given (Sent.restores). */
+  resolve: (answer: CommandResultBody, restores: number) => void;
   reject: (error: unknown) => void;
+}
+
+/**
+ * What a batch's operation left, as the document followed it (confirm): the
+ * seq that it applied as, and the revision that it gave each entity that it
+ * changed, by its ID.
+ */
+interface Followed {
+  seq: number;
+  revisions: ReadonlyMap<string, number>;
 }
 
 /**
@@ -342,6 +360,19 @@ class WentBackError extends Error {
 interface Sent {
   answer: CommandResultBody;
   captured?: Captured;
+  /** What the batch's operation left, where the document followed it, which an answer of already_applied does not give (Entry.followed). */
+  followed?: Followed;
+  /**
+   * How many times the document had found the server's seq gone back
+   * (restores) as the batch was sent, or as its answer told of a restore
+   * itself, after which the answer is of what the server has. One of fewer
+   * than the document has found since may be of what the server no longer
+   * has, as a part of a step sent in parts that applied before the answer
+   * to a later part told of a restore, or that was under way as the
+   * document found one, whose seq the timeline after the restore gives to
+   * another batch (stepped).
+   */
+  restores: number;
 }
 
 /** How many of a batch's refusals for a revision that changed elsewhere, but not what it changes, it is sent again after. */
@@ -437,26 +468,31 @@ function firstCommandId(commands: readonly unknown[]): string | undefined {
 }
 
 /**
- * Returns the revisions that answers left, each entity's from the last
- * answer that changed it, but for an answer of already_applied, as to a
- * step of the history sent again with the IDs of one that no answer came
- * to, once the server no longer kept its first answer: its revisions are
- * those that the entities have now, which may be past what other sessions
- * changed since, which the other steps, and the rest of a step sent in
- * parts, moved there, would expect, and write over unasked, rather than be
- * refused for it (FR-EDIT-08 AC4), as the page's batches are not moved
- * past them either (pump).
+ * Returns the revisions that the batches of sent left, each entity's from
+ * the last that changed it, as their answers give them, but for an answer
+ * of already_applied, as to a step of the history sent again with the IDs
+ * of one that no answer came to, once the server no longer kept its first
+ * answer: its revisions are those that the entities have now, which may be
+ * past what other sessions changed since, which the other steps, and the
+ * rest of a step sent in parts, moved there, would expect, and write over
+ * unasked, rather than be refused for it (FR-EDIT-08 AC4), as the page's
+ * batches are not moved past them either (pump). What its batch left is
+ * what the batch's operation gave, where the document followed it
+ * (Sent.followed), as of a channel that brought it while no answer came;
+ * otherwise nothing moves, and what expects what it left is refused, with
+ * what changed, once sent.
  */
-function latestRevisions(
-  answers: readonly CommandResultBody[],
-): Map<string, number> {
+function latestRevisions(sent: readonly Sent[]): Map<string, number> {
   const latest = new Map<string, number>();
-  for (const answer of answers) {
-    if (answer.status !== "applied") {
-      continue;
-    }
-    for (const r of answer.revisions ?? []) {
-      latest.set(canonical(r.id), r.rev);
+  for (const { answer, followed } of sent) {
+    if (answer.status === "applied") {
+      for (const r of answer.revisions ?? []) {
+        latest.set(canonical(r.id), r.rev);
+      }
+    } else if (followed?.seq === answer.seq) {
+      for (const [id, rev] of followed.revisions) {
+        latest.set(id, rev);
+      }
     }
   }
   return latest;
@@ -528,11 +564,13 @@ export class ProjectDocument {
   /**
    * The IDs of the commands of each batch that no answer came to, by its key,
    * which a batch sent again as it was takes (enqueue), with what the server
-   * was known to have had once the first of them was sent (Entry.known).
+   * was known to have had once the first of them was sent (Entry.known), and
+   * what its operation left, once the document has followed it (confirm),
+   * which the answer to the batch sent again takes (Entry.followed).
    */
   private readonly unanswered = new Map<
     string,
-    { ids: string[]; known: Known }
+    { ids: string[]; known: Known; followed?: Followed }
   >();
   private readonly waiters: { seq: number; resolve: () => void }[] = [];
   private readonly history: History;
@@ -620,10 +658,22 @@ export class ProjectDocument {
   /** How many of the pages' readings anew of the project are under way (refresh), which the document is busy with. */
   private refreshes = 0;
   /**
+   * How many reads of the project's seq are under way (seqChecked), which
+   * the document is busy with, as once its first read of the project is of a
+   * seq before the history kept over a reload (start), so that it is not
+   * dropped before the read has told whether the history is of what the
+   * server has: the project's next document would read the same steps from
+   * the tab's storage meanwhile, which a restore that the read tells of once
+   * this one has been dropped takes out of the storage alone, not out of the
+   * steps that that document holds, and writes again (History.clear).
+   */
+  private seqChecks = 0;
+  /**
    * Reads the project anew a while after the socket was lost, unless it is
    * back by then (catchUp), for the answers to the page's batches that came
-   * before, and that come meanwhile too (pump); undefined once it has, or
-   * the socket is back.
+   * before, and that come meanwhile too, which catchUp leaves to it, but for
+   * a step of the history asked for meanwhile, which needs them read now
+   * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
   private unsubscribe: (() => void) | undefined;
@@ -703,15 +753,17 @@ export class ProjectDocument {
   /**
    * Reports whether the document is reading the project, or a part of it,
    * or reading it anew, which a route's loader may be waiting for (refresh),
-   * or sending the page's batches, or a step of the history, whose answers
-   * join the history, which a document dropped keeps no longer in the tab's
-   * storage (dispose).
+   * or the project's seq, which tells whether the history kept over a
+   * reload is of what the server has (seqChecks), or sending the page's
+   * batches, or a step of the history, whose answers join the history,
+   * which a document dropped keeps no longer in the tab's storage (dispose).
    */
   get busy(): boolean {
     return (
       !this.started ||
       this.partReads > 0 ||
       this.refreshes > 0 ||
+      this.seqChecks > 0 ||
       this.resyncing !== undefined ||
       this.sends.size > 0 ||
       this.stepUnderWay !== undefined
@@ -732,9 +784,10 @@ export class ProjectDocument {
     // which the project's seq read anew tells apart (seqChecked), as, while
     // the channel is not live, nothing else would until a step or a batch is
     // sent, and the page would offer to undo what the server no longer has.
-    // A read that fails once the document has been dropped, as with every
-    // other once the session is of another account, is of no page's; one
-    // that tells of a restore then takes the history out of the tab's
+    // The document is kept until the read has settled (seqChecks). A read
+    // that fails once the document has been dropped all the same, as with
+    // every other once the session is of another account, is of no page's;
+    // one that tells of a restore then takes the history out of the tab's
     // storage still, unless the project's next document has written its own
     // there since (History.clear).
     if (body.seq < this.latest) {
@@ -795,7 +848,8 @@ export class ProjectDocument {
         // brings those operations itself, rather than have the project and
         // every part that the document holds read for each socket that is
         // lost for a moment, as once the browser's network changes; the
-        // answers that come meanwhile wait for it too (pump).
+        // answers that come meanwhile wait for it too, but for a step of the
+        // history asked for meanwhile (stepped).
         clearTimeout(this.lostTimer);
         this.lostTimer = undefined;
         if (!live) {
@@ -1076,6 +1130,25 @@ export class ProjectDocument {
         e.sent &&
         (firstCommandId(e.commands) === first || e.answer?.seq === op.seq),
     );
+    // What the operation of a batch that no answer came to left, whether the
+    // batch sent again as it was is under way, or yet to be, which its
+    // answer, of already_applied, does not give (latestRevisions).
+    let unanswered =
+      own === undefined ? undefined : this.unanswered.get(own.key);
+    if (own === undefined) {
+      for (const u of this.unanswered.values()) {
+        if (u.ids[0] === first) {
+          unanswered = u;
+          break;
+        }
+      }
+    }
+    if (first !== undefined && unanswered?.ids[0] === first) {
+      unanswered.followed = {
+        seq: op.seq,
+        revisions: new Map(op.revisions.map((r) => [canonical(r.id), r.rev])),
+      };
+    }
     const wanted = own !== undefined || this.history.wants(op.seq);
     const captured: Captured = {};
     // What the document holds of what the operation changed, which
@@ -1527,17 +1600,23 @@ export class ProjectDocument {
    * Reads the project's seq from the server, and takes the document back to
    * it if it is before what the server was known to have had once the read
    * was sent (wentBehind), which, while the channel is not live, nothing
-   * else would tell. It reports whether the project can still be read.
+   * else would tell, and which the document is busy with (seqChecks). It
+   * reports whether the project can still be read.
    */
   private async seqChecked(): Promise<boolean> {
     const known = this.knownNow();
-    const body = await readOne(this.projectId, this.projectId);
-    if (body === undefined) {
-      this.goneAway();
-      return false;
+    this.seqChecks++;
+    try {
+      const body = await readOne(this.projectId, this.projectId);
+      if (body === undefined) {
+        this.goneAway();
+        return false;
+      }
+      this.wentBehind((body as ProjectBody).seq, known);
+      return true;
+    } finally {
+      this.seqChecks--;
     }
-    this.wentBehind((body as ProjectBody).seq, known);
-    return true;
   }
 
   /** Records that the server has had the project as of seq, at least, which the channel told of, if told (latest, told). */
@@ -1706,11 +1785,21 @@ export class ProjectDocument {
    * live again, if ever, as behind a proxy that refuses the socket, and
    * until they do the batches stay on top of the document, which would show
    * nothing of what changed elsewhere. A project that can no longer be
-   * read, as once the socket's subscription found it gone, is not.
+   * read, as once the socket's subscription found it gone, is not. Nothing
+   * reads it anew here while the socket has been lost for a moment, as the
+   * answers that come meanwhile, and those that a reading anew leaves past
+   * what it read, wait for that while too, rather than have the project and
+   * every part read anew for a socket that is back soon, with the operations
+   * before them; the timer of that while has ended it once it calls this.
    */
   private catchUp(): void {
     const { live, gone } = this.store.getState();
-    if (live || gone || this.buffer !== undefined) {
+    if (
+      live ||
+      gone ||
+      this.buffer !== undefined ||
+      this.lostTimer !== undefined
+    ) {
       return;
     }
     // An answer of already_applied, as to a batch sent again once the
@@ -2166,10 +2255,24 @@ export class ProjectDocument {
       // meanwhile, behind those batches, but a seq that the server gives, as
       // the project's, which it reads first (seqChecked): the project read
       // anew may have failed, and wait to try again, or be slower than the
-      // wait, or have read the project before the step was asked for.
+      // wait, or have read the project before the step was asked for. A
+      // socket lost a moment before, whose answers' reading anew waits a
+      // while for it to be back (lostTimer), would leave the step without
+      // those batches, and so without what it moves, after which the other
+      // steps, which go on expecting what the document held before them,
+      // would be refused for the user's own step, and dropped: the project is
+      // read anew now, as of them, rather than once that while has passed.
       const restores = this.restores;
+      const last = Math.max(...step.seqs);
+      if (
+        this.lostTimer !== undefined &&
+        this.buffer === undefined &&
+        last > this.confirmed.seq
+      ) {
+        void this.resync(last);
+      }
       if (this.store.getState().live || this.buffer !== undefined) {
-        await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
+        await this.whenConfirmed(last, confirmWait);
       }
       if (
         !this.store.getState().live &&
@@ -2204,20 +2307,26 @@ export class ProjectDocument {
       // A step sent in parts whose batches the server's seq went back behind
       // meanwhile, as the answer to a part told, sends no more of them: the
       // history, which no longer has the step, keeps the redo of the parts
-      // that applied, which are of what the server has now, and nothing of
-      // the rest (sendInParts).
+      // that applied after that restore, which are of what the server has
+      // now, and nothing of those that applied before it, or were under way
+      // as the document found it (Sent.restores), whose changes the restore
+      // may have taken back, and whose seqs and revisions the timeline after
+      // it gives to other changes, which their redo would wait for, and
+      // write over, nor of the rest (sendInParts).
       const wentBack = failure instanceof WentBackError;
       if (wentBack) {
         failure = undefined;
         rest = [];
       }
-      if (applied.length > 0) {
-        const answers = applied.map((s) => s.answer);
+      const current = applied.filter((s) => s.restores === this.restores);
+      if (current.length > 0) {
+        const answers = current.map((s) => s.answer);
         // What an answer of already_applied gives, the entities' current
         // revisions, moves nothing: the other steps go on expecting what
         // they did, and are refused once sent, rather than moved past what
-        // another session may have changed since (latestRevisions).
-        const latest = latestRevisions(answers);
+        // another session may have changed since, but to what its batch's
+        // operation left, where the document followed it (latestRevisions).
+        const latest = latestRevisions(current);
         const moves: [string, number, number][] = [];
         for (const [id, rev] of latest) {
           const was = before.get(id);
@@ -2252,7 +2361,7 @@ export class ProjectDocument {
         if (left !== undefined) {
           this.history.advance(left, latest);
         }
-        for (const s of applied) {
+        for (const s of current) {
           if (s.captured !== undefined && this.history.wants(s.answer.seq)) {
             this.history.capture(s.answer.seq, s.captured);
           }
@@ -2308,13 +2417,13 @@ export class ProjectDocument {
       }
       // Part of the first half applied: the rest of it, and the second
       // half, expect what that part left.
-      const latest = latestRevisions(error.applied.map((s) => s.answer));
+      const latest = latestRevisions(error.applied);
       throw new PartsError(error.applied, error.cause, [
         ...error.rest,
         ...commands.slice(half).map((c) => withRevisions(c, latest)),
       ]);
     }
-    const latest = latestRevisions(first.map((s) => s.answer));
+    const latest = latestRevisions(first);
     const second = commands.slice(half).map((c) => withRevisions(c, latest));
     try {
       return [...first, ...(await this.sendInParts(second, restores))];
@@ -2387,7 +2496,13 @@ export class ProjectDocument {
         known: again?.known,
         step,
         sent: false,
-        resolve: (answer) => resolve({ answer, captured: entry.captured }),
+        resolve: (answer, restores) =>
+          resolve({
+            answer,
+            captured: entry.captured,
+            followed: entry.followed,
+            restores,
+          }),
         reject,
       };
       this.entries.push(entry);
@@ -2432,15 +2547,21 @@ export class ProjectDocument {
     const known = entry.known;
     try {
       await this.whenReady();
+      // The restores that the document had found as the batch was sent,
+      // after which its answer is of what the server has (Sent.restores).
+      let restores = this.restores;
       const answer = await this.post(entry.commands);
-      if (answer.status === "applied") {
-        // A batch that applied at a seq that the server had had before its
-        // commands were first sent tells that its seq went back, as of a
-        // database restored from an older backup, which the channel may tell
-        // only later, or never, as while it is not live. The history is
-        // forgotten before the batch's undo joins it, which is of what the
-        // server has now.
-        this.wentBehind(answer.seq - 1, known);
+      // A batch that applied at a seq that the server had had before its
+      // commands were first sent tells that its seq went back, as of a
+      // database restored from an older backup, which the channel may tell
+      // only later, or never, as while it is not live. The history is
+      // forgotten before the batch's undo joins it, which is of what the
+      // server has now, as the batch applied after that restore.
+      if (
+        answer.status === "applied" &&
+        this.wentBehind(answer.seq - 1, known)
+      ) {
+        restores = this.restores;
       }
       this.heardOf(answer.seq);
       entry.answer = answer;
@@ -2473,16 +2594,20 @@ export class ProjectDocument {
           });
         }
       }
+      // What the operation of the batch that no answer came to left, which
+      // the document followed meanwhile, of the batch whose commands' IDs
+      // this one sent again has (confirm).
+      const unanswered = this.unanswered.get(entry.key);
+      if (
+        unanswered !== undefined &&
+        unanswered.ids[0] === firstCommandId(entry.commands)
+      ) {
+        entry.followed ??= unanswered.followed;
+      }
       this.unanswered.delete(entry.key);
       this.settle();
-      // An answer that comes while the socket has been lost for a moment
-      // waits for it, as the answers before it do, rather than have the
-      // project and every part read anew for a socket that is back soon,
-      // with the operations before it (lostTimer).
-      if (this.lostTimer === undefined) {
-        this.catchUp();
-      }
-      entry.resolve(answer);
+      this.catchUp();
+      entry.resolve(answer, restores);
     } catch (error) {
       if (conflictOf(error)) {
         // The page shows what changed elsewhere at once, whatever becomes

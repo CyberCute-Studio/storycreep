@@ -16,6 +16,7 @@
 // (move), as the server's undo of a batch expects what the batch left.
 
 import type { UndoCommandBody } from "@storycreep/shared/api";
+import { formatUuid, newUuid } from "@storycreep/shared/ids";
 
 /** A step of the history: the commands that undo a batch, or redo one. */
 export interface Step {
@@ -42,9 +43,18 @@ export const depth = 200;
 /** What the history keeps in the tab's storage. */
 interface Saved {
   v: 1;
+  /** The history that wrote it, first after v, as clear finds it without reading the rest (History.writer). */
+  w?: string;
   undo: Step[];
   redo: Step[];
   captured: Record<string, Captured>;
+}
+
+/** Returns the history that wrote text, a value of the tab's storage, or null for none, as of text that is none, or that no history wrote (Saved.w). */
+function writerOf(text: string | null): string | null {
+  return text === null
+    ? null
+    : (/^\{"v":1,"w":"([0-9a-f-]+)"/.exec(text)?.[1] ?? null);
 }
 
 /** Reports whether value is an object, as JSON reads one, rather than null or a list. */
@@ -182,11 +192,19 @@ export class History {
    */
   private left = 0;
   /**
-   * What the tab's storage held under key as the history last read it or
-   * wrote it there, or null for nothing, which a history that no longer
-   * keeps itself there takes out only while the storage holds it still
-   * (clear), rather than what the project's next document, which reads the
-   * same key, has written there since.
+   * What tells the history's writes to the tab's storage apart from those
+   * of another history of the same key, as the project's next document's,
+   * which it writes with them (Saved.w), rather than keep their text, which
+   * may be megabytes, to compare with what the storage holds (clear).
+   */
+  private readonly writer = formatUuid(newUuid());
+  /**
+   * The history that wrote what the tab's storage held under key as this
+   * one last read it or wrote it there, or null for none, as of nothing
+   * (writerOf), which a history that no longer keeps itself there takes
+   * out only while the storage holds what that one wrote still (clear),
+   * rather than what the project's next document, which reads the same
+   * key, has written there since.
    */
   private stored: string | null | undefined;
 
@@ -203,7 +221,7 @@ export class History {
     }
     try {
       const text = storage.getItem(key);
-      this.stored = text;
+      this.stored = writerOf(text);
       if (text === null) {
         return;
       }
@@ -214,8 +232,7 @@ export class History {
         saved?.v !== 1 ||
         !isSteps(saved.undo) ||
         !isSteps(saved.redo) ||
-        typeof saved.captured !== "object" ||
-        saved.captured === null
+        !isObject(saved.captured)
       ) {
         return;
       }
@@ -330,7 +347,11 @@ export class History {
    * writes the same key, wrote since, as with steps of the user's changes
    * since it found the restore itself, which a reload would otherwise lose
    * (FR-EDIT-08 AC3), however the document was dropped, and whatever was
-   * under way.
+   * under way. The steps that the project's next document has read from
+   * there are its own, which this does not reach, so that a document is not
+   * dropped while a read of its that may tell of a restore is under way
+   * (ProjectDocument.busy), unless at once, as once it found its project
+   * gone, or the session is another account's.
    */
   clear(): void {
     this.undoSteps = [];
@@ -345,7 +366,7 @@ export class History {
       return;
     }
     try {
-      if (this.storage.getItem(this.key) === this.stored) {
+      if (writerOf(this.storage.getItem(this.key)) === this.stored) {
         this.storage.removeItem(this.key);
         this.stored = null;
       }
@@ -587,10 +608,10 @@ export class History {
     // What it saves (Saved), as JSON.stringify would write it, of the JSON
     // of each of its steps and captures.
     const steps = (list: Step[]) => list.map((s) => this.jsonOf(s)).join(",");
-    const text = `{"v":1,"undo":[${steps(undo)}],"redo":[${steps(redo)}],"captured":{${captured.join(",")}}}`;
+    const text = `{"v":1,"w":"${this.writer}","undo":[${steps(undo)}],"redo":[${steps(redo)}],"captured":{${captured.join(",")}}}`;
     try {
       storage.setItem(key, text);
-      this.stored = text;
+      this.stored = this.writer;
       return true;
     } catch {
       // The storage is full.
