@@ -2310,6 +2310,37 @@ describe("the undo history over a reload", () => {
     ]);
   });
 
+  it("writes a history that stays full twice for each change, from as many steps left out as the write before, rather than halve its way there anew", async () => {
+    const limit = 1_000;
+    const setItem = Storage.prototype.setItem;
+    const writes = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(function (this: Storage, key: string, value: string) {
+        if (value.length > limit) {
+          throw new DOMException(
+            "The quota is exceeded.",
+            "QuotaExceededError",
+          );
+        }
+        setItem.call(this, key, value);
+      });
+    const key = historyKey(testSession.user_id, testProject.id);
+    const written = () => writes.mock.calls.filter(([k]) => k === key).length;
+    const server = renamingServer();
+    const { doc } = await open();
+    for (let i = 10; i <= 30; i++) {
+      await doc.send([rename("bd_a", `Name ${i}`, server.state.rev)]);
+    }
+    await flush();
+    const before = written();
+    await doc.send([rename("bd_a", "Name 31", server.state.rev)]);
+    await flush();
+    expect(written() - before).toBe(2);
+    const kept = JSON.parse(window.sessionStorage.getItem(key) ?? "null");
+    expect(kept.undo.length).toBeGreaterThan(0);
+    expect(kept.undo.at(-1).commands[0].payload.name).toBe("Name 30");
+  });
+
   it("is taken out of the tab's storage, with every other history, once the page is signed out", async () => {
     serve({
       ...tree([board("bd_a", "Harbour")]),
@@ -3140,7 +3171,7 @@ describe("the page's own batches while the channel is not live", () => {
     expect(shown(doc, "bd_b")).toMatchObject({ name: "Old light", rev: 4 });
   });
 
-  it("read the project anew once the socket is lost before it brought the operations up to the answer to one, as other sessions' came before it, rather than stay on top of what the document had until the socket is back", async () => {
+  it("read the project anew a while after the socket is lost before it brought the operations up to the answer to one, as other sessions' came before it, rather than stay on top of what the document had until the socket is back, but not once the socket is back by then", async () => {
     let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
     const server = serve({
       getProject: () => testProject,
@@ -3157,7 +3188,23 @@ describe("the page's own batches while the channel is not live", () => {
     expect(doc.doc.seq).toBe(1);
     expect(server.calls("getProject")).toHaveLength(1);
     boards = [board("bd_a", "Harbour at night", 4), board("bd_b", "Old light")];
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    // A socket that is back soon, its subscription answered as of the
+    // server's seq, brings the operations up to the rename itself.
     subscriber().live(false);
+    await vi.advanceTimersByTimeAsync(4_000);
+    realtime.hold(testProject.id, 3);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(server.calls("getProject")).toHaveLength(1);
+    // One that is not back by then has the project read anew.
+    subscriber().live(false);
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(server.calls("getProject")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
     await vi.waitFor(() => expect(doc.doc.seq).toBe(3));
     expect(server.calls("getProject")).toHaveLength(2);
     expect(doc.store.getState().view).toBe(doc.doc);
@@ -4211,15 +4258,71 @@ describe("the page's documents", () => {
     const { documents, subscribers } = documentsOf();
     const doc = documents.get(testProject.id);
     await doc.ready;
-    const release = documents.acquire(testProject.id);
+    const release = documents.acquire(doc);
     subscribers.at(-1)?.gone();
     expect(doc.store.getState().gone).toBe(true);
     // The page that shows it shows the page of no page.
     expect(documents.get(testProject.id)).toBe(doc);
-    release();
+    release?.();
     const again = documents.get(testProject.id);
     expect(again).not.toBe(doc);
     expect(again.store.getState().gone).toBe(false);
+  });
+
+  it("keep no document that they dropped since they gave it, as with every other once the session is of another account, so that the page asks for the one that they have now, rather than show one while they keep another", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    serve(tree([board("bd_a", "Harbour")]));
+    const { documents } = documentsOf();
+    const doc = documents.get(testProject.id);
+    documents.clear();
+    expect(documents.acquire(doc)).toBeUndefined();
+    const again = documents.get(testProject.id);
+    expect(again).not.toBe(doc);
+    expect(documents.acquire(again)).toBeTypeOf("function");
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).toBe(again);
+  });
+
+  it("keep a document that no page shows while it reads the project's seq, as once its first read of the project is of a seq before the history kept over a reload, longer than they keep one otherwise, rather than drop it while a restore that the read may tell of would take the steps that the project's next document kept since out of the tab's storage", async () => {
+    let reads = 0;
+    const check = Promise.withResolvers<unknown>();
+    serve({
+      getProject: () => (++reads === 3 ? check.promise : testProject),
+      listFolders: () => page([]),
+      listBoards: () => page([board("bd_a", "Harbour")]),
+      applyCommands: () =>
+        applied(
+          3,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+    });
+    const before = await open();
+    await before.doc.send([rename("bd_a", "Harbour at night", 3)]);
+    before.doc.dispose();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { documents, queryClient } = documentsOf(window.sessionStorage);
+    // The page's read of the project, as of before the rename, which the
+    // query client kept, as it does a while once the document has gone.
+    queryClient.setQueryData(
+      projectQuery(testProject.id).queryKey,
+      testProject,
+    );
+    const doc = documents.get(testProject.id);
+    await doc.ready;
+    expect(doc.store.getState().undoable).toBe(1);
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(reads).toBe(3);
+    expect(documents.get(testProject.id)).toBe(doc);
+    check.resolve(testProject);
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).not.toBe(doc);
   });
 
   it("keep a document that no page shows while it reads what a route's loader waits for, longer than they keep one otherwise", async () => {

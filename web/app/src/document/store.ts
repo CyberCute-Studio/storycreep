@@ -358,7 +358,14 @@ const readsAtOnce = 6;
  */
 const readsOfOnePart = 20;
 
-/** How long, in milliseconds, an undo waits for the operations of the batch that it undoes to reach the document. */
+/**
+ * How long, in milliseconds, the document waits for the real-time channel
+ * to bring the operations that it expects before it goes on without them:
+ * an undo, those of the batch that it undoes; a page's reading anew, those
+ * up to the seq that the subscription holds as of (refresh); and a socket
+ * that was lost, to be back with those up to the answers to the page's
+ * batches (catchUp).
+ */
 const confirmWait = 5_000;
 
 /** How many of the states that entities had before operations changed them the document keeps, the latest (earlier). */
@@ -599,6 +606,20 @@ export class ProjectDocument {
   private told = 0;
   /** How many of the pages' readings anew of the project are under way (refresh), which the document is busy with. */
   private refreshes = 0;
+  /**
+   * How many reads of the project's seq are under way that no step of the
+   * history waits for, as once the document's first read of the project is
+   * of a seq before the history kept over a reload (start), which the
+   * document is busy with, so that it is not dropped before the read has
+   * told whether the history is of what the server has: a read that tells
+   * of a restore once its document has been dropped takes the history out
+   * of the tab's storage (History.clear), where the project's next
+   * document, which found the restore itself, may have kept steps of its
+   * own since.
+   */
+  private seqChecks = 0;
+  /** Reads the project anew a while after the socket was lost, unless it is back by then (catchUp). */
+  private lostTimer: ReturnType<typeof setTimeout> | undefined;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -676,15 +697,17 @@ export class ProjectDocument {
   /**
    * Reports whether the document is reading the project, or a part of it,
    * or reading it anew, which a route's loader may be waiting for (refresh),
-   * or sending the page's batches, or a step of the history, whose answers
-   * join the history, which a document dropped keeps no longer in the tab's
-   * storage (dispose).
+   * or the project's seq, which tells whether the history kept over a
+   * reload is of what the server has (seqChecks), or sending the page's
+   * batches, or a step of the history, whose answers join the history,
+   * which a document dropped keeps no longer in the tab's storage (dispose).
    */
   get busy(): boolean {
     return (
       !this.started ||
       this.partReads > 0 ||
       this.refreshes > 0 ||
+      this.seqChecks > 0 ||
       this.resyncing !== undefined ||
       this.sends.size > 0 ||
       this.stepUnderWay !== undefined
@@ -705,8 +728,19 @@ export class ProjectDocument {
     // which the project's seq read anew tells apart (seqChecked), as, while
     // the channel is not live, nothing else would until a step or a batch is
     // sent, and the page would offer to undo what the server no longer has.
+    // A read that fails once the document has been dropped, as with every
+    // other once the session is of another account, is of no page's.
     if (body.seq < this.latest) {
-      void this.seqChecked().catch((error: unknown) => this.failed(error));
+      this.seqChecks++;
+      void this.seqChecked()
+        .catch((error: unknown) => {
+          if (!this.disposed) {
+            this.failed(error);
+          }
+        })
+        .finally(() => {
+          this.seqChecks--;
+        });
     }
     this.heardOf(body.seq);
     const buffered = this.buffer ?? [];
@@ -754,9 +788,14 @@ export class ProjectDocument {
         // one whose operations the socket was lost before it brought, are
         // followed by the project read anew, as they are once they come
         // while the channel is not live, rather than shown on top of what
-        // the document had until the socket is back, if ever (catchUp).
+        // the document had until the socket is back, if ever (catchUp):
+        // once the socket has been lost a while, as one that is back soon
+        // brings those operations itself, rather than have the project and
+        // every part that the document holds read for each socket that is
+        // lost for a moment, as once the browser's network changes.
+        clearTimeout(this.lostTimer);
         if (!live) {
-          this.catchUp();
+          this.lostTimer = setTimeout(() => this.catchUp(), confirmWait);
         }
       },
     });
@@ -777,6 +816,7 @@ export class ProjectDocument {
   dispose(): void {
     this.disposed = true;
     clearTimeout(this.resyncTimer);
+    clearTimeout(this.lostTimer);
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.history.close();
@@ -1634,14 +1674,17 @@ export class ProjectDocument {
   /**
    * Reads the project anew, while the channel is not live, once the answers
    * to the page's batches are past what the document has, as they come, or
-   * as the socket is lost before it brought the operations up to them: the
-   * operations before them, of other sessions, would not come until the
-   * channel is live again, if ever, as behind a proxy that refuses the
-   * socket, and until they do the batches stay on top of the document,
-   * which would show nothing of what changed elsewhere.
+   * a while after the socket is lost before it brought the operations up to
+   * them, unless it is back by then: the operations before them, of other
+   * sessions, would not come until the channel is live again, if ever, as
+   * behind a proxy that refuses the socket, and until they do the batches
+   * stay on top of the document, which would show nothing of what changed
+   * elsewhere. A project that can no longer be read, as once the socket's
+   * subscription found it gone, is not.
    */
   private catchUp(): void {
-    if (this.store.getState().live || this.buffer !== undefined) {
+    const { live, gone } = this.store.getState();
+    if (live || gone || this.buffer !== undefined) {
       return;
     }
     // An answer of already_applied, as to a batch sent again once the

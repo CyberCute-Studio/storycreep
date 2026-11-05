@@ -7,7 +7,7 @@
 
 import type { Board, Folder } from "@storycreep/shared/api";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useReducer } from "react";
 import { useStore } from "zustand";
 import type { Documents } from "./documents";
 import type { DocumentState, ProjectDocument } from "./store";
@@ -21,12 +21,21 @@ export function useDocuments(): Documents {
  * Returns the document of projectId, which the page follows while the
  * component that reads it is shown: the one that it shows, which is made
  * anew once the page's documents have dropped the one before, as once the
- * session is of another account that may see the project too.
+ * session is of another account that may see the project too, and which
+ * the component renders again with once they drop the one that it rendered
+ * with before its effect has kept it (Documents.acquire).
  */
 export function useProjectDocument(projectId: string): ProjectDocument {
   const documents = useDocuments();
+  const [, dropped] = useReducer((renders: number) => renders + 1, 0);
   const doc = documents.get(projectId);
-  useEffect(() => documents.acquire(doc.projectId), [documents, doc]);
+  useEffect(() => {
+    const release = documents.acquire(doc);
+    if (release === undefined) {
+      dropped();
+    }
+    return release;
+  }, [documents, doc]);
   return doc;
 }
 

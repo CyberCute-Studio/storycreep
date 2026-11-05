@@ -151,6 +151,13 @@ export class History {
    * (advance).
    */
   private readonly json = new WeakMap<object, string>();
+  /**
+   * How many of the oldest steps the last write that fit left out (write),
+   * from which the next looks for how many to leave out, as a history that
+   * fills the storage leaves out about as many with each change, rather
+   * than halve its way there anew, writing its whole text each time.
+   */
+  private left = 0;
 
   /**
    * Returns the history kept under key in storage, or a new one, which it
@@ -461,41 +468,65 @@ export class History {
    * Writes the history to the tab's storage, if it is to be (save): the
    * latest steps that fit, the oldest steps to undo left out first, and then
    * the oldest to redo, which come after the latest change. Where the storage
-   * is full, how many are left out is found by halving, so that a long
-   * history is written a few times, rather than once for each step that is
-   * left out.
+   * is full, how many are left out is looked for from as many as the last
+   * write left out (left), one fewer, as once a step has been taken away,
+   * or one more, as once one has been added, so that a history that stays
+   * full is written twice for each change, and otherwise found by halving,
+   * so that a long history is written a few times, rather than once for
+   * each step that is left out.
    */
   private write(): void {
     if (!this.unsaved) {
       return;
     }
     this.unsaved = false;
-    if (this.closed || this.storage === undefined || this.key === undefined) {
+    const storage = this.storage;
+    const key = this.key;
+    if (this.closed || storage === undefined || key === undefined) {
       return;
     }
-    if (this.writeLeaving(this.storage, this.key, 0)) {
-      return;
-    }
-    let fits = this.undoSteps.length + this.redoSteps.length;
-    if (!this.writeLeaving(this.storage, this.key, fits)) {
-      try {
-        this.storage.removeItem(this.key);
-      } catch {
-        // Nothing to keep, and nothing to take out.
+    const steps = this.undoSteps.length + this.redoSteps.length;
+    const wrote = (left: number) => this.writeLeaving(storage, key, left);
+    // The fewest left out that fit are more than fails, which does not, and
+    // fits at most, which does, and which the storage holds, as a write that
+    // fails leaves what the storage had.
+    let fails = -1;
+    let fits = Math.min(this.left, steps);
+    if (wrote(fits)) {
+      if (fits > 0) {
+        if (wrote(fits - 1)) {
+          fits--;
+        } else {
+          fails = fits - 1;
+        }
       }
-      return;
+    } else {
+      fails = fits;
+      if (fails < steps && wrote(fails + 1)) {
+        fits = fails + 1;
+      } else if (fails + 1 < steps && wrote(steps)) {
+        fails++;
+        fits = steps;
+      } else {
+        // Not even the history without its steps fits.
+        this.left = 0;
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Nothing to keep, and nothing to take out.
+        }
+        return;
+      }
     }
-    // A write that fails leaves what the storage had, so it holds the last
-    // that fit, of the fewest steps left out.
-    let fails = 0;
     while (fits - fails > 1) {
       const half = Math.floor((fits + fails) / 2);
-      if (this.writeLeaving(this.storage, this.key, half)) {
+      if (wrote(half)) {
         fits = half;
       } else {
         fails = half;
       }
     }
+    this.left = fits;
   }
 
   /** Writes the history under key in storage, without its oldest steps, as many as left, and reports whether it fit. */

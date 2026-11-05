@@ -108,15 +108,25 @@ export class Documents {
     return held.doc;
   }
 
-  /** Keeps the document of projectId while a page of it is shown, until what it returns is called. */
-  acquire(projectId: string): () => void {
-    const doc = this.get(projectId);
-    const held = this.held.get(projectId) as Held;
+  /**
+   * Keeps doc, the document of its project that get returned, while a page
+   * of it is shown, until what it returns is called. One that the page's
+   * documents have dropped since get returned it, as with every other once
+   * the session is of another account, is not kept, and it returns
+   * undefined, so that the page asks for the one that they have now, rather
+   * than show one while another is kept.
+   */
+  acquire(doc: ProjectDocument): (() => void) | undefined {
+    const projectId = doc.projectId;
+    const held = this.held.get(projectId);
+    if (held?.doc !== doc) {
+      return undefined;
+    }
     held.shown++;
     clearTimeout(held.timer);
     let released = false;
     return () => {
-      if (released || this.held.get(projectId)?.doc !== doc) {
+      if (released || this.held.get(projectId) !== held) {
         return;
       }
       released = true;

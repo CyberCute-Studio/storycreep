@@ -51,3 +51,35 @@ it("follows the document that it shows, once the page's documents have made it a
   await vi.advanceTimersByTimeAsync(keptUnshown + 1);
   expect(documents.get(testProject.id)).toBe(again);
 });
+
+it("follows the document that the page's documents have now, once they dropped the one that it rendered with before its effect kept it, rather than show that one while they keep another", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  fakeApi((operation) => {
+    if (operation === "getProject") {
+      return testProject;
+    }
+    throw new Error(`unexpected ${operation}`);
+  });
+  const log = createErrorLog();
+  const queryClient = createQueryClient(log);
+  queryClient.setQueryData(sessionQuery.queryKey, testSession);
+  const documents = new Documents({ queryClient, log });
+  onTestFinished(() => documents.close());
+  context.documents = documents;
+  // The documents are dropped between the first render and its effect, as
+  // once the session became another account's.
+  let renders = 0;
+  const { result } = renderHook(() => {
+    const doc = useProjectDocument(testProject.id);
+    if (++renders === 1) {
+      documents.clear();
+    }
+    return doc;
+  });
+  expect(renders).toBe(2);
+  const shown = result.current;
+  expect(documents.get(testProject.id)).toBe(shown);
+  // The one that the page shows is kept.
+  await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+  expect(documents.get(testProject.id)).toBe(shown);
+});
