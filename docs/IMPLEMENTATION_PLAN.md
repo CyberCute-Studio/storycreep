@@ -617,7 +617,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-ENT-03 AC2 passes and the management flows have Playwright coverage.
 
 ### 56. Client document store, command client, and remote operations
-**Status:** todo · **Depends on:** 37, 52, 55
+**Status:** done ([#69](https://github.com/CyberCute-Studio/storycreep/pull/69)) · **Depends on:** 37, 52, 55
 **PRD:** §10.6, §7.10, FR-EDIT-08 (AC3), FR-RT-02 (AC1, AC3), FR-OFF-03 (AC2 by design), NFR-PERF-08
 - A Zustand project store that loads entities with paging, in parts that the pages ask for, in package `web/app/src/document` (`ProjectDocument`), which the router's context holds, and from which the tree of a project's boards and a board's page now read (N63).
 - One shared TypeScript layer that applies commands to local state, an applier for each registered type (`apply.ts`), which the document holds to each operation's revisions, reading from the API what the appliers could not know (`reconcile.ts`). Offline reuses it unchanged (FR-OFF-03 AC2, N63).
