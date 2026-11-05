@@ -27,10 +27,15 @@ export interface Subscriber {
   /**
    * The seq of the latest operation of the project that the store has, from
    * which the subscription starts: the operations after it are sent first.
+   * The channel asks for it as it sends the subscription, and it changes
+   * nothing, so that a fake of the channel may ask for it too.
    */
   since(): number;
-  /** The subscription holds: the operations after since, up to seq, follow. */
-  subscribed(seq: number): void;
+  /**
+   * The subscription holds: the operations after since, the seq that it was
+   * sent from, up to seq, follow.
+   */
+  subscribed(seq: number, since: number): void;
   /** An operation of the project, its seq the next after the one before. */
   operation(message: OperationMessage): void;
   /**
@@ -167,6 +172,9 @@ export function createRealtime(options: RealtimeOptions): Realtime {
   let silence: ReturnType<typeof setTimeout> | undefined;
   let linger: ReturnType<typeof setTimeout> | undefined;
   const resubscribes = new Map<string, ReturnType<typeof setTimeout>>();
+  // The seq that each project's latest subscription was sent from, which
+  // its store compares the seq that the subscription holds as of with.
+  const sentFrom = new Map<string, number>();
 
   const send = (message: ClientMessage) => {
     if (socket?.readyState === open) {
@@ -176,11 +184,9 @@ export function createRealtime(options: RealtimeOptions): Realtime {
   const subscribeTo = (projectId: string) => {
     const subscriber = subscribers.get(projectId);
     if (subscriber !== undefined) {
-      send({
-        type: "subscribe",
-        project_id: projectId,
-        since: subscriber.since(),
-      });
+      const since = subscriber.since();
+      sentFrom.set(projectId, since);
+      send({ type: "subscribe", project_id: projectId, since });
     }
   };
   const notLive = () => {
@@ -312,7 +318,10 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         // subscription holds once its store has read the project anew.
         failures = 0;
         holding.add(message.project_id);
-        subscriber.subscribed(message.seq);
+        subscriber.subscribed(
+          message.seq,
+          sentFrom.get(message.project_id) ?? message.seq,
+        );
         subscriber.live(true);
         return;
       case "resync_required":
@@ -393,6 +402,7 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         }
         subscribers.delete(projectId);
         holding.delete(projectId);
+        sentFrom.delete(projectId);
         clearTimeout(resubscribes.get(projectId));
         resubscribes.delete(projectId);
         send({ type: "unsubscribe", project_id: projectId });

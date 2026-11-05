@@ -49,7 +49,8 @@ export function fakeRealtime(): FakeRealtime {
       if (subscriber === undefined) {
         throw new Error(`Nothing subscribes to ${projectId}.`);
       }
-      subscriber.subscribed(subscriber.since());
+      const since = subscriber.since();
+      subscriber.subscribed(since, since);
       subscriber.live(true);
     },
     send(projectId, commands, revisions) {

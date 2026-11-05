@@ -24,6 +24,12 @@ export const Route = createFileRoute("/projects/$projectId/")({
       void doc.refresh().catch(() => undefined);
     }
   },
+  // The router keeps no match of the page once it is left, which it would
+  // show at once on the way back, before its loader runs again: the
+  // project's document, dropped once no page has shown it for a while
+  // (keptUnshown), would by then be one made anew, without the tree, which
+  // the page would show empty until the loader had read it.
+  gcTime: 0,
   component: Boards,
 });
 

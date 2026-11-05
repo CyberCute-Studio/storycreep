@@ -7,7 +7,8 @@
 // which went with the session before, is opened anew. Signing out also
 // clears the undo histories that the tab's storage keeps (PRD FR-EDIT-08:
 // the history is the user's), which another account's, kept under its own
-// key, never reads.
+// key, never reads, as does a page that finds itself signed out once it
+// loads, as after the session ended while the tab reloaded.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { sessionQuery } from "../api";
@@ -43,9 +44,15 @@ export class Documents {
 
   constructor(options: DocumentsOptions) {
     this.options = options;
-    let userId = options.queryClient.getQueryData(
-      sessionQuery.queryKey,
-    )?.user_id;
+    const session = options.queryClient.getQueryData(sessionQuery.queryKey);
+    let userId = session?.user_id;
+    // Whether the page is known to be signed out, as a page that loads once
+    // the session has ended, whose tab's storage may keep the histories of
+    // the session before, which it never read.
+    let signedOut = session === null;
+    if (signedOut) {
+      clearHistories(options.storage);
+    }
     // The documents, and the histories, are the account's: once the page's
     // session is of another account, or of none, they go.
     this.stop = options.queryClient.getQueryCache().subscribe((event) => {
@@ -53,15 +60,22 @@ export class Documents {
         return;
       }
       const now = options.queryClient.getQueryData(sessionQuery.queryKey);
-      if (now === undefined || now?.user_id === userId) {
+      if (now === undefined) {
         return;
       }
-      userId = now?.user_id;
-      this.clear();
-      // The socket went with the cookie of the session before, whose
-      // subscriptions the next documents' would otherwise be for a while.
-      options.realtime?.reconnect();
-      if (now === null) {
+      const ended = now === null && !signedOut;
+      signedOut = now === null;
+      if (now?.user_id !== userId) {
+        userId = now?.user_id;
+        this.clear();
+        // The socket went with the cookie of the session before, whose
+        // subscriptions the next documents' would otherwise be for a while.
+        options.realtime?.reconnect();
+      }
+      // The histories are cleared once the documents have gone, each of
+      // which writes what its history recorded before as it goes
+      // (History.close).
+      if (ended) {
         clearHistories(options.storage);
       }
     });

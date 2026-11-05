@@ -13,15 +13,16 @@
 // The page's batches are sent one at a time, in the order that they were
 // made, each expecting the revisions that the page showed, moved to those
 // that the answers to the batches before it gave, where it was made on top
-// of them. A batch refused for a revision that changed elsewhere since is
-// sent again, expecting the current revision, where what changed elsewhere
-// is none of what the batch changes, field by field; where it is, the
-// refusal names each field with both values (ConflictError), and nothing is
-// changed over (§7.10 item 1). The answer to a batch holds its undo, which
-// the history keeps (undo.ts), and which undo and redo send back, once the
-// page's batches made before they are sent have joined the history,
-// expecting what the server left, which no answer to a batch before them
-// moves.
+// of them, as by a dialog that opened before they were answered. A batch
+// refused for a revision that changed elsewhere since is sent again,
+// expecting the current revision, where what changed elsewhere is none of
+// what the batch changes, field by field; where it is, the refusal names
+// each field with both values (ConflictError), and nothing is changed over
+// (§7.10 item 1). The answer to a batch holds its undo, which the history
+// keeps (undo.ts), and which undo and redo send back, once the page's
+// batches made before they were asked for have joined the history, and
+// before those made after, expecting what the server left, which no answer
+// to a batch before them moves.
 
 import {
   ApiError,
@@ -194,15 +195,26 @@ interface Entry {
    * Whether the batch is a step of the history, whose commands expect what
    * the server left of the entities that the batch that it undoes or redoes
    * changed, rather than what the page showed, so that the answers to the
-   * batches before it never move them past those batches (moveQueued): an
-   * undo that would write over what they changed is refused (FR-EDIT-08
-   * AC4).
+   * batches before it never move them past those batches (moveQueued,
+   * ownMoves): an undo that would write over what they changed is refused
+   * (FR-EDIT-08 AC4).
    */
   step: boolean;
   sent: boolean;
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
   captured?: Captured;
+  /**
+   * The view that the batch's commands, as they were, and the revisions of
+   * its answer, as it was, left from, which the page showed last, so that
+   * the view is made anew from what changed alone (show).
+   */
+  shown?: {
+    from: Doc;
+    commands: CommandBody[];
+    revisions: CommandResultBody["revisions"] | undefined;
+    view: Doc;
+  };
   resolve: (answer: CommandResultBody) => void;
   reject: (error: unknown) => void;
 }
@@ -414,18 +426,32 @@ export class ProjectDocument {
     | { which: "undo" | "redo"; done: Promise<boolean> }
     | undefined;
   /**
-   * The page's batches that send has yet to settle, each with what its
-   * answer adds to the history, which an undo or a redo waits for before it
-   * is sent, so that it sends the step that is the latest once they have
-   * joined it (stepped).
+   * The page's batches that send has yet to settle, those that wait for a
+   * step of the history under way too (send), which the document is busy
+   * with until they have.
    */
   private readonly sends = new Set<Promise<CommandResultBody>>();
+  /**
+   * The page's batches that send has sent, or queued, and that have yet to
+   * settle, each with what its answer adds to the history, which an undo or
+   * a redo asked for meanwhile waits for before it is sent, so that it sends
+   * the step that is the latest once they have joined it (stepped).
+   */
+  private readonly batches = new Set<Promise<CommandResultBody>>();
+  /**
+   * The revision that each of the page's batches that applied moved an
+   * entity to, by the entity's ID and the revision that the batch expected
+   * of it, which the server had as the batch applied, the latest
+   * (earlierKept): a batch made on top of the page's own, as by a dialog
+   * that opened before the answer to it came, which holds the revision that
+   * it opened with, expects what that batch moved it to, rather than be
+   * refused for the page's own change, as for one made elsewhere (enqueue).
+   */
+  private readonly ownMoves = new Map<string, number>();
   /** Reads the project anew now, once a read of it failed and waits to try again (reload). */
   private retryNow: (() => void) | undefined;
   /** What the latest reading anew of the project failed with, or undefined once one did not fail (refresh). */
   private resyncFailure: unknown;
-  /** The seq that the document's subscription was sent from, as the operations after it follow (subscribed). */
-  private subscribedFrom = 0;
   /** The seq that the document's subscription held as of, up to which the channel sends the operations that it missed first (refresh). */
   private subscribedTo = 0;
   /**
@@ -537,18 +563,18 @@ export class ProjectDocument {
     const buffered = this.buffer ?? [];
     this.buffer = undefined;
     this.unsubscribe = this.options.realtime?.subscribe(this.projectId, {
-      since: () => {
-        this.subscribedFrom = this.confirmed.seq;
-        return this.subscribedFrom;
-      },
-      subscribed: (seq) => {
+      since: () => this.confirmed.seq,
+      subscribed: (seq, since) => {
         this.subscribedTo = seq;
         // A project whose seq is behind what the subscription was sent from,
         // as of a database restored from a backup older than the page, has
         // other operations after it than those that the document has. One
         // that the document's own batches have moved past since it was sent,
         // whose answers came before it, is not behind.
-        if (seq < this.subscribedFrom) {
+        if (seq < since) {
+          // The revisions that the page's own batches moved its entities
+          // from and to are the project's from before it was restored.
+          this.ownMoves.clear();
           void this.resync(seq);
         }
       },
@@ -917,8 +943,9 @@ export class ProjectDocument {
     op: Operation | undefined,
     before: Project | undefined,
     role?: ProjectBody["role"],
+    readAt?: number,
   ): void {
-    this.projectFollowed(before, role);
+    this.projectFollowed(before, role, readAt);
     if (
       op === undefined ||
       op.commands.some((c) => /\.(delete|restore)(_many)?$/.test(c.type))
@@ -939,24 +966,31 @@ export class ProjectDocument {
    * the project's read has. A read of the project's that is as of a later
    * seq than the document, as one that a page made once the document began
    * from what an earlier one read, whose operations since the channel
-   * brings it now, is kept, rather than taken back to what they changed.
+   * brings it now, is kept, rather than taken back to what they changed,
+   * but for one older than the document's own read of the project, at
+   * readAt, as the project read anew, which is what the server has now,
+   * though at an earlier seq, as of a database restored from a backup.
    */
   private projectFollowed(
     before: Project | undefined,
     role?: ProjectBody["role"],
+    readAt?: number,
   ): void {
     const project = this.confirmed.project;
     if (project !== undefined && project !== before) {
-      this.options.queryClient.setQueryData(
-        projectQuery(this.projectId).queryKey,
-        (body) =>
-          body === undefined || body.seq > this.confirmed.seq
-            ? body
-            : {
-                ...project,
-                role: role ?? body.role,
-                seq: this.confirmed.seq,
-              },
+      const key = projectQuery(this.projectId).queryKey;
+      const older =
+        readAt !== undefined &&
+        (this.options.queryClient.getQueryState(key)?.dataUpdatedAt ?? 0) <=
+          readAt;
+      this.options.queryClient.setQueryData(key, (body) =>
+        body === undefined || (body.seq > this.confirmed.seq && !older)
+          ? body
+          : {
+              ...project,
+              role: role ?? body.role,
+              seq: this.confirmed.seq,
+            },
       );
     }
   }
@@ -1048,16 +1082,28 @@ export class ProjectDocument {
    * revisions that the entities have now, which may be past what other
    * sessions changed since, which the document does not show yet, and which
    * a batch made on top of it would otherwise expect, and write over unasked.
+   * A batch is applied anew only once what it applies on top of, its
+   * commands, or its answer has changed since it was shown last, as each
+   * copies what it changes of the document's maps (Entry.shown).
    */
   private show(): void {
     let view = this.confirmed;
     for (const entry of this.entries) {
-      view = applyPending(
-        view,
-        entry.commands,
-        entry.time,
-        entry.answer?.status === "applied" ? entry.answer.revisions : undefined,
-      );
+      const revisions =
+        entry.answer?.status === "applied" ? entry.answer.revisions : undefined;
+      const last = entry.shown;
+      if (
+        last !== undefined &&
+        last.from === view &&
+        last.commands === entry.commands &&
+        last.revisions === revisions
+      ) {
+        view = last.view;
+        continue;
+      }
+      const from = view;
+      view = applyPending(view, entry.commands, entry.time, revisions);
+      entry.shown = { from, commands: entry.commands, revisions, view };
     }
     this.store.setState({
       view,
@@ -1129,6 +1175,7 @@ export class ProjectDocument {
     let doc: Doc;
     let body: ProjectBody;
     this.resyncFailure = undefined;
+    const readAt = Date.now();
     try {
       body = (
         await api.call("getProject", { path: { project_id: this.projectId } })
@@ -1221,7 +1268,7 @@ export class ProjectDocument {
     this.generation++;
     // What the project read anew has, it has with the server's times.
     this.answeredAt.clear();
-    this.followed(undefined, before, body.role);
+    this.followed(undefined, before, body.role, readAt);
     const buffered = (this.buffer ?? []).sort((a, b) => a.seq - b.seq);
     this.buffer = undefined;
     for (const op of buffered) {
@@ -1543,16 +1590,46 @@ export class ProjectDocument {
    * the page shows the project without the batch again. A batch sent again
    * as it was, as once no answer came to it, has the IDs that its commands
    * had, so that the server answers it as the batch that it applied, if it
-   * did, rather than apply it again. The batch's undo joins the history.
+   * did, rather than apply it again. What the batch expects of an entity
+   * is moved past the page's own batches that applied on top of that
+   * revision, which are no change made elsewhere (ownMoves). The batch's
+   * undo joins the history.
    */
   send(commands: readonly Command[]): Promise<CommandResultBody> {
-    const sending = this.sendBatch(commands);
+    const sending = this.sendAfterSteps(commands);
     this.sends.add(sending);
     const settled = () => {
       this.sends.delete(sending);
     };
     sending.then(settled, settled);
     return sending;
+  }
+
+  /**
+   * Sends a batch as sendBatch does, once no step of the history is under
+   * way: one made while an undo or a redo waits to be sent, as a form saved
+   * while the undo waits for the channel's operations, was asked for after
+   * it, and is sent after it, rather than before it, which would leave the
+   * undo the latest change, the one that the user did not ask to undo, or
+   * end what the redo would redo, or else be written over by it (stepped).
+   * It is sent in the order that it was made in among the steps asked for
+   * meanwhile, as they are among themselves (step).
+   */
+  private sendAfterSteps(
+    commands: readonly Command[],
+  ): Promise<CommandResultBody> {
+    const underWay = this.stepUnderWay;
+    if (underWay !== undefined) {
+      const after = () => this.sendAfterSteps(commands);
+      return underWay.done.then(after, after);
+    }
+    const batch = this.sendBatch(commands);
+    this.batches.add(batch);
+    const settled = () => {
+      this.batches.delete(batch);
+    };
+    batch.then(settled, settled);
+    return batch;
   }
 
   /** Sends a batch as send does, adding its undo to the history once it has applied. */
@@ -1594,7 +1671,8 @@ export class ProjectDocument {
    * while another of the same is under way, as by a second click before the
    * first has disabled the button, is that one, and settles as it does, so
    * that what the page says of it is what became of it; one of the other is
-   * sent once that one has settled, as what was asked for after it.
+   * sent once that one has settled, as what was asked for after it, as is a
+   * batch of the page's made meanwhile (sendAfterSteps).
    */
   private step(which: "undo" | "redo"): Promise<boolean> {
     const underWay = this.stepUnderWay;
@@ -1607,10 +1685,11 @@ export class ProjectDocument {
     }
     const newest = () =>
       which === "undo" ? this.history.nextUndo() : this.history.nextRedo();
-    if (newest() === undefined && this.sends.size === 0) {
+    const before = [...this.batches];
+    if (newest() === undefined && before.length === 0) {
       return Promise.resolve(false);
     }
-    const done = this.stepped(which, newest).finally(() => {
+    const done = this.stepped(which, newest, before).finally(() => {
       if (this.stepUnderWay?.done === done) {
         this.stepUnderWay = undefined;
       }
@@ -1621,50 +1700,38 @@ export class ProjectDocument {
 
   /**
    * Sends the latest step to undo or to redo, which newest returns, once the
-   * page's batches made before it is sent have joined the history, and the
-   * document has the operations before it, and resolves with whether there
-   * was one.
+   * page's batches made before it was asked for, earlier, have joined the
+   * history, and the document has the operations before it, and resolves
+   * with whether there was one.
    */
   private async stepped(
     which: "undo" | "redo",
     newest: () => Step | undefined,
+    earlier: readonly Promise<CommandResultBody>[],
   ): Promise<boolean> {
     this.store.setState({ stepping: true });
     try {
-      // The page's batches made before the step is sent, queued or under
-      // way, as a form's save just before it was asked for, or one saved
-      // while it waits, join the history first, so that the step sent is
-      // the latest once they have, rather than one before them, which would
-      // write over what they changed, unasked, and be refused for it, and
-      // dropped, with the steps before it, which expect what it undoes.
-      let step: Step | undefined;
-      do {
-        await Promise.allSettled([...this.sends]);
-        step = newest();
-        if (step === undefined) {
-          return false;
-        }
-        // What the step expects is moved from what the document held before
-        // the batches that it undoes, which it knows once it has them: while
-        // the channel is live, which brings them, or while the project is
-        // read anew, as once an answer was past what the document had while
-        // the channel was not, which settles the batches that it read. A
-        // batch answered meanwhile, as a form's save, changes the history, of
-        // which the step sent is the latest then, if any, as a new change
-        // leaves nothing to redo.
-        while (this.store.getState().live || this.buffer !== undefined) {
-          await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
-          const now = newest();
-          if (now === undefined) {
-            return false;
-          }
-          const same = now.seqs[0] === step.seqs[0];
-          step = now;
-          if (same) {
-            break;
-          }
-        }
-      } while (this.sends.size > 0);
+      // The page's batches made before the step was asked for, queued or
+      // under way, as a form's save just before it, join the history first,
+      // so that the step sent is the latest once they have, rather than one
+      // before them, which would write over what they changed, unasked, and
+      // be refused for it, and dropped, with the steps before it, which
+      // expect what it undoes. Those made after wait for it (sendAfterSteps).
+      await Promise.allSettled(earlier);
+      const step = newest();
+      if (step === undefined) {
+        return false;
+      }
+      // What the step expects is moved from what the document held before
+      // the batches that it undoes, which it knows once it has them: while
+      // the channel is live, which brings them, or while the project is read
+      // anew, as once an answer was past what the document had while the
+      // channel was not, which settles the batches that it read. Nothing
+      // changes the history meanwhile, as the page's batches made since wait
+      // for the step.
+      if (this.store.getState().live || this.buffer !== undefined) {
+        await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
+      }
       const before = this.history.before(step);
       let applied: Sent[] = [];
       let rest: UndoCommandBody[] = [];
@@ -1796,9 +1863,14 @@ export class ProjectDocument {
       ? undefined
       : this.unanswered.get(key);
     const ids = again ?? commands.map(() => formatUuid(newUuid()));
-    const withIds = commands.map(
-      (command, i) => ({ ...command, command_id: ids[i] }) as CommandBody,
-    );
+    // A batch of the page's, but for a step of the history, which expects
+    // what the history moved it to, expects what the page's own batches that
+    // applied on top of what it expects left (ownMoves), as one that was
+    // queued behind them would (moveQueued).
+    const withIds = commands.map((command, i) => {
+      const body = { ...command, command_id: ids[i] } as CommandBody;
+      return step ? body : this.pastOwn(body);
+    });
     const view = this.store.getState().view;
     const base = new Map<string, Base>();
     for (const command of withIds) {
@@ -1884,6 +1956,7 @@ export class ProjectDocument {
       // and compared with it, if anything did (retried).
       if (answer.status === "applied") {
         this.moveQueued(entry, answer);
+        this.movedOwn(entry, answer);
       }
       if (
         answer.status === "applied" &&
@@ -2005,6 +2078,52 @@ export class ProjectDocument {
         }
       }
     }
+  }
+
+  /**
+   * Records the revision that entry, which applied, moved each entity that
+   * it expected to, from the one that it expected, which the server had as
+   * it applied, so that nothing but entry changed the entity between the two
+   * (ownMoves): what it changed without expecting it, as another session may
+   * have changed it before, is not recorded.
+   */
+  private movedOwn(entry: Entry, answer: CommandResultBody): void {
+    const revisions = new Map(
+      (answer.revisions ?? []).map((r) => [canonical(r.id), r.rev]),
+    );
+    for (const [id, from] of expectedOf(entry.commands)) {
+      const to = revisions.get(id);
+      if (to === undefined || to === from) {
+        continue;
+      }
+      this.ownMoves.set(`${id}@${from}`, to);
+      if (this.ownMoves.size > earlierKept) {
+        this.ownMoves.delete(this.ownMoves.keys().next().value as string);
+      }
+    }
+  }
+
+  /**
+   * Returns command with what it expects of each entity moved past the
+   * page's own batches that applied on top of that revision (ownMoves), to
+   * the revision that the last of them left.
+   */
+  private pastOwn(command: CommandBody): CommandBody {
+    let past = command;
+    for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
+      let to = rev;
+      for (
+        let next = this.ownMoves.get(`${canonical(id)}@${to}`);
+        next !== undefined && next > to;
+        next = this.ownMoves.get(`${canonical(id)}@${to}`)
+      ) {
+        to = next;
+      }
+      if (to !== rev) {
+        past = moved(past, id, rev, to);
+      }
+    }
+    return past;
   }
 
   /**

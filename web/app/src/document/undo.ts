@@ -135,6 +135,8 @@ export class History {
   private readonly key: string | undefined;
   /** Whether the history no longer keeps itself in the tab's storage (close). */
   private closed = false;
+  /** Whether the history is to be written to the tab's storage, once what changes it at once has (save). */
+  private unsaved = false;
   /**
    * Each step, and each batch's capture, as JSON, which the history writes
    * to the tab's storage once for each change, a few times where it does
@@ -347,10 +349,12 @@ export class History {
 
   /**
    * Stops keeping the history in the tab's storage, as once its document is
-   * dropped: what it records after, as the answer to a batch that comes once
-   * the page has signed out, is not written there.
+   * dropped, once it has written what it recorded before: what it records
+   * after, as the answer to a batch that comes once the page has signed
+   * out, is not written there.
    */
   close(): void {
+    this.write();
     this.closed = true;
   }
 
@@ -388,21 +392,41 @@ export class History {
   }
 
   /**
-   * Keeps the history in the tab's storage: the latest steps that fit, the
-   * oldest steps to undo left out first, and then the oldest to redo, which
-   * come after the latest change. Where the storage is full, how many are
-   * left out is found by halving, so that a long history is written a few
-   * times, rather than once for each step that is left out.
+   * Keeps the history in the tab's storage once what changes it at once has,
+   * as a batch's answer that a step joins and whose capture follows, or a
+   * step that moves the others, takes its place, and advances what it
+   * captured, so that the history is written once for them all, rather than
+   * once for each (write).
    */
   private save(): void {
+    if (this.unsaved) {
+      return;
+    }
+    this.unsaved = true;
+    queueMicrotask(() => this.write());
+  }
+
+  /**
+   * Writes the history to the tab's storage, if it is to be (save): the
+   * latest steps that fit, the oldest steps to undo left out first, and then
+   * the oldest to redo, which come after the latest change. Where the storage
+   * is full, how many are left out is found by halving, so that a long
+   * history is written a few times, rather than once for each step that is
+   * left out.
+   */
+  private write(): void {
+    if (!this.unsaved) {
+      return;
+    }
+    this.unsaved = false;
     if (this.closed || this.storage === undefined || this.key === undefined) {
       return;
     }
-    if (this.write(this.storage, this.key, 0)) {
+    if (this.writeLeaving(this.storage, this.key, 0)) {
       return;
     }
     let fits = this.undoSteps.length + this.redoSteps.length;
-    if (!this.write(this.storage, this.key, fits)) {
+    if (!this.writeLeaving(this.storage, this.key, fits)) {
       try {
         this.storage.removeItem(this.key);
       } catch {
@@ -415,7 +439,7 @@ export class History {
     let fails = 0;
     while (fits - fails > 1) {
       const half = Math.floor((fits + fails) / 2);
-      if (this.write(this.storage, this.key, half)) {
+      if (this.writeLeaving(this.storage, this.key, half)) {
         fits = half;
       } else {
         fails = half;
@@ -424,7 +448,7 @@ export class History {
   }
 
   /** Writes the history under key in storage, without its oldest steps, as many as left, and reports whether it fit. */
-  private write(storage: Storage, key: string, left: number): boolean {
+  private writeLeaving(storage: Storage, key: string, left: number): boolean {
     const undo = this.undoSteps.slice(Math.min(left, this.undoSteps.length));
     const redo = this.redoSteps.slice(
       Math.max(0, left - this.undoSteps.length),

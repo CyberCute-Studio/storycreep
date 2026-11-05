@@ -1165,6 +1165,41 @@ describe("a board's page", () => {
     );
   });
 
+  it("shows the tree once the project's document has read it anew, as once the user is back after the document was dropped, rather than show it empty until then", async () => {
+    let boardsRead = 0;
+    const later = Promise.withResolvers<unknown>();
+    fakeApi((operation) => {
+      if (operation === "listBoards" && ++boardsRead > 1) {
+        return later.promise;
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    const { router, documents } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    await act(() =>
+      router.navigate({
+        to: "/workspaces/$workspaceId",
+        params: { workspaceId: testWorkspace.id },
+      }),
+    );
+    // No page has shown the project's document for a while: it is dropped.
+    documents.forget(testProject.id);
+    const back = router.navigate({
+      to: "/projects/$projectId",
+      params: { projectId: testProject.id },
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(screen.queryByText("No boards yet.")).toBeNull();
+    later.resolve({ items: [board("bd_a", "Harbour")], next_cursor: null });
+    await act(() => back);
+    expect(await screen.findByRole("link", { name: "Harbour" })).toBeDefined();
+  });
+
   it("shows a board that another session made since the tree was read, which the document reads anew while its channel is not live", async () => {
     let boards = [board("bd_a", "Harbour")];
     fakeApi((operation) =>
@@ -1207,6 +1242,104 @@ describe("a board's page", () => {
     expect(screen.queryByRole("heading", { name: "Page not found" })).toBe(
       null,
     );
+  });
+
+  it("keeps what the user typed once the document could not send a save again, for how often another editor changed the board meanwhile, and sends it over the board as it is now once saved again", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    // Another editor gives the board another colour before each attempt.
+    const colors = ["blue", "red", "green", "teal"] as const;
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        const attempt = sent.length;
+        if (attempt <= colors.length) {
+          throw refused(409, {
+            code: "revision_conflict",
+            details: {
+              conflicts: [
+                {
+                  command: 0,
+                  command_id: "00000000-0000-7000-8000-000000000001",
+                  type: "board.describe",
+                  id: "bd_a",
+                  expected_rev: 2 + attempt,
+                  exists: true,
+                  current_rev: 3 + attempt,
+                },
+              ],
+              states: {
+                bd_a: {
+                  ...harbour,
+                  color: colors[attempt - 1],
+                  rev: 3 + attempt,
+                },
+              },
+            },
+          });
+        }
+        return applied(testProject.seq + 1, [{ id: "bd_a", rev: 8 }]);
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText("revision_conflict");
+    expect(sent).toHaveLength(4);
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "teal");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText(saved);
+    expect(sent[4]).toEqual([
+      {
+        type: "board.describe",
+        payload: { id: "bd_a", description: "Where the story starts" },
+        expected_rev: { bd_a: 7 },
+        command_id: expect.any(String),
+      },
+    ]);
+  });
+
+  it("shows another board's page anew, rather than with what the user typed in the form of the board before", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) =>
+      expected(
+        projectPages(operation, [
+          board("bd_a", "Harbour"),
+          board("bd_b", "Lighthouse"),
+        ]),
+        operation,
+      ),
+    );
+    const { router } = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_b" },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Lighthouse" }),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Name")).toHaveProperty("value", "Lighthouse");
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", "");
   });
 
   it("shows the other editor's version of a field that both changed once the user takes theirs", async () => {

@@ -65,6 +65,8 @@ class FakeSocket implements SocketLike {
 interface FakeStore extends Subscriber {
   /** The seq of the latest operation that the store has, which since returns. */
   seq: number;
+  /** The seq that each subscription that held was sent from, as the channel told the store. */
+  sentFrom: number[];
   heard: unknown[][];
   operations: OperationMessage[];
 }
@@ -72,10 +74,12 @@ interface FakeStore extends Subscriber {
 function fakeStore(seq = 0): FakeStore {
   const store: FakeStore = {
     seq,
+    sentFrom: [],
     heard: [],
     operations: [],
     since: () => store.seq,
-    subscribed(seq) {
+    subscribed(seq, since) {
+      store.sentFrom.push(since);
       store.heard.push(["subscribed", seq]);
     },
     operation(message) {
@@ -261,6 +265,23 @@ describe("createRealtime", () => {
       ["subscribed", 8],
       ["live", true],
     ]);
+  });
+
+  it("tells a store the seq that its subscription was sent from once it holds, though the store has gone past it since, as with its own batches' answers", () => {
+    const h = setup();
+    const a = fakeStore(5);
+    h.realtime.subscribe("prj_a", a);
+    h.socket().open();
+    a.seq = 7;
+    h.socket().deliver({ type: "subscribed", project_id: "prj_a", seq: 6 });
+    expect(a.sentFrom).toEqual([5]);
+    // A subscription sent anew, once the socket is back, is from the seq
+    // that the store had then.
+    h.socket().drop();
+    vi.advanceTimersByTime(2_000);
+    h.socket().open();
+    h.socket().deliver({ type: "subscribed", project_id: "prj_a", seq: 7 });
+    expect(a.sentFrom).toEqual([5, 7]);
   });
 
   it("passes each operation to the store of its project", () => {

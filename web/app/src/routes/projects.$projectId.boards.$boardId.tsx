@@ -53,6 +53,14 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
       throw notFound();
     }
   },
+  // The router keeps no match of the page once it is left, as for the tree
+  // of the project's boards: the project's document may be made anew by the
+  // time the user is back, without the board yet, which the page would say
+  // there is none of until the loader had read the tree.
+  gcTime: 0,
+  // The page of another board is shown anew, rather than with what the
+  // board's form held, or the deletion that it had open, of the one before.
+  remountDeps: ({ params }) => params.boardId,
   component: BoardPage,
 });
 
@@ -195,13 +203,16 @@ const boardField = payloadField("name", "slug", "description", "color");
  * save refused for a change made elsewhere of another field is sent again by
  * the document (PRD §7.10); one of a field that the form changes too names
  * each such field with both values (ConflictError), and shows the board as
- * it is now, but for what the user changed, which it keeps, so that saving
- * again keeps it, over the board as it is now, and what the user changes
- * after is over what the form shows, rather than over another session's
- * change that it did not show; using theirs shows the board as it is now.
+ * it is now, but for what the user changed, which it keeps, as a save does
+ * that the document could not send again, for how often the board changed
+ * meanwhile, so that saving again keeps it, over the board as it is now, and
+ * what the user changes after is over what the form shows, rather than over
+ * another session's change that it did not show; using theirs shows the
+ * board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
+  const doc = useProjectDocument(projectId);
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
   const held = useHeld(board);
@@ -288,18 +299,28 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
         setTheirs(undefined);
       },
       onError: (error) => {
+        if (!conflictOf(error)) {
+          return;
+        }
+        // The board as the server has it now: as the refusal gave it, where
+        // it named a field that the form changes too, or else as the
+        // document took it from the refusal, as once the document could not
+        // send the save again, for as often as other sessions changed the
+        // board meanwhile; none once it is gone.
         const state =
           error instanceof ConflictError
             ? error.overlaps.find((o) => o.id === against.id && !o.gone)?.state
             : undefined;
-        if (state !== undefined) {
-          const now = state as unknown as Board;
-          setTheirs(now);
-          held.hold({ ...now, ...typed });
-        } else if (conflictOf(error)) {
+        const now =
+          (state as unknown as Board | undefined) ??
+          doc.store.getState().view.boards.get(against.id);
+        if (now === undefined) {
           held.release();
           setTheirs(undefined);
+          return;
         }
+        setTheirs(now);
+        held.hold({ ...now, ...typed });
       },
     });
   };

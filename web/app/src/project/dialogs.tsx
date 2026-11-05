@@ -115,7 +115,9 @@ function revOf(node: TreeNode): number {
  * the project's document shows as it commits, is not changed over unasked
  * (PRD §7.10, FR-API-03 AC3), or, once an attempt was refused for such a
  * change (error), which the dialog says, and the tree shows, the one that
- * it has then.
+ * it has then. The document moves it past the page's own batches that
+ * applied since, as a drag that was under way once the dialog opened, which
+ * are no change made elsewhere (ProjectDocument.send).
  */
 function useExpected(rev: number, error: unknown): number {
   const [held, setHeld] = useState({ rev, error });
