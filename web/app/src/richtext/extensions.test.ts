@@ -49,4 +49,98 @@ describe("the editor's extensions", () => {
     expect(stored?.content.at(-1)).toEqual(p("line 49!"));
     expect(JSON.stringify(stored)).not.toContain("link");
   });
+
+  test("keep a pair of surrogates, and a carriage return and a line feed, that a mark's boundary splits one character", () => {
+    const editor = testEditor();
+    const { schema } = editor;
+    const bold = schema.marks.bold.create();
+    // x, the two halves of 😀, and y; bold up to the first half.
+    editor.commands.insertContent("x😀y");
+    editor.view.dispatch(editor.state.tr.addMark(1, 3, bold));
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { marks: [{ type: "bold" }], text: "x😀", type: "text" },
+          { text: "y", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+    editor.commands.clearContent();
+    editor.view.dispatch(
+      editor.state.tr.insert(1, [
+        schema.text("a\r"),
+        schema.text("\nb", [bold]),
+      ]),
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "a", type: "text" },
+          { type: "hardBreak" },
+          { marks: [{ type: "bold" }], text: "b", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("Tab nests the selected list items only where none of their lists would nest deeper than lists nest", () => {
+    const item = (text: string, ...lists: object[]) => ({
+      content: [p(text), ...lists],
+      type: "listItem",
+    });
+    const bullets = (...items: object[]) => ({
+      content: items,
+      type: "bulletList",
+    });
+    // a, b, and c, whose list x is in, in a list at depth 4.
+    let list = bullets(item("a"), item("b"), item("c", bullets(item("x"))));
+    for (let depth = 3; depth >= 1; depth--) {
+      list = bullets(item(`level ${depth}`, list));
+    }
+    const content = { content: [list], type: "doc" } as RichTextDoc;
+    const editor = testEditor(content);
+    const at = (text: string) => {
+      let found = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.text === text) {
+          found = pos;
+        }
+      });
+      return found;
+    };
+    // From b into c: c's list would be at depth 6.
+    editor.commands.setTextSelection({ from: at("b"), to: at("c") + 1 });
+    editor.commands.keyboardShortcut("Tab");
+    expect(storedOf(editor.state.doc).doc).toEqual(content);
+    // b alone moves into a list of a, at depth 5.
+    editor.commands.setTextSelection(at("b"));
+    editor.commands.keyboardShortcut("Tab");
+    expect(storedOf(editor.state.doc).doc).not.toEqual(content);
+  });
+
+  test("setLink sets a URL as the link's field takes it, and refuses one that no link may lead to", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    expect(editor.commands.setLink({ href: "javascript:alert(1)" })).toBe(
+      false,
+    );
+    expect(editor.commands.setLink({ href: "example.com" })).toBe(true);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "harbour",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
 });

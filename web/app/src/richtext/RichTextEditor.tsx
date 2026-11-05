@@ -162,7 +162,15 @@ export function RichTextEditor({
     editorProps,
     onUpdate: ({ editor }) => {
       const value = storedOf(editor.state.doc);
-      setRefused(value.error);
+      // A refusal that says what the one before it said is no change of the
+      // editor's, which would render it again on each keystroke.
+      setRefused((before) =>
+        before !== undefined &&
+        value.error?.reason === before.reason &&
+        value.error.limit === before.limit
+          ? before
+          : value.error,
+      );
       latest.current.onChange?.(value);
     },
   });
@@ -389,10 +397,6 @@ function LinkDialog({
   const [invalid, setInvalid] = useState(false);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    // The dialog's portal puts this form outside the page's, but React
-    // passes its submission on to the page's form that holds the editor,
-    // which saving a link does not submit.
-    event.stopPropagation();
     const typed = String(new FormData(event.currentTarget).get("href"));
     const href = typedHref(typed);
     if (href === undefined) {

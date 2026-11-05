@@ -127,11 +127,55 @@ describe("the limits", () => {
     const error = refusal(paragraphs(fits + 1));
     expect(error?.reason).toBe("too_large");
     expect(error?.limit).toBe("bytes");
+    // A document of more than 1 MiB of JSON is too large, as the server
+    // reads it, though its canonical form, which joins its texts, is not.
+    const texts = (n: number) =>
+      paragraphOf(
+        ...Array.from({ length: n }, () => ({ type: "text", text: "a" })),
+      );
+    expect(parseRichText(texts(30_000))).toEqual(
+      paragraphOf({ text: "a".repeat(30_000), type: "text" }),
+    );
+    expect(refusal(texts(60_000))).toMatchObject({
+      reason: "too_large",
+      pointer: "",
+      limit: "bytes",
+    });
     // A quote in a link is two bytes of JSON and counts as one.
     const href = `https://example.com/${'"'.repeat(2000)}`;
     expect(richTextLength(JSON.stringify({ href }))).toBe(
       JSON.stringify({ href }).length - 2000,
     );
+  });
+});
+
+describe("a document that a page builds", () => {
+  test("has no field whose value is undefined, as JSON.stringify sends it", () => {
+    expect(
+      parseRichText({
+        attrs: undefined,
+        content: [
+          { content: undefined, type: "paragraph" },
+          {
+            content: [{ marks: undefined, text: "a", type: "text" }],
+            type: "paragraph",
+          },
+        ],
+        type: "doc",
+      }),
+    ).toEqual({
+      content: [
+        { type: "paragraph" },
+        { content: [{ text: "a", type: "text" }], type: "paragraph" },
+      ],
+      type: "doc",
+    });
+    expect(
+      refusal(paragraphOf({ text: undefined, type: "text" })),
+    ).toMatchObject({
+      reason: "missing_field",
+      pointer: "/content/0/content/0",
+    });
   });
 });
 

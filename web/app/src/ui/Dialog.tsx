@@ -3,9 +3,19 @@
 // control that opened it when it closes, over the page, which it dims.
 
 import { AlertDialog, Dialog } from "radix-ui";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { focusContentIfLost } from "../shell/focus";
 import { Button } from "./Button";
+
+/**
+ * Keeps the submission of a dialog's form within the dialog: its portal puts
+ * the form outside the page's elements, but React passes the submission on
+ * to the components that hold the dialog, as a page's form that holds the
+ * control that opened it, which the dialog's form does not submit.
+ */
+function keepSubmission(event: FormEvent) {
+  event.stopPropagation();
+}
 
 const overlay = "fixed inset-0 bg-backdrop/50";
 const content =
@@ -45,6 +55,7 @@ export function DialogFrame({
       <Dialog.Content
         className={content}
         onCloseAutoFocus={onCloseAutoFocus}
+        onSubmit={keepSubmission}
         onInteractOutside={
           closesOutside ? undefined : (event) => event.preventDefault()
         }
@@ -83,6 +94,7 @@ export function ConfirmFrame({
       <AlertDialog.Content
         className={content}
         onCloseAutoFocus={onCloseAutoFocus}
+        onSubmit={keepSubmission}
       >
         <AlertDialog.Title className="text-xl font-semibold">
           {title}

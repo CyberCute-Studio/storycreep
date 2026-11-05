@@ -517,6 +517,42 @@ if (tide) {}</pre>
     });
   });
 
+  test("a numbered list that is not numbered from where the one before it ends is a list of its own, and Word's nested items are numbered by their own numbers", () => {
+    expect(
+      pasted(
+        '<ol><li>a</li><li>b</li></ol><ol start="10"><li>x</li></ol><ol start="11"><li>y</li></ol><ol><li>z</li></ol>',
+      ),
+    ).toEqual(
+      doc(
+        numbers(1, item(p(text("a"))), item(p(text("b")))),
+        numbers(10, item(p(text("x"))), item(p(text("y")))),
+        numbers(1, item(p(text("z")))),
+      ),
+    );
+    const word = (level: number, marker: string, value: string) =>
+      `<p style="mso-list:l0 level${level} lfo1"><span style="mso-list:Ignore">${marker}<span style="font:7.0pt">&nbsp;&nbsp;</span></span>${value}</p>`;
+    expect(
+      pasted(
+        word(1, "1.", "a") +
+          word(2, "1.1.", "b") +
+          word(2, "1.2.", "c") +
+          word(1, "2.", "d") +
+          word(2, "2.1.", "e"),
+      ),
+    ).toEqual(
+      doc(
+        numbers(
+          1,
+          item(
+            p(text("a")),
+            numbers(1, item(p(text("b"))), item(p(text("c")))),
+          ),
+          item(p(text("d")), numbers(1, item(p(text("e"))))),
+        ),
+      ),
+    );
+  });
+
   test("a list within a list item that no list holds is nested within it", () => {
     expect(pasted("<li>aaa<ul><li>cc</li></ul></li>")).toEqual(
       doc(bullets(item(p(text("aaa")), bullets(item(p(text("cc"))))))),

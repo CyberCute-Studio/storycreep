@@ -34,7 +34,12 @@ type Run =
 interface ItemOf {
   level: number;
   ordered: boolean;
-  /** The number of the item, of the first item of a list, or undefined for none. */
+  /**
+   * The number of the item, where the HTML gives it: of the first item of an
+   * ol that the walk reads, the ol's start, and of a paragraph of Word's
+   * list, its number; or undefined, as of a later item of an ol, which
+   * continues its list.
+   */
   start?: number;
   /**
    * Whether the item is one of ProseMirror's HTML that no list element holds,
@@ -62,6 +67,8 @@ interface Context {
   ordered: boolean;
   /** The start of the innermost list, as its element gives it. */
   start?: number;
+  /** The innermost list's element, whose first item that the walk reads has its start. */
+  list?: Element;
   /** Whether white space and line breaks are kept, as in a pre. */
   pre: boolean;
 }
@@ -284,7 +291,9 @@ function wordItemOf(element: Element): ItemOf | undefined {
         /mso-list\s*:\s*ignore/i.test(span.getAttribute("style") ?? ""),
       )
       ?.textContent?.trim() ?? "";
-  const numbered = /^\(?([0-9]+|[a-z]{1,4})[.)]/i.exec(marker);
+  // The item's number is the last of those that the marker holds, as 2 of
+  // 1.2., where the numbers of the items that hold it go before it.
+  const numbered = /^\(?(?:\d+\.)*([0-9]+|[a-z]{1,4})[.)]/i.exec(marker);
   return {
     level: Number(match[1]),
     ordered: numbered !== null,
@@ -310,6 +319,8 @@ class Reader {
    * not.
    */
   private readonly faithful: boolean;
+  /** The list elements of which the walk has read an item. */
+  private readonly begun = new Set<Element>();
 
   constructor(faithful: boolean) {
     this.faithful = faithful;
@@ -384,10 +395,14 @@ class Reader {
     // continue.
     let item: ItemOf | undefined;
     if (name === "li") {
+      const first = ctx.list !== undefined && !this.begun.has(ctx.list);
+      if (ctx.list !== undefined) {
+        this.begun.add(ctx.list);
+      }
       item = {
         level: levelOf(element) ?? Math.max(ctx.lists, 1),
         ordered: ctx.ordered,
-        start: ctx.start,
+        start: ctx.ordered && first ? (ctx.start ?? 1) : undefined,
         loose: this.faithful && ctx.lists === 0,
       };
     } else if (name === "p" || name === "div") {
@@ -441,10 +456,12 @@ class Reader {
         name === "ol" && element.hasAttribute("start")
           ? startOf(element.getAttribute("start"))
           : undefined;
+      inner.list = element;
     } else if (name === "li") {
       // The start of a list is its first item's. An item that no list holds
       // is one of a list too, which the lists within it nest in.
       inner.start = undefined;
+      inner.list = undefined;
       inner.lists = Math.max(ctx.lists, 1);
     }
     return inner;
@@ -519,10 +536,13 @@ type Block =
 /**
  * Returns the blocks of the paragraphs, each list item's in its list, nested
  * by their levels: an item one level deeper than the item before it begins
- * a list within that item, one at the same level of another kind of list,
- * or a loose one at the top level, a list of its own, and one at a level
- * that skips a level is at the next. A paragraph of the editor's own HTML
- * (faithful) keeps its white space, as ProseMirror reads it.
+ * a list within that item, one at the same level of another kind of list, a
+ * loose one at the top level, or one whose number (ItemOf) is not the one
+ * after the list's last item, a list of its own, and one at a level that
+ * skips a level is at the next. So Word Online's lists of one item each,
+ * each ol numbered from where the one before it ends, are one list. A
+ * paragraph of the editor's own HTML (faithful) keeps its white space, as
+ * ProseMirror reads it.
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
@@ -538,10 +558,13 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
       const level = Math.min(para.item.level, open.length + 1);
       const loose = para.item.loose === true && level === 1;
       open.length = Math.min(open.length, level);
+      const at = open[level - 1];
       if (
         open.length === level &&
-        (open[level - 1].ordered !== para.item.ordered ||
-          open[level - 1].loose !== loose)
+        (at.ordered !== para.item.ordered ||
+          at.loose !== loose ||
+          (para.item.start !== undefined &&
+            para.item.start !== at.start + at.items.length))
       ) {
         open.length = level - 1;
       }

@@ -109,6 +109,11 @@ function isObject(v: unknown): v is Json {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/** Reports whether o has the field key, as JSON.stringify writes o: it leaves out a field whose value is undefined, which the server never sees. */
+function has(o: Json, key: string): boolean {
+  return Object.hasOwn(o, key) && o[key] !== undefined;
+}
+
 /** The names of the schema's marks, in alphabetical order, as the canonical form orders them. */
 const MARK_ORDER = ["bold", "code", "italic", "link", "strike"] as const;
 type MarkName = (typeof MARK_ORDER)[number];
@@ -344,7 +349,7 @@ class Parser {
     if (!isObject(v)) {
       throw this.fail("wrong_type", "a node is not an object");
     }
-    if (!Object.hasOwn(v, "type")) {
+    if (!has(v, "type")) {
       throw this.fail("missing_field", "the node has no type");
     }
     const type = v.type;
@@ -365,11 +370,12 @@ class Parser {
     return { o: v, type };
   }
 
-  /** Checks that o has no field but those allowed, naming the first in the order of code points of those that it may not have. */
+  /** Checks that o has no field but those allowed (has), naming the first in the order of code points of those that it may not have. */
   private fields(o: Json, what: string, allowed: readonly string[]) {
     let unknown: string | undefined;
     for (const key of Object.keys(o)) {
       if (
+        has(o, key) &&
         !allowed.includes(key) &&
         (unknown === undefined || compareCodePoints(key, unknown) < 0)
       ) {
@@ -387,7 +393,7 @@ class Parser {
 
   /** Returns the content of node o, which holds a node when required, and may be missing otherwise. It leaves "content" pushed for the caller to pop. */
   private content(o: Json, type: string, required: boolean): unknown[] {
-    if (!Object.hasOwn(o, "content")) {
+    if (!has(o, "content")) {
       if (required) {
         throw this.fail("missing_field", `the ${type} has no content`);
       }
@@ -407,7 +413,7 @@ class Parser {
 
   /** Returns the attributes of node or mark o, or undefined when it has none and they are not required. It leaves "attrs" pushed when it returns an object. */
   private attrs(o: Json, type: string, required: boolean): Json | undefined {
-    if (!Object.hasOwn(o, "attrs")) {
+    if (!has(o, "attrs")) {
       if (required) {
         throw this.fail("missing_field", `the ${type} has no attrs`);
       }
@@ -462,7 +468,7 @@ class Parser {
       const attrs = this.attrs(o, type, false);
       if (attrs !== undefined) {
         this.fields(attrs, "the orderedList's attrs", ["start"]);
-        if (Object.hasOwn(attrs, "start")) {
+        if (has(attrs, "start")) {
           this.push("start");
           start = this.integer(
             attrs.start,
@@ -546,7 +552,7 @@ class Parser {
   }
 
   private text(o: Json): string {
-    if (!Object.hasOwn(o, "text")) {
+    if (!has(o, "text")) {
       throw this.fail("missing_field", "a text has no text");
     }
     this.push("text");
@@ -595,7 +601,7 @@ class Parser {
       "variable",
       "component",
     ]);
-    const named = Object.hasOwn(attrs, "attribute");
+    const named = has(attrs, "attribute");
     let attribute = "";
     if (kind === "variable" && named) {
       this.push("attribute");
@@ -622,7 +628,7 @@ class Parser {
       ]).id;
     }
     let decimals: number | undefined;
-    if (Object.hasOwn(attrs, "decimals")) {
+    if (has(attrs, "decimals")) {
       this.push("decimals");
       decimals = this.integer(
         attrs.decimals,
@@ -643,7 +649,7 @@ class Parser {
     what: string,
     kinds: readonly IdKind[],
   ): { kind: IdKind; id: string } {
-    if (!Object.hasOwn(attrs, key)) {
+    if (!has(attrs, key)) {
       throw this.fail("missing_field", `${what} has no ${key}`);
     }
     this.push(key);
@@ -667,7 +673,7 @@ class Parser {
 
   private marks(o: Json): Marks {
     const m = noMarks();
-    if (!Object.hasOwn(o, "marks")) {
+    if (!has(o, "marks")) {
       return m;
     }
     this.push("marks");
@@ -680,7 +686,7 @@ class Parser {
       if (!isObject(mo)) {
         throw this.fail("wrong_type", "a mark is not an object");
       }
-      if (!Object.hasOwn(mo, "type")) {
+      if (!has(mo, "type")) {
         throw this.fail("missing_field", "the mark has no type");
       }
       const type = mo.type;
@@ -724,7 +730,7 @@ class Parser {
   private link(mo: Json): string {
     const attrs = this.attrs(mo, "link mark", true) as Json;
     this.fields(attrs, "the link's attrs", ["href"]);
-    if (!Object.hasOwn(attrs, "href")) {
+    if (!has(attrs, "href")) {
       throw this.fail("missing_field", "a link has no href");
     }
     this.push("href");
@@ -760,21 +766,14 @@ function codePoints(s: string): number {
   return n;
 }
 
-function isHighSurrogate(c: number): boolean {
+/** Reports whether the UTF-16 code unit c is the first of a pair of surrogates, which a text holds only before the second (isWellFormed). */
+export function isHighSurrogate(c: number): boolean {
   return c >= 0xd800 && c <= 0xdbff;
 }
 
-function isLowSurrogate(c: number): boolean {
+/** Reports whether the UTF-16 code unit c is the second of a pair of surrogates, which a text holds only after the first. */
+export function isLowSurrogate(c: number): boolean {
   return c >= 0xdc00 && c <= 0xdfff;
-}
-
-/** Reports whether the UTF-16 code unit of s at i is a surrogate that is not one of a pair, which a text may not hold (isWellFormed). */
-export function isLoneSurrogate(s: string, i: number): boolean {
-  const c = s.charCodeAt(i);
-  if (isHighSurrogate(c)) {
-    return !isLowSurrogate(s.charCodeAt(i + 1));
-  }
-  return isLowSurrogate(c) && !isHighSurrogate(s.charCodeAt(i - 1));
 }
 
 /**
@@ -839,6 +838,10 @@ function holdsLoneSurrogate(v: unknown): boolean {
       }
     } else if (isObject(x)) {
       for (const [key, value] of Object.entries(x)) {
+        // A field of undefined is none (has).
+        if (value === undefined) {
+          continue;
+        }
         if (!isWellFormed(key)) {
           return true;
         }
@@ -850,18 +853,41 @@ function holdsLoneSurrogate(v: unknown): boolean {
 }
 
 /**
- * Returns a document, a JSON value as JSON.parse reads it, in its canonical
- * form, as the server stores it (schema/rich-text/README.md): no field that
- * holds its default, an inline node's marks in alphabetical order, a
- * paragraph's neighbouring texts with the same marks joined, each ID in its
- * canonical spelling, and every object's fields in alphabetical order, so
- * that stringifyRichText writes what the server writes.
+ * Reports whether json is longer than MAX_BYTES as richTextLength counts it,
+ * which it reads only of JSON of more than a third of MAX_BYTES in UTF-16
+ * code units, since none counts more than 3 bytes.
+ */
+function overMaxBytes(json: string): boolean {
+  return json.length * 3 > MAX_BYTES && richTextLength(json) > MAX_BYTES;
+}
+
+/**
+ * Returns a document, a JSON value as JSON.parse reads it, or as
+ * JSON.stringify writes it, which leaves out a field of undefined, in its
+ * canonical form, as the server stores it (schema/rich-text/README.md): no
+ * field that holds its default, an inline node's marks in alphabetical
+ * order, a paragraph's neighbouring texts with the same marks joined, each
+ * ID in its canonical spelling, and every object's fields in alphabetical
+ * order, so that stringifyRichText writes what the server writes. The
+ * document's JSON, as JSON.stringify writes it, and its canonical form are
+ * each held to MAX_BYTES, as the server holds the JSON that it reads and
+ * the canonical form.
  *
  * @throws {RichTextError} when the server would refuse the document, with
  * the reason and the pointer that the server gives, or, for one with more
  * than one thing wrong, of one of them.
  */
 export function parseRichText(value: unknown): RichTextDoc {
+  // The server reads the length first, whatever else is wrong.
+  const json = JSON.stringify(value);
+  if (json !== undefined && overMaxBytes(json)) {
+    throw new RichTextError(
+      "too_large",
+      "",
+      `the document is longer than ${MAX_BYTES} bytes without the white space between its tokens, with each escape counted as the character that it stands for`,
+      "bytes",
+    );
+  }
   if (holdsLoneSurrogate(value)) {
     throw new RichTextError(
       "invalid_json",
@@ -870,7 +896,7 @@ export function parseRichText(value: unknown): RichTextDoc {
     );
   }
   const doc = new Parser().doc(value);
-  if (richTextLength(stringifyRichText(doc)) > MAX_BYTES) {
+  if (overMaxBytes(stringifyRichText(doc))) {
     throw new RichTextError(
       "too_large",
       "",
@@ -879,6 +905,23 @@ export function parseRichText(value: unknown): RichTextDoc {
     );
   }
   return doc;
+}
+
+/** What tryParseRichText makes of a document: its canonical form, or why the server would refuse it. */
+export type RichTextResult =
+  | { doc: RichTextDoc; error?: undefined }
+  | { doc?: undefined; error: RichTextError };
+
+/** Returns what parseRichText returns of value, or the RichTextError that it throws, as a value. */
+export function tryParseRichText(value: unknown): RichTextResult {
+  try {
+    return { doc: parseRichText(value) };
+  } catch (error) {
+    if (error instanceof RichTextError) {
+      return { error };
+    }
+    throw error;
+  }
 }
 
 /**

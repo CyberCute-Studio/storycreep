@@ -28,11 +28,7 @@ import type {
   NodeTarget,
   RichTextDoc,
 } from "@storycreep/shared/api";
-import {
-  emptyRichText,
-  parseRichText,
-  RichTextError,
-} from "@storycreep/shared/richtext";
+import { emptyRichText, tryParseRichText } from "@storycreep/shared/richtext";
 import {
   compareChildren,
   keyBetween,
@@ -135,17 +131,7 @@ export function idOrNone(id: string | undefined): string | undefined {
 export function canonicalText(
   text: RichTextDoc | undefined,
 ): RichTextDoc | undefined {
-  if (text === undefined) {
-    return emptyRichText();
-  }
-  try {
-    return parseRichText(text);
-  } catch (error) {
-    if (error instanceof RichTextError) {
-      return undefined;
-    }
-    throw error;
-  }
+  return text === undefined ? emptyRichText() : tryParseRichText(text).doc;
 }
 
 /** Returns the text that a payload's text makes, as the server stores it, and whether the document can tell it. */

@@ -6,7 +6,8 @@ export {
   emptyRichText,
   idKindOf,
   isControlCode,
-  isLoneSurrogate,
+  isHighSurrogate,
+  isLowSurrogate,
   MAX_BYTES,
   MAX_CHARS,
   MAX_DECIMALS,
@@ -16,6 +17,8 @@ export {
   parseRichText,
   RichTextError,
   type RichTextReason,
+  type RichTextResult,
   richTextLength,
   stringifyRichText,
+  tryParseRichText,
 } from "./parse";

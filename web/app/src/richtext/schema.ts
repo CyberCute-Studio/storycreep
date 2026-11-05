@@ -46,26 +46,34 @@ export function listsWithin(node: PMNode): number {
 }
 
 /**
- * Reports whether the list item at $pos can move into a list of the item
- * before it, as Tab moves it, with no list that it holds nested deeper than
- * lists nest (MAX_LIST_DEPTH): the lists that hold it, one more, and those
- * that it holds.
+ * Reports whether the list items from $from to $to, those that Tab moves as
+ * ProseMirror's sinkListItem finds them, can move into a list of the item
+ * before them, with no list that one of them holds nested deeper than lists
+ * nest (MAX_LIST_DEPTH): the lists that hold them, one more, and those that
+ * the item that holds the most holds.
  */
-export function sinkFits($pos: ResolvedPos): boolean {
-  for (let depth = $pos.depth; depth > 0; depth--) {
-    const item = $pos.node(depth);
-    if (item.type.name !== "listItem") {
-      continue;
-    }
-    let holding = 0;
-    for (let d = depth - 1; d > 0; d--) {
-      if (isList($pos.node(d))) {
-        holding++;
-      }
-    }
-    return holding + 1 + listsWithin(item) <= MAX_LIST_DEPTH;
+export function sinkFits(
+  $from: ResolvedPos,
+  $to: ResolvedPos = $from,
+): boolean {
+  const range = $from.blockRange(
+    $to,
+    (node) => node.firstChild?.type.name === "listItem",
+  );
+  if (range === null) {
+    return false;
   }
-  return false;
+  let holding = 0;
+  for (let d = range.depth; d > 0; d--) {
+    if (isList($from.node(d))) {
+      holding++;
+    }
+  }
+  let most = 0;
+  for (let i = range.startIndex; i < range.endIndex; i++) {
+    most = Math.max(most, listsWithin(range.parent.child(i)));
+  }
+  return holding + 1 + most <= MAX_LIST_DEPTH;
 }
 
 /**

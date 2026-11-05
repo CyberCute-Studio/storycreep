@@ -7,7 +7,8 @@
 
 import {
   isControlCode,
-  isLoneSurrogate,
+  isHighSurrogate,
+  isLowSurrogate,
   MAX_LIST_DEPTH,
 } from "@storycreep/shared/richtext";
 import { Fragment, type Mark, type Node as PMNode } from "@tiptap/pm/model";
@@ -89,41 +90,93 @@ function isLineBreak(c: number): boolean {
   );
 }
 
+/** Returns the UTF-16 code unit at i of the text of node, counted from its end for an i below 0, or NaN for none, as of a node that is no text. */
+function unitOf(node: PMNode | null | undefined, i: number): number {
+  const text = node?.isText ? (node.text ?? "") : "";
+  return text.charCodeAt(i < 0 ? text.length + i : i);
+}
+
 /**
  * Takes out of each text the characters that a text may not hold
  * (isControlCode), as a U+200F RIGHT-TO-LEFT MARK that a keyboard of Hebrew
  * types, and a surrogate that is not one of a pair, and puts a hardBreak in
  * place of a line break, a carriage return and a line feed together being
- * one; a tab, which is white space, stays. It reads the texts between from
- * and to, where the document changed, since the rest holds none of them.
+ * one; a tab, which is white space, stays. A pair of surrogates, or a
+ * carriage return and a line feed, that a mark's boundary splits between
+ * two texts is one, which the first text takes, with its marks. It reads the
+ * texts between from and to, where the document changed, since the rest
+ * holds none of them.
  */
 function cleanTexts(tr: Transaction, from: number, to: number) {
-  const edits: { from: number; to: number; marks?: readonly Mark[] }[] = [];
-  tr.doc.nodesBetween(from, to, (node, pos) => {
+  const edits: {
+    from: number;
+    to: number;
+    /** What takes the place of what is between from and to: a hardBreak, the pair of surrogates of a text, or nothing. */
+    with?: "break" | string;
+    marks?: readonly Mark[];
+  }[] = [];
+  tr.doc.nodesBetween(from, to, (node, pos, parent, index) => {
     const text = node.text;
     if (!node.isText || text === undefined) {
       return;
     }
+    // The last code unit of the text before, and the first of the text
+    // after, which are of the same characters where a mark's boundary
+    // splits one.
+    const before = unitOf(parent?.maybeChild(index - 1), -1);
+    const after = unitOf(parent?.maybeChild(index + 1), 0);
+    const unit = (i: number) =>
+      i < 0 ? before : i < text.length ? text.charCodeAt(i) : after;
     for (let i = 0; i < text.length; i++) {
       const c = text.charCodeAt(i);
+      if (
+        i === 0 &&
+        ((c === 0x0a && before === 0x0d) ||
+          (isLowSurrogate(c) && isHighSurrogate(before)))
+      ) {
+        // The text before takes it.
+        continue;
+      }
       if (isLineBreak(c)) {
-        const length = c === 0x0d && text.charCodeAt(i + 1) === 0x0a ? 2 : 1;
-        edits.push({ from: pos + i, to: pos + i + length, marks: node.marks });
+        const length = c === 0x0d && unit(i + 1) === 0x0a ? 2 : 1;
+        edits.push({
+          from: pos + i,
+          to: pos + i + length,
+          with: "break",
+          marks: node.marks,
+        });
         i += length - 1;
-      } else if (isControlCode(c) || isLoneSurrogate(text, i)) {
+      } else if (isHighSurrogate(c) && isLowSurrogate(unit(i + 1))) {
+        if (i === text.length - 1) {
+          edits.push({
+            from: pos + i,
+            to: pos + i + 2,
+            with: String.fromCharCode(c, after),
+            marks: node.marks,
+          });
+        }
+        i++;
+      } else if (
+        isControlCode(c) ||
+        // A surrogate that no pair took above is lone.
+        isHighSurrogate(c) ||
+        isLowSurrogate(c)
+      ) {
         edits.push({ from: pos + i, to: pos + i + 1 });
       }
     }
   });
-  const hardBreak = tr.doc.type.schema.nodes.hardBreak;
+  const schema = tr.doc.type.schema;
   for (const edit of edits.reverse()) {
-    if (edit.marks === undefined) {
+    if (edit.with === undefined) {
       tr.delete(edit.from, edit.to);
     } else {
       tr.replaceWith(
         edit.from,
         edit.to,
-        hardBreak.create(null, null, edit.marks),
+        edit.with === "break"
+          ? schema.nodes.hardBreak.create(null, null, edit.marks)
+          : schema.text(edit.with, edit.marks),
       );
     }
   }

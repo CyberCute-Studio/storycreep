@@ -1,8 +1,10 @@
 // The editor's document as the server stores it, and back (PRD FR-TEXT-01,
 // schema/rich-text/README.md).
 
-import type { RichTextDoc } from "@storycreep/shared/api";
-import { parseRichText, RichTextError } from "@storycreep/shared/richtext";
+import {
+  type RichTextResult,
+  tryParseRichText,
+} from "@storycreep/shared/richtext";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
 
 type Json = Record<string, unknown>;
@@ -69,18 +71,9 @@ function jsonOf(node: PMNode): Json {
 }
 
 /** What the editor holds: its document as the server stores it, or why the server would refuse it. */
-export type RichTextValue =
-  | { doc: RichTextDoc; error?: undefined }
-  | { doc?: undefined; error: RichTextError };
+export type RichTextValue = RichTextResult;
 
 /** Returns the editor's document in its canonical form, as the server stores it, or why the server would refuse it, as a document that is too large. */
 export function storedOf(doc: PMNode): RichTextValue {
-  try {
-    return { doc: parseRichText(jsonOf(doc)) };
-  } catch (error) {
-    if (error instanceof RichTextError) {
-      return { error };
-    }
-    throw error;
-  }
+  return tryParseRichText(jsonOf(doc));
 }

@@ -240,7 +240,10 @@ export function relabel(editor: Editor) {
  * editor puts the caret in it rather than following it. A URL typed or
  * pasted is linked where a link may lead to it, as the link's field takes
  * it (typedHref), as example.com, which linkify links to https://example.com,
- * and an email address, which it links to a mailto URL.
+ * and an email address, which it links to a mailto URL. setLink and
+ * toggleLink take a URL as the link's field does too, and set it as a link
+ * stores it, so that a link that they set is not taken off again by the
+ * normalizer, and refuse one that no link may lead to.
  */
 const StoredLink = Link.extend({
   addAttributes() {
@@ -248,6 +251,33 @@ const StoredLink = Link.extend({
       href: {
         default: null,
         parseHTML: (element) => element.getAttribute("href"),
+      },
+    };
+  },
+
+  addCommands() {
+    const parent = this.parent?.() ?? {};
+    return {
+      ...parent,
+      setLink: (attributes) => (props) => {
+        const href = typedHref(attributes.href);
+        if (href === undefined || parent.setLink === undefined) {
+          return false;
+        }
+        return parent.setLink({ ...attributes, href })(props);
+      },
+      toggleLink: (attributes) => (props) => {
+        if (parent.toggleLink === undefined) {
+          return false;
+        }
+        if (attributes === undefined) {
+          return parent.toggleLink()(props);
+        }
+        const href = typedHref(attributes.href);
+        return (
+          href !== undefined &&
+          parent.toggleLink({ ...attributes, href })(props)
+        );
       },
     };
   },
@@ -275,17 +305,20 @@ const StoredOrderedList = OrderedList.extend({
 });
 
 /**
- * A list's item, which Tab moves into a list of the item before it, as far
- * as lists nest (MAX_LIST_DEPTH), and otherwise leaves to move the focus on,
- * so that the keyboard leaves the editor from any item.
+ * A list's item, which Tab moves, with the other items of the selection,
+ * into a list of the item before them, as far as lists nest
+ * (MAX_LIST_DEPTH), and otherwise leaves to move the focus on, so that the
+ * keyboard leaves the editor from any item.
  */
 const NestingListItem = ListItem.extend({
   addKeyboardShortcuts() {
     return {
       Enter: () => this.editor.commands.splitListItem(this.name),
       Tab: () =>
-        sinkFits(this.editor.state.selection.$from) &&
-        this.editor.commands.sinkListItem(this.name),
+        sinkFits(
+          this.editor.state.selection.$from,
+          this.editor.state.selection.$to,
+        ) && this.editor.commands.sinkListItem(this.name),
       "Shift-Tab": () => this.editor.commands.liftListItem(this.name),
     };
   },
