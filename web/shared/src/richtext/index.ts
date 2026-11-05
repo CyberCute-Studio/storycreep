@@ -4,7 +4,9 @@
 export {
   checkHref,
   emptyRichText,
+  idKindOf,
   isControlCode,
+  isLoneSurrogate,
   MAX_BYTES,
   MAX_CHARS,
   MAX_DECIMALS,

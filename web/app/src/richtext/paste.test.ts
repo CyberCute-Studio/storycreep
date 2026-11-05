@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RichTextDoc } from "@storycreep/shared/api";
 import { parseRichText } from "@storycreep/shared/richtext";
-import { TextSelection } from "@tiptap/pm/state";
+import type { Node as PMNode } from "@tiptap/pm/model";
+import {
+  AllSelection,
+  NodeSelection,
+  type Selection,
+  TextSelection,
+} from "@tiptap/pm/state";
 import { describe, expect, test } from "vitest";
 import { testEditor } from "../test/editor";
 import { storedOf } from "./convert";
@@ -350,25 +356,45 @@ if (tide) {}</pre>
   });
 
   describe("what the editor copies", () => {
-    /** Returns what copying from to to of content, as the editor writes it to the clipboard, and pasting it at at makes. */
-    function copiedAndPasted(
+    /** Returns the HTML that the editor writes to the clipboard of a copy of what select selects of content, as its copy writes it, of the selection's content. */
+    function copied(
       content: object,
-      from: number,
-      to: number,
+      select: (doc: PMNode) => Selection,
+    ): string {
+      const source = testEditor(content as RichTextDoc);
+      return source.view.serializeForClipboard(
+        select(source.state.doc).content(),
+      ).dom.innerHTML;
+    }
+
+    /** Returns what pasting html at at of content makes. */
+    function pastedAt(
+      html: string,
+      content: object,
       at: number,
     ): RichTextDoc | undefined {
-      const source = testEditor(content as RichTextDoc);
-      const { dom } = source.view.serializeForClipboard(
-        source.state.doc.slice(from, to),
-      );
       const target = testEditor(content as RichTextDoc);
       target.view.dispatch(
         target.state.tr.setSelection(
           TextSelection.create(target.state.doc, at),
         ),
       );
-      target.view.pasteHTML(dom.innerHTML);
+      target.view.pasteHTML(html);
       return storedOf(target.state.doc).doc;
+    }
+
+    /** Returns what copying from to to of content, and pasting it at at, makes. */
+    function copiedAndPasted(
+      content: object,
+      from: number,
+      to: number,
+      at: number,
+    ): RichTextDoc | undefined {
+      return pastedAt(
+        copied(content, (d) => TextSelection.create(d, from, to)),
+        content,
+        at,
+      );
     }
 
     test("is pasted within a paragraph where it was part of one, though it starts with a mark", () => {
@@ -384,6 +410,25 @@ if (tide) {}</pre>
         doc(
           p(text("bold", "bold"), text(" text")),
           p(text("Hello "), text("bold", "bold"), text(" teworld")),
+        ),
+      );
+    });
+
+    test("a mention that was selected as a whole is pasted within the paragraph", () => {
+      const mention = {
+        attrs: { id: "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BVD" },
+        type: "mention",
+      };
+      const content = doc(
+        p(text("Ask "), mention, text(" now")),
+        p(text("Hello world")),
+      );
+      // The mention, at 5, pasted after "Hello".
+      const html = copied(content, (d) => NodeSelection.create(d, 5));
+      expect(pastedAt(html, content, 17)).toEqual(
+        doc(
+          p(text("Ask "), mention, text(" now")),
+          p(text("Hello"), mention, text(" world")),
         ),
       );
     });
@@ -408,9 +453,45 @@ if (tide) {}</pre>
       );
     });
 
+    test("keeps the lists within a list item that it was cut from within, and their kind and numbering", () => {
+      // From within "aaaa" to within "cccc", the item of a list within it,
+      // pasted at the end of "zzzz".
+      const nested = doc(
+        bullets(
+          item(p(text("aaaa")), bullets(item(p(text("cccc"))))),
+          item(p(text("zzzz"))),
+        ),
+      );
+      expect(copiedAndPasted(nested, 4, 13, 25)).toEqual(
+        doc(
+          bullets(
+            item(p(text("aaaa")), bullets(item(p(text("cccc"))))),
+            item(p(text("zzzzaaa")), bullets(item(p(text("cc"))))),
+          ),
+        ),
+      );
+      // The same of a list numbered from 3, pasted at the start of "XXYY".
+      const numbered = doc(
+        numbers(3, item(p(text("aaaa")), numbers(1, item(p(text("cccc")))))),
+        p(text("XXYY")),
+      );
+      expect(copiedAndPasted(numbered, 4, 13, 21)).toEqual(
+        doc(
+          numbers(3, item(p(text("aaaa")), numbers(1, item(p(text("cccc")))))),
+          numbers(3, item(p(text("aaa")), numbers(1, item(p(text("ccXXYY")))))),
+        ),
+      );
+    });
+
     test("keeps its empty paragraphs and the white space at a paragraph's end", () => {
       const content = doc(p(text("a  ")), p(), p(text("b")));
-      expect(copiedAndPasted(content, 0, 10, 9)).toEqual(
+      expect(
+        pastedAt(
+          copied(content, (d) => new AllSelection(d)),
+          content,
+          9,
+        ),
+      ).toEqual(
         doc(
           p(text("a  ")),
           p(),
@@ -421,6 +502,25 @@ if (tide) {}</pre>
         ),
       );
     });
+
+    test("another editor's slice that begins with what the cleaning leaves out, as an image, begins with what follows it", () => {
+      // The paragraph is closed at its start, after the image, and so is a
+      // paragraph of its own; it is open at its end, and so joins the rest
+      // of the paragraph that it is pasted into.
+      expect(
+        pastedAt(
+          '<img data-pm-slice="0 1 []" src="x"><p>text</p>',
+          doc(p(text("Hello world"))),
+          7,
+        ),
+      ).toEqual(doc(p(text("Hello ")), p(text("textworld"))));
+    });
+  });
+
+  test("a list within a list item that no list holds is nested within it", () => {
+    expect(pasted("<li>aaa<ul><li>cc</li></ul></li>")).toEqual(
+      doc(bullets(item(p(text("aaa")), bullets(item(p(text("cc"))))))),
+    );
   });
 
   test("plain text loses the characters that a text may not hold, and each line is a paragraph", () => {

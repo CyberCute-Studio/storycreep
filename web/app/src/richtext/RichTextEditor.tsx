@@ -62,7 +62,12 @@ export interface RichTextEditorProps {
   editable?: boolean;
   /** What the empty editor shows. */
   placeholder?: string;
-  /** What the text's mentions and value references show of what they refer to. */
+  /**
+   * What the text's mentions and value references show of what they refer
+   * to. The editor shows them again, walking the whole text, whenever it is
+   * another object, so a page keeps the same one until the names change, as
+   * useMemo keeps it.
+   */
   names?: RichTextNames;
 }
 
@@ -384,6 +389,10 @@ function LinkDialog({
   const [invalid, setInvalid] = useState(false);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // The dialog's portal puts this form outside the page's, but React
+    // passes its submission on to the page's form that holds the editor,
+    // which saving a link does not submit.
+    event.stopPropagation();
     const typed = String(new FormData(event.currentTarget).get("href"));
     const href = typedHref(typed);
     if (href === undefined) {

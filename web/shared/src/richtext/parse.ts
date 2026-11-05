@@ -298,6 +298,19 @@ function wireInlines(inlines: readonly Inline[]): RichTextInline[] {
   return out;
 }
 
+/**
+ * Returns the kind of entity whose public ID id is, in either case, or
+ * undefined for what is no ID: a mention's, a value reference's, and its
+ * attribute's ID name an entity of the kinds that they may.
+ */
+export function idKindOf(id: string): IdKind | undefined {
+  try {
+    return decodeAnyId(id).kind;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reads a document from a JSON value, keeping the pointer of the value that it reads for an error to name. */
 class Parser {
   /** The reference tokens of the pointer to the value being read. Reading stops at the first error, which names them. */
@@ -638,12 +651,7 @@ class Parser {
     if (typeof s !== "string") {
       throw this.fail("wrong_type", `${what}'s ${key} is not a string`);
     }
-    let kind: IdKind | undefined;
-    try {
-      kind = decodeAnyId(s).kind;
-    } catch {
-      kind = undefined;
-    }
+    const kind = idKindOf(s);
     if (kind === undefined || !kinds.includes(kind)) {
       const names = kinds.map((k) =>
         article(k === "attribute_def" ? "attribute definition" : k),
@@ -754,6 +762,19 @@ function codePoints(s: string): number {
 
 function isHighSurrogate(c: number): boolean {
   return c >= 0xd800 && c <= 0xdbff;
+}
+
+function isLowSurrogate(c: number): boolean {
+  return c >= 0xdc00 && c <= 0xdfff;
+}
+
+/** Reports whether the UTF-16 code unit of s at i is a surrogate that is not one of a pair, which a text may not hold (isWellFormed). */
+export function isLoneSurrogate(s: string, i: number): boolean {
+  const c = s.charCodeAt(i);
+  if (isHighSurrogate(c)) {
+    return !isLowSurrogate(s.charCodeAt(i + 1));
+  }
+  return isLowSurrogate(c) && !isHighSurrogate(s.charCodeAt(i - 1));
 }
 
 /**

@@ -115,6 +115,27 @@ describe("the rich-text editor", () => {
     await waitFor(() => expect(document.activeElement).toBe(textbox));
   });
 
+  test("saving a link submits no form of the page that holds the editor", async () => {
+    const onSubmit = vi.fn((event: { preventDefault: () => void }) => {
+      event.preventDefault();
+    });
+    render(
+      <I18nextProvider i18n={createAppI18n(["en"], document.documentElement)}>
+        <form onSubmit={onSubmit}>
+          <RichTextEditor label="Body" defaultValue={paragraph("harbour")} />
+        </form>
+      </I18nextProvider>,
+    );
+    await selectAll(screen.getByRole("textbox", { name: "Body" }));
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "Address" }),
+      "example.com{Enter}",
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   test("says that a text of more than 100,000 characters is too long to save, and gives the page why", async () => {
     const { textbox, last } = renderEditor({
       defaultValue: paragraph("a".repeat(MAX_CHARS)),

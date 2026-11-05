@@ -2,20 +2,18 @@
 // schema/rich-text/README.md, and of the elements of its mentions and value
 // references.
 
-import { decodeAnyId, type IdKind } from "@storycreep/shared/ids";
-import { MAX_LIST_DEPTH, MAX_START } from "@storycreep/shared/richtext";
+import type { IdKind } from "@storycreep/shared/ids";
+import {
+  idKindOf,
+  MAX_LIST_DEPTH,
+  MAX_START,
+} from "@storycreep/shared/richtext";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 
 /** Reports whether id is the public ID of an entity of one of the kinds. */
 function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {
-  if (id === null) {
-    return false;
-  }
-  try {
-    return kinds.includes(decodeAnyId(id).kind);
-  } catch {
-    return false;
-  }
+  const kind = id === null ? undefined : idKindOf(id);
+  return kind !== undefined && kinds.includes(kind);
 }
 
 /** Reports whether the element of a mention names a component, as the editor's mention does. */

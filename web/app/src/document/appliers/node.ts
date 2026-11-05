@@ -28,7 +28,11 @@ import type {
   NodeTarget,
   RichTextDoc,
 } from "@storycreep/shared/api";
-import { emptyRichText, parseRichText } from "@storycreep/shared/richtext";
+import {
+  emptyRichText,
+  parseRichText,
+  RichTextError,
+} from "@storycreep/shared/richtext";
 import {
   compareChildren,
   keyBetween,
@@ -136,8 +140,11 @@ export function canonicalText(
   }
   try {
     return parseRichText(text);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof RichTextError) {
+      return undefined;
+    }
+    throw error;
   }
 }
 

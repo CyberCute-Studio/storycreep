@@ -36,6 +36,12 @@ interface ItemOf {
   ordered: boolean;
   /** The number of the item, of the first item of a list, or undefined for none. */
   start?: number;
+  /**
+   * Whether the item is one of ProseMirror's HTML that no list element holds,
+   * as of a copy within one list item, whose marker names the list, which
+   * the cleaned HTML leaves it out of too.
+   */
+  loose?: boolean;
 }
 
 /** A paragraph of the HTML: one of the document, a list item's first, or one that continues the list item at a level. */
@@ -230,6 +236,24 @@ function hidden(element: Element): boolean {
   );
 }
 
+/**
+ * Reports whether the cleaning leaves an element out, with what it holds: an
+ * element that no text shows or that holds none of the document's
+ * (SKIPPED), a hidden one, the bullet or number of a list item that Word
+ * writes out, in a span of mso-list:Ignore, which the list shows, and the
+ * line break that a browser adds where a selection that it copied ends at
+ * the start of a line, which marks where the selection ended.
+ */
+function dropped(element: Element, name: string): boolean {
+  return (
+    SKIPPED.has(name) ||
+    hidden(element) ||
+    (name === "span" &&
+      /mso-list\s*:\s*ignore/i.test(element.getAttribute("style") ?? "")) ||
+    (name === "br" && element.classList.contains("Apple-interchange-newline"))
+  );
+}
+
 /** Returns the level of a list item that its element gives, as Google Docs's aria-level and Word's data-aria-level do, or undefined for none. */
 function levelOf(element: Element): number | undefined {
   const level = Number(
@@ -323,23 +347,11 @@ class Reader {
     }
     const element = node as Element;
     const name = element.localName.toLowerCase();
-    if (SKIPPED.has(name) || hidden(element)) {
-      return;
-    }
-    // Word's bullet or number of a list item, which the list shows.
-    if (
-      name === "span" &&
-      /mso-list\s*:\s*ignore/i.test(element.getAttribute("style") ?? "")
-    ) {
+    if (dropped(element, name)) {
       return;
     }
     if (name === "br") {
-      // The line break that a browser adds where a selection that it copied
-      // ends at the start of a line marks where the selection ended, and is
-      // none of the text.
-      if (!element.classList.contains("Apple-interchange-newline")) {
-        this.paragraph(ctx.pre).runs.push({ kind: "break" });
-      }
+      this.paragraph(ctx.pre).runs.push({ kind: "break" });
       return;
     }
     const chip = chipOf(element);
@@ -376,6 +388,7 @@ class Reader {
         level: levelOf(element) ?? Math.max(ctx.lists, 1),
         ordered: ctx.ordered,
         start: ctx.start,
+        loose: this.faithful && ctx.lists === 0,
       };
     } else if (name === "p" || name === "div") {
       item = wordItemOf(element);
@@ -429,8 +442,10 @@ class Reader {
           ? startOf(element.getAttribute("start"))
           : undefined;
     } else if (name === "li") {
-      // The start of a list is its first item's.
+      // The start of a list is its first item's. An item that no list holds
+      // is one of a list too, which the lists within it nest in.
       inner.start = undefined;
+      inner.lists = Math.max(ctx.lists, 1);
     }
     return inner;
   }
@@ -492,6 +507,8 @@ function chipOf(element: Element): [string, string][] | undefined {
 interface List {
   ordered: boolean;
   start: number;
+  /** Whether the list's items are loose ones (ItemOf), which it writes without the list's element. */
+  loose: boolean;
   items: Block[][];
 }
 
@@ -502,10 +519,10 @@ type Block =
 /**
  * Returns the blocks of the paragraphs, each list item's in its list, nested
  * by their levels: an item one level deeper than the item before it begins
- * a list within that item, one at the same level of another kind of list a
- * list of its own, and one at a level that skips a level is at the next. A
- * paragraph of the editor's own HTML (faithful) keeps its white space, as
- * ProseMirror reads it.
+ * a list within that item, one at the same level of another kind of list,
+ * or a loose one at the top level, a list of its own, and one at a level
+ * that skips a level is at the next. A paragraph of the editor's own HTML
+ * (faithful) keeps its white space, as ProseMirror reads it.
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
@@ -519,10 +536,12 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
     };
     if (para.item !== undefined) {
       const level = Math.min(para.item.level, open.length + 1);
+      const loose = para.item.loose === true && level === 1;
       open.length = Math.min(open.length, level);
       if (
         open.length === level &&
-        open[level - 1].ordered !== para.item.ordered
+        (open[level - 1].ordered !== para.item.ordered ||
+          open[level - 1].loose !== loose)
       ) {
         open.length = level - 1;
       }
@@ -530,6 +549,7 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
         const list: List = {
           ordered: para.item.ordered,
           start: para.item.start ?? 1,
+          loose,
           items: [],
         };
         (open.length === 0 ? top : lastItem(open[open.length - 1])).push({
@@ -623,15 +643,22 @@ function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
       parent.append(p);
       continue;
     }
+    const items = block.list.items.map((item) => {
+      const li = doc.createElement("li");
+      writeBlocks(doc, li, item);
+      return li;
+    });
+    if (block.list.loose) {
+      // Loose items are written as they were, so that ProseMirror puts them
+      // in the list that the marker of the slice names.
+      parent.append(...items);
+      continue;
+    }
     const list = doc.createElement(block.list.ordered ? "ol" : "ul");
     if (block.list.ordered && block.list.start !== 1) {
       list.setAttribute("start", String(block.list.start));
     }
-    for (const item of block.list.items) {
-      const li = doc.createElement("li");
-      writeBlocks(doc, li, item);
-      list.append(li);
-    }
+    list.append(...items);
     parent.append(list);
   }
 }
@@ -643,9 +670,11 @@ function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
  * or undefined for HTML without one, or with one that no editor of this
  * schema writes: one that elements wrap that are none of its nodes, as a
  * table's around its rows (-N), whose cells the cleaning makes paragraphs
- * of. The cleaning puts a slice of inline content, as of part of a
- * paragraph, in a paragraph, and one of a list's items in a list, and so
- * the slice is open one deeper at both ends.
+ * of. The cleaning puts a slice of inline content, as of a selected
+ * mention, in a paragraph, and so the slice is open one deeper at both ends;
+ * one whose first element the cleaning leaves out, as another editor's
+ * image, begins with what follows it, as ProseMirror reads it too; and
+ * loose list items stay loose (ItemOf).
  */
 function sliceOf(source: Document): string | undefined {
   const element = source.querySelector("[data-pm-slice]");
@@ -658,9 +687,23 @@ function sliceOf(source: Document): string | undefined {
   if (element === null || match === null || match[3] !== undefined) {
     return undefined;
   }
-  const name = element.localName.toLowerCase();
-  const wrapped = name === "li" || !BLOCKS.has(name) ? 1 : 0;
+  const wrapped = wrapsInline(element) ? 1 : 0;
   return `${Number(match[1]) + wrapped} ${Number(match[2]) + wrapped} ${match[4]}`;
+}
+
+/** Reports whether the cleaning puts what element holds in a paragraph of its own making: the element is kept, and neither it nor what holds it is a block. */
+function wrapsInline(element: Element): boolean {
+  for (
+    let e: Element | null = element;
+    e !== null && e !== element.ownerDocument.body;
+    e = e.parentElement
+  ) {
+    const name = e.localName.toLowerCase();
+    if (BLOCKS.has(name) || dropped(e, name)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -671,8 +714,9 @@ function sliceOf(source: Document): string | undefined {
  * window, so that none of it runs, loads, or applies a style; and the
  * marker of a slice that ProseMirror wrote, data-pm-slice, is kept on the
  * first block, as it holds of the cleaned HTML (sliceOf), with every block
- * of text a paragraph and its white space kept, so that what is copied from
- * the editor is pasted as it was cut from its blocks.
+ * of text a paragraph and its white space kept, and list items that no list
+ * element holds kept so, so that what is copied from the editor is pasted
+ * as it was cut from its blocks.
  */
 export function cleanPastedHTML(html: string): string {
   const source = new DOMParser().parseFromString(html, "text/html");

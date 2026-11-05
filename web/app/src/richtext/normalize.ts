@@ -5,7 +5,11 @@
 // does loses its link, an ordered list's start comes within its range, and
 // a list nested deeper than lists nest has its items moved up a level.
 
-import { isControlCode, MAX_LIST_DEPTH } from "@storycreep/shared/richtext";
+import {
+  isControlCode,
+  isLoneSurrogate,
+  MAX_LIST_DEPTH,
+} from "@storycreep/shared/richtext";
 import { Fragment, type Mark, type Node as PMNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
 import { storedHref } from "./link";
@@ -83,20 +87,6 @@ function isLineBreak(c: number): boolean {
     c === 0x2028 ||
     c === 0x2029
   );
-}
-
-/** Reports whether the code unit of s at i is a surrogate that is not one of a pair. */
-function isLoneSurrogate(s: string, i: number): boolean {
-  const c = s.charCodeAt(i);
-  if (c >= 0xd800 && c <= 0xdbff) {
-    const next = s.charCodeAt(i + 1);
-    return !(next >= 0xdc00 && next <= 0xdfff);
-  }
-  if (c >= 0xdc00 && c <= 0xdfff) {
-    const before = s.charCodeAt(i - 1);
-    return !(before >= 0xd800 && before <= 0xdbff);
-  }
-  return false;
 }
 
 /**
