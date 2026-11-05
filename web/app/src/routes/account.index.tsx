@@ -16,7 +16,7 @@ import {
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
 import { VerifyNotice } from "../auth/VerifyNotice";
-import { applyLocale, supportedLocales } from "../i18n";
+import { applyLocale, languageName, supportedLocales } from "../i18n";
 import { Button } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
 import { Alert, Page, Status } from "../ui/Page";
@@ -57,17 +57,6 @@ function Profile() {
       <Password />
     </Page>
   );
-}
-
-/** Returns the name of locale in its own language, as English for en. */
-function languageName(locale: string): string {
-  try {
-    return (
-      new Intl.DisplayNames([locale], { type: "language" }).of(locale) ?? locale
-    );
-  } catch {
-    return locale;
-  }
 }
 
 /**

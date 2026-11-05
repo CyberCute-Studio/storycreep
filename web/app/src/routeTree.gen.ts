@@ -21,6 +21,18 @@ import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as AccountSessionsRouteImport } from './routes/account.sessions'
 import { Route as AccountTokensRouteImport } from './routes/account.tokens'
+import { Route as ProjectsIndexRouteImport } from './routes/projects.index'
+import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
+import { Route as WorkspacesWorkspaceIdRouteImport } from './routes/workspaces.$workspaceId'
+import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects.$projectId.index'
+import { Route as ProjectsProjectIdAccessRouteImport } from './routes/projects.$projectId.access'
+import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects.$projectId.settings'
+import { Route as ProjectsProjectIdTrashRouteImport } from './routes/projects.$projectId.trash'
+import { Route as WorkspacesWorkspaceIdIndexRouteImport } from './routes/workspaces.$workspaceId.index'
+import { Route as WorkspacesWorkspaceIdMembersRouteImport } from './routes/workspaces.$workspaceId.members'
+import { Route as WorkspacesWorkspaceIdSettingsRouteImport } from './routes/workspaces.$workspaceId.settings'
+import { Route as WorkspacesWorkspaceIdTrashRouteImport } from './routes/workspaces.$workspaceId.trash'
+import { Route as ProjectsProjectIdBoardsBoardIdRouteImport } from './routes/projects.$projectId.boards.$boardId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -82,6 +94,72 @@ const AccountTokensRoute = AccountTokensRouteImport.update({
   path: '/tokens',
   getParentRoute: () => AccountRoute,
 } as any)
+const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
+  id: '/projects/',
+  path: '/projects/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspacesWorkspaceIdRoute = WorkspacesWorkspaceIdRouteImport.update({
+  id: '/workspaces/$workspaceId',
+  path: '/workspaces/$workspaceId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ProjectsProjectIdRoute,
+} as any)
+const ProjectsProjectIdAccessRoute = ProjectsProjectIdAccessRouteImport.update({
+  id: '/access',
+  path: '/access',
+  getParentRoute: () => ProjectsProjectIdRoute,
+} as any)
+const ProjectsProjectIdSettingsRoute =
+  ProjectsProjectIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
+const ProjectsProjectIdTrashRoute = ProjectsProjectIdTrashRouteImport.update({
+  id: '/trash',
+  path: '/trash',
+  getParentRoute: () => ProjectsProjectIdRoute,
+} as any)
+const WorkspacesWorkspaceIdIndexRoute =
+  WorkspacesWorkspaceIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => WorkspacesWorkspaceIdRoute,
+  } as any)
+const WorkspacesWorkspaceIdMembersRoute =
+  WorkspacesWorkspaceIdMembersRouteImport.update({
+    id: '/members',
+    path: '/members',
+    getParentRoute: () => WorkspacesWorkspaceIdRoute,
+  } as any)
+const WorkspacesWorkspaceIdSettingsRoute =
+  WorkspacesWorkspaceIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => WorkspacesWorkspaceIdRoute,
+  } as any)
+const WorkspacesWorkspaceIdTrashRoute =
+  WorkspacesWorkspaceIdTrashRouteImport.update({
+    id: '/trash',
+    path: '/trash',
+    getParentRoute: () => WorkspacesWorkspaceIdRoute,
+  } as any)
+const ProjectsProjectIdBoardsBoardIdRoute =
+  ProjectsProjectIdBoardsBoardIdRouteImport.update({
+    id: '/boards/$boardId',
+    path: '/boards/$boardId',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -95,7 +173,19 @@ export interface FileRoutesByFullPath {
   '/verify-email': typeof VerifyEmailRoute
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRouteWithChildren
+  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRouteWithChildren
   '/account/': typeof AccountIndexRoute
+  '/projects/': typeof ProjectsIndexRoute
+  '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
+  '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
+  '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
+  '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -109,6 +199,16 @@ export interface FileRoutesByTo {
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
   '/account': typeof AccountIndexRoute
+  '/projects': typeof ProjectsIndexRoute
+  '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
+  '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
+  '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
+  '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdIndexRoute
+  '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,7 +223,19 @@ export interface FileRoutesById {
   '/verify-email': typeof VerifyEmailRoute
   '/account/sessions': typeof AccountSessionsRoute
   '/account/tokens': typeof AccountTokensRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRouteWithChildren
+  '/workspaces/$workspaceId': typeof WorkspacesWorkspaceIdRouteWithChildren
   '/account/': typeof AccountIndexRoute
+  '/projects/': typeof ProjectsIndexRoute
+  '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
+  '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
+  '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/workspaces/$workspaceId/': typeof WorkspacesWorkspaceIdIndexRoute
+  '/projects/$projectId/boards/$boardId': typeof ProjectsProjectIdBoardsBoardIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,7 +251,19 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/account/sessions'
     | '/account/tokens'
+    | '/projects/$projectId'
+    | '/workspaces/$workspaceId'
     | '/account/'
+    | '/projects/'
+    | '/projects/$projectId/access'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/trash'
+    | '/workspaces/$workspaceId/members'
+    | '/workspaces/$workspaceId/settings'
+    | '/workspaces/$workspaceId/trash'
+    | '/projects/$projectId/'
+    | '/workspaces/$workspaceId/'
+    | '/projects/$projectId/boards/$boardId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -153,6 +277,16 @@ export interface FileRouteTypes {
     | '/account/sessions'
     | '/account/tokens'
     | '/account'
+    | '/projects'
+    | '/projects/$projectId/access'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/trash'
+    | '/workspaces/$workspaceId/members'
+    | '/workspaces/$workspaceId/settings'
+    | '/workspaces/$workspaceId/trash'
+    | '/projects/$projectId'
+    | '/workspaces/$workspaceId'
+    | '/projects/$projectId/boards/$boardId'
   id:
     | '__root__'
     | '/'
@@ -166,7 +300,19 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/account/sessions'
     | '/account/tokens'
+    | '/projects/$projectId'
+    | '/workspaces/$workspaceId'
     | '/account/'
+    | '/projects/'
+    | '/projects/$projectId/access'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/trash'
+    | '/workspaces/$workspaceId/members'
+    | '/workspaces/$workspaceId/settings'
+    | '/workspaces/$workspaceId/trash'
+    | '/projects/$projectId/'
+    | '/workspaces/$workspaceId/'
+    | '/projects/$projectId/boards/$boardId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -179,6 +325,9 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   SignupRoute: typeof SignupRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
+  ProjectsProjectIdRoute: typeof ProjectsProjectIdRouteWithChildren
+  WorkspacesWorkspaceIdRoute: typeof WorkspacesWorkspaceIdRouteWithChildren
+  ProjectsIndexRoute: typeof ProjectsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -267,6 +416,90 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountTokensRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/projects/': {
+      id: '/projects/'
+      path: '/projects'
+      fullPath: '/projects/'
+      preLoaderRoute: typeof ProjectsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId': {
+      id: '/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ProjectsProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspaces/$workspaceId': {
+      id: '/workspaces/$workspaceId'
+      path: '/workspaces/$workspaceId'
+      fullPath: '/workspaces/$workspaceId'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/': {
+      id: '/projects/$projectId/'
+      path: '/'
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/access': {
+      id: '/projects/$projectId/access'
+      path: '/access'
+      fullPath: '/projects/$projectId/access'
+      preLoaderRoute: typeof ProjectsProjectIdAccessRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/settings': {
+      id: '/projects/$projectId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/settings'
+      preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/trash': {
+      id: '/projects/$projectId/trash'
+      path: '/trash'
+      fullPath: '/projects/$projectId/trash'
+      preLoaderRoute: typeof ProjectsProjectIdTrashRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/workspaces/$workspaceId/': {
+      id: '/workspaces/$workspaceId/'
+      path: '/'
+      fullPath: '/workspaces/$workspaceId/'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdIndexRouteImport
+      parentRoute: typeof WorkspacesWorkspaceIdRoute
+    }
+    '/workspaces/$workspaceId/members': {
+      id: '/workspaces/$workspaceId/members'
+      path: '/members'
+      fullPath: '/workspaces/$workspaceId/members'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdMembersRouteImport
+      parentRoute: typeof WorkspacesWorkspaceIdRoute
+    }
+    '/workspaces/$workspaceId/settings': {
+      id: '/workspaces/$workspaceId/settings'
+      path: '/settings'
+      fullPath: '/workspaces/$workspaceId/settings'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdSettingsRouteImport
+      parentRoute: typeof WorkspacesWorkspaceIdRoute
+    }
+    '/workspaces/$workspaceId/trash': {
+      id: '/workspaces/$workspaceId/trash'
+      path: '/trash'
+      fullPath: '/workspaces/$workspaceId/trash'
+      preLoaderRoute: typeof WorkspacesWorkspaceIdTrashRouteImport
+      parentRoute: typeof WorkspacesWorkspaceIdRoute
+    }
+    '/projects/$projectId/boards/$boardId': {
+      id: '/projects/$projectId/boards/$boardId'
+      path: '/boards/$boardId'
+      fullPath: '/projects/$projectId/boards/$boardId'
+      preLoaderRoute: typeof ProjectsProjectIdBoardsBoardIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
   }
 }
 
@@ -285,6 +518,44 @@ const AccountRouteChildren: AccountRouteChildren = {
 const AccountRouteWithChildren =
   AccountRoute._addFileChildren(AccountRouteChildren)
 
+interface ProjectsProjectIdRouteChildren {
+  ProjectsProjectIdAccessRoute: typeof ProjectsProjectIdAccessRoute
+  ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
+  ProjectsProjectIdTrashRoute: typeof ProjectsProjectIdTrashRoute
+  ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  ProjectsProjectIdBoardsBoardIdRoute: typeof ProjectsProjectIdBoardsBoardIdRoute
+}
+
+const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
+  ProjectsProjectIdAccessRoute: ProjectsProjectIdAccessRoute,
+  ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
+  ProjectsProjectIdTrashRoute: ProjectsProjectIdTrashRoute,
+  ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+  ProjectsProjectIdBoardsBoardIdRoute: ProjectsProjectIdBoardsBoardIdRoute,
+}
+
+const ProjectsProjectIdRouteWithChildren =
+  ProjectsProjectIdRoute._addFileChildren(ProjectsProjectIdRouteChildren)
+
+interface WorkspacesWorkspaceIdRouteChildren {
+  WorkspacesWorkspaceIdMembersRoute: typeof WorkspacesWorkspaceIdMembersRoute
+  WorkspacesWorkspaceIdSettingsRoute: typeof WorkspacesWorkspaceIdSettingsRoute
+  WorkspacesWorkspaceIdTrashRoute: typeof WorkspacesWorkspaceIdTrashRoute
+  WorkspacesWorkspaceIdIndexRoute: typeof WorkspacesWorkspaceIdIndexRoute
+}
+
+const WorkspacesWorkspaceIdRouteChildren: WorkspacesWorkspaceIdRouteChildren = {
+  WorkspacesWorkspaceIdMembersRoute: WorkspacesWorkspaceIdMembersRoute,
+  WorkspacesWorkspaceIdSettingsRoute: WorkspacesWorkspaceIdSettingsRoute,
+  WorkspacesWorkspaceIdTrashRoute: WorkspacesWorkspaceIdTrashRoute,
+  WorkspacesWorkspaceIdIndexRoute: WorkspacesWorkspaceIdIndexRoute,
+}
+
+const WorkspacesWorkspaceIdRouteWithChildren =
+  WorkspacesWorkspaceIdRoute._addFileChildren(
+    WorkspacesWorkspaceIdRouteChildren,
+  )
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AccountRoute: AccountRouteWithChildren,
@@ -295,6 +566,9 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   SignupRoute: SignupRoute,
   VerifyEmailRoute: VerifyEmailRoute,
+  ProjectsProjectIdRoute: ProjectsProjectIdRouteWithChildren,
+  WorkspacesWorkspaceIdRoute: WorkspacesWorkspaceIdRouteWithChildren,
+  ProjectsIndexRoute: ProjectsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

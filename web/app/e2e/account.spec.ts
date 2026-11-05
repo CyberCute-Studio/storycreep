@@ -1,9 +1,9 @@
 import type { Page } from "@playwright/test";
 import {
   apiSignIn,
+  atStart,
   en,
   expect,
-  message,
   password,
   press,
   registerAccount,
@@ -20,9 +20,7 @@ import {
 async function signedIn(page: Page, name: string): Promise<string> {
   const account = await registerAccount(page.request, name);
   await signIn(page, account.email);
-  await expect(
-    page.getByText(message("home.signed_in", { name })),
-  ).toBeVisible();
+  await atStart(page, name);
   return account.email;
 }
 
@@ -225,7 +223,5 @@ test("changing the password, after which the new one signs in", async ({
     en["login.title"],
   );
   await signIn(page, email, replacement);
-  await expect(
-    page.getByText(message("home.signed_in", { name: "Pat Password" })),
-  ).toBeVisible();
+  await atStart(page, "Pat Password");
 });

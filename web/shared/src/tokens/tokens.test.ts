@@ -21,6 +21,7 @@ const text: readonly [string, string][] = [
   ["accent-fg", "accent-hover"],
   ["danger", "canvas"],
   ["danger", "surface"],
+  ["danger", "surface-hover"],
   ["danger-fg", "danger"],
 ];
 const boundaries: readonly [string, string][] = [

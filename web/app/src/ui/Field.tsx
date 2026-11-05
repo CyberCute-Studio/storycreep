@@ -78,6 +78,37 @@ export function TextField({ label, hint, error, ...input }: TextFieldProps) {
   );
 }
 
+export interface TextAreaFieldProps
+  extends Omit<ComponentProps<"textarea">, "id"> {
+  label: string;
+  hint?: string;
+  error?: string;
+}
+
+/** A field of text of more than one line, as a description. */
+export function TextAreaField({
+  label,
+  hint,
+  error,
+  ...textarea
+}: TextAreaFieldProps) {
+  const id = useId();
+  return (
+    <FieldFrame id={id} label={label} hint={hint} error={error}>
+      {(describedBy) => (
+        <textarea
+          id={id}
+          rows={3}
+          className={`${control} py-2`}
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={describedBy}
+          {...textarea}
+        />
+      )}
+    </FieldFrame>
+  );
+}
+
 export interface SelectFieldProps extends Omit<ComponentProps<"select">, "id"> {
   label: string;
   hint?: string;
@@ -114,7 +145,17 @@ export interface CheckboxFieldProps
 }
 
 /** A box to tick, with its label beside it, which ticks it too. */
-export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
+export function CheckboxField(props: CheckboxFieldProps) {
+  return <ChoiceField type="checkbox" {...props} />;
+}
+
+/** A box to tick or a button to choose, with its label beside it. */
+function ChoiceField({
+  label,
+  hint,
+  type,
+  ...input
+}: CheckboxFieldProps & { type: "checkbox" | "radio" }) {
   const id = useId();
   const hintId = hint === undefined ? undefined : `${id}-hint`;
   return (
@@ -122,7 +163,7 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
       <label htmlFor={id} className="flex min-h-11 items-center gap-3">
         <input
           id={id}
-          type="checkbox"
+          type={type}
           className="size-5 shrink-0 accent-accent"
           aria-describedby={hintId}
           {...input}
@@ -136,6 +177,17 @@ export function CheckboxField({ label, hint, ...input }: CheckboxFieldProps) {
       )}
     </div>
   );
+}
+
+export interface RadioFieldProps
+  extends Omit<ComponentProps<"input">, "id" | "type"> {
+  label: string;
+  hint?: string;
+}
+
+/** A button to choose one of a GroupField's choices, with its label beside it. */
+export function RadioField(props: RadioFieldProps) {
+  return <ChoiceField type="radio" {...props} />;
 }
 
 export interface GroupFieldProps {

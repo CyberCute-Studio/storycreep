@@ -24,3 +24,60 @@ export function roleName(t: TFunction, role: Role): string {
       return t("role.guest");
   }
 }
+
+/** Returns the name of role as a choice of a list shows it, in the page's locale. */
+export function roleLabel(t: TFunction, role: Role): string {
+  switch (role) {
+    case "owner":
+      return t("role_label.owner");
+    case "admin":
+      return t("role_label.admin");
+    case "editor":
+      return t("role_label.editor");
+    case "commenter":
+      return t("role_label.commenter");
+    case "viewer":
+      return t("role_label.viewer");
+    case "guest":
+      return t("role_label.guest");
+  }
+}
+
+/**
+ * The roles of a workspace that its pages offer, highest first: owner,
+ * admin, editor, commenter, and viewer (PRD FR-TEN-03). A guest is a
+ * member whom project grants alone let act, whose role a page shows but
+ * does not offer.
+ */
+export const workspaceRoles = [
+  "owner",
+  "admin",
+  "editor",
+  "commenter",
+  "viewer",
+] as const;
+
+/** A role of a project grant, which is never owner (PRD FR-TEN-04 AC5). */
+export const grantRoles = ["admin", "editor", "commenter", "viewer"] as const;
+
+/** A role of a project grant. */
+export type GrantRole = (typeof grantRoles)[number];
+
+/**
+ * Reports whether a member whose role is actor's, who manages the
+ * workspace, acts on what has the role role: a member's role, removal, or
+ * grant, an invitation's sending anew, or a role given. Only an owner acts
+ * on an owner's (PRD FR-TEN-03 AC4).
+ */
+export function actsOn(actor: Role, role: Role): boolean {
+  return actor === "owner" || role !== "owner";
+}
+
+/**
+ * Returns the roles that a member whose role is actor's may give, of
+ * workspaceRoles: every one for an owner, and all but owner for an admin,
+ * since only an owner grants owner (actsOn).
+ */
+export function rolesGivenBy(actor: Role): readonly Role[] {
+  return workspaceRoles.filter((r) => actsOn(actor, r));
+}

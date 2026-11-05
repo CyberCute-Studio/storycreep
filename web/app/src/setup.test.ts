@@ -1,5 +1,6 @@
-import { ApiError } from "@storycreep/shared/api";
-import { describe, expect, it, vi } from "vitest";
+import { ApiError, NetworkError } from "@storycreep/shared/api";
+import { onlineManager } from "@tanstack/react-query";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createQueryClient } from "./api";
 import { createErrorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -86,6 +87,46 @@ describe("createQueryClient", () => {
     expect(log.entries().map((e) => e.request?.status)).toEqual([
       409, 500, 413,
     ]);
+  });
+
+  it("records no answer that a list is not there, which a loader shows as the page of no page, but its other refusals", async () => {
+    const log = createErrorLog();
+    const client = createQueryClient(log);
+    const answer = (status: number, code: string) =>
+      new ApiError(new Response(null, { status }), {
+        code,
+        message: code,
+        request_id: "req",
+      });
+    const read = (error: ApiError) =>
+      client
+        .fetchQuery({
+          queryKey: [error.status],
+          queryFn: () => Promise.reject(error),
+          meta: { showsNotFound: true },
+          retry: false,
+        })
+        .catch(() => {});
+    await read(answer(404, "not_found"));
+    await read(answer(400, "invalid_id"));
+    await read(answer(403, "insufficient_role"));
+    expect(log.entries().map((e) => e.request?.status)).toEqual([403]);
+  });
+
+  it("sends a mutation while the browser says that it has no connection, which then fails rather than waits for it", async () => {
+    const client = createQueryClient(createErrorLog());
+    onlineManager.setOnline(false);
+    onTestFinished(() => onlineManager.setOnline(true));
+    const send = vi.fn(() =>
+      Promise.reject(new NetworkError(new TypeError("Failed to fetch"))),
+    );
+    await expect(
+      client
+        .getMutationCache()
+        .build(client, { mutationFn: send })
+        .execute(undefined),
+    ).rejects.toBeInstanceOf(NetworkError);
+    expect(send).toHaveBeenCalledOnce();
   });
 
   it("asks for the session again once an answer tells that it may have changed elsewhere", async () => {

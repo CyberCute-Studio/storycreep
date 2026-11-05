@@ -4,8 +4,6 @@ import type {
   CreateTokenBody,
   MembershipBody,
   PageAPITokenBody,
-  PageMembershipBody,
-  PageProjectBody,
 } from "@storycreep/shared/api";
 import { formatDate, formatRelativeTime } from "@storycreep/shared/i18n";
 import {
@@ -31,10 +29,15 @@ import {
 import { bodyField } from "../auth/forms";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
-import { copyText } from "../errors/copy";
-import { focusContentIfLost } from "../shell/focus";
 import { Button, MoreButton } from "../ui/Button";
-import { ConfirmFrame, DialogFrame } from "../ui/Dialog";
+import { CopyField } from "../ui/CopyField";
+import {
+  ConfirmButtons,
+  ConfirmFrame,
+  closesUnlessPending,
+  DialogFrame,
+  focusBackTo,
+} from "../ui/Dialog";
 import {
   CheckboxField,
   GroupField,
@@ -42,39 +45,14 @@ import {
   TextField,
   useFocusRefusal,
 } from "../ui/Field";
-import { Alert, Page, Status } from "../ui/Page";
+import { Alert, Page } from "../ui/Page";
+import { projectsQuery, workspacesQuery } from "../workspace/queries";
 
 export const Route = createFileRoute("/account/tokens")({
   loader: ({ context }) =>
     context.queryClient.ensureInfiniteQueryData(workspacesQuery),
   component: Tokens,
 });
-
-/**
- * The workspaces that the user is a member of, a page at a time: the page
- * shows itself once it has the first, and the rest come as the user asks
- * for them, as the tokens do.
- */
-const workspacesQuery = pagedQuery(
-  ["workspaces"],
-  async (query, signal): Promise<PageMembershipBody> =>
-    (await api.call("listWorkspaces", { query }, { signal })).body,
-);
-
-/** The projects of a workspace that the user can see, a page at a time. */
-function projectsQuery(workspaceId: string) {
-  return pagedQuery(
-    ["workspaces", workspaceId, "projects"],
-    async (query, signal): Promise<PageProjectBody> =>
-      (
-        await api.call(
-          "listProjects",
-          { path: { workspace_id: workspaceId }, query },
-          { signal },
-        )
-      ).body,
-  );
-}
 
 /** What a token acts on: a whole workspace, or one project of it. */
 type Target =
@@ -398,15 +376,7 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
     Date.parse(token.expires_at) <= Date.now();
   // The confirmation stays open while the token is being revoked, and opens
   // again without the refusal of the attempt before.
-  const onOpenChange = (next: boolean) => {
-    if (!next && revoke.isPending) {
-      return;
-    }
-    setConfirming(next);
-    if (!next) {
-      revoke.reset();
-    }
-  };
+  const onOpenChange = closesUnlessPending(setConfirming, revoke);
   return (
     <li className="space-y-2 rounded-md border border-border p-4">
       <p id={nameId} className="font-medium break-words">
@@ -458,20 +428,12 @@ function TokenItem({ token, target }: { token: APITokenBody; target: Target }) {
           description={t("tokens.revoke_body")}
         >
           <Alert message={refusalOf(revoke.error, t)?.message} />
-          <div className="flex flex-wrap justify-end gap-2">
-            <AlertDialog.Cancel asChild>
-              <Button disabled={revoke.isPending}>{t("tokens.cancel")}</Button>
-            </AlertDialog.Cancel>
-            {/* Not an AlertDialog.Action, which would close the dialog
-                before the request has answered. */}
-            <Button
-              variant="danger"
-              disabled={revoke.isPending}
-              onClick={() => revoke.mutate()}
-            >
-              {t("tokens.revoke_confirm")}
-            </Button>
-          </div>
+          <ConfirmButtons
+            cancel={t("tokens.cancel")}
+            confirm={t("tokens.revoke_confirm")}
+            pending={revoke.isPending}
+            onConfirm={() => revoke.mutate()}
+          />
         </ConfirmFrame>
       </AlertDialog.Root>
     </li>
@@ -514,14 +476,7 @@ function CreateToken({
   };
   // The control that opened the dialog gets the focus back, or the page's
   // content, once that control has gone with its list.
-  const onCloseAutoFocus = (event: Event) => {
-    event.preventDefault();
-    if (opener.isConnected) {
-      opener.focus();
-    } else {
-      focusContentIfLost(document);
-    }
-  };
+  const onCloseAutoFocus = focusBackTo(opener);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -625,37 +580,22 @@ function Secret({
   onDone: () => void;
 }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState<boolean>();
-  const area = useRef<HTMLDivElement>(null);
-  const copy = async () => {
-    setCopied(await copyText(token.secret, area.current ?? document.body));
-  };
   return (
-    <div ref={area} className="space-y-4">
+    <div className="space-y-4">
       <p>{t("tokens.secret_intro", { name: token.name })}</p>
-      <TextField
+      <CopyField
         label={t("tokens.secret")}
         value={token.secret}
-        readOnly
-        spellCheck={false}
-        className="min-h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-fg"
-        onFocus={(event) => event.currentTarget.select()}
-      />
-      <Status
-        message={
-          copied === undefined
-            ? undefined
-            : copied
-              ? t("tokens.copied")
-              : t("tokens.copy_failed")
-        }
-      />
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button onClick={() => void copy()}>{t("tokens.copy")}</Button>
+        messages={{
+          copy: t("tokens.copy"),
+          copied: t("tokens.copied"),
+          failed: t("tokens.copy_failed"),
+        }}
+      >
         <Button variant="primary" onClick={onDone}>
           {t("tokens.done")}
         </Button>
-      </div>
+      </CopyField>
     </div>
   );
 }
