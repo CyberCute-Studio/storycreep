@@ -1,0 +1,129 @@
+// The page's documents of projects (store.ts), one for each project that it
+// shows, which a project's pages share, and its routes' loaders read before
+// the pages show: a document is made once a page asks for it, follows its
+// project while a page of it is shown (acquire), and is dropped a while
+// after none is, and at once, with every other, once the page is signed in
+// to another account or signed out. Signing out also clears the undo
+// histories that the tab's storage keeps (PRD FR-EDIT-08: the history is
+// the user's), which another account's, kept under its own key, never reads.
+
+import type { QueryClient } from "@tanstack/react-query";
+import { sessionQuery } from "../api";
+import type { ErrorLog } from "../errors/log";
+import type { Realtime } from "./realtime";
+import { ProjectDocument } from "./store";
+import { clearHistories } from "./undo";
+
+/** How long, in milliseconds, a document that no page shows is kept, as for a page of the project that the user goes back to. */
+export const keptUnshown = 30_000;
+
+export interface DocumentsOptions {
+  queryClient: QueryClient;
+  realtime?: Realtime;
+  log: ErrorLog;
+  /** The tab's storage, which keeps the undo histories over a reload. */
+  storage?: Storage;
+}
+
+interface Held {
+  doc: ProjectDocument;
+  shown: number;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+/** The page's documents. */
+export class Documents {
+  private readonly options: DocumentsOptions;
+  private readonly held = new Map<string, Held>();
+  private readonly stop: () => void;
+
+  constructor(options: DocumentsOptions) {
+    this.options = options;
+    let userId = options.queryClient.getQueryData(
+      sessionQuery.queryKey,
+    )?.user_id;
+    // The documents, and the histories, are the account's: once the page's
+    // session is of another account, or of none, they go.
+    this.stop = options.queryClient.getQueryCache().subscribe((event) => {
+      if (event.query.queryKey[0] !== sessionQuery.queryKey[0]) {
+        return;
+      }
+      const now = options.queryClient.getQueryData(sessionQuery.queryKey);
+      if (now === undefined || now?.user_id === userId) {
+        return;
+      }
+      userId = now?.user_id;
+      this.clear();
+      if (now === null) {
+        clearHistories(options.storage);
+      }
+    });
+  }
+
+  /** Returns the document of projectId, made now if the page has none. */
+  get(projectId: string): ProjectDocument {
+    let held = this.held.get(projectId);
+    if (held === undefined) {
+      held = {
+        doc: new ProjectDocument(projectId, this.options),
+        shown: 0,
+      };
+      this.held.set(projectId, held);
+      this.unshown(projectId, held);
+    }
+    return held.doc;
+  }
+
+  /** Keeps the document of projectId while a page of it is shown, until what it returns is called. */
+  acquire(projectId: string): () => void {
+    const doc = this.get(projectId);
+    const held = this.held.get(projectId) as Held;
+    held.shown++;
+    clearTimeout(held.timer);
+    let released = false;
+    return () => {
+      if (released || this.held.get(projectId)?.doc !== doc) {
+        return;
+      }
+      released = true;
+      held.shown--;
+      if (held.shown === 0) {
+        this.unshown(projectId, held);
+      }
+    };
+  }
+
+  /** Drops the document of projectId once no page has shown it for a while. */
+  private unshown(projectId: string, held: Held): void {
+    clearTimeout(held.timer);
+    held.timer = setTimeout(() => {
+      if (held.shown === 0 && this.held.get(projectId) === held) {
+        this.held.delete(projectId);
+        held.doc.dispose();
+      }
+    }, keptUnshown);
+  }
+
+  /** Drops the document of projectId at once, as once the project could not be read, so that a page asks anew. */
+  forget(projectId: string): void {
+    const held = this.held.get(projectId);
+    if (held !== undefined) {
+      clearTimeout(held.timer);
+      this.held.delete(projectId);
+      held.doc.dispose();
+    }
+  }
+
+  /** Drops every document. */
+  clear(): void {
+    for (const projectId of [...this.held.keys()]) {
+      this.forget(projectId);
+    }
+  }
+
+  /** Drops every document, and stops following the session, as once the page goes. */
+  close(): void {
+    this.stop();
+    this.clear();
+  }
+}

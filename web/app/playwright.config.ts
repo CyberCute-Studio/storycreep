@@ -6,7 +6,7 @@
 // variables name, as CI's does (e2e/environment.ts).
 
 import { defineConfig, devices } from "@playwright/test";
-import { baseURL } from "./e2e/environment.ts";
+import { baseURL, peerURL } from "./e2e/environment.ts";
 
 // Playwright has no build of Chromium for Windows on ARM64, whose x64 build
 // would run emulated (PRD §9.9), so the tests run in Windows's own Edge
@@ -33,16 +33,32 @@ export default defineConfig({
       use: { ...devices["Galaxy Tab S9"], channel },
     },
   ],
-  webServer: {
-    command: "node e2e/server.ts",
-    url: `${baseURL}/readyz`,
-    // Building the server, and migrating a new database, take a while.
-    timeout: 300_000,
-    reuseExistingServer: false,
-    // Without it, Playwright kills the server outright, and e2e/server.ts
-    // could not remove its directory. Windows has no such signal, and there
-    // Playwright kills it anyway, so the next run on the port reuses the
-    // directory.
-    gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
-  },
+  // Playwright starts its servers one after another, each once the one
+  // before it answers its url, and stops them the other way round: the
+  // peer, a second process of the server's instance, on its database
+  // (e2e/peer.ts), starts once the server has built the binaries and made
+  // and migrated the database, and stops before the server drops it. One
+  // peer for the run, rather than one that each test that needs it starts,
+  // adds a process's connections to PostgreSQL once, not once a worker.
+  webServer: [
+    {
+      command: "node e2e/server.ts",
+      url: `${baseURL}/readyz`,
+      // Building the server, and migrating a new database, take a while.
+      timeout: 300_000,
+      reuseExistingServer: false,
+      // Without it, Playwright kills the server outright, and e2e/server.ts
+      // could not remove its directory. Windows has no such signal, and there
+      // Playwright kills it anyway, so the next run on the port reuses the
+      // directory.
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
+    },
+    {
+      command: "node e2e/peer.ts",
+      url: `${peerURL}/readyz`,
+      timeout: 120_000,
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
+    },
+  ],
 });

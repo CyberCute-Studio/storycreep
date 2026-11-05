@@ -6,11 +6,6 @@
 // same for a keyboard, a screen reader, or a single tap (WCAG 2.5.7).
 
 import type { ProjectBody } from "@storycreep/shared/api";
-import {
-  type QueryClient,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -22,6 +17,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { useProjectDocument, useTree } from "../document/react";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
@@ -35,17 +31,9 @@ import {
   nameOf,
   RenameDialog,
 } from "./dialogs";
-import { keyBetween } from "./orderkey";
-import {
-  conflictOf,
-  readProjectAgain,
-  type TreeData,
-  treeQuery,
-  useCommands,
-} from "./queries";
+import { useCommands } from "./queries";
 import {
   buildTree,
-  childrenOf,
   type Drop,
   type Placement,
   placementOf,
@@ -85,43 +73,23 @@ export function BoardTree({
   editable: boolean;
 }) {
   const { t } = useTranslation();
-  const client = useQueryClient();
-  const data = useSuspenseQuery(treeQuery(project.id)).data;
+  const data = useTree(useProjectDocument(project.id));
   const tree = useMemo(() => buildTree(data.folders, data.boards), [data]);
   const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState<Open>();
   const [created, setCreated] = useState<string>();
   const move = useCommands(project.id);
   const [moved, setMoved] = useState<string>();
-  const dropped = async (node: TreeNode, placement: Placement) => {
+  // The project's document shows the child where it was dropped at once,
+  // and where it was again once its move is refused, or no answer comes to
+  // it, so the tree needs nothing of its own for either.
+  const dropped = (node: TreeNode, placement: Placement) => {
     setMoved(nameOf(node));
-    const key = treeQuery(project.id).queryKey;
-    // A read of the tree under way, as one that the window's focus began,
-    // would answer with where the child was, over where it was dropped.
-    await client.cancelQueries({ queryKey: key });
-    const before = client.getQueryData(key);
-    showMoved(client, project.id, tree, node, placement);
-    move.mutate(moveCommands(node, placement), {
-      // A move that was refused for a revision has the project read again
-      // by useCommands. One refused otherwise, or that no answer came to,
-      // shows the child where it was, until the project, read again, shows
-      // where it is, rather than where it was dropped. It is read again once
-      // the child shows where it was, which begins anew the read that
-      // useCommands began once no answer came, so that the child where it
-      // was is not shown over what that read answered.
-      onError: (error) => {
-        if (!conflictOf(error)) {
-          client.setQueryData(key, before);
-          void readProjectAgain(client, project.id);
-        }
-      },
-    });
+    move.mutate(moveCommands(node, placement));
   };
-  // A drag waits for the move before it, whose batch, once it has applied,
-  // has the tree read again, with the revisions that the next one expects.
-  const drag = useTreeDrag(tree, closed, move.isPending, (node, placement) => {
-    void dropped(node, placement);
-  });
+  // A drag waits for the move before it, whose answer gives the revision
+  // that the next one expects.
+  const drag = useTreeDrag(tree, closed, move.isPending, dropped);
   const toggle = (id: string) =>
     setClosed((before) => {
       const after = new Set(before);
@@ -263,58 +231,6 @@ export function BoardTree({
         ))}
     </section>
   );
-}
-
-/**
- * Shows in the tree's cache the child that a drag dropped where it landed,
- * at once, rather than where it was until the tree has been read again,
- * which the move's batch does once it has applied, or been refused.
- */
-function showMoved(
-  client: QueryClient,
-  projectId: string,
-  tree: Tree,
-  node: TreeNode,
-  placement: Placement,
-): void {
-  const last = childrenOf(tree, placement.parentId).findLast(
-    (c) => c.id !== node.id,
-  );
-  const order =
-    placement.order ?? keyBetween(last?.order, undefined) ?? node.order;
-  client.setQueryData(
-    treeQuery(projectId).queryKey,
-    (data: TreeData | undefined) =>
-      data === undefined
-        ? data
-        : {
-            folders: data.folders.map((f) =>
-              f.id === node.id
-                ? withParent(f, "parent_id", placement.parentId, order)
-                : f,
-            ),
-            boards: data.boards.map((b) =>
-              b.id === node.id
-                ? withParent(b, "folder_id", placement.parentId, order)
-                : b,
-            ),
-          },
-  );
-}
-
-/** Returns child with its parent's field set to parentId, or none, and its key to order. */
-function withParent<T extends { order: string }>(
-  child: T,
-  field: "parent_id" | "folder_id",
-  parentId: string | undefined,
-  order: string,
-): T {
-  const { [field]: _, ...rest } = child as T & Record<string, unknown>;
-  return {
-    ...(rest as T),
-    order,
-    ...(parentId === undefined ? {} : { [field]: parentId }),
-  };
 }
 
 interface ListProps {

@@ -551,9 +551,11 @@ export function DeleteBoardDialog({
             },
           ],
           {
+            // What deleted the board hears of it before the dialog closes,
+            // as the board's page, which goes to the project's then.
             onSuccess: () => {
-              onClose();
               onDeleted?.();
+              onClose();
             },
           },
         )

@@ -11,7 +11,14 @@
 
 import { spawn } from "node:child_process";
 import { rmSync } from "node:fs";
-import { baseURL, binaries, binary, owner, port } from "./environment.ts";
+import {
+  baseURL,
+  binaries,
+  binary,
+  mainDatabase as database,
+  owner,
+  port,
+} from "./environment.ts";
 import { build, createDatabase, dropDatabase, serverEnv } from "./instance.ts";
 
 // The run starts the directory of the binaries and of the uploaded files
@@ -19,7 +26,6 @@ import { build, createDatabase, dropDatabase, serverEnv } from "./instance.ts";
 // On Windows, Playwright kills the server instead, which leaves both for the
 // next run on the port to replace, rather than one more each run.
 build();
-const database = `storycreep_e2e_${port}`;
 createDatabase(database);
 
 const cleanUp = () => {

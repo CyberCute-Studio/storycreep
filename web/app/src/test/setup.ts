@@ -9,5 +9,6 @@ afterEach(() => {
   // The tests of the lint rules run in Node, which has no window.
   if (typeof window !== "undefined") {
     window.localStorage.clear();
+    window.sessionStorage.clear();
   }
 });

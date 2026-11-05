@@ -1,21 +1,22 @@
 import type { Board } from "@storycreep/shared/api";
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { useBoard, useProjectDocument, useTree } from "../document/react";
+import { ConflictError } from "../document/store";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import {
-  boardQuery,
   type Command,
   conflictOf,
   dropBoard,
   editsProject,
   projectQuery,
-  treeQuery,
   useCommands,
 } from "../project/queries";
 import { canonicalId, found } from "../shell/found";
+import { NotFound } from "../shell/NotFound";
 import { Button } from "../ui/Button";
 import {
   SelectField,
@@ -31,18 +32,17 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
-  // The project comes first, as for the tree of its boards, and then the
-  // board, which is not there once it is in the trash.
-  loader: async ({ context: { queryClient }, params }) => {
+  // The project comes first, as for the tree of its boards, which its
+  // document reads, and which holds the board, but for one in the trash.
+  loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
-    await found(
-      Promise.all([
-        queryClient.ensureQueryData(boardQuery(project.id, params.boardId)),
-        queryClient.ensureQueryData(treeQuery(project.id)),
-      ]),
-    );
+    const doc = documents.get(project.id);
+    await found(doc.load("tree"));
+    if (!doc.store.getState().view.boards.has(params.boardId)) {
+      throw notFound();
+    }
   },
   component: BoardPage,
 });
@@ -63,12 +63,47 @@ const colors = [
 
 // A board's page (PRD FR-PROJ-02): its name, its slug, its description, and
 // its colour, which an editor changes, and its deletion to the project's
-// trash. The canvas of its nodes joins it later (plan item 59).
+// trash. The canvas of its nodes joins it later (plan item 59). It shows the
+// board as the project's document has it, so a change that another session
+// makes shows as it commits (FR-RT-02), and the page of no page once the
+// board has gone to the trash.
 function BoardPage() {
-  const { t } = useTranslation();
   const { projectId, boardId } = Route.useParams();
+  const doc = useProjectDocument(projectId);
+  const board = useBoard(doc, boardId);
+  // While the board's deletion is open, the board is shown as it was, as
+  // the document takes it away at once, once its deletion is sent, so that
+  // the dialog stays, and says what became of the deletion, after which the
+  // page goes to the project's, or the deletion is cancelled.
+  const [deleting, setDeleting] = useState(false);
+  const last = useRef<Board>(undefined);
+  if (board !== undefined) {
+    last.current = board;
+  }
+  const shown = board ?? (deleting ? last.current : undefined);
+  return shown === undefined ? (
+    <NotFound />
+  ) : (
+    <BoardContent
+      projectId={projectId}
+      board={shown}
+      onDeleting={setDeleting}
+    />
+  );
+}
+
+function BoardContent({
+  projectId,
+  board,
+  onDeleting,
+}: {
+  projectId: string;
+  board: Board;
+  /** Tells whether the board's deletion is open. */
+  onDeleting: (deleting: boolean) => void;
+}) {
+  const { t } = useTranslation();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
-  const board = useSuspenseQuery(boardQuery(projectId, boardId)).data;
   const editable =
     editsProject(project.role) && project.archived_at === undefined;
   return (
@@ -97,7 +132,13 @@ function BoardPage() {
           <dd>{colorName(t, board.color)}</dd>
         </dl>
       )}
-      {editable && <DeleteBoard projectId={projectId} board={board} />}
+      {editable && (
+        <DeleteBoard
+          projectId={projectId}
+          board={board}
+          onDeleting={onDeleting}
+        />
+      )}
     </Page>
   );
 }
@@ -139,9 +180,13 @@ const boardField = payloadField("name", "slug", "description", "color");
  * board that changed elsewhere since is not changed over (PRD FR-API-03
  * AC3). It shows the board as the page has it until the user changes
  * something in it, and then as it was, so that a change made elsewhere,
- * which the page reads as its tab is shown again, does not take away what
- * the user typed, until the form is saved, or refused for that change, when
- * it shows the board as it is now.
+ * which the page's document shows as it commits, does not take away what
+ * the user typed (FR-RT-02 AC3), until the form is saved. A save refused for
+ * a change made elsewhere of another field is sent again by the document
+ * (PRD §7.10); one of a field that the form changes too names each such
+ * field with both values (ConflictError), and keeps what the user typed, so
+ * that saving again keeps it, over the board as it is now, and using theirs
+ * shows the board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
@@ -149,7 +194,15 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
   const [held, setHeld] = useState<Board>();
+  // The board as the server had it when it refused the form's save for a
+  // change of what the form changes too, which saving again changes over.
+  const [theirs, setTheirs] = useState<Board>();
   const shown = held ?? board;
+  const against = theirs ?? shown;
+  const overlaps =
+    commands.error instanceof ConflictError
+      ? commands.error.overlaps.flatMap((o) => o.fields)
+      : [];
   const refusal = refusalOf(commands.error, t, boardField, {
     slug_taken: t("board.error.slug_taken"),
   });
@@ -157,13 +210,13 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const expected_rev = { [shown.id]: shown.rev };
+    const expected_rev = { [against.id]: against.rev };
     const name = String(data.get("name"));
     const slug = String(data.get("slug"));
     const description = String(data.get("description"));
     const color = String(data.get("color")) as Board["color"];
     const changes: Command[] = [
-      ...(name === shown.name
+      ...(name === against.name
         ? []
         : [
             {
@@ -172,7 +225,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(slug === shown.slug
+      ...(slug === against.slug
         ? []
         : [
             {
@@ -181,7 +234,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(description === shown.description
+      ...(description === against.description
         ? []
         : [
             {
@@ -190,7 +243,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(color === shown.color
+      ...(color === against.color
         ? []
         : [
             {
@@ -204,20 +257,65 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     if (changes.length === 0) {
       commands.reset();
       setHeld(undefined);
+      setTheirs(undefined);
       return;
     }
     commands.mutate(changes, {
-      onSuccess: () => setHeld(undefined),
+      onSuccess: () => {
+        setHeld(undefined);
+        setTheirs(undefined);
+      },
       onError: (error) => {
-        if (conflictOf(error)) {
+        const state =
+          error instanceof ConflictError
+            ? error.overlaps.find((o) => o.id === against.id && !o.gone)?.state
+            : undefined;
+        if (state !== undefined) {
+          setTheirs(state as unknown as Board);
+        } else if (conflictOf(error)) {
           setHeld(undefined);
+          setTheirs(undefined);
         }
       },
     });
   };
+  const useTheirs = () => {
+    commands.reset();
+    setHeld(undefined);
+    setTheirs(undefined);
+  };
+  const fieldName = (field: string) =>
+    field === "name"
+      ? t("board.name")
+      : field === "slug"
+        ? t("board.slug")
+        : field === "description"
+          ? t("board.description")
+          : t("board.color");
+  const shownValue = (field: string, value: unknown) =>
+    field === "color"
+      ? colorName(t, value as Board["color"])
+      : String(value ?? "");
   return (
     <div className="max-w-md space-y-4">
-      <Alert message={refusal?.message} />
+      <Alert message={overlaps.length > 0 ? undefined : refusal?.message} />
+      {overlaps.length > 0 && (
+        <div className="space-y-2 rounded-md border border-danger px-4 py-3">
+          <p>{t("conflict.intro")}</p>
+          <ul className="list-disc ps-5">
+            {overlaps.map((o) => (
+              <li key={o.field} className="break-words">
+                {t("conflict.field", {
+                  field: fieldName(o.field),
+                  theirs: shownValue(o.field, o.theirs),
+                  mine: shownValue(o.field, o.mine),
+                })}
+              </li>
+            ))}
+          </ul>
+          <Button onClick={useTheirs}>{t("conflict.use_theirs")}</Button>
+        </div>
+      )}
       <Status
         message={
           unchanged
@@ -287,15 +385,20 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
 function DeleteBoard({
   projectId,
   board,
+  onDeleting,
 }: {
   projectId: string;
   board: Board;
+  onDeleting: (deleting: boolean) => void;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const client = useQueryClient();
-  const boards = useSuspenseQuery(treeQuery(projectId)).data.boards;
+  const boards = useTree(useProjectDocument(projectId)).boards;
   const [opener, setOpener] = useState<HTMLElement | null>();
+  // Once the board is deleted, the page goes, and shows the board until it
+  // has, rather than the page of no page.
+  const deleted = useRef(false);
   return (
     <section className="space-y-2" aria-labelledby="board-delete">
       <h2 id="board-delete" className="text-lg font-semibold">
@@ -305,7 +408,10 @@ function DeleteBoard({
       <Button
         variant="danger"
         aria-haspopup="dialog"
-        onClick={(event) => setOpener(event.currentTarget)}
+        onClick={(event) => {
+          onDeleting(true);
+          setOpener(event.currentTarget);
+        }}
       >
         {t("board.delete")}
       </Button>
@@ -315,18 +421,24 @@ function DeleteBoard({
           board={board}
           boards={boards}
           opener={opener}
-          onClose={() => setOpener(undefined)}
+          onClose={() => {
+            setOpener(undefined);
+            if (!deleted.current) {
+              onDeleting(false);
+            }
+          }}
           // The page goes before what it read of the board, which is in the
           // trash now, is dropped, so that a page of it that the user goes
           // back to asks the server, which answers as for one that does
           // not exist, rather than shows it.
-          onDeleted={() =>
+          onDeleted={() => {
+            deleted.current = true;
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },
               replace: true,
-            }).then(() => dropBoard(client, projectId, board.id))
-          }
+            }).then(() => dropBoard(client, projectId, board.id));
+          }}
         />
       )}
     </section>

@@ -5,6 +5,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
+import type { Documents } from "./document/documents";
 import { routeTree } from "./routeTree.gen";
 import { focusContentIfLost } from "./shell/focus";
 
@@ -20,6 +21,11 @@ export interface RouterContext {
    * as a change of the password or a reset of one.
    */
   checkSession: () => Promise<void>;
+  /**
+   * The page's documents of projects (PRD §10.6), which a project's pages
+   * read its content from, as its loaders do before they show.
+   */
+  documents: Documents;
 }
 
 /** Returns the app's router. */

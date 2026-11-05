@@ -40,17 +40,54 @@ import (
 func TypeScript(d *Document, header string) ([]byte, error) {
 	g := &tsGen{d: d}
 	g.b.WriteString(header)
-	if d.Components != nil {
-		for _, name := range slices.Sorted(maps.Keys(d.Components.Schemas)) {
-			if err := g.declare(name, d.Components.Schemas[name]); err != nil {
-				return nil, fmt.Errorf("schema %s: %w", name, err)
-			}
-		}
+	if err := g.schemas(); err != nil {
+		return nil, err
 	}
 	if err := g.operations(); err != nil {
 		return nil, err
 	}
 	return []byte(g.b.String()), nil
+}
+
+// SchemasTypeScript returns the TypeScript module of the named schemas of
+// defs, a JSON Schema's $defs as huma writes them, whose references are to
+// #/$defs/: a type for each, as TypeScript writes a named schema's, without
+// Operations and routes, as for the real-time channel's messages, which no
+// operation of the API carries (PRD FR-RT-01).
+func SchemasTypeScript(defs json.RawMessage, header string) ([]byte, error) {
+	defs = bytes.ReplaceAll(defs, []byte(`"#/$defs/`), []byte(`"#/components/schemas/`))
+	doc, err := json.Marshal(map[string]any{
+		"openapi":    "3.1.0",
+		"info":       map[string]string{"title": "schemas", "version": "1"},
+		"paths":      map[string]any{},
+		"components": map[string]json.RawMessage{"schemas": defs},
+	})
+	if err != nil {
+		return nil, err
+	}
+	d, err := Load(doc)
+	if err != nil {
+		return nil, err
+	}
+	g := &tsGen{d: d}
+	g.b.WriteString(header)
+	if err := g.schemas(); err != nil {
+		return nil, err
+	}
+	return []byte(g.b.String()), nil
+}
+
+// schemas writes the type of each named schema of the document.
+func (g *tsGen) schemas() error {
+	if g.d.Components == nil {
+		return nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(g.d.Components.Schemas)) {
+		if err := g.declare(name, g.d.Components.Schemas[name]); err != nil {
+			return fmt.Errorf("schema %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 type tsGen struct {

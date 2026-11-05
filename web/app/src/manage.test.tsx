@@ -5,7 +5,7 @@ import {
   NetworkError,
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
@@ -16,6 +16,7 @@ import {
   testProject,
   testWorkspace,
 } from "./test/fake";
+import { fakeRealtime } from "./test/realtime";
 
 // The management screens as the router shows them, over a fake of the API's
 // client: the workspace that the project list opens, the switcher, what an
@@ -85,6 +86,39 @@ function projectPages(operation: string, boards: Board[]): unknown {
       return { items: boards, next_cursor: null };
   }
   return startPage(operation as Parameters<typeof startPage>[0]);
+}
+
+/** What a board's page says once its form is saved. */
+const saved = "Saved.";
+
+/**
+ * Returns the server's refusal of a batch of one command of type for the
+ * revision of the board state, which changed elsewhere since the page read
+ * it at rev 3, with the board as it is now.
+ */
+function conflict(type: string, state: Board) {
+  return refused(409, {
+    code: "revision_conflict",
+    details: {
+      conflicts: [
+        {
+          command: 0,
+          command_id: "00000000-0000-7000-8000-000000000001",
+          type,
+          id: state.id,
+          expected_rev: 3,
+          exists: true,
+          current_rev: state.rev,
+        },
+      ],
+      states: { [state.id]: state },
+    },
+  });
+}
+
+/** Returns the answer to a batch that applied as seq, leaving revisions. */
+function applied(seq: number, revisions: { id: string; rev: number }[]) {
+  return { status: "applied", seq, revisions, not_reconnected: [], undo: [] };
 }
 
 /** Answers with answer, or fails the test's request of an operation that it does not expect. */
@@ -680,9 +714,8 @@ describe("the tree of boards", () => {
     expect(sent[2].id).toBe(sent[0].id);
   });
 
-  it("sends a rename refused for a revision again with the revision that the tree read since", async () => {
+  it("sends a rename again by itself, expecting the board's revision now, once it was refused for another change of the board elsewhere", async () => {
     const user = userEvent.setup();
-    let rev = 3;
     const revisions: unknown[] = [];
     fakeApi((operation, input) => {
       if (operation === "applyCommands") {
@@ -691,20 +724,57 @@ describe("the tree of boards", () => {
         };
         revisions.push(body.commands[0].expected_rev);
         if (revisions.length === 1) {
-          // The board changed elsewhere since the tree read it.
-          rev = 4;
-          throw refused(409, { code: "revision_conflict" });
+          // Another editor gave the board a colour since the tree read it,
+          // which the rename does not change.
+          throw conflict("board.rename", {
+            ...board("bd_a", "Harbour"),
+            color: "blue",
+            rev: 4,
+          });
         }
-        return {
-          status: "applied",
-          seq: 3,
-          revisions: [],
-          not_reconnected: [],
-          undo: [],
-        };
+        return applied(3, [{ id: "bd_a", rev: 5 }]);
       }
       return expected(
-        projectPages(operation, [{ ...board("bd_a", "Harbour"), rev }]),
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("New name");
+    await user.clear(name);
+    await user.type(name, "Harbour at night");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
+    expect(
+      await screen.findByRole("link", { name: "Harbour at night" }),
+    ).toBeDefined();
+  });
+
+  it("shows a rename refused for a rename of the board elsewhere, and sends it again, once asked, expecting the revision that the refusal gave", async () => {
+    const user = userEvent.setup();
+    const revisions: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { expected_rev: unknown }[] };
+        };
+        revisions.push(body.commands[0].expected_rev);
+        if (revisions.length === 1) {
+          throw conflict("board.rename", {
+            ...board("bd_a", "Old harbour"),
+            rev: 4,
+          });
+        }
+        return applied(3, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
         operation,
       );
     });
@@ -719,6 +789,10 @@ describe("the tree of boards", () => {
     await user.type(name, "Harbour at night");
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
     await within(dialog).findByRole("alert");
+    // The tree, behind the dialog, shows the other editor's name meanwhile.
+    expect(
+      await screen.findByRole("link", { name: "Old harbour", hidden: true }),
+    ).toBeDefined();
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
@@ -783,43 +857,50 @@ describe("the tree of boards", () => {
 });
 
 describe("a board's page", () => {
-  it("keeps what the user typed once the board has changed elsewhere, and sends it expecting the revision that the form shows", async () => {
+  // Verifies: FR-RT-02/AC3
+  it("keeps what the user typed while another session's change of the board applies, and sends it again by itself once it was refused for that change", async () => {
     const user = userEvent.setup();
-    let harbour = board("bd_a", "Harbour");
+    const realtime = fakeRealtime();
+    const harbour = board("bd_a", "Harbour");
     const sent: unknown[] = [];
     fakeApi((operation, input) => {
-      switch (operation) {
-        case "getBoard":
-          return harbour;
-        case "applyCommands":
-          sent.push((input as { body: { commands: unknown[] } }).body.commands);
-          throw refused(409, { code: "revision_conflict" });
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        if (sent.length === 1) {
+          throw conflict("board.describe", {
+            ...harbour,
+            color: "blue",
+            rev: 4,
+          });
+        }
+        return applied(testProject.seq + 2, [{ id: "bd_a", rev: 5 }]);
       }
       return expected(projectPages(operation, [harbour]), operation);
     });
-    const { queryClient } = renderApp(
-      `/projects/${testProject.id}/boards/bd_a`,
-      {
-        session: testSession,
-      },
-    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
     await user.type(
       await screen.findByLabelText("Description"),
       "Where the story starts",
     );
-    // Another editor gives the board a colour, which the page reads again.
-    harbour = { ...harbour, color: "blue", rev: 4 };
-    await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    // Another editor gives the board a colour, which comes over the channel.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
     expect(screen.getByLabelText("Description")).toHaveProperty(
       "value",
       "Where the story starts",
     );
     expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
     await user.click(screen.getByRole("button", { name: "Save the board" }));
-    // Refused for that change, the form shows the board as it is now.
-    await waitFor(() =>
-      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
-    );
+    await screen.findByText(saved);
     expect(sent).toEqual([
       [
         {
@@ -829,6 +910,100 @@ describe("a board's page", () => {
           command_id: expect.any(String),
         },
       ],
+      [
+        {
+          type: "board.describe",
+          payload: { id: "bd_a", description: "Where the story starts" },
+          expected_rev: { bd_a: 4 },
+          command_id: expect.any(String),
+        },
+      ],
     ]);
+    // Saved, the form shows the board as it is now, with both changes.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+  });
+
+  it("names a field that another editor changed too with both values, and keeps the user's once saved again", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    const theirs = { ...harbour, description: "Where the tale ends", rev: 4 };
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        if (sent.length === 1) {
+          throw conflict("board.describe", theirs);
+        }
+        return applied(testProject.seq + 1, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    expect(
+      await screen.findByText(
+        "Description: now “Where the tale ends”, yours “Where the story starts”",
+      ),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText(saved);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual([
+      {
+        type: "board.describe",
+        payload: { id: "bd_a", description: "Where the story starts" },
+        expected_rev: { bd_a: 4 },
+        command_id: expect.any(String),
+      },
+    ]);
+  });
+
+  it("shows the other editor's version of a field that both changed once the user takes theirs", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    fakeApi((operation) => {
+      if (operation === "applyCommands") {
+        throw conflict("board.describe", {
+          ...harbour,
+          description: "Where the tale ends",
+          rev: 4,
+        });
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use their version" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Description")).toHaveProperty(
+        "value",
+        "Where the tale ends",
+      ),
+    );
   });
 });
