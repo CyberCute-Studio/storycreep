@@ -60,6 +60,13 @@ export interface Realtime {
    * one subscriber at a time; another replaces it.
    */
   subscribe(projectId: string, subscriber: Subscriber): () => void;
+  /**
+   * Closes the socket at once, and opens one anew for the projects that are
+   * subscribed to, then or later, as once the page's session is of another
+   * account, or of none: a socket's subscriptions are of the session whose
+   * cookie opened it, which they would otherwise go on being for a while.
+   */
+  reconnect(): void;
   /** Closes the socket for good, as once the page signs out. */
   close(): void;
 }
@@ -197,16 +204,20 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       lost(socket);
     }, silenceTimeout);
   };
-  /** Drops the socket s, if it is still the channel's, and connects again later. */
-  const lost = (s: SocketLike | undefined, code?: number) => {
-    if (s === undefined || s !== socket) {
-      return;
-    }
+  /** Closes the socket s, the channel's, which is the channel's no longer. */
+  const drop = (s: SocketLike) => {
     socket = undefined;
     clearTimeout(silence);
     s.onopen = s.onmessage = s.onclose = s.onerror = null;
     s.close();
     notLive();
+  };
+  /** Drops the socket s, if it is still the channel's, and connects again later. */
+  const lost = (s: SocketLike | undefined, code?: number) => {
+    if (s === undefined || s !== socket) {
+      return;
+    }
+    drop(s);
     if (closed || subscribers.size === 0) {
       return;
     }
@@ -394,6 +405,16 @@ export function createRealtime(options: RealtimeOptions): Realtime {
           }, lingerTimeout);
         }
       };
+    },
+    reconnect() {
+      clearTimeout(linger);
+      clearTimeout(retry);
+      retry = undefined;
+      if (socket !== undefined) {
+        drop(socket);
+      }
+      failures = 0;
+      start();
     },
     close() {
       closed = true;

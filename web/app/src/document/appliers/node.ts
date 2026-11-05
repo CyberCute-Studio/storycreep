@@ -462,16 +462,18 @@ function nodeOf(draft: Draft, id: string): Node | undefined {
 
 /**
  * Takes out of draft each connection that is gone, which went to the trash
- * with one of its ends, without a revision of its own, and which every read
- * leaves out.
+ * with what goesWith returns of it, one of its ends or both, or the output
+ * that it leaves, without a revision of its own, and which every read leaves
+ * out; one that it goes with nothing of stays.
  */
 function dropConnections(
   draft: Draft,
-  gone: (connection: Connection) => boolean,
+  goesWith: (connection: Connection) => string[],
 ): void {
   for (const connection of [...draft.all("connections").values()]) {
-    if (gone(connection)) {
-      draft.removeQuietly("connections", connection.id);
+    const owners = goesWith(connection);
+    if (owners.length > 0) {
+      draft.removeQuietly("connections", connection.id, owners);
     }
   }
 }
@@ -496,9 +498,8 @@ function deleteNodes(draft: Draft, ids: readonly string[]): void {
   }
   // A node's outputs go with it, in its outputs, and so do the connections
   // that leave or enter it, without a revision of their own.
-  dropConnections(
-    draft,
-    (c) => gone.has(c.from_node_id) || gone.has(c.to_node_id),
+  dropConnections(draft, (c) =>
+    [c.from_node_id, c.to_node_id].filter((end) => gone.has(end)),
   );
   renames(draft, [...gone]);
 }
@@ -812,7 +813,9 @@ export const nodeAppliers: Appliers<Types> = {
     );
     draft.changed(output.id);
     // The connections that leave it go to the trash with it.
-    dropConnections(draft, (c) => c.from_port === output.id);
+    dropConnections(draft, (c) =>
+      c.from_port === output.id ? [output.id] : [],
+    );
   },
   // The output in the trash is none that the document holds, and the
   // payload does not tell its node: the store reads the boards that it

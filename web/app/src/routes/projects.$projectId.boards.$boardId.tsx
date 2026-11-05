@@ -35,7 +35,9 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   // document reads, and which holds the board, but for one in the trash. A
   // document that the real-time channel does not keep current, while it is
   // not live, may not have the board yet, as one that another session made
-  // since, so it reads the project anew before it says that there is none.
+  // since, so it reads the project anew before it says that there is none,
+  // and shows what that read failed with, rather than say so after a read
+  // that failed.
   loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),

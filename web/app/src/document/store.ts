@@ -18,12 +18,16 @@
 // is none of what the batch changes, field by field; where it is, the
 // refusal names each field with both values (ConflictError), and nothing is
 // changed over (§7.10 item 1). The answer to a batch holds its undo, which
-// the history keeps (undo.ts), and which undo and redo send back.
+// the history keeps (undo.ts), and which undo and redo send back, once the
+// page's batches made before have joined the history, expecting what the
+// server left, which no answer to a batch before them moves.
 
 import {
   ApiError,
+  type BranchOutput,
   type CommandBody,
   type CommandResultBody,
+  type ProjectBody,
   type UndoCommandBody,
 } from "@storycreep/shared/api";
 import { formatUuid, newUuid } from "@storycreep/shared/ids";
@@ -53,10 +57,13 @@ import { backoff, type Realtime } from "./realtime";
 import {
   applyOperation,
   applyPending,
+  entitiesOf,
   entityOf,
   equal,
   mergeEntity,
   mergeList,
+  nestedFieldOf,
+  nestedOf,
   type Operation,
   withEntity,
 } from "./reconcile";
@@ -172,6 +179,15 @@ interface Entry {
   parts: Set<Part>;
   /** Whether a batch refused for a revision is sent again where nothing that it changes changed elsewhere. */
   retries: number;
+  /**
+   * Whether the batch is a step of the history, whose commands expect what
+   * the server left of the entities that the batch that it undoes or redoes
+   * changed, rather than what the page showed, so that the answers to the
+   * batches before it never move them past those batches (moveQueued): an
+   * undo that would write over what they changed is refused (FR-EDIT-08
+   * AC4).
+   */
+  step: boolean;
   sent: boolean;
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
@@ -348,16 +364,34 @@ export class ProjectDocument {
   private readonly earlier = new Map<string, Revised>();
   private readonly toRead = new Set<string>();
   private reading = false;
+  /** The parts being read again, each with whether it is to be read once more after (reread). */
+  private readonly rereads = new Map<
+    Part,
+    { again: boolean; done: Promise<void> }
+  >();
   /** The IDs of the commands of each batch that no answer came to, by its key, which a batch sent again as it was takes (enqueue). */
   private readonly unanswered = new Map<string, string[]>();
   private readonly waiters: { seq: number; resolve: () => void }[] = [];
   private readonly history: History;
   /** The account that the document is of, as the page's session was once it was made, whose batches it sends as no other's (post). */
   private readonly userId: string | undefined;
-  /** The undo or the redo under way, which another asked for meanwhile settles as (step). */
-  private stepUnderWay: Promise<void> | undefined;
+  /** The undo or the redo under way, which another of the same asked for meanwhile settles as, and one of the other follows (step). */
+  private stepUnderWay:
+    | { which: "undo" | "redo"; done: Promise<boolean> }
+    | undefined;
+  /**
+   * The page's batches that send has yet to settle, each with what its
+   * answer adds to the history, which an undo or a redo asked for meanwhile
+   * waits for, so that it sends the step that is the latest once they have
+   * joined it (stepped).
+   */
+  private readonly sends = new Set<Promise<CommandResultBody>>();
   /** Reads the project anew now, once a read of it failed and waits to try again (reload). */
   private retryNow: (() => void) | undefined;
+  /** What the latest reading anew of the project failed with, or undefined once one did not fail (refresh). */
+  private resyncFailure: unknown;
+  /** The seq that the document's subscription was sent from, as the operations after it follow (subscribed). */
+  private subscribedFrom = 0;
   /**
    * The seq that the project read anew is to be as of, at least, as a
    * resync_required that came while it was under way asks, whose
@@ -422,12 +456,17 @@ export class ProjectDocument {
     const buffered = this.buffer ?? [];
     this.buffer = undefined;
     this.unsubscribe = this.options.realtime?.subscribe(this.projectId, {
-      since: () => this.confirmed.seq,
+      since: () => {
+        this.subscribedFrom = this.confirmed.seq;
+        return this.subscribedFrom;
+      },
       subscribed: (seq) => {
-        // A project whose seq is behind the document's, as of a database
-        // restored from a backup older than the page, has other operations
-        // after it than those that the document has.
-        if (seq < this.confirmed.seq) {
+        // A project whose seq is behind what the subscription was sent from,
+        // as of a database restored from a backup older than the page, has
+        // other operations after it than those that the document has. One
+        // that the document's own batches have moved past since it was sent,
+        // whose answers came before it, is not behind.
+        if (seq < this.subscribedFrom) {
           void this.resync(seq);
         }
       },
@@ -506,13 +545,19 @@ export class ProjectDocument {
   /**
    * Reads the project anew while the real-time channel is not live, as the
    * document may have missed what changed since, as a board that another
-   * session created, and resolves once it has, or has failed to.
+   * session created, and resolves once it has, or rejects with what it
+   * failed with, as it tries again later, so that a page does not take the
+   * document as it was for what the project has, and say that a board that
+   * another session created is none.
    */
-  refresh(): Promise<void> {
+  async refresh(): Promise<void> {
     if (this.store.getState().live) {
-      return Promise.resolve();
+      return;
     }
-    return this.resync(this.confirmed.seq);
+    await this.resync(this.confirmed.seq);
+    if (this.resyncFailure !== undefined) {
+      throw this.resyncFailure;
+    }
   }
 
   /** Returns a set of the entities that operations change from now on, until the caller takes it out of watchers. */
@@ -567,6 +612,10 @@ export class ProjectDocument {
     );
     const wanted = own !== undefined || this.history.wants(op.seq);
     const captured: Captured = {};
+    const held = entitiesOf(
+      this.confirmed,
+      op.revisions.map((r) => canonical(r.id)),
+    );
     if (wanted) {
       // What the batch's commands expected is what the server had of each
       // entity once it had every operation before the batch, as the batch
@@ -577,22 +626,22 @@ export class ProjectDocument {
       const expected = expectedOf(own?.commands ?? []);
       for (const r of op.revisions) {
         const id = canonical(r.id);
-        const held = entityOf(this.confirmed, id)?.rev;
+        const rev = held.get(id)?.rev;
         const sent = expected.get(id);
         if (sent !== undefined) {
           captured[id] = sent;
-        } else if (held === undefined) {
+        } else if (rev === undefined) {
           captured[id] = null;
-        } else if (held < r.rev) {
-          captured[id] = held;
+        } else if (rev < r.rev) {
+          captured[id] = rev;
         }
       }
     }
     for (const r of op.revisions) {
       const id = canonical(r.id);
-      const held = entityOf(this.confirmed, id);
-      if (held !== undefined && held.rev < r.rev) {
-        this.remember(id, held);
+      const was = held.get(id);
+      if (was !== undefined && was.rev < r.rev) {
+        this.remember(id, was);
       }
     }
     const reconciled = applyOperation(this.confirmed, op);
@@ -644,16 +693,18 @@ export class ProjectDocument {
 
   /**
    * Tells the page's other reads of the project what an operation changed,
-   * or, for none, what the project read anew may have: the project itself,
-   * which the project's pages read with its role, as the document has it,
-   * without what the operation took out of it, as an unarchive's
-   * archived_at, and the trash, which a deletion or a restoration changes.
+   * or, for none, what the project read anew may have, with the role that
+   * it read: the project itself, which the project's pages read with its
+   * role, as the document has it, without what the operation took out of
+   * it, as an unarchive's archived_at, and the trash, which a deletion or a
+   * restoration changes.
    */
   private followed(
     op: Operation | undefined,
     before: Project | undefined,
+    role?: ProjectBody["role"],
   ): void {
-    this.projectFollowed(before);
+    this.projectFollowed(before, role);
     if (
       op === undefined ||
       op.commands.some((c) => /\.(delete|restore)(_many)?$/.test(c.type))
@@ -669,9 +720,14 @@ export class ProjectDocument {
    * it is another than before, however it came: by an operation, by the
    * project read anew, or by a read of it, or a refusal's state of it,
    * which an operation of the same revision that comes after leaves as it
-   * is (applyOperation).
+   * is (applyOperation), with the role that a read of it gave, as once the
+   * user's changed while the channel was not live, or else the role that
+   * the project's read has.
    */
-  private projectFollowed(before: Project | undefined): void {
+  private projectFollowed(
+    before: Project | undefined,
+    role?: ProjectBody["role"],
+  ): void {
     const project = this.confirmed.project;
     if (project !== undefined && project !== before) {
       this.options.queryClient.setQueryData(
@@ -679,7 +735,11 @@ export class ProjectDocument {
         (body) =>
           body === undefined
             ? body
-            : { ...project, role: body.role, seq: this.confirmed.seq },
+            : {
+                ...project,
+                role: role ?? body.role,
+                seq: this.confirmed.seq,
+              },
       );
     }
   }
@@ -703,6 +763,7 @@ export class ProjectDocument {
       if (was[kind] === doc[kind]) {
         continue;
       }
+      const field = nestedFieldOf(kind);
       for (const [id, held] of was[kind] as ReadonlyMap<string, Revised>) {
         const now = (doc[kind] as ReadonlyMap<string, Revised>).get(id);
         if (now === undefined || now === held) {
@@ -711,18 +772,9 @@ export class ProjectDocument {
         if (now.rev > held.rev) {
           this.remember(id, held);
         }
-        const field =
-          kind === "nodes"
-            ? "outputs"
-            : kind === "componentTypes"
-              ? "attributes"
-              : undefined;
         if (field !== undefined) {
-          const nested = (entity: Revised) =>
-            ((entity as unknown as Record<string, unknown>)[field] ??
-              []) as Revised[];
-          const later = new Map(nested(now).map((c) => [c.id, c]));
-          for (const child of nested(held)) {
+          const later = new Map(nestedOf(now, field).map((c) => [c.id, c]));
+          for (const child of nestedOf(held, field)) {
             const next = later.get(child.id);
             if (next !== undefined && next.rev > child.rev) {
               this.remember(child.id, child);
@@ -765,7 +817,14 @@ export class ProjectDocument {
     this.show();
   }
 
-  /** Shows the page the document: what the server confirmed, with the page's batches on top. */
+  /**
+   * Shows the page the document: what the server confirmed, with the page's
+   * batches on top, each that applied at the revisions that its answer gave.
+   * One answered with already_applied is not: its answer gives the
+   * revisions that the entities have now, which may be past what other
+   * sessions changed since, which the document does not show yet, and which
+   * a batch made on top of it would otherwise expect, and write over unasked.
+   */
   private show(): void {
     let view = this.confirmed;
     for (const entry of this.entries) {
@@ -773,7 +832,7 @@ export class ProjectDocument {
         view,
         entry.commands,
         entry.time,
-        entry.answer?.revisions,
+        entry.answer?.status === "applied" ? entry.answer.revisions : undefined,
       );
     }
     this.store.setState({
@@ -844,8 +903,10 @@ export class ProjectDocument {
   /** Reads the project anew as resync does, after failures failures in a row. */
   private async reload(seq: number, failures: number): Promise<void> {
     let doc: Doc;
+    let body: ProjectBody;
+    this.resyncFailure = undefined;
     try {
-      const body = (
+      body = (
         await api.call("getProject", { path: { project_id: this.projectId } })
       ).body;
       // The parts are read after the project, so they are as of its seq at
@@ -918,6 +979,7 @@ export class ProjectDocument {
         return;
       }
       this.options.log.record("request", error);
+      this.resyncFailure = error;
       const retry = () => {
         clearTimeout(this.resyncTimer);
         this.retryNow = undefined;
@@ -933,7 +995,7 @@ export class ProjectDocument {
     const before = this.confirmed.project;
     this.took(doc);
     this.generation++;
-    this.followed(undefined, before);
+    this.followed(undefined, before, body.role);
     const buffered = (this.buffer ?? []).sort((a, b) => a.seq - b.seq);
     this.buffer = undefined;
     for (const op of buffered) {
@@ -975,8 +1037,36 @@ export class ProjectDocument {
     }
   }
 
-  /** Reads part again, as once entities of it came back without revisions of their own. */
-  private async reread(part: Part): Promise<void> {
+  /**
+   * Reads part again, as once entities of it came back without revisions of
+   * their own. A part being read again is read once more after that read,
+   * however many ask meanwhile, as that read may have begun before what
+   * they ask for, rather than once for each, as for the boards that each
+   * node restored by an undo, and a redo, and an undo again, has read again.
+   */
+  private reread(part: Part): Promise<void> {
+    const under = this.rereads.get(part);
+    if (under !== undefined) {
+      under.again = true;
+      return under.done;
+    }
+    const reading = { again: false, done: Promise.resolve() };
+    reading.done = (async () => {
+      try {
+        do {
+          reading.again = false;
+          await this.rereadOnce(part);
+        } while (reading.again && !this.disposed);
+      } finally {
+        this.rereads.delete(part);
+      }
+    })();
+    this.rereads.set(part, reading);
+    return reading.done;
+  }
+
+  /** Reads part again, as reread does, once. */
+  private async rereadOnce(part: Part): Promise<void> {
     if (this.disposed) {
       return;
     }
@@ -1023,11 +1113,22 @@ export class ProjectDocument {
         const folders = ids.some(
           (id) => placeOf(id)?.of === "kind" && id.startsWith("fld_"),
         );
-        // A part of which there are many to read is read again whole, in a
-        // few pages of its lists, rather than each of them by its own read.
+        const entities = ids.filter((id) => !id.startsWith("fld_"));
+        const held = entitiesOf(this.confirmed, entities);
         const byPart = new Map<Part | undefined, string[]>();
-        for (const id of ids.filter((id) => !id.startsWith("fld_"))) {
-          const part = partOfId(this.confirmed, id);
+        const rereads = new Set<Part>();
+        for (const id of entities) {
+          if (placeOf(id)?.of === "attribute" && held.get(id) === undefined) {
+            // An attribute definition that no type that the document holds
+            // has, as one that came back from the trash, has no read of its
+            // own, and is of a type that the types' list answers with it,
+            // which is read again, once for them all.
+            if (this.confirmed.parts.has("components")) {
+              rereads.add("components");
+            }
+            continue;
+          }
+          const part = partOfHeld(this.confirmed, id, held.get(id));
           const of = byPart.get(part);
           if (of === undefined) {
             byPart.set(part, [id]);
@@ -1035,13 +1136,21 @@ export class ProjectDocument {
             of.push(id);
           }
         }
-        const tasks: (() => Promise<void>)[] = [];
+        // A part of which there are many to read is read again whole, in a
+        // few pages of its lists, rather than each of them by its own read.
         for (const [part, of] of byPart) {
           if (part !== undefined && of.length > readsOfOnePart) {
-            tasks.push(() => this.reread(part));
-          } else {
+            rereads.add(part);
+          }
+        }
+        const tasks: (() => Promise<void>)[] = [];
+        for (const [part, of] of byPart) {
+          if (part === undefined || !rereads.has(part)) {
             tasks.push(...of.map((id) => () => this.readEntity(id, since)));
           }
+        }
+        for (const part of rereads) {
+          tasks.push(() => this.reread(part));
         }
         if (folders) {
           for (const part of ["tree", "variables", "components"] as const) {
@@ -1068,14 +1177,10 @@ export class ProjectDocument {
       }
       owner = node.id;
     } else if (place?.of === "attribute") {
+      // One that no type that the document holds has is read with the
+      // types' list (readAll).
       const type = typeOfAttribute(this.confirmed.componentTypes, id);
       if (type === undefined) {
-        // An attribute definition that came back from the trash, which no
-        // type that the document holds has, is of a type that the list of
-        // the types has with it.
-        if (this.confirmed.parts.has("components")) {
-          await this.reread("components");
-        }
         return;
       }
       owner = type.id;
@@ -1095,16 +1200,18 @@ export class ProjectDocument {
       // The project read anew meanwhile read the entity with its part.
       return;
     }
+    let role: ProjectBody["role"] | undefined;
     if (owner === this.projectId) {
       if (body === undefined) {
         this.goneAway();
         return;
       }
+      role = (body as ProjectBody).role;
       body = projectOf(body as Project);
     }
     const before = this.confirmed.project;
     this.took(mergeEntity(this.confirmed, owner, body, since, changed));
-    this.projectFollowed(before);
+    this.projectFollowed(before, role);
     this.show();
   }
 
@@ -1115,20 +1222,13 @@ export class ProjectDocument {
     const generation = this.generation;
     const changed = this.watch();
     try {
-      const kind =
+      const items = await listFolders(
+        this.projectId,
         part === "tree"
           ? "board"
           : part === "variables"
             ? "variable"
-            : "component";
-      const items = await everyPage(
-        async (cursor) =>
-          (
-            await api.call("listFolders", {
-              path: { project_id: this.projectId },
-              query: { kind, cursor, limit: allAtOnce },
-            })
-          ).body,
+            : "component",
       );
       // The project read anew meanwhile read the folders with their part.
       if (this.generation === generation) {
@@ -1153,8 +1253,21 @@ export class ProjectDocument {
    * had, so that the server answers it as the batch that it applied, if it
    * did, rather than apply it again. The batch's undo joins the history.
    */
-  async send(commands: readonly Command[]): Promise<CommandResultBody> {
-    const sent = await this.enqueue(commands, conflictRetries);
+  send(commands: readonly Command[]): Promise<CommandResultBody> {
+    const sending = this.sendBatch(commands);
+    this.sends.add(sending);
+    const settled = () => {
+      this.sends.delete(sending);
+    };
+    sending.then(settled, settled);
+    return sending;
+  }
+
+  /** Sends a batch as send does, adding its undo to the history once it has applied. */
+  private async sendBatch(
+    commands: readonly Command[],
+  ): Promise<CommandResultBody> {
+    const sent = await this.enqueue(commands, conflictRetries, false);
     const answer = sent.answer;
     if (answer.status === "applied") {
       this.history.done(
@@ -1170,50 +1283,71 @@ export class ProjectDocument {
     return answer;
   }
 
-  /** Undoes the latest step of the history, rejecting with the server's refusal, as of what changed since (FR-EDIT-08 AC4). */
-  undo(): Promise<void> {
+  /**
+   * Undoes the latest step of the history, resolving with whether there was
+   * one, rejecting with the server's refusal, as of what changed since
+   * (FR-EDIT-08 AC4).
+   */
+  undo(): Promise<boolean> {
     return this.step("undo");
   }
 
-  /** Redoes the latest step that was undone. */
-  redo(): Promise<void> {
+  /** Redoes the latest step that was undone, resolving with whether there was one, as undo does. */
+  redo(): Promise<boolean> {
     return this.step("redo");
   }
 
   /**
    * Sends the latest step of the history to undo or to redo. One asked for
-   * while another is under way, as by a second click before the first has
-   * disabled the button, is that one, and settles as it does, so that what
-   * the page says of it is what became of it.
+   * while another of the same is under way, as by a second click before the
+   * first has disabled the button, is that one, and settles as it does, so
+   * that what the page says of it is what became of it; one of the other is
+   * sent once that one has settled, as what was asked for after it.
    */
-  private step(which: "undo" | "redo"): Promise<void> {
-    if (this.stepUnderWay !== undefined) {
-      return this.stepUnderWay;
+  private step(which: "undo" | "redo"): Promise<boolean> {
+    const underWay = this.stepUnderWay;
+    if (underWay !== undefined) {
+      if (underWay.which === which) {
+        return underWay.done;
+      }
+      const after = () => this.step(which);
+      return underWay.done.then(after, after);
     }
     const newest = () =>
       which === "undo" ? this.history.nextUndo() : this.history.nextRedo();
-    const first = newest();
-    if (first === undefined) {
-      return Promise.resolve();
+    if (newest() === undefined && this.sends.size === 0) {
+      return Promise.resolve(false);
     }
-    const underWay = this.stepped(which, first, newest).finally(() => {
-      if (this.stepUnderWay === underWay) {
+    const done = this.stepped(which, newest).finally(() => {
+      if (this.stepUnderWay?.done === done) {
         this.stepUnderWay = undefined;
       }
     });
-    this.stepUnderWay = underWay;
-    return underWay;
+    this.stepUnderWay = { which, done };
+    return done;
   }
 
-  /** Sends first, the latest step to undo or to redo, which newest returns, or the one that is the latest once the document has the operations before it. */
+  /**
+   * Sends the latest step to undo or to redo, which newest returns, once the
+   * page's batches made before have joined the history, and the document
+   * has the operations before it, and resolves with whether there was one.
+   */
   private async stepped(
     which: "undo" | "redo",
-    first: Step,
     newest: () => Step | undefined,
-  ): Promise<void> {
-    let step = first;
+  ): Promise<boolean> {
     this.store.setState({ stepping: true });
+    // The page's batches made before the step was asked for, queued or under
+    // way, as a form's save just before, join the history first, so that
+    // the step sent is the latest once they have, rather than one before
+    // them, which would write over what they changed, unasked.
+    const sends = [...this.sends];
     try {
+      await Promise.allSettled(sends);
+      let step = newest();
+      if (step === undefined) {
+        return false;
+      }
       // What the step expects is moved from what the document held before
       // the batches that it undoes, which it knows once it has them. A
       // batch answered meanwhile, as a form's save, changes the history, of
@@ -1223,7 +1357,7 @@ export class ProjectDocument {
         await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
         const now = newest();
         if (now === undefined) {
-          return;
+          return false;
         }
         const same = now.seqs[0] === step.seqs[0];
         step = now;
@@ -1297,6 +1431,7 @@ export class ProjectDocument {
       if (failure !== undefined) {
         throw failure;
       }
+      return true;
     } finally {
       this.store.setState({ stepping: false });
       this.show();
@@ -1314,7 +1449,7 @@ export class ProjectDocument {
     commands: readonly UndoCommandBody[],
   ): Promise<Sent[]> {
     try {
-      return [await this.enqueue(commands as unknown as Command[], 0)];
+      return [await this.enqueue(commands as unknown as Command[], 0, true)];
     } catch (error) {
       if (!undoTooLarge(error) || commands.length < 2) {
         throw error;
@@ -1347,10 +1482,11 @@ export class ProjectDocument {
     }
   }
 
-  /** Queues a batch, which the page shows at once, and resolves with its answer. */
+  /** Queues a batch, which the page shows at once, a step of the history or not (Entry.step), and resolves with its answer. */
   private enqueue(
     commands: readonly Command[],
     retries: number,
+    step: boolean,
   ): Promise<Sent> {
     const key = JSON.stringify(commands);
     // A batch the same as one that is queued or under way, as once a change
@@ -1375,12 +1511,15 @@ export class ProjectDocument {
     const before = new Map<string, number>();
     const parts = new Set<Part>();
     const after = draft.finish(view.seq);
+    const was = entitiesOf(view, draft.changes.keys());
+    const now = entitiesOf(after, draft.changes.keys());
     for (const id of draft.changes.keys()) {
-      const was = entityOf(view, id);
-      if (was !== undefined) {
-        before.set(id, was.rev);
+      const shown = was.get(id);
+      if (shown !== undefined) {
+        before.set(id, shown.rev);
       }
-      const part = partOfId(view, id) ?? partOfId(after, id);
+      const part =
+        partOfHeld(view, id, shown) ?? partOfHeld(after, id, now.get(id));
       if (part !== undefined) {
         parts.add(part);
       }
@@ -1394,6 +1533,7 @@ export class ProjectDocument {
         before,
         parts,
         retries,
+        step,
         sent: false,
         resolve: (answer) => resolve({ answer, captured: entry.captured }),
         reject,
@@ -1437,7 +1577,14 @@ export class ProjectDocument {
       await this.ready;
       const answer = await this.post(entry.commands);
       entry.answer = answer;
-      this.moveQueued(entry, answer);
+      // An answer of already_applied gives the revisions that the entities
+      // have now, which may be past what other sessions changed since, over
+      // which the batches made on top of it would be moved, and applied
+      // unasked: they are sent as they are, and refused for what changed,
+      // and compared with it, if anything did (retried).
+      if (answer.status === "applied") {
+        this.moveQueued(entry, answer);
+      }
       if (
         answer.status === "applied" &&
         answer.seq === this.confirmed.seq + 1 &&
@@ -1531,7 +1678,8 @@ export class ProjectDocument {
   /**
    * Moves what the queued batches after entry expect of each entity that
    * entry changed, from the revision that the page showed before entry,
-   * which they were made on top of, to the one that its answer gives.
+   * which they were made on top of, to the one that its answer gives, but
+   * for the steps of the history, which were not (Entry.step).
    */
   private moveQueued(entry: Entry, answer: CommandResultBody): void {
     for (const r of answer.revisions ?? []) {
@@ -1541,15 +1689,18 @@ export class ProjectDocument {
         continue;
       }
       for (const queued of this.entries) {
-        if (!queued.sent && queued !== entry) {
+        if (queued.sent || queued === entry) {
+          continue;
+        }
+        if (!queued.step) {
           queued.commands = queued.commands.map((c) =>
             moved(c, id, from, r.rev),
           );
-          // A batch made on top of this one, after it, expects what this
-          // one is moved to, from which its answer moves it on.
-          if (queued.before.get(id) === from) {
-            queued.before.set(id, r.rev);
-          }
+        }
+        // A batch made on top of this one, after it, expects what this one
+        // is moved to, from which its answer moves it on.
+        if (queued.before.get(id) === from) {
+          queued.before.set(id, r.rev);
         }
       }
     }
@@ -1614,9 +1765,12 @@ export class ProjectDocument {
   private adopt(error: ApiError): void {
     const states = statesOf(error);
     // An entity whose state the refusal does not give, as one that is gone,
-    // is read from the server.
+    // or gives in the trash, is read from the server, which has none of it
+    // to read, so that the page no longer shows it, as the channel, while it
+    // is not live, would not tell.
     for (const c of conflictsOf(error)) {
-      if (!(c.id in states)) {
+      const state = states[c.id] ?? states[canonical(c.id)];
+      if (state === undefined || state.deleted_at !== undefined) {
         this.toRead.add(canonical(c.id));
       }
     }
@@ -1719,16 +1873,27 @@ function unreadFields(id: string, base: Record<string, unknown>): Set<string> {
     : new Set();
 }
 
-/** Returns the part of doc that holds the entity of id, or undefined for none, as the project. */
-function partOfId(doc: Doc, id: string): Part | undefined {
+/**
+ * Returns the part of doc that holds entity, the entity of id that it holds,
+ * as entitiesOf finds it, or undefined for none, as the project: a branch
+ * output's is its node's, which it names.
+ */
+function partOfHeld(
+  doc: Doc,
+  id: string,
+  entity: Revised | undefined,
+): Part | undefined {
   const place = placeOf(id);
   switch (place?.of) {
-    case "kind": {
-      const entity = doc[place.kind].get(id);
-      return entity === undefined ? undefined : partOf(place.kind, entity);
-    }
+    case "kind":
+      return entity === undefined
+        ? undefined
+        : partOf(place.kind, entity as Entities[Kind]);
     case "output": {
-      const node = nodeOfOutput(doc.nodes, id);
+      const node =
+        entity === undefined
+          ? undefined
+          : doc.nodes.get((entity as BranchOutput).node_id);
       return node === undefined ? undefined : partOf("nodes", node);
     }
     case "attribute":
@@ -1817,20 +1982,30 @@ async function inTurns(
 /** A list that a part is read from. */
 type List = { [K in Kind]: { kind: K; items: Entities[K][] } }[Kind];
 
+/** Reads the project's folders of kind, every page. */
+function listFolders(
+  projectId: string,
+  kind: "board" | "variable" | "component",
+): Promise<Entities["folders"][]> {
+  return everyPage(
+    async (cursor) =>
+      (
+        await api.call("listFolders", {
+          path: { project_id: projectId },
+          query: { kind, cursor, limit: allAtOnce },
+        })
+      ).body,
+  );
+}
+
 /** Reads the lists of part, every page of each. */
 async function readPart(projectId: string, part: Part): Promise<List[]> {
   const path = { project_id: projectId };
   const page = { limit: allAtOnce };
   const folders = (kind: "board" | "variable" | "component") =>
-    everyPage(
-      async (cursor) =>
-        (
-          await api.call("listFolders", {
-            path,
-            query: { kind, cursor, ...page },
-          })
-        ).body,
-    ).then((items): List => ({ kind: "folders", items }));
+    listFolders(projectId, kind).then(
+      (items): List => ({ kind: "folders", items }),
+    );
   switch (part) {
     case "tree":
       return Promise.all([

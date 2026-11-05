@@ -141,8 +141,9 @@ export class History {
   /**
    * Each step, and each batch's capture, as JSON, which the history writes
    * to the tab's storage once for each change, a few times where it does
-   * not fit, but serialises once: a step that moves is another object
-   * (move), as a capture that changes is (advance).
+   * not fit, but serialises once: a step that moves is another object, and
+   * one that does not the same (move), as a capture that changes is another
+   * (advance).
    */
   private readonly json = new WeakMap<object, string>();
 
@@ -309,11 +310,15 @@ export class History {
         ? command
         : { ...command, expected_rev: expected };
     };
+    // A step none of whose commands moved stays the same object, whose JSON
+    // the history has serialised already (json).
     const moved = (steps: Step[]) =>
-      steps.map((step) => ({
-        ...step,
-        commands: step.commands.map(movedCommand),
-      }));
+      steps.map((step) => {
+        const commands = step.commands.map(movedCommand);
+        return commands.every((c, i) => c === step.commands[i])
+          ? step
+          : { ...step, commands };
+      });
     this.undoSteps = moved(this.undoSteps);
     this.redoSteps = moved(this.redoSteps);
     this.save();

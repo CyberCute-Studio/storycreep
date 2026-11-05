@@ -19,7 +19,9 @@ export const Route = createFileRoute("/projects/$projectId/")({
     const held = doc.holds("tree");
     await found(doc.load("tree"));
     if (held) {
-      void doc.refresh();
+      // A read anew that fails is recorded, and tried again later, while
+      // the tree shows what the document held.
+      void doc.refresh().catch(() => undefined);
     }
   },
   component: Boards,

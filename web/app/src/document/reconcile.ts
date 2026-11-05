@@ -3,13 +3,14 @@
 // seq). An operation, the batch of commands that the server applied as its
 // project's next seq, with the revisions that it left of every entity that it
 // changed, is applied to the document through the shared appliers (apply.ts),
-// and then held to its revisions: what the appliers surely changed takes the
+// and then held to its revisions: what the appliers changed takes the
 // revision that the server gave it; what they changed that the server did
 // not change is set back; and what the server changed that the appliers did
 // not surely change is read from the server (toRead), as is a part whose
 // entities came back without revisions of their own (reread). A document that
 // holds an entity at a revision that the operation's is not past keeps it, as
-// one read from the server since, which may have seen later operations.
+// one read from the server since, which may have seen later operations, and
+// what went with it, without a revision of its own (Draft.passed).
 //
 // What the server is read for comes back later than the operations after it
 // may: an entity, or a part's list, is merged by its revision, the higher
@@ -80,6 +81,50 @@ export function entityOf(doc: Doc, id: string): Revised | undefined {
       );
   }
   return undefined;
+}
+
+/**
+ * Returns the entity that doc holds of each of ids, as entityOf does, the
+ * branch outputs and the attribute definitions found through one index of
+ * the nodes' and the types', built once one is asked for, rather than by
+ * looking through every node, or type, for each, as for the hundreds of
+ * outputs whose conditions a variable's rename compiles anew.
+ */
+export function entitiesOf(
+  doc: Doc,
+  ids: Iterable<string>,
+): Map<string, Revised | undefined> {
+  let nested: Map<string, Revised> | undefined;
+  const found = new Map<string, Revised | undefined>();
+  for (const id of ids) {
+    const of = placeOf(id)?.of;
+    if (of === "output" || of === "attribute") {
+      nested ??= nestedIndex(doc);
+      found.set(id, nested.get(id));
+    } else {
+      found.set(id, entityOf(doc, id));
+    }
+  }
+  return found;
+}
+
+/** Returns the branch outputs of doc's nodes and the attribute definitions of its types, by their IDs, each the first that holds it, as entityOf finds it. */
+function nestedIndex(doc: Doc): Map<string, Revised> {
+  const index = new Map<string, Revised>();
+  const add = (children: readonly Revised[]) => {
+    for (const child of children) {
+      if (!index.has(child.id)) {
+        index.set(child.id, child);
+      }
+    }
+  };
+  for (const node of doc.nodes.values()) {
+    add(node.outputs ?? []);
+  }
+  for (const type of doc.componentTypes.values()) {
+    add(type.attributes);
+  }
+  return index;
 }
 
 /** A document that is being written by ID, which copies each of its maps that it changes once. */
@@ -263,40 +308,58 @@ function ownersFirst(ids: Iterable<string>): string[] {
  * document as of op's seq, with what it leaves to read from the server.
  */
 export function applyOperation(doc: Doc, op: Operation): Reconciled {
-  const draft = new Draft(doc, op.time);
-  applyCommands(draft, op.commands);
-  const applied = draft.finish(op.seq);
   const revs = new Map<string, number>();
   for (const r of op.revisions) {
     revs.set(canonical(r.id), r.rev);
   }
+  const held = entitiesOf(doc, revs.keys());
+  // What the document has as of the operation already, or later, as read
+  // since, whose change it passes over, with what went with it (Draft.passed).
+  const passed = new Set<string>();
+  for (const [id, rev] of revs) {
+    const was = held.get(id);
+    if (was !== undefined && was.rev >= rev) {
+      passed.add(id);
+    }
+  }
+  const draft = new Draft(doc, op.time, passed);
+  applyCommands(draft, op.commands);
+  const applied = draft.finish(op.seq);
+  const after = entitiesOf(applied, draft.changes.keys());
   const out = new Writer(applied, op.time);
   const toRead = new Set<string>();
   const reread = new Set(draft.rereads);
   for (const id of ownersFirst(draft.changes.keys())) {
     const change = draft.changes.get(id) as { sure: boolean };
-    const before = entityOf(doc, id);
     const rev = revs.get(id);
-    if (rev === undefined || (before !== undefined && before.rev >= rev)) {
+    if (rev === undefined || passed.has(id)) {
       // The server did not change it, or the document has it as of a later
       // operation already, as read since.
-      out.set(id, before);
+      out.set(id, rev === undefined ? entityOf(doc, id) : held.get(id));
       continue;
     }
-    const after = entityOf(applied, id);
-    if (!change.sure) {
-      toRead.add(id);
-      continue;
-    }
-    if (after === undefined) {
+    const now = after.get(id);
+    if (now === undefined) {
       // A nested entity is taken out of its owner, which may have been set
       // back with it.
-      out.set(id, undefined);
-      out.gone(id, rev, op.seq);
-    } else {
-      out.set(id, { ...after, rev });
-      out.back(id);
+      if (change.sure) {
+        out.set(id, undefined);
+        out.gone(id, rev, op.seq);
+      } else {
+        toRead.add(id);
+      }
+      continue;
     }
+    // What the appliers were not sure of is the server's at the operation's
+    // revision too, as the next batch that changes it expects, which the
+    // read of it corrects, as the read's fields at the same revision win
+    // (mergeEntity), rather than a batch expecting the revision before be
+    // refused, and compared with what the appliers predicted.
+    if (!change.sure) {
+      toRead.add(id);
+    }
+    out.set(id, { ...now, rev });
+    out.back(id);
   }
   // What went with another, without a revision of its own, as a connection
   // with its node to the trash, is marked gone, though no revision of the
@@ -311,8 +374,8 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
     if (draft.changes.has(id)) {
       continue;
     }
-    const held = entityOf(doc, id);
-    if (held !== undefined ? held.rev < rev : wouldHold(applied, id)) {
+    const was = held.get(id);
+    if (was !== undefined ? was.rev < rev : wouldHold(applied, id)) {
       toRead.add(id);
     }
   }
@@ -322,8 +385,9 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
 /**
  * Applies the commands of a batch of the page's own that the server has not
  * confirmed by seq yet to doc, as the page shows it, and, once the server has
- * answered it, gives what the appliers surely changed the revisions of the
- * answer, so that the next command expects them.
+ * answered that it applied it, gives what the appliers changed the revisions
+ * of the answer, so that the next command expects them, as the operation's
+ * do once it applies (applyOperation).
  */
 export function applyPending(
   doc: Doc,
@@ -342,30 +406,38 @@ export function applyPending(
   for (const r of revisions) {
     revs.set(canonical(r.id), r.rev);
   }
+  const entities = entitiesOf(applied, revs.keys());
   for (const id of ownersFirst(revs.keys())) {
-    const entity = entityOf(applied, id);
-    if (draft.changes.get(id)?.sure && entity !== undefined) {
+    const entity = entities.get(id);
+    if (draft.changes.has(id) && entity !== undefined) {
       out.set(id, { ...entity, rev: revs.get(id) as number });
     }
   }
   return out.finish(doc.seq);
 }
 
-/** Returns the field of the entity of id that holds its nested entities, each with a revision of its own: a node's branch outputs, or a type's attribute definitions, or undefined for none. */
-function nestedField(id: string): "outputs" | "attributes" | undefined {
-  const place = placeOf(id);
-  if (place?.of !== "kind") {
-    return undefined;
-  }
-  return place.kind === "nodes"
+/** Returns the field of an entity of kind that holds its nested entities, each with a revision of its own: a node's branch outputs, or a type's attribute definitions, or undefined for none. */
+export function nestedFieldOf(
+  kind: Kind,
+): "outputs" | "attributes" | undefined {
+  return kind === "nodes"
     ? "outputs"
-    : place.kind === "componentTypes"
+    : kind === "componentTypes"
       ? "attributes"
       : undefined;
 }
 
+/** Returns the field of the entity of id that holds its nested entities, as nestedFieldOf does. */
+function nestedField(id: string): "outputs" | "attributes" | undefined {
+  const place = placeOf(id);
+  return place?.of === "kind" ? nestedFieldOf(place.kind) : undefined;
+}
+
 /** Returns the nested entities of owner under field, or none. */
-function nestedOf(owner: Revised, field: "outputs" | "attributes"): Revised[] {
+export function nestedOf(
+  owner: Revised,
+  field: "outputs" | "attributes",
+): Revised[] {
   const list = (owner as unknown as Record<string, unknown>)[field];
   return Array.isArray(list) ? (list as Revised[]) : [];
 }

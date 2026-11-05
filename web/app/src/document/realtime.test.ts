@@ -726,6 +726,43 @@ describe("createRealtime", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
+  it("closes the socket at once once asked to connect anew, and opens another for the next subscription, rather than one that went with the session before", () => {
+    const h = setup();
+    const a = fakeStore();
+    const stop = h.realtime.subscribe("prj_a", a);
+    h.socket().open();
+    h.socket().deliver({ type: "subscribed", project_id: "prj_a", seq: 0 });
+    stop();
+    h.realtime.reconnect();
+    expect(h.sockets[0].closed).toBe(true);
+    expect(h.sockets).toHaveLength(1);
+    h.realtime.subscribe("prj_b", fakeStore(4));
+    expect(h.sockets).toHaveLength(2);
+    h.socket().open();
+    expect(h.socket().sent).toEqual([
+      { type: "subscribe", project_id: "prj_b", since: 4 },
+    ]);
+  });
+
+  it("opens a socket anew at once for the projects still subscribed to once asked to connect anew, and from the start of its backoff", () => {
+    const h = setup();
+    const a = fakeStore(2);
+    h.realtime.subscribe("prj_a", a);
+    h.socket().drop();
+    vi.advanceTimersByTime(2_000);
+    h.socket().drop();
+    h.realtime.reconnect();
+    expect(h.sockets).toHaveLength(3);
+    h.socket().open();
+    expect(h.socket().sent).toEqual([
+      { type: "subscribe", project_id: "prj_a", since: 2 },
+    ]);
+    // The wait that it cut short connects nothing more.
+    vi.advanceTimersByTime(backoffMax * 2);
+    expect(h.sockets).toHaveLength(3);
+    expectWaits(h, [2_000]);
+  });
+
   it("closes for good: the socket, its waits to connect again, and its listener of the browser's online event", () => {
     const h = setup();
     const a = fakeStore();

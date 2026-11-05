@@ -192,12 +192,12 @@ export const boardAppliers: Appliers<Types> = {
     draft.remove("boards", id);
     // The board's nodes and connections are in the trash with it, without
     // a revision of their own, and the server's reads leave them out.
-    draft.drop(boardPart(id));
+    draft.drop(boardPart(id), id);
     // So are its variables, of its scope, which the server's reads leave
     // out too (live_variable).
     for (const variable of [...draft.all("variables").values()]) {
       if (variable.scope === "board" && variable.board_id === id) {
-        draft.removeQuietly("variables", variable.id);
+        draft.removeQuietly("variables", variable.id, [id]);
       }
     }
     // The expressions on other boards that name its nodes, or its

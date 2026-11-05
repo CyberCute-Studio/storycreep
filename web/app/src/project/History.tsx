@@ -20,11 +20,13 @@ export function History({ projectId }: { projectId: string }) {
   const redoable = useDocumentState(doc, (state) => state.redoable);
   const stepping = useDocumentState(doc, (state) => state.stepping);
   const [done, setDone] = useState<"undo" | "redo">();
+  // A step that there was none of once it was sent, as a redo that a change
+  // saved just before ended, says nothing.
   const step = useMutation({
     mutationFn: (which: "undo" | "redo") =>
       which === "undo" ? doc.undo() : doc.redo(),
     onMutate: () => setDone(undefined),
-    onSuccess: (_result, which) => setDone(which),
+    onSuccess: (stepped, which) => setDone(stepped ? which : undefined),
   });
   const reason = refusalOf(step.error, t)?.message ?? "";
   return (

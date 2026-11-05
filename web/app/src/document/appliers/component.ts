@@ -406,8 +406,14 @@ export const componentAppliers: Appliers<Types> = {
   },
   // The definition in the trash is none that the document holds, and the
   // payload does not tell its type, nor the values that come back with it:
-  // the store reads the components, as its operation's revisions name them.
-  "attribute.restore": (draft) => renames(draft),
+  // the store reads the components, as its operation's revisions name them,
+  // and the types' list again, which brings the definition back in its type,
+  // as a definition has no read of its own, and its revision does not
+  // change its type's.
+  "attribute.restore": (draft) => {
+    draft.reread("components");
+    renames(draft);
+  },
   "component.create": (draft, p) => {
     const type = draft.get("componentTypes", canonical(p.component_type_id));
     const given = valuesOf(p.attributes);

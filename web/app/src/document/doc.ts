@@ -15,7 +15,6 @@
 
 import type {
   Board,
-  BranchOutput,
   Component,
   Summary as ComponentSummary,
   ComponentType,
@@ -216,25 +215,6 @@ export function typeOfAttribute(
   return undefined;
 }
 
-/** Returns the revision that doc holds of the entity of id, or undefined if it holds none. */
-export function revOf(doc: Doc, id: string): number | undefined {
-  const place = placeOf(id);
-  switch (place?.of) {
-    case "project":
-      return doc.project?.id === id ? doc.project.rev : undefined;
-    case "kind":
-      return doc[place.kind].get(id)?.rev;
-    case "output":
-      return nodeOfOutput(doc.nodes, id)?.outputs?.find((o) => o.id === id)
-        ?.rev;
-    case "attribute":
-      return typeOfAttribute(doc.componentTypes, id)?.attributes.find(
-        (a) => a.id === id,
-      )?.rev;
-  }
-  return undefined;
-}
-
 /** What a Draft records of an entity that a command changed. */
 export interface Change {
   /**
@@ -245,6 +225,9 @@ export interface Change {
    */
   sure: boolean;
 }
+
+/** No entities, whose change a draft passes over, as it passes over none by default (Draft.passed). */
+const none: ReadonlySet<string> = new Set();
 
 /**
  * A document being changed by a batch's commands, which copies each map of
@@ -279,11 +262,21 @@ export class Draft {
    * names, so that the store marks them gone (Doc.gone) itself.
    */
   readonly quiet = new Map<string, number>();
+  /**
+   * The entities that the document holds as of the batch's operation
+   * already, or later, as read from the server since, whose change of the
+   * batch the store passes over (applyOperation): what goes with one of them,
+   * without a revision of its own, as a connection with its node to the
+   * trash, or a board's content with the board, stays as it is, as the read
+   * that found it as of later found that too, as once it came back.
+   */
+  private readonly passed: ReadonlySet<string>;
 
-  constructor(base: Doc, time: string) {
+  constructor(base: Doc, time: string, passed: ReadonlySet<string> = none) {
     this.base = base;
     this.time = time;
     this.project = base.project;
+    this.passed = passed;
   }
 
   /** Returns the entity of kind and id, as the batch has left it so far. */
@@ -351,14 +344,19 @@ export class Draft {
 
   /**
    * Takes the entity of kind and id out of the document as remove does,
-   * without recording a change of it: for an entity that goes with another,
-   * without a revision of its own, as a connection with its node to the
-   * trash, which the store would otherwise set back, as one that the server
-   * did not change. It records the entity's revision (quiet).
+   * without recording a change of it: for an entity that goes with others,
+   * owners, without a revision of its own, as a connection with its node to
+   * the trash, which the store would otherwise set back, as one that the
+   * server did not change, unless the store passes over the change of every
+   * owner (passed). It records the entity's revision (quiet).
    */
-  removeQuietly<K extends Kind>(kind: K, id: string): void {
+  removeQuietly<K extends Kind>(
+    kind: K,
+    id: string,
+    owners: readonly string[],
+  ): void {
     const entity = this.get(kind, id);
-    if (entity !== undefined) {
+    if (entity !== undefined && !owners.every((o) => this.passed.has(o))) {
       this.writable(kind).delete(id);
       if (!this.quiet.has(id)) {
         this.quiet.set(id, entity.rev);
@@ -403,12 +401,13 @@ export class Draft {
 
   /**
    * Takes part out of the document, with the entities of it, of every kind,
-   * as a board's content once the board is in the trash, or the tree, with
-   * its folders and its boards, once its read failed, which no change of
-   * them would keep current after.
+   * as a board's content once the board, owner, is in the trash, unless the
+   * store passes over the board's change (passed), or the tree, with its
+   * folders and its boards, once its read failed, which no change of them
+   * would keep current after.
    */
-  drop(part: Part): void {
-    if (!this.holds(part)) {
+  drop(part: Part, owner?: string): void {
+    if (!this.holds(part) || (owner !== undefined && this.passed.has(owner))) {
       return;
     }
     this.parts ??= new Set(this.base.parts);
@@ -452,25 +451,4 @@ export class Draft {
     doc.gone = this.gone ?? this.base.gone;
     return doc;
   }
-}
-
-/** Returns node with its branch output of id replaced by what change returns of it, or node if it has none. */
-export function withOutput(
-  node: Node,
-  id: string,
-  change: (output: BranchOutput) => BranchOutput | undefined,
-): Node {
-  const outputs = node.outputs ?? [];
-  const i = outputs.findIndex((output) => output.id === id);
-  if (i < 0) {
-    return node;
-  }
-  const changed = change(outputs[i]);
-  const next = [...outputs];
-  if (changed === undefined) {
-    next.splice(i, 1);
-  } else {
-    next[i] = changed;
-  }
-  return { ...node, outputs: next };
 }

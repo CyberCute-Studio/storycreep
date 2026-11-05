@@ -37,6 +37,9 @@ export function fakeRealtime(): FakeRealtime {
         }
       };
     },
+    reconnect() {
+      // The fake's subscriptions go with no session's cookie.
+    },
     close() {
       subscribers.clear();
     },

@@ -997,6 +997,31 @@ describe("a board's page", () => {
     ).toBeDefined();
   });
 
+  it("says that it could not show a board that the tree does not have once the project's read anew failed, rather than that there is no such page", async () => {
+    // The wait before the document reads the project again is longer than
+    // the test.
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    let projectReads = 0;
+    fakeApi((operation) => {
+      if (operation === "getProject" && ++projectReads > 1) {
+        throw refused(503, { code: "unavailable" });
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_b`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Something went wrong" }),
+    ).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Page not found" })).toBe(
+      null,
+    );
+  });
+
   it("shows the other editor's version of a field that both changed once the user takes theirs", async () => {
     const user = userEvent.setup();
     const harbour = board("bd_a", "Harbour");

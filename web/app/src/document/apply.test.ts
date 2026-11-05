@@ -548,6 +548,64 @@ describe("an operation held to its revisions (reconcile.ts)", () => {
       node?.outputs?.find((o) => o.id === id("branch_output", 3)),
     ).toMatchObject({ order: "Vm", rev: 4 });
   });
+
+  it("gives what the appliers were not sure of the operation's revision, and has it read, so that the next batch expects what the server has", () => {
+    const { doc, toRead } = applyOperation(
+      docOf({ folders: [folder(1, "board")], boards: [board(1)] }),
+      {
+        seq: 8,
+        commands: [
+          command("board.move", { id: boardA, folder_id: id("folder", 1) }),
+        ],
+        revisions: [{ id: boardA, rev: 4 }],
+        time,
+      },
+    );
+    expect(doc.boards.get(boardA)).toMatchObject({
+      folder_id: id("folder", 1),
+      rev: 4,
+    });
+    expect(toRead).toEqual(new Set([boardA]));
+  });
+
+  it("keeps what went with an entity that the document holds as of a later operation, as read since, without a revision of its own: a node's connections, and a board's content and variables", () => {
+    // The node and the board came back from the trash by later operations,
+    // which the document has read them as of.
+    const doc = docOf({
+      boards: [board(1, { rev: 5 })],
+      nodes: [node(1, { rev: 5 }), node(2), node(3)],
+      connections: [connection(1, 1, 2), connection(2, 3, 2)],
+      variables: [variable(1, { scope: "board", board_id: boardA })],
+    });
+    const deleted = applyOperation(doc, {
+      seq: 8,
+      commands: [
+        command("node.delete_many", { ids: [id("node", 1), id("node", 3)] }),
+      ],
+      revisions: [
+        { id: id("node", 1), rev: 4 },
+        { id: id("node", 3), rev: 4 },
+      ],
+      time,
+    });
+    expect(deleted.doc.nodes.get(id("node", 1))?.rev).toBe(5);
+    expect(deleted.doc.connections.has(id("connection", 1))).toBe(true);
+    expect(deleted.doc.gone.has(id("connection", 1))).toBe(false);
+    // One that went with a node that the document did not have later went.
+    expect(deleted.doc.nodes.has(id("node", 3))).toBe(false);
+    expect(deleted.doc.connections.has(id("connection", 2))).toBe(false);
+    const trashed = applyOperation(doc, {
+      seq: 8,
+      commands: [command("board.delete", { id: boardA })],
+      revisions: [{ id: boardA, rev: 4 }],
+      time,
+    });
+    expect(trashed.dropped.size).toBe(0);
+    expect(trashed.doc.boards.get(boardA)?.rev).toBe(5);
+    expect(trashed.doc.parts.has(boardPart(boardA))).toBe(true);
+    expect(trashed.doc.nodes.size).toBe(3);
+    expect(trashed.doc.variables.has(id("variable", 1))).toBe(true);
+  });
 });
 
 describe("an entity merged as a read of it answered (reconcile.ts)", () => {
@@ -1917,12 +1975,13 @@ describe("the component appliers", () => {
     expect(result.sure(id("component", 2))).toBe(true);
   });
 
-  it("predicts nothing of a definition restored", () => {
+  it("predicts nothing of a definition restored, and reads the types again, which bring it back in its type", () => {
     const result = apply(
       typed(summary(1, 1)),
       command("attribute.restore", { id: id("attribute_def", 3) }),
     );
     expect(result.draft.changes.size).toBe(0);
+    expect(result.draft.rereads).toEqual(new Set(["components"]));
   });
 
   it("creates a component with the payload's values and its type's defaults for the others, and the empty description, surely", () => {

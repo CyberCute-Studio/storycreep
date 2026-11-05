@@ -3,9 +3,11 @@
 // the pages show: a document is made once a page asks for it, follows its
 // project while a page of it is shown (acquire), and is dropped a while
 // after none is, and at once, with every other, once the page is signed in
-// to another account or signed out. Signing out also clears the undo
-// histories that the tab's storage keeps (PRD FR-EDIT-08: the history is
-// the user's), which another account's, kept under its own key, never reads.
+// to another account or signed out, when the real-time channel's socket,
+// which went with the session before, is opened anew. Signing out also
+// clears the undo histories that the tab's storage keeps (PRD FR-EDIT-08:
+// the history is the user's), which another account's, kept under its own
+// key, never reads.
 
 import type { QueryClient } from "@tanstack/react-query";
 import { sessionQuery } from "../api";
@@ -54,6 +56,9 @@ export class Documents {
       }
       userId = now?.user_id;
       this.clear();
+      // The socket went with the cookie of the session before, whose
+      // subscriptions the next documents' would otherwise be for a while.
+      options.realtime?.reconnect();
       if (now === null) {
         clearHistories(options.storage);
       }
