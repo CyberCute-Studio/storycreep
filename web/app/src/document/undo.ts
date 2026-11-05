@@ -131,6 +131,12 @@ export class History {
   private undoSteps: Step[] = [];
   private redoSteps: Step[] = [];
   private captured = new Map<number, Captured>();
+  /**
+   * The seqs of the batches that the steps undo or redo, which the history
+   * finds anew once its steps change (forget), rather than look for in every
+   * step for each operation that the store applies (wants).
+   */
+  private seqs = new Set<number>();
   private readonly storage: Storage | undefined;
   private readonly key: string | undefined;
   /** Whether the history no longer keeps itself in the tab's storage (close). */
@@ -184,6 +190,7 @@ export class History {
       this.undoSteps = saved.undo;
       this.redoSteps = saved.redo;
       this.captured = captured;
+      this.forget();
     } catch {
       // A history that is no JSON is none.
     }
@@ -197,6 +204,23 @@ export class History {
   /** How many steps can be redone. */
   get redoable(): number {
     return this.redoSteps.length;
+  }
+
+  /**
+   * The latest seq of the batches that the steps undo or redo, or 0 for
+   * none: one that the server had, as it answered the batch, which it has
+   * still, but for a database restored from an older backup.
+   */
+  get latest(): number {
+    let latest = 0;
+    for (const seq of this.seqs) {
+      // A seq of a history that another version of the app wrote, which is
+      // no number, is none.
+      if (Number.isSafeInteger(seq) && seq > latest) {
+        latest = seq;
+      }
+    }
+    return latest;
   }
 
   /** Returns the step that undo would send, the latest. */
@@ -219,6 +243,8 @@ export class History {
     this.redoSteps = [];
     if (step !== undefined) {
       this.push(this.undoSteps, step);
+    } else {
+      this.forget();
     }
     this.save();
   }
@@ -261,6 +287,7 @@ export class History {
     this.undoSteps = [];
     this.redoSteps = [];
     this.captured.clear();
+    this.seqs.clear();
     this.save();
   }
 
@@ -272,10 +299,7 @@ export class History {
 
   /** Reports whether the history wants to know what the batch of seq changed (capture): whether one of its steps undoes it. */
   wants(seq: number): boolean {
-    return (
-      !this.captured.has(seq) &&
-      [...this.undoSteps, ...this.redoSteps].some((s) => s.seqs.includes(seq))
-    );
+    return !this.captured.has(seq) && this.seqs.has(seq);
   }
 
   /**
@@ -391,13 +415,13 @@ export class History {
     this.forget();
   }
 
-  /** Forgets what it captured of a batch that no step undoes any longer. */
+  /** Finds the seqs of the batches that the steps undo anew (seqs), and forgets what it captured of one that no step undoes any longer. */
   private forget(): void {
-    const seqs = new Set(
+    this.seqs = new Set(
       [...this.undoSteps, ...this.redoSteps].flatMap((s) => s.seqs),
     );
     for (const seq of this.captured.keys()) {
-      if (!seqs.has(seq)) {
+      if (!this.seqs.has(seq)) {
         this.captured.delete(seq);
       }
     }

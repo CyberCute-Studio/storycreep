@@ -15,11 +15,12 @@ export interface FakeRealtime extends Realtime {
   hold(projectId: string): void;
   /**
    * Sends the store of projectId an operation of the next seq of its
-   * document, of commands, which left revisions, as of another session.
+   * document, of commands, which left revisions, as of another session, or
+   * of the page's own batch, whose commands have the IDs that it gave them.
    */
   send(
     projectId: string,
-    commands: { type: string; payload: unknown }[],
+    commands: { type: string; payload: unknown; command_id?: string }[],
     revisions: { id: string; rev: number }[],
   ): void;
 }
@@ -62,8 +63,8 @@ export function fakeRealtime(): FakeRealtime {
         project_id: projectId,
         seq: subscriber.since() + 1,
         commands: commands.map((command) => ({
-          ...command,
           command_id: `00000000-0000-7000-8000-${String(++ids).padStart(12, "0")}`,
+          ...command,
         })),
         revisions,
         created_at: "2026-11-05T10:00:00Z",

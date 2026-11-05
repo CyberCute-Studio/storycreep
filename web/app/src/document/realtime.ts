@@ -27,8 +27,11 @@ export interface Subscriber {
   /**
    * The seq of the latest operation of the project that the store has, from
    * which the subscription starts: the operations after it are sent first.
-   * The channel asks for it as it sends the subscription, and it changes
-   * nothing, so that a fake of the channel may ask for it too.
+   * The channel asks for it as it sends the subscription, so that the store
+   * knows what the server had before the subscription's answer, and what
+   * follows, which a seq of theirs is not before, but for a database
+   * restored from an older backup; a fake of the channel that asks for it
+   * otherwise asks at a moment at which it could have sent one.
    */
   since(): number;
   /**
@@ -41,14 +44,9 @@ export interface Subscriber {
   /**
    * The operations that the store missed cannot be sent, so it reads the
    * project again, from the API: the operations after seq follow, of which
-   * it passes over what it has already, by their revisions. The project is
-   * behind where seq is before the seq that the subscription was sent from,
-   * or of an operation that it was sent, which the server had: the server's
-   * seq went back, as of a database restored from an older backup, whose
-   * operations after seq, which commit anew, are not those that the store
-   * has.
+   * it passes over what it has already, by their revisions.
    */
-  resync(seq: number, behind: boolean): void;
+  resync(seq: number): void;
   /**
    * The project can no longer be read, as once it went to the trash, or the
    * user lost their access to it, which the server does not tell apart from
@@ -177,12 +175,6 @@ export function createRealtime(options: RealtimeOptions): Realtime {
   let silence: ReturnType<typeof setTimeout> | undefined;
   let linger: ReturnType<typeof setTimeout> | undefined;
   const resubscribes = new Map<string, ReturnType<typeof setTimeout>>();
-  // The latest seq that the server is known to have had of each project
-  // that is subscribed to: the one that its latest subscription was sent
-  // from, which the store had of it, and then each that the subscription
-  // was told of, a resync_required before which tells that the server's
-  // seq went back (Subscriber.resync).
-  const heardOf = new Map<string, number>();
 
   const send = (message: ClientMessage) => {
     if (socket?.readyState === open) {
@@ -191,15 +183,15 @@ export function createRealtime(options: RealtimeOptions): Realtime {
   };
   const subscribeTo = (projectId: string) => {
     const subscriber = subscribers.get(projectId);
-    if (subscriber !== undefined) {
-      const since = subscriber.since();
-      heardOf.set(projectId, since);
-      send({ type: "subscribe", project_id: projectId, since });
+    // The store is asked for its seq as the subscription is sent, and only
+    // then (Subscriber.since).
+    if (subscriber !== undefined && socket?.readyState === open) {
+      send({
+        type: "subscribe",
+        project_id: projectId,
+        since: subscriber.since(),
+      });
     }
-  };
-  /** Records that the server has had projectId as of seq, at least. */
-  const told = (projectId: string, seq: number) => {
-    heardOf.set(projectId, Math.max(seq, heardOf.get(projectId) ?? seq));
   };
   const notLive = () => {
     for (const projectId of holding) {
@@ -330,24 +322,16 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         // subscription holds once its store has read the project anew.
         failures = 0;
         holding.add(message.project_id);
-        told(message.project_id, message.seq);
         subscriber.subscribed(message.seq);
         subscriber.live(true);
         return;
-      case "resync_required": {
+      case "resync_required":
         failures = 0;
         holding.add(message.project_id);
-        // What the server had before, it has still, but for a database
-        // restored from an older backup; the operations that follow are
-        // those after seq.
-        const behind = message.seq < (heardOf.get(message.project_id) ?? 0);
-        heardOf.set(message.project_id, message.seq);
-        subscriber.resync(message.seq, behind);
+        subscriber.resync(message.seq);
         subscriber.live(true);
         return;
-      }
       case "operation":
-        told(message.project_id, message.seq);
         subscriber.operation(message);
         return;
       case "unsubscribed":
@@ -419,7 +403,6 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         }
         subscribers.delete(projectId);
         holding.delete(projectId);
-        heardOf.delete(projectId);
         clearTimeout(resubscribes.get(projectId));
         resubscribes.delete(projectId);
         send({ type: "unsubscribe", project_id: projectId });

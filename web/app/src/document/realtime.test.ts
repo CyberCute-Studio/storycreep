@@ -83,8 +83,8 @@ function fakeStore(seq = 0): FakeStore {
       store.operations.push(message);
       store.heard.push(["operation", message.seq]);
     },
-    resync(seq, behind) {
-      store.heard.push(behind ? ["resync", seq, "behind"] : ["resync", seq]);
+    resync(seq) {
+      store.heard.push(["resync", seq]);
     },
     gone() {
       store.heard.push(["gone"]);
@@ -263,63 +263,40 @@ describe("createRealtime", () => {
     ]);
   });
 
-  it("tells a store that its project is behind once a resync_required is of a seq before the one that the subscription was sent from, or of an operation that it was sent, as of a database restored from an older backup, though not before what the store has gone past since, as with its own batches' answers", () => {
+  it("asks a store for the seq that it has as each subscription is sent, and only then, which the store takes for what the server had before the subscription's answer", () => {
     const h = setup();
     const a = fakeStore(5);
+    const b = fakeStore(2);
+    const sinceA = vi.spyOn(a, "since");
+    const sinceB = vi.spyOn(b, "since");
     h.realtime.subscribe("prj_a", a);
+    // The socket is connecting still, so nothing is sent.
+    h.realtime.subscribe("prj_b", b);
+    expect(sinceA).not.toHaveBeenCalled();
+    expect(sinceB).not.toHaveBeenCalled();
     h.socket().open();
-    // The store's own batch's answer moved it past the seq that the
-    // subscription was sent from, which the server's seq is not behind.
-    a.seq = 7;
-    h.socket().deliver({
-      type: "resync_required",
-      project_id: "prj_a",
-      seq: 6,
-    });
-    h.socket().deliver(operation("prj_a", 7));
-    h.socket().deliver(operation("prj_a", 8));
-    // The server's seq went back behind the operation that it sent.
-    h.socket().deliver({
-      type: "resync_required",
-      project_id: "prj_a",
-      seq: 7,
-    });
-    // Past what the subscription heard, as once the log no longer has
-    // what it missed.
-    h.socket().deliver({
-      type: "resync_required",
-      project_id: "prj_a",
-      seq: 20,
-    });
-    expect(a.heard).toEqual([
-      ["resync", 6],
-      ["live", true],
-      ["operation", 7],
-      ["operation", 8],
-      ["resync", 7, "behind"],
-      ["live", true],
-      ["resync", 20],
-      ["live", true],
-    ]);
-    // A subscription sent anew, once the socket is back, is from the seq
-    // that the store had then, which the server's is behind.
-    h.socket().drop();
-    vi.advanceTimersByTime(2_000);
-    h.socket().open();
-    expect(h.socket().sent.at(-1)).toEqual({
-      type: "subscribe",
-      project_id: "prj_a",
-      since: 8,
-    });
+    expect(sinceA).toHaveBeenCalledTimes(1);
+    expect(sinceB).toHaveBeenCalledTimes(1);
+    // The store tells apart a seq that the server went back to itself.
     h.socket().deliver({
       type: "resync_required",
       project_id: "prj_a",
       seq: 3,
     });
-    expect(a.heard.slice(-2)).toEqual([
-      ["resync", 3, "behind"],
+    expect(a.heard).toEqual([
+      ["resync", 3],
       ["live", true],
     ]);
+    h.socket().drop();
+    vi.advanceTimersByTime(2_000);
+    expect(sinceA).toHaveBeenCalledTimes(1);
+    h.socket().open();
+    expect(sinceA).toHaveBeenCalledTimes(2);
+    expect(h.socket().sent.at(-2)).toEqual({
+      type: "subscribe",
+      project_id: "prj_a",
+      since: 5,
+    });
   });
 
   it("passes each operation to the store of its project", () => {
