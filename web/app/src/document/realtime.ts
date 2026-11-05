@@ -27,13 +27,15 @@ export interface Subscriber {
   /**
    * The seq of the latest operation of the project that the store has, from
    * which the subscription starts: the operations after it are sent first.
-   * The channel asks for it as it sends the subscription, so that the store
-   * knows what the server had before the subscription's answer, and what
-   * follows, which a seq of theirs is not before, but for a database
-   * restored from an older backup; a fake of the channel that asks for it
-   * otherwise asks at a moment at which it could have sent one.
+   * The channel asks for it as it sends the subscription, and only then, so
+   * that the store knows what the server had before the subscription's
+   * answer, and what follows, which a seq of theirs is not before, but for a
+   * database restored from an older backup; a fake of the channel that asks
+   * for it otherwise, as for the seq of the next operation that it sends,
+   * says that it sends no subscription (sending false), which tells the
+   * store nothing.
    */
-  since(): number;
+  since(sending?: boolean): number;
   /**
    * The subscription holds: the operations after the seq that it was sent
    * from, up to seq, follow.

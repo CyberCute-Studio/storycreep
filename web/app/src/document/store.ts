@@ -699,6 +699,15 @@ export class ProjectDocument {
       return;
     }
     this.confirmed = { ...emptyDoc(body.seq), project: projectOf(body) };
+    // A read of the project as of a seq before the steps of the history, kept
+    // over a reload, may be one that the query client kept from before them,
+    // or of a database restored from an older backup since, behind them,
+    // which the project's seq read anew tells apart (seqChecked), as, while
+    // the channel is not live, nothing else would until a step or a batch is
+    // sent, and the page would offer to undo what the server no longer has.
+    if (body.seq < this.latest) {
+      void this.seqChecked().catch((error: unknown) => this.failed(error));
+    }
     this.heardOf(body.seq);
     const buffered = this.buffer ?? [];
     this.buffer = undefined;
@@ -709,8 +718,10 @@ export class ProjectDocument {
     // answered before it was sent, had moved past, or whose history, kept
     // over a reload, is of batches past it.
     this.unsubscribe = this.options.realtime?.subscribe(this.projectId, {
-      since: () => {
-        this.told = this.latest;
+      since: (sending = true) => {
+        if (sending) {
+          this.told = this.latest;
+        }
         return this.confirmed.seq;
       },
       subscribed: (seq) => {
@@ -739,6 +750,14 @@ export class ProjectDocument {
           this.answeredAt.clear();
         }
         this.store.setState({ live });
+        // The answers to the page's batches past what the document has, as
+        // one whose operations the socket was lost before it brought, are
+        // followed by the project read anew, as they are once they come
+        // while the channel is not live, rather than shown on top of what
+        // the document had until the socket is back, if ever (catchUp).
+        if (!live) {
+          this.catchUp();
+        }
       },
     });
     for (const op of buffered) {
@@ -1432,10 +1451,12 @@ export class ProjectDocument {
    * if seq, which the server had once it answered a request sent once it
    * was known to have had what known says, is before that, as only a
    * database restored from an older backup since leaves it, but for a
-   * restore that the document has found since (Known.restores).
+   * restore that the document has found since (Known.restores); otherwise
+   * it records that the server has had seq (heardOf).
    */
   private wentBehind(seq: number, known: Known): boolean {
     if (seq >= known.latest || this.restores !== known.restores) {
+      this.heardOf(seq);
       return false;
     }
     this.wentBack(seq);
@@ -1446,25 +1467,17 @@ export class ProjectDocument {
    * Reads the project's seq from the server, and takes the document back to
    * it if it is before what the server was known to have had once the read
    * was sent (wentBehind), which, while the channel is not live, nothing
-   * else would tell.
+   * else would tell. It reports whether the project can still be read.
    */
-  private async seqChecked(): Promise<void> {
+  private async seqChecked(): Promise<boolean> {
     const known = this.knownNow();
-    let body: ProjectBody;
-    try {
-      body = (
-        await api.call("getProject", { path: { project_id: this.projectId } })
-      ).body;
-    } catch (error) {
-      if (notFoundBy(error)) {
-        // The project can no longer be read, as reload finds.
-        this.goneAway();
-      }
-      throw error;
+    const body = await readOne(this.projectId, this.projectId);
+    if (body === undefined) {
+      this.goneAway();
+      return false;
     }
-    if (!this.wentBehind(body.seq, known)) {
-      this.heardOf(body.seq);
-    }
+    this.wentBehind((body as ProjectBody).seq, known);
+    return true;
   }
 
   /** Records that the server has had the project as of seq, at least, which the channel told of, if told (latest, told). */
@@ -1510,8 +1523,6 @@ export class ProjectDocument {
       if (this.wentBehind(body.seq, known)) {
         restores = this.restores;
         asOf = body.seq;
-      } else {
-        this.heardOf(body.seq);
       }
       doc = { ...emptyDoc(asOf), project: projectOf(body) };
       // A part that a page asks for while the project is read anew is read
@@ -1622,11 +1633,12 @@ export class ProjectDocument {
 
   /**
    * Reads the project anew, while the channel is not live, once the answers
-   * to the page's batches are past what the document has: the operations
-   * before them, of other sessions, would not come until the channel is live
-   * again, if ever, as behind a proxy that refuses the socket, and until
-   * they do the batches stay on top of the document, which would show
-   * nothing of what changed elsewhere.
+   * to the page's batches are past what the document has, as they come, or
+   * as the socket is lost before it brought the operations up to them: the
+   * operations before them, of other sessions, would not come until the
+   * channel is live again, if ever, as behind a proxy that refuses the
+   * socket, and until they do the batches stay on top of the document,
+   * which would show nothing of what changed elsewhere.
    */
   private catchUp(): void {
     if (this.store.getState().live || this.buffer !== undefined) {
@@ -2080,15 +2092,23 @@ export class ProjectDocument {
       // anew, as once an answer was past what the document had while the
       // channel was not, which settles the batches that it read. Nothing
       // changes the history meanwhile, as the page's batches made since wait
-      // for the step. Otherwise nothing would tell the document of a
-      // database restored from an older backup meanwhile, behind those
-      // batches, but a seq that the server gives, as the project's, which it
-      // reads first (seqChecked).
+      // for the step. Once the channel is not live after that, nothing would
+      // tell the document of a database restored from an older backup
+      // meanwhile, behind those batches, but a seq that the server gives, as
+      // the project's, which it reads first (seqChecked): the project read
+      // anew may have failed, and wait to try again, or be slower than the
+      // wait, or have read the project before the step was asked for.
       const restores = this.restores;
       if (this.store.getState().live || this.buffer !== undefined) {
         await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
-      } else {
-        await this.seqChecked();
+      }
+      if (
+        !this.store.getState().live &&
+        this.restores === restores &&
+        !(await this.seqChecked())
+      ) {
+        // The project can no longer be read, which its pages show.
+        return false;
       }
       if (this.restores !== restores) {
         // The server's seq went back meanwhile, behind the batches that the

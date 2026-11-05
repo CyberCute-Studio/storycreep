@@ -68,7 +68,9 @@ export function fakeRealtime(): FakeRealtime {
       const message: OperationMessage = {
         type: "operation",
         project_id: projectId,
-        seq: subscriber.since() + 1,
+        // The store's seq, asked for as no subscription, as the real channel
+        // asks for it only as it sends one (Subscriber.since).
+        seq: subscriber.since(false) + 1,
         commands: commands.map((command) => ({
           command_id: `00000000-0000-7000-8000-${String(++ids).padStart(12, "0")}`,
           ...command,
