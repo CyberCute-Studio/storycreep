@@ -9,10 +9,16 @@ export interface FakeRealtime extends Realtime {
   /** Reports whether a store subscribes to projectId. */
   subscribed(projectId: string): boolean;
   /**
-   * Holds the subscription of projectId, as the server answers it, after
-   * which the store is live.
+   * Holds the subscription of projectId, as the server answers it, as of
+   * seq, the project's seq on the server, after which the store is live. The
+   * seq is the store's own unless given, as of a store that has every
+   * operation that the server has; one that knows of a later seq, as the
+   * answer to its page's batch that it has yet to take for its operation,
+   * or a history kept over a reload, is given the server's, which is not
+   * before that, as a seq before it tells the store of a database restored
+   * from an older backup.
    */
-  hold(projectId: string): void;
+  hold(projectId: string, seq?: number): void;
   /**
    * Sends the store of projectId an operation of the next seq of its
    * document, of commands, which left revisions, as of another session, or
@@ -45,12 +51,13 @@ export function fakeRealtime(): FakeRealtime {
       subscribers.clear();
     },
     subscribed: (projectId) => subscribers.has(projectId),
-    hold(projectId) {
+    hold(projectId, seq) {
       const subscriber = subscribers.get(projectId);
       if (subscriber === undefined) {
         throw new Error(`Nothing subscribes to ${projectId}.`);
       }
-      subscriber.subscribed(subscriber.since());
+      const since = subscriber.since();
+      subscriber.subscribed(seq ?? since);
       subscriber.live(true);
     },
     send(projectId, commands, revisions) {

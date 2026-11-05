@@ -281,14 +281,29 @@ export class History {
   /**
    * Takes every step out of the history, as once the project's seqs and
    * revisions that they wait for and expect are of changes that the server
-   * no longer has, as of a database restored from an older backup.
+   * no longer has, as of a database restored from an older backup, and out
+   * of the tab's storage, even once the history no longer keeps itself
+   * there (close), as of a document dropped while the answer that tells of
+   * the restore was under way, whose steps kept there the project's next
+   * document would read.
    */
   clear(): void {
     this.undoSteps = [];
     this.redoSteps = [];
     this.captured.clear();
     this.seqs.clear();
-    this.save();
+    if (!this.closed) {
+      this.save();
+      return;
+    }
+    if (this.storage === undefined || this.key === undefined) {
+      return;
+    }
+    try {
+      this.storage.removeItem(this.key);
+    } catch {
+      // A storage that the browser refuses keeps nothing to take out.
+    }
   }
 
   /** Records what the store held of the entities that the batch of seq changed, once it had every operation before it. */

@@ -23,7 +23,10 @@ export const mainDatabase = `storycreep_e2e_${port}`;
 /**
  * The port of the peer: a second process of the same instance, on the
  * server's database, which Playwright starts once the server is ready
- * (peer.ts).
+ * (peer.ts), by default on the port after the server's: a run takes two
+ * ports, so another run keeps apart from it on a port at least two away,
+ * as one on the port next to it would share one, which Playwright refuses
+ * to start, as it finds the port's URL answering already.
  */
 export const peerPort = Number(
   process.env.STORYCREEP_E2E_PEER_PORT ?? port + 1,

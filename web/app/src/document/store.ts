@@ -48,7 +48,7 @@ import {
 import { csrfHeaders } from "../auth/session";
 import type { ErrorLog } from "../errors/log";
 import { conflictOf, projectQuery } from "../project/queries";
-import { applyCommands, canonical } from "./apply";
+import { type AnyCommand, applyCommands, canonical } from "./apply";
 import {
   type Doc,
   Draft,
@@ -186,8 +186,44 @@ interface Waiting {
   commands: readonly Command[];
   /** The time that the page gave the batch as it was made, which it keeps once it is queued (enqueue). */
   time: string;
-  /** The view that the batch left from, which the page showed last, so that it is applied anew only once that has changed (show). */
-  shown?: { from: Doc; view: Doc };
+  shown?: Shown;
+}
+
+/**
+ * The view that a batch's commands, as they were, and the revisions of its
+ * answer, as it was, left from, which the page showed last, so that the view
+ * is made anew from what changed alone (shownOn).
+ */
+interface Shown {
+  from: Doc;
+  commands: readonly AnyCommand[];
+  revisions: CommandResultBody["revisions"] | undefined;
+  view: Doc;
+}
+
+/**
+ * Returns view with batch on top, its commands applied as of its time, at
+ * revisions, if given, as the page showed it last where none of those, nor
+ * view, has changed since (Shown), as each batch applied anew copies what it
+ * changes of the document's maps.
+ */
+function shownOn(
+  view: Doc,
+  batch: { commands: readonly AnyCommand[]; time: string; shown?: Shown },
+  revisions?: CommandResultBody["revisions"],
+): Doc {
+  const last = batch.shown;
+  if (
+    last !== undefined &&
+    last.from === view &&
+    last.commands === batch.commands &&
+    last.revisions === revisions
+  ) {
+    return last.view;
+  }
+  const next = applyPending(view, batch.commands, batch.time, revisions);
+  batch.shown = { from: view, commands: batch.commands, revisions, view: next };
+  return next;
 }
 
 /** A batch of the page's own, which the document shows until the server confirms it by seq. */
@@ -205,11 +241,13 @@ interface Entry {
   /** Whether a batch refused for a revision is sent again where nothing that it changes changed elsewhere. */
   retries: number;
   /**
-   * Whether the batch's commands have the IDs of a batch that no answer came
-   * to (unanswered), which the server answers as it answered that one, if it
-   * applied, at its seq, rather than apply it again (pump).
+   * What the server was known to have had as the batch's commands, with
+   * their IDs, were first sent, which a batch whose commands have the IDs of
+   * one that no answer came to (unanswered), and which the server answers as
+   * it answered that one, if it applied, at its seq, rather than apply it
+   * again, takes from that one (pump).
    */
-  again: boolean;
+  known?: Known;
   /**
    * Whether the batch is a step of the history, whose commands expect what
    * the server left of the entities that the batch that it undoes or redoes
@@ -223,19 +261,22 @@ interface Entry {
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
   captured?: Captured;
-  /**
-   * The view that the batch's commands, as they were, and the revisions of
-   * its answer, as it was, left from, which the page showed last, so that
-   * the view is made anew from what changed alone (show).
-   */
-  shown?: {
-    from: Doc;
-    commands: CommandBody[];
-    revisions: CommandResultBody["revisions"] | undefined;
-    view: Doc;
-  };
+  shown?: Shown;
   resolve: (answer: CommandResultBody) => void;
   reject: (error: unknown) => void;
+}
+
+/**
+ * What the server was known to have had of the project (latest) once a
+ * request was sent, as a batch, or a read of the project, past which the
+ * batch commits, if it applies, and as of which, at least, the read
+ * answers, but for a database restored from an older backup since, and how
+ * many times the document had found the server's seq gone back then
+ * (restores), after which a seq of before is no longer what the server has.
+ */
+interface Known {
+  latest: number;
+  restores: number;
 }
 
 interface Revised {
@@ -282,6 +323,18 @@ class PartsError extends Error {
     this.applied = applied;
     this.cause = cause;
     this.rest = rest;
+  }
+}
+
+/**
+ * The server's seq went back behind the batches that a step of the history
+ * undoes or redoes, as of a database restored from an older backup, while
+ * the step was sent in parts, after which no more of them are sent
+ * (sendInParts).
+ */
+class WentBackError extends Error {
+  constructor() {
+    super("The server's seq went back behind the step's batches.");
   }
 }
 
@@ -367,6 +420,15 @@ function moved(
   return { ...command, expected_rev: { ...expected, [id]: after } };
 }
 
+/**
+ * Returns the ID of the first of a batch's commands, which tells its
+ * operation from another batch's of the same seq, as of a database restored
+ * from an older backup, whose seqs commit anew (wentBack).
+ */
+function firstCommandId(commands: readonly unknown[]): string | undefined {
+  return (commands[0] as { command_id?: string } | undefined)?.command_id;
+}
+
 /** Returns the revisions that answers left, each entity's from the last answer that changed it. */
 function latestRevisions(
   answers: readonly CommandResultBody[],
@@ -443,8 +505,15 @@ export class ProjectDocument {
     Part,
     { again: boolean; done: Promise<void> }
   >();
-  /** The IDs of the commands of each batch that no answer came to, by its key, which a batch sent again as it was takes (enqueue). */
-  private readonly unanswered = new Map<string, string[]>();
+  /**
+   * The IDs of the commands of each batch that no answer came to, by its key,
+   * which a batch sent again as it was takes (enqueue), with what the server
+   * was known to have had once the first of them was sent (Entry.known).
+   */
+  private readonly unanswered = new Map<
+    string,
+    { ids: string[]; known: Known }
+  >();
   private readonly waiters: { seq: number; resolve: () => void }[] = [];
   private readonly history: History;
   /** The account that the document is of, as the page's session was once it was made, whose batches it sends as no other's (post). */
@@ -486,9 +555,14 @@ export class ProjectDocument {
    * The times that the page gave the operations of its batches that the
    * document took from their answers, by seq, while the channel was live,
    * which the server's own replace once the channel brings the operations
-   * (retime).
+   * (retime), each with the ID of the batch's first command, which the
+   * operation of that seq that the channel brings has, but for a database
+   * restored from an older backup meanwhile (receive).
    */
-  private readonly answeredAt = new Map<number, string>();
+  private readonly answeredAt = new Map<
+    number,
+    { time: string; command: string | undefined }
+  >();
   /**
    * The seq that the project read anew is to be as of, at least, as a
    * resync_required that came while it was under way asks, whose
@@ -879,32 +953,37 @@ export class ProjectDocument {
       this.buffer.push(op);
       return;
     }
+    const first = firstCommandId(op.commands);
+    const answered = this.answeredAt.get(op.seq);
+    if (
+      (op.seq <= this.confirmed.seq &&
+        answered !== undefined &&
+        answered.command !== first) ||
+      (op.seq > this.confirmed.seq &&
+        this.entries.some(
+          (e) =>
+            e.answer?.status === "applied" &&
+            e.answer.seq === op.seq &&
+            firstCommandId(e.commands) !== first,
+        ))
+    ) {
+      // The operation of the seq that the page's own batch applied as, as
+      // its answer says, whether the document has taken it from the answer
+      // already or not, is of another batch (an answer of already_applied
+      // gives the latest of the seqs that applied its commands, which may
+      // be of several, and is never taken for its operation): the server's
+      // seq went back behind that answer, as of a database restored from an
+      // older backup, which no resync_required tells where the channel had
+      // not sent the operations up to it, and the operation is of a change
+      // that another session made since, which the project read anew has,
+      // and which is kept until it has (buffer).
+      this.wentBack(op.seq - 1);
+      this.receive(op);
+      return;
+    }
     if (op.seq <= this.confirmed.seq) {
       this.retime(op);
       this.settle();
-      return;
-    }
-    const first = (op.commands[0] as { command_id?: string } | undefined)
-      ?.command_id;
-    if (
-      this.entries.some(
-        (e) =>
-          e.answer?.status === "applied" &&
-          e.answer.seq === op.seq &&
-          e.commands[0]?.command_id !== first,
-      )
-    ) {
-      // The operation of the seq that the page's own batch applied as, as
-      // its answer says, is of another batch (an answer of already_applied
-      // gives the latest of the seqs that applied its commands, which may
-      // be of several): the server's seq went back behind that answer, as
-      // of a database restored from an older backup, which no
-      // resync_required tells where the channel had not sent the operations
-      // up to it, and the operation is of a change that another session
-      // made since, which the project read anew has, and which is kept
-      // until it has (buffer).
-      this.wentBack(op.seq - 1);
-      this.receive(op);
       return;
     }
     if (op.seq > this.confirmed.seq + 1) {
@@ -921,7 +1000,7 @@ export class ProjectDocument {
 
   /** Applies op, whose seq is the next of the document's, to what the server confirmed. */
   private confirm(op: Operation): void {
-    const first = op.commands[0] as { command_id?: string } | undefined;
+    const first = firstCommandId(op.commands);
     // A batch sent again as it was, with the IDs that its commands had, that
     // is queued still, is not the operation's: the operation is of the batch
     // that no answer came to, and the one queued, which would never be sent
@@ -929,8 +1008,7 @@ export class ProjectDocument {
     const own = this.entries.find(
       (e) =>
         e.sent &&
-        (e.commands[0]?.command_id === first?.command_id ||
-          e.answer?.seq === op.seq),
+        (firstCommandId(e.commands) === first || e.answer?.seq === op.seq),
     );
     const wanted = own !== undefined || this.history.wants(op.seq);
     const captured: Captured = {};
@@ -1025,7 +1103,7 @@ export class ProjectDocument {
    * the page gave it, which its appliers wrote, as a create's created_at.
    */
   private retime(op: Operation): void {
-    const time = this.answeredAt.get(op.seq);
+    const time = this.answeredAt.get(op.seq)?.time;
     if (time === undefined) {
       return;
     }
@@ -1220,31 +1298,15 @@ export class ProjectDocument {
   private show(): void {
     let view = this.confirmed;
     for (const entry of this.entries) {
-      const revisions =
-        entry.answer?.status === "applied" ? entry.answer.revisions : undefined;
-      const last = entry.shown;
-      if (
-        last !== undefined &&
-        last.from === view &&
-        last.commands === entry.commands &&
-        last.revisions === revisions
-      ) {
-        view = last.view;
-        continue;
-      }
-      const from = view;
-      view = applyPending(view, entry.commands, entry.time, revisions);
-      entry.shown = { from, commands: entry.commands, revisions, view };
+      view = shownOn(
+        view,
+        entry,
+        entry.answer?.status === "applied" ? entry.answer.revisions : undefined,
+      );
     }
     this.queuedView = view;
     for (const waiting of this.waiting) {
-      if (waiting.shown?.from === view) {
-        view = waiting.shown.view;
-        continue;
-      }
-      const from = view;
-      view = applyPending(view, waiting.commands, waiting.time);
-      waiting.shown = { from, view };
+      view = shownOn(view, waiting);
     }
     this.store.setState({
       view,
@@ -1307,15 +1369,21 @@ export class ProjectDocument {
    * the server's seq is found gone back to it, behind what the server had
    * (latest, told), as by the channel's resync_required or its
    * subscription's answer, an operation of another batch than the page's
-   * own of its seq, or the answer to a batch of the page's, as of a
-   * database restored from an older backup, whose seqs and revisions after
-   * seq, which commit anew, are of other changes than those that the
-   * document saw: the steps of the history, which wait for
-   * seqs, and expect revisions, from before, and would otherwise write over
-   * a change that another session made since, which took the same revision
-   * (FR-EDIT-08 AC4); the revisions that the page's own batches moved
-   * entities to (ownMoves), and what the document held of each at each
-   * revision (earlier); the page's batches answered past seq, which the
+   * own of its seq, the answer to a batch of the page's, or the project read
+   * anew (wentBehind), as of a database restored from an older backup,
+   * whose seqs and revisions after seq, which commit anew, are of other
+   * changes than those that the document saw: the steps of the history,
+   * which wait for seqs, and expect revisions, from before, and would
+   * otherwise write over a change that another session made since, which
+   * took the same revision (FR-EDIT-08 AC4). Seqs are all that tell it: a
+   * restore that the server's seq has passed again by the time the
+   * document hears from the server, or that took it back to the seq that
+   * the document has, is not told apart, which only a timeline that a
+   * restore changes would tell, and a batch that the page made on what it
+   * showed before is sent as it was, as a form held open across the
+   * restore would be. It forgets the revisions that the page's own batches
+   * moved entities to (ownMoves), and what the document held of each at
+   * each revision (earlier); the page's batches answered past seq, which the
    * restore took back; what the server was known to have had past seq
    * (latest, told), so that the answers that follow are compared with what
    * it has now; and the operations that came while the project was read
@@ -1354,6 +1422,51 @@ export class ProjectDocument {
     this.show();
   }
 
+  /** Returns what the server is known to have had of the project now, past which what it commits from now on commits (Known). */
+  private knownNow(): Known {
+    return { latest: this.latest, restores: this.restores };
+  }
+
+  /**
+   * Takes the document back to seq (wentBack), and reports whether it did,
+   * if seq, which the server had once it answered a request sent once it
+   * was known to have had what known says, is before that, as only a
+   * database restored from an older backup since leaves it, but for a
+   * restore that the document has found since (Known.restores).
+   */
+  private wentBehind(seq: number, known: Known): boolean {
+    if (seq >= known.latest || this.restores !== known.restores) {
+      return false;
+    }
+    this.wentBack(seq);
+    return true;
+  }
+
+  /**
+   * Reads the project's seq from the server, and takes the document back to
+   * it if it is before what the server was known to have had once the read
+   * was sent (wentBehind), which, while the channel is not live, nothing
+   * else would tell.
+   */
+  private async seqChecked(): Promise<void> {
+    const known = this.knownNow();
+    let body: ProjectBody;
+    try {
+      body = (
+        await api.call("getProject", { path: { project_id: this.projectId } })
+      ).body;
+    } catch (error) {
+      if (notFoundBy(error)) {
+        // The project can no longer be read, as reload finds.
+        this.goneAway();
+      }
+      throw error;
+    }
+    if (!this.wentBehind(body.seq, known)) {
+      this.heardOf(body.seq);
+    }
+  }
+
   /** Records that the server has had the project as of seq, at least, which the channel told of, if told (latest, told). */
   private heardOf(seq: number, told = false): void {
     this.latest = Math.max(this.latest, seq);
@@ -1379,20 +1492,28 @@ export class ProjectDocument {
     let body: ProjectBody;
     this.resyncFailure = undefined;
     const readAt = Date.now();
-    const restores = this.restores;
+    const known = this.knownNow();
+    let restores = known.restores;
     try {
       body = (
         await api.call("getProject", { path: { project_id: this.projectId } })
       ).body;
-      this.heardOf(body.seq);
       // The parts are read after the project, so they are as of its seq at
       // least, which may be past seq, as once the page read the project
       // anew while the channel was not live (refresh), and which the next
-      // answer to the page's batches follows.
-      doc = {
-        ...emptyDoc(Math.max(seq, body.seq)),
-        project: projectOf(body),
-      };
+      // answer to the page's batches follows. A project read as of a seq
+      // before what the server was known to have had once the read was sent
+      // is of a database restored from an older backup since, which the
+      // document goes back to (wentBehind), and which the read is of what
+      // the server has now, as of that seq.
+      let asOf = Math.max(seq, body.seq);
+      if (this.wentBehind(body.seq, known)) {
+        restores = this.restores;
+        asOf = body.seq;
+      } else {
+        this.heardOf(body.seq);
+      }
+      doc = { ...emptyDoc(asOf), project: projectOf(body) };
       // A part that a page asks for while the project is read anew is read
       // with the others, as the document read anew would otherwise not hold
       // it, and pass over what its own read found. The parts are read a few
@@ -1959,10 +2080,15 @@ export class ProjectDocument {
       // anew, as once an answer was past what the document had while the
       // channel was not, which settles the batches that it read. Nothing
       // changes the history meanwhile, as the page's batches made since wait
-      // for the step.
+      // for the step. Otherwise nothing would tell the document of a
+      // database restored from an older backup meanwhile, behind those
+      // batches, but a seq that the server gives, as the project's, which it
+      // reads first (seqChecked).
       const restores = this.restores;
       if (this.store.getState().live || this.buffer !== undefined) {
         await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
+      } else {
+        await this.seqChecked();
       }
       if (this.restores !== restores) {
         // The server's seq went back meanwhile, behind the batches that the
@@ -1976,7 +2102,7 @@ export class ProjectDocument {
       let rest: UndoCommandBody[] = [];
       let failure: unknown;
       try {
-        applied = await this.sendInParts(step.commands);
+        applied = await this.sendInParts(step.commands, restores);
       } catch (error) {
         if (error instanceof PartsError) {
           applied = error.applied;
@@ -1985,6 +2111,16 @@ export class ProjectDocument {
         } else {
           failure = error;
         }
+      }
+      // A step sent in parts whose batches the server's seq went back behind
+      // meanwhile, as the answer to a part told, sends no more of them: the
+      // history, which no longer has the step, keeps the redo of the parts
+      // that applied, which are of what the server has now, and nothing of
+      // the rest (sendInParts).
+      const wentBack = failure instanceof WentBackError;
+      if (wentBack) {
+        failure = undefined;
+        rest = [];
       }
       if (applied.length > 0) {
         const answers = applied.map((s) => s.answer);
@@ -2037,7 +2173,7 @@ export class ProjectDocument {
       if (failure !== undefined) {
         throw failure;
       }
-      return true;
+      return applied.length > 0 || !wentBack;
     } finally {
       this.store.setState({ stepping: false });
       this.show();
@@ -2049,11 +2185,19 @@ export class ProjectDocument {
    * it as an undo too large for one request, in two halves, each split
    * again as it needs, in order, each once the one before has applied, with
    * what it expects of an entity that those before it brought back moved to
-   * the revision that the last of them that changed it left (FR-EDIT-08).
+   * the revision that the last of them that changed it left (FR-EDIT-08). A
+   * part is not sent once the document has found the server's seq gone back
+   * since the step was sent (restores), as the answer to a part before it
+   * may tell (pump), behind the batches that the step undoes, whose
+   * revisions its commands expect (WentBackError).
    */
   private async sendInParts(
     commands: readonly UndoCommandBody[],
+    restores: number,
   ): Promise<Sent[]> {
+    if (this.restores !== restores) {
+      throw new WentBackError();
+    }
     try {
       return [await this.enqueue(commands as unknown as Command[], 0, true)];
     } catch (error) {
@@ -2064,7 +2208,7 @@ export class ProjectDocument {
     const half = Math.ceil(commands.length / 2);
     let first: Sent[];
     try {
-      first = await this.sendInParts(commands.slice(0, half));
+      first = await this.sendInParts(commands.slice(0, half), restores);
     } catch (error) {
       if (!(error instanceof PartsError)) {
         throw error;
@@ -2080,7 +2224,7 @@ export class ProjectDocument {
     const latest = latestRevisions(first.map((s) => s.answer));
     const second = commands.slice(half).map((c) => withRevisions(c, latest));
     try {
-      return [...first, ...(await this.sendInParts(second))];
+      return [...first, ...(await this.sendInParts(second, restores))];
     } catch (error) {
       throw error instanceof PartsError
         ? new PartsError([...first, ...error.applied], error.cause, error.rest)
@@ -2102,7 +2246,7 @@ export class ProjectDocument {
     const again = this.entries.some((e) => e.key === key)
       ? undefined
       : this.unanswered.get(key);
-    const ids = again ?? commands.map(() => formatUuid(newUuid()));
+    const ids = again?.ids ?? commands.map(() => formatUuid(newUuid()));
     // A batch of the page's, but for a step of the history, which expects
     // what the history moved it to, expects what the page's own batches that
     // applied on top of what it expects left (ownMoves), as one that was
@@ -2147,7 +2291,7 @@ export class ProjectDocument {
         before,
         parts,
         retries,
-        again: again !== undefined,
+        known: again?.known,
         step,
         sent: false,
         resolve: (answer) => resolve({ answer, captured: entry.captured }),
@@ -2188,25 +2332,22 @@ export class ProjectDocument {
     }
     this.inflight = true;
     entry.sent = true;
-    // What the server is known to have had as the batch is sent, past which
-    // a batch that applies commits, after.
-    const latest = this.latest;
-    const restores = this.restores;
+    // What the server is known to have had as the batch's commands were
+    // first sent, past which they commit, if they apply, and past which the
+    // server's answer to them sent again gives the seq that applied them.
+    entry.known ??= this.knownNow();
+    const known = entry.known;
     try {
       await this.whenReady();
       const answer = await this.post(entry.commands);
-      if (
-        answer.status === "applied" &&
-        !entry.again &&
-        answer.seq <= latest &&
-        this.restores === restores
-      ) {
-        // The batch, of IDs that the server never had, applied at a seq that
-        // it had had before: its seq went back, as of a database restored
-        // from an older backup, which the channel may tell only later, or
-        // never, as while it is not live. The history is forgotten before the
-        // batch's undo joins it, which is of what the server has now.
-        this.wentBack(answer.seq - 1);
+      if (answer.status === "applied") {
+        // A batch that applied at a seq that the server had had before its
+        // commands were first sent tells that its seq went back, as of a
+        // database restored from an older backup, which the channel may tell
+        // only later, or never, as while it is not live. The history is
+        // forgotten before the batch's undo joins it, which is of what the
+        // server has now.
+        this.wentBehind(answer.seq - 1, known);
       }
       this.heardOf(answer.seq);
       entry.answer = answer;
@@ -2233,7 +2374,10 @@ export class ProjectDocument {
         });
         // The channel brings the operation after, with the server's time.
         if (this.store.getState().live) {
-          this.answeredAt.set(answer.seq, entry.time);
+          this.answeredAt.set(answer.seq, {
+            time: entry.time,
+            command: firstCommandId(entry.commands),
+          });
         }
       }
       this.unanswered.delete(entry.key);
@@ -2257,10 +2401,10 @@ export class ProjectDocument {
         // A batch that no answer came to may have applied all the same: one
         // sent again as it was has the IDs that its commands had, which the
         // server answers as the batch that it applied, if it did.
-        this.unanswered.set(
-          entry.key,
-          entry.commands.map((c) => c.command_id),
-        );
+        this.unanswered.set(entry.key, {
+          ids: entry.commands.map((c) => c.command_id),
+          known,
+        });
         if (!this.store.getState().live) {
           // The channel, while it is not live, would not bring it: the
           // parts that it changes are read again, so that the page shows
@@ -2428,7 +2572,7 @@ export class ProjectDocument {
     }));
     this.unanswered.delete(entry.key);
     entry.retries--;
-    entry.again = false;
+    entry.known = undefined;
     entry.sent = false;
     this.show();
     return true;
