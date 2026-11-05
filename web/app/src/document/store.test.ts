@@ -2517,14 +2517,60 @@ describe("the undo history over a reload", () => {
     expect(serialised).toBeLessThan(kept.length / 4);
   });
 
-  it("is none where what the tab's storage holds of it cannot be read, rather than a part of one", async () => {
+  const step = { commands: [renameBack("bd_a", "Harbour", 4)], seqs: [2] };
+  it.each<[string, unknown]>([
+    ["without its steps to undo", { v: 1, redo: [], captured: {} }],
+    [
+      "with a seq that is no number",
+      { v: 1, undo: [{ ...step, seqs: ["2"] }], redo: [], captured: {} },
+    ],
+    [
+      "with a command that expects nothing",
+      {
+        v: 1,
+        undo: [{ ...step, commands: [{ type: "board.rename", payload: {} }] }],
+        redo: [],
+        captured: {},
+      },
+    ],
+    [
+      "with a capture of no seq",
+      { v: 1, undo: [step], redo: [], captured: { two: { bd_a: 3 } } },
+    ],
+    [
+      "with a capture of no revision",
+      { v: 1, undo: [step], redo: [], captured: { 2: { bd_a: "3" } } },
+    ],
+  ])(
+    "is none where what the tab's storage holds of it cannot be read, as a history %s, rather than a part of one",
+    async (_, saved) => {
+      serve(tree([board("bd_a", "Harbour")]));
+      // The project is as of a seq past the step's batch, which the server
+      // has, so that nothing but the history itself takes the step out.
+      committed(5);
+      window.sessionStorage.setItem(
+        historyKey(testSession.user_id, testProject.id),
+        JSON.stringify(saved),
+      );
+      const { doc } = await open();
+      expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 0 });
+    },
+  );
+
+  it("is read where what the tab's storage holds of it is as the history writes it", async () => {
     serve(tree([board("bd_a", "Harbour")]));
+    committed(5);
     window.sessionStorage.setItem(
       historyKey(testSession.user_id, testProject.id),
-      JSON.stringify({ v: 1, redo: [], captured: {} }),
+      JSON.stringify({
+        v: 1,
+        undo: [step],
+        redo: [],
+        captured: { 2: { bd_a: 3, bd_b: null } },
+      }),
     );
     const { doc } = await open();
-    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 0 });
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
   });
 });
 
@@ -2732,6 +2778,32 @@ describe("what the document reads while operations come", () => {
     await refreshing;
     expect(shown(doc, "bd_b")).toMatchObject({ name: "Lighthouse" });
     expect(server.calls("getProject")).toHaveLength(1);
+  });
+
+  it("leaves no timer of a wait for the operations behind once they have come, as of a page's reading anew of the project while the channel is live, which would hold the document once it is dropped", async () => {
+    serve(tree([board("bd_a", "Harbour")]));
+    const { doc, realtime, deliver } = await open();
+    // The subscription holds as of seq 2, whose operation follows.
+    realtime.hold(testProject.id, 2);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const refreshed = doc.refresh();
+    expect(vi.getTimerCount()).toBe(1);
+    deliver(
+      2,
+      [
+        {
+          type: "board.rename",
+          payload: { id: "bd_a", name: "Harbour at night" },
+        },
+      ],
+      [{ id: "bd_a", rev: 4 }],
+    );
+    await refreshed;
+    expect(doc.doc.seq).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reads the project anew again, later, once it failed to, and applies the operations that came meanwhile once it has", async () => {
@@ -3211,6 +3283,36 @@ describe("the page's own batches while the channel is not live", () => {
     expect(shown(doc, "bd_b")).toMatchObject({ name: "Old light" });
   });
 
+  it("read the project anew a while after the socket is lost, rather than at once, once the answer to one that comes meanwhile is past the next seq, as a socket that is back soon brings the operations before it itself", async () => {
+    let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      applyCommands: () => applied(3, [{ id: "bd_a", rev: 4 }]),
+    });
+    const { doc, realtime, subscriber } = await open();
+    realtime.hold(testProject.id);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    subscriber().live(false);
+    // The rename applies as seq 3, past another session's batch of seq 2,
+    // whose operation the socket, lost a moment before, has yet to bring.
+    const sent = doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await vi.advanceTimersByTimeAsync(0);
+    await sent;
+    boards = [board("bd_a", "Harbour at night", 4), board("bd_b", "Old light")];
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(server.calls("getProject")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(doc.doc.seq).toBe(3));
+    expect(server.calls("getProject")).toHaveLength(2);
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Old light" });
+  });
+
   it("read the project anew once an answer of already_applied is past what the document has, as to a batch sent again once the server no longer kept its first answer", async () => {
     let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
     const server = serve({
@@ -3397,6 +3499,46 @@ describe("undo and redo, as answers and reads come", () => {
       rev: 6,
     });
     expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 2 });
+  });
+
+  it("moves nothing that the other steps expect once an undo sent again with the IDs of one that no answer came to is answered with already_applied, as once the server no longer kept its first answer, rather than to the revisions that the answer gives, which may be past a change made elsewhere since, and write over it", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        applied(3, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Dusk", 5)]),
+        new NetworkError(new TypeError("Failed to fetch")),
+        // The undo applied as seq 4, at revision 6, and another session
+        // renamed the board since, to revision 7.
+        {
+          status: "already_applied",
+          seq: 4,
+          revisions: [{ id: "bd_a", rev: 7 }],
+          not_reconnected: [],
+          undo: null,
+        },
+        conflict(board("bd_a", "Evening", 7), 4),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Dusk", 3)]);
+    await doc.send([rename("bd_a", "Night", 4)]);
+    await expect(doc.undo()).rejects.toBeInstanceOf(NetworkError);
+    expect(doc.store.getState()).toMatchObject({ undoable: 2, redoable: 0 });
+    await doc.undo();
+    expect(server.batches[3][0].command_id).toBe(
+      server.batches[2][0].command_id,
+    );
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
+    // The first rename's undo expects what that rename left, and is refused
+    // for the change made elsewhere since.
+    const error = await doc.undo().catch((e: unknown) => e);
+    expect(server.batches[4][0].expected_rev).toEqual({ bd_a: 4 });
+    expect(error).toBeInstanceOf(ConflictError);
   });
 
   it("moves what the other steps expect, once the rest of an undo sent in parts applies, from what the parts that applied left", async () => {
@@ -4286,27 +4428,29 @@ describe("the page's documents", () => {
     expect(documents.get(testProject.id)).toBe(again);
   });
 
-  it("keep a document that no page shows while it reads the project's seq, as once its first read of the project is of a seq before the history kept over a reload, longer than they keep one otherwise, rather than drop it while a restore that the read may tell of would take the steps that the project's next document kept since out of the tab's storage", async () => {
+  it("leave the steps that the project's next document kept in the tab's storage once a document that they dropped while it read the project's seq finds by it that the server's seq went back, rather than take them out with its own", async () => {
     let reads = 0;
     const check = Promise.withResolvers<unknown>();
     serve({
       getProject: () => (++reads === 3 ? check.promise : testProject),
       listFolders: () => page([]),
       listBoards: () => page([board("bd_a", "Harbour")]),
-      applyCommands: () =>
+      applyCommands: inTurn(
         applied(
           3,
           [{ id: "bd_a", rev: 4 }],
           [renameBack("bd_a", "Harbour", 4)],
         ),
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+      ),
     });
     const before = await open();
     await before.doc.send([rename("bd_a", "Harbour at night", 3)]);
     before.doc.dispose();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    onTestFinished(() => {
-      vi.useRealTimers();
-    });
     const { documents, queryClient } = documentsOf(window.sessionStorage);
     // The page's read of the project, as of before the rename, which the
     // query client kept, as it does a while once the document has gone.
@@ -4314,15 +4458,36 @@ describe("the page's documents", () => {
       projectQuery(testProject.id).queryKey,
       testProject,
     );
-    const doc = documents.get(testProject.id);
-    await doc.ready;
-    expect(doc.store.getState().undoable).toBe(1);
-    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    const dropped = documents.get(testProject.id);
+    await dropped.ready;
+    expect(dropped.store.getState().undoable).toBe(1);
     expect(reads).toBe(3);
-    expect(documents.get(testProject.id)).toBe(doc);
+    // The documents are dropped while the read of the seq is under way, as
+    // once the session is of another account and back, and the database is
+    // restored from a backup of before the rename, which the project's next
+    // document finds itself, before the user renames the board again.
+    documents.clear();
+    restored(1);
+    const doc = documents.get(testProject.id);
+    await doc.load("tree");
+    await vi.waitFor(() => expect(doc.store.getState().undoable).toBe(0));
+    await doc.send([rename("bd_a", "Harbour at dusk", 3)]);
+    await flush();
+    const key = historyKey(testSession.user_id, testProject.id);
+    expect(
+      JSON.parse(window.sessionStorage.getItem(key) ?? "null"),
+    ).toMatchObject({
+      undo: [{ seqs: [2] }],
+    });
+    // The dropped document's read tells of the restore only now.
     check.resolve(testProject);
-    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
-    expect(documents.get(testProject.id)).not.toBe(doc);
+    await flush();
+    await flush();
+    expect(
+      JSON.parse(window.sessionStorage.getItem(key) ?? "null"),
+    ).toMatchObject({
+      undo: [{ seqs: [2] }],
+    });
   });
 
   it("keep a document that no page shows while it reads what a route's loader waits for, longer than they keep one otherwise", async () => {

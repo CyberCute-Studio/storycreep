@@ -436,12 +436,25 @@ function firstCommandId(commands: readonly unknown[]): string | undefined {
   return (commands[0] as { command_id?: string } | undefined)?.command_id;
 }
 
-/** Returns the revisions that answers left, each entity's from the last answer that changed it. */
+/**
+ * Returns the revisions that answers left, each entity's from the last
+ * answer that changed it, but for an answer of already_applied, as to a
+ * step of the history sent again with the IDs of one that no answer came
+ * to, once the server no longer kept its first answer: its revisions are
+ * those that the entities have now, which may be past what other sessions
+ * changed since, which the other steps, and the rest of a step sent in
+ * parts, moved there, would expect, and write over unasked, rather than be
+ * refused for it (FR-EDIT-08 AC4), as the page's batches are not moved
+ * past them either (pump).
+ */
 function latestRevisions(
   answers: readonly CommandResultBody[],
 ): Map<string, number> {
   const latest = new Map<string, number>();
   for (const answer of answers) {
+    if (answer.status !== "applied") {
+      continue;
+    }
     for (const r of answer.revisions ?? []) {
       latest.set(canonical(r.id), r.rev);
     }
@@ -607,18 +620,11 @@ export class ProjectDocument {
   /** How many of the pages' readings anew of the project are under way (refresh), which the document is busy with. */
   private refreshes = 0;
   /**
-   * How many reads of the project's seq are under way that no step of the
-   * history waits for, as once the document's first read of the project is
-   * of a seq before the history kept over a reload (start), which the
-   * document is busy with, so that it is not dropped before the read has
-   * told whether the history is of what the server has: a read that tells
-   * of a restore once its document has been dropped takes the history out
-   * of the tab's storage (History.clear), where the project's next
-   * document, which found the restore itself, may have kept steps of its
-   * own since.
+   * Reads the project anew a while after the socket was lost, unless it is
+   * back by then (catchUp), for the answers to the page's batches that came
+   * before, and that come meanwhile too (pump); undefined once it has, or
+   * the socket is back.
    */
-  private seqChecks = 0;
-  /** Reads the project anew a while after the socket was lost, unless it is back by then (catchUp). */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
@@ -697,17 +703,15 @@ export class ProjectDocument {
   /**
    * Reports whether the document is reading the project, or a part of it,
    * or reading it anew, which a route's loader may be waiting for (refresh),
-   * or the project's seq, which tells whether the history kept over a
-   * reload is of what the server has (seqChecks), or sending the page's
-   * batches, or a step of the history, whose answers join the history,
-   * which a document dropped keeps no longer in the tab's storage (dispose).
+   * or sending the page's batches, or a step of the history, whose answers
+   * join the history, which a document dropped keeps no longer in the tab's
+   * storage (dispose).
    */
   get busy(): boolean {
     return (
       !this.started ||
       this.partReads > 0 ||
       this.refreshes > 0 ||
-      this.seqChecks > 0 ||
       this.resyncing !== undefined ||
       this.sends.size > 0 ||
       this.stepUnderWay !== undefined
@@ -729,18 +733,16 @@ export class ProjectDocument {
     // the channel is not live, nothing else would until a step or a batch is
     // sent, and the page would offer to undo what the server no longer has.
     // A read that fails once the document has been dropped, as with every
-    // other once the session is of another account, is of no page's.
+    // other once the session is of another account, is of no page's; one
+    // that tells of a restore then takes the history out of the tab's
+    // storage still, unless the project's next document has written its own
+    // there since (History.clear).
     if (body.seq < this.latest) {
-      this.seqChecks++;
-      void this.seqChecked()
-        .catch((error: unknown) => {
-          if (!this.disposed) {
-            this.failed(error);
-          }
-        })
-        .finally(() => {
-          this.seqChecks--;
-        });
+      void this.seqChecked().catch((error: unknown) => {
+        if (!this.disposed) {
+          this.failed(error);
+        }
+      });
     }
     this.heardOf(body.seq);
     const buffered = this.buffer ?? [];
@@ -792,10 +794,15 @@ export class ProjectDocument {
         // once the socket has been lost a while, as one that is back soon
         // brings those operations itself, rather than have the project and
         // every part that the document holds read for each socket that is
-        // lost for a moment, as once the browser's network changes.
+        // lost for a moment, as once the browser's network changes; the
+        // answers that come meanwhile wait for it too (pump).
         clearTimeout(this.lostTimer);
+        this.lostTimer = undefined;
         if (!live) {
-          this.lostTimer = setTimeout(() => this.catchUp(), confirmWait);
+          this.lostTimer = setTimeout(() => {
+            this.lostTimer = undefined;
+            this.catchUp();
+          }, confirmWait);
         }
       },
     });
@@ -1377,15 +1384,28 @@ export class ProjectDocument {
     });
   }
 
-  /** Resolves once the document is as of seq, or after wait milliseconds. */
+  /**
+   * Resolves once the document is as of seq, or after wait milliseconds,
+   * whichever comes first, the other then left undone, so that a wait that
+   * ended, as with each page's reading anew of the project while the
+   * channel is live, and each step of the history, leaves no timer behind,
+   * which would hold the document after it has been dropped.
+   */
   private whenConfirmed(seq: number, wait: number): Promise<void> {
     if (this.confirmed.seq >= seq) {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      const waiter = { seq, resolve };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waiter = {
+        seq,
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+      };
       this.waiters.push(waiter);
-      setTimeout(() => {
+      timer = setTimeout(() => {
         const i = this.waiters.indexOf(waiter);
         if (i >= 0) {
           this.waiters.splice(i, 1);
@@ -1564,6 +1584,11 @@ export class ProjectDocument {
         restores = this.restores;
         asOf = body.seq;
       }
+      // A document dropped meanwhile reads no parts: it has told of the
+      // restore, if any, which takes its history out of the tab's storage.
+      if (this.disposed) {
+        return;
+      }
       doc = { ...emptyDoc(asOf), project: projectOf(body) };
       // A part that a page asks for while the project is read anew is read
       // with the others, as the document read anew would otherwise not hold
@@ -1673,14 +1698,15 @@ export class ProjectDocument {
 
   /**
    * Reads the project anew, while the channel is not live, once the answers
-   * to the page's batches are past what the document has, as they come, or
-   * a while after the socket is lost before it brought the operations up to
-   * them, unless it is back by then: the operations before them, of other
-   * sessions, would not come until the channel is live again, if ever, as
-   * behind a proxy that refuses the socket, and until they do the batches
-   * stay on top of the document, which would show nothing of what changed
-   * elsewhere. A project that can no longer be read, as once the socket's
-   * subscription found it gone, is not.
+   * to the page's batches are past what the document has, as they come, or,
+   * for those that came before the socket was lost, before it brought the
+   * operations up to them, or that come within a while after, once that
+   * while has passed, unless it is back by then (lostTimer): the operations
+   * before them, of other sessions, would not come until the channel is
+   * live again, if ever, as behind a proxy that refuses the socket, and
+   * until they do the batches stay on top of the document, which would show
+   * nothing of what changed elsewhere. A project that can no longer be
+   * read, as once the socket's subscription found it gone, is not.
    */
   private catchUp(): void {
     const { live, gone } = this.store.getState();
@@ -2187,6 +2213,10 @@ export class ProjectDocument {
       }
       if (applied.length > 0) {
         const answers = applied.map((s) => s.answer);
+        // What an answer of already_applied gives, the entities' current
+        // revisions, moves nothing: the other steps go on expecting what
+        // they did, and are refused once sent, rather than moved past what
+        // another session may have changed since (latestRevisions).
         const latest = latestRevisions(answers);
         const moves: [string, number, number][] = [];
         for (const [id, rev] of latest) {
@@ -2445,7 +2475,13 @@ export class ProjectDocument {
       }
       this.unanswered.delete(entry.key);
       this.settle();
-      this.catchUp();
+      // An answer that comes while the socket has been lost for a moment
+      // waits for it, as the answers before it do, rather than have the
+      // project and every part read anew for a socket that is back soon,
+      // with the operations before it (lostTimer).
+      if (this.lostTimer === undefined) {
+        this.catchUp();
+      }
       entry.resolve(answer);
     } catch (error) {
       if (conflictOf(error)) {

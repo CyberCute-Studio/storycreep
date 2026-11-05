@@ -47,17 +47,40 @@ interface Saved {
   captured: Record<string, Captured>;
 }
 
-/** Reports whether value is a list of steps, each with its commands and the seqs of one batch at least. */
+/** Reports whether value is an object, as JSON reads one, rather than null or a list. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Reports whether value is a revision, or a seq, as the server gives them. */
+function isRevision(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+/**
+ * Reports whether value is a list of steps, each with its commands, of a
+ * type and with the revisions that each expects, and the seqs of one batch
+ * at least, as the history wrote them: one that another version of the app
+ * wrote otherwise, as with a seq that is no number, would wait for an
+ * operation that never comes, and move what nothing expects (move).
+ */
 function isSteps(value: unknown): value is Step[] {
   return (
     Array.isArray(value) &&
     value.every(
       (step) =>
-        typeof step === "object" &&
-        step !== null &&
+        isObject(step) &&
         Array.isArray(step.commands) &&
+        step.commands.every(
+          (command: unknown) =>
+            isObject(command) &&
+            typeof command.type === "string" &&
+            isObject(command.expected_rev) &&
+            Object.values(command.expected_rev).every(isRevision),
+        ) &&
         Array.isArray(step.seqs) &&
-        step.seqs.length > 0,
+        step.seqs.length > 0 &&
+        step.seqs.every(isRevision),
     )
   );
 }
@@ -158,6 +181,14 @@ export class History {
    * than halve its way there anew, writing its whole text each time.
    */
   private left = 0;
+  /**
+   * What the tab's storage held under key as the history last read it or
+   * wrote it there, or null for nothing, which a history that no longer
+   * keeps itself there takes out only while the storage holds it still
+   * (clear), rather than what the project's next document, which reads the
+   * same key, has written there since.
+   */
+  private stored: string | null | undefined;
 
   /**
    * Returns the history kept under key in storage, or a new one, which it
@@ -172,6 +203,7 @@ export class History {
     }
     try {
       const text = storage.getItem(key);
+      this.stored = text;
       if (text === null) {
         return;
       }
@@ -189,10 +221,14 @@ export class History {
       }
       const captured = new Map<number, Captured>();
       for (const [seq, revs] of Object.entries(saved.captured)) {
-        if (typeof revs !== "object" || revs === null) {
+        if (
+          !isRevision(Number(seq)) ||
+          !isObject(revs) ||
+          !Object.values(revs).every((rev) => rev === null || isRevision(rev))
+        ) {
           return;
         }
-        captured.set(Number(seq), revs);
+        captured.set(Number(seq), revs as Captured);
       }
       this.undoSteps = saved.undo;
       this.redoSteps = saved.redo;
@@ -221,11 +257,7 @@ export class History {
   get latest(): number {
     let latest = 0;
     for (const seq of this.seqs) {
-      // A seq of a history that another version of the app wrote, which is
-      // no number, is none.
-      if (Number.isSafeInteger(seq) && seq > latest) {
-        latest = seq;
-      }
+      latest = Math.max(latest, seq);
     }
     return latest;
   }
@@ -290,9 +322,15 @@ export class History {
    * revisions that they wait for and expect are of changes that the server
    * no longer has, as of a database restored from an older backup, and out
    * of the tab's storage, even once the history no longer keeps itself
-   * there (close), as of a document dropped while the answer that tells of
-   * the restore was under way, whose steps kept there the project's next
-   * document would read.
+   * there (close), as of a document dropped while the answer or the read
+   * that tells of the restore was under way, whose steps kept there the
+   * project's next document would read: while the storage holds what the
+   * history last read or wrote there still (stored), and not once it holds
+   * another history, which the project's next document, which reads and
+   * writes the same key, wrote since, as with steps of the user's changes
+   * since it found the restore itself, which a reload would otherwise lose
+   * (FR-EDIT-08 AC3), however the document was dropped, and whatever was
+   * under way.
    */
   clear(): void {
     this.undoSteps = [];
@@ -307,7 +345,10 @@ export class History {
       return;
     }
     try {
-      this.storage.removeItem(this.key);
+      if (this.storage.getItem(this.key) === this.stored) {
+        this.storage.removeItem(this.key);
+        this.stored = null;
+      }
     } catch {
       // A storage that the browser refuses keeps nothing to take out.
     }
@@ -512,6 +553,7 @@ export class History {
         this.left = 0;
         try {
           storage.removeItem(key);
+          this.stored = null;
         } catch {
           // Nothing to keep, and nothing to take out.
         }
@@ -548,6 +590,7 @@ export class History {
     const text = `{"v":1,"undo":[${steps(undo)}],"redo":[${steps(redo)}],"captured":{${captured.join(",")}}}`;
     try {
       storage.setItem(key, text);
+      this.stored = text;
       return true;
     } catch {
       // The storage is full.
