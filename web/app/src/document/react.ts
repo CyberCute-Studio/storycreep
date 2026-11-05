@@ -18,11 +18,16 @@ export function useDocuments(): Documents {
   return useRouter().options.context.documents;
 }
 
-/** Returns the document of projectId, which the page follows while the component that reads it is shown. */
+/**
+ * Returns the document of projectId, which the page follows while the
+ * component that reads it is shown: the one that it shows, which is made
+ * anew once the page's documents have dropped the one before, as once the
+ * session is of another account that may see the project too.
+ */
 export function useProjectDocument(projectId: string): ProjectDocument {
   const documents = useDocuments();
   const doc = documents.get(projectId);
-  useEffect(() => documents.acquire(projectId), [documents, projectId]);
+  useEffect(() => documents.acquire(doc.projectId), [documents, doc]);
   return doc;
 }
 

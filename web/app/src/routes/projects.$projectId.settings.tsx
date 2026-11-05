@@ -207,9 +207,8 @@ function DetailsForm({ project }: { project: ProjectBody }) {
 }
 
 /**
- * Reads again what a change of the project's settings changed: the project,
- * as a change of its content does (readProjectAgain), and its workspace's
- * list of projects, which shows it.
+ * Reads again what a change of the project's settings changed: the project
+ * (readProjectAgain), and its workspace's list of projects, which shows it.
  */
 function readProjectAndListAgain(
   client: ReturnType<typeof useQueryClient>,

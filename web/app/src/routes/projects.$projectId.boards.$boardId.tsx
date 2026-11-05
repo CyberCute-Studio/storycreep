@@ -1,5 +1,5 @@
 import type { Board } from "@storycreep/shared/api";
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,7 +10,6 @@ import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import {
   type Command,
   conflictOf,
-  dropBoard,
   editsProject,
   projectQuery,
   useCommands,
@@ -409,7 +408,6 @@ function DeleteBoard({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const client = useQueryClient();
   const boards = useTree(useProjectDocument(projectId)).boards;
   const [opener, setOpener] = useState<HTMLElement | null>();
   // Once the board is deleted, the page goes, and shows the board until it
@@ -443,17 +441,16 @@ function DeleteBoard({
               onDeleting(false);
             }
           }}
-          // The page goes before what it read of the board, which is in the
-          // trash now, is dropped, so that a page of it that the user goes
-          // back to asks the server, which answers as for one that does
-          // not exist, rather than shows it.
+          // The page goes to the project's; a page of the board, which is
+          // in the trash now, that the user goes back to finds it gone from
+          // the document's tree, and shows the page of no page.
           onDeleted={() => {
             deleted.current = true;
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },
               replace: true,
-            }).then(() => dropBoard(client, projectId, board.id));
+            });
           }}
         />
       )}

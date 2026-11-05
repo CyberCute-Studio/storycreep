@@ -390,7 +390,12 @@ export class Draft {
     this.changed(project.id, sure);
   }
 
-  /** Takes part out of the document, with the entities of it, as a board's content once the board is in the trash. */
+  /**
+   * Takes part out of the document, with the entities of it, of every kind,
+   * as a board's content once the board is in the trash, or the tree, with
+   * its folders and its boards, once its read failed, which no change of
+   * them would keep current after.
+   */
   drop(part: Part): void {
     if (!this.holds(part)) {
       return;
@@ -398,7 +403,7 @@ export class Draft {
     this.parts ??= new Set(this.base.parts);
     this.parts.delete(part);
     this.dropped.add(part);
-    for (const kind of ["nodes", "connections"] as const) {
+    for (const kind of kinds) {
       for (const [id, entity] of this.all(kind)) {
         if (partOf(kind, entity) === part) {
           this.writable(kind).delete(id);

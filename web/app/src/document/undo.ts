@@ -121,6 +121,8 @@ export class History {
   private captured = new Map<number, Captured>();
   private readonly storage: Storage | undefined;
   private readonly key: string | undefined;
+  /** Whether the history no longer keeps itself in the tab's storage (close). */
+  private closed = false;
 
   /**
    * Returns the history kept under key in storage, or a new one, which it
@@ -248,26 +250,72 @@ export class History {
   }
 
   /**
-   * Moves what every step of the history expects of an entity that a step
-   * brought back, from before, the revision that it had before the batch
-   * that the step undid, to after, the one that the step's answer gives.
+   * Moves what every step of the history expects of each entity of moves
+   * that a step brought back, by its ID, from before, the revision that it
+   * had before the batch that the step undid, to after, the one that the
+   * step's answer gives, all at once, so that the history is kept in the
+   * tab's storage once, rather than once for each entity of a step that
+   * brought back hundreds.
    */
-  move(id: string, before: number, after: number): void {
+  move(
+    moves: readonly (readonly [id: string, before: number, after: number])[],
+  ): void {
+    if (moves.length === 0) {
+      return;
+    }
+    const movedCommand = (command: UndoCommandBody): UndoCommandBody => {
+      let expected: Record<string, number> | undefined;
+      for (const [id, before, after] of moves) {
+        if (command.expected_rev[id] === before) {
+          expected ??= { ...command.expected_rev };
+          expected[id] = after;
+        }
+      }
+      return expected === undefined
+        ? command
+        : { ...command, expected_rev: expected };
+    };
     const moved = (steps: Step[]) =>
       steps.map((step) => ({
         ...step,
-        commands: step.commands.map((command) =>
-          command.expected_rev[id] === before
-            ? {
-                ...command,
-                expected_rev: { ...command.expected_rev, [id]: after },
-              }
-            : command,
-        ),
+        commands: step.commands.map(movedCommand),
       }));
     this.undoSteps = moved(this.undoSteps);
     this.redoSteps = moved(this.redoSteps);
     this.save();
+  }
+
+  /**
+   * Records that the parts of a step sent in parts that applied left the
+   * entities of revisions at those revisions, so that rest, the step kept in
+   * its place, moves what the other steps expect of each from there once it
+   * applies, as those parts moved them there (move), rather than from what
+   * the store held of it before the batch that the step undoes.
+   */
+  advance(rest: Step, revisions: ReadonlyMap<string, number>): void {
+    for (const seq of rest.seqs) {
+      const captured = this.captured.get(seq);
+      if (captured === undefined) {
+        continue;
+      }
+      const next = { ...captured };
+      for (const [id, rev] of revisions) {
+        if (typeof next[id] === "number") {
+          next[id] = rev;
+        }
+      }
+      this.captured.set(seq, next);
+    }
+    this.save();
+  }
+
+  /**
+   * Stops keeping the history in the tab's storage, as once its document is
+   * dropped: what it records after, as the answer to a batch that comes once
+   * the page has signed out, is not written there.
+   */
+  close(): void {
+    this.closed = true;
   }
 
   private push(steps: Step[], step: Step): void {
@@ -305,43 +353,60 @@ export class History {
 
   /**
    * Keeps the history in the tab's storage: the latest steps that fit, the
-   * oldest left out first, and the steps to redo before them, which come
-   * after the latest change.
+   * oldest steps to undo left out first, and then the oldest to redo, which
+   * come after the latest change. Where the storage is full, how many are
+   * left out is found by halving, so that a long history is written a few
+   * times, rather than once for each step that is left out.
    */
   private save(): void {
-    if (this.storage === undefined || this.key === undefined) {
+    if (this.closed || this.storage === undefined || this.key === undefined) {
       return;
     }
-    let undo = this.undoSteps;
-    let redo = this.redoSteps;
-    for (;;) {
-      const seqs = new Set([...undo, ...redo].flatMap((s) => s.seqs));
-      const captured: Record<string, Captured> = {};
-      for (const [seq, revs] of this.captured) {
-        if (seqs.has(seq)) {
-          captured[seq] = revs;
-        }
-      }
-      const saved: Saved = { v: 1, undo, redo, captured };
+    if (this.write(this.storage, this.key, 0)) {
+      return;
+    }
+    let fits = this.undoSteps.length + this.redoSteps.length;
+    if (!this.write(this.storage, this.key, fits)) {
       try {
-        this.storage.setItem(this.key, JSON.stringify(saved));
-        return;
+        this.storage.removeItem(this.key);
       } catch {
-        // The storage is full: leave out the oldest step to undo, then the
-        // oldest to redo, until the rest fit, or nothing is left.
-        if (undo.length > 0) {
-          undo = undo.slice(1);
-        } else if (redo.length > 0) {
-          redo = redo.slice(1);
-        } else {
-          try {
-            this.storage.removeItem(this.key);
-          } catch {
-            // Nothing to keep, and nothing to take out.
-          }
-          return;
-        }
+        // Nothing to keep, and nothing to take out.
       }
+      return;
+    }
+    // A write that fails leaves what the storage had, so it holds the last
+    // that fit, of the fewest steps left out.
+    let fails = 0;
+    while (fits - fails > 1) {
+      const half = Math.floor((fits + fails) / 2);
+      if (this.write(this.storage, this.key, half)) {
+        fits = half;
+      } else {
+        fails = half;
+      }
+    }
+  }
+
+  /** Writes the history under key in storage, without its oldest steps, as many as left, and reports whether it fit. */
+  private write(storage: Storage, key: string, left: number): boolean {
+    const undo = this.undoSteps.slice(Math.min(left, this.undoSteps.length));
+    const redo = this.redoSteps.slice(
+      Math.max(0, left - this.undoSteps.length),
+    );
+    const seqs = new Set([...undo, ...redo].flatMap((s) => s.seqs));
+    const captured: Record<string, Captured> = {};
+    for (const [seq, revs] of this.captured) {
+      if (seqs.has(seq)) {
+        captured[seq] = revs;
+      }
+    }
+    const saved: Saved = { v: 1, undo, redo, captured };
+    try {
+      storage.setItem(key, JSON.stringify(saved));
+      return true;
+    } catch {
+      // The storage is full.
+      return false;
     }
   }
 }

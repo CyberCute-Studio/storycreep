@@ -29,7 +29,7 @@ import {
   type Part,
   type Project,
 } from "./doc";
-import { applyOperation } from "./reconcile";
+import { applyOperation, mergeEntity } from "./reconcile";
 
 const earlier = "2026-01-01T00:00:00.000Z";
 const time = "2026-11-05T10:00:00.000Z";
@@ -547,6 +547,81 @@ describe("an operation held to its revisions (reconcile.ts)", () => {
     expect(
       node?.outputs?.find((o) => o.id === id("branch_output", 3)),
     ).toMatchObject({ order: "Vm", rev: 4 });
+  });
+});
+
+describe("an entity merged as a read of it answered (reconcile.ts)", () => {
+  const nodeId = id("node", 1);
+
+  it("keeps what the document holds of a node's branch outputs that is later than the read's, or that went since the read began, once the read's node is later", () => {
+    // The node's second output went by the operation of seq 9, after the
+    // read began, as of 7, which found it, and the first as it was before
+    // its change to 4.
+    const doc: Doc = {
+      ...docOf({
+        nodes: [
+          {
+            ...branch(1, [output(1, 1, { kind: "if", order: "V", rev: 4 })]),
+            rev: 4,
+          },
+        ],
+      }),
+      gone: new Map([[id("branch_output", 2), { rev: 4, seq: 9 }]]),
+    };
+    const read = {
+      ...branch(1, [
+        output(1, 1, { kind: "if", order: "V" }),
+        output(2, 1, { order: "W" }),
+      ]),
+      title: "Fork",
+      rev: 5,
+    };
+    const node = mergeEntity(doc, nodeId, read, 7).nodes.get(nodeId);
+    expect(node).toMatchObject({ title: "Fork", rev: 5 });
+    expect(node?.outputs).toEqual([
+      output(1, 1, { kind: "if", order: "V", rev: 4 }),
+    ]);
+  });
+
+  it("takes the read's fields of an entity at the same revision, keeping what the read leaves out, as a component's values that its list does not answer, and the document as it was where nothing differs", () => {
+    const full = component(1, 1, { [id("attribute_def", 1)]: 5 });
+    const doc = docOf({ components: [{ ...full, name: "Guess" }] });
+    const merged = mergeEntity(doc, full.id, summary(1, 1), 7);
+    expect(merged.components.get(full.id)).toEqual(full);
+    expect(mergeEntity(merged, full.id, summary(1, 1), 7)).toBe(merged);
+  });
+
+  it("keeps a branch output that an operation put in while the read of its node was under way, which the read does not have", () => {
+    const added = output(3, 1, { order: "X", rev: 1 });
+    const doc = docOf({
+      nodes: [{ ...branch(1, [output(1, 1, { kind: "if" }), added]), rev: 4 }],
+    });
+    const read = { ...branch(1, [output(1, 1, { kind: "if" })]), rev: 5 };
+    expect(
+      mergeEntity(doc, nodeId, read, 7, new Set([added.id])).nodes.get(nodeId)
+        ?.outputs,
+    ).toEqual([output(1, 1, { kind: "if" }), added]);
+    // One that no operation changed since went before the read began.
+    expect(
+      mergeEntity(doc, nodeId, read, 7).nodes.get(nodeId)?.outputs,
+    ).toEqual([output(1, 1, { kind: "if" })]);
+  });
+});
+
+describe("a part taken out of a document (Draft.drop)", () => {
+  it("takes out the tree with its folders of boards and its boards, and leaves the other parts' entities", () => {
+    const doc = docOf({
+      folders: [folder(1, "board"), folder(2, "variable")],
+      boards: [board(1)],
+      variables: [variable(1)],
+    });
+    const draft = new Draft(doc, time);
+    draft.drop("tree");
+    const after = draft.finish(doc.seq);
+    expect(after.parts.has("tree")).toBe(false);
+    expect([...after.folders.keys()]).toEqual([id("folder", 2)]);
+    expect(after.boards.size).toBe(0);
+    expect(after.variables.size).toBe(1);
   });
 });
 

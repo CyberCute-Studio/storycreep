@@ -13,8 +13,10 @@
 //
 // What the server is read for comes back later than the operations after it
 // may: an entity, or a part's list, is merged by its revision, the higher
-// winning, and one that the document saw go, as to the trash, is not brought
-// back by an answer to a read that began before it went (Doc.gone).
+// winning, and the read's fields at the same one, which correct what the
+// appliers were not sure of; one that the document saw go, as to the trash,
+// is not brought back by an answer to a read that began before it went
+// (Doc.gone).
 
 import type {
   Attribute,
@@ -316,31 +318,92 @@ export function applyPending(
   return out.finish(doc.seq);
 }
 
+/** Returns the field of the entity of id that holds its nested entities, each with a revision of its own: a node's branch outputs, or a type's attribute definitions, or undefined for none. */
+function nestedField(id: string): "outputs" | "attributes" | undefined {
+  const place = placeOf(id);
+  if (place?.of !== "kind") {
+    return undefined;
+  }
+  return place.kind === "nodes"
+    ? "outputs"
+    : place.kind === "componentTypes"
+      ? "attributes"
+      : undefined;
+}
+
+/** Returns the nested entities of owner under field, or none. */
+function nestedOf(owner: Revised, field: "outputs" | "attributes"): Revised[] {
+  const list = (owner as unknown as Record<string, unknown>)[field];
+  return Array.isArray(list) ? (list as Revised[]) : [];
+}
+
+/**
+ * Reports whether the entity of id went from doc at rev or later, by an
+ * operation that a read that began once doc was as of seq since began
+ * before, so that the read, which found it at rev, may have found it as it
+ * was before.
+ */
+function wentSince(doc: Doc, id: string, rev: number, since: number): boolean {
+  const gone = doc.gone.get(id);
+  return gone !== undefined && since < gone.seq && rev <= gone.rev;
+}
+
 /**
  * Returns doc with entity, of id, as the server answered a read of it that
  * began once doc was as of seq since, or undefined if the server answered
- * that it has none (404): the higher revision wins, and one that went from
- * the document since the read began stays gone, unless the server has it at
- * a later revision, as once it came back.
+ * that it has none (404): the higher revision wins, and the read's fields at
+ * the same one, and one that went from the document since the read began
+ * stays gone, unless the server has it at a later revision, as once it came
+ * back. changedSince holds the entities that operations changed while the
+ * read was under way.
  */
 export function mergeEntity(
   doc: Doc,
   id: string,
   entity: Revised | undefined,
   since: number,
+  changedSince: ReadonlySet<string> = new Set(),
 ): Doc {
+  const held = entityOf(doc, id);
   let next = mergeOne(doc, id, entity, since);
   // A node's branch outputs and a type's attribute definitions have
   // revisions of their own, which a change of theirs does not give their
   // owner, so each is merged by its own, as one that came back from the
   // trash, whose owner's revision is the same.
-  const nested =
-    (entity as { outputs?: Revised[] | null } | undefined)?.outputs ??
-    (entity as { attributes?: Revised[] } | undefined)?.attributes;
-  if (Array.isArray(nested) && entityOf(next, id) !== undefined) {
-    for (const child of nested) {
-      next = mergeOne(next, child.id, child, since);
-    }
+  const field = nestedField(id);
+  const owner = entityOf(next, id);
+  if (field === undefined || entity === undefined || owner === undefined) {
+    return next;
+  }
+  const nested = nestedOf(entity, field);
+  if (owner !== held) {
+    // The owner, of a later revision, was set as the read found it, with
+    // its nested entities as they were then: each that the document holds
+    // is set back to what it holds, which may be later, as an operation
+    // that applied while the read was under way left it, before each is
+    // merged by its own revision; one that went from the document since the
+    // read began stays gone; and one that the read does not have, which an
+    // operation put in since, is kept.
+    const was = new Map(
+      (held === undefined ? [] : nestedOf(held, field)).map((c) => [c.id, c]),
+    );
+    const read = new Set(nested.map((c) => c.id));
+    const children = [
+      ...nested.flatMap((c) => {
+        const kept = was.get(c.id);
+        if (kept !== undefined) {
+          return [kept];
+        }
+        return wentSince(next, c.id, c.rev, since) ? [] : [c];
+      }),
+      ...[...was.values()].filter(
+        (c) => !read.has(c.id) && changedSince.has(c.id),
+      ),
+    ];
+    next = withEntity(next, id, { ...owner, [field]: children } as Revised);
+  }
+  for (const child of nested) {
+    next = mergeOne(next, child.id, child, since);
   }
   return next;
 }
@@ -361,16 +424,23 @@ function mergeOne(
     }
     return out.finish(doc.seq);
   }
-  if (held !== undefined && held.rev >= entity.rev) {
+  if (held !== undefined && held.rev > entity.rev) {
     return doc;
   }
-  const gone = doc.gone.get(id);
-  if (
-    held === undefined &&
-    gone !== undefined &&
-    since < gone.seq &&
-    entity.rev <= gone.rev
-  ) {
+  let merged = entity;
+  if (held !== undefined && held.rev === entity.rev) {
+    // The server has the same state of it at the same revision, which the
+    // read answers: what the document holds otherwise, as what the appliers
+    // predicted of a change that they were not sure of, as the key of order
+    // that a create left to the server, takes the read's, and what the read
+    // leaves out, as the description and the values that the list of the
+    // components does not answer, is kept.
+    merged = { ...held, ...entity };
+    if (equal(merged, held)) {
+      return doc;
+    }
+  }
+  if (held === undefined && wentSince(doc, id, entity.rev, since)) {
     // It went at that revision or later, by an operation that the read
     // began before, so the read may have found it as it was before.
     return doc;
@@ -382,9 +452,36 @@ function mergeOne(
   ) {
     return doc;
   }
-  out.set(id, entity);
+  out.set(id, merged);
   out.back(id);
   return out.finish(doc.seq);
+}
+
+/** Reports whether a and b are the same JSON value, whatever the order of their objects' fields. */
+function equal(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (
+    typeof a !== "object" ||
+    typeof b !== "object" ||
+    a === null ||
+    b === null ||
+    Array.isArray(a) !== Array.isArray(b)
+  ) {
+    return false;
+  }
+  if (Array.isArray(a)) {
+    const other = b as unknown[];
+    return a.length === other.length && a.every((v, i) => equal(v, other[i]));
+  }
+  const x = a as Record<string, unknown>;
+  const y = b as Record<string, unknown>;
+  const keys = Object.keys(x);
+  return (
+    keys.length === Object.keys(y).length &&
+    keys.every((k) => Object.hasOwn(y, k) && equal(x[k], y[k]))
+  );
 }
 
 /**
@@ -406,7 +503,7 @@ export function mergeList<K extends Kind>(
   const listed = new Set<string>();
   for (const item of items) {
     listed.add(item.id);
-    next = mergeEntity(next, item.id, item, since);
+    next = mergeEntity(next, item.id, item, since, changedSince);
   }
   const out = new Writer(next, "");
   for (const [id, entity] of next[kind]) {

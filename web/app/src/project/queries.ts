@@ -14,11 +14,9 @@ import {
   type ProjectBody,
 } from "@storycreep/shared/api";
 import {
-  type Query,
   type QueryClient,
   queryOptions,
   useMutation,
-  useQueryClient,
 } from "@tanstack/react-query";
 import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import { useProjectDocument } from "../document/react";
@@ -135,51 +133,19 @@ export function grantsQuery(projectId: string) {
 }
 
 /**
- * Reads again what a change of projectId's content may have changed of what
- * the pages read besides its document: the project, its trash, and the
- * members' grants, but not the jumpers that a board's deletion lists
- * (referrersQuery), which its confirmation reads as it opens, nor what the
- * page read of the boards deleted, the IDs that deleted lists, which, read
- * again once the boards are in the trash, the server would refuse, as of
- * boards that it does not have, and which are dropped, so that a page of one
- * that the user goes back to asks the server anew.
+ * Reads again what the pages of projectId read besides its document, as
+ * once a change of its settings has applied: the project, its trash, and
+ * the members' grants, but not the jumpers that a board's deletion lists
+ * (referrersQuery), which its confirmation reads as it opens.
  */
 export function readProjectAgain(
   client: QueryClient,
   projectId: string,
-  deleted: readonly string[] = [],
 ): Promise<void> {
-  const ofDeleted = (query: Query) =>
-    query.queryKey[2] === "boards" &&
-    deleted.includes(String(query.queryKey[3]));
-  client.removeQueries({
-    queryKey: ["projects", projectId, "boards"],
-    type: "inactive",
-    predicate: ofDeleted,
-  });
   return client.invalidateQueries({
     queryKey: ["projects", projectId],
-    predicate: (query) =>
-      query.queryKey.at(-1) !== "referrers" && !ofDeleted(query),
+    predicate: (query) => query.queryKey.at(-1) !== "referrers",
   });
-}
-
-/** Drops what the page read of a board of projectId, once no page shows it, as after its deletion. */
-export function dropBoard(
-  client: QueryClient,
-  projectId: string,
-  boardId: string,
-): void {
-  client.removeQueries({
-    queryKey: ["projects", projectId, "boards", boardId],
-  });
-}
-
-/** Returns the IDs of the boards that commands delete. */
-function deletedBoards(commands: readonly Command[]): string[] {
-  return commands.flatMap((command) =>
-    command.type === "board.delete" ? [command.payload.id] : [],
-  );
 }
 
 /**
@@ -189,17 +155,14 @@ function deletedBoards(commands: readonly Command[]): string[] {
  * refused, or no answer came to it (ProjectDocument.send). A batch sent
  * again as it was, as once no answer came to it, has the IDs that its
  * commands had, so that the server answers it as the batch that it applied
- * already, if it did, rather than apply it again. What the pages read of
- * the project besides its document is read again once it has applied
- * (readProjectAgain).
+ * already, if it did, rather than apply it again. The document tells what
+ * the pages read of the project besides it what the batch changed of that,
+ * the project and its trash, as it does of another session's.
  */
 export function useCommands(projectId: string) {
   const doc = useProjectDocument(projectId);
-  const client = useQueryClient();
   return useMutation({
     mutationFn: (commands: Command[]) => doc.send(commands),
-    onSuccess: (_answer, commands) =>
-      readProjectAgain(client, projectId, deletedBoards(commands)),
   });
 }
 
