@@ -5,7 +5,13 @@ import {
   NetworkError,
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
@@ -16,6 +22,7 @@ import {
   testProject,
   testWorkspace,
 } from "./test/fake";
+import { fakeRealtime } from "./test/realtime";
 
 // The management screens as the router shows them, over a fake of the API's
 // client: the workspace that the project list opens, the switcher, what an
@@ -85,6 +92,39 @@ function projectPages(operation: string, boards: Board[]): unknown {
       return { items: boards, next_cursor: null };
   }
   return startPage(operation as Parameters<typeof startPage>[0]);
+}
+
+/** What a board's page says once its form is saved. */
+const saved = "Saved.";
+
+/**
+ * Returns the server's refusal of a batch of one command of type for the
+ * revision of the board state, which changed elsewhere since the page read
+ * it at rev 3, with the board as it is now.
+ */
+function conflict(type: string, state: Board) {
+  return refused(409, {
+    code: "revision_conflict",
+    details: {
+      conflicts: [
+        {
+          command: 0,
+          command_id: "00000000-0000-7000-8000-000000000001",
+          type,
+          id: state.id,
+          expected_rev: 3,
+          exists: true,
+          current_rev: state.rev,
+        },
+      ],
+      states: { [state.id]: state },
+    },
+  });
+}
+
+/** Returns the answer to a batch that applied as seq, leaving revisions. */
+function applied(seq: number, revisions: { id: string; rev: number }[]) {
+  return { status: "applied", seq, revisions, not_reconnected: [], undo: [] };
 }
 
 /** Answers with answer, or fails the test's request of an operation that it does not expect. */
@@ -680,9 +720,46 @@ describe("the tree of boards", () => {
     expect(sent[2].id).toBe(sent[0].id);
   });
 
-  it("sends a rename refused for a revision again with the revision that the tree read since", async () => {
+  it("sends a rename again by itself, expecting the board's revision now, once it was refused for another change of the board elsewhere", async () => {
     const user = userEvent.setup();
-    let rev = 3;
+    const revisions: unknown[] = [];
+    let current = board("bd_a", "Harbour");
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { expected_rev: unknown }[] };
+        };
+        revisions.push(body.commands[0].expected_rev);
+        if (revisions.length === 1) {
+          // Another editor gave the board a colour since the tree read it,
+          // which the rename does not change.
+          current = { ...current, color: "blue", rev: 4 };
+          throw conflict("board.rename", current);
+        }
+        current = { ...current, name: "Harbour at night", rev: 5 };
+        return applied(3, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(projectPages(operation, [current]), operation);
+    });
+    renderApp(`/projects/${testProject.id}`, { session: testSession });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("New name");
+    await user.clear(name);
+    await user.type(name, "Harbour at night");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
+    expect(
+      await screen.findByRole("link", { name: "Harbour at night" }),
+    ).toBeDefined();
+  });
+
+  it("shows a rename refused for a rename of the board elsewhere, and sends it again, once asked, expecting the revision that the refusal gave", async () => {
+    const user = userEvent.setup();
     const revisions: unknown[] = [];
     fakeApi((operation, input) => {
       if (operation === "applyCommands") {
@@ -691,20 +768,15 @@ describe("the tree of boards", () => {
         };
         revisions.push(body.commands[0].expected_rev);
         if (revisions.length === 1) {
-          // The board changed elsewhere since the tree read it.
-          rev = 4;
-          throw refused(409, { code: "revision_conflict" });
+          throw conflict("board.rename", {
+            ...board("bd_a", "Old harbour"),
+            rev: 4,
+          });
         }
-        return {
-          status: "applied",
-          seq: 3,
-          revisions: [],
-          not_reconnected: [],
-          undo: [],
-        };
+        return applied(3, [{ id: "bd_a", rev: 5 }]);
       }
       return expected(
-        projectPages(operation, [{ ...board("bd_a", "Harbour"), rev }]),
+        projectPages(operation, [board("bd_a", "Harbour")]),
         operation,
       );
     });
@@ -719,6 +791,67 @@ describe("the tree of boards", () => {
     await user.type(name, "Harbour at night");
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
     await within(dialog).findByRole("alert");
+    // The tree, behind the dialog, shows the other editor's name meanwhile.
+    expect(
+      await screen.findByRole("link", { name: "Old harbour", hidden: true }),
+    ).toBeDefined();
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
+  });
+
+  it("sends a rename expecting the revision of the board that the dialog opened with, rather than the one that another session's rename gave it meanwhile, which it would write over unasked", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const revisions: Record<string, number>[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { body } = input as {
+          body: { commands: { expected_rev: Record<string, number> }[] };
+        };
+        revisions.push(body.commands[0].expected_rev);
+        if (body.commands[0].expected_rev.bd_a !== 4) {
+          throw conflict("board.rename", {
+            ...board("bd_a", "Old harbour"),
+            rev: 4,
+          });
+        }
+        return applied(testProject.seq + 2, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+      realtime,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Harbour" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText("New name");
+    await user.clear(name);
+    await user.type(name, "Harbour at night");
+    // Another editor renames the board meanwhile, which the tree shows.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "board.rename",
+            payload: { id: "bd_a", name: "Old harbour" },
+          },
+        ],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await within(dialog).findByRole("alert");
+    expect(revisions).toEqual([{ bd_a: 3 }]);
+    // Asked again, once the refusal has said so, it renames it over theirs.
     await user.click(within(dialog).getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(revisions).toEqual([{ bd_a: 3 }, { bd_a: 4 }]);
@@ -783,43 +916,50 @@ describe("the tree of boards", () => {
 });
 
 describe("a board's page", () => {
-  it("keeps what the user typed once the board has changed elsewhere, and sends it expecting the revision that the form shows", async () => {
+  // Verifies: FR-RT-02/AC3
+  it("keeps what the user typed while another session's change of the board applies, and sends it again by itself once it was refused for that change", async () => {
     const user = userEvent.setup();
-    let harbour = board("bd_a", "Harbour");
+    const realtime = fakeRealtime();
+    const harbour = board("bd_a", "Harbour");
     const sent: unknown[] = [];
     fakeApi((operation, input) => {
-      switch (operation) {
-        case "getBoard":
-          return harbour;
-        case "applyCommands":
-          sent.push((input as { body: { commands: unknown[] } }).body.commands);
-          throw refused(409, { code: "revision_conflict" });
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        if (sent.length === 1) {
+          throw conflict("board.describe", {
+            ...harbour,
+            color: "blue",
+            rev: 4,
+          });
+        }
+        return applied(testProject.seq + 2, [{ id: "bd_a", rev: 5 }]);
       }
       return expected(projectPages(operation, [harbour]), operation);
     });
-    const { queryClient } = renderApp(
-      `/projects/${testProject.id}/boards/bd_a`,
-      {
-        session: testSession,
-      },
-    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
     await user.type(
       await screen.findByLabelText("Description"),
       "Where the story starts",
     );
-    // Another editor gives the board a colour, which the page reads again.
-    harbour = { ...harbour, color: "blue", rev: 4 };
-    await queryClient.invalidateQueries({ queryKey: ["projects"] });
+    // Another editor gives the board a colour, which comes over the channel.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
     expect(screen.getByLabelText("Description")).toHaveProperty(
       "value",
       "Where the story starts",
     );
     expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
     await user.click(screen.getByRole("button", { name: "Save the board" }));
-    // Refused for that change, the form shows the board as it is now.
-    await waitFor(() =>
-      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
-    );
+    await screen.findByText(saved);
     expect(sent).toEqual([
       [
         {
@@ -829,6 +969,480 @@ describe("a board's page", () => {
           command_id: expect.any(String),
         },
       ],
+      [
+        {
+          type: "board.describe",
+          payload: { id: "bd_a", description: "Where the story starts" },
+          expected_rev: { bd_a: 4 },
+          command_id: expect.any(String),
+        },
+      ],
     ]);
+    // Saved, the form shows the board as it is now, with both changes.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+  });
+
+  // Verifies: FR-RT-02/AC3
+  it("keeps the focus in a field that the user is in, before typing in it, while another session's change of the board applies, and shows the change once the focus leaves the form", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) =>
+      expected(projectPages(operation, [board("bd_a", "Harbour")]), operation),
+    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(document.activeElement).toBe(description);
+    expect(description.isConnected).toBe(true);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+  });
+
+  // Verifies: FR-RT-02/AC3
+  it("keeps the focus in a field that the user is in while the page has lost it, as to another tab, and another session's change of the board applies, rather than show the form anew without it", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) =>
+      expected(projectPages(operation, [board("bd_a", "Harbour")]), operation),
+    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    // The window loses the focus, which the field keeps, as the browser
+    // gives it back once the user is back.
+    fireEvent.blur(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(description.isConnected).toBe(true);
+    expect(document.activeElement).toBe(description);
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
+    fireEvent.focus(description);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+  });
+
+  it("names a field that another editor changed too with both values, and keeps the user's once saved again, without what the user did not change", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    // The other editor changed the colour too, which the user did not, and
+    // which saving again leaves as they made it.
+    const theirs = {
+      ...harbour,
+      description: "Where the tale ends",
+      color: "blue" as const,
+      rev: 4,
+    };
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        if (sent.length === 1) {
+          throw conflict("board.describe", theirs);
+        }
+        return applied(testProject.seq + 1, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    expect(
+      await screen.findByText(
+        "Description: now “Where the tale ends”, yours “Where the story starts”",
+      ),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText(saved);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual([
+      {
+        type: "board.describe",
+        payload: { id: "bd_a", description: "Where the story starts" },
+        expected_rev: { bd_a: 4 },
+        command_id: expect.any(String),
+      },
+    ]);
+  });
+
+  it("shows the board as the server has it once a save was refused for a field that another editor changed too, but for what the user changed, so that what the user changes after is over what it shows", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    // The other editor described the board too, which the user did not.
+    const theirs = {
+      ...harbour,
+      name: "Old harbour",
+      description: "Where the tale ends",
+      rev: 4,
+    };
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        if (sent.length === 1) {
+          throw conflict("board.rename", theirs);
+        }
+        return applied(testProject.seq + 1, [{ id: "bd_a", rev: 5 }]);
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const name = await screen.findByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Harbour at night");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    expect(
+      await screen.findByText(
+        "Name: now “Old harbour”, yours “Harbour at night”",
+      ),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Name")).toHaveProperty(
+      "value",
+      "Harbour at night",
+    );
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the tale ends",
+    );
+    await user.type(screen.getByLabelText("Description"), " and begins");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText(saved);
+    expect(sent[1]).toEqual([
+      {
+        type: "board.rename",
+        payload: { id: "bd_a", name: "Harbour at night" },
+        expected_rev: { bd_a: 4 },
+        command_id: expect.any(String),
+      },
+      {
+        type: "board.describe",
+        payload: { id: "bd_a", description: "Where the tale ends and begins" },
+        expected_rev: { bd_a: 4 },
+        command_id: expect.any(String),
+      },
+    ]);
+  });
+
+  // Verifies: FR-RT-02/AC3
+  it("keeps the focus in the form once a save with nothing changed shows the board as another session's change left it, and shows the next change once the focus leaves the form", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) =>
+      expected(projectPages(operation, [board("bd_a", "Harbour")]), operation),
+    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    await user.click(await screen.findByLabelText("Description"));
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    expect(
+      await screen.findByText("Nothing has changed, so nothing was saved."),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue");
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Save the board" }),
+    );
+    await user.click(document.body);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "red" } }],
+        [{ id: "bd_a", rev: 5 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "red"),
+    );
+  });
+
+  it("shows the tree once the project's document has read it anew, as once the user is back after the document was dropped, rather than show it empty until then", async () => {
+    let boardsRead = 0;
+    const later = Promise.withResolvers<unknown>();
+    fakeApi((operation) => {
+      if (operation === "listBoards" && ++boardsRead > 1) {
+        return later.promise;
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    const { router, documents } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    await act(() =>
+      router.navigate({
+        to: "/workspaces/$workspaceId",
+        params: { workspaceId: testWorkspace.id },
+      }),
+    );
+    // No page has shown the project's document for a while: it is dropped.
+    documents.forget(testProject.id);
+    const back = router.navigate({
+      to: "/projects/$projectId",
+      params: { projectId: testProject.id },
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(screen.queryByText("No boards yet.")).toBeNull();
+    later.resolve({ items: [board("bd_a", "Harbour")], next_cursor: null });
+    await act(() => back);
+    expect(await screen.findByRole("link", { name: "Harbour" })).toBeDefined();
+  });
+
+  it("shows a board that another session made since the tree was read, which the document reads anew while its channel is not live", async () => {
+    let boards = [board("bd_a", "Harbour")];
+    fakeApi((operation) =>
+      expected(projectPages(operation, boards), operation),
+    );
+    const { router } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
+    await router.navigate({
+      to: "/projects/$projectId/boards/$boardId",
+      params: { projectId: testProject.id, boardId: "bd_b" },
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Lighthouse" }),
+    ).toBeDefined();
+  });
+
+  it("says that it could not show a board that the tree does not have once the project's read anew failed, rather than that there is no such page", async () => {
+    // The wait before the document reads the project again is longer than
+    // the test.
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    let projectReads = 0;
+    fakeApi((operation) => {
+      if (operation === "getProject" && ++projectReads > 1) {
+        throw refused(503, { code: "unavailable" });
+      }
+      return expected(
+        projectPages(operation, [board("bd_a", "Harbour")]),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_b`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Something went wrong" }),
+    ).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Page not found" })).toBe(
+      null,
+    );
+  });
+
+  it("keeps what the user typed once the document could not send a save again, for how often another editor changed the board meanwhile, and sends it over the board as it is now once saved again", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    // Another editor gives the board another colour before each attempt.
+    const colors = ["blue", "red", "green", "teal"] as const;
+    const sent: unknown[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        const { commands } = (input as { body: { commands: unknown[] } }).body;
+        sent.push(commands);
+        const attempt = sent.length;
+        if (attempt <= colors.length) {
+          throw refused(409, {
+            code: "revision_conflict",
+            details: {
+              conflicts: [
+                {
+                  command: 0,
+                  command_id: "00000000-0000-7000-8000-000000000001",
+                  type: "board.describe",
+                  id: "bd_a",
+                  expected_rev: 2 + attempt,
+                  exists: true,
+                  current_rev: 3 + attempt,
+                },
+              ],
+              states: {
+                bd_a: {
+                  ...harbour,
+                  color: colors[attempt - 1],
+                  rev: 3 + attempt,
+                },
+              },
+            },
+          });
+        }
+        return applied(testProject.seq + 1, [{ id: "bd_a", rev: 8 }]);
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText("revision_conflict");
+    expect(sent).toHaveLength(4);
+    expect(screen.getByLabelText("Description")).toHaveProperty(
+      "value",
+      "Where the story starts",
+    );
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "teal");
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await screen.findByText(saved);
+    expect(sent[4]).toEqual([
+      {
+        type: "board.describe",
+        payload: { id: "bd_a", description: "Where the story starts" },
+        expected_rev: { bd_a: 7 },
+        command_id: expect.any(String),
+      },
+    ]);
+  });
+
+  it("shows another board's page anew, rather than with what the user typed in the form of the board before", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation) =>
+      expected(
+        projectPages(operation, [
+          board("bd_a", "Harbour"),
+          board("bd_b", "Lighthouse"),
+        ]),
+        operation,
+      ),
+    );
+    const { router } = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_b" },
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Lighthouse" }),
+    ).toBeDefined();
+    expect(screen.getByLabelText("Name")).toHaveProperty("value", "Lighthouse");
+    expect(screen.getByLabelText("Description")).toHaveProperty("value", "");
+  });
+
+  it("shows the other editor's version of a field that both changed once the user takes theirs", async () => {
+    const user = userEvent.setup();
+    const harbour = board("bd_a", "Harbour");
+    fakeApi((operation) => {
+      if (operation === "applyCommands") {
+        throw conflict("board.describe", {
+          ...harbour,
+          description: "Where the tale ends",
+          rev: 4,
+        });
+      }
+      return expected(projectPages(operation, [harbour]), operation);
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await user.type(
+      await screen.findByLabelText("Description"),
+      "Where the story starts",
+    );
+    await user.click(screen.getByRole("button", { name: "Save the board" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Use their version" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Description")).toHaveProperty(
+        "value",
+        "Where the tale ends",
+      ),
+    );
+  });
+});
+
+describe("a project's settings", () => {
+  // Verifies: FR-RT-02/AC3
+  it("keep the focus in a field that the user is in, before typing in it, while another session's change of the project applies, and show the change once the focus leaves the form", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) => expected(projectPages(operation, []), operation));
+    renderApp(`/projects/${testProject.id}/settings`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "project.rename", payload: { name: "Harbour at night" } }],
+        [{ id: testProject.id, rev: 2 }],
+      ),
+    );
+    // The page shows the project as the change left it.
+    await waitFor(() => expect(document.title).toContain("Harbour at night"));
+    expect(document.activeElement).toBe(description);
+    expect(description.isConnected).toBe(true);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Name")).toHaveProperty(
+        "value",
+        "Harbour at night",
+      ),
+    );
   });
 });

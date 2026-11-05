@@ -3,7 +3,8 @@
 // dragging does too, but for a keyboard, a screen reader, or a single tap
 // (WCAG 2.5.7), and deleting one to the trash, a board after it lists the
 // jumpers on other boards that its deletion would leave broken (AC2). Each
-// sends a batch of commands (useCommands), and gives the focus back to the
+// sends a batch of commands (useCommands), expecting the revision of what it
+// changes that it opened with (useExpected), and gives the focus back to the
 // control that opened it, or to the page's content once that control has
 // gone, as with its item.
 
@@ -32,6 +33,7 @@ import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
 import { Alert, RefusalAlert } from "../ui/Page";
 import {
   type Command,
+  conflictOf,
   referrersQuery,
   referrersShown,
   useCommands,
@@ -57,8 +59,15 @@ export function payloadField(...fields: string[]) {
 /** The value of the choice of a folder that stands for the top of the tree. */
 const top = "";
 
-/** Returns the commands that move node to placement. */
-export function moveCommands(node: TreeNode, placement: Placement): Command[] {
+/**
+ * Returns the commands that move node to placement, expecting rev of it, the
+ * revision that the tree shows of it unless given.
+ */
+export function moveCommands(
+  node: TreeNode,
+  placement: Placement,
+  rev = revOf(node),
+): Command[] {
   const order = placement.order === undefined ? {} : { order: placement.order };
   return node.kind === "board"
     ? [
@@ -71,7 +80,7 @@ export function moveCommands(node: TreeNode, placement: Placement): Command[] {
               : { folder_id: placement.parentId }),
             ...order,
           },
-          expected_rev: { [node.id]: node.board.rev },
+          expected_rev: { [node.id]: rev },
         },
       ]
     : [
@@ -84,7 +93,7 @@ export function moveCommands(node: TreeNode, placement: Placement): Command[] {
               : { parent_id: placement.parentId }),
             ...order,
           },
-          expected_rev: { [node.id]: node.folder.rev },
+          expected_rev: { [node.id]: rev },
         },
       ];
 }
@@ -92,6 +101,32 @@ export function moveCommands(node: TreeNode, placement: Placement): Command[] {
 /** Returns the name of a node of the tree. */
 export function nameOf(node: TreeNode): string {
   return node.kind === "board" ? node.board.name : node.folder.name;
+}
+
+/** Returns the revision of a node of the tree. */
+function revOf(node: TreeNode): number {
+  return node.kind === "board" ? node.board.rev : node.folder.rev;
+}
+
+/**
+ * Returns the revision that a dialog's next attempt expects of what it
+ * changes, of which the tree shows rev now: the one that it had once the
+ * dialog opened, so that a change made elsewhere while it is open, which
+ * the project's document shows as it commits, is not changed over unasked
+ * (PRD §7.10, FR-API-03 AC3), or, once an attempt was refused for such a
+ * change (error), which the dialog says, and the tree shows, the one that
+ * it has then. The document moves it past the page's own batches that
+ * applied since, as a drag that was under way once the dialog opened, which
+ * are no change made elsewhere (ProjectDocument.send).
+ */
+function useExpected(rev: number, error: unknown): number {
+  const [held, setHeld] = useState({ rev, error });
+  if (error !== held.error) {
+    const next = { rev: conflictOf(error) ? rev : held.rev, error };
+    setHeld(next);
+    return next.rev;
+  }
+  return held.rev;
 }
 
 interface FrameProps {
@@ -286,6 +321,7 @@ export function RenameDialog({
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const commands = useCommands(projectId);
+  const rev = useExpected(revOf(node), commands.error);
   const refusal = refusalOf(commands.error, t, nameField);
   useFocusRefusal(form, commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -296,12 +332,12 @@ export function RenameDialog({
         ? {
             type: "board.rename",
             payload: { id: node.id, name },
-            expected_rev: { [node.id]: node.board.rev },
+            expected_rev: { [node.id]: rev },
           }
         : {
             type: "folder.rename",
             payload: { id: node.id, name },
-            expected_rev: { [node.id]: node.folder.rev },
+            expected_rev: { [node.id]: rev },
           };
     commands.mutate([command], { onSuccess: onClose });
   };
@@ -360,6 +396,7 @@ export function MoveDialog({
   const [folder, setFolder] = useState(node.parentId ?? top);
   const [place, setPlace] = useState(atEnd);
   const commands = useCommands(projectId);
+  const rev = useExpected(revOf(node), commands.error);
   // Where the choices say, as the tree has them now: a folder, or a child
   // to go after, that has gone from them since it was chosen, as once the
   // tree was read again, shows as the first choice, as a select shows a
@@ -383,7 +420,9 @@ export function MoveDialog({
     event.preventDefault();
     const placement = placementOf(tree, node, drop);
     if (placement !== undefined) {
-      commands.mutate(moveCommands(node, placement), { onSuccess: onClose });
+      commands.mutate(moveCommands(node, placement, rev), {
+        onSuccess: onClose,
+      });
     }
   };
   return (
@@ -445,6 +484,7 @@ export function DeleteFolderDialog({
 }) {
   const { t } = useTranslation();
   const commands = useCommands(projectId);
+  const rev = useExpected(folder.rev, commands.error);
   return (
     <Confirm
       title={t("boards.delete_folder_title", { name: folder.name })}
@@ -459,7 +499,7 @@ export function DeleteFolderDialog({
             {
               type: "folder.delete",
               payload: { id: folder.id },
-              expected_rev: { [folder.id]: folder.rev },
+              expected_rev: { [folder.id]: rev },
             },
           ],
           { onSuccess: onClose },
@@ -505,6 +545,7 @@ export function DeleteBoardDialog({
   const { t } = useTranslation();
   const referrers = useQuery(referrersQuery(projectId, board.id));
   const commands = useCommands(projectId);
+  const rev = useExpected(board.rev, commands.error);
   const refused = referencedBy(commands.error);
   const jumpers: Jumper[] | undefined =
     refused?.jumpers ??
@@ -547,13 +588,15 @@ export function DeleteBoardDialog({
                 id: board.id,
                 ...(confirmed ? { confirm: true } : {}),
               },
-              expected_rev: { [board.id]: board.rev },
+              expected_rev: { [board.id]: rev },
             },
           ],
           {
+            // What deleted the board hears of it before the dialog closes,
+            // as the board's page, which goes to the project's then.
             onSuccess: () => {
-              onClose();
               onDeleted?.();
+              onClose();
             },
           },
         )

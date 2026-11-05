@@ -10,8 +10,15 @@ import { setNonce } from "get-nonce";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { createQueryClient, requestsIn, requestVersion } from "./api";
+import {
+  createQueryClient,
+  requestsIn,
+  requestVersion,
+  sessionQuery,
+} from "./api";
 import { followSession, sessionChanges } from "./auth/session";
+import { Documents } from "./document/documents";
+import { createRealtime, socketURL } from "./document/realtime";
 import { captureGlobalErrors, rootErrorOptions } from "./errors/capture";
 import { errorLog } from "./errors/log";
 import { createAppI18n } from "./i18n";
@@ -39,10 +46,27 @@ requestsIn(i18n);
 const queryClient = createQueryClient(errorLog, {
   checkSession: () => void session.check(),
 });
+// The real-time channel of the page's projects (PRD FR-RT-01), whose
+// operations their documents apply as they commit.
+const realtime = createRealtime({
+  url: () => socketURL(window.location),
+  checkSession: () => session.check(),
+  signedIn: () => !!queryClient.getQueryData(sessionQuery.queryKey),
+  log: errorLog,
+  window,
+});
+const documents = new Documents({
+  queryClient,
+  realtime,
+  log: errorLog,
+  checkSession: () => void session.check(),
+  storage: tabStorage(),
+});
 const router = createAppRouter({
   queryClient,
   i18n,
   checkSession: () => session.check(),
+  documents,
 });
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of
@@ -52,6 +76,19 @@ const session = followSession(
   document,
   sessionChanges(queryClient, router),
 );
+/**
+ * Returns the tab's session storage, which keeps the undo histories over a
+ * reload (PRD FR-EDIT-08 AC3), or undefined where the browser refuses it, as
+ * with the site's data blocked, where they last as long as the page.
+ */
+function tabStorage(): Storage | undefined {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 // What the error console's reports name, asked for before anything is shown.
 requestVersion(queryClient);
 

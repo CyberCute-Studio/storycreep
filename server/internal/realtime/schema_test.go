@@ -12,6 +12,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/apicontract"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 )
@@ -21,6 +22,14 @@ var update = flag.Bool("update", false, "rewrite the real-time messages' JSON Sc
 // schemaFile is the messages' JSON Schema in the repository.
 var schemaFile = filepath.Join("..", "..", "..", filepath.FromSlash(SchemaPath))
 
+// typeScriptFile is the web app's TypeScript module of the messages' types,
+// which its real-time client reads them with (PRD FR-API-02 AC2).
+var typeScriptFile = filepath.Join("..", "..", "..", "web", "shared", "src", "realtime", "v1.gen.ts")
+
+// typeScriptHeader starts the messages' TypeScript module.
+const typeScriptHeader = "// Generated from " + SchemaPath + ". Do not edit; run\n" +
+	"// \"go test ./internal/realtime -run TestSchemaFile -update\" in server/ instead.\n"
+
 // TestSchemaFile checks that the real-time messages' JSON Schema in the
 // repository is the one that Schema generates from their types, so that the
 // documented messages cannot drift from those that the hub reads and writes,
@@ -28,21 +37,33 @@ var schemaFile = filepath.Join("..", "..", "..", filepath.FromSlash(SchemaPath))
 // TestSchemaFile -update in server/ to write it again.
 func TestSchemaFile(t *testing.T) {
 	want := Schema()
-	if *update {
-		if err := os.MkdirAll(filepath.Dir(schemaFile), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(schemaFile, want, 0o644); err != nil {
-			t.Fatal(err)
-		}
+	var doc struct {
+		Defs json.RawMessage `json:"$defs"`
 	}
-	got, err := os.ReadFile(schemaFile)
-	if err != nil {
+	if err := json.Unmarshal(want, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("%s is not what Schema generates; run go test ./internal/realtime -run TestSchemaFile -update",
-			SchemaPath)
+	ts, err := apicontract.SchemasTypeScript(doc.Defs, typeScriptHeader)
+	if err != nil {
+		t.Fatalf("the messages' TypeScript: %v", err)
+	}
+	for path, want := range map[string][]byte{schemaFile: want, typeScriptFile: ts} {
+		if *update {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, want, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s is not what Schema generates; run go test ./internal/realtime -run TestSchemaFile -update",
+				filepath.ToSlash(path))
+		}
 	}
 	if !strings.Contains(SchemaID, "/v1/") || !strings.HasSuffix(SchemaID, SchemaPath) {
 		t.Errorf("the schema's $id %s does not name the version at %s", SchemaID, SchemaPath)

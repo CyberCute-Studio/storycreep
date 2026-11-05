@@ -13,6 +13,7 @@
     "./ids": "./src/ids.ts",
     "./lint/testing": "./src/lint/testing.ts",
     "./published": "./src/published/index.ts",
+    "./realtime": "./src/realtime/index.ts",
     "./save-state": "./src/save-state/index.ts",
     "./tokens.css": "./src/tokens/tokens.css"
   },

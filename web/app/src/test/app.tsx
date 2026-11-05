@@ -29,6 +29,8 @@ import {
   sessionQuery,
 } from "../api";
 import { followSession, sessionChanges } from "../auth/session";
+import { Documents } from "../document/documents";
+import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
@@ -82,6 +84,11 @@ export interface RenderAppOptions {
   languages?: readonly string[];
   /** The routes, instead of the app's. */
   routes?: AnyRoute;
+  /**
+   * The page's real-time channel, as a fake that sends the operations of
+   * other sessions (fakeRealtime); none if not set.
+   */
+  realtime?: Realtime;
 }
 
 /**
@@ -124,11 +131,28 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     options.catalogs,
   );
   const checkSession = () => follower.check();
+  // The page's documents, without a real-time channel unless the test
+  // gives one, so that its pages follow their projects through their own
+  // batches alone.
+  const documents = new Documents({
+    queryClient,
+    realtime: options.realtime,
+    log,
+    checkSession: () => void follower.check(),
+    storage: window.sessionStorage,
+  });
+  // The documents go after the setup has cleared the tab's storage for the
+  // next test, which each writes what its history recorded to as it goes
+  // (History.close): it is cleared again once they have.
+  onTestFinished(() => {
+    documents.close();
+    window.sessionStorage.clear();
+  });
   const router = createRouter({
     routeTree: options.routes ?? routeTree,
     basepath: "/app",
     history: createMemoryHistory({ initialEntries: [`/app${path}`] }),
-    context: { queryClient, i18n, checkSession },
+    context: { queryClient, i18n, checkSession, documents },
     disableGlobalCatchBoundary: true,
   });
   const follower = followSession(
@@ -146,5 +170,5 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { ...view, queryClient, i18n, router, checkSession, log };
+  return { ...view, queryClient, i18n, router, checkSession, log, documents };
 }

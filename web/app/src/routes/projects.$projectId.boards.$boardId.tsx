@@ -1,21 +1,21 @@
 import type { Board } from "@storycreep/shared/api";
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { useBoard, useProjectDocument, useTree } from "../document/react";
+import { ConflictError } from "../document/store";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import {
-  boardQuery,
   type Command,
   conflictOf,
-  dropBoard,
   editsProject,
   projectQuery,
-  treeQuery,
   useCommands,
 } from "../project/queries";
 import { canonicalId, found } from "../shell/found";
+import { NotFound } from "../shell/NotFound";
 import { Button } from "../ui/Button";
 import {
   SelectField,
@@ -23,6 +23,7 @@ import {
   TextField,
   useFocusRefusal,
 } from "../ui/Field";
+import { useHeld } from "../ui/held";
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
@@ -31,19 +32,35 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
-  // The project comes first, as for the tree of its boards, and then the
-  // board, which is not there once it is in the trash.
-  loader: async ({ context: { queryClient }, params }) => {
+  // The project comes first, as for the tree of its boards, which its
+  // document reads, and which holds the board, but for one in the trash. A
+  // document that the real-time channel does not keep current, while it is
+  // not live, may not have the board yet, as one that another session made
+  // since, so it reads the project anew before it says that there is none,
+  // and shows what that read failed with, rather than say so after a read
+  // that failed.
+  loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
-    await found(
-      Promise.all([
-        queryClient.ensureQueryData(boardQuery(project.id, params.boardId)),
-        queryClient.ensureQueryData(treeQuery(project.id)),
-      ]),
-    );
+    const doc = documents.get(project.id);
+    await found(doc.load("tree"));
+    const has = () => doc.store.getState().view.boards.has(params.boardId);
+    if (!has()) {
+      await doc.refresh();
+    }
+    if (!has()) {
+      throw notFound();
+    }
   },
+  // The router keeps no match of the page once it is left, as for the tree
+  // of the project's boards: the project's document may be made anew by the
+  // time the user is back, without the board yet, which the page would say
+  // there is none of until the loader had read the tree.
+  gcTime: 0,
+  // The page of another board is shown anew, rather than with what the
+  // board's form held, or the deletion that it had open, of the one before.
+  remountDeps: ({ params }) => params.boardId,
   component: BoardPage,
 });
 
@@ -63,12 +80,47 @@ const colors = [
 
 // A board's page (PRD FR-PROJ-02): its name, its slug, its description, and
 // its colour, which an editor changes, and its deletion to the project's
-// trash. The canvas of its nodes joins it later (plan item 59).
+// trash. The canvas of its nodes joins it later (plan item 59). It shows the
+// board as the project's document has it, so a change that another session
+// makes shows as it commits (FR-RT-02), and the page of no page once the
+// board has gone to the trash.
 function BoardPage() {
-  const { t } = useTranslation();
   const { projectId, boardId } = Route.useParams();
+  const doc = useProjectDocument(projectId);
+  const board = useBoard(doc, boardId);
+  // While the board's deletion is open, the board is shown as it was, as
+  // the document takes it away at once, once its deletion is sent, so that
+  // the dialog stays, and says what became of the deletion, after which the
+  // page goes to the project's, or the deletion is cancelled.
+  const [deleting, setDeleting] = useState(false);
+  const last = useRef<Board>(undefined);
+  if (board !== undefined) {
+    last.current = board;
+  }
+  const shown = board ?? (deleting ? last.current : undefined);
+  return shown === undefined ? (
+    <NotFound />
+  ) : (
+    <BoardContent
+      projectId={projectId}
+      board={shown}
+      onDeleting={setDeleting}
+    />
+  );
+}
+
+function BoardContent({
+  projectId,
+  board,
+  onDeleting,
+}: {
+  projectId: string;
+  board: Board;
+  /** Tells whether the board's deletion is open. */
+  onDeleting: (deleting: boolean) => void;
+}) {
+  const { t } = useTranslation();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
-  const board = useSuspenseQuery(boardQuery(projectId, boardId)).data;
   const editable =
     editsProject(project.role) && project.archived_at === undefined;
   return (
@@ -97,7 +149,13 @@ function BoardPage() {
           <dd>{colorName(t, board.color)}</dd>
         </dl>
       )}
-      {editable && <DeleteBoard projectId={projectId} board={board} />}
+      {editable && (
+        <DeleteBoard
+          projectId={projectId}
+          board={board}
+          onDeleting={onDeleting}
+        />
+      )}
     </Page>
   );
 }
@@ -137,65 +195,92 @@ const boardField = payloadField("name", "slug", "description", "color");
  * The form of a board's settings, which sends what of them changed in one
  * batch, each command expecting the revision that the form shows, so that a
  * board that changed elsewhere since is not changed over (PRD FR-API-03
- * AC3). It shows the board as the page has it until the user changes
- * something in it, and then as it was, so that a change made elsewhere,
- * which the page reads as its tab is shown again, does not take away what
- * the user typed, until the form is saved, or refused for that change, when
- * it shows the board as it is now.
+ * AC3). It shows the board as the page has it until the user is in it, with
+ * the focus, or has changed something in it, and then as it was, so that a
+ * change made elsewhere, which the page's document shows as it commits, does
+ * not take away the focus, a selection, or what the user typed (FR-RT-02
+ * AC3), until the focus leaves it unchanged, or it is saved (useHeld). A
+ * save refused for a change made elsewhere of another field is sent again by
+ * the document (PRD §7.10); one of a field that the form changes too names
+ * each such field with both values (ConflictError), and shows the board as
+ * it is now, but for what the user changed, which it keeps, as a save does
+ * that the document could not send again, for how often the board changed
+ * meanwhile, so that saving again keeps it, over the board as it is now, and
+ * what the user changes after is over what the form shows, rather than over
+ * another session's change that it did not show; using theirs shows the
+ * board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
-  const form = useRef<HTMLFormElement>(null);
+  const doc = useProjectDocument(projectId);
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
-  const [held, setHeld] = useState<Board>();
-  const shown = held ?? board;
+  const held = useHeld(board);
+  const shown = held.shown;
+  // The board as the server had it when it refused the form's save for a
+  // change of what the form changes too, which saving again changes over.
+  const [theirs, setTheirs] = useState<Board>();
+  const against = theirs ?? shown;
+  const overlaps =
+    commands.error instanceof ConflictError
+      ? commands.error.overlaps.flatMap((o) => o.fields)
+      : [];
   const refusal = refusalOf(commands.error, t, boardField, {
     slug_taken: t("board.error.slug_taken"),
   });
-  useFocusRefusal(form, commands.error);
+  useFocusRefusal(held.form, commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const expected_rev = { [shown.id]: shown.rev };
-    const name = String(data.get("name"));
-    const slug = String(data.get("slug"));
-    const description = String(data.get("description"));
-    const color = String(data.get("color")) as Board["color"];
+    const expected_rev = { [against.id]: against.rev };
+    const values = {
+      name: String(data.get("name")),
+      slug: String(data.get("slug")),
+      description: String(data.get("description")),
+      color: String(data.get("color")) as Board["color"],
+    };
+    // A field is sent where it is not what the board has already: as the
+    // form showed it, or as the server had it once it refused the form's
+    // save, which the form shows but for what the user changed.
+    const typed: Partial<typeof values> = Object.fromEntries(
+      Object.entries(values).filter(
+        ([field, value]) => value !== against[field as keyof typeof values],
+      ),
+    );
     const changes: Command[] = [
-      ...(name === shown.name
+      ...(typed.name === undefined
         ? []
         : [
             {
               type: "board.rename" as const,
-              payload: { id: shown.id, name },
+              payload: { id: shown.id, name: typed.name },
               expected_rev,
             },
           ]),
-      ...(slug === shown.slug
+      ...(typed.slug === undefined
         ? []
         : [
             {
               type: "board.set_slug" as const,
-              payload: { id: shown.id, slug },
+              payload: { id: shown.id, slug: typed.slug },
               expected_rev,
             },
           ]),
-      ...(description === shown.description
+      ...(typed.description === undefined
         ? []
         : [
             {
               type: "board.describe" as const,
-              payload: { id: shown.id, description },
+              payload: { id: shown.id, description: typed.description },
               expected_rev,
             },
           ]),
-      ...(color === shown.color
+      ...(typed.color === undefined
         ? []
         : [
             {
               type: "board.set_color" as const,
-              payload: { id: shown.id, color },
+              payload: { id: shown.id, color: typed.color },
               expected_rev,
             },
           ]),
@@ -203,21 +288,79 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     setUnchanged(changes.length === 0);
     if (changes.length === 0) {
       commands.reset();
-      setHeld(undefined);
+      // The board as it is now, which the focus, still in the form, holds.
+      held.holdNow();
+      setTheirs(undefined);
       return;
     }
     commands.mutate(changes, {
-      onSuccess: () => setHeld(undefined),
+      onSuccess: () => {
+        held.release();
+        setTheirs(undefined);
+      },
       onError: (error) => {
-        if (conflictOf(error)) {
-          setHeld(undefined);
+        if (!conflictOf(error)) {
+          return;
         }
+        // The board as the server has it now: as the refusal gave it, where
+        // it named a field that the form changes too, or else as the
+        // document took it from the refusal, as once the document could not
+        // send the save again, for as often as other sessions changed the
+        // board meanwhile; none once it is gone.
+        const state =
+          error instanceof ConflictError
+            ? error.overlaps.find((o) => o.id === against.id && !o.gone)?.state
+            : undefined;
+        const now =
+          (state as unknown as Board | undefined) ??
+          doc.store.getState().view.boards.get(against.id);
+        if (now === undefined) {
+          held.release();
+          setTheirs(undefined);
+          return;
+        }
+        setTheirs(now);
+        held.hold({ ...now, ...typed });
       },
     });
   };
+  const useTheirs = () => {
+    commands.reset();
+    held.release();
+    setTheirs(undefined);
+  };
+  const fieldName = (field: string) =>
+    field === "name"
+      ? t("board.name")
+      : field === "slug"
+        ? t("board.slug")
+        : field === "description"
+          ? t("board.description")
+          : t("board.color");
+  const shownValue = (field: string, value: unknown) =>
+    field === "color"
+      ? colorName(t, value as Board["color"])
+      : String(value ?? "");
   return (
     <div className="max-w-md space-y-4">
-      <Alert message={refusal?.message} />
+      <Alert message={overlaps.length > 0 ? undefined : refusal?.message} />
+      {overlaps.length > 0 && (
+        <div className="space-y-2 rounded-md border border-danger px-4 py-3">
+          <p>{t("conflict.intro")}</p>
+          <ul className="list-disc ps-5">
+            {overlaps.map((o) => (
+              <li key={o.field} className="break-words">
+                {t("conflict.field", {
+                  field: fieldName(o.field),
+                  theirs: shownValue(o.field, o.theirs),
+                  mine: shownValue(o.field, o.mine),
+                })}
+              </li>
+            ))}
+          </ul>
+          <Button onClick={useTheirs}>{t("conflict.use_theirs")}</Button>
+        </div>
+      )}
       <Status
         message={
           unchanged
@@ -227,14 +370,13 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               : undefined
         }
       />
-      {/* Shown anew once the board that it shows has changed, as once
+      {/* Shown anew once what it shows of the board has changed, as once
           this form saved it, rather than showing what it was. */}
       <form
-        key={shown.rev}
-        ref={form}
+        key={held.key}
+        {...held.props}
         className="space-y-4"
         onSubmit={submit}
-        onChange={() => setHeld((before) => before ?? board)}
         noValidate
       >
         <TextField
@@ -287,15 +429,19 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
 function DeleteBoard({
   projectId,
   board,
+  onDeleting,
 }: {
   projectId: string;
   board: Board;
+  onDeleting: (deleting: boolean) => void;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const client = useQueryClient();
-  const boards = useSuspenseQuery(treeQuery(projectId)).data.boards;
+  const boards = useTree(useProjectDocument(projectId)).boards;
   const [opener, setOpener] = useState<HTMLElement | null>();
+  // Once the board is deleted, the page goes, and shows the board until it
+  // has, rather than the page of no page.
+  const deleted = useRef(false);
   return (
     <section className="space-y-2" aria-labelledby="board-delete">
       <h2 id="board-delete" className="text-lg font-semibold">
@@ -305,7 +451,10 @@ function DeleteBoard({
       <Button
         variant="danger"
         aria-haspopup="dialog"
-        onClick={(event) => setOpener(event.currentTarget)}
+        onClick={(event) => {
+          onDeleting(true);
+          setOpener(event.currentTarget);
+        }}
       >
         {t("board.delete")}
       </Button>
@@ -315,18 +464,23 @@ function DeleteBoard({
           board={board}
           boards={boards}
           opener={opener}
-          onClose={() => setOpener(undefined)}
-          // The page goes before what it read of the board, which is in the
-          // trash now, is dropped, so that a page of it that the user goes
-          // back to asks the server, which answers as for one that does
-          // not exist, rather than shows it.
-          onDeleted={() =>
+          onClose={() => {
+            setOpener(undefined);
+            if (!deleted.current) {
+              onDeleting(false);
+            }
+          }}
+          // The page goes to the project's; a page of the board, which is
+          // in the trash now, that the user goes back to finds it gone from
+          // the document's tree, and shows the page of no page.
+          onDeleted={() => {
+            deleted.current = true;
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },
               replace: true,
-            }).then(() => dropBoard(client, projectId, board.id))
-          }
+            });
+          }}
         />
       )}
     </section>

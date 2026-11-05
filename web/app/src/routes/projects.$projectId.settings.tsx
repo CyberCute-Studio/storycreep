@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { AlertDialog } from "radix-ui";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
@@ -26,6 +26,7 @@ import {
   closesUnlessPending,
 } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
+import { useHeld } from "../ui/held";
 import { Alert, Page, RefusalAlert, Status } from "../ui/Page";
 import {
   managesWorkspace,
@@ -87,19 +88,21 @@ const detailsField = bodyField("name", "slug", "description");
  * The form of a project's details, which sends what of them changed,
  * expecting the revision that the form shows, so that a project that
  * changed elsewhere since is not changed over. It shows the project as the
- * page has it until the user changes something in it, and then as it was,
- * so that a change made elsewhere, which the page reads as its tab is shown
- * again, does not take away what the user typed, until the form is saved,
- * or refused for that change, when it shows the project as it is now.
+ * page has it until the user is in it, with the focus, or has changed
+ * something in it, and then as it was, so that a change made elsewhere,
+ * which the project's document brings as it commits (FR-RT-02), or the page
+ * reads as its tab is shown again, does not take away the focus, a
+ * selection, or what the user typed (FR-RT-02 AC3), until the focus leaves
+ * it unchanged, or it is saved, or refused for that change, when it shows
+ * the project as it is now (useHeld).
  */
 function DetailsForm({ project }: { project: ProjectBody }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
-  const form = useRef<HTMLFormElement>(null);
   const [unchanged, setUnchanged] = useState(false);
-  const [held, setHeld] = useState<ProjectBody>();
-  const shown = held ?? project;
+  const held = useHeld(project);
+  const shown = held.shown;
   const save = useMutation({
     mutationFn: (body: UpdateProjectBody) =>
       api.call("updateProject", {
@@ -115,7 +118,7 @@ function DetailsForm({ project }: { project: ProjectBody }) {
   const refusal = refusalOf(save.error, t, detailsField, {
     slug_taken: t("project_settings.error.slug_taken"),
   });
-  useFocusRefusal(form, save.error);
+  useFocusRefusal(held.form, save.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -127,20 +130,21 @@ function DetailsForm({ project }: { project: ProjectBody }) {
       ...(slug === shown.slug ? {} : { slug }),
       ...(description === shown.description ? {} : { description }),
     };
-    const changed = Object.keys(body).length > 0;
-    setUnchanged(!changed);
-    if (!changed) {
+    const any = Object.keys(body).length > 0;
+    setUnchanged(!any);
+    if (!any) {
       save.reset();
-      setHeld(undefined);
+      // The project as it is now, which the focus, still in the form, holds.
+      held.holdNow();
       return;
     }
     save.mutate(
       { ...body, expected_rev: shown.rev },
       {
-        onSuccess: () => setHeld(undefined),
+        onSuccess: held.release,
         onError: (error) => {
           if (conflictOf(error)) {
-            setHeld(undefined);
+            held.release();
           }
         },
       },
@@ -164,11 +168,10 @@ function DetailsForm({ project }: { project: ProjectBody }) {
       {/* Shown anew once the project that it shows has changed, as once
           this form saved it, rather than showing what it was. */}
       <form
-        key={shown.rev}
-        ref={form}
+        key={held.key}
+        {...held.props}
         className="space-y-4"
         onSubmit={submit}
-        onChange={() => setHeld((before) => before ?? project)}
         noValidate
       >
         <TextField
@@ -207,9 +210,8 @@ function DetailsForm({ project }: { project: ProjectBody }) {
 }
 
 /**
- * Reads again what a change of the project's settings changed: the project,
- * as a change of its content does (readProjectAgain), and its workspace's
- * list of projects, which shows it.
+ * Reads again what a change of the project's settings changed: the project
+ * (readProjectAgain), and its workspace's list of projects, which shows it.
  */
 function readProjectAndListAgain(
   client: ReturnType<typeof useQueryClient>,
