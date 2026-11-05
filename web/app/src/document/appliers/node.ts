@@ -21,6 +21,7 @@ import type {
   BranchOutput,
   Connection,
   Expression,
+  Folder,
   Node,
   NodePosition,
   NodeSize,
@@ -69,6 +70,36 @@ export function placed(
     return { order: moving.order, sure: true };
   }
   return { order: keyAfter(others.map((s) => s.order)), sure: false };
+}
+
+/**
+ * Returns the children of the folder of kind of parentId, or of the top,
+ * that draft holds: its folders, and its boards, its variables, or its
+ * components, which share one order.
+ */
+export function folderChildren(
+  draft: Draft,
+  kind: Folder["kind"],
+  parentId: string | undefined,
+): Ordered[] {
+  const children: Ordered[] = [];
+  for (const folder of draft.all("folders").values()) {
+    if (folder.kind === kind && folder.parent_id === parentId) {
+      children.push(folder);
+    }
+  }
+  const others =
+    kind === "board"
+      ? draft.all("boards")
+      : kind === "variable"
+        ? draft.all("variables")
+        : draft.all("components");
+  for (const child of others.values()) {
+    if (child.folder_id === parentId) {
+      children.push(child);
+    }
+  }
+  return children;
 }
 
 /** Returns entity with field set to value, or without it for undefined, as the API leaves out a field that holds nothing. */

@@ -308,13 +308,15 @@ export function createRealtime(options: RealtimeOptions): Realtime {
     switch (message.type) {
       case "subscribed":
         // A socket that has held a subscription has connected well, so the
-        // next that is lost waits from the start again.
+        // next that is lost waits from the start again, as one does whose
+        // subscription holds once its store has read the project anew.
         failures = 0;
         holding.add(message.project_id);
         subscriber.subscribed(message.seq);
         subscriber.live(true);
         return;
       case "resync_required":
+        failures = 0;
         holding.add(message.project_id);
         subscriber.resync(message.seq);
         subscriber.live(true);

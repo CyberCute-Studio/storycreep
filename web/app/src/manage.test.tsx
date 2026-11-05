@@ -925,6 +925,34 @@ describe("a board's page", () => {
     );
   });
 
+  // Verifies: FR-RT-02/AC3
+  it("keeps the focus in a field that the user is in, before typing in it, while another session's change of the board applies, and shows the change once the focus leaves the form", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) =>
+      expected(projectPages(operation, [board("bd_a", "Harbour")]), operation),
+    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(document.activeElement).toBe(description);
+    expect(description.isConnected).toBe(true);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+  });
+
   it("names a field that another editor changed too with both values, and keeps the user's once saved again, without what the user did not change", async () => {
     const user = userEvent.setup();
     const harbour = board("bd_a", "Harbour");
@@ -1050,6 +1078,39 @@ describe("a board's page", () => {
       expect(screen.getByLabelText("Description")).toHaveProperty(
         "value",
         "Where the tale ends",
+      ),
+    );
+  });
+});
+
+describe("a project's settings", () => {
+  // Verifies: FR-RT-02/AC3
+  it("keep the focus in a field that the user is in, before typing in it, while another session's change of the project applies, and show the change once the focus leaves the form", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) => expected(projectPages(operation, []), operation));
+    renderApp(`/projects/${testProject.id}/settings`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "project.rename", payload: { name: "Harbour at night" } }],
+        [{ id: testProject.id, rev: 2 }],
+      ),
+    );
+    // The page shows the project as the change left it.
+    await waitFor(() => expect(document.title).toContain("Harbour at night"));
+    expect(document.activeElement).toBe(description);
+    expect(description.isConnected).toBe(true);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Name")).toHaveProperty(
+        "value",
+        "Harbour at night",
       ),
     );
   });

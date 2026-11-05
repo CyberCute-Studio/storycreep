@@ -507,6 +507,19 @@ describe("createRealtime", () => {
     expectWaits(h, [2_000]);
   });
 
+  it("waits from the start again after a loss once a subscription has held after its store was told to read its project again", () => {
+    const h = setup();
+    h.realtime.subscribe("prj_a", fakeStore());
+    expectWaits(h, [2_000, 4_000]);
+    h.socket().open();
+    h.socket().deliver({
+      type: "resync_required",
+      project_id: "prj_a",
+      seq: 3,
+    });
+    expectWaits(h, [2_000]);
+  });
+
   it("records a socket that cannot be opened in the error log, and tries again later", () => {
     const h = setup();
     h.refuse(new SyntaxError("The URL is not one of a WebSocket."));

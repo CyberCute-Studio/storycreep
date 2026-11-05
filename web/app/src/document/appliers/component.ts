@@ -16,7 +16,15 @@ import type { Attribute, ComponentType } from "@storycreep/shared/api";
 import { compareChildren } from "../../project/orderkey";
 import { type Appliers, canonical } from "../apply";
 import { type ComponentEntry, type Draft, typeOfAttribute } from "../doc";
-import { idOrNone, keyAfter, placed, renames, textOf, withField } from "./node";
+import {
+  folderChildren,
+  idOrNone,
+  keyAfter,
+  placed,
+  renames,
+  textOf,
+  withField,
+} from "./node";
 import { canonicalValue } from "./variable";
 
 type Types =
@@ -186,21 +194,6 @@ function changeComponent(
       sure,
     );
   }
-}
-
-/** Returns the children of the folder of components of folderId, or of the top, that draft holds, folders and components alike. */
-function childrenOf(
-  draft: Draft,
-  folderId: string | undefined,
-): { id: string; order: string }[] {
-  return [
-    ...[...draft.all("components").values()].filter(
-      (c) => c.folder_id === folderId,
-    ),
-    ...[...draft.all("folders").values()].filter(
-      (f) => f.kind === "component" && f.parent_id === folderId,
-    ),
-  ];
 }
 
 export const componentAppliers: Appliers<Types> = {
@@ -428,7 +421,10 @@ export const componentAppliers: Appliers<Types> = {
         component_type_id: canonical(p.component_type_id),
         ...(folderId === undefined ? {} : { folder_id: folderId }),
         order:
-          p.order ?? keyAfter(childrenOf(draft, folderId).map((c) => c.order)),
+          p.order ??
+          keyAfter(
+            folderChildren(draft, "component", folderId).map((c) => c.order),
+          ),
         key: p.key ?? derivedKey(p.name, "component"),
         name: p.name,
         ...(image === undefined ? {} : { image_asset_id: image }),
@@ -505,9 +501,13 @@ export const componentAppliers: Appliers<Types> = {
       p.order !== undefined
         ? { order: p.order, sure: true }
         : component.folder_id === folderId
-          ? placed(component, childrenOf(draft, folderId))
+          ? placed(component, folderChildren(draft, "component", folderId))
           : {
-              order: keyAfter(childrenOf(draft, folderId).map((c) => c.order)),
+              order: keyAfter(
+                folderChildren(draft, "component", folderId).map(
+                  (c) => c.order,
+                ),
+              ),
               sure: false,
             };
     draft.put(

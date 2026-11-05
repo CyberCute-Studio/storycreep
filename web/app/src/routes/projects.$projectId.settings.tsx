@@ -87,10 +87,13 @@ const detailsField = bodyField("name", "slug", "description");
  * The form of a project's details, which sends what of them changed,
  * expecting the revision that the form shows, so that a project that
  * changed elsewhere since is not changed over. It shows the project as the
- * page has it until the user changes something in it, and then as it was,
- * so that a change made elsewhere, which the page reads as its tab is shown
- * again, does not take away what the user typed, until the form is saved,
- * or refused for that change, when it shows the project as it is now.
+ * page has it until the user is in it, with the focus, or has changed
+ * something in it, and then as it was, so that a change made elsewhere,
+ * which the project's document brings as it commits (FR-RT-02), or the page
+ * reads as its tab is shown again, does not take away the focus, a
+ * selection, or what the user typed (FR-RT-02 AC3), until the focus leaves
+ * it unchanged, or it is saved, or refused for that change, when it shows
+ * the project as it is now.
  */
 function DetailsForm({ project }: { project: ProjectBody }) {
   const { t } = useTranslation();
@@ -99,6 +102,14 @@ function DetailsForm({ project }: { project: ProjectBody }) {
   const form = useRef<HTMLFormElement>(null);
   const [unchanged, setUnchanged] = useState(false);
   const [held, setHeld] = useState<ProjectBody>();
+  // Whether the user has changed something in the form since it held the
+  // project, which the focus leaving it then does not let go.
+  const changed = useRef(false);
+  /** Lets go of the project, which the form then shows as the page has it. */
+  const release = () => {
+    changed.current = false;
+    setHeld(undefined);
+  };
   const shown = held ?? project;
   const save = useMutation({
     mutationFn: (body: UpdateProjectBody) =>
@@ -127,20 +138,24 @@ function DetailsForm({ project }: { project: ProjectBody }) {
       ...(slug === shown.slug ? {} : { slug }),
       ...(description === shown.description ? {} : { description }),
     };
-    const changed = Object.keys(body).length > 0;
-    setUnchanged(!changed);
-    if (!changed) {
+    const any = Object.keys(body).length > 0;
+    setUnchanged(!any);
+    if (!any) {
       save.reset();
-      setHeld(undefined);
+      // The project as it is now, which the focus, still in the form, holds.
+      changed.current = false;
+      setHeld(
+        form.current?.contains(document.activeElement) ? project : undefined,
+      );
       return;
     }
     save.mutate(
       { ...body, expected_rev: shown.rev },
       {
-        onSuccess: () => setHeld(undefined),
+        onSuccess: release,
         onError: (error) => {
           if (conflictOf(error)) {
-            setHeld(undefined);
+            release();
           }
         },
       },
@@ -168,7 +183,21 @@ function DetailsForm({ project }: { project: ProjectBody }) {
         ref={form}
         className="space-y-4"
         onSubmit={submit}
-        onChange={() => setHeld((before) => before ?? project)}
+        // The focus coming into the form holds the project as it shows it,
+        // and a change keeps it held once the focus leaves.
+        onFocus={() => setHeld((before) => before ?? project)}
+        onChange={() => {
+          changed.current = true;
+          setHeld((before) => before ?? project);
+        }}
+        onBlur={(event) => {
+          if (
+            !changed.current &&
+            !event.currentTarget.contains(event.relatedTarget as Node | null)
+          ) {
+            setHeld(undefined);
+          }
+        }}
         noValidate
       >
         <TextField

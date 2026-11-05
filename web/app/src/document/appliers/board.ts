@@ -3,15 +3,15 @@
 // value of a payload is stored as it is sent, since the server refuses what
 // it would have to mend; a key of order that the payload leaves out is the
 // server's to pick, after every sibling, those in the trash too, which the
-// document does not hold, so the applier's is not sure; and a board that
-// goes to the trash takes its nodes and connections out of every read with
-// it, without a revision of theirs.
+// document does not hold, so the applier's is not sure, but for a child that
+// moves within its folder after every other, which keeps its own; and a
+// board that goes to the trash takes its nodes and connections out of every
+// read with it, without a revision of theirs.
 
 import type { Board, Folder } from "@storycreep/shared/api";
-import { keyBetween } from "../../project/orderkey";
 import { type Appliers, canonical } from "../apply";
 import { boardPart, type Draft, type Project } from "../doc";
-import { renames } from "./node";
+import { folderChildren, keyAfter, placed, renames, withField } from "./node";
 
 type Types =
   | `board.${"create" | "rename" | "describe" | "set_color" | "set_slug" | "move" | "delete" | "restore" | "set_entry_node"}`
@@ -22,63 +22,41 @@ type Types =
 const trashDays = 30;
 
 /**
- * Returns a key after the last of the children of a folder of boards, or of
- * the top, that draft holds, folders and boards alike, which share one
- * order: the server picks one after those in the trash too, which the
- * document does not hold, so it is not sure.
+ * Returns a key after the last of the children of the folder of kind of
+ * parentId, or of the top, that draft holds (folderChildren): the server
+ * picks one after those in the trash too, which the document does not hold,
+ * so it is not sure.
  */
-function keyAfterBoards(draft: Draft, parentId: string | undefined): string {
-  let last: string | undefined;
-  for (const folder of draft.all("folders").values()) {
-    if (folder.kind === "board" && folder.parent_id === parentId) {
-      last = last === undefined || folder.order > last ? folder.order : last;
-    }
-  }
-  for (const board of draft.all("boards").values()) {
-    if (board.folder_id === parentId) {
-      last = last === undefined || board.order > last ? board.order : last;
-    }
-  }
-  return keyBetween(last, undefined) ?? "V";
-}
-
-/** Returns a key after the last child of a folder of kind, or of the top, that draft holds, which is not sure either. */
-function keyAfterFolders(
+function keyAfterChildren(
   draft: Draft,
   kind: Folder["kind"],
   parentId: string | undefined,
 ): string {
-  if (kind === "board") {
-    return keyAfterBoards(draft, parentId);
-  }
-  let last: string | undefined;
-  const children =
-    kind === "variable"
-      ? draft.all("variables").values()
-      : draft.all("components").values();
-  for (const child of children) {
-    if (child.folder_id === parentId) {
-      last = last === undefined || child.order > last ? child.order : last;
-    }
-  }
-  for (const folder of draft.all("folders").values()) {
-    if (folder.kind === kind && folder.parent_id === parentId) {
-      last = last === undefined || folder.order > last ? folder.order : last;
-    }
-  }
-  return keyBetween(last, undefined) ?? "V";
+  return keyAfter(folderChildren(draft, kind, parentId).map((c) => c.order));
 }
 
-/** Returns child without its parent's field, or with it set to parentId. */
-function withParent<T extends object, F extends string>(
-  child: T,
-  field: F,
+/**
+ * Returns the key that child, of a folder of kind, moving from the folder of
+ * from, or the top, to the one of parentId, or the top, is placed at, and
+ * whether it is sure: the payload's order, if it gives one; or else, within
+ * its folder, its own if it comes after every other child, and otherwise one
+ * after the last of them (placed), as the server places it (board.Place);
+ * or else one after the last child of the folder that it goes into.
+ */
+function movedTo(
+  draft: Draft,
+  child: { id: string; order: string },
+  kind: Folder["kind"],
+  from: string | undefined,
   parentId: string | undefined,
-): T {
-  const { [field]: _, ...rest } = child as T & Record<F, unknown>;
-  return (parentId === undefined
-    ? rest
-    : { ...rest, [field]: parentId }) as unknown as T;
+  order: string | undefined,
+): { order: string; sure: boolean } {
+  if (order !== undefined) {
+    return { order, sure: true };
+  }
+  return from === parentId
+    ? placed(child, folderChildren(draft, kind, parentId))
+    : { order: keyAfterChildren(draft, kind, parentId), sure: false };
 }
 
 /**
@@ -147,7 +125,7 @@ export const boardAppliers: Appliers<Types> = {
         slug: p.slug ?? derivedSlug(p.name),
         description: p.description ?? "",
         color: p.color ?? "none",
-        order: p.order ?? keyAfterBoards(draft, folderId),
+        order: p.order ?? keyAfterChildren(draft, "board", folderId),
         ...(folderId === undefined ? {} : { folder_id: folderId }),
         rev: 1,
         created_at: draft.time,
@@ -169,22 +147,30 @@ export const boardAppliers: Appliers<Types> = {
     changeBoard(draft, p.id, (board) => ({ ...board, slug: p.slug })),
   "board.set_entry_node": (draft, p) =>
     changeBoard(draft, p.id, (board) =>
-      withParent(board, "entry_node_id", canonical(p.node_id)),
+      withField(board, "entry_node_id", canonical(p.node_id)),
     ),
   "board.move": (draft, p) => {
+    const board = draft.get("boards", canonical(p.id));
+    if (board === undefined) {
+      return;
+    }
     const folderId = canonical(p.folder_id);
-    changeBoard(
+    const { order, sure } = movedTo(
       draft,
-      p.id,
-      (board) => ({
-        ...withParent(board, "folder_id", folderId),
-        order:
-          p.order ??
-          (board.folder_id === folderId
-            ? board.order
-            : keyAfterBoards(draft, folderId)),
-      }),
-      p.order !== undefined,
+      board,
+      "board",
+      board.folder_id,
+      folderId,
+      p.order,
+    );
+    draft.put(
+      "boards",
+      {
+        ...withField(board, "folder_id", folderId),
+        order,
+        updated_at: draft.time,
+      },
+      sure,
     );
   },
   "board.delete": (draft, p) => {
@@ -222,7 +208,7 @@ export const boardAppliers: Appliers<Types> = {
         project_id: draft.project?.id ?? "",
         kind: p.kind,
         name: p.name,
-        order: p.order ?? keyAfterFolders(draft, p.kind, parentId),
+        order: p.order ?? keyAfterChildren(draft, p.kind, parentId),
         ...(parentId === undefined ? {} : { parent_id: parentId }),
         rev: 1,
         created_at: draft.time,
@@ -234,19 +220,27 @@ export const boardAppliers: Appliers<Types> = {
   "folder.rename": (draft, p) =>
     changeFolder(draft, p.id, (folder) => ({ ...folder, name: p.name })),
   "folder.move": (draft, p) => {
+    const folder = draft.get("folders", canonical(p.id));
+    if (folder === undefined) {
+      return;
+    }
     const parentId = canonical(p.parent_id);
-    changeFolder(
+    const { order, sure } = movedTo(
       draft,
-      p.id,
-      (folder) => ({
-        ...withParent(folder, "parent_id", parentId),
-        order:
-          p.order ??
-          (folder.parent_id === parentId
-            ? folder.order
-            : keyAfterFolders(draft, folder.kind, parentId)),
-      }),
-      p.order !== undefined,
+      folder,
+      folder.kind,
+      folder.parent_id,
+      parentId,
+      p.order,
+    );
+    draft.put(
+      "folders",
+      {
+        ...withField(folder, "parent_id", parentId),
+        order,
+        updated_at: draft.time,
+      },
+      sure,
     );
   },
   "folder.delete": (draft, p) => {
@@ -283,7 +277,7 @@ export const boardAppliers: Appliers<Types> = {
     })),
   "project.unarchive": (draft) =>
     changeProject(draft, (project) =>
-      withParent(project, "archived_at", undefined),
+      withField(project, "archived_at", undefined),
     ),
   "project.delete": (draft) =>
     changeProject(draft, (project) => ({
@@ -295,8 +289,8 @@ export const boardAppliers: Appliers<Types> = {
     })),
   "project.restore": (draft) =>
     changeProject(draft, (project) =>
-      withParent(
-        withParent(project, "deleted_at", undefined),
+      withField(
+        withField(project, "deleted_at", undefined),
         "hard_delete_after",
         undefined,
       ),

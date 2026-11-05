@@ -48,6 +48,12 @@ export interface Operation {
   time: string;
 }
 
+/**
+ * The entities that operations changed while a read was under way, by their
+ * IDs, as a set, or a map of them to the revisions that the operations gave.
+ */
+export type Changed = Pick<ReadonlySet<string>, "has">;
+
 /** What applying an operation leaves to do. */
 export interface Reconciled {
   doc: Doc;
@@ -294,7 +300,7 @@ function wouldHold(doc: Doc, id: string): boolean {
  * revision, or its change, be set back by its owner's, whatever the order of
  * the batch's commands.
  */
-function ownersFirst(ids: Iterable<string>): string[] {
+export function ownersFirst(ids: Iterable<string>): string[] {
   const nested = (id: string) => {
     const of = placeOf(id)?.of;
     return of === "output" || of === "attribute";
@@ -305,14 +311,21 @@ function ownersFirst(ids: Iterable<string>): string[] {
 
 /**
  * Applies op to doc, which must be as of the seq before op's, and returns the
- * document as of op's seq, with what it leaves to read from the server.
+ * document as of op's seq, with what it leaves to read from the server. held
+ * is what doc holds of each entity that op's revisions name, as entitiesOf
+ * finds it, which a caller that has found it already passes, rather than it
+ * be found again.
  */
-export function applyOperation(doc: Doc, op: Operation): Reconciled {
+export function applyOperation(
+  doc: Doc,
+  op: Operation,
+  held?: ReadonlyMap<string, Revised | undefined>,
+): Reconciled {
   const revs = new Map<string, number>();
   for (const r of op.revisions) {
     revs.set(canonical(r.id), r.rev);
   }
-  const held = entitiesOf(doc, revs.keys());
+  held ??= entitiesOf(doc, revs.keys());
   // What the document has as of the operation already, or later, as read
   // since, whose change it passes over, with what went with it (Draft.passed).
   const passed = new Set<string>();
@@ -467,7 +480,7 @@ export function mergeEntity(
   id: string,
   entity: Revised | undefined,
   since: number,
-  changedSince: ReadonlySet<string> = new Set(),
+  changedSince: Changed = new Set(),
 ): Doc {
   const out = new Writer(doc, "");
   mergeInto(out, id, entity, since, changedSince);
@@ -480,7 +493,7 @@ function mergeInto(
   id: string,
   entity: Revised | undefined,
   since: number,
-  changedSince: ReadonlySet<string>,
+  changedSince: Changed,
 ): void {
   const held = entityOf(out.doc, id);
   mergeOne(out, id, entity, since);
@@ -641,7 +654,7 @@ export function mergeList<K extends Kind>(
   part: Part,
   items: readonly Entities[K][],
   since: number,
-  changedSince: ReadonlySet<string>,
+  changedSince: Changed,
 ): Doc {
   const out = new Writer(doc, "");
   const listed = new Set<string>();

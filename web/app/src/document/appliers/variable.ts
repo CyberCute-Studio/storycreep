@@ -10,7 +10,14 @@
 import type { Variable } from "@storycreep/shared/api";
 import { type Appliers, canonical } from "../apply";
 import type { Draft } from "../doc";
-import { idOrNone, keyAfter, placed, renames, withField } from "./node";
+import {
+  folderChildren,
+  idOrNone,
+  keyAfter,
+  placed,
+  renames,
+  withField,
+} from "./node";
 
 type Types =
   `variable.${"create" | "rename" | "describe" | "set_default" | "retype" | "set_scope" | "set_reset_on_enter" | "move" | "delete" | "restore"}`;
@@ -25,21 +32,6 @@ export function canonicalValue<V extends Value>(value: V): V {
 /** Returns the zero value of type, which the server gives a variable that is created or retyped without a default. */
 function zeroOf(type: Variable["type"]): Value {
   return type === "bool" ? false : type === "string" ? "" : 0;
-}
-
-/** Returns the children of the folder of variables of folderId, or of the top, that draft holds, folders and variables alike. */
-function childrenOf(
-  draft: Draft,
-  folderId: string | undefined,
-): { id: string; order: string }[] {
-  return [
-    ...[...draft.all("variables").values()].filter(
-      (v) => v.folder_id === folderId,
-    ),
-    ...[...draft.all("folders").values()].filter(
-      (f) => f.kind === "variable" && f.parent_id === folderId,
-    ),
-  ];
 }
 
 /** Changes the variable of id with change, if draft holds it. */
@@ -73,7 +65,11 @@ export const variableAppliers: Appliers<Types> = {
         ...(folderId === undefined ? {} : { folder_id: folderId }),
         order:
           p.order ??
-          keyAfter(childrenOf(draft, folderId).map((child) => child.order)),
+          keyAfter(
+            folderChildren(draft, "variable", folderId).map(
+              (child) => child.order,
+            ),
+          ),
         key: p.key,
         type: p.type,
         default: canonicalValue(p.default ?? zeroOf(p.type)),
@@ -135,9 +131,11 @@ export const variableAppliers: Appliers<Types> = {
       p.order !== undefined
         ? { order: p.order, sure: true }
         : variable.folder_id === folderId
-          ? placed(variable, childrenOf(draft, folderId))
+          ? placed(variable, folderChildren(draft, "variable", folderId))
           : {
-              order: keyAfter(childrenOf(draft, folderId).map((c) => c.order)),
+              order: keyAfter(
+                folderChildren(draft, "variable", folderId).map((c) => c.order),
+              ),
               sure: false,
             };
     draft.put(

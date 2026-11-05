@@ -327,6 +327,28 @@ describe("the project document's reads", () => {
     expect(view.seq).toBe(testProject.seq);
     expect(doc.holds("tree")).toBe(true);
   });
+
+  it("reads the project again once its first read failed, as a page asks for a part again, rather than fail as that read did for as long as the document is kept", async () => {
+    let projectReads = 0;
+    serve({
+      ...tree([board("bd_a", "Harbour")]),
+      getProject: () => {
+        if (++projectReads === 1) {
+          throw refused(429, { code: "rate_limited" });
+        }
+        return testProject;
+      },
+    });
+    const log = createErrorLog();
+    const queryClient = createQueryClient(log);
+    queryClient.setQueryData(sessionQuery.queryKey, testSession);
+    const doc = new ProjectDocument(testProject.id, { queryClient, log });
+    onTestFinished(() => doc.dispose());
+    await expect(doc.load("tree")).rejects.toMatchObject({ status: 429 });
+    await doc.load("tree");
+    expect(projectReads).toBe(2);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour" });
+  });
 });
 
 describe("an operation of another session", () => {
@@ -420,9 +442,48 @@ describe("an operation of another session", () => {
     expect(shown(doc, "bd_b")).toBeDefined();
   });
 
-  it("drops a board that went to the trash", async () => {
-    serve(tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]));
+  it("reads the project anew once the read of what an operation's appliers could not know failed, rather than keep what they predicted", async () => {
+    let boards = [board("bd_a", "Harbour")];
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      getBoard: () => {
+        throw refused(503, { code: "unavailable" });
+      },
+    });
     const { doc, realtime } = await open();
+    // Another session creates a board without a key of order, which the
+    // server picks.
+    boards = [
+      board("bd_a", "Harbour"),
+      { ...board("bd_c", "Lighthouse", 1), order: "X" },
+    ];
+    realtime.send(
+      testProject.id,
+      [
+        {
+          type: "board.create",
+          payload: { id: "bd_c", name: "Lighthouse", slug: "c" },
+        },
+      ],
+      [{ id: "bd_c", rev: 1 }],
+    );
+    expect(shown(doc, "bd_c")?.order).not.toBe("X");
+    await vi.waitFor(() => expect(shown(doc, "bd_c")?.order).toBe("X"));
+    expect(server.calls("getBoard")).toHaveLength(1);
+    expect(server.calls("getProject")).toHaveLength(2);
+  });
+
+  it("drops a board that went to the trash, keeping that it went while a read that began before is under way, and forgetting it once none is", async () => {
+    const listed = Promise.withResolvers<unknown>();
+    serve({
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
+      listVariables: () => listed.promise,
+    });
+    const { doc, realtime } = await open();
+    const loaded = doc.load("variables");
+    await flush();
     realtime.send(
       testProject.id,
       [{ type: "board.delete", payload: { id: "bd_a" } }],
@@ -431,6 +492,10 @@ describe("an operation of another session", () => {
     expect(shown(doc, "bd_a")).toBeUndefined();
     expect(shown(doc, "bd_b")).toBeDefined();
     expect(doc.doc.gone.get("bd_a")).toEqual({ rev: 4, seq: 2 });
+    listed.resolve(page([]));
+    await loaded;
+    realtime.send(testProject.id, [], []);
+    expect(doc.doc.gone.size).toBe(0);
   });
 
   it("reads the project and the parts that the document holds anew once an operation comes after a gap", async () => {
@@ -657,6 +722,37 @@ describe("the page's own batches", () => {
     );
   });
 
+  it("gives what a batch changed, which it took from the batch's answer, the server's time of its operation, which the channel brings after", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: () => applied(2, [{ id: "bd_a", rev: 4 }]),
+    });
+    const { doc, realtime, subscriber } = await open();
+    realtime.hold(testProject.id);
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    expect(doc.doc.boards.get("bd_a")).toMatchObject({
+      rev: 4,
+      updated_at: time,
+    });
+    // The server's clock, which the page's is not.
+    const committed = "2026-11-05T10:00:01.234Z";
+    subscriber().operation({
+      type: "operation",
+      project_id: testProject.id,
+      seq: 2,
+      commands: server.batches[0],
+      revisions: [{ id: "bd_a", rev: 4 }],
+      created_at: committed,
+    });
+    expect(doc.doc.boards.get("bd_a")).toMatchObject({
+      name: "Harbour at night",
+      rev: 4,
+      created_at: "2026-11-01T10:00:00Z",
+      updated_at: committed,
+    });
+    expect(shown(doc, "bd_a")?.updated_at).toBe(committed);
+  });
+
   it("applies a batch once when the channel brings its operation before the server's answer", async () => {
     const answer = Promise.withResolvers<CommandResultBody>();
     const server = serve({
@@ -845,6 +941,22 @@ describe("the page's own batches", () => {
 });
 
 describe("a batch refused for a revision that changed elsewhere (§7.10)", () => {
+  it("is sent again where what it changes changed elsewhere to what it writes, as once two users give a board the same name", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        conflict(board("bd_a", "Harbour at night", 4)),
+        applied(2, [{ id: "bd_a", rev: 5 }]),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { bd_a: 3 },
+      { bd_a: 4 },
+    ]);
+  });
+
   it("is sent again by itself, expecting the current revision, with new command IDs, where nothing that it changes changed elsewhere", async () => {
     const theirs = { ...board("bd_a", "Harbour", 4), color: "blue" as const };
     const server = serve({
@@ -2115,6 +2227,64 @@ describe("what the document reads while operations come", () => {
     expect(doc.store.getState().view.folders.has("fld_c")).toBe(true);
   });
 
+  it("reads again what an operation took to the trash while a part was read for the first time, whose list, answered before, still has it", async () => {
+    const listed = Promise.withResolvers<unknown>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      listVariables: () => listed.promise,
+      getVariable: () => {
+        throw refused(404, { code: "not_found" });
+      },
+    });
+    const { doc, realtime } = await open();
+    const loaded = doc.load("variables");
+    await flush();
+    // Another session takes a variable to the trash, which the document does
+    // not hold yet, and which its own read finds gone before the list comes.
+    realtime.send(
+      testProject.id,
+      [{ type: "variable.delete", payload: { id: "var_met" } }],
+      [{ id: "var_met", rev: 2 }],
+    );
+    await vi.waitFor(() => expect(server.calls("getVariable")).toHaveLength(1));
+    await flush();
+    listed.resolve(page([variable("var_met")]));
+    await loaded;
+    await vi.waitFor(() => expect(server.calls("getVariable")).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(doc.store.getState().view.variables.has("var_met")).toBe(false),
+    );
+  });
+
+  it("resolves a page's reading anew of the project, while the channel is live, once the operations up to the seq that its subscription holds as of have come, rather than at once", async () => {
+    const server = serve(tree([board("bd_a", "Harbour")]));
+    const { doc, deliver, subscriber } = await open();
+    // The socket is back, and the subscription holds as of 3, after which
+    // the channel sends the operations after 1.
+    subscriber().subscribed(3);
+    subscriber().live(true);
+    let refreshed = false;
+    const refreshing = doc.refresh().then(() => {
+      refreshed = true;
+    });
+    await flush();
+    expect(refreshed).toBe(false);
+    deliver(
+      2,
+      [
+        {
+          type: "board.create",
+          payload: { id: "bd_b", name: "Lighthouse", slug: "b", order: "W" },
+        },
+      ],
+      [{ id: "bd_b", rev: 1 }],
+    );
+    deliver(3, [], []);
+    await refreshing;
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Lighthouse" });
+    expect(server.calls("getProject")).toHaveLength(1);
+  });
+
   it("reads the project anew again, later, once it failed to, and applies the operations that came meanwhile once it has", async () => {
     // The wait before it tries again is none.
     vi.spyOn(Math, "random").mockReturnValue(0);
@@ -2305,9 +2475,12 @@ describe("what the document reads while operations come", () => {
           ? page([])
           : reads === 2
             ? pending.promise
-            : page([node("nd_x", "bd_a", 4)]);
+            : page([node("nd_x", "bd_a", 6)]);
       },
       listBoardConnections: () => page([]),
+      // The node, which the first read again found as of before the later
+      // operations, is read by itself too.
+      getNode: () => node("nd_x", "bd_a", 6),
     });
     const { doc, realtime } = await open();
     await doc.load(boardPart("bd_a"));
@@ -2405,6 +2578,47 @@ describe("what the document reads while operations come", () => {
 });
 
 describe("the page's own batches while the channel is not live", () => {
+  it("are undone once the project read anew, as the answer to one was past the next seq, has the operations up to it, which tell what the other steps expect", async () => {
+    const reread = Promise.withResolvers<unknown>();
+    let projectReads = 0;
+    let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
+    const server = serve({
+      getProject: () => (++projectReads === 2 ? reread.promise : testProject),
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        // Another session's batch applied as seq 3, which the channel, not
+        // live, does not bring.
+        applied(4, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Dusk", 5)]),
+        applied(5, [{ id: "bd_a", rev: 6 }], [renameBack("bd_a", "Night", 6)]),
+        applied(6, [{ id: "bd_a", rev: 7 }], []),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Dusk", 3)]);
+    await doc.send([rename("bd_a", "Night", 4)]);
+    await vi.waitFor(() => expect(projectReads).toBe(2));
+    const undone = doc.undo();
+    await flush();
+    expect(server.batches).toHaveLength(2);
+    boards = [board("bd_a", "Night", 5), board("bd_b", "Old light", 4)];
+    reread.resolve({ ...testProject, seq: 4 });
+    await undone;
+    expect(server.batches[2][0].expected_rev).toEqual({ bd_a: 5 });
+    // The board was at 4 before the batch that the undo undid, which the
+    // first batch's undo expects, and is the same again, at 6.
+    await doc.undo();
+    expect(server.batches[3][0]).toMatchObject({
+      payload: { id: "bd_a", name: "Harbour" },
+      expected_rev: { bd_a: 6 },
+    });
+  });
+
   it("read the project anew once the answer to one is past the next seq, as other sessions' operations came before it", async () => {
     let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
     const server = serve({
@@ -2682,7 +2896,9 @@ describe("undo and redo, as answers and reads come", () => {
   it("moves what the other steps expect from the revision that the undone batch expected, though the document read the entity as the batch left it before its answer came", async () => {
     const second = Promise.withResolvers<CommandResultBody>();
     const server = serve({
-      ...tree([board("bd_a", "Harbour")]),
+      // The second board comes after the first, which a move without a key
+      // places after it.
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
       // The read of the board whose key of order the first batch left to
       // the server, answered once the second batch has applied.
       getBoard: () => ({ ...board("bd_a", "Harbour at night", 5), order: "W" }),

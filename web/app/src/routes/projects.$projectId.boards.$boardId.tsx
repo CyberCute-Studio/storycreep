@@ -186,10 +186,11 @@ const boardField = payloadField("name", "slug", "description", "color");
  * The form of a board's settings, which sends what of them changed in one
  * batch, each command expecting the revision that the form shows, so that a
  * board that changed elsewhere since is not changed over (PRD FR-API-03
- * AC3). It shows the board as the page has it until the user changes
- * something in it, and then as it was, so that a change made elsewhere,
- * which the page's document shows as it commits, does not take away what
- * the user typed (FR-RT-02 AC3), until the form is saved. A save refused for
+ * AC3). It shows the board as the page has it until the user is in it, with
+ * the focus, or has changed something in it, and then as it was, so that a
+ * change made elsewhere, which the page's document shows as it commits, does
+ * not take away the focus, a selection, or what the user typed (FR-RT-02
+ * AC3), until the focus leaves it unchanged, or it is saved. A save refused for
  * a change made elsewhere of another field is sent again by the document
  * (PRD §7.10); one of a field that the form changes too names each such
  * field with both values (ConflictError), and keeps what the user typed, so
@@ -202,6 +203,14 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
   const [held, setHeld] = useState<Board>();
+  // Whether the user has changed something in the form since it held the
+  // board, which the focus leaving it then does not let go.
+  const changed = useRef(false);
+  /** Lets go of the board, which the form then shows as the page has it. */
+  const release = () => {
+    changed.current = false;
+    setHeld(undefined);
+  };
   // The board as the server had it when it refused the form's save for a
   // change of what the form changes too, which saving again changes over.
   const [theirs, setTheirs] = useState<Board>();
@@ -273,13 +282,17 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     setUnchanged(changes.length === 0);
     if (changes.length === 0) {
       commands.reset();
-      setHeld(undefined);
+      // The board as it is now, which the focus, still in the form, holds.
+      changed.current = false;
+      setHeld(
+        form.current?.contains(document.activeElement) ? board : undefined,
+      );
       setTheirs(undefined);
       return;
     }
     commands.mutate(changes, {
       onSuccess: () => {
-        setHeld(undefined);
+        release();
         setTheirs(undefined);
       },
       onError: (error) => {
@@ -290,7 +303,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
         if (state !== undefined) {
           setTheirs(state as unknown as Board);
         } else if (conflictOf(error)) {
-          setHeld(undefined);
+          release();
           setTheirs(undefined);
         }
       },
@@ -298,7 +311,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   };
   const useTheirs = () => {
     commands.reset();
-    setHeld(undefined);
+    release();
     setTheirs(undefined);
   };
   const fieldName = (field: string) =>
@@ -349,7 +362,21 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
         ref={form}
         className="space-y-4"
         onSubmit={submit}
-        onChange={() => setHeld((before) => before ?? board)}
+        // The focus coming into the form holds the board as it shows it,
+        // and a change keeps it held once the focus leaves.
+        onFocus={() => setHeld((before) => before ?? board)}
+        onChange={() => {
+          changed.current = true;
+          setHeld((before) => before ?? board);
+        }}
+        onBlur={(event) => {
+          if (
+            !changed.current &&
+            !event.currentTarget.contains(event.relatedTarget as Node | null)
+          ) {
+            setHeld(undefined);
+          }
+        }}
         noValidate
       >
         <TextField

@@ -405,6 +405,24 @@ describe("the board appliers", () => {
     expect(result.sure(boardA)).toBe(false);
   });
 
+  it("moves a board or a folder without a key within its folder after the last of the others, not surely, and keeps the key of the last surely, as the server places it", () => {
+    const doc = docOf({
+      folders: [folder(1, "board", { order: "W" })],
+      boards: [board(1, { order: "F" }), board(2, { order: "a" })],
+    });
+    const before = apply(doc, command("board.move", { id: boardA }));
+    expect(isAfter(before.doc.boards.get(boardA)?.order, "a")).toBe(true);
+    expect(before.sure(boardA)).toBe(false);
+    const last = apply(doc, command("board.move", { id: boardB }));
+    expect(last.doc.boards.get(boardB)?.order).toBe("a");
+    expect(last.sure(boardB)).toBe(true);
+    const folded = apply(doc, command("folder.move", { id: id("folder", 1) }));
+    expect(isAfter(folded.doc.folders.get(id("folder", 1))?.order, "a")).toBe(
+      true,
+    );
+    expect(folded.sure(id("folder", 1))).toBe(false);
+  });
+
   it("creates a board with the slug and the key that the payload gives, surely", () => {
     const result = apply(
       docOf(),
