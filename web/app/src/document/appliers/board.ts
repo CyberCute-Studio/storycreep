@@ -193,15 +193,26 @@ export const boardAppliers: Appliers<Types> = {
     // The board's nodes and connections are in the trash with it, without
     // a revision of their own, and the server's reads leave them out.
     draft.drop(boardPart(id));
+    // So are its variables, of its scope, which the server's reads leave
+    // out too (live_variable).
+    for (const variable of [...draft.all("variables").values()]) {
+      if (variable.scope === "board" && variable.board_id === id) {
+        draft.removeQuietly("variables", variable.id);
+      }
+    }
     // The expressions on other boards that name its nodes, or its
     // variables, compile anew.
     renames(draft);
   },
   // The board in the trash is none that the document holds, nor are the
   // folders that its restoration brings back: the store reads them, as its
-  // operation's revisions name them. The expressions that name its nodes,
-  // or its variables, compile anew.
-  "board.restore": (draft) => renames(draft),
+  // operation's revisions name them, and its variables, which come back
+  // with it without revisions of their own, with the variables' lists. The
+  // expressions that name its nodes, or its variables, compile anew.
+  "board.restore": (draft) => {
+    draft.reread("variables");
+    renames(draft);
+  },
   "folder.create": (draft, p) => {
     const parentId = canonical(p.parent_id);
     draft.put(

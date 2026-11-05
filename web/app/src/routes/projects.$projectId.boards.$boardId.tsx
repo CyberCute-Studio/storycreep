@@ -33,14 +33,21 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
   // The project comes first, as for the tree of its boards, which its
-  // document reads, and which holds the board, but for one in the trash.
+  // document reads, and which holds the board, but for one in the trash. A
+  // document that the real-time channel does not keep current, while it is
+  // not live, may not have the board yet, as one that another session made
+  // since, so it reads the project anew before it says that there is none.
   loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
     const doc = documents.get(project.id);
     await found(doc.load("tree"));
-    if (!doc.store.getState().view.boards.has(params.boardId)) {
+    const has = () => doc.store.getState().view.boards.has(params.boardId);
+    if (!has()) {
+      await doc.refresh();
+    }
+    if (!has()) {
       throw notFound();
     }
   },
@@ -185,8 +192,8 @@ const boardField = payloadField("name", "slug", "description", "color");
  * a change made elsewhere of another field is sent again by the document
  * (PRD §7.10); one of a field that the form changes too names each such
  * field with both values (ConflictError), and keeps what the user typed, so
- * that saving again keeps it, over the board as it is now, and using theirs
- * shows the board as it is now.
+ * that saving again keeps it, over the board as it is now, without what the
+ * user did not change, and using theirs shows the board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
@@ -215,8 +222,17 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     const slug = String(data.get("slug"));
     const description = String(data.get("description"));
     const color = String(data.get("color")) as Board["color"];
+    // A field is sent where the user changed it from what the form showed,
+    // or where it was one of a conflict's, which saving again keeps, and it
+    // is not what the board has already: a field that the user did not
+    // change, which the form still shows as it was before a conflict, is
+    // not sent over the board as it is now, which another session changed.
+    const conflicting = new Set(overlaps.map((o) => o.field));
+    const unchangedField = (field: keyof Board, value: unknown) =>
+      value === against[field] ||
+      (value === shown[field] && !conflicting.has(field));
     const changes: Command[] = [
-      ...(name === against.name
+      ...(unchangedField("name", name)
         ? []
         : [
             {
@@ -225,7 +241,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(slug === against.slug
+      ...(unchangedField("slug", slug)
         ? []
         : [
             {
@@ -234,7 +250,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(description === against.description
+      ...(unchangedField("description", description)
         ? []
         : [
             {
@@ -243,7 +259,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               expected_rev,
             },
           ]),
-      ...(color === against.color
+      ...(unchangedField("color", color)
         ? []
         : [
             {

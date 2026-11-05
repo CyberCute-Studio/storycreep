@@ -717,6 +717,7 @@ describe("the tree of boards", () => {
   it("sends a rename again by itself, expecting the board's revision now, once it was refused for another change of the board elsewhere", async () => {
     const user = userEvent.setup();
     const revisions: unknown[] = [];
+    let current = board("bd_a", "Harbour");
     fakeApi((operation, input) => {
       if (operation === "applyCommands") {
         const { body } = input as {
@@ -726,18 +727,13 @@ describe("the tree of boards", () => {
         if (revisions.length === 1) {
           // Another editor gave the board a colour since the tree read it,
           // which the rename does not change.
-          throw conflict("board.rename", {
-            ...board("bd_a", "Harbour"),
-            color: "blue",
-            rev: 4,
-          });
+          current = { ...current, color: "blue", rev: 4 };
+          throw conflict("board.rename", current);
         }
+        current = { ...current, name: "Harbour at night", rev: 5 };
         return applied(3, [{ id: "bd_a", rev: 5 }]);
       }
-      return expected(
-        projectPages(operation, [board("bd_a", "Harbour")]),
-        operation,
-      );
+      return expected(projectPages(operation, [current]), operation);
     });
     renderApp(`/projects/${testProject.id}`, { session: testSession });
     await user.click(
@@ -929,10 +925,17 @@ describe("a board's page", () => {
     );
   });
 
-  it("names a field that another editor changed too with both values, and keeps the user's once saved again", async () => {
+  it("names a field that another editor changed too with both values, and keeps the user's once saved again, without what the user did not change", async () => {
     const user = userEvent.setup();
     const harbour = board("bd_a", "Harbour");
-    const theirs = { ...harbour, description: "Where the tale ends", rev: 4 };
+    // The other editor changed the colour too, which the user did not, and
+    // which saving again leaves as they made it.
+    const theirs = {
+      ...harbour,
+      description: "Where the tale ends",
+      color: "blue" as const,
+      rev: 4,
+    };
     const sent: unknown[] = [];
     fakeApi((operation, input) => {
       if (operation === "applyCommands") {
@@ -973,6 +976,25 @@ describe("a board's page", () => {
         command_id: expect.any(String),
       },
     ]);
+  });
+
+  it("shows a board that another session made since the tree was read, which the document reads anew while its channel is not live", async () => {
+    let boards = [board("bd_a", "Harbour")];
+    fakeApi((operation) =>
+      expected(projectPages(operation, boards), operation),
+    );
+    const { router } = renderApp(`/projects/${testProject.id}`, {
+      session: testSession,
+    });
+    await screen.findByRole("link", { name: "Harbour" });
+    boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
+    await router.navigate({
+      to: "/projects/$projectId/boards/$boardId",
+      params: { projectId: testProject.id, boardId: "bd_b" },
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Lighthouse" }),
+    ).toBeDefined();
   });
 
   it("shows the other editor's version of a field that both changed once the user takes theirs", async () => {

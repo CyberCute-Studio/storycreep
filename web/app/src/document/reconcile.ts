@@ -52,6 +52,8 @@ export interface Reconciled {
   toRead: Set<string>;
   /** The parts to read again. */
   reread: Set<Part>;
+  /** The parts that the operation took out of the document whole, as a board's once it is in the trash. */
+  dropped: ReadonlySet<Part>;
 }
 
 /** An entity of any place, with what all of them have. */
@@ -214,6 +216,23 @@ function wouldHold(doc: Doc, id: string): boolean {
 }
 
 /**
+ * Returns ids with those of nested entities, a branch output or an attribute
+ * definition, after the others: an owner, as a node, is set whole, with its
+ * nested entities as they were before or as the appliers left them, so a
+ * nested entity that changed is set after it, into it, rather than its
+ * revision, or its change, be set back by its owner's, whatever the order of
+ * the batch's commands.
+ */
+function ownersFirst(ids: Iterable<string>): string[] {
+  const nested = (id: string) => {
+    const of = placeOf(id)?.of;
+    return of === "output" || of === "attribute";
+  };
+  const all = [...ids];
+  return [...all.filter((id) => !nested(id)), ...all.filter(nested)];
+}
+
+/**
  * Applies op to doc, which must be as of the seq before op's, and returns the
  * document as of op's seq, with what it leaves to read from the server.
  */
@@ -228,7 +247,8 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
   const out = new Writer(applied, op.time);
   const toRead = new Set<string>();
   const reread = new Set(draft.rereads);
-  for (const [id, change] of draft.changes) {
+  for (const id of ownersFirst(draft.changes.keys())) {
+    const change = draft.changes.get(id) as { sure: boolean };
     const before = entityOf(doc, id);
     const rev = revs.get(id);
     if (rev === undefined || (before !== undefined && before.rev >= rev)) {
@@ -243,6 +263,9 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
       continue;
     }
     if (after === undefined) {
+      // A nested entity is taken out of its owner, which may have been set
+      // back with it.
+      out.set(id, undefined);
       out.gone(id, rev, op.seq);
     } else {
       out.set(id, { ...after, rev });
@@ -258,7 +281,7 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
       toRead.add(id);
     }
   }
-  return { doc: out.finish(op.seq), toRead, reread };
+  return { doc: out.finish(op.seq), toRead, reread, dropped: draft.dropped };
 }
 
 /**
@@ -280,11 +303,14 @@ export function applyPending(
     return applied;
   }
   const out = new Writer(applied, time);
+  const revs = new Map<string, number>();
   for (const r of revisions) {
-    const id = canonical(r.id);
+    revs.set(canonical(r.id), r.rev);
+  }
+  for (const id of ownersFirst(revs.keys())) {
     const entity = entityOf(applied, id);
     if (draft.changes.get(id)?.sure && entity !== undefined) {
-      out.set(id, { ...entity, rev: r.rev });
+      out.set(id, { ...entity, rev: revs.get(id) as number });
     }
   }
   return out.finish(doc.seq);

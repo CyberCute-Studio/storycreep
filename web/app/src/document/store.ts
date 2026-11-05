@@ -48,7 +48,7 @@ import {
   placeOf,
   typeOfAttribute,
 } from "./doc";
-import type { Realtime } from "./realtime";
+import { backoff, type Realtime } from "./realtime";
 import {
   applyOperation,
   applyPending,
@@ -160,21 +160,21 @@ interface Revised {
   rev: number;
 }
 
-/** A part that the document is reading, with the entities that operations changed while it did. */
-interface Load {
-  promise: Promise<void>;
-  changed: Set<string>;
-}
-
-/** The batches that an undo sent in parts applied, before the one that error refused. */
+/**
+ * The batches that an undo sent in parts applied, before the one that error
+ * refused, and the commands that did not apply, each expecting what those
+ * that did left.
+ */
 class PartsError extends Error {
   readonly applied: Sent[];
   readonly cause: unknown;
+  readonly rest: UndoCommandBody[];
 
-  constructor(applied: Sent[], cause: unknown) {
+  constructor(applied: Sent[], cause: unknown, rest: UndoCommandBody[]) {
     super(cause instanceof Error ? cause.message : String(cause));
     this.applied = applied;
     this.cause = cause;
+    this.rest = rest;
   }
 }
 
@@ -189,6 +189,14 @@ const conflictRetries = 3;
 
 /** How many entities the document reads from the server at once. */
 const readsAtOnce = 6;
+
+/**
+ * How many entities of one part an operation may leave to read from the
+ * server, each by its ID, before the part is read again instead, as once a
+ * variable's rename has compiled anew the expressions of a board's hundreds
+ * of nodes, which its lists, 200 to a page, answer in a few requests.
+ */
+const readsOfOnePart = 20;
 
 /** How long, in milliseconds, an undo waits for the operations of the batch that it undoes to reach the document. */
 const confirmWait = 5_000;
@@ -258,7 +266,20 @@ export class ProjectDocument {
   private inflight = false;
   /** The operations that came while the document read the project, which it applies once it has. */
   private buffer: Operation[] | undefined = [];
-  private readonly loads = new Map<Part, Load>();
+  /** The parts that the document holds, read or being read, each with its read. */
+  private readonly loads = new Map<Part, Promise<void>>();
+  /**
+   * The entities that operations changed while a read of a part, or of a
+   * part's folders, was under way, one set for each such read, so that its
+   * list does not take out what an operation put in since the read began.
+   */
+  private readonly watchers = new Set<Set<string>>();
+  /** How many reads of parts are under way. */
+  private partReads = 0;
+  private started = false;
+  /** The reading anew of the project, under way, or waiting to try again once it failed. */
+  private resyncing: Promise<void> | undefined;
+  private resyncTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly toRead = new Set<string>();
   private reading = false;
   private readonly unanswered = new Map<string, string[]>();
@@ -290,12 +311,24 @@ export class ProjectDocument {
     this.ready = this.start();
     // A page that waits for the project shows what refuses it; nothing else
     // needs to hear of it here.
-    this.ready.catch(() => undefined);
+    this.ready.then(
+      () => {
+        this.started = true;
+      },
+      () => {
+        this.started = true;
+      },
+    );
   }
 
   /** The document as the server has confirmed it. */
   get doc(): Doc {
     return this.confirmed;
+  }
+
+  /** Reports whether the document is reading the project, or a part of it, which a route's loader may be waiting for. */
+  get busy(): boolean {
+    return !this.started || this.partReads > 0;
   }
 
   private async start(): Promise<void> {
@@ -332,6 +365,7 @@ export class ProjectDocument {
   /** Stops following the project. */
   dispose(): void {
     this.disposed = true;
+    clearTimeout(this.resyncTimer);
     this.unsubscribe?.();
     this.unsubscribe = undefined;
   }
@@ -344,37 +378,58 @@ export class ProjectDocument {
   load(part: Part): Promise<void> {
     const loading = this.loads.get(part);
     if (loading !== undefined) {
-      return loading.promise;
+      return loading;
     }
-    const load: Load = { promise: Promise.resolve(), changed: new Set() };
-    load.promise = (async () => {
-      await this.ready;
-      const since = this.confirmed.seq;
-      this.confirmed = withParts(this.confirmed, [part], []);
+    this.partReads++;
+    // A read that fails takes out the part, unless an operation has taken
+    // it out already, and a page has asked for it anew since.
+    let load: Promise<void> | undefined;
+    load = (async () => {
+      const changed = this.watch();
       try {
+        await this.ready;
+        const since = this.confirmed.seq;
+        this.confirmed = withParts(this.confirmed, [part], []);
         const lists = await readPart(this.projectId, part);
         let doc = this.confirmed;
         for (const list of lists) {
-          doc = mergeList(
-            doc,
-            list.kind,
-            part,
-            list.items,
-            since,
-            load.changed,
-          );
+          doc = mergeList(doc, list.kind, part, list.items, since, changed);
         }
         this.confirmed = doc;
         this.show();
       } catch (error) {
-        this.loads.delete(part);
-        this.confirmed = withParts(this.confirmed, [], [part]);
-        this.show();
+        if (this.loads.get(part) === load) {
+          this.loads.delete(part);
+          this.confirmed = withParts(this.confirmed, [], [part]);
+          this.show();
+        }
         throw error;
+      } finally {
+        this.watchers.delete(changed);
+        this.partReads--;
       }
     })();
     this.loads.set(part, load);
-    return load.promise;
+    return load;
+  }
+
+  /**
+   * Reads the project anew while the real-time channel is not live, as the
+   * document may have missed what changed since, as a board that another
+   * session created, and resolves once it has, or has failed to.
+   */
+  refresh(): Promise<void> {
+    if (this.store.getState().live) {
+      return Promise.resolve();
+    }
+    return this.resync(this.confirmed.seq);
+  }
+
+  /** Returns a set of the entities that operations change from now on, until the caller takes it out of watchers. */
+  private watch(): Set<string> {
+    const changed = new Set<string>();
+    this.watchers.add(changed);
+    return changed;
   }
 
   /** Reports whether the document holds part, read or being read. */
@@ -418,16 +473,43 @@ export class ProjectDocument {
     const wanted = own !== undefined || this.history.wants(op.seq);
     const captured: Captured = {};
     if (wanted) {
+      // What the batch's commands expected is what the server had of each
+      // entity once it had every operation before the batch, as the batch
+      // applied. What they did not expect is as the document holds it, if it
+      // holds it as of before the operation: one that it holds as of the
+      // operation or later, as read from the server since, it does not know
+      // as it was before, and leaves out.
+      const expected = new Map<string, number>();
+      for (const command of own?.commands ?? []) {
+        for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
+          expected.set(canonical(id), rev);
+        }
+      }
       for (const r of op.revisions) {
         const id = canonical(r.id);
-        captured[id] = entityOf(this.confirmed, id)?.rev ?? null;
+        const held = entityOf(this.confirmed, id)?.rev;
+        const sent = expected.get(id);
+        if (sent !== undefined) {
+          captured[id] = sent;
+        } else if (held === undefined) {
+          captured[id] = null;
+        } else if (held < r.rev) {
+          captured[id] = held;
+        }
       }
     }
     const reconciled = applyOperation(this.confirmed, op);
-    for (const load of this.loads.values()) {
+    for (const changed of this.watchers) {
       for (const r of op.revisions) {
-        load.changed.add(canonical(r.id));
+        changed.add(canonical(r.id));
       }
+    }
+    // A part that the operation took out whole, as a board's once the board
+    // is in the trash, is no longer held, so that a page that shows it again,
+    // once the board is back, reads it anew, and the project read anew does
+    // not ask for it.
+    for (const part of reconciled.dropped) {
+      this.loads.delete(part);
     }
     const before = this.confirmed.project;
     this.confirmed = reconciled.doc;
@@ -524,48 +606,131 @@ export class ProjectDocument {
    * Reads the project anew, as once the channel cannot send the operations
    * that the document missed: the project, and every part that it holds,
    * as of seq, after which the operations after seq follow, of which it
-   * passes over what it has read already, by their revisions.
+   * passes over what it has read already, by their revisions. It resolves
+   * once it has, or has failed to, after which it tries again, later each
+   * time, as the channel connects again (backoff), with the operations that
+   * come meanwhile kept for once it has, rather than applied to what it has
+   * missed, which would only find the gap again.
    */
-  private async resync(seq: number): Promise<void> {
-    if (this.buffer !== undefined || this.disposed) {
-      return;
+  private resync(seq: number): Promise<void> {
+    if (this.disposed) {
+      return Promise.resolve();
+    }
+    if (this.buffer !== undefined) {
+      // The document is reading the project already, which is as of seq at
+      // least, or has yet to read it.
+      return this.resyncing ?? Promise.resolve();
     }
     this.buffer = [];
-    const parts = [...this.loads.keys()];
+    const resyncing = this.reload(seq, 0).finally(() => {
+      if (this.resyncing === resyncing) {
+        this.resyncing = undefined;
+      }
+    });
+    this.resyncing = resyncing;
+    return resyncing;
+  }
+
+  /** Reads the project anew as resync does, after failures failures in a row. */
+  private async reload(seq: number, failures: number): Promise<void> {
+    let doc: Doc;
     try {
       const body = (
         await api.call("getProject", { path: { project_id: this.projectId } })
       ).body;
-      let doc = withParts(
-        { ...emptyDoc(seq), project: projectOf(body) },
-        parts,
-        [],
-      );
-      for (const part of parts) {
-        for (const list of await readPart(this.projectId, part)) {
-          doc = mergeList(doc, list.kind, part, list.items, seq, new Set());
+      doc = { ...emptyDoc(seq), project: projectOf(body) };
+      // A part that a page asks for while the project is read anew is read
+      // with the others, as the document read anew would otherwise not hold
+      // it, and pass over what its own read found.
+      const read = new Set<Part>();
+      for (;;) {
+        const parts = [...this.loads.keys()].filter((p) => !read.has(p));
+        if (parts.length === 0) {
+          break;
+        }
+        for (const part of parts) {
+          read.add(part);
+          let lists: List[];
+          try {
+            lists = await readPart(this.projectId, part);
+          } catch (error) {
+            if (part.startsWith("board:") && notFound(error)) {
+              // The board went to the trash, by an operation that the
+              // document has yet to apply, which takes its part out.
+              this.loads.delete(part);
+              continue;
+            }
+            throw error;
+          }
+          doc = withParts(doc, [part], []);
+          for (const list of lists) {
+            doc = mergeList(doc, list.kind, part, list.items, seq, new Set());
+          }
         }
       }
-      this.confirmed = doc;
+      // A part whose own read failed meanwhile is not held.
+      doc = withParts(
+        doc,
+        [],
+        [...doc.parts].filter((p) => !this.loads.has(p)),
+      );
     } catch (error) {
-      this.options.log.record("request", error);
-    } finally {
-      const buffered = (this.buffer ?? []).sort((a, b) => a.seq - b.seq);
-      this.buffer = undefined;
-      for (const op of buffered) {
-        this.receive(op);
+      if (this.disposed) {
+        return;
       }
-      this.settle();
+      if (notFound(error)) {
+        // The project can no longer be read.
+        this.buffer = undefined;
+        this.goneAway();
+        return;
+      }
+      this.options.log.record("request", error);
+      this.resyncTimer = setTimeout(
+        () => void this.reload(seq, failures + 1),
+        backoff(failures + 1, Math.random),
+      );
+      return;
+    }
+    if (this.disposed) {
+      return;
+    }
+    this.confirmed = doc;
+    const buffered = (this.buffer ?? []).sort((a, b) => a.seq - b.seq);
+    this.buffer = undefined;
+    for (const op of buffered) {
+      this.receive(op);
+    }
+    this.settle();
+    this.catchUp();
+  }
+
+  /**
+   * Reads the project anew, while the channel is not live, once the answers
+   * to the page's batches are past what the document has: the operations
+   * before them, of other sessions, would not come until the channel is live
+   * again, if ever, as behind a proxy that refuses the socket, and until
+   * they do the batches stay on top of the document, which would show
+   * nothing of what changed elsewhere.
+   */
+  private catchUp(): void {
+    if (this.store.getState().live || this.buffer !== undefined) {
+      return;
+    }
+    let seq = this.confirmed.seq;
+    for (const entry of this.entries) {
+      if (entry.answer?.status === "applied" && entry.answer.seq > seq) {
+        seq = entry.answer.seq;
+      }
+    }
+    if (seq > this.confirmed.seq) {
+      void this.resync(seq);
     }
   }
 
   /** Reads part again, as once entities of it came back without revisions of their own. */
   private async reread(part: Part): Promise<void> {
     const since = this.confirmed.seq;
-    const changed = new Set<string>();
-    const load: Load = { promise: Promise.resolve(), changed };
-    const before = this.loads.get(part);
-    this.loads.set(part, load);
+    const changed = this.watch();
     try {
       const lists = await readPart(this.projectId, part);
       let doc = this.confirmed;
@@ -579,9 +744,7 @@ export class ProjectDocument {
     } catch (error) {
       this.options.log.record("request", error);
     } finally {
-      if (this.loads.get(part) === load && before !== undefined) {
-        this.loads.set(part, before);
-      }
+      this.watchers.delete(changed);
     }
   }
 
@@ -608,9 +771,26 @@ export class ProjectDocument {
         const folders = ids.some(
           (id) => placeOf(id)?.of === "kind" && id.startsWith("fld_"),
         );
-        const tasks = ids
-          .filter((id) => !id.startsWith("fld_"))
-          .map((id) => () => this.readEntity(id, since));
+        // A part of which there are many to read is read again whole, in a
+        // few pages of its lists, rather than each of them by its own read.
+        const byPart = new Map<Part | undefined, string[]>();
+        for (const id of ids.filter((id) => !id.startsWith("fld_"))) {
+          const part = partOfId(this.confirmed, id);
+          const of = byPart.get(part);
+          if (of === undefined) {
+            byPart.set(part, [id]);
+          } else {
+            of.push(id);
+          }
+        }
+        const tasks: (() => Promise<void>)[] = [];
+        for (const [part, of] of byPart) {
+          if (part !== undefined && of.length > readsOfOnePart) {
+            tasks.push(() => this.reread(part));
+          } else {
+            tasks.push(...of.map((id) => () => this.readEntity(id, since)));
+          }
+        }
         if (folders) {
           for (const part of ["tree", "variables", "components"] as const) {
             if (this.confirmed.parts.has(part)) {
@@ -670,6 +850,7 @@ export class ProjectDocument {
     part: "tree" | "variables" | "components",
     since: number,
   ): Promise<void> {
+    const changed = this.watch();
     try {
       const kind =
         part === "tree"
@@ -692,11 +873,13 @@ export class ProjectDocument {
         part,
         items,
         since,
-        new Set(),
+        changed,
       );
       this.show();
     } catch (error) {
       this.options.log.record("request", error);
+    } finally {
+      this.watchers.delete(changed);
     }
   }
 
@@ -751,12 +934,14 @@ export class ProjectDocument {
       }
       const before = this.history.before(step);
       let applied: Sent[] = [];
+      let rest: UndoCommandBody[] = [];
       let failure: unknown;
       try {
         applied = await this.sendInParts(step.commands);
       } catch (error) {
         if (error instanceof PartsError) {
           applied = error.applied;
+          rest = error.rest;
           failure = error.cause;
         } else {
           failure = error;
@@ -779,10 +964,18 @@ export class ProjectDocument {
                 seqs: answers.map((a) => a.seq),
               }
             : undefined;
+        // A step sent in parts that no answer came to the rest of, which may
+        // apply once sent again, keeps the rest, each command expecting what
+        // the parts that applied left; one that the server refused, as for
+        // what changed since, would be refused again (FR-EDIT-08).
+        const left: Step | undefined =
+          rest.length > 0 && !answered(failure)
+            ? { commands: rest, seqs: step.seqs }
+            : undefined;
         if (which === "undo") {
-          this.history.undone(step, next);
+          this.history.undone(step, next, left);
         } else {
-          this.history.redone(step, next);
+          this.history.redone(step, next, left);
         }
         for (const s of applied) {
           if (s.captured !== undefined && this.history.wants(s.answer.seq)) {
@@ -821,20 +1014,29 @@ export class ProjectDocument {
       }
     }
     const half = Math.ceil(commands.length / 2);
-    const first = await this.sendInParts(commands.slice(0, half));
-    const latest = latestRevisions(first.map((s) => s.answer));
+    let first: Sent[];
     try {
-      const rest = await this.sendInParts(
-        commands.slice(half).map((c) => withRevisions(c, latest)),
-      );
-      return [...first, ...rest];
+      first = await this.sendInParts(commands.slice(0, half));
     } catch (error) {
-      const applied =
-        error instanceof PartsError ? [...first, ...error.applied] : first;
-      throw new PartsError(
-        applied,
-        error instanceof PartsError ? error.cause : error,
-      );
+      if (!(error instanceof PartsError)) {
+        throw error;
+      }
+      // Part of the first half applied: the rest of it, and the second
+      // half, expect what that part left.
+      const latest = latestRevisions(error.applied.map((s) => s.answer));
+      throw new PartsError(error.applied, error.cause, [
+        ...error.rest,
+        ...commands.slice(half).map((c) => withRevisions(c, latest)),
+      ]);
+    }
+    const latest = latestRevisions(first.map((s) => s.answer));
+    const second = commands.slice(half).map((c) => withRevisions(c, latest));
+    try {
+      return [...first, ...(await this.sendInParts(second))];
+    } catch (error) {
+      throw error instanceof PartsError
+        ? new PartsError([...first, ...error.applied], error.cause, error.rest)
+        : new PartsError(first, error, second);
     }
   }
 
@@ -922,6 +1124,7 @@ export class ProjectDocument {
       }
       this.unanswered.delete(entry.key);
       this.settle();
+      this.catchUp();
       entry.resolve(answer);
     } catch (error) {
       if (
@@ -1091,12 +1294,13 @@ export class ProjectDocument {
         continue;
       }
       const mine = this.written(entry, id, base);
+      const unread = unreadFields(id, base);
       const fields = [];
       for (const field of new Set([
         ...Object.keys(base),
         ...Object.keys(mine ?? {}),
       ])) {
-        if (meta.has(field)) {
+        if (meta.has(field) || unread.has(field)) {
           continue;
         }
         const value = mine?.[field];
@@ -1121,6 +1325,22 @@ export class ProjectDocument {
     const after = applyPending(seeded, entry.commands, entry.time);
     return entityOf(after, id) as Record<string, unknown> | undefined;
   }
+}
+
+/**
+ * Returns the fields of the entity of id that the document held of it, as
+ * base, without having read them, as a component's description and values,
+ * which the list of the components leaves out: what changed of them
+ * elsewhere it cannot tell, so a conflict does not compare them, rather than
+ * take every value that the server has for one that changed.
+ */
+function unreadFields(id: string, base: Record<string, unknown>): Set<string> {
+  const place = placeOf(id);
+  return place?.of === "kind" &&
+    place.kind === "components" &&
+    base.attributes === undefined
+    ? new Set(["attributes", "description"])
+    : new Set();
 }
 
 /** Returns the part of doc that holds the entity of id, or undefined for none, as the project. */
@@ -1345,13 +1565,18 @@ async function readOne(
   try {
     return await read();
   } catch (error) {
-    if (
-      error instanceof ApiError &&
-      error.status === 404 &&
-      error.error?.code === "not_found"
-    ) {
+    if (notFound(error)) {
       return undefined;
     }
     throw error;
   }
+}
+
+/** Reports whether error is the server's answer that it has no such thing for the user (404). */
+function notFound(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 404 &&
+    error.error?.code === "not_found"
+  );
 }

@@ -29,6 +29,7 @@ import {
   type Part,
   type Project,
 } from "./doc";
+import { applyOperation } from "./reconcile";
 
 const earlier = "2026-01-01T00:00:00.000Z";
 const time = "2026-11-05T10:00:00.000Z";
@@ -456,6 +457,23 @@ describe("the board appliers", () => {
     expect(result.sure(boardA)).toBe(true);
   });
 
+  it("takes a deleted board's variables out with it, without a change of theirs, and reads the variables again once it is restored", () => {
+    const own = variable(1, { scope: "board", board_id: boardA });
+    const other = variable(2, { scope: "board", board_id: boardB });
+    const global = variable(3);
+    const deleted = apply(
+      docOf({ boards: [board(1)], variables: [own, other, global] }),
+      command("board.delete", { id: boardA }),
+    );
+    expect([...deleted.doc.variables.keys()]).toEqual([other.id, global.id]);
+    expect(deleted.sure(own.id)).toBeUndefined();
+    const restored = apply(
+      deleted.doc,
+      command("board.restore", { id: boardA }),
+    );
+    expect(restored.draft.rereads).toEqual(new Set(["variables"]));
+  });
+
   it("archives the project and unarchives it, surely", () => {
     const archived = apply(docOf(), command("project.archive", {}));
     expect(archived.doc.project?.archived_at).toBe(time);
@@ -475,6 +493,60 @@ describe("the board appliers", () => {
       default_locale: "en",
     });
     expect(result.sure(projectId)).toBe(true);
+  });
+});
+
+describe("an operation held to its revisions (reconcile.ts)", () => {
+  // A branch node with three conditional outputs, the last of which a batch
+  // moves between the others, at the key that it gives, surely.
+  const outputs = [
+    output(1, 1, { kind: "if", order: "V" }),
+    output(2, 1, { kind: "elseif", order: "W" }),
+    output(3, 1, { kind: "elseif", order: "X" }),
+  ];
+  const reorder = command("branch_output.reorder", {
+    id: id("branch_output", 3),
+    order: "Vm",
+  });
+
+  it("gives a branch output that a batch changed before its node the output's revision, whatever the order of the commands", () => {
+    const op = {
+      seq: 8,
+      commands: [
+        reorder,
+        command("node.update", { id: id("node", 1), title: "Fork" }),
+      ],
+      revisions: [
+        { id: id("branch_output", 3), rev: 4 },
+        { id: id("node", 1), rev: 4 },
+      ],
+      time,
+    };
+    const { doc } = applyOperation(docOf({ nodes: [branch(1, outputs)] }), op);
+    const node = doc.nodes.get(id("node", 1));
+    expect(node).toMatchObject({ title: "Fork", rev: 4 });
+    expect(
+      node?.outputs?.find((o) => o.id === id("branch_output", 3)),
+    ).toMatchObject({ order: "Vm", rev: 4 });
+  });
+
+  it("keeps the change of a branch output whose node the batch set back, as one that the server did not change", () => {
+    const op = {
+      seq: 8,
+      commands: [
+        reorder,
+        // The title that the node has already, which changes nothing.
+        command("node.update", { id: id("node", 1), title: "" }),
+      ],
+      revisions: [{ id: id("branch_output", 3), rev: 4 }],
+      time,
+    };
+    const { doc } = applyOperation(docOf({ nodes: [branch(1, outputs)] }), op);
+    const node = doc.nodes.get(id("node", 1));
+    expect(node).toMatchObject({ rev: 3, updated_at: earlier });
+    expect(
+      node?.outputs?.find((o) => o.id === id("branch_output", 3)),
+    ).toMatchObject({ order: "Vm", rev: 4 });
   });
 });
 

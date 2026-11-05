@@ -187,18 +187,22 @@ export class History {
     this.save();
   }
 
-  /** Takes the next step to undo out of the history, once it has applied, and records the step that redoes it, if any. */
-  undone(step: Step, redo: Step | undefined): void {
-    this.take(this.undoSteps, step);
+  /**
+   * Takes the next step to undo out of the history, once it has applied, and
+   * records the step that redoes it, if any; a step sent in parts of which
+   * some applied is left in its place as rest, what did not.
+   */
+  undone(step: Step, redo: Step | undefined, rest?: Step): void {
+    this.take(this.undoSteps, step, rest);
     if (redo !== undefined) {
       this.push(this.redoSteps, redo);
     }
     this.save();
   }
 
-  /** Takes the next step to redo out of the history, once it has applied, and records the step that undoes it again, if any. */
-  redone(step: Step, undo: Step | undefined): void {
-    this.take(this.redoSteps, step);
+  /** Takes the next step to redo out of the history, once it has applied, as undone does, and records the step that undoes it again, if any. */
+  redone(step: Step, undo: Step | undefined, rest?: Step): void {
+    this.take(this.redoSteps, step, rest);
     if (undo !== undefined) {
       this.push(this.undoSteps, undo);
     }
@@ -276,12 +280,13 @@ export class History {
 
   /**
    * Takes step out of steps, found by its batches' seqs, which no other step
-   * has, since a step that moved (move) is another object.
+   * has, since a step that moved (move) is another object, or puts rest in
+   * its place.
    */
-  private take(steps: Step[], step: Step): void {
+  private take(steps: Step[], step: Step, rest?: Step): void {
     const i = steps.findLastIndex((s) => s.seqs[0] === step.seqs[0]);
     if (i >= 0) {
-      steps.splice(i, 1);
+      steps.splice(i, 1, ...(rest === undefined ? [] : [rest]));
     }
     this.forget();
   }

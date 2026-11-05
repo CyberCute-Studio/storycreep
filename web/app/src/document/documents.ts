@@ -60,9 +60,22 @@ export class Documents {
     });
   }
 
-  /** Returns the document of projectId, made now if the page has none. */
+  /**
+   * Returns the document of projectId, made now if the page has none, or if
+   * the one that it has found the project gone, as to the trash, and no page
+   * shows it, so that a page that the user opens again, as once the project
+   * is back, asks anew.
+   */
   get(projectId: string): ProjectDocument {
     let held = this.held.get(projectId);
+    if (
+      held !== undefined &&
+      held.shown === 0 &&
+      held.doc.store.getState().gone
+    ) {
+      this.forget(projectId);
+      held = undefined;
+    }
     if (held === undefined) {
       held = {
         doc: new ProjectDocument(projectId, this.options),
@@ -93,14 +106,23 @@ export class Documents {
     };
   }
 
-  /** Drops the document of projectId once no page has shown it for a while. */
+  /**
+   * Drops the document of projectId once no page has shown it for a while,
+   * and it is not reading what a route's loader may be waiting for, before
+   * the page that it is for shows, however long that takes.
+   */
   private unshown(projectId: string, held: Held): void {
     clearTimeout(held.timer);
     held.timer = setTimeout(() => {
-      if (held.shown === 0 && this.held.get(projectId) === held) {
-        this.held.delete(projectId);
-        held.doc.dispose();
+      if (held.shown !== 0 || this.held.get(projectId) !== held) {
+        return;
       }
+      if (held.doc.busy) {
+        this.unshown(projectId, held);
+        return;
+      }
+      this.held.delete(projectId);
+      held.doc.dispose();
     }, keptUnshown);
   }
 
