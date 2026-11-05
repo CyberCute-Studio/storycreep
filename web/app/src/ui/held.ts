@@ -103,6 +103,12 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
           return;
         }
+        // The page itself lost the focus, as to another tab or window, and
+        // the control that had it has it again once the user is back, as
+        // the form held what it showed meanwhile.
+        if (event.target === event.currentTarget.ownerDocument.activeElement) {
+          return;
+        }
         focused.current = undefined;
         if (!changed.current) {
           setHeld(undefined);

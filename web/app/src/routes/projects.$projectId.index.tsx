@@ -10,7 +10,8 @@ export const Route = createFileRoute("/projects/$projectId/")({
   // comes first, so that a project that the account may not see shows the
   // page of no page before its document reads its tree. A tree that the
   // document held already, which the real-time channel does not keep
-  // current while it is not live, is shown as it is, and read anew.
+  // current while it is not live, is shown as it is, and read anew, alone,
+  // rather than with every board that the session has opened.
   loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
@@ -21,7 +22,7 @@ export const Route = createFileRoute("/projects/$projectId/")({
     if (held) {
       // A read anew that fails is recorded, and tried again later, while
       // the tree shows what the document held.
-      void doc.refresh().catch(() => undefined);
+      void doc.refresh("tree").catch(() => undefined);
     }
   },
   // The router keeps no match of the page once it is left, which it would

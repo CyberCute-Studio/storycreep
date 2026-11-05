@@ -252,6 +252,18 @@ export class History {
     this.save();
   }
 
+  /**
+   * Takes every step out of the history, as once the project's seqs and
+   * revisions that they wait for and expect are of changes that the server
+   * no longer has, as of a database restored from an older backup.
+   */
+  clear(): void {
+    this.undoSteps = [];
+    this.redoSteps = [];
+    this.captured.clear();
+    this.save();
+  }
+
   /** Records what the store held of the entities that the batch of seq changed, once it had every operation before it. */
   capture(seq: number, revs: Captured): void {
     this.captured.set(seq, revs);

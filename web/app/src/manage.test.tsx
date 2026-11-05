@@ -5,7 +5,13 @@ import {
   NetworkError,
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
@@ -1004,6 +1010,39 @@ describe("a board's page", () => {
     );
     expect(document.activeElement).toBe(description);
     expect(description.isConnected).toBe(true);
+    await user.click(document.body);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),
+    );
+  });
+
+  // Verifies: FR-RT-02/AC3
+  it("keeps the focus in a field that the user is in while the page has lost it, as to another tab, and another session's change of the board applies, rather than show the form anew without it", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation) =>
+      expected(projectPages(operation, [board("bd_a", "Harbour")]), operation),
+    );
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const description = await screen.findByLabelText("Description");
+    await user.click(description);
+    // The window loses the focus, which the field keeps, as the browser
+    // gives it back once the user is back.
+    fireEvent.blur(description);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.set_color", payload: { id: "bd_a", color: "blue" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(description.isConnected).toBe(true);
+    expect(document.activeElement).toBe(description);
+    expect(screen.getByLabelText("Colour")).toHaveProperty("value", "none");
+    fireEvent.focus(description);
     await user.click(document.body);
     await waitFor(() =>
       expect(screen.getByLabelText("Colour")).toHaveProperty("value", "blue"),

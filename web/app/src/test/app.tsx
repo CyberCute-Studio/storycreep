@@ -141,7 +141,13 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     checkSession: () => void follower.check(),
     storage: window.sessionStorage,
   });
-  onTestFinished(() => documents.close());
+  // The documents go after the setup has cleared the tab's storage for the
+  // next test, which each writes what its history recorded to as it goes
+  // (History.close): it is cleared again once they have.
+  onTestFinished(() => {
+    documents.close();
+    window.sessionStorage.clear();
+  });
   const router = createRouter({
     routeTree: options.routes ?? routeTree,
     basepath: "/app",

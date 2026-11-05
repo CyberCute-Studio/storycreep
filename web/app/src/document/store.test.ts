@@ -268,7 +268,13 @@ async function open(options: { checkSession?: () => void } = {}) {
     storage: window.sessionStorage,
     now: () => time,
   });
-  onTestFinished(() => doc.dispose());
+  // The document goes after the setup has cleared the tab's storage for the
+  // next test, which it writes what its history recorded to as it goes
+  // (History.close): it is cleared again once it has.
+  onTestFinished(() => {
+    doc.dispose();
+    window.sessionStorage.clear();
+  });
   await doc.ready;
   await doc.load("tree");
   let ids = 0;
@@ -288,8 +294,10 @@ async function open(options: { checkSession?: () => void } = {}) {
       revisions,
       created_at: time,
     });
-  // The channel's resync_required: the operations after seq follow.
-  const resync = (seq: number) => subscribers.at(-1)?.resync(seq);
+  // The channel's resync_required: the operations after seq follow, of a
+  // project whose seq went back behind what the server had, if behind.
+  const resync = (seq: number, behind = false) =>
+    subscribers.at(-1)?.resync(seq, behind);
   const subscriber = () => subscribers.at(-1) as Subscriber;
   return { doc, realtime, log, queryClient, deliver, resync, subscriber };
 }
@@ -349,6 +357,23 @@ describe("the project document's reads", () => {
     await doc.load("tree");
     expect(projectReads).toBe(2);
     expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour" });
+  });
+
+  it("records a read of a part that failed, which a loader shows as the error page that offers the error console, but for one of what is not there, which it shows as the page of no page", async () => {
+    let reads = 0;
+    serve({
+      ...tree([]),
+      listVariables: () => {
+        throw ++reads === 1
+          ? refused(503, { code: "unavailable" })
+          : refused(404, { code: "not_found" });
+      },
+    });
+    const { doc, log } = await open();
+    await expect(doc.load("variables")).rejects.toMatchObject({ status: 503 });
+    expect(log.entries()).toMatchObject([{ source: "request", count: 1 }]);
+    await expect(doc.load("variables")).rejects.toMatchObject({ status: 404 });
+    expect(log.entries()).toHaveLength(1);
   });
 
   it("has the page ask for its session once a read is answered that the session may have ended, without recording it, as the app's queries do", async () => {
@@ -1844,9 +1869,12 @@ describe("undo and redo (FR-EDIT-08)", () => {
     const sent = doc.send([rename("bd_b", "Old light", 3)]);
     await flush();
     // The batch waits for the redo, which waits for the operations up to
-    // the undo that it redoes.
+    // the undo that it redoes, and the page shows it at once all the same.
     expect(server.batches).toHaveLength(2);
     expect(doc.store.getState().redoable).toBe(1);
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Old light" });
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour" });
+    expect(doc.store.getState().sending).toBe(1);
     realtime.send(
       testProject.id,
       [{ type: "board.describe", payload: { id: "bd_b", description: "" } }],
@@ -2569,7 +2597,7 @@ describe("what the document reads while operations come", () => {
     const { doc, deliver, subscriber } = await open();
     // The socket is back, and the subscription holds as of 3, after which
     // the channel sends the operations after 1.
-    subscriber().subscribed(3, 1);
+    subscriber().subscribed(3);
     subscriber().live(true);
     let refreshed = false;
     const refreshing = doc.refresh().then(() => {
@@ -2751,6 +2779,27 @@ describe("what the document reads while operations come", () => {
     expect(projectReads).toBe(3);
   });
 
+  it("reads again the part alone that a page asks to read anew, while the channel is not live, rather than the project and every part that the session has opened", async () => {
+    let boards = [board("bd_a", "Harbour")];
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      listBoardNodes: () => page([]),
+      listBoardConnections: () => page([]),
+    });
+    const { doc } = await open();
+    await doc.load("board:bd_a");
+    // Another session made a board, which the channel, not live, does not
+    // bring.
+    boards = [...boards, board("bd_b", "Lighthouse")];
+    await doc.refresh("tree");
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Lighthouse" });
+    expect(server.calls("listBoards")).toHaveLength(2);
+    expect(server.calls("getProject")).toHaveLength(1);
+    expect(server.calls("listBoardNodes")).toHaveLength(1);
+  });
+
   it("does not read the project anew once its subscription holds as of a seq that the page's own batch, answered before, has moved the document past", async () => {
     const server = serve({
       ...tree([board("bd_a", "Harbour")]),
@@ -2762,20 +2811,46 @@ describe("what the document reads while operations come", () => {
     const since = subscriber().since();
     await doc.send([rename("bd_a", "Harbour at night", 3)]);
     expect(doc.doc.seq).toBe(2);
-    subscriber().subscribed(since, since);
+    subscriber().subscribed(since);
     subscriber().live(true);
     await flush();
     expect(server.calls("getProject")).toHaveLength(1);
-    // A subscription that holds as of a seq before the one that it was sent
-    // from, as of a database restored from an older backup, is behind.
-    const from = subscriber().since();
-    subscriber().subscribed(from - 1, from);
+  });
+
+  it("forgets the history, and the revisions that the page's own batches moved entities to, once the channel tells that the server's seq went back behind what it had, as of a database restored from an older backup, rather than undo, or send a dialog's batch, over a change made since that took the same revision", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        applied(2, [{ id: "bd_a", rev: 4 }]),
+      ),
+    });
+    const { doc, realtime, resync } = await open();
+    realtime.hold(testProject.id);
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    expect(doc.store.getState().undoable).toBe(1);
+    // The database is restored from a backup of before the rename, at seq
+    // 1, which the subscription sent anew from seq 2 is told to read anew.
+    resync(testProject.seq, true);
     await vi.waitFor(() => expect(server.calls("getProject")).toHaveLength(2));
+    await vi.waitFor(() =>
+      expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour", rev: 3 }),
+    );
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 0 });
+    await expect(doc.undo()).resolves.toBe(false);
+    // A dialog that opened before the restore, with the revision that the
+    // page's own rename moved the board from, which is the board's again.
+    await doc.send([rename("bd_a", "Lighthouse", 3)]);
+    expect(server.batches[1][0].expected_rev).toEqual({ bd_a: 3 });
   });
 
   it("tells the project's read the project as the server has it once a database restored from an older backup took the project's seq back, rather than keep what it read before", async () => {
     serve(tree([]));
-    const { queryClient, realtime, subscriber } = await open();
+    const { queryClient, realtime, resync } = await open();
     const key = projectQuery(testProject.id).queryKey;
     realtime.send(
       testProject.id,
@@ -2787,9 +2862,9 @@ describe("what the document reads while operations come", () => {
       seq: 2,
     });
     // The database is restored from a backup of before the rename, and the
-    // subscription sent anew holds as of the seq that it had then.
-    const from = subscriber().since();
-    subscriber().subscribed(testProject.seq, from);
+    // subscription sent anew is told to read the project anew as of the seq
+    // that it had then.
+    resync(testProject.seq, true);
     await vi.waitFor(() =>
       expect(queryClient.getQueryData(key)).toMatchObject({
         name: "Harbour",
@@ -3297,7 +3372,11 @@ describe("the page's documents", () => {
       return subscribe(projectId, subscriber);
     };
     const documents = new Documents({ queryClient, realtime, log, storage });
-    onTestFinished(() => documents.close());
+    // As the document that open makes.
+    onTestFinished(() => {
+      documents.close();
+      window.sessionStorage.clear();
+    });
     return { documents, subscribers, queryClient, realtime };
   }
 
@@ -3349,6 +3428,31 @@ describe("the page's documents", () => {
     expect(documents.get(testProject.id)).toBe(doc);
     boards.resolve(page([]));
     await loaded;
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).not.toBe(doc);
+  });
+
+  it("keep a document that no page shows while it reads the project anew, as a board's loader waits for before it says that there is no such board, longer than they keep one otherwise", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let reads = 0;
+    const again = Promise.withResolvers<unknown>();
+    serve({
+      getProject: () => (++reads === 1 ? testProject : again.promise),
+      listFolders: () => page([]),
+      listBoards: () => page([board("bd_a", "Harbour")]),
+    });
+    const { documents } = documentsOf();
+    const doc = documents.get(testProject.id);
+    await doc.load("tree");
+    const refreshed = doc.refresh();
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).toBe(doc);
+    again.resolve(testProject);
+    await refreshed;
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour" });
     await vi.advanceTimersByTimeAsync(keptUnshown + 1);
     expect(documents.get(testProject.id)).not.toBe(doc);
   });

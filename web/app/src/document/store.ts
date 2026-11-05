@@ -103,7 +103,7 @@ export interface DocumentState {
   live: boolean;
   /** Whether the project can no longer be read, as once it went to the trash. */
   gone: boolean;
-  /** How many of the page's batches are queued or under way. */
+  /** How many of the page's batches are queued or under way, or wait for a step of the history. */
   sending: number;
   /** How many steps can be undone and redone. */
   undoable: number;
@@ -175,6 +175,16 @@ function refusedForGood(error: unknown): boolean {
     ![401, 403, 408, 429].includes(status) &&
     body?.code !== "project_archived"
   );
+}
+
+/**
+ * A batch of the page's own made while a step of the history is under way,
+ * which waits to be queued until the step has settled (sendAfterSteps), and
+ * which the page shows meanwhile, on top of the batches queued.
+ */
+interface Waiting {
+  commands: readonly Command[];
+  time: string;
 }
 
 /** A batch of the page's own, which the document shows until the server confirms it by seq. */
@@ -369,6 +379,15 @@ export class ProjectDocument {
   private readonly now: () => string;
   private confirmed: Doc = emptyDoc();
   private entries: Entry[] = [];
+  /** The page's batches that wait for a step of the history under way, in the order that they were made in. */
+  private waiting: Waiting[] = [];
+  /**
+   * The document as the page shows it without the batches that wait for a
+   * step of the history (waiting): what the server confirmed, with the
+   * page's queued batches on top, on which a batch queued now, or a step,
+   * is made (enqueue).
+   */
+  private queuedView: Doc = this.confirmed;
   private inflight = false;
   /** The operations that came while the document read the project, which it applies once it has. */
   private buffer: Operation[] | undefined = [];
@@ -467,6 +486,15 @@ export class ProjectDocument {
    * operations up to it the channel does not send (reload).
    */
   private resyncTo = 0;
+  /**
+   * How many times the server's seq has gone back behind what the document
+   * had, as of a database restored from an older backup (wentBack), so that
+   * the project read anew that was under way then, which may be of before,
+   * is read again.
+   */
+  private restores = 0;
+  /** How many of the pages' readings anew of the project are under way (refresh), which the document is busy with. */
+  private refreshes = 0;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -539,14 +567,17 @@ export class ProjectDocument {
 
   /**
    * Reports whether the document is reading the project, or a part of it,
-   * which a route's loader may be waiting for, or sending the page's batches,
-   * or a step of the history, whose answers join the history, which a
-   * document dropped keeps no longer in the tab's storage (dispose).
+   * or reading it anew, which a route's loader may be waiting for (refresh),
+   * or sending the page's batches, or a step of the history, whose answers
+   * join the history, which a document dropped keeps no longer in the tab's
+   * storage (dispose).
    */
   get busy(): boolean {
     return (
       !this.started ||
       this.partReads > 0 ||
+      this.refreshes > 0 ||
+      this.resyncing !== undefined ||
       this.sends.size > 0 ||
       this.stepUnderWay !== undefined
     );
@@ -564,22 +595,17 @@ export class ProjectDocument {
     this.buffer = undefined;
     this.unsubscribe = this.options.realtime?.subscribe(this.projectId, {
       since: () => this.confirmed.seq,
-      subscribed: (seq, since) => {
+      subscribed: (seq) => {
         this.subscribedTo = seq;
-        // A project whose seq is behind what the subscription was sent from,
-        // as of a database restored from a backup older than the page, has
-        // other operations after it than those that the document has. One
-        // that the document's own batches have moved past since it was sent,
-        // whose answers came before it, is not behind.
-        if (seq < since) {
-          // The revisions that the page's own batches moved its entities
-          // from and to are the project's from before it was restored.
-          this.ownMoves.clear();
-          void this.resync(seq);
-        }
       },
       operation: (message) => this.receive(operationOf(message)),
-      resync: (seq) => void this.resync(seq),
+      resync: (seq, behind) => {
+        this.subscribedTo = seq;
+        if (behind) {
+          this.wentBack(seq);
+        }
+        void this.resync(seq);
+      },
       gone: () => this.goneAway(),
       live: (live) => {
         // The operations up to the seq that the subscription is sent from,
@@ -656,7 +682,11 @@ export class ProjectDocument {
         }
         this.show();
       } catch (error) {
-        this.failed(error, false);
+        // A loader shows a part that is not there as the page of no page,
+        // and any other failure as the error page, which offers the error
+        // console that recorded it: the part's read here, and the project's
+        // by the query client, which read it (start).
+        this.failed(error, generation !== undefined && !notFoundBy(error));
         if (
           this.loads.get(part) === load &&
           generation !== undefined &&
@@ -691,18 +721,36 @@ export class ProjectDocument {
    * subscription held as of, which the channel sends first, once the socket
    * is back, or once the reading anew under way has read the project, as
    * after resync_required; and it reads the project anew if those
-   * operations do not come in a while.
+   * operations do not come in a while. Given a part that the document
+   * holds, as the tree that a page shows alone, it reads that part again
+   * in place of the project, rather than every part that the session has
+   * opened, and resolves once it has, or has failed to, which has the
+   * project read anew, and records it (readFailed). The document is busy
+   * meanwhile, so that it is not dropped under the loader that waits.
    */
-  async refresh(): Promise<void> {
-    if (this.store.getState().live && this.buffer === undefined) {
-      await this.whenConfirmed(this.subscribedTo, confirmWait);
-      if (this.confirmed.seq >= this.subscribedTo || this.disposed) {
+  async refresh(part?: Part): Promise<void> {
+    this.refreshes++;
+    try {
+      if (this.store.getState().live && this.buffer === undefined) {
+        await this.whenConfirmed(this.subscribedTo, confirmWait);
+        if (this.confirmed.seq >= this.subscribedTo || this.disposed) {
+          return;
+        }
+      }
+      if (
+        part !== undefined &&
+        this.loads.has(part) &&
+        this.buffer === undefined
+      ) {
+        await this.reread(part);
         return;
       }
-    }
-    await this.resync(this.confirmed.seq);
-    if (this.resyncFailure !== undefined) {
-      throw this.resyncFailure;
+      await this.resync(this.confirmed.seq);
+      if (this.resyncFailure !== undefined) {
+        throw this.resyncFailure;
+      }
+    } finally {
+      this.refreshes--;
     }
   }
 
@@ -1084,7 +1132,9 @@ export class ProjectDocument {
    * a batch made on top of it would otherwise expect, and write over unasked.
    * A batch is applied anew only once what it applies on top of, its
    * commands, or its answer has changed since it was shown last, as each
-   * copies what it changes of the document's maps (Entry.shown).
+   * copies what it changes of the document's maps (Entry.shown). The
+   * batches that wait for a step of the history under way are on top of
+   * them all (waiting), as they are sent after.
    */
   private show(): void {
     let view = this.confirmed;
@@ -1105,9 +1155,15 @@ export class ProjectDocument {
       view = applyPending(view, entry.commands, entry.time, revisions);
       entry.shown = { from, commands: entry.commands, revisions, view };
     }
+    this.queuedView = view;
+    for (const waiting of this.waiting) {
+      view = applyPending(view, waiting.commands, waiting.time);
+    }
     this.store.setState({
       view,
-      sending: this.entries.filter((e) => e.answer === undefined).length,
+      sending:
+        this.entries.filter((e) => e.answer === undefined).length +
+        this.waiting.length,
       undoable: this.history.undoable,
       redoable: this.history.redoable,
     });
@@ -1159,6 +1215,36 @@ export class ProjectDocument {
     return this.reloading(seq, 0);
   }
 
+  /**
+   * Forgets what the document knows of the project from before seq, once
+   * the channel tells that the server's seq went back to it, behind what the
+   * server had, as of a database restored from an older backup, whose seqs
+   * and revisions after seq, which commit anew, are of other changes than
+   * those that the document saw: the steps of the history, which wait for
+   * seqs, and expect revisions, from before, and would otherwise write over
+   * a change that another session made since, which took the same revision
+   * (FR-EDIT-08 AC4); the revisions that the page's own batches moved
+   * entities to (ownMoves), and what the document held of each at each
+   * revision (earlier); the page's batches answered past seq, which the
+   * restore took back; and the operations that came while the project was
+   * read anew, which are of before, as may be that read itself, which it
+   * reads again (reload).
+   */
+  private wentBack(seq: number): void {
+    this.history.clear();
+    this.ownMoves.clear();
+    this.earlier.clear();
+    this.entries = this.entries.filter(
+      (e) => e.answer === undefined || e.answer.seq <= seq,
+    );
+    this.restores++;
+    if (this.buffer !== undefined) {
+      this.buffer = [];
+      this.resyncTo = seq;
+    }
+    this.show();
+  }
+
   /** Reads the project anew as reload does, as the reading anew under way, which resync and refresh resolve with. */
   private reloading(seq: number, failures: number): Promise<void> {
     const resyncing = this.reload(seq, failures).finally(() => {
@@ -1176,6 +1262,7 @@ export class ProjectDocument {
     let body: ProjectBody;
     this.resyncFailure = undefined;
     const readAt = Date.now();
+    const restores = this.restores;
     try {
       body = (
         await api.call("getProject", { path: { project_id: this.projectId } })
@@ -1251,16 +1338,24 @@ export class ProjectDocument {
       }
       this.failed(error);
       this.resyncFailure = error;
+      // The read tried again is as of the latest seq that the channel asked
+      // for meanwhile, or the one that the server's seq went back to.
       const retry = () => {
         clearTimeout(this.resyncTimer);
         this.retryNow = undefined;
-        void this.reloading(seq, failures + 1);
+        void this.reloading(this.resyncTo, failures + 1);
       };
       this.retryNow = retry;
       this.resyncTimer = setTimeout(retry, backoff(failures + 1, Math.random));
       return;
     }
     if (this.disposed) {
+      return;
+    }
+    if (this.restores !== restores) {
+      // The server's seq went back while the project was read, which may
+      // have read it as it was before.
+      void this.reloading(this.resyncTo, 0);
       return;
     }
     const before = this.confirmed.project;
@@ -1392,8 +1487,8 @@ export class ProjectDocument {
    * page's session may have ended has the page ask for its session, which
    * drops the document once it has none, and is not recorded where the
    * session has ended (signedOutBy), which the page shows by signing out;
-   * one that a page shows, as a loader's read of a part, is not recorded
-   * here (record).
+   * one that a page shows as the page of no page, as a loader's read of a
+   * part that is not there, is not recorded here (record).
    */
   private failed(error: unknown, record = true): void {
     if (sessionDoubtedBy(error)) {
@@ -1613,15 +1708,29 @@ export class ProjectDocument {
    * undo the latest change, the one that the user did not ask to undo, or
    * end what the redo would redo, or else be written over by it (stepped).
    * It is sent in the order that it was made in among the steps asked for
-   * meanwhile, as they are among themselves (step).
+   * meanwhile, as they are among themselves (step), and the page shows it
+   * at once all the same, on top of what is queued (waiting), as a board
+   * dropped in the tree where it was dropped, rather than where it was
+   * until the step has settled.
    */
   private sendAfterSteps(
     commands: readonly Command[],
+    waiting?: Waiting,
   ): Promise<CommandResultBody> {
     const underWay = this.stepUnderWay;
     if (underWay !== undefined) {
-      const after = () => this.sendAfterSteps(commands);
+      let held = waiting;
+      if (held === undefined) {
+        held = { commands, time: this.now() };
+        this.waiting.push(held);
+        this.show();
+      }
+      const after = () => this.sendAfterSteps(commands, held);
       return underWay.done.then(after, after);
+    }
+    if (waiting !== undefined) {
+      // The batch is queued now, which the page shows in its place.
+      this.waiting = this.waiting.filter((w) => w !== waiting);
     }
     const batch = this.sendBatch(commands);
     this.batches.add(batch);
@@ -1729,8 +1838,14 @@ export class ProjectDocument {
       // channel was not, which settles the batches that it read. Nothing
       // changes the history meanwhile, as the page's batches made since wait
       // for the step.
+      const restores = this.restores;
       if (this.store.getState().live || this.buffer !== undefined) {
         await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
+      }
+      if (this.restores !== restores) {
+        // The server's seq went back meanwhile, behind the batches that the
+        // step undoes or redoes, which the history no longer has (wentBack).
+        return false;
       }
       const before = this.history.before(step);
       let applied: Sent[] = [];
@@ -1871,7 +1986,9 @@ export class ProjectDocument {
       const body = { ...command, command_id: ids[i] } as CommandBody;
       return step ? body : this.pastOwn(body);
     });
-    const view = this.store.getState().view;
+    // Made on what is queued, without the batches that wait for a step,
+    // which come after it (waiting).
+    const view = this.queuedView;
     const base = new Map<string, Base>();
     for (const command of withIds) {
       for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
