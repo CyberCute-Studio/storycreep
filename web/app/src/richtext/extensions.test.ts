@@ -35,6 +35,33 @@ describe("the editor's extensions", () => {
     });
   });
 
+  test("a URL pasted over the selection links it where a link may lead to the URL, and is pasted as text over it otherwise", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    editor.view.pasteText("ftp://files.example.com");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      p("ftp://files.example.com"),
+    ]);
+    editor.commands.setContent(p("harbour"));
+    editor.commands.selectAll();
+    editor.view.pasteText("example.com");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "harbour",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
   test("keep a change within the schema wherever it is in a long text, though it sets only a mark", () => {
     const paragraphs = Array.from({ length: 50 }, (_, i) => p(`line ${i}`));
     const editor = testEditor({

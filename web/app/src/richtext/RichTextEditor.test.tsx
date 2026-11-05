@@ -115,13 +115,14 @@ describe("the rich-text editor", () => {
     await waitFor(() => expect(document.activeElement).toBe(textbox));
   });
 
-  test("saving a link submits no form of the page that holds the editor", async () => {
+  test("saving a link submits no form of the page that holds the editor, and typing its URL changes none of the form's fields", async () => {
     const onSubmit = vi.fn((event: { preventDefault: () => void }) => {
       event.preventDefault();
     });
+    const onFormChange = vi.fn();
     render(
       <I18nextProvider i18n={createAppI18n(["en"], document.documentElement)}>
-        <form onSubmit={onSubmit}>
+        <form onSubmit={onSubmit} onChange={onFormChange}>
           <RichTextEditor label="Body" defaultValue={paragraph("harbour")} />
         </form>
       </I18nextProvider>,
@@ -134,6 +135,7 @@ describe("the rich-text editor", () => {
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(onSubmit).not.toHaveBeenCalled();
+    expect(onFormChange).not.toHaveBeenCalled();
   });
 
   test("says that a text of more than 100,000 characters is too long to save, and gives the page why", async () => {
@@ -230,6 +232,36 @@ describe("the rich-text editor", () => {
     await waitFor(() => expect(textbox.textContent).toBe("Ask @Elara"));
   });
 
+  test("a click on the label puts the focus in the text, as it does in every field", async () => {
+    const { textbox } = renderEditor({ defaultValue: paragraph("harbour") });
+    await userEvent.click(screen.getByText("Body"));
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+  });
+
+  test("a text that may no longer be changed closes the link's dialog, which changes nothing", async () => {
+    const onChange = vi.fn();
+    const i18n = createAppI18n(["en"], document.documentElement);
+    const editor = (editable: boolean) => (
+      <I18nextProvider i18n={i18n}>
+        <RichTextEditor
+          label="Body"
+          defaultValue={paragraph("harbour")}
+          editable={editable}
+          onChange={onChange}
+        />
+      </I18nextProvider>
+    );
+    const { rerender } = render(editor(true));
+    await selectAll(screen.getByRole("textbox", { name: "Body" }));
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await screen.findByRole("dialog", { name: "Add a link" });
+    rerender(editor(false));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    rerender(editor(true));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   test("inserts what the user typed as the text of a link where nothing is selected", async () => {
     const { textbox, last } = renderEditor();
     textbox.focus();
@@ -249,6 +281,31 @@ describe("the rich-text editor", () => {
             { attrs: { href: "https://xn--caf-dma.example" }, type: "link" },
           ],
           text: "café.example",
+          type: "text",
+        },
+      ],
+      type: "paragraph",
+    });
+  });
+
+  test("the text of a link inserted where nothing is selected has the marks of text typed there", async () => {
+    const { textbox, last } = renderEditor();
+    textbox.focus();
+    await userEvent.click(screen.getByRole("button", { name: "Bold" }));
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "Address" }),
+      "example.com{Enter}",
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(last()?.doc?.content[0]).toEqual({
+      content: [
+        {
+          marks: [
+            { type: "bold" },
+            { attrs: { href: "https://example.com" }, type: "link" },
+          ],
+          text: "example.com",
           type: "text",
         },
       ],

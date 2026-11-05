@@ -6,6 +6,7 @@
 import { MAX_DECIMALS } from "@storycreep/shared/richtext";
 import {
   type AnyExtension,
+  type Attributes,
   type Editor,
   Extension,
   mergeAttributes,
@@ -60,130 +61,101 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
 }
 
 /**
- * A mention of a component, an inline atom that shows the component's name
- * (FR-TEXT-03), with its ID in attrs.id. Its element is a span of
- * data-type="mention", which the paste's cleaning keeps, so that a mention
- * copied from one text is one in the text that it is pasted into.
+ * Returns an inline atom of the editor's own, named name, which shows what
+ * chipText makes of it with the labels of its options. Its element is a span
+ * of data-type, with its attributes, which the paste's cleaning keeps where
+ * accepts takes it, so that one copied from one text is one in the text that
+ * it is pasted into.
  */
-const Mention = Node.create<{ labels: ChipLabels }>({
-  name: "mention",
-  group: "inline",
-  inline: true,
-  atom: true,
-  selectable: true,
+function chipNode(
+  name: "mention" | "valueRef",
+  type: "mention" | "value-ref",
+  accepts: (element: HTMLElement) => boolean,
+  attributes: Attributes,
+) {
+  return Node.create<{ labels: ChipLabels }>({
+    name,
+    group: "inline",
+    inline: true,
+    atom: true,
+    selectable: true,
 
-  addOptions() {
-    return { labels: { mention: (id: string) => id, value: (ref) => ref } };
-  },
+    addOptions() {
+      return { labels: { mention: (id: string) => id, value: (ref) => ref } };
+    },
 
-  addAttributes() {
-    return {
-      id: {
-        isRequired: true,
-        parseHTML: (element) => element.getAttribute("data-id"),
-        renderHTML: (attributes) => ({ "data-id": attributes.id }),
-      },
-    };
-  },
+    addAttributes: () => attributes,
 
-  parseHTML() {
-    return [
-      {
-        tag: 'span[data-type="mention"]',
-        getAttrs: (element) => (isMentionElement(element) ? null : false),
-      },
-    ];
-  },
+    parseHTML() {
+      return [
+        {
+          tag: `span[data-type="${type}"]`,
+          getAttrs: (element) => (accepts(element) ? null : false),
+        },
+      ];
+    },
 
-  renderHTML({ node, HTMLAttributes }) {
-    return [
-      "span",
-      mergeAttributes(HTMLAttributes, {
-        "data-type": "mention",
-        class: "rich-text-chip",
-      }),
-      chipText(node, this.options.labels) ?? "",
-    ];
-  },
+    renderHTML({ node, HTMLAttributes }) {
+      return [
+        "span",
+        mergeAttributes(HTMLAttributes, {
+          "data-type": type,
+          class: "rich-text-chip",
+        }),
+        chipText(node, this.options.labels) ?? "",
+      ];
+    },
 
-  renderText({ node }) {
-    return chipText(node, this.options.labels) ?? "";
+    renderText({ node }) {
+      return chipText(node, this.options.labels) ?? "";
+    },
+  });
+}
+
+/** A mention of a component, which shows the component's name (FR-TEXT-03), with its ID in attrs.id. */
+const Mention = chipNode("mention", "mention", isMentionElement, {
+  id: {
+    isRequired: true,
+    parseHTML: (element) => element.getAttribute("data-id"),
+    renderHTML: (attributes) => ({ "data-id": attributes.id }),
   },
 });
 
 /**
- * A reference to a value, an inline atom that shows the value (FR-TEXT-02):
- * a variable's, with its ID in attrs.ref, or a component's runtime
- * attribute's, with the component's ID in attrs.ref and the attribute
- * definition's in attrs.attribute, and attrs.decimals, the digits after the
- * point that a number is shown with, or null for none.
+ * A reference to a value, which shows the value (FR-TEXT-02): a variable's,
+ * with its ID in attrs.ref, or a component's runtime attribute's, with the
+ * component's ID in attrs.ref and the attribute definition's in
+ * attrs.attribute, and attrs.decimals, the digits after the point that a
+ * number is shown with, or null for none.
  */
-const ValueRef = Node.create<{ labels: ChipLabels }>({
-  name: "valueRef",
-  group: "inline",
-  inline: true,
-  atom: true,
-  selectable: true,
-
-  addOptions() {
-    return { labels: { mention: (id: string) => id, value: (ref) => ref } };
+const ValueRef = chipNode("valueRef", "value-ref", isValueRefElement, {
+  ref: {
+    isRequired: true,
+    parseHTML: (element) => element.getAttribute("data-ref"),
+    renderHTML: (attributes) => ({ "data-ref": attributes.ref }),
   },
-
-  addAttributes() {
-    return {
-      ref: {
-        isRequired: true,
-        parseHTML: (element) => element.getAttribute("data-ref"),
-        renderHTML: (attributes) => ({ "data-ref": attributes.ref }),
-      },
-      attribute: {
-        default: null,
-        parseHTML: (element) => element.getAttribute("data-attribute"),
-        renderHTML: (attributes) =>
-          attributes.attribute === null
-            ? {}
-            : { "data-attribute": attributes.attribute },
-      },
-      decimals: {
-        default: null,
-        parseHTML: (element) => {
-          const decimals = element.getAttribute("data-decimals");
-          return decimals !== null &&
-            /^\d$/.test(decimals) &&
-            Number(decimals) <= MAX_DECIMALS
-            ? Number(decimals)
-            : null;
-        },
-        renderHTML: (attributes) =>
-          attributes.decimals === null
-            ? {}
-            : { "data-decimals": String(attributes.decimals) },
-      },
-    };
+  attribute: {
+    default: null,
+    parseHTML: (element) => element.getAttribute("data-attribute"),
+    renderHTML: (attributes) =>
+      attributes.attribute === null
+        ? {}
+        : { "data-attribute": attributes.attribute },
   },
-
-  parseHTML() {
-    return [
-      {
-        tag: 'span[data-type="value-ref"]',
-        getAttrs: (element) => (isValueRefElement(element) ? null : false),
-      },
-    ];
-  },
-
-  renderHTML({ node, HTMLAttributes }) {
-    return [
-      "span",
-      mergeAttributes(HTMLAttributes, {
-        "data-type": "value-ref",
-        class: "rich-text-chip",
-      }),
-      chipText(node, this.options.labels) ?? "",
-    ];
-  },
-
-  renderText({ node }) {
-    return chipText(node, this.options.labels) ?? "";
+  decimals: {
+    default: null,
+    parseHTML: (element) => {
+      const decimals = element.getAttribute("data-decimals");
+      return decimals !== null &&
+        /^\d$/.test(decimals) &&
+        Number(decimals) <= MAX_DECIMALS
+        ? Number(decimals)
+        : null;
+    },
+    renderHTML: (attributes) =>
+      attributes.decimals === null
+        ? {}
+        : { "data-decimals": String(attributes.decimals) },
   },
 });
 
@@ -233,6 +205,9 @@ export function relabel(editor: Editor) {
     );
   }
 }
+
+/** Whether TipTap links a URL that linkify finds as it is typed or pasted, of which StoredLink links only those that a link may lead to. */
+const autoLinks = Link.options.shouldAutoLink;
 
 /**
  * A link, with its URL in attrs.href and no other attribute: it opens in a
@@ -287,8 +262,12 @@ const StoredLink = Link.extend({
   defaultProtocol: "https",
   // Autolinking and the paste's linking of a URL ask of linkify's text of
   // the URL, as typed, which the link leads to with linkify's scheme; the
-  // normalizer writes the link's URL as a link stores it.
+  // normalizer writes the link's URL as a link stores it. Pasting a URL over
+  // a selection, which links the selection, asks only shouldAutoLink, so
+  // that a URL that no link may lead to is pasted as text over it, rather
+  // than linking it with a link that the normalizer then takes off.
   isAllowedUri: (url) => typedHref(url) !== undefined,
+  shouldAutoLink: (url) => autoLinks(url) && typedHref(url) !== undefined,
   HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
 });
 

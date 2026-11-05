@@ -213,6 +213,59 @@ if (tide) {}</pre>
     );
   });
 
+  test("text whose white-space style keeps its white space, as Google Docs's and a code editor's, keeps it", () => {
+    const docs = (value: string) =>
+      `<span style="font-weight:400;white-space:pre;white-space:pre-wrap;">${value}</span>`;
+    expect(
+      pasted(
+        `<b style="font-weight:normal;" id="docs-internal-guid-1"><p dir="ltr">${docs("\tOnce  upon")}${docs(" a ")}<span>tide,  then</span></p></b>` +
+          '<div style="white-space: pre;"><div><span>if (tide) {</span></div><div>    <span>sail();</span></div><div style="white-space: normal">  }  </div></div>',
+      ),
+    ).toEqual(
+      doc(
+        p(text("\tOnce  upon a tide, then")),
+        p(text("if (tide) {")),
+        p(text("    sail();")),
+        p(text("}")),
+      ),
+    );
+  });
+
+  test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {
+    expect(
+      pasted(
+        "<p class=MsoNormal>Tide<br>\r\n<![if !supportLineBreakNewLine]><br>\r\n<![endif]><o:p></o:p></p>" +
+          "<p>High<br> </p><p>Low<br>&nbsp;</p>",
+      ),
+    ).toEqual(
+      doc(
+        p(text("Tide"), { type: "hardBreak" }),
+        p(text("High")),
+        p(text("Low")),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("what a browser does not show, a dialog that is not open, a closed details's content, and the HTML of noembed and noframes, is left out", () => {
+    expect(
+      pasted(
+        "<dialog><p>secret</p></dialog><dialog open><p>open dialog</p></dialog>" +
+          "<details><summary>Folded</summary><p>folded away</p></details>" +
+          "<details open><summary>Unfolded</summary><p>shown</p></details>" +
+          "<noembed><p>embed</p></noembed><noframes><p>frames</p></noframes><p>end</p>",
+      ),
+    ).toEqual(
+      doc(
+        p(text("open dialog")),
+        p(text("Folded")),
+        p(text("Unfolded")),
+        p(text("shown")),
+        p(text("end")),
+      ),
+    );
+  });
+
   // Verifies: FR-TEXT-01/AC2
   test("random HTML of elements, styles, and attributes that the schema does not hold always gives a document that the server stores", () => {
     // A seeded generator, so that a failure is the same on every run.

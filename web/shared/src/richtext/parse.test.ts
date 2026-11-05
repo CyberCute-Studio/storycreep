@@ -177,6 +177,24 @@ describe("a document that a page builds", () => {
       pointer: "/content/0/content/0",
     });
   });
+
+  test("has no number in a field whose value is NaN, as JSON.stringify sends it as null", () => {
+    expect(
+      refusal({
+        content: [
+          {
+            attrs: { start: Number.NaN },
+            content: [{ content: [{ type: "paragraph" }], type: "listItem" }],
+            type: "orderedList",
+          },
+        ],
+        type: "doc",
+      }),
+    ).toMatchObject({
+      reason: "wrong_type",
+      pointer: "/content/0/attrs/start",
+    });
+  });
 });
 
 describe("links", () => {

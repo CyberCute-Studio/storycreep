@@ -6,8 +6,9 @@
 // list elements or of Word's paragraphs of a list (mso-list), lists, nested
 // by their levels; its bold, italic, struck-through, and code text, by
 // element or by style, the marks; its links that a link may lead to
-// (storedHref) links; and its line breaks hard breaks. What no text shows,
-// as a script, a style sheet, an image, a comment, a hidden element, or the
+// (storedHref) links; its line breaks hard breaks; and its white space,
+// which a pre or a white-space style keeps, kept. What no text shows, as a
+// script, a style sheet, an image, a comment, a hidden element, or the
 // bullet or number of a list item that Word writes out, is left out.
 
 import { MAX_LIST_DEPTH } from "@storycreep/shared/richtext";
@@ -24,9 +25,9 @@ interface Marks {
   href?: string;
 }
 
-/** What a paragraph holds: text, a line break, or a mention or a value reference that the editor itself wrote. */
+/** What a paragraph holds: text, whose white space is kept where its HTML keeps it (Context), a line break, or a mention or a value reference that the editor itself wrote. */
 type Run =
-  | { kind: "text"; text: string; marks: Marks }
+  | { kind: "text"; text: string; marks: Marks; keep: boolean }
   | { kind: "break" }
   | { kind: "chip"; attrs: [string, string][]; marks: Marks };
 
@@ -54,8 +55,6 @@ interface Para {
   runs: Run[];
   item?: ItemOf;
   continues?: number;
-  /** Whether the paragraph is of a pre, whose white space it keeps. */
-  pre: boolean;
 }
 
 /** What the HTML's elements say of the text in them, as the walk reads them. */
@@ -69,9 +68,12 @@ interface Context {
   start?: number;
   /** The innermost list's element, whose first item that the walk reads has its start. */
   list?: Element;
-  /** Whether white space and line breaks are kept, as in a pre. */
-  pre: boolean;
+  /** Whether white space and line breaks are kept, as in a pre, or in an element whose white-space is one of KEPT_SPACE. */
+  keep: boolean;
 }
+
+/** The values of the white-space style that keep white space and line breaks, as a pre does, and as Google Docs's and Word Online's text has them. */
+const KEPT_SPACE = new Set(["pre", "pre-wrap", "break-spaces"]);
 
 /** The elements whose content no text shows, or that hold no text of the document's. */
 const SKIPPED = new Set([
@@ -93,6 +95,8 @@ const SKIPPED = new Set([
   "map",
   "math",
   "meta",
+  "noembed",
+  "noframes",
   "noscript",
   "object",
   "option",
@@ -233,10 +237,12 @@ function strikeOf(element: Element, name: string): boolean {
   );
 }
 
-/** Reports whether the element is not shown, by its style or its hidden attribute. */
+/** Reports whether the element is not shown, by its style or its hidden attribute, or as a dialog that is not open. */
 function hidden(element: Element): boolean {
   return (
     element.hasAttribute("hidden") ||
+    (element.localName.toLowerCase() === "dialog" &&
+      !element.hasAttribute("open")) ||
     styleOf(element, "display") === "none" ||
     styleOf(element, "visibility") === "hidden" ||
     /mso-hide\s*:\s*all/i.test(element.getAttribute("style") ?? "")
@@ -331,10 +337,10 @@ class Reader {
     this.current = undefined;
   }
 
-  /** Returns the paragraph that inline content goes to, which begins with the first, and is of a pre if that content is. */
-  private paragraph(pre = false): Para {
+  /** Returns the paragraph that inline content goes to, which begins with the first. */
+  private paragraph(): Para {
     if (this.current === undefined) {
-      const para: Para = { runs: [], pre };
+      const para: Para = { runs: [] };
       if (this.pendingItem !== undefined) {
         para.item = this.pendingItem;
         this.pendingItem = undefined;
@@ -362,12 +368,12 @@ class Reader {
       return;
     }
     if (name === "br") {
-      this.paragraph(ctx.pre).runs.push({ kind: "break" });
+      this.paragraph().runs.push({ kind: "break" });
       return;
     }
     const chip = chipOf(element);
     if (chip !== undefined) {
-      this.paragraph(ctx.pre).runs.push({
+      this.paragraph().runs.push({
         kind: "chip",
         attrs: chip,
         marks: marksOf(ctx.marks),
@@ -414,7 +420,7 @@ class Reader {
       this.itemLevel = name === "li" ? item.level : undefined;
     }
     if (this.faithful && TEXTBLOCKS.has(name)) {
-      this.paragraph(inner.pre);
+      this.paragraph();
     }
     this.children(element, inner);
     if (item !== undefined) {
@@ -428,8 +434,17 @@ class Reader {
     this.end();
   }
 
+  /** Reads the children of element that show: of a details that is not open, only its summary. */
   private children(element: Element, ctx: Context) {
-    for (const child of Array.from(element.childNodes)) {
+    const closed =
+      element.localName.toLowerCase() === "details" &&
+      !element.hasAttribute("open");
+    const shown = closed
+      ? Array.from(element.children)
+          .filter((child) => child.localName.toLowerCase() === "summary")
+          .slice(0, 1)
+      : Array.from(element.childNodes);
+    for (const child of shown) {
       this.read(child, ctx);
     }
   }
@@ -448,7 +463,14 @@ class Reader {
       marks.href =
         href === null ? marks.href : (storedHref(href) ?? marks.href);
     }
-    const inner: Context = { ...ctx, marks, pre: ctx.pre || name === "pre" };
+    // White space is kept in a pre, and as an element's white-space, which
+    // what it holds takes, says.
+    const space = styleOf(element, "white-space");
+    const inner: Context = {
+      ...ctx,
+      marks,
+      keep: space === "" ? ctx.keep || name === "pre" : KEPT_SPACE.has(space),
+    };
     if (name === "ul" || name === "ol" || name === "menu" || name === "dir") {
       inner.lists = ctx.lists + 1;
       inner.ordered = name === "ol";
@@ -468,23 +490,29 @@ class Reader {
   }
 
   private text(value: string, ctx: Context) {
-    // White space between blocks is no paragraph.
-    if (this.current === undefined && !ctx.pre && HTML_SPACE.test(value)) {
+    // White space between blocks is no paragraph, but where it is kept.
+    if (this.current === undefined && !ctx.keep && HTML_SPACE.test(value)) {
       return;
     }
     const marks = marksOf(ctx.marks);
-    if (!ctx.pre) {
-      this.paragraph().runs.push({ kind: "text", text: value, marks });
+    if (!ctx.keep) {
+      this.paragraph().runs.push({
+        kind: "text",
+        text: value,
+        marks,
+        keep: false,
+      });
       return;
     }
-    // A pre keeps its lines, each after a line break, and their white space.
+    // Kept text keeps its lines, each after a line break, and their white
+    // space.
     value.split(/\r\n?|\n/).forEach((line, i) => {
-      const para = this.paragraph(true);
+      const para = this.paragraph();
       if (i > 0) {
         para.runs.push({ kind: "break" });
       }
       if (line !== "") {
-        para.runs.push({ kind: "text", text: line, marks });
+        para.runs.push({ kind: "text", text: line, marks, keep: true });
       }
     });
   }
@@ -529,9 +557,7 @@ interface List {
   items: Block[][];
 }
 
-type Block =
-  | { kind: "p"; runs: Run[]; pre: boolean }
-  | { kind: "list"; list: List };
+type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
 
 /**
  * Returns the blocks of the paragraphs, each list item's in its list, nested
@@ -552,7 +578,6 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
     const block = {
       kind: "p" as const,
       runs: faithful ? para.runs : tidy(para.runs),
-      pre: para.pre,
     };
     if (para.item !== undefined) {
       const level = Math.min(para.item.level, open.length + 1);
@@ -616,7 +641,12 @@ function tidy(runs: readonly Run[]): Run[] {
   return out;
 }
 
-/** Writes a run into parent, within the elements of its marks. */
+/**
+ * Writes a run into parent, within the elements of its marks: text whose
+ * white space is kept within a span of white-space pre-wrap, which the
+ * editor's parser reads without collapsing its white space, as a line's
+ * indentation.
+ */
 function writeRun(doc: Document, parent: Element, run: Run) {
   if (run.kind === "break") {
     parent.append(doc.createElement("br"));
@@ -625,6 +655,12 @@ function writeRun(doc: Document, parent: Element, run: Run) {
   let node: Node;
   if (run.kind === "text") {
     node = doc.createTextNode(run.text);
+    if (run.keep) {
+      const span = doc.createElement("span");
+      span.setAttribute("style", "white-space: pre-wrap");
+      span.append(node);
+      node = span;
+    }
   } else {
     const span = doc.createElement("span");
     for (const [name, value] of run.attrs) {
@@ -657,9 +693,7 @@ function writeRun(doc: Document, parent: Element, run: Run) {
 function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
   for (const block of blocks) {
     if (block.kind === "p") {
-      // A paragraph of a pre is one too, which the editor's parser reads
-      // without collapsing its white space, as a line's indentation.
-      const p = doc.createElement(block.pre ? "pre" : "p");
+      const p = doc.createElement("p");
       for (const run of block.runs) {
         writeRun(doc, p, run);
       }
@@ -732,14 +766,15 @@ function wrapsInline(element: Element): boolean {
 /**
  * Returns pasted HTML as HTML of only what the schema holds: paragraphs,
  * line breaks, lists and their items, the elements of the marks, links of
- * URLs that a link may lead to, and the spans of the editor's mentions and
- * value references. The HTML is read in a document of its own, without a
- * window, so that none of it runs, loads, or applies a style; and the
- * marker of a slice that ProseMirror wrote, data-pm-slice, is kept on the
- * first block, as it holds of the cleaned HTML (sliceOf), with every block
- * of text a paragraph and its white space kept, and list items that no list
- * element holds kept so, so that what is copied from the editor is pasted
- * as it was cut from its blocks.
+ * URLs that a link may lead to, the spans of the editor's mentions and value
+ * references, and spans of text whose white space is kept (writeRun). The
+ * HTML is read in a document of its own, without a window, so that none of
+ * it runs, loads, or applies a style; and the marker of a slice that
+ * ProseMirror wrote, data-pm-slice, is kept on the first block, as it holds
+ * of the cleaned HTML (sliceOf), with every block of text a paragraph and
+ * its white space kept, and list items that no list element holds kept so,
+ * so that what is copied from the editor is pasted as it was cut from its
+ * blocks.
  */
 export function cleanPastedHTML(html: string): string {
   const source = new DOMParser().parseFromString(html, "text/html");
@@ -749,7 +784,7 @@ export function cleanPastedHTML(html: string): string {
     marks: { bold: false, italic: false, strike: false, code: false },
     lists: 0,
     ordered: false,
-    pre: false,
+    keep: false,
   });
   const out = document.implementation.createHTMLDocument("");
   writeBlocks(out, out.body, blocksOf(reader.paras, slice !== undefined));

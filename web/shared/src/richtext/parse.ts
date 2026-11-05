@@ -500,9 +500,9 @@ class Parser {
     };
   }
 
-  /** Reads integer v, what, which is between lo and hi, as JSON.parse reads a number: one too large for a double, which it reads as Infinity, is out of range. */
+  /** Reads integer v, what, which is between lo and hi, as JSON.parse reads a number: one too large for a double, which it reads as Infinity, is out of range; and NaN, which JSON.stringify writes as null, is no number. */
   private integer(v: unknown, what: string, lo: number, hi: number): number {
-    if (typeof v !== "number") {
+    if (typeof v !== "number" || Number.isNaN(v)) {
       throw this.fail("wrong_type", `${what} is not a number`);
     }
     if (Number.isFinite(v) && !Number.isInteger(v)) {

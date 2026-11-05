@@ -20,23 +20,53 @@ import { focusIsNowhere } from "../shell/focus";
 const control =
   "min-h-11 w-full rounded-md border border-border bg-canvas px-3 text-fg";
 
+/** Returns the IDs of the hint and the error of the field whose control is id, and the list of them that the control's aria-describedby takes. */
+export function fieldDescription(
+  id: string,
+  hint: string | undefined,
+  error: string | undefined,
+): { hintId?: string; errorId?: string; describedBy?: string } {
+  const hintId = hint === undefined ? undefined : `${id}-hint`;
+  const errorId = error === undefined ? undefined : `${id}-error`;
+  const describedBy =
+    [hintId, errorId].filter((s) => s !== undefined).join(" ") || undefined;
+  return { hintId, errorId, describedBy };
+}
+
 interface FieldFrameProps {
   id: string;
   label: string;
   hint?: string;
   error?: string;
+  /**
+   * Focuses a control that is no form control, which a click on its label
+   * does not focus, as a rich text's editable element: its label's ID is
+   * then labelId, which its aria-labelledby names, as a label names only a
+   * form control.
+   */
+  focus?: { labelId: string; onLabelClick: () => void };
   children: (describedBy: string | undefined) => ReactNode;
 }
 
 /** The label, the hint, and the error around a field's control. */
-function FieldFrame({ id, label, hint, error, children }: FieldFrameProps) {
-  const hintId = hint === undefined ? undefined : `${id}-hint`;
-  const errorId = error === undefined ? undefined : `${id}-error`;
-  const describedBy =
-    [hintId, errorId].filter((s) => s !== undefined).join(" ") || undefined;
+export function FieldFrame({
+  id,
+  label,
+  hint,
+  error,
+  focus,
+  children,
+}: FieldFrameProps) {
+  const { hintId, errorId, describedBy } = fieldDescription(id, hint, error);
   return (
     <div className="flex flex-col gap-1">
-      <label htmlFor={id} className="font-medium">
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: a label takes no focus, and a keyboard goes to its control, as it does every field's. */}
+      <label
+        htmlFor={id}
+        id={focus?.labelId}
+        onClick={focus?.onLabelClick}
+        className="font-medium"
+      >
         {label}
       </label>
       {hint !== undefined && (

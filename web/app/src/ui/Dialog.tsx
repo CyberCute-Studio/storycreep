@@ -8,12 +8,17 @@ import { focusContentIfLost } from "../shell/focus";
 import { Button } from "./Button";
 
 /**
- * Keeps the submission of a dialog's form within the dialog: its portal puts
- * the form outside the page's elements, but React passes the submission on
- * to the components that hold the dialog, as a page's form that holds the
- * control that opened it, which the dialog's form does not submit.
+ * Keeps the submission of a dialog's form, and a change of its fields,
+ * within the dialog: its portal puts them outside the page's elements, but
+ * React passes them on to the components that hold the dialog, as a page's
+ * form that holds the control that opened it, which the dialog's form does
+ * not submit, and whose fields the dialog's do not change, as the form's
+ * onChange of useHeld reads them. The focus is passed on, since useHeld
+ * holds a form while the focus is in a dialog that the form opened, and
+ * Radix's FocusScope, which keeps the focus within the dialog, reads it
+ * from the document.
  */
-function keepSubmission(event: FormEvent) {
+function keepWithin(event: FormEvent) {
   event.stopPropagation();
 }
 
@@ -55,7 +60,8 @@ export function DialogFrame({
       <Dialog.Content
         className={content}
         onCloseAutoFocus={onCloseAutoFocus}
-        onSubmit={keepSubmission}
+        onSubmit={keepWithin}
+        onChange={keepWithin}
         onInteractOutside={
           closesOutside ? undefined : (event) => event.preventDefault()
         }
@@ -94,7 +100,8 @@ export function ConfirmFrame({
       <AlertDialog.Content
         className={content}
         onCloseAutoFocus={onCloseAutoFocus}
-        onSubmit={keepSubmission}
+        onSubmit={keepWithin}
+        onChange={keepWithin}
       >
         <AlertDialog.Title className="text-xl font-semibold">
           {title}

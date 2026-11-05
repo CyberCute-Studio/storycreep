@@ -34,7 +34,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/Button";
 import { DialogFrame } from "../ui/Dialog";
-import { TextField } from "../ui/Field";
+import { FieldFrame, fieldDescription, TextField } from "../ui/Field";
 import { type RichTextValue, storedOf } from "./convert";
 import {
   pasteProps,
@@ -97,15 +97,12 @@ export function RichTextEditor({
   const { t } = useTranslation();
   const id = useId();
   const labelId = `${id}-label`;
-  const hintId = hint === undefined ? undefined : `${id}-hint`;
   // Why the server would refuse what the editor holds, which the page's own
   // error goes before.
   const [refused, setRefused] = useState<RichTextError>();
   const shownError =
     error ?? (refused === undefined ? undefined : messageOf(t, refused));
-  const errorId = shownError === undefined ? undefined : `${id}-error`;
-  const describedBy =
-    [hintId, errorId].filter((s) => s !== undefined).join(" ") || undefined;
+  const { describedBy } = fieldDescription(id, hint, shownError);
   const [linking, setLinking] = useState(false);
   // What the editor's callbacks, made once with it, read as the page renders.
   const unknownMention = t("richtext.unknown_mention");
@@ -138,6 +135,7 @@ export function RichTextEditor({
     () => ({
       ...pasteProps,
       attributes: {
+        id,
         role: "textbox",
         "aria-multiline": "true",
         "aria-labelledby": labelId,
@@ -149,7 +147,7 @@ export function RichTextEditor({
         class: "rich-text min-h-24 rounded-b-md px-3 py-2 text-fg break-words",
       },
     }),
-    [labelId, describedBy, shownError, editable],
+    [id, labelId, describedBy, shownError, editable],
   );
   const editor = useEditor({
     content: initial.content,
@@ -174,10 +172,15 @@ export function RichTextEditor({
       latest.current.onChange?.(value);
     },
   });
-  // Whether the user may change the text is no change of it.
+  // Whether the user may change the text is no change of it. A text that
+  // may no longer be changed closes the link's dialog, which would change
+  // it.
   useEffect(() => {
     if (editor !== null && editor.isEditable !== editable) {
       editor.setEditable(editable, false);
+    }
+    if (!editable) {
+      setLinking(false);
     }
   }, [editor, editable]);
   // The editor draws a mention, a value reference, and the placeholder once,
@@ -189,36 +192,33 @@ export function RichTextEditor({
     }
   }, [editor, names, unknownMention, unknownValue, placeholder]);
   return (
-    <div className="flex flex-col gap-1">
-      <div id={labelId} className="font-medium">
-        {label}
-      </div>
-      {hint !== undefined && (
-        <p id={hintId} className="text-sm text-fg-muted">
-          {hint}
-        </p>
+    <FieldFrame
+      id={id}
+      label={label}
+      hint={hint}
+      error={shownError}
+      focus={{ labelId, onLabelClick: () => editor?.commands.focus() }}
+    >
+      {() => (
+        <>
+          <div
+            className={`rounded-md border bg-canvas ${shownError === undefined ? "border-border" : "border-danger"}`}
+          >
+            {editable && editor !== null && (
+              <FormatBar
+                editor={editor}
+                label={label}
+                onLink={() => setLinking(true)}
+              />
+            )}
+            <EditorContent editor={editor} />
+          </div>
+          {linking && editable && editor !== null && (
+            <LinkDialog editor={editor} onClose={() => setLinking(false)} />
+          )}
+        </>
       )}
-      <div
-        className={`rounded-md border bg-canvas ${shownError === undefined ? "border-border" : "border-danger"}`}
-      >
-        {editable && editor !== null && (
-          <FormatBar
-            editor={editor}
-            label={label}
-            onLink={() => setLinking(true)}
-          />
-        )}
-        <EditorContent editor={editor} />
-      </div>
-      {shownError !== undefined && (
-        <p id={errorId} className="text-sm text-danger">
-          {shownError}
-        </p>
-      )}
-      {linking && editor !== null && (
-        <LinkDialog editor={editor} onClose={() => setLinking(false)} />
-      )}
-    </div>
+    </FieldFrame>
   );
 }
 
@@ -378,10 +378,11 @@ function FormatBar({
 /**
  * The dialog that edits the link of the selection, or of the link that the
  * caret is in, whose URL it shows: it links the selection, or inserts what
- * the user typed as linked text where nothing is selected, to a URL that a
- * link may lead to, as one typed without a scheme, example.com, is an https
- * URL (typedHref), and says so of one that no link may; and it removes a
- * link. Closed, it gives the focus back to the text.
+ * the user typed as linked text where nothing is selected, with the marks
+ * of text typed there, to a URL that a link may lead to, as one typed
+ * without a scheme, example.com, is an https URL (typedHref), and says so
+ * of one that no link may; and it removes a link. Closed, it gives the focus
+ * back to the text.
  */
 function LinkDialog({
   editor,
@@ -404,14 +405,20 @@ function LinkDialog({
       return;
     }
     const chain = editor.chain().focus();
-    if (editor.state.selection.empty && !editor.isActive("link")) {
+    const { selection, storedMarks, schema } = editor.state;
+    if (selection.empty && !editor.isActive("link")) {
       // The text is what the user typed, as café.example, rather than the
-      // URL as the link stores it, https://xn--caf-dma.example.
+      // URL as the link stores it, https://xn--caf-dma.example, with the
+      // marks that text typed at the caret has, as bold, which a link goes
+      // with.
+      const marks = (storedMarks ?? selection.$from.marks())
+        .filter((mark) => !mark.type.excludes(schema.marks.link))
+        .map((mark) => mark.toJSON());
       chain
         .insertContent({
           type: "text",
           text: typed.trim(),
-          marks: [{ type: "link", attrs: { href } }],
+          marks: [...marks, { type: "link", attrs: { href } }],
         })
         .run();
     } else {
