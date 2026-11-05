@@ -16,6 +16,7 @@ import { projectQuery } from "../project/queries";
 import { testSession } from "../test/app";
 import { fakeApi, refused, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
+import { boardPart } from "./doc";
 import { Documents, keptUnshown } from "./documents";
 import type { Subscriber } from "./realtime";
 import { type Command, ConflictError, ProjectDocument } from "./store";
@@ -286,7 +287,9 @@ async function open() {
       revisions,
       created_at: time,
     });
-  return { doc, realtime, log, queryClient, deliver };
+  // The channel's resync_required: the operations after seq follow.
+  const resync = (seq: number) => subscribers.at(-1)?.resync(seq);
+  return { doc, realtime, log, queryClient, deliver, resync };
 }
 
 /** Returns the board of id as the page shows it. */
@@ -754,6 +757,63 @@ describe("the page's own batches", () => {
       rev: 6,
     });
   });
+
+  it("sends a batch sent again as it was, queued once the operation of the batch that no answer came to comes, and is answered as that one", async () => {
+    const other = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
+      applyCommands: inTurn(
+        new NetworkError(new TypeError("Failed to fetch")),
+        other.promise,
+        applied(2, [{ id: "bd_a", rev: 4 }]),
+      ),
+    });
+    const { doc, realtime, deliver } = await open();
+    realtime.hold(testProject.id);
+    const night = [rename("bd_a", "Harbour at night", 3)];
+    await expect(doc.send(night)).rejects.toBeInstanceOf(NetworkError);
+    const light = doc.send([rename("bd_b", "Old light", 3)]);
+    const again = doc.send(night);
+    await vi.waitFor(() => expect(server.batches).toHaveLength(2));
+    // The batch that no answer came to applied as seq 2, whose operation,
+    // with its commands' IDs, comes while the one sent again waits behind
+    // another.
+    deliver(2, server.batches[0], [{ id: "bd_a", rev: 4 }]);
+    other.resolve(applied(3, [{ id: "bd_b", rev: 4 }]));
+    await light;
+    await expect(again).resolves.toMatchObject({ status: "applied", seq: 2 });
+    expect(server.batches[2][0].command_id).toBe(
+      server.batches[0][0].command_id,
+    );
+    expect(doc.store.getState().sending).toBe(0);
+    expect(doc.store.getState().view).toBe(doc.doc);
+    expect(shown(doc, "bd_a")).toMatchObject({
+      name: "Harbour at night",
+      rev: 4,
+    });
+  });
+
+  it("does not send a batch queued while the page signed in to another account as that account's", async () => {
+    const first = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(first.promise),
+    });
+    const { doc, queryClient } = await open();
+    const dusk = doc.send([rename("bd_a", "Harbour at dusk", 3)]);
+    const night = doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await vi.waitFor(() => expect(server.batches).toHaveLength(1));
+    const other = {
+      ...testSession,
+      user_id: "usr_other",
+      csrf_token: "other-csrf-token",
+    };
+    queryClient.setQueryData(sessionQuery.queryKey, other);
+    first.resolve(applied(2, [{ id: "bd_a", rev: 4 }]));
+    await dusk;
+    await expect(night).rejects.toThrow(/another account/);
+    expect(server.batches).toHaveLength(1);
+  });
 });
 
 describe("a batch refused for a revision that changed elsewhere (§7.10)", () => {
@@ -869,13 +929,47 @@ describe("a batch refused for a revision that changed elsewhere (§7.10)", () =>
     });
   });
 
+  it("is sent again where what changed elsewhere, which the project read anew brought, is none of what it changes, as a form that holds what it showed before expects", async () => {
+    const theirs = { ...board("bd_a", "Harbour", 4), color: "blue" as const };
+    let boards = [board("bd_a", "Harbour")];
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      applyCommands: inTurn(
+        conflict(theirs),
+        applied(4, [{ id: "bd_a", rev: 5 }]),
+      ),
+    });
+    const { doc, deliver } = await open();
+    // A gap, after which the document reads the board anew, as it is now.
+    boards = [theirs];
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(shown(doc, "bd_a")?.rev).toBe(4));
+    await doc.send([redescribe("bd_a", "Where it begins", 3)]);
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { bd_a: 3 },
+      { bd_a: 4 },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({
+      description: "Where it begins",
+      color: "blue",
+      rev: 5,
+    });
+  });
+
   it("is refused with both values of each field that it changes that has another value now, where the document no longer knows the entity at the revision that it expects", async () => {
     const theirs = {
       ...board("bd_a", "Harbour", 4),
       description: "Where the tale ends",
       color: "blue" as const,
     };
-    let boards = [board("bd_a", "Harbour")];
+    // A thousand other boards, whose states before the project read anew
+    // the document keeps after the board's, which it forgets.
+    const others = Array.from({ length: 1_000 }, (_, i) =>
+      board(`bd_${i}`, `Board ${i}`),
+    );
+    let boards = [board("bd_a", "Harbour"), ...others];
     serve({
       getProject: () => testProject,
       listFolders: () => page([]),
@@ -883,8 +977,8 @@ describe("a batch refused for a revision that changed elsewhere (§7.10)", () =>
       applyCommands: inTurn(conflict(theirs)),
     });
     const { doc, deliver } = await open();
-    // A gap, after which the document reads the board anew, as it is now.
-    boards = [theirs];
+    // A gap, after which the document reads the boards anew, as they are now.
+    boards = [theirs, ...others.map((b) => ({ ...b, rev: 4 }))];
     deliver(3, [], []);
     await vi.waitFor(() => expect(shown(doc, "bd_a")?.rev).toBe(4));
     const error = await doc
@@ -898,6 +992,129 @@ describe("a batch refused for a revision that changed elsewhere (§7.10)", () =>
         theirs: "Where the tale ends",
       },
     ]);
+  });
+
+  it("is refused for a field that changed elsewhere, rather than written over it, where it was made on top of a batch that was sent again before it", async () => {
+    // Another session changed the board's description, after which the
+    // page's rename, made before the page knew, is refused and sent again,
+    // and the page's change of the description, made on top of the rename
+    // while it was under way, does not expect what the other session wrote.
+    const theirs = { ...board("bd_a", "Harbour", 4), description: "Theirs" };
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        conflict(theirs),
+        applied(3, [{ id: "bd_a", rev: 5 }]),
+        conflict({ ...theirs, name: "Harbour at dusk", rev: 5 }),
+      ),
+    });
+    const { doc, realtime } = await open();
+    realtime.hold(testProject.id);
+    const dusk = doc.send([rename("bd_a", "Harbour at dusk", 3)]);
+    const mine = doc.send([redescribe("bd_a", "Mine", 3)]);
+    await dusk;
+    const error = await mine.catch((e: unknown) => e);
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { bd_a: 3 },
+      { bd_a: 4 },
+      { bd_a: 3 },
+    ]);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).overlaps[0].fields).toEqual([
+      { field: "description", mine: "Mine", theirs: "Theirs" },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({
+      name: "Harbour at dusk",
+      description: "Theirs",
+      rev: 5,
+    });
+  });
+
+  it("is sent again where a field that it changes has the value elsewhere that the page showed, whatever the order of its object's fields", async () => {
+    const theirs = {
+      ...node("nd_a", "bd_a", 4),
+      title: "Theirs",
+      position: { y: 0, x: 0 },
+    };
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      listBoardNodes: () => page([node("nd_a", "bd_a")]),
+      listBoardConnections: () => page([]),
+      applyCommands: inTurn(
+        refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "node.move",
+                id: "nd_a",
+                expected_rev: 3,
+                exists: true,
+                current_rev: 4,
+              },
+            ],
+            states: { nd_a: theirs },
+          },
+        }),
+        applied(2, [{ id: "nd_a", rev: 5 }]),
+      ),
+    });
+    const { doc } = await open();
+    await doc.load(boardPart("bd_a"));
+    await doc.send([
+      {
+        type: "node.move",
+        payload: { nodes: [{ id: "nd_a", position: { x: 10, y: 0 } }] },
+        expected_rev: { nd_a: 3 },
+      },
+    ]);
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { nd_a: 3 },
+      { nd_a: 4 },
+    ]);
+  });
+
+  it("tells the project's read the state of the project that a refusal for its revision gave", async () => {
+    serve({
+      ...tree([]),
+      applyCommands: inTurn(
+        refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "project.rename",
+                id: testProject.id,
+                expected_rev: 1,
+                exists: true,
+                current_rev: 2,
+              },
+            ],
+            states: {
+              [testProject.id]: { ...testProject, name: "Theirs", rev: 2 },
+            },
+          },
+        }),
+      ),
+    });
+    const { doc, queryClient } = await open();
+    const error = await doc
+      .send([
+        {
+          type: "project.rename",
+          payload: { name: "Mine" },
+          expected_rev: { [testProject.id]: 1 },
+        },
+      ])
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect(
+      queryClient.getQueryData(projectQuery(testProject.id).queryKey),
+    ).toMatchObject({ name: "Theirs", rev: 2, role: "owner" });
   });
 });
 
@@ -1196,6 +1413,109 @@ describe("undo and redo (FR-EDIT-08)", () => {
       },
     ]);
   });
+
+  it("moves what the other steps expect from what a batch expected, whose operation came before the answer to it sent again, as once no answer came to it at first", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        new NetworkError(new TypeError("Failed to fetch")),
+        // The batch sent again, which applied the first time, as seq 3, is
+        // answered as it was then.
+        applied(3, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Dusk", 5)]),
+        applied(4, [{ id: "bd_a", rev: 6 }], []),
+        applied(5, [{ id: "bd_a", rev: 7 }], []),
+      ),
+    });
+    const { doc, realtime } = await open();
+    realtime.hold(testProject.id);
+    await doc.send([rename("bd_a", "Dusk", 3)]);
+    const night = [rename("bd_a", "Night", 4)];
+    await expect(doc.send(night)).rejects.toBeInstanceOf(NetworkError);
+    realtime.send(testProject.id, server.batches[1], [{ id: "bd_a", rev: 5 }]);
+    await doc.send(night);
+    await doc.undo();
+    expect(server.batches[3][0].expected_rev).toEqual({ bd_a: 5 });
+    // The board was at 4 before the batch that the undo undid, which the
+    // first batch's undo expects, and is the same again, at 6.
+    await doc.undo();
+    expect(server.batches[4][0]).toMatchObject({
+      payload: { id: "bd_a", name: "Harbour" },
+      expected_rev: { bd_a: 6 },
+    });
+  });
+
+  it("sends no redo that a batch answered while it waited for the operations before it has ended, as a new change does", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        // Another session's batch applied as seq 3, which the channel has
+        // yet to bring.
+        applied(
+          4,
+          [{ id: "bd_a", rev: 5 }],
+          [renameBack("bd_a", "Harbour at night", 5)],
+        ),
+        applied(
+          5,
+          [{ id: "bd_b", rev: 4 }],
+          [renameBack("bd_b", "Lighthouse", 4)],
+        ),
+      ),
+    });
+    const { doc, realtime } = await open();
+    realtime.hold(testProject.id);
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await doc.undo();
+    expect(doc.store.getState().redoable).toBe(1);
+    const redone = doc.redo();
+    await flush();
+    await doc.send([rename("bd_b", "Old light", 3)]);
+    expect(doc.store.getState().redoable).toBe(0);
+    realtime.send(
+      testProject.id,
+      [{ type: "board.describe", payload: { id: "bd_b", description: "" } }],
+      [],
+    );
+    realtime.send(testProject.id, server.batches[1], [{ id: "bd_a", rev: 5 }]);
+    await redone;
+    expect(server.batches).toHaveLength(3);
+    expect(doc.store.getState()).toMatchObject({
+      undoable: 1,
+      redoable: 0,
+      stepping: false,
+    });
+  });
+
+  it("settles an undo asked for while another is under way as that one, as once it is refused", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        conflict(board("bd_a", "Old harbour", 5), 4),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    const first = doc.undo();
+    const second = doc.undo();
+    await expect(first).rejects.toBeInstanceOf(ConflictError);
+    await expect(second).rejects.toBeInstanceOf(ConflictError);
+    expect(server.batches).toHaveLength(2);
+  });
 });
 
 /**
@@ -1391,6 +1711,38 @@ describe("the undo history over a reload", () => {
     expect(writes).toBeLessThan(30);
     expect(doc.store.getState().undoable).toBe(101);
   });
+
+  it("serialises each step once, rather than the whole history each time that it writes it", async () => {
+    const server = renamingServer();
+    const { doc } = await open();
+    for (let i = 1; i <= 20; i++) {
+      await doc.send([rename("bd_a", `Name ${i}`, server.state.rev)]);
+    }
+    const stringify = vi.spyOn(JSON, "stringify");
+    await doc.send([rename("bd_a", "Name 21", server.state.rev)]);
+    const serialised = stringify.mock.results.reduce(
+      (n, result) =>
+        n + (typeof result.value === "string" ? result.value.length : 0),
+      0,
+    );
+    stringify.mockRestore();
+    const kept =
+      window.sessionStorage.getItem(
+        historyKey(testSession.user_id, testProject.id),
+      ) ?? "";
+    expect(doc.store.getState().undoable).toBe(21);
+    expect(serialised).toBeLessThan(kept.length / 4);
+  });
+
+  it("is none where what the tab's storage holds of it cannot be read, rather than a part of one", async () => {
+    serve(tree([board("bd_a", "Harbour")]));
+    window.sessionStorage.setItem(
+      historyKey(testSession.user_id, testProject.id),
+      JSON.stringify({ v: 1, redo: [], captured: {} }),
+    );
+    const { doc } = await open();
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 0 });
+  });
 });
 
 describe("what the document reads while operations come", () => {
@@ -1579,6 +1931,95 @@ describe("what the document reads while operations come", () => {
     await vi.waitFor(() => expect(doc.doc.seq).toBe(3));
     expect(doc.holds("variables")).toBe(true);
   });
+
+  it("reads no more of the parts that it holds once the read of one failed, as it reads the project anew later", async () => {
+    // The wait before it tries again is longer than the test.
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    const nodes = Promise.withResolvers<void>();
+    let treeReads = 0;
+    let anew = false;
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => {
+        if (++treeReads === 2) {
+          throw refused(503, { code: "unavailable" });
+        }
+        return page([board("bd_a", "Harbour")]);
+      },
+      listBoardNodes: async () => {
+        if (anew) {
+          await nodes.promise;
+        }
+        return page([]);
+      },
+      listBoardConnections: () => page([]),
+    });
+    const { doc, deliver } = await open();
+    for (let i = 0; i < 7; i++) {
+      await doc.load(boardPart(`bd_${i}`));
+    }
+    anew = true;
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(treeReads).toBe(2));
+    nodes.resolve();
+    await flush();
+    // The tree and five boards are read at once, and the other two boards
+    // are not, once the tree's read failed.
+    expect(server.calls("listBoardNodes")).toHaveLength(7 + 5);
+    expect(doc.doc.seq).toBe(1);
+  });
+
+  it("reads the project anew at once, once its read failed and waits to try again, as a page asks for it", async () => {
+    // The wait before it tries again is longer than the test.
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    let projectReads = 0;
+    serve({
+      getProject: () => {
+        if (++projectReads === 2) {
+          throw refused(503, { code: "unavailable" });
+        }
+        return testProject;
+      },
+      listFolders: () => page([]),
+      listBoards: () => page([board("bd_a", "Harbour at night", 4)]),
+    });
+    const { doc, deliver } = await open();
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(projectReads).toBe(2));
+    await flush();
+    await doc.refresh();
+    expect(projectReads).toBe(3);
+    expect(doc.doc.seq).toBe(3);
+    expect(shown(doc, "bd_a")).toMatchObject({
+      name: "Harbour at night",
+      rev: 4,
+    });
+  });
+
+  it("reads the project anew again once a resync_required came while it read it, of a seq past what it read", async () => {
+    const read = Promise.withResolvers<unknown>();
+    let projectReads = 0;
+    serve({
+      getProject: () => {
+        projectReads++;
+        if (projectReads === 2) {
+          return read.promise;
+        }
+        return { ...testProject, seq: projectReads === 1 ? 1 : 5 };
+      },
+      listFolders: () => page([]),
+      listBoards: () => page([board("bd_a", "Harbour")]),
+    });
+    const { doc, deliver, resync } = await open();
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(projectReads).toBe(2));
+    // The channel's operations after 5 follow, of which none has come yet.
+    resync(5);
+    read.resolve({ ...testProject, seq: 3 });
+    await vi.waitFor(() => expect(doc.doc.seq).toBe(5));
+    expect(projectReads).toBe(3);
+  });
 });
 
 describe("the page's own batches while the channel is not live", () => {
@@ -1594,6 +2035,34 @@ describe("the page's own batches while the channel is not live", () => {
           board("bd_b", "Old light", 4),
         ];
         return applied(3, [{ id: "bd_a", rev: 4 }]);
+      },
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await vi.waitFor(() => expect(doc.doc.seq).toBe(3));
+    expect(server.calls("getProject")).toHaveLength(2);
+    expect(doc.store.getState().view).toBe(doc.doc);
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Old light", rev: 4 });
+  });
+
+  it("read the project anew once an answer of already_applied is past what the document has, as to a batch sent again once the server no longer kept its first answer", async () => {
+    let boards = [board("bd_a", "Harbour"), board("bd_b", "Lighthouse")];
+    const server = serve({
+      getProject: () => testProject,
+      listFolders: () => page([]),
+      listBoards: () => page(boards),
+      applyCommands: (): CommandResultBody => {
+        boards = [
+          board("bd_a", "Harbour at night", 4),
+          board("bd_b", "Old light", 4),
+        ];
+        return {
+          status: "already_applied",
+          seq: 3,
+          revisions: [{ id: "bd_a", rev: 4 }],
+          not_reconnected: [],
+          undo: null,
+        };
       },
     });
     const { doc } = await open();

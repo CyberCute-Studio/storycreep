@@ -29,7 +29,7 @@ import {
   type Part,
   type Project,
 } from "./doc";
-import { applyOperation, mergeEntity } from "./reconcile";
+import { applyOperation, mergeEntity, mergeList } from "./reconcile";
 
 const earlier = "2026-01-01T00:00:00.000Z";
 const time = "2026-11-05T10:00:00.000Z";
@@ -581,6 +581,30 @@ describe("an entity merged as a read of it answered (reconcile.ts)", () => {
     expect(node?.outputs).toEqual([
       output(1, 1, { kind: "if", order: "V", rev: 4 }),
     ]);
+  });
+
+  it("leaves out of a list read before an operation took a node to the trash the connections that went with it, without revisions of their own, until a list read after", () => {
+    const doc = docOf({
+      nodes: [node(1), node(2)],
+      connections: [connection(1, 1, 2)],
+    });
+    const { doc: after } = applyOperation(doc, {
+      seq: 8,
+      commands: [command("node.delete", { id: id("node", 1) })],
+      revisions: [{ id: id("node", 1), rev: 4 }],
+      time,
+    });
+    expect(after.connections.has(id("connection", 1))).toBe(false);
+    const part = boardPart(boardA);
+    const listed = [connection(1, 1, 2)];
+    // The list of the board's connections, read as of 7, before the node
+    // went, still has its connection.
+    const stale = mergeList(after, "connections", part, listed, 7, new Set());
+    expect(stale.connections.has(id("connection", 1))).toBe(false);
+    // A list read as of 9, once the node came back, has it again.
+    const back = mergeList(stale, "connections", part, listed, 9, new Set());
+    expect(back.connections.get(id("connection", 1))).toEqual(listed[0]);
+    expect(back.gone.has(id("connection", 1))).toBe(false);
   });
 
   it("takes the read's fields of an entity at the same revision, keeping what the read leaves out, as a component's values that its list does not answer, and the document as it was where nothing differs", () => {

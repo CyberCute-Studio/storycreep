@@ -50,6 +50,21 @@ interface Saved {
   captured: Record<string, Captured>;
 }
 
+/** Reports whether value is a list of steps, each with its commands and the seqs of one batch at least. */
+function isSteps(value: unknown): value is Step[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (step) =>
+        typeof step === "object" &&
+        step !== null &&
+        Array.isArray(step.commands) &&
+        Array.isArray(step.seqs) &&
+        step.seqs.length > 0,
+    )
+  );
+}
+
 /** The key of the tab's storage that the history of a user's project is kept under. */
 export function historyKey(userId: string, projectId: string): string {
   return `storycreep.undo.${userId}.${projectId}`;
@@ -123,6 +138,13 @@ export class History {
   private readonly key: string | undefined;
   /** Whether the history no longer keeps itself in the tab's storage (close). */
   private closed = false;
+  /**
+   * Each step, and each batch's capture, as JSON, which the history writes
+   * to the tab's storage once for each change, a few times where it does
+   * not fit, but serialises once: a step that moves is another object
+   * (move), as a capture that changes is (advance).
+   */
+  private readonly json = new WeakMap<object, string>();
 
   /**
    * Returns the history kept under key in storage, or a new one, which it
@@ -140,18 +162,30 @@ export class History {
       if (text === null) {
         return;
       }
-      const saved = JSON.parse(text) as Saved;
-      if (saved.v !== 1) {
+      // A history that cannot be read, as one that another version of the
+      // app wrote, is none, rather than a part of one.
+      const saved = JSON.parse(text) as Partial<Saved> | null;
+      if (
+        saved?.v !== 1 ||
+        !isSteps(saved.undo) ||
+        !isSteps(saved.redo) ||
+        typeof saved.captured !== "object" ||
+        saved.captured === null
+      ) {
         return;
+      }
+      const captured = new Map<number, Captured>();
+      for (const [seq, revs] of Object.entries(saved.captured)) {
+        if (typeof revs !== "object" || revs === null) {
+          return;
+        }
+        captured.set(Number(seq), revs);
       }
       this.undoSteps = saved.undo;
       this.redoSteps = saved.redo;
-      for (const [seq, revs] of Object.entries(saved.captured)) {
-        this.captured.set(Number(seq), revs);
-      }
+      this.captured = captured;
     } catch {
-      // A history that cannot be read, as one that another version of the
-      // app wrote, is none.
+      // A history that is no JSON is none.
     }
   }
 
@@ -394,19 +428,32 @@ export class History {
       Math.max(0, left - this.undoSteps.length),
     );
     const seqs = new Set([...undo, ...redo].flatMap((s) => s.seqs));
-    const captured: Record<string, Captured> = {};
+    const captured: string[] = [];
     for (const [seq, revs] of this.captured) {
       if (seqs.has(seq)) {
-        captured[seq] = revs;
+        captured.push(`${JSON.stringify(String(seq))}:${this.jsonOf(revs)}`);
       }
     }
-    const saved: Saved = { v: 1, undo, redo, captured };
+    // What it saves (Saved), as JSON.stringify would write it, of the JSON
+    // of each of its steps and captures.
+    const steps = (list: Step[]) => list.map((s) => this.jsonOf(s)).join(",");
+    const text = `{"v":1,"undo":[${steps(undo)}],"redo":[${steps(redo)}],"captured":{${captured.join(",")}}}`;
     try {
-      storage.setItem(key, JSON.stringify(saved));
+      storage.setItem(key, text);
       return true;
     } catch {
       // The storage is full.
       return false;
     }
+  }
+
+  /** Returns value, a step or a capture, as JSON, serialised once (json). */
+  private jsonOf(value: Step | Captured): string {
+    let text = this.json.get(value);
+    if (text === undefined) {
+      text = JSON.stringify(value);
+      this.json.set(value, text);
+    }
+    return text;
   }
 }

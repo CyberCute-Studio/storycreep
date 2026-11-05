@@ -272,6 +272,13 @@ export class Draft {
    * with it, which come back without a revision of their own.
    */
   readonly rereads = new Set<Part>();
+  /**
+   * The entities that went with another, without a revision of their own,
+   * as a connection with its node to the trash (removeQuietly), each with
+   * the revision that it had, which no revision of the batch's operation
+   * names, so that the store marks them gone (Doc.gone) itself.
+   */
+  readonly quiet = new Map<string, number>();
 
   constructor(base: Doc, time: string) {
     this.base = base;
@@ -347,11 +354,15 @@ export class Draft {
    * without recording a change of it: for an entity that goes with another,
    * without a revision of its own, as a connection with its node to the
    * trash, which the store would otherwise set back, as one that the server
-   * did not change.
+   * did not change. It records the entity's revision (quiet).
    */
   removeQuietly<K extends Kind>(kind: K, id: string): void {
-    if (this.get(kind, id) !== undefined) {
+    const entity = this.get(kind, id);
+    if (entity !== undefined) {
       this.writable(kind).delete(id);
+      if (!this.quiet.has(id)) {
+        this.quiet.set(id, entity.rev);
+      }
     }
   }
 

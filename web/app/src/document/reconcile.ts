@@ -85,13 +85,28 @@ export function entityOf(doc: Doc, id: string): Revised | undefined {
 /** A document that is being written by ID, which copies each of its maps that it changes once. */
 class Writer {
   private draft: Draft;
+  private readonly seq: number;
+  /** Whether it has written anything, without which it leaves the document as it was (finish). */
+  private wrote = false;
 
   constructor(doc: Doc, time: string) {
     this.draft = new Draft(doc, time);
+    this.seq = doc.seq;
+  }
+
+  /**
+   * The document as written so far, whose maps the writes after it go on
+   * changing, so that the entities of a list are merged in one copy of
+   * each map, rather than one for each: it is read before the next write,
+   * and never kept.
+   */
+  get doc(): Doc {
+    return this.draft.finish(this.seq);
   }
 
   /** Sets the entity of id to entity, or takes it out for undefined, without regard to what it held. */
   set(id: string, entity: Revised | undefined): void {
+    this.wrote = true;
     const place = placeOf(id);
     switch (place?.of) {
       case "project":
@@ -107,10 +122,13 @@ class Writer {
         }
         return;
       case "output": {
+        // The node that the output names holds it, if any does, rather than
+        // each node be looked through for it.
         const output = entity as BranchOutput | undefined;
-        const owner =
-          nodeOfOutput(this.draft.all("nodes"), id) ??
-          (output && this.draft.get("nodes", output.node_id));
+        const named = output && this.draft.get("nodes", output.node_id);
+        const owner = named?.outputs?.some((o) => o.id === id)
+          ? named
+          : (nodeOfOutput(this.draft.all("nodes"), id) ?? named);
         if (owner !== undefined) {
           this.draft.putQuietly(
             "nodes",
@@ -121,10 +139,12 @@ class Writer {
       }
       case "attribute": {
         const attribute = entity as Attribute | undefined;
-        const owner =
-          typeOfAttribute(this.draft.all("componentTypes"), id) ??
-          (attribute &&
-            this.draft.get("componentTypes", attribute.component_type_id));
+        const named =
+          attribute &&
+          this.draft.get("componentTypes", attribute.component_type_id);
+        const owner = named?.attributes.some((a) => a.id === id)
+          ? named
+          : (typeOfAttribute(this.draft.all("componentTypes"), id) ?? named);
         if (owner !== undefined) {
           this.draft.putQuietly(
             "componentTypes",
@@ -137,15 +157,19 @@ class Writer {
   }
 
   gone(id: string, rev: number, seq: number): void {
+    this.wrote = true;
     this.draft.markGone(id, rev, seq);
   }
 
   back(id: string): void {
+    this.wrote = true;
     this.draft.unmarkGone(id);
   }
 
   finish(seq: number): Doc {
-    return this.draft.finish(seq);
+    return this.wrote || seq !== this.seq
+      ? this.draft.finish(seq)
+      : this.draft.base;
   }
 }
 
@@ -274,6 +298,15 @@ export function applyOperation(doc: Doc, op: Operation): Reconciled {
       out.back(id);
     }
   }
+  // What went with another, without a revision of its own, as a connection
+  // with its node to the trash, is marked gone, though no revision of the
+  // operation names it, so that the list of a read that began before, which
+  // still has it, does not bring it back (wentSince).
+  for (const [id, rev] of draft.quiet) {
+    if (!draft.changes.has(id) && entityOf(applied, id) === undefined) {
+      out.gone(id, rev, op.seq);
+    }
+  }
   for (const [id, rev] of revs) {
     if (draft.changes.has(id)) {
       continue;
@@ -364,16 +397,29 @@ export function mergeEntity(
   since: number,
   changedSince: ReadonlySet<string> = new Set(),
 ): Doc {
-  const held = entityOf(doc, id);
-  let next = mergeOne(doc, id, entity, since);
+  const out = new Writer(doc, "");
+  mergeInto(out, id, entity, since, changedSince);
+  return out.finish(doc.seq);
+}
+
+/** Merges entity, of id, into what out has written, as mergeEntity does. */
+function mergeInto(
+  out: Writer,
+  id: string,
+  entity: Revised | undefined,
+  since: number,
+  changedSince: ReadonlySet<string>,
+): void {
+  const held = entityOf(out.doc, id);
+  mergeOne(out, id, entity, since);
   // A node's branch outputs and a type's attribute definitions have
   // revisions of their own, which a change of theirs does not give their
   // owner, so each is merged by its own, as one that came back from the
   // trash, whose owner's revision is the same.
   const field = nestedField(id);
-  const owner = entityOf(next, id);
+  const owner = entityOf(out.doc, id);
   if (field === undefined || entity === undefined || owner === undefined) {
-    return next;
+    return;
   }
   const nested = nestedOf(entity, field);
   if (owner !== held) {
@@ -388,44 +434,70 @@ export function mergeEntity(
       (held === undefined ? [] : nestedOf(held, field)).map((c) => [c.id, c]),
     );
     const read = new Set(nested.map((c) => c.id));
+    const doc = out.doc;
     const children = [
       ...nested.flatMap((c) => {
         const kept = was.get(c.id);
         if (kept !== undefined) {
           return [kept];
         }
-        return wentSince(next, c.id, c.rev, since) ? [] : [c];
+        return wentSince(doc, c.id, c.rev, since) ? [] : [c];
       }),
       ...[...was.values()].filter(
         (c) => !read.has(c.id) && changedSince.has(c.id),
       ),
     ];
-    next = withEntity(next, id, { ...owner, [field]: children } as Revised);
+    out.set(id, { ...owner, [field]: children } as Revised);
   }
   for (const child of nested) {
-    next = mergeOne(next, child.id, child, since);
+    mergeOne(out, child.id, child, since);
   }
-  return next;
 }
 
-/** Merges entity, of id, into doc, as mergeEntity does, without its nested entities. */
-function mergeOne(
+/**
+ * Returns the entity of id that doc holds, as entityOf does, a nested one
+ * looked for first in the owner that entity names, rather than in each.
+ */
+function heldOf(
   doc: Doc,
   id: string,
   entity: Revised | undefined,
+): Revised | undefined {
+  const of = placeOf(id)?.of;
+  if (entity !== undefined && (of === "output" || of === "attribute")) {
+    const found =
+      of === "output"
+        ? doc.nodes
+            .get((entity as BranchOutput).node_id)
+            ?.outputs?.find((o) => o.id === id)
+        : doc.componentTypes
+            .get((entity as Attribute).component_type_id)
+            ?.attributes.find((a) => a.id === id);
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return entityOf(doc, id);
+}
+
+/** Merges entity, of id, into what out has written, as mergeEntity does, without its nested entities. */
+function mergeOne(
+  out: Writer,
+  id: string,
+  entity: Revised | undefined,
   since: number,
-): Doc {
-  const held = entityOf(doc, id);
-  const out = new Writer(doc, "");
+): void {
+  const doc = out.doc;
+  const held = heldOf(doc, id, entity);
   if (entity === undefined) {
     if (held !== undefined) {
       out.set(id, undefined);
       out.gone(id, held.rev, since);
     }
-    return out.finish(doc.seq);
+    return;
   }
   if (held !== undefined && held.rev > entity.rev) {
-    return doc;
+    return;
   }
   let merged = entity;
   if (held !== undefined && held.rev === entity.rev) {
@@ -437,28 +509,27 @@ function mergeOne(
     // components does not answer, is kept.
     merged = { ...held, ...entity };
     if (equal(merged, held)) {
-      return doc;
+      return;
     }
   }
   if (held === undefined && wentSince(doc, id, entity.rev, since)) {
     // It went at that revision or later, by an operation that the read
     // began before, so the read may have found it as it was before.
-    return doc;
+    return;
   }
   const place = placeOf(id);
   if (
     place?.of === "kind" &&
     !doc.parts.has(partOf(place.kind, entity as Entities[Kind]) as Part)
   ) {
-    return doc;
+    return;
   }
   out.set(id, merged);
   out.back(id);
-  return out.finish(doc.seq);
 }
 
 /** Reports whether a and b are the same JSON value, whatever the order of their objects' fields. */
-function equal(a: unknown, b: unknown): boolean {
+export function equal(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true;
   }
@@ -489,7 +560,8 @@ function equal(a: unknown, b: unknown): boolean {
  * once doc was as of seq since, merged as mergeEntity merges each, and
  * without those of part that it holds that the list did not, which went
  * from the part before the list was read, unless the document has them as
- * of an operation after since, as one created since.
+ * of an operation after since, as one created since. The list is merged in
+ * one copy of each map that it changes, rather than one for each entity.
  */
 export function mergeList<K extends Kind>(
   doc: Doc,
@@ -499,14 +571,13 @@ export function mergeList<K extends Kind>(
   since: number,
   changedSince: ReadonlySet<string>,
 ): Doc {
-  let next = doc;
+  const out = new Writer(doc, "");
   const listed = new Set<string>();
   for (const item of items) {
     listed.add(item.id);
-    next = mergeEntity(next, item.id, item, since, changedSince);
+    mergeInto(out, item.id, item, since, changedSince);
   }
-  const out = new Writer(next, "");
-  for (const [id, entity] of next[kind]) {
+  for (const [id, entity] of [...out.doc[kind]]) {
     if (
       !listed.has(id) &&
       partOf(kind, entity as Entities[K]) === part &&
@@ -515,5 +586,5 @@ export function mergeList<K extends Kind>(
       out.set(id, undefined);
     }
   }
-  return out.finish(next.seq);
+  return out.finish(doc.seq);
 }

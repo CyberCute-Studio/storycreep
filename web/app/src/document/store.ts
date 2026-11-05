@@ -41,6 +41,7 @@ import {
   type Entities,
   emptyDoc,
   type Kind,
+  kinds,
   nodeOfOutput,
   type Part,
   type Project,
@@ -53,6 +54,7 @@ import {
   applyOperation,
   applyPending,
   entityOf,
+  equal,
   mergeEntity,
   mergeList,
   type Operation,
@@ -260,9 +262,19 @@ function projectOf(body: { role?: unknown; seq?: unknown } & Project): Project {
   return project as Project;
 }
 
-/** Reports whether a and b are the same JSON value. */
-function same(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+/**
+ * Returns the revisions that commands expect of each entity: what the
+ * server had of it once it had every operation before their batch, as the
+ * batch applied.
+ */
+function expectedOf(commands: readonly CommandBody[]): Map<string, number> {
+  const expected = new Map<string, number>();
+  for (const command of commands) {
+    for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
+      expected.set(canonical(id), rev);
+    }
+  }
+  return expected;
 }
 
 /** Returns command with what it expects of id moved from before to after. */
@@ -340,6 +352,18 @@ export class ProjectDocument {
   private readonly unanswered = new Map<string, string[]>();
   private readonly waiters: { seq: number; resolve: () => void }[] = [];
   private readonly history: History;
+  /** The account that the document is of, as the page's session was once it was made, whose batches it sends as no other's (post). */
+  private readonly userId: string | undefined;
+  /** The undo or the redo under way, which another asked for meanwhile settles as (step). */
+  private stepUnderWay: Promise<void> | undefined;
+  /** Reads the project anew now, once a read of it failed and waits to try again (reload). */
+  private retryNow: (() => void) | undefined;
+  /**
+   * The seq that the project read anew is to be as of, at least, as a
+   * resync_required that came while it was under way asks, whose
+   * operations up to it the channel does not send (reload).
+   */
+  private resyncTo = 0;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -350,6 +374,7 @@ export class ProjectDocument {
     const userId = options.queryClient.getQueryData(
       sessionQuery.queryKey,
     )?.user_id;
+    this.userId = userId;
     this.history = new History(
       options.storage,
       userId === undefined ? undefined : historyKey(userId, projectId),
@@ -459,7 +484,7 @@ export class ProjectDocument {
           for (const list of lists) {
             doc = mergeList(doc, list.kind, part, list.items, since, changed);
           }
-          this.confirmed = doc;
+          this.took(doc);
         }
         this.show();
       } catch (error) {
@@ -530,10 +555,15 @@ export class ProjectDocument {
   /** Applies op, whose seq is the next of the document's, to what the server confirmed. */
   private confirm(op: Operation): void {
     const first = op.commands[0] as { command_id?: string } | undefined;
+    // A batch sent again as it was, with the IDs that its commands had, that
+    // is queued still, is not the operation's: the operation is of the batch
+    // that no answer came to, and the one queued, which would never be sent
+    // once taken out, is answered as that one once it is (settle).
     const own = this.entries.find(
       (e) =>
-        e.commands[0]?.command_id === first?.command_id ||
-        e.answer?.seq === op.seq,
+        e.sent &&
+        (e.commands[0]?.command_id === first?.command_id ||
+          e.answer?.seq === op.seq),
     );
     const wanted = own !== undefined || this.history.wants(op.seq);
     const captured: Captured = {};
@@ -544,12 +574,7 @@ export class ProjectDocument {
       // holds it as of before the operation: one that it holds as of the
       // operation or later, as read from the server since, it does not know
       // as it was before, and leaves out.
-      const expected = new Map<string, number>();
-      for (const command of own?.commands ?? []) {
-        for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
-          expected.set(canonical(id), rev);
-        }
-      }
+      const expected = expectedOf(own?.commands ?? []);
       for (const r of op.revisions) {
         const id = canonical(r.id);
         const held = entityOf(this.confirmed, id)?.rev;
@@ -628,28 +653,108 @@ export class ProjectDocument {
     op: Operation | undefined,
     before: Project | undefined,
   ): void {
-    const client = this.options.queryClient;
-    const project = this.confirmed.project;
-    if (project !== undefined && project !== before) {
-      client.setQueryData(projectQuery(this.projectId).queryKey, (body) =>
-        body === undefined
-          ? body
-          : { ...project, role: body.role, seq: this.confirmed.seq },
-      );
-    }
+    this.projectFollowed(before);
     if (
       op === undefined ||
       op.commands.some((c) => /\.(delete|restore)(_many)?$/.test(c.type))
     ) {
-      void client.invalidateQueries({
+      void this.options.queryClient.invalidateQueries({
         queryKey: ["projects", this.projectId, "trash"],
       });
     }
   }
 
+  /**
+   * Tells the project's read what the document holds of the project, once
+   * it is another than before, however it came: by an operation, by the
+   * project read anew, or by a read of it, or a refusal's state of it,
+   * which an operation of the same revision that comes after leaves as it
+   * is (applyOperation).
+   */
+  private projectFollowed(before: Project | undefined): void {
+    const project = this.confirmed.project;
+    if (project !== undefined && project !== before) {
+      this.options.queryClient.setQueryData(
+        projectQuery(this.projectId).queryKey,
+        (body) =>
+          body === undefined
+            ? body
+            : { ...project, role: body.role, seq: this.confirmed.seq },
+      );
+    }
+  }
+
+  /**
+   * Takes doc, which reads from the server have brought, for what the
+   * server confirmed, keeping what the document held of each entity that
+   * doc holds at a later revision (earlier), as a form may show it still.
+   */
+  private took(doc: Doc): void {
+    const was = this.confirmed;
+    const project = was.project;
+    if (
+      project !== undefined &&
+      doc.project !== undefined &&
+      doc.project.rev > project.rev
+    ) {
+      this.remember(project.id, project);
+    }
+    for (const kind of kinds) {
+      if (was[kind] === doc[kind]) {
+        continue;
+      }
+      for (const [id, held] of was[kind] as ReadonlyMap<string, Revised>) {
+        const now = (doc[kind] as ReadonlyMap<string, Revised>).get(id);
+        if (now === undefined || now === held) {
+          continue;
+        }
+        if (now.rev > held.rev) {
+          this.remember(id, held);
+        }
+        const field =
+          kind === "nodes"
+            ? "outputs"
+            : kind === "componentTypes"
+              ? "attributes"
+              : undefined;
+        if (field !== undefined) {
+          const nested = (entity: Revised) =>
+            ((entity as unknown as Record<string, unknown>)[field] ??
+              []) as Revised[];
+          const later = new Map(nested(now).map((c) => [c.id, c]));
+          for (const child of nested(held)) {
+            const next = later.get(child.id);
+            if (next !== undefined && next.rev > child.rev) {
+              this.remember(child.id, child);
+            }
+          }
+        }
+      }
+    }
+    this.confirmed = doc;
+  }
+
   /** Drops what the server has confirmed of the page's batches, and shows the document. */
   private settle(): void {
     const seq = this.confirmed.seq;
+    for (const entry of this.entries) {
+      const answer = entry.answer;
+      if (
+        answer?.status === "applied" &&
+        answer.seq <= seq &&
+        entry.captured === undefined
+      ) {
+        // The batch's operation reached the document without it, as once no
+        // answer came to it at first, and it was sent again, or as the
+        // project read anew: what its commands expected is what the server
+        // had before it, as it applied, which the step that undoes it moves
+        // the other steps from (confirm).
+        entry.captured = Object.fromEntries(expectedOf(entry.commands));
+        if (this.history.wants(answer.seq)) {
+          this.history.capture(answer.seq, entry.captured);
+        }
+      }
+    }
     this.entries = this.entries.filter(
       (e) => e.answer === undefined || e.answer.seq > seq,
     );
@@ -713,11 +818,21 @@ export class ProjectDocument {
     }
     if (this.buffer !== undefined) {
       // The document is reading the project already, which is as of seq at
-      // least, or has yet to read it.
+      // least once it has, as it reads it again if it is not (resyncTo), or
+      // has yet to read it. A read that failed, which waits to try again,
+      // tries now, as the channel, or a page, that asks for it is back.
+      this.resyncTo = Math.max(this.resyncTo, seq);
+      this.retryNow?.();
       return this.resyncing ?? Promise.resolve();
     }
     this.buffer = [];
-    const resyncing = this.reload(seq, 0).finally(() => {
+    this.resyncTo = seq;
+    return this.reloading(seq, 0);
+  }
+
+  /** Reads the project anew as reload does, as the reading anew under way, which resync and refresh resolve with. */
+  private reloading(seq: number, failures: number): Promise<void> {
+    const resyncing = this.reload(seq, failures).finally(() => {
       if (this.resyncing === resyncing) {
         this.resyncing = undefined;
       }
@@ -803,17 +918,20 @@ export class ProjectDocument {
         return;
       }
       this.options.log.record("request", error);
-      this.resyncTimer = setTimeout(
-        () => void this.reload(seq, failures + 1),
-        backoff(failures + 1, Math.random),
-      );
+      const retry = () => {
+        clearTimeout(this.resyncTimer);
+        this.retryNow = undefined;
+        void this.reloading(seq, failures + 1);
+      };
+      this.retryNow = retry;
+      this.resyncTimer = setTimeout(retry, backoff(failures + 1, Math.random));
       return;
     }
     if (this.disposed) {
       return;
     }
     const before = this.confirmed.project;
-    this.confirmed = doc;
+    this.took(doc);
     this.generation++;
     this.followed(undefined, before);
     const buffered = (this.buffer ?? []).sort((a, b) => a.seq - b.seq);
@@ -822,6 +940,12 @@ export class ProjectDocument {
       this.receive(op);
     }
     this.settle();
+    // A resync_required that came while the project was read, of a seq past
+    // what it read, is followed by the operations after that seq alone:
+    // those up to it the document reads anew again.
+    if (this.resyncTo > this.confirmed.seq) {
+      void this.resync(this.resyncTo);
+    }
     this.catchUp();
   }
 
@@ -837,9 +961,12 @@ export class ProjectDocument {
     if (this.store.getState().live || this.buffer !== undefined) {
       return;
     }
+    // An answer of already_applied, as to a batch sent again once the
+    // server no longer kept its first answer, gives the seq that applied it,
+    // which the document follows as it does an applied one's.
     let seq = this.confirmed.seq;
     for (const entry of this.entries) {
-      if (entry.answer?.status === "applied" && entry.answer.seq > seq) {
+      if (entry.answer !== undefined && entry.answer.seq > seq) {
         seq = entry.answer.seq;
       }
     }
@@ -850,6 +977,9 @@ export class ProjectDocument {
 
   /** Reads part again, as once entities of it came back without revisions of their own. */
   private async reread(part: Part): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
     const since = this.confirmed.seq;
     const generation = this.generation;
     const changed = this.watch();
@@ -860,7 +990,7 @@ export class ProjectDocument {
         for (const list of lists) {
           doc = mergeList(doc, list.kind, part, list.items, since, changed);
         }
-        this.confirmed = doc;
+        this.took(doc);
         this.show();
       }
     } catch (error) {
@@ -972,7 +1102,9 @@ export class ProjectDocument {
       }
       body = projectOf(body as Project);
     }
-    this.confirmed = mergeEntity(this.confirmed, owner, body, since, changed);
+    const before = this.confirmed.project;
+    this.took(mergeEntity(this.confirmed, owner, body, since, changed));
+    this.projectFollowed(before);
     this.show();
   }
 
@@ -1000,13 +1132,8 @@ export class ProjectDocument {
       );
       // The project read anew meanwhile read the folders with their part.
       if (this.generation === generation) {
-        this.confirmed = mergeList(
-          this.confirmed,
-          "folders",
-          part,
-          items,
-          since,
-          changed,
+        this.took(
+          mergeList(this.confirmed, "folders", part, items, since, changed),
         );
         this.show();
       }
@@ -1053,18 +1180,56 @@ export class ProjectDocument {
     return this.step("redo");
   }
 
-  private async step(which: "undo" | "redo"): Promise<void> {
-    const step =
-      which === "undo" ? this.history.nextUndo() : this.history.nextRedo();
-    if (step === undefined || this.store.getState().stepping) {
-      return;
+  /**
+   * Sends the latest step of the history to undo or to redo. One asked for
+   * while another is under way, as by a second click before the first has
+   * disabled the button, is that one, and settles as it does, so that what
+   * the page says of it is what became of it.
+   */
+  private step(which: "undo" | "redo"): Promise<void> {
+    if (this.stepUnderWay !== undefined) {
+      return this.stepUnderWay;
     }
+    const newest = () =>
+      which === "undo" ? this.history.nextUndo() : this.history.nextRedo();
+    const first = newest();
+    if (first === undefined) {
+      return Promise.resolve();
+    }
+    const underWay = this.stepped(which, first, newest).finally(() => {
+      if (this.stepUnderWay === underWay) {
+        this.stepUnderWay = undefined;
+      }
+    });
+    this.stepUnderWay = underWay;
+    return underWay;
+  }
+
+  /** Sends first, the latest step to undo or to redo, which newest returns, or the one that is the latest once the document has the operations before it. */
+  private async stepped(
+    which: "undo" | "redo",
+    first: Step,
+    newest: () => Step | undefined,
+  ): Promise<void> {
+    let step = first;
     this.store.setState({ stepping: true });
     try {
       // What the step expects is moved from what the document held before
-      // the batches that it undoes, which it knows once it has them.
-      if (this.store.getState().live) {
+      // the batches that it undoes, which it knows once it has them. A
+      // batch answered meanwhile, as a form's save, changes the history, of
+      // which the step sent is the latest then, if any, as a new change
+      // leaves nothing to redo.
+      while (this.store.getState().live) {
         await this.whenConfirmed(Math.max(...step.seqs), confirmWait);
+        const now = newest();
+        if (now === undefined) {
+          return;
+        }
+        const same = now.seqs[0] === step.seqs[0];
+        step = now;
+        if (same) {
+          break;
+        }
       }
       const before = this.history.before(step);
       let applied: Sent[] = [];
@@ -1341,6 +1506,14 @@ export class ProjectDocument {
     const session = this.options.queryClient.getQueryData(
       sessionQuery.queryKey,
     );
+    // The document is its account's (Documents): a batch queued while the
+    // page signed in to another account, whose cookie and CSRF token the
+    // request would carry, is never sent as that account's.
+    if (this.userId !== undefined && session?.user_id !== this.userId) {
+      throw new Error(
+        "The page is signed in to another account than the batch's.",
+      );
+    }
     const answer = (
       await api.call("applyCommands", {
         path: { project_id: this.projectId },
@@ -1409,6 +1582,18 @@ export class ProjectDocument {
         moved(command, c.id, c.expected_rev, c.current_rev as number),
       );
     }
+    // What the page showed before the batch moves with it, so that its
+    // answer moves the batches made on top of it as it is now, which expect
+    // the current revision, and not those made on top of it before, which
+    // expect what the page showed before what changed elsewhere, and are
+    // refused for it in turn, and compared with it, rather than written over
+    // it unasked (moveQueued).
+    for (const c of conflicts) {
+      const id = canonical(c.id);
+      if (entry.before.get(id) === c.expected_rev) {
+        entry.before.set(id, c.current_rev as number);
+      }
+    }
     entry.commands = commands.map((c) => ({
       ...c,
       command_id: formatUuid(newUuid()),
@@ -1436,6 +1621,7 @@ export class ProjectDocument {
       }
     }
     this.readLater();
+    const before = this.confirmed.project;
     let doc = this.confirmed;
     for (const [id, state] of Object.entries(states)) {
       if (state.deleted_at === undefined && typeof state.rev === "number") {
@@ -1451,6 +1637,7 @@ export class ProjectDocument {
       }
     }
     this.confirmed = doc;
+    this.projectFollowed(before);
   }
 
   /**
@@ -1491,9 +1678,9 @@ export class ProjectDocument {
         // which has another value now than the batch's, may have changed
         // elsewhere since, and is not written over unasked.
         const elsewhere = shown.exact
-          ? !same(state[field], base[field])
-          : !same(state[field], value);
-        if (!same(value, base[field]) && elsewhere) {
+          ? !equal(state[field], base[field])
+          : !equal(state[field], value);
+        if (!equal(value, base[field]) && elsewhere) {
           fields.push({ field, mine: value, theirs: state[field] });
         }
       }
@@ -1604,15 +1791,24 @@ function operationOf(message: OperationMessage): Operation {
   };
 }
 
-/** Runs tasks, at most n at a time. */
+/**
+ * Runs tasks, at most n at a time, and rejects as the first that fails
+ * does, after which it starts none of those left, whose caller has failed.
+ */
 async function inTurns(
   tasks: readonly (() => Promise<void>)[],
   n: number,
 ): Promise<void> {
   let next = 0;
+  let failed = false;
   const run = async () => {
-    while (next < tasks.length) {
-      await tasks[next++]();
+    while (next < tasks.length && !failed) {
+      try {
+        await tasks[next++]();
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(n, tasks.length) }, run));
