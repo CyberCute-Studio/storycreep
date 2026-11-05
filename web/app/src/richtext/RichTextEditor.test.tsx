@@ -1,0 +1,177 @@
+import type { RichTextDoc } from "@storycreep/shared/api";
+import { MAX_CHARS } from "@storycreep/shared/richtext";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { I18nextProvider } from "react-i18next";
+import { describe, expect, test, vi } from "vitest";
+import { createAppI18n } from "../i18n";
+import "../test/editor";
+import type { RichTextValue } from "./convert";
+import { RichTextEditor, type RichTextEditorProps } from "./RichTextEditor";
+
+const paragraph = (text: string): RichTextDoc => ({
+  content: [{ content: [{ text, type: "text" }], type: "paragraph" }],
+  type: "doc",
+});
+
+/** Renders the editor of props in English, and returns what each change gave the page. */
+function renderEditor(props: Partial<RichTextEditorProps> = {}) {
+  const changes: RichTextValue[] = [];
+  const onChange = vi.fn((value: RichTextValue) => {
+    changes.push(value);
+  });
+  render(
+    <I18nextProvider i18n={createAppI18n(["en"], document.documentElement)}>
+      <RichTextEditor label="Body" onChange={onChange} {...props} />
+    </I18nextProvider>,
+  );
+  const textbox = screen.getByRole("textbox", { name: "Body" });
+  return { changes, textbox, last: () => changes.at(-1) };
+}
+
+/** Selects the whole text of the editor that has the focus, as its keyboard does. */
+async function selectAll(textbox: HTMLElement) {
+  textbox.focus();
+  await userEvent.keyboard("{Control>}a{/Control}");
+}
+
+describe("the rich-text editor", () => {
+  test("is a labelled text box, whose toolbar's buttons say whether the selection has their mark", async () => {
+    const { textbox, last } = renderEditor({
+      defaultValue: paragraph("Stay away"),
+      hint: "What the keeper says",
+    });
+    expect(textbox.getAttribute("aria-multiline")).toBe("true");
+    screen.getByRole("textbox", {
+      name: "Body",
+      description: "What the keeper says",
+    });
+    screen.getByRole("toolbar", { name: "Formatting of Body" });
+    const bold = screen.getByRole("button", { name: "Bold", pressed: false });
+    await selectAll(textbox);
+    await userEvent.click(bold);
+    expect(last()?.doc).toEqual({
+      content: [
+        {
+          content: [
+            { marks: [{ type: "bold" }], text: "Stay away", type: "text" },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    });
+    await waitFor(() => expect(bold.getAttribute("aria-pressed")).toBe("true"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Numbered list" }),
+    );
+    expect(last()?.doc?.content[0].type).toBe("orderedList");
+  });
+
+  test("links the selection to a URL typed without its scheme, and refuses one that no link may lead to", async () => {
+    const { textbox, last } = renderEditor({
+      defaultValue: paragraph("harbour"),
+    });
+    await selectAll(textbox);
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add a link" });
+    const address = screen.getByRole("textbox", { name: "Address" });
+    expect(dialog.contains(address)).toBe(true);
+    await userEvent.type(address, "javascript:alert(1)");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the link" }),
+    );
+    screen.getByRole("textbox", {
+      name: "Address",
+      description: /A link leads to a web address/,
+    });
+    expect(last()).toBeUndefined();
+    await userEvent.clear(address);
+    await userEvent.type(address, "café.example/harbour");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the link" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(last()?.doc).toEqual({
+      content: [
+        {
+          content: [
+            {
+              marks: [
+                {
+                  attrs: { href: "https://xn--caf-dma.example/harbour" },
+                  type: "link",
+                },
+              ],
+              text: "harbour",
+              type: "text",
+            },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+  });
+
+  test("says that a text of more than 100,000 characters is too long to save, and gives the page why", async () => {
+    const { textbox, last } = renderEditor({
+      defaultValue: paragraph("a".repeat(MAX_CHARS)),
+    });
+    textbox.focus();
+    await userEvent.paste("b");
+    expect(last()?.error?.reason).toBe("too_large");
+    expect(textbox.getAttribute("aria-invalid")).toBe("true");
+    screen.getByRole("textbox", {
+      name: "Body",
+      description:
+        "This text is too long to save: it may hold at most 100,000 characters.",
+    });
+  });
+
+  test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar", () => {
+    const { textbox } = renderEditor({
+      defaultValue: paragraph("Read only"),
+      editable: false,
+      error: "The server refused it.",
+    });
+    expect(textbox.getAttribute("aria-readonly")).toBe("true");
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+    screen.getByRole("textbox", {
+      name: "Body",
+      description: "The server refused it.",
+    });
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  test("shows a mention and a value reference by the names that the page gives, and by what they are when it knows none", () => {
+    const component = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BVD";
+    const variable = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVE";
+    const { textbox } = renderEditor({
+      defaultValue: {
+        content: [
+          {
+            content: [
+              { attrs: { id: component }, type: "mention" },
+              { text: " has ", type: "text" },
+              { attrs: { ref: variable }, type: "valueRef" },
+              { text: " and ", type: "text" },
+              {
+                attrs: { ref: "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVF" },
+                type: "valueRef",
+              },
+            ],
+            type: "paragraph",
+          },
+        ],
+        type: "doc",
+      },
+      names: {
+        mention: (id) => (id === component ? "Elara" : undefined),
+        value: (ref) => (ref === variable ? "gold" : undefined),
+      },
+    });
+    expect(textbox.textContent).toBe("@Elara has {gold} and {value}");
+  });
+});

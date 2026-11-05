@@ -12,7 +12,8 @@
       "!**/*.gen.ts",
       "!schema/api/v1/openapi.json",
       "!schema/**/*.schema.json",
-      "!schema/conformance/**/*.json"
+      "!schema/conformance/**/*.json",
+      "!web/app/src/richtext/testdata"
     ]
   },
   "formatter": {

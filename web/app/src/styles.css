@@ -27,3 +27,88 @@
     outline: none;
   }
 }
+
+/* The rich-text editor's text (web/app/src/richtext): ProseMirror's own
+   rules, which TipTap would add in a style element of its own that the
+   page's Content-Security-Policy refuses, and how the text shows what the
+   schema holds. */
+@layer components {
+  .rich-text {
+    position: relative;
+    overflow-wrap: break-word;
+    white-space: break-spaces;
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0;
+  }
+
+  .rich-text [contenteditable="false"] {
+    white-space: normal;
+  }
+
+  .rich-text > * + *,
+  .rich-text li > * + * {
+    margin-block-start: 0.5em;
+  }
+
+  .rich-text ul,
+  .rich-text ol {
+    padding-inline-start: 1.5em;
+  }
+
+  .rich-text ul {
+    list-style-type: disc;
+  }
+
+  .rich-text ol {
+    list-style-type: decimal;
+  }
+
+  .rich-text code {
+    border-radius: 0.25rem;
+    background-color: var(--color-surface);
+    padding-inline: 0.2em;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  .rich-text a {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .rich-text .rich-text-chip {
+    border-radius: 0.25rem;
+    background-color: var(--color-surface);
+    padding-inline: 0.25em;
+    white-space: nowrap;
+  }
+
+  /* What the empty editor shows, which takes no room of its own. */
+  .rich-text p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: inline-start;
+    height: 0;
+    color: var(--color-fg-muted);
+    pointer-events: none;
+  }
+
+  /* The base layer's images are blocks; the separator that ProseMirror
+     puts after an inline node shows nothing. */
+  .rich-text img.ProseMirror-separator {
+    display: inline;
+    margin: 0;
+    border: none;
+    width: 0;
+    height: 0;
+  }
+
+  /* While ProseMirror shows the selection itself, as of a mention. */
+  .rich-text.ProseMirror-hideselection *::selection {
+    background: transparent;
+  }
+
+  .rich-text.ProseMirror-hideselection * {
+    caret-color: transparent;
+  }
+}

@@ -1,0 +1,330 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { RichTextDoc } from "@storycreep/shared/api";
+import { parseRichText } from "@storycreep/shared/richtext";
+import { describe, expect, test } from "vitest";
+import { testEditor } from "../test/editor";
+import { storedOf } from "./convert";
+
+/** Returns a file of testdata/: what Word, Word Online, and Google Docs put on the clipboard, as Chrome reads it. */
+function fixture(name: string): string {
+  return readFileSync(join(import.meta.dirname, "testdata", name), "utf8");
+}
+
+/** Returns what pasting html into an empty editor makes, as the server stores it. */
+function pasted(html: string, editor = testEditor()): RichTextDoc {
+  editor.commands.clearContent();
+  editor.view.pasteHTML(html);
+  const value = storedOf(editor.state.doc);
+  if (value.error !== undefined) {
+    throw value.error;
+  }
+  return value.doc;
+}
+
+const text = (value: string, ...marks: string[]) => ({
+  ...(marks.length === 0 ? {} : { marks: marks.map((type) => ({ type })) }),
+  text: value,
+  type: "text",
+});
+const linked = (value: string, href: string) => ({
+  marks: [{ attrs: { href }, type: "link" }],
+  text: value,
+  type: "text",
+});
+const p = (...content: object[]) =>
+  content.length === 0 ? { type: "paragraph" } : { content, type: "paragraph" };
+const item = (...content: object[]) => ({ content, type: "listItem" });
+const bullets = (...items: object[]) => ({
+  content: items,
+  type: "bulletList",
+});
+const numbers = (start: number, ...items: object[]) => ({
+  ...(start === 1 ? {} : { attrs: { start } }),
+  content: items,
+  type: "orderedList",
+});
+const doc = (...content: object[]) => ({ content, type: "doc" });
+
+describe("pasting", () => {
+  // Verifies: FR-TEXT-01/AC2
+  test("Google Docs keeps its bold, italic, and struck-through text, lists, and links, and makes plain text of the rest", () => {
+    expect(pasted(fixture("google-docs.html"))).toEqual(
+      doc(
+        p(
+          text("The keeper said: "),
+          text("stay", "bold"),
+          text(" "),
+          text("away", "italic"),
+          text(" "),
+          text("now", "strike"),
+          text(", under a sea"),
+        ),
+        p(text("Packing")),
+        p(),
+        bullets(
+          item(p(text("Rope", "bold")), bullets(item(p(text("Oil"))))),
+          item(p(text("Lamp"))),
+        ),
+        numbers(3, item(p(text("Sail")))),
+        p(
+          text("Ask at "),
+          linked("the harbour", "https://example.com/harbour"),
+          text(" or see Packing"),
+        ),
+        p(text("Tide")),
+        p(text("High")),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("Word keeps its marks, and makes lists of its paragraphs of a list, numbered from where Word numbers them", () => {
+    expect(pasted(fixture("word.html"))).toEqual(
+      doc(
+        p(
+          text("Bold", "bold"),
+          text(" and "),
+          text("italic", "italic"),
+          text(" and "),
+          text("struck", "strike"),
+          text(" and underlined and red, "),
+          {
+            marks: [{ type: "bold" }, { type: "italic" }],
+            text: "both",
+            type: "text",
+          },
+          text("."),
+        ),
+        p(),
+        bullets(
+          item(p(text("Rope")), bullets(item(p(text("Oil"))))),
+          item(p(text("Lamp"))),
+        ),
+        numbers(3, item(p(text("Sail"))), item(p(text("Return")))),
+        p(text("Arrival")),
+        p(
+          text("See "),
+          linked("the site", "https://example.com/"),
+          text(" and a file."),
+          { type: "hardBreak" },
+          text("Next line"),
+        ),
+        p(text("Shown")),
+        p(text("Tide")),
+        p(text("High")),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("Word Online's lists of one item each are one list, nested by their levels", () => {
+    expect(pasted(fixture("word-online.html"))).toEqual(
+      doc(
+        p(text("Bold", "bold"), text(" plain "), text("slanted", "italic")),
+        bullets(item(p(text("First")), bullets(item(p(text("Nested")))))),
+        numbers(1, item(p(text("Numbered")))),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("HTML that the schema does not hold gives plain text, and none of its scripts, styles, frames, or links that a link may not lead to", () => {
+    const html = `<script>alert(1)</script><style>p{color:red}</style>
+      <p onclick="steal()">Click <img src="x" onerror="alert(1)">me</p>
+      <iframe src="https://evil.example/"></iframe>
+      <p><a href="javascript:alert(1)">script</a> <a href="data:text/html,x">data</a> <a href="https://example.com@evil.example/">userinfo</a> <a href="/relative">relative</a> <a href=" https://café.example/menu ">café</a> <a href="MAILTO:keeper@example.com">mail</a></p>
+      <table><tr><th>Name</th><td>Elara</td></tr></table>
+      <blockquote><p>Quoted</p></blockquote>
+      <pre>let tide = 1;
+if (tide) {}</pre>
+      <h3>Title</h3>
+      <p><u>under</u> <sup>2</sup> <font color="red">font</font> <mark>marked</mark> <code><b>code</b></code> <a href="https://example.com/"><code>linked code</code></a></p>
+      <svg><text>drawn</text></svg><math><mi>x</mi></math><template><p>template</p></template>
+      <noscript>no script</noscript><object>object</object><select><option>option</option></select>
+      <textarea>area</textarea><button>button</button><video>video</video>
+      <div hidden>hidden</div><p style="display:none">not shown</p>
+      <p>Mark&#x200F;ed &#x202E;over&#x202C;ridden&#x2028;line</p>
+      <p>Ruby <ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby></p>
+      <p><span data-type="mention" data-id="nd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD">@not a component</span>end</p>`;
+    expect(pasted(html)).toEqual(
+      doc(
+        p(text("Click me")),
+        p(
+          text("script data userinfo relative "),
+          linked("café", "https://xn--caf-dma.example/menu"),
+          text(" "),
+          linked("mail", "MAILTO:keeper@example.com"),
+        ),
+        p(text("Name")),
+        p(text("Elara")),
+        p(text("Quoted")),
+        p(
+          text("let tide = 1;", "code"),
+          { type: "hardBreak" },
+          text("if (tide) {}", "code"),
+        ),
+        p(text("Title")),
+        p(
+          text("under 2 font marked "),
+          text("code", "code"),
+          text(" "),
+          linked("linked code", "https://example.com/"),
+        ),
+        p(text("Marked overridden"), { type: "hardBreak" }, text("line")),
+        p(text("Ruby 漢")),
+        p(text("end")),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("random HTML of elements, styles, and attributes that the schema does not hold always gives a document that the server stores", () => {
+    // A seeded generator, so that a failure is the same on every run.
+    let seed = 57;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    const pick = <T>(items: readonly T[]): T =>
+      items[Math.floor(random() * items.length)];
+    const tags = [
+      "p",
+      "div",
+      "span",
+      "b",
+      "strong",
+      "i",
+      "em",
+      "s",
+      "del",
+      "u",
+      "code",
+      "pre",
+      "a",
+      "ul",
+      "ol",
+      "li",
+      "h1",
+      "blockquote",
+      "table",
+      "tr",
+      "td",
+      "br",
+      "img",
+      "script",
+      "style",
+      "sup",
+      "font",
+    ];
+    const styles = [
+      "font-weight:700",
+      "font-weight:normal",
+      "font-style:italic",
+      "text-decoration:line-through",
+      "display:none",
+      "mso-list:l0 level3 lfo1",
+      "color:red",
+      "white-space:pre",
+    ];
+    const hrefs = [
+      "https://example.com/",
+      "javascript:x()",
+      "mailto:a@b.example",
+      "https://exa mple.com/",
+      "https://ex​ample.com/",
+      "https://例え.jp/",
+      "#top",
+      "",
+    ];
+    const texts = [
+      "word",
+      " ",
+      " ",
+      "line break",
+      "tab\there",
+      "rtl‮over",
+      "🐴",
+      "\r\n",
+      "<b>not a tag</b>",
+    ];
+    const element = (depth: number): string => {
+      if (depth > 9 || random() < 0.3) {
+        return pick(texts).replace(
+          /[<>&]/g,
+          (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] ?? c,
+        );
+      }
+      const tag = pick(tags);
+      const attrs = [
+        random() < 0.4 ? ` style="${pick(styles)}"` : "",
+        tag === "a" ? ` href="${pick(hrefs)}"` : "",
+        tag === "ol"
+          ? ` start="${pick(["0", "-4", "3", "99999999", "x"])}"`
+          : "",
+        tag === "li" && random() < 0.5
+          ? ` aria-level="${pick(["1", "2", "7", "0"])}"`
+          : "",
+      ].join("");
+      const children = Array.from({ length: Math.floor(random() * 4) }, () =>
+        element(depth + 1),
+      );
+      return `<${tag}${attrs}>${children.join("")}</${tag}>`;
+    };
+    const editor = testEditor();
+    for (let i = 0; i < 300; i++) {
+      const html = Array.from({ length: 3 }, () => element(0)).join("");
+      const stored = pasted(html, editor);
+      // The server would take the document as the editor writes it.
+      expect(parseRichText(stored), html).toEqual(stored);
+    }
+  }, 30_000);
+
+  // Verifies: FR-TEXT-01/AC2
+  test("lists nested more deeply than lists nest have their items moved up to the deepest level", () => {
+    let html = "<p>last</p>";
+    for (let depth = 8; depth >= 1; depth--) {
+      html = `<ul><li>level ${depth}${html}</li></ul>`;
+    }
+    const stored = pasted(html.replace("<p>last</p>", ""));
+    let list = stored.content[0] as { content: { content: object[] }[] };
+    for (let depth = 1; depth < 5; depth++) {
+      list = list.content[0].content[1] as typeof list;
+    }
+    // The fifth list holds the items of levels 5 to 8, one after another.
+    expect(list).toEqual(
+      bullets(...[5, 6, 7, 8].map((n) => item(p(text(`level ${n}`))))),
+    );
+  });
+
+  test("a mention and a value reference that the editor copied are pasted as they were", () => {
+    const mention = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BVD";
+    const variable = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVE";
+    expect(
+      pasted(
+        `<p data-pm-slice="1 1 []">Ask <span data-type="mention" data-id="${mention}" class="rich-text-chip">@Elara</span> for <strong><span data-type="value-ref" data-ref="${variable}" data-decimals="2">{gold}</span></strong></p>`,
+      ),
+    ).toEqual(
+      doc(
+        p(
+          text("Ask "),
+          { attrs: { id: mention }, type: "mention" },
+          text(" for "),
+          {
+            attrs: { decimals: 2, ref: variable },
+            marks: [{ type: "bold" }],
+            type: "valueRef",
+          },
+        ),
+      ),
+    );
+  });
+
+  test("plain text loses the characters that a text may not hold, and each line is a paragraph", () => {
+    const editor = testEditor();
+    editor.view.pasteText("first‏ line\u0007\nsecond\ttabbed");
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("first line")), p(text("second\ttabbed"))),
+    );
+  });
+});
