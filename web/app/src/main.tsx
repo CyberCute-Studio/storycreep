@@ -59,6 +59,7 @@ const documents = new Documents({
   queryClient,
   realtime,
   log: errorLog,
+  checkSession: () => void session.check(),
   storage: tabStorage(),
 });
 const router = createAppRouter({

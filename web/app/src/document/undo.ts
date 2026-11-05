@@ -5,8 +5,8 @@
 // own, and whose answer holds the undo of that batch, the step that redoes
 // it. The steps are the user's, of one project, and the history keeps at
 // least the last 200 of them (depth), in the tab's session storage, so that
-// a reload keeps them, as many as fit, and at least the last 50 if they fit
-// (AC3).
+// a reload keeps the latest of them that fit, the oldest left out first
+// (save), and so at least the last 50 wherever 50 fit (AC3).
 //
 // A step that applies brings each entity that the undone batch changed back
 // to what it was, at a new revision, so the history moves what its other
@@ -38,9 +38,6 @@ export type Captured = Record<string, number | null>;
 
 /** How many steps the history keeps at least (FR-EDIT-08). */
 export const depth = 200;
-
-/** How many of the latest steps a reload keeps at least, where they fit in the tab's storage (FR-EDIT-08 AC3). */
-export const keptOnReload = 50;
 
 /** What the history keeps in the tab's storage. */
 interface Saved {

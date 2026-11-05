@@ -469,8 +469,10 @@ export const componentAppliers: Appliers<Types> = {
     changeComponent(draft, p.id, (c) =>
       withField(c, "image_asset_id", idOrNone(p.image_asset_id)),
     ),
-  // A component that the document holds without its values is given the
-  // one, but not the others, which the store reads.
+  // A component that the document holds without its values, as the list of
+  // the components gives it, is given none of them, not even the one, which
+  // would be taken for all of them, as read (unreadFields, in store.ts): the
+  // store reads it.
   "component.set_attribute": (draft, p) => {
     const component = draft.get("components", canonical(p.id));
     const attributeId = canonical(p.attribute_id);
@@ -483,11 +485,13 @@ export const componentAppliers: Appliers<Types> = {
     }
     draft.put(
       "components",
-      {
-        ...component,
-        attributes: { ...component.attributes, [attributeId]: value },
-        updated_at: draft.time,
-      },
+      component.attributes === undefined
+        ? { ...component, updated_at: draft.time }
+        : {
+            ...component,
+            attributes: { ...component.attributes, [attributeId]: value },
+            updated_at: draft.time,
+          },
       component.attributes !== undefined,
     );
   },

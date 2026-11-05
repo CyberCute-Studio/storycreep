@@ -1,17 +1,25 @@
 // The appliers of the commands of the project, its folders, and its boards
 // (PRD FR-PROJ-01, FR-PROJ-02), as their server's packages apply them: a
 // value of a payload is stored as it is sent, since the server refuses what
-// it would have to mend; a key of order that the payload leaves out is the
-// server's to pick, after every sibling, those in the trash too, which the
-// document does not hold, so the applier's is not sure, but for a child that
-// moves within its folder after every other, which keeps its own; and a
-// board that goes to the trash takes its nodes and connections out of every
-// read with it, without a revision of theirs.
+// it would have to mend, but for the empty ID of a folder, which is the top,
+// as the server takes it (board.LiveFolder); a key of order that the payload
+// leaves out is the server's to pick, after every sibling, those in the
+// trash too, which the document does not hold, so the applier's is not
+// sure, but for a child that moves within its folder after every other,
+// which keeps its own; and a board that goes to the trash takes its nodes
+// and connections out of every read with it, without a revision of theirs.
 
 import type { Board, Folder } from "@storycreep/shared/api";
 import { type Appliers, canonical } from "../apply";
 import { boardPart, type Draft, type Project } from "../doc";
-import { folderChildren, keyAfter, placed, renames, withField } from "./node";
+import {
+  folderChildren,
+  idOrNone,
+  keyAfter,
+  placed,
+  renames,
+  withField,
+} from "./node";
 
 type Types =
   | `board.${"create" | "rename" | "describe" | "set_color" | "set_slug" | "move" | "delete" | "restore" | "set_entry_node"}`
@@ -115,7 +123,7 @@ function changeProject(
 
 export const boardAppliers: Appliers<Types> = {
   "board.create": (draft, p) => {
-    const folderId = canonical(p.folder_id);
+    const folderId = idOrNone(p.folder_id);
     draft.put(
       "boards",
       {
@@ -154,7 +162,7 @@ export const boardAppliers: Appliers<Types> = {
     if (board === undefined) {
       return;
     }
-    const folderId = canonical(p.folder_id);
+    const folderId = idOrNone(p.folder_id);
     const { order, sure } = movedTo(
       draft,
       board,
@@ -200,7 +208,7 @@ export const boardAppliers: Appliers<Types> = {
     renames(draft);
   },
   "folder.create": (draft, p) => {
-    const parentId = canonical(p.parent_id);
+    const parentId = idOrNone(p.parent_id);
     draft.put(
       "folders",
       {
@@ -224,7 +232,7 @@ export const boardAppliers: Appliers<Types> = {
     if (folder === undefined) {
       return;
     }
-    const parentId = canonical(p.parent_id);
+    const parentId = idOrNone(p.parent_id);
     const { order, sure } = movedTo(
       draft,
       folder,

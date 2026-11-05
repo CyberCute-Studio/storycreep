@@ -100,10 +100,11 @@ export function BoardTree({
     });
   const opens = (next: Open) => setOpen(next);
   const close = () => setOpen(undefined);
-  // What a dialog renames, moves, or deletes, as the tree has it now, with
-  // the revision that it read last, as once a refusal of the revision that
-  // the dialog sent had it read again, so that the dialog's next attempt
-  // expects that one, or, once it has gone from the tree, as it was.
+  // What a dialog renames, moves, or deletes, as the tree has it now, or,
+  // once it has gone from the tree, as it was; the dialog expects the
+  // revision of it that it opened with, rather than the one that a change
+  // made elsewhere since gave it, which it would write over unasked, until
+  // a refusal for that change has said so (useExpected).
   const node =
     open === undefined || open.dialog === "create"
       ? undefined

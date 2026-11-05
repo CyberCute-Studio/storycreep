@@ -167,6 +167,6 @@ export function useCommands(projectId: string) {
 }
 
 /** Reports whether error is a refusal of a revision that a batch expected (revision_conflict). */
-export function conflictOf(error: unknown): boolean {
+export function conflictOf(error: unknown): error is ApiError {
   return error instanceof ApiError && error.error?.code === "revision_conflict";
 }

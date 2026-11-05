@@ -23,6 +23,8 @@ export interface DocumentsOptions {
   queryClient: QueryClient;
   realtime?: Realtime;
   log: ErrorLog;
+  /** Has the page ask for its session, once a document's read tells that it may have ended (DocumentOptions.checkSession). */
+  checkSession?: () => void;
   /** The tab's storage, which keeps the undo histories over a reload. */
   storage?: Storage;
 }
@@ -113,8 +115,10 @@ export class Documents {
 
   /**
    * Drops the document of projectId once no page has shown it for a while,
-   * and it is not reading what a route's loader may be waiting for, before
-   * the page that it is for shows, however long that takes.
+   * and it is not busy (ProjectDocument.busy): reading what a route's loader
+   * may be waiting for, before the page that it is for shows, or sending the
+   * page's batches, whose answers join the history that it keeps, however
+   * long that takes, as on a slow connection.
    */
   private unshown(projectId: string, held: Held): void {
     clearTimeout(held.timer);

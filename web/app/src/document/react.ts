@@ -9,7 +9,6 @@ import type { Board, Folder } from "@storycreep/shared/api";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { useStore } from "zustand";
-import type { Doc } from "./doc";
 import type { Documents } from "./documents";
 import type { DocumentState, ProjectDocument } from "./store";
 
@@ -37,11 +36,6 @@ export function useDocumentState<T>(
   select: (state: DocumentState) => T,
 ): T {
   return useStore(doc.store, select);
-}
-
-/** Returns the document as the page shows it. */
-export function useView(doc: ProjectDocument): Doc {
-  return useStore(doc.store, (state) => state.view);
 }
 
 /** What the tree of a project's boards is built from. */

@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { AlertDialog } from "radix-ui";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { bodyField } from "../auth/forms";
@@ -26,6 +26,7 @@ import {
   closesUnlessPending,
 } from "../ui/Dialog";
 import { TextAreaField, TextField, useFocusRefusal } from "../ui/Field";
+import { useHeld } from "../ui/held";
 import { Alert, Page, RefusalAlert, Status } from "../ui/Page";
 import {
   managesWorkspace,
@@ -93,24 +94,15 @@ const detailsField = bodyField("name", "slug", "description");
  * reads as its tab is shown again, does not take away the focus, a
  * selection, or what the user typed (FR-RT-02 AC3), until the focus leaves
  * it unchanged, or it is saved, or refused for that change, when it shows
- * the project as it is now.
+ * the project as it is now (useHeld).
  */
 function DetailsForm({ project }: { project: ProjectBody }) {
   const { t } = useTranslation();
   const session = useSuspenseQuery(sessionQuery).data;
   const client = useQueryClient();
-  const form = useRef<HTMLFormElement>(null);
   const [unchanged, setUnchanged] = useState(false);
-  const [held, setHeld] = useState<ProjectBody>();
-  // Whether the user has changed something in the form since it held the
-  // project, which the focus leaving it then does not let go.
-  const changed = useRef(false);
-  /** Lets go of the project, which the form then shows as the page has it. */
-  const release = () => {
-    changed.current = false;
-    setHeld(undefined);
-  };
-  const shown = held ?? project;
+  const held = useHeld(project);
+  const shown = held.shown;
   const save = useMutation({
     mutationFn: (body: UpdateProjectBody) =>
       api.call("updateProject", {
@@ -126,7 +118,7 @@ function DetailsForm({ project }: { project: ProjectBody }) {
   const refusal = refusalOf(save.error, t, detailsField, {
     slug_taken: t("project_settings.error.slug_taken"),
   });
-  useFocusRefusal(form, save.error);
+  useFocusRefusal(held.form, save.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -143,19 +135,16 @@ function DetailsForm({ project }: { project: ProjectBody }) {
     if (!any) {
       save.reset();
       // The project as it is now, which the focus, still in the form, holds.
-      changed.current = false;
-      setHeld(
-        form.current?.contains(document.activeElement) ? project : undefined,
-      );
+      held.holdNow();
       return;
     }
     save.mutate(
       { ...body, expected_rev: shown.rev },
       {
-        onSuccess: release,
+        onSuccess: held.release,
         onError: (error) => {
           if (conflictOf(error)) {
-            release();
+            held.release();
           }
         },
       },
@@ -179,25 +168,10 @@ function DetailsForm({ project }: { project: ProjectBody }) {
       {/* Shown anew once the project that it shows has changed, as once
           this form saved it, rather than showing what it was. */}
       <form
-        key={shown.rev}
-        ref={form}
+        key={held.key}
+        {...held.props}
         className="space-y-4"
         onSubmit={submit}
-        // The focus coming into the form holds the project as it shows it,
-        // and a change keeps it held once the focus leaves.
-        onFocus={() => setHeld((before) => before ?? project)}
-        onChange={() => {
-          changed.current = true;
-          setHeld((before) => before ?? project);
-        }}
-        onBlur={(event) => {
-          if (
-            !changed.current &&
-            !event.currentTarget.contains(event.relatedTarget as Node | null)
-          ) {
-            setHeld(undefined);
-          }
-        }}
         noValidate
       >
         <TextField

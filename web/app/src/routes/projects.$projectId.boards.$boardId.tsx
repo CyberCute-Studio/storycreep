@@ -23,6 +23,7 @@ import {
   TextField,
   useFocusRefusal,
 } from "../ui/Field";
+import { useHeld } from "../ui/held";
 import { Alert, Page, Status } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
@@ -190,31 +191,24 @@ const boardField = payloadField("name", "slug", "description", "color");
  * the focus, or has changed something in it, and then as it was, so that a
  * change made elsewhere, which the page's document shows as it commits, does
  * not take away the focus, a selection, or what the user typed (FR-RT-02
- * AC3), until the focus leaves it unchanged, or it is saved. A save refused for
- * a change made elsewhere of another field is sent again by the document
- * (PRD §7.10); one of a field that the form changes too names each such
- * field with both values (ConflictError), and keeps what the user typed, so
- * that saving again keeps it, over the board as it is now, without what the
- * user did not change, and using theirs shows the board as it is now.
+ * AC3), until the focus leaves it unchanged, or it is saved (useHeld). A
+ * save refused for a change made elsewhere of another field is sent again by
+ * the document (PRD §7.10); one of a field that the form changes too names
+ * each such field with both values (ConflictError), and shows the board as
+ * it is now, but for what the user changed, which it keeps, so that saving
+ * again keeps it, over the board as it is now, and what the user changes
+ * after is over what the form shows, rather than over another session's
+ * change that it did not show; using theirs shows the board as it is now.
  */
 function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const { t } = useTranslation();
-  const form = useRef<HTMLFormElement>(null);
   const commands = useCommands(projectId);
   const [unchanged, setUnchanged] = useState(false);
-  const [held, setHeld] = useState<Board>();
-  // Whether the user has changed something in the form since it held the
-  // board, which the focus leaving it then does not let go.
-  const changed = useRef(false);
-  /** Lets go of the board, which the form then shows as the page has it. */
-  const release = () => {
-    changed.current = false;
-    setHeld(undefined);
-  };
+  const held = useHeld(board);
+  const shown = held.shown;
   // The board as the server had it when it refused the form's save for a
   // change of what the form changes too, which saving again changes over.
   const [theirs, setTheirs] = useState<Board>();
-  const shown = held ?? board;
   const against = theirs ?? shown;
   const overlaps =
     commands.error instanceof ConflictError
@@ -223,58 +217,59 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   const refusal = refusalOf(commands.error, t, boardField, {
     slug_taken: t("board.error.slug_taken"),
   });
-  useFocusRefusal(form, commands.error);
+  useFocusRefusal(held.form, commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const expected_rev = { [against.id]: against.rev };
-    const name = String(data.get("name"));
-    const slug = String(data.get("slug"));
-    const description = String(data.get("description"));
-    const color = String(data.get("color")) as Board["color"];
-    // A field is sent where the user changed it from what the form showed,
-    // or where it was one of a conflict's, which saving again keeps, and it
-    // is not what the board has already: a field that the user did not
-    // change, which the form still shows as it was before a conflict, is
-    // not sent over the board as it is now, which another session changed.
-    const conflicting = new Set(overlaps.map((o) => o.field));
-    const unchangedField = (field: keyof Board, value: unknown) =>
-      value === against[field] ||
-      (value === shown[field] && !conflicting.has(field));
+    const values = {
+      name: String(data.get("name")),
+      slug: String(data.get("slug")),
+      description: String(data.get("description")),
+      color: String(data.get("color")) as Board["color"],
+    };
+    // A field is sent where it is not what the board has already: as the
+    // form showed it, or as the server had it once it refused the form's
+    // save, which the form shows but for what the user changed.
+    const typed: Partial<typeof values> = Object.fromEntries(
+      Object.entries(values).filter(
+        ([field, value]) => value !== against[field as keyof typeof values],
+      ),
+    );
     const changes: Command[] = [
-      ...(unchangedField("name", name)
+      ...(typed.name === undefined
         ? []
         : [
             {
               type: "board.rename" as const,
-              payload: { id: shown.id, name },
+              payload: { id: shown.id, name: typed.name },
               expected_rev,
             },
           ]),
-      ...(unchangedField("slug", slug)
+      ...(typed.slug === undefined
         ? []
         : [
             {
               type: "board.set_slug" as const,
-              payload: { id: shown.id, slug },
+              payload: { id: shown.id, slug: typed.slug },
               expected_rev,
             },
           ]),
-      ...(unchangedField("description", description)
+      ...(typed.description === undefined
         ? []
         : [
             {
               type: "board.describe" as const,
-              payload: { id: shown.id, description },
+              payload: { id: shown.id, description: typed.description },
               expected_rev,
             },
           ]),
-      ...(unchangedField("color", color)
+      ...(typed.color === undefined
         ? []
         : [
             {
               type: "board.set_color" as const,
-              payload: { id: shown.id, color },
+              payload: { id: shown.id, color: typed.color },
               expected_rev,
             },
           ]),
@@ -283,16 +278,13 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
     if (changes.length === 0) {
       commands.reset();
       // The board as it is now, which the focus, still in the form, holds.
-      changed.current = false;
-      setHeld(
-        form.current?.contains(document.activeElement) ? board : undefined,
-      );
+      held.holdNow();
       setTheirs(undefined);
       return;
     }
     commands.mutate(changes, {
       onSuccess: () => {
-        release();
+        held.release();
         setTheirs(undefined);
       },
       onError: (error) => {
@@ -301,9 +293,11 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
             ? error.overlaps.find((o) => o.id === against.id && !o.gone)?.state
             : undefined;
         if (state !== undefined) {
-          setTheirs(state as unknown as Board);
+          const now = state as unknown as Board;
+          setTheirs(now);
+          held.hold({ ...now, ...typed });
         } else if (conflictOf(error)) {
-          release();
+          held.release();
           setTheirs(undefined);
         }
       },
@@ -311,7 +305,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
   };
   const useTheirs = () => {
     commands.reset();
-    release();
+    held.release();
     setTheirs(undefined);
   };
   const fieldName = (field: string) =>
@@ -355,28 +349,13 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
               : undefined
         }
       />
-      {/* Shown anew once the board that it shows has changed, as once
+      {/* Shown anew once what it shows of the board has changed, as once
           this form saved it, rather than showing what it was. */}
       <form
-        key={shown.rev}
-        ref={form}
+        key={held.key}
+        {...held.props}
         className="space-y-4"
         onSubmit={submit}
-        // The focus coming into the form holds the board as it shows it,
-        // and a change keeps it held once the focus leaves.
-        onFocus={() => setHeld((before) => before ?? board)}
-        onChange={() => {
-          changed.current = true;
-          setHeld((before) => before ?? board);
-        }}
-        onBlur={(event) => {
-          if (
-            !changed.current &&
-            !event.currentTarget.contains(event.relatedTarget as Node | null)
-          ) {
-            setHeld(undefined);
-          }
-        }}
         noValidate
       >
         <TextField

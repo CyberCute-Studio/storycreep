@@ -138,6 +138,7 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     queryClient,
     realtime: options.realtime,
     log,
+    checkSession: () => void follower.check(),
     storage: window.sessionStorage,
   });
   onTestFinished(() => documents.close());

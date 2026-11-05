@@ -249,7 +249,7 @@ function flush(): Promise<void> {
  * project and the tree. It returns the document, its fake channel, and a
  * way to send it an operation of any seq, as the channel's server does.
  */
-async function open() {
+async function open(options: { checkSession?: () => void } = {}) {
   const log = createErrorLog();
   const queryClient = createQueryClient(log);
   queryClient.setQueryData(sessionQuery.queryKey, testSession);
@@ -264,6 +264,7 @@ async function open() {
     queryClient,
     realtime,
     log,
+    checkSession: options.checkSession,
     storage: window.sessionStorage,
     now: () => time,
   });
@@ -348,6 +349,55 @@ describe("the project document's reads", () => {
     await doc.load("tree");
     expect(projectReads).toBe(2);
     expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour" });
+  });
+
+  it("has the page ask for its session once a read is answered that the session may have ended, without recording it, as the app's queries do", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(1);
+    let signedOut = false;
+    serve({
+      ...tree([board("bd_a", "Harbour")]),
+      getProject: () => {
+        if (signedOut) {
+          throw refused(401, { code: "unauthenticated" });
+        }
+        return testProject;
+      },
+      listVariables: () => {
+        throw refused(401, { code: "unauthenticated" });
+      },
+    });
+    const checkSession = vi.fn();
+    const { doc, log, deliver } = await open({ checkSession });
+    await expect(doc.load("variables")).rejects.toMatchObject({ status: 401 });
+    expect(checkSession).toHaveBeenCalledOnce();
+    // A gap, after which the document reads the project anew, which fails.
+    signedOut = true;
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(checkSession).toHaveBeenCalledTimes(2));
+    expect(log.entries()).toEqual([]);
+  });
+
+  it("holds a part whose own first read failed once the project read anew meanwhile has read it with the others, rather than take it out", async () => {
+    const first = Promise.withResolvers<unknown>();
+    let variableReads = 0;
+    serve({
+      ...tree([board("bd_a", "Harbour")]),
+      listVariables: () =>
+        ++variableReads === 1 ? first.promise : page([variable("var_met")]),
+    });
+    const { doc, deliver } = await open();
+    const loaded = doc.load("variables");
+    await vi.waitFor(() => expect(variableReads).toBe(1));
+    // A gap, after which the document reads the project anew, with the
+    // variables, which a page asked for.
+    deliver(3, [], []);
+    await vi.waitFor(() => expect(doc.doc.seq).toBe(3));
+    first.reject(new NetworkError(new TypeError("Failed to fetch")));
+    await loaded;
+    expect(doc.holds("variables")).toBe(true);
+    expect([...doc.store.getState().view.variables.keys()]).toEqual([
+      "var_met",
+    ]);
   });
 });
 
@@ -575,6 +625,45 @@ describe("an operation of another session", () => {
     );
     expect(body).not.toHaveProperty("archived_at");
     expect(body).toMatchObject({ role: "owner", rev: 2, seq: 2 });
+  });
+
+  it("leaves the project's read as it is where it is as of a later seq than the document, as one that a page made once the document began from an earlier, until the operations up to it have come", async () => {
+    serve(tree([]));
+    const { queryClient, realtime } = await open();
+    const key = projectQuery(testProject.id).queryKey;
+    // The page read the project again, as its layout does once the read
+    // that the document began from is stale, after two renames.
+    queryClient.setQueryData(key, {
+      ...testProject,
+      name: "Lighthouse",
+      rev: 3,
+      seq: 3,
+    });
+    realtime.send(
+      testProject.id,
+      [{ type: "project.rename", payload: { name: "Harbour at night" } }],
+      [{ id: testProject.id, rev: 2 }],
+    );
+    expect(queryClient.getQueryData(key)).toMatchObject({
+      name: "Lighthouse",
+      rev: 3,
+      seq: 3,
+    });
+    realtime.send(
+      testProject.id,
+      [{ type: "project.rename", payload: { name: "Lighthouse" } }],
+      [{ id: testProject.id, rev: 3 }],
+    );
+    realtime.send(
+      testProject.id,
+      [{ type: "project.rename", payload: { name: "Old light" } }],
+      [{ id: testProject.id, rev: 4 }],
+    );
+    expect(queryClient.getQueryData(key)).toMatchObject({
+      name: "Old light",
+      rev: 4,
+      seq: 4,
+    });
   });
 
   it("leaves what it did not change as it was, so that what the page reads of that is not shown anew", async () => {
@@ -1723,8 +1812,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
     expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 1 });
   });
 
-  // Verifies: FR-EDIT-08/AC4
-  it("sends a step expecting what the batch that it undoes left, though a batch made after it was asked for is answered before it, so that it is refused rather than written over that batch", async () => {
+  it("undoes a batch that the page made once the undo was asked for, before it was sent, once its answer has joined the history, rather than send the step before it, which would be refused for it, and dropped, with the steps before it", async () => {
     const night = Promise.withResolvers<CommandResultBody>();
     const dawn = Promise.withResolvers<CommandResultBody>();
     const server = serve({
@@ -1737,7 +1825,8 @@ describe("undo and redo (FR-EDIT-08)", () => {
         ),
         night.promise,
         dawn.promise,
-        conflict(board("bd_a", "Dawn", 6), 5),
+        applied(5, [{ id: "bd_a", rev: 7 }], [renameBack("bd_a", "Dawn", 7)]),
+        applied(6, [{ id: "bd_a", rev: 8 }], [renameBack("bd_a", "Night", 8)]),
       ),
     });
     const { doc } = await open();
@@ -1745,23 +1834,30 @@ describe("undo and redo (FR-EDIT-08)", () => {
     const nightSent = doc.send([rename("bd_a", "Night", 4)]);
     await vi.waitFor(() => expect(server.batches).toHaveLength(2));
     const undone = doc.undo();
-    // A change made once the undo was asked for, which it does not wait for.
+    // A change made once the undo was asked for, while it waits.
     const dawnSent = doc.send([rename("bd_a", "Dawn", 4)]);
     night.resolve(
       applied(3, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Dusk", 5)]),
     );
     await nightSent;
     await vi.waitFor(() => expect(server.batches).toHaveLength(3));
+    await flush();
     dawn.resolve(
       applied(4, [{ id: "bd_a", rev: 6 }], [renameBack("bd_a", "Night", 6)]),
     );
     await dawnSent;
-    await expect(undone).rejects.toBeInstanceOf(ConflictError);
-    expect(server.batches[3][0]).toMatchObject({
-      payload: { id: "bd_a", name: "Dusk" },
-      expected_rev: { bd_a: 5 },
-    });
-    expect(shown(doc, "bd_a")).toMatchObject({ name: "Dawn", rev: 6 });
+    await expect(undone).resolves.toBe(true);
+    expect(server.batches[3]).toEqual([
+      { ...renameBack("bd_a", "Night", 6), command_id: expect.any(String) },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Night", rev: 7 });
+    expect(doc.store.getState()).toMatchObject({ undoable: 2, redoable: 1 });
+    // The step before it is undone next, moved to what this one left.
+    await doc.undo();
+    expect(server.batches[4]).toEqual([
+      { ...renameBack("bd_a", "Dusk", 7), command_id: expect.any(String) },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Dusk", rev: 8 });
   });
 
   it("sends a redo asked for while an undo is under way once the undo has settled, rather than settle as the undo", async () => {
@@ -2225,6 +2321,40 @@ describe("what the document reads while operations come", () => {
       expect(doc.store.getState().view.folders.has("fld_b")).toBe(true),
     );
     expect(doc.store.getState().view.folders.has("fld_c")).toBe(true);
+  });
+
+  it("reads the folders of the part of a folder's kind alone once an operation leaves the folder to read, rather than those of every part", async () => {
+    const server = serve({
+      ...tree([]),
+      listVariables: () => page([]),
+      listComponentTypes: () => page([]),
+      listComponents: () => page([]),
+    });
+    const { doc, realtime } = await open();
+    await doc.load("variables");
+    await doc.load("components");
+    const before = server.calls("listFolders").length;
+    // A folder created without a key of order, which the server picks.
+    realtime.send(
+      testProject.id,
+      [
+        {
+          type: "folder.create",
+          payload: { id: "fld_c", kind: "board", name: "Act three" },
+        },
+      ],
+      [{ id: "fld_c", rev: 1 }],
+    );
+    await vi.waitFor(() =>
+      expect(server.calls("listFolders").length).toBeGreaterThan(before),
+    );
+    await flush();
+    expect(
+      server
+        .calls("listFolders")
+        .slice(before)
+        .map((c) => c.query?.kind),
+    ).toEqual(["board"]);
   });
 
   it("reads again what an operation took to the trash while a part was read for the first time, whose list, answered before, still has it", async () => {
@@ -2950,7 +3080,7 @@ describe("undo and redo, as answers and reads come", () => {
 
 describe("the page's documents", () => {
   /** Returns the page's documents over a fake channel, with the subscribers that its documents gave it. */
-  function documentsOf() {
+  function documentsOf(storage?: Storage) {
     const log = createErrorLog();
     const queryClient = createQueryClient(log);
     queryClient.setQueryData(sessionQuery.queryKey, testSession);
@@ -2961,7 +3091,7 @@ describe("the page's documents", () => {
       subscribers.push(subscriber);
       return subscribe(projectId, subscriber);
     };
-    const documents = new Documents({ queryClient, realtime, log });
+    const documents = new Documents({ queryClient, realtime, log, storage });
     onTestFinished(() => documents.close());
     return { documents, subscribers, queryClient, realtime };
   }
@@ -3014,6 +3144,36 @@ describe("the page's documents", () => {
     expect(documents.get(testProject.id)).toBe(doc);
     boards.resolve(page([]));
     await loaded;
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).not.toBe(doc);
+  });
+
+  it("keep a document that no page shows while a batch of the page's is under way, longer than they keep one otherwise, so that its answer joins the history that the tab's storage keeps", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const answer = Promise.withResolvers<unknown>();
+    serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: () => answer.promise,
+    });
+    const { documents } = documentsOf(window.sessionStorage);
+    const doc = documents.get(testProject.id);
+    await doc.load("tree");
+    const sent = doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await vi.advanceTimersByTimeAsync(keptUnshown + 1);
+    expect(documents.get(testProject.id)).toBe(doc);
+    answer.resolve(
+      applied(2, [{ id: "bd_a", rev: 4 }], [renameBack("bd_a", "Harbour", 4)]),
+    );
+    await sent;
+    const kept = window.sessionStorage.getItem(
+      historyKey(testSession.user_id, testProject.id),
+    );
+    expect(JSON.parse(kept ?? "null")).toMatchObject({
+      undo: [{ seqs: [2] }],
+    });
     await vi.advanceTimersByTimeAsync(keptUnshown + 1);
     expect(documents.get(testProject.id)).not.toBe(doc);
   });

@@ -448,6 +448,45 @@ describe("the board appliers", () => {
     expect(result.sure(boardB)).toBe(true);
   });
 
+  it("takes the empty ID of a folder for the top, as the server does, for a board or a folder that is created or moves there", () => {
+    const f = folder(1, "board");
+    const doc = docOf({
+      folders: [f, folder(2, "board", { parent_id: f.id })],
+      boards: [board(1, { folder_id: f.id })],
+    });
+    const result = apply(
+      doc,
+      command("board.create", {
+        id: boardB,
+        name: "Docks",
+        slug: "docks",
+        folder_id: "",
+        order: "k",
+      }),
+      command("folder.create", {
+        id: id("folder", 3),
+        kind: "board",
+        name: "Act three",
+        parent_id: "",
+        order: "l",
+      }),
+      command("board.move", { id: boardA, folder_id: "", order: "m" }),
+      command("folder.move", {
+        id: id("folder", 2),
+        parent_id: "",
+        order: "n",
+      }),
+    );
+    expect(result.doc.boards.get(boardB)).not.toHaveProperty("folder_id");
+    expect(result.doc.folders.get(id("folder", 3))).not.toHaveProperty(
+      "parent_id",
+    );
+    expect(result.doc.boards.get(boardA)).not.toHaveProperty("folder_id");
+    expect(result.doc.folders.get(id("folder", 2))).not.toHaveProperty(
+      "parent_id",
+    );
+  });
+
   it("creates a board without a slug or a key with ones that the server may pick otherwise, not surely", () => {
     const result = apply(
       docOf({ boards: [board(1, { order: "a" })] }),
@@ -2063,7 +2102,7 @@ describe("the component appliers", () => {
     expect(result.sure(id("component", 1))).toBe(true);
   });
 
-  it("sets a value surely, and one of a component that the document holds without its values not surely", () => {
+  it("sets a value surely, and gives a component that the document holds without its values none, not surely, rather than the one alone, which would be taken for all of them", () => {
     const full = apply(
       typed(
         component(1, 1, {
@@ -2090,9 +2129,9 @@ describe("the component appliers", () => {
         value: 5,
       }),
     );
-    expect(listed.doc.components.get(id("component", 1))?.attributes).toEqual({
-      [id("attribute_def", 1)]: 5,
-    });
+    expect(listed.doc.components.get(id("component", 1))).not.toHaveProperty(
+      "attributes",
+    );
     expect(listed.sure(id("component", 1))).toBe(false);
   });
 
