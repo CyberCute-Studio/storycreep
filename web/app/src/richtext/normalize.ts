@@ -15,13 +15,21 @@ import { isList, startOf } from "./schema";
 export function normalizer(): Plugin {
   return new Plugin({
     key: new PluginKey("richTextNormalizer"),
-    appendTransaction(transactions, _before, state) {
+    appendTransaction(transactions, before, state) {
       if (!transactions.some((tr) => tr.docChanged)) {
         return null;
       }
+      const changed = changedRange(before.doc, state.doc);
+      if (changed === undefined) {
+        return null;
+      }
       const tr = state.tr;
-      cleanTexts(tr);
-      cleanLinks(tr);
+      cleanTexts(tr, changed.from, changed.to);
+      cleanLinks(
+        tr,
+        tr.mapping.map(changed.from, -1),
+        tr.mapping.map(changed.to, 1),
+      );
       cleanStarts(tr);
       liftTooDeep(tr);
       if (!tr.docChanged) {
@@ -35,6 +43,33 @@ export function normalizer(): Plugin {
       return tr;
     },
   });
+}
+
+/**
+ * Returns the range of after that differs from before, as ProseMirror
+ * compares them, by the nodes that they share and then by their content,
+ * whatever step changed it, with the node on each side of it, so that a
+ * text that a deletion joined is in it; or undefined for none. Where the
+ * change repeats what is next to it, the range is one of the places where
+ * it could be, which holds the same content.
+ */
+function changedRange(
+  before: PMNode,
+  after: PMNode,
+): { from: number; to: number } | undefined {
+  const start = before.content.findDiffStart(after.content);
+  if (start === null) {
+    return undefined;
+  }
+  const { a, b } = before.content.findDiffEnd(after.content) ?? {
+    a: before.content.size,
+    b: after.content.size,
+  };
+  const end = Math.max(start, b + Math.max(0, start - a));
+  return {
+    from: Math.max(0, start - 1),
+    to: Math.min(after.content.size, end + 1),
+  };
 }
 
 /** Reports whether the UTF-16 code unit c stands for a line break, which a hardBreak takes the place of: a line feed, a carriage return, a line tabulation, a form feed, a next line, or a line or paragraph separator. */
@@ -69,11 +104,12 @@ function isLoneSurrogate(s: string, i: number): boolean {
  * (isControlCode), as a U+200F RIGHT-TO-LEFT MARK that a keyboard of Hebrew
  * types, and a surrogate that is not one of a pair, and puts a hardBreak in
  * place of a line break, a carriage return and a line feed together being
- * one; a tab, which is white space, stays.
+ * one; a tab, which is white space, stays. It reads the texts between from
+ * and to, where the document changed, since the rest holds none of them.
  */
-function cleanTexts(tr: Transaction) {
+function cleanTexts(tr: Transaction, from: number, to: number) {
   const edits: { from: number; to: number; marks?: readonly Mark[] }[] = [];
-  tr.doc.descendants((node, pos) => {
+  tr.doc.nodesBetween(from, to, (node, pos) => {
     const text = node.text;
     if (!node.isText || text === undefined) {
       return;
@@ -103,11 +139,11 @@ function cleanTexts(tr: Transaction) {
   }
 }
 
-/** Writes each link's URL as a link stores it (storedHref), and takes the link off what leads where no link may. */
-function cleanLinks(tr: Transaction) {
+/** Writes the URL of each link between from and to, where the document changed, as a link stores it (storedHref), and takes the link off what leads where no link may. */
+function cleanLinks(tr: Transaction, from: number, to: number) {
   const link = tr.doc.type.schema.marks.link;
   const edits: { from: number; to: number; mark: Mark; href?: string }[] = [];
-  tr.doc.descendants((node, pos) => {
+  tr.doc.nodesBetween(from, to, (node, pos) => {
     if (!node.isInline) {
       return;
     }

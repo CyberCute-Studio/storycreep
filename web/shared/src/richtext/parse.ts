@@ -17,7 +17,7 @@ import type {
   RichTextListItem,
   RichTextMarks,
 } from "../api";
-import { decodeAnyId, encodeId, type IdKind } from "../ids";
+import { canonicalAnyId, decodeAnyId, type IdKind } from "../ids";
 
 /**
  * The most bytes of a document's JSON, counted as richTextLength counts
@@ -244,12 +244,6 @@ type Inline =
       marks: Marks;
     };
 
-/** Returns an ID in its canonical spelling: its prefix in lowercase and its body in uppercase. */
-function canonicalId(id: string): string {
-  const { kind, uuid } = decodeAnyId(id);
-  return encodeId(kind, uuid);
-}
-
 /** Returns inlines as the canonical form writes them: neighbouring texts with the same marks joined, as ProseMirror joins them, and each ID in its canonical spelling. */
 function wireInlines(inlines: readonly Inline[]): RichTextInline[] {
   const out: RichTextInline[] = [];
@@ -280,7 +274,7 @@ function wireInlines(inlines: readonly Inline[]): RichTextInline[] {
         break;
       case "mention":
         out.push({
-          attrs: { id: canonicalId(n.id) },
+          attrs: { id: canonicalAnyId(n.id) },
           ...withMarks,
           type: "mention",
         });
@@ -290,9 +284,9 @@ function wireInlines(inlines: readonly Inline[]): RichTextInline[] {
           attrs: {
             ...(n.attribute === ""
               ? {}
-              : { attribute: canonicalId(n.attribute) }),
+              : { attribute: canonicalAnyId(n.attribute) }),
             ...(n.decimals === undefined ? {} : { decimals: n.decimals }),
-            ref: canonicalId(n.ref),
+            ref: canonicalAnyId(n.ref),
           } as { ref: string },
           ...withMarks,
           type: "valueRef",
@@ -795,6 +789,16 @@ function hasControl(s: string): boolean {
 }
 
 /**
+ * Reports whether s holds no surrogate that is not one of a pair, as
+ * s.isWellFormed() does, which Safari has only since 16.4, so that it runs
+ * on iPadOS 16, which PRD §9.9 supports: a regular expression of Unicode
+ * reads a pair as the one code point that it is, and no pair as a surrogate.
+ */
+function isWellFormed(s: string): boolean {
+  return !/\p{Surrogate}/u.test(s);
+}
+
+/**
  * Reports whether a string of v, a key or a value, at any depth, escapes a
  * surrogate that is not one of a pair, which no UTF-8 holds and which the
  * server reads as U+FFFD, where JSON.parse keeps it. It walks v without
@@ -805,7 +809,7 @@ function holdsLoneSurrogate(v: unknown): boolean {
   while (stack.length > 0) {
     const x = stack.pop();
     if (typeof x === "string") {
-      if (!x.isWellFormed()) {
+      if (!isWellFormed(x)) {
         return true;
       }
     } else if (Array.isArray(x)) {
@@ -814,7 +818,7 @@ function holdsLoneSurrogate(v: unknown): boolean {
       }
     } else if (isObject(x)) {
       for (const [key, value] of Object.entries(x)) {
-        if (!key.isWellFormed()) {
+        if (!isWellFormed(key)) {
           return true;
         }
         stack.push(value);
@@ -959,7 +963,7 @@ export function checkHref(href: string): string | undefined {
   if (href === "") {
     return "is empty";
   }
-  if (!href.isWellFormed()) {
+  if (!isWellFormed(href)) {
     return "is not UTF-8";
   }
   if (codePoints(href) > MAX_HREF_CHARS) {

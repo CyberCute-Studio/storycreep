@@ -111,4 +111,11 @@
   .rich-text.ProseMirror-hideselection * {
     caret-color: transparent;
   }
+
+  /* A mention or a value reference that is selected as a whole, which
+     neither the selection's highlight nor the caret shows, at 3:1 against
+     the text and the chip (tokens.test.ts), as the focus ring is. */
+  .rich-text .ProseMirror-selectednode {
+    outline: 2px solid var(--color-focus);
+  }
 }

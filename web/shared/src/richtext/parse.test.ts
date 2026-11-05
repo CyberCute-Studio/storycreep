@@ -66,6 +66,28 @@ describe("the vectors", () => {
       expect(richTextLength(json)).toBe(length);
     },
   );
+
+  test("run without String.prototype.isWellFormed, which Safari has only since 16.4", () => {
+    const isWellFormed = Object.getOwnPropertyDescriptor(
+      String.prototype,
+      "isWellFormed",
+    );
+    Reflect.deleteProperty(String.prototype, "isWellFormed");
+    try {
+      for (const { doc, canonical } of vectors.valid) {
+        expect(stringifyRichText(parseRichText(doc))).toBe(
+          JSON.stringify(canonical ?? doc),
+        );
+      }
+      for (const { doc, reason, pointer } of vectors.invalid) {
+        expect(refusal(doc)).toMatchObject({ reason, pointer });
+      }
+    } finally {
+      if (isWellFormed !== undefined) {
+        Object.defineProperty(String.prototype, "isWellFormed", isWellFormed);
+      }
+    }
+  });
 });
 
 /** Returns a document of one paragraph of texts. */

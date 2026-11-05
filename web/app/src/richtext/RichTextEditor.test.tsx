@@ -174,4 +174,64 @@ describe("the rich-text editor", () => {
     });
     expect(textbox.textContent).toBe("@Elara has {gold} and {value}");
   });
+
+  test("shows a mention again by its name once the page gives it, as when the project's names have loaded", async () => {
+    const component = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BVD";
+    const defaultValue: RichTextDoc = {
+      content: [
+        {
+          content: [
+            { text: "Ask ", type: "text" },
+            { attrs: { id: component }, type: "mention" },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    };
+    const i18n = createAppI18n(["en"], document.documentElement);
+    const { rerender } = render(
+      <I18nextProvider i18n={i18n}>
+        <RichTextEditor label="Body" defaultValue={defaultValue} />
+      </I18nextProvider>,
+    );
+    const textbox = screen.getByRole("textbox", { name: "Body" });
+    expect(textbox.textContent).toBe("Ask @component");
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <RichTextEditor
+          label="Body"
+          defaultValue={defaultValue}
+          names={{ mention: () => "Elara", value: () => undefined }}
+        />
+      </I18nextProvider>,
+    );
+    await waitFor(() => expect(textbox.textContent).toBe("Ask @Elara"));
+  });
+
+  test("inserts what the user typed as the text of a link where nothing is selected", async () => {
+    const { textbox, last } = renderEditor();
+    textbox.focus();
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "Address" }),
+      "café.example",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save the link" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(last()?.doc?.content[0]).toEqual({
+      content: [
+        {
+          marks: [
+            { attrs: { href: "https://xn--caf-dma.example" }, type: "link" },
+          ],
+          text: "café.example",
+          type: "text",
+        },
+      ],
+      type: "paragraph",
+    });
+  });
 });

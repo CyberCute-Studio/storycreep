@@ -15,8 +15,10 @@ export function storedHref(href: string): string | undefined {
   let url = href.trim();
   const parts = /^(https?:\/\/)([^/?#]*)(.*)$/is.exec(url);
   if (parts !== null && /[^!-~]/u.test(parts[2])) {
-    // An authority with userinfo is refused as it is, rather than read.
-    if (parts[2].includes("@")) {
+    // An authority with userinfo is refused as it is, rather than read, and
+    // so is one with a backslash, where a browser's host ends and its path
+    // begins, as checkHref refuses one of ASCII.
+    if (parts[2].includes("@") || parts[2].includes("\\")) {
       return undefined;
     }
     try {
@@ -31,7 +33,9 @@ export function storedHref(href: string): string | undefined {
 /**
  * Returns the URL that a user types into the link's field, as storedHref
  * writes it, or undefined for one that no link may lead to: an address
- * without a scheme, as example.com, is an https URL, and one that is an
+ * without a scheme, as example.com, is an https URL, and so is a host with a
+ * port, as example.com:8080 or localhost:3000, whose host has a dot or is
+ * localhost, rather than a URL of a scheme of that name; and one that is an
  * email address, as keeper@example.com, a mailto URL.
  */
 export function typedHref(typed: string): string | undefined {
@@ -39,7 +43,10 @@ export function typedHref(typed: string): string | undefined {
   if (text === "") {
     return undefined;
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(text)) {
+  if (
+    /^[a-z][a-z0-9+.-]*:/i.test(text) &&
+    !/^([^:]*\.[^:]*|localhost):\d+([/?#]|$)/i.test(text)
+  ) {
     return storedHref(text);
   }
   if (/^[^\s@/?#]+@[^\s@/?#]+$/u.test(text)) {

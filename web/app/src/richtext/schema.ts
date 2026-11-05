@@ -1,8 +1,37 @@
 // What the editor reads of its documents' lists, by the limits of
-// schema/rich-text/README.md.
+// schema/rich-text/README.md, and of the elements of its mentions and value
+// references.
 
+import { decodeAnyId, type IdKind } from "@storycreep/shared/ids";
 import { MAX_LIST_DEPTH, MAX_START } from "@storycreep/shared/richtext";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
+
+/** Reports whether id is the public ID of an entity of one of the kinds. */
+function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {
+  if (id === null) {
+    return false;
+  }
+  try {
+    return kinds.includes(decodeAnyId(id).kind);
+  } catch {
+    return false;
+  }
+}
+
+/** Reports whether the element of a mention names a component, as the editor's mention does. */
+export function isMentionElement(element: Element): boolean {
+  return isIdOf(element.getAttribute("data-id"), ["component"]);
+}
+
+/** Reports whether the element of a value reference names a variable's value, without an attribute, or a component's attribute's, as the editor's value reference does. */
+export function isValueRefElement(element: Element): boolean {
+  const ref = element.getAttribute("data-ref");
+  const attribute = element.getAttribute("data-attribute");
+  return (
+    (isIdOf(ref, ["variable"]) && attribute === null) ||
+    (isIdOf(ref, ["component"]) && isIdOf(attribute, ["attribute_def"]))
+  );
+}
 
 /** Reports whether node is a list, bulleted or numbered. */
 export function isList(node: PMNode): boolean {

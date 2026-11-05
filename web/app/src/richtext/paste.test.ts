@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RichTextDoc } from "@storycreep/shared/api";
 import { parseRichText } from "@storycreep/shared/richtext";
+import { TextSelection } from "@tiptap/pm/state";
 import { describe, expect, test } from "vitest";
 import { testEditor } from "../test/editor";
 import { storedOf } from "./convert";
@@ -146,7 +147,7 @@ if (tide) {}</pre>
       <div hidden>hidden</div><p style="display:none">not shown</p>
       <p>Mark&#x200F;ed &#x202E;over&#x202C;ridden&#x2028;line</p>
       <p>Ruby <ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby></p>
-      <p><span data-type="mention" data-id="nd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD">@not a component</span>end</p>`;
+      <p><span data-type="mention" data-id="nd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD">@not a component</span> and <span data-type="mention" data-id="u123">@Bob</span></p>`;
     expect(pasted(html)).toEqual(
       doc(
         p(text("Click me")),
@@ -173,7 +174,35 @@ if (tide) {}</pre>
         ),
         p(text("Marked overridden"), { type: "hardBreak" }, text("line")),
         p(text("Ruby 漢")),
-        p(text("end")),
+        p(text("@not a component and @Bob")),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("another editor's table rows, which ProseMirror copies with the elements that wrap them, give paragraphs of all their text", () => {
+    expect(
+      pasted(
+        '<table><tbody><tr data-pm-slice="1 1 -2 []"><td><p>first <strong>cell</strong> text</p></td><td><p>second</p></td></tr></tbody></table>',
+      ),
+    ).toEqual(
+      doc(
+        p(text("first "), text("cell", "bold"), text(" text")),
+        p(text("second")),
+      ),
+    );
+  });
+
+  test("a pre keeps the indentation of its lines", () => {
+    expect(pasted("<pre>if (tide) {\n    sail();\n\t}</pre>")).toEqual(
+      doc(
+        p(
+          text("if (tide) {", "code"),
+          { type: "hardBreak" },
+          text("    sail();", "code"),
+          { type: "hardBreak" },
+          text("\t}", "code"),
+        ),
       ),
     );
   });
@@ -318,6 +347,80 @@ if (tide) {}</pre>
         ),
       ),
     );
+  });
+
+  describe("what the editor copies", () => {
+    /** Returns what copying from to to of content, as the editor writes it to the clipboard, and pasting it at at makes. */
+    function copiedAndPasted(
+      content: object,
+      from: number,
+      to: number,
+      at: number,
+    ): RichTextDoc | undefined {
+      const source = testEditor(content as RichTextDoc);
+      const { dom } = source.view.serializeForClipboard(
+        source.state.doc.slice(from, to),
+      );
+      const target = testEditor(content as RichTextDoc);
+      target.view.dispatch(
+        target.state.tr.setSelection(
+          TextSelection.create(target.state.doc, at),
+        ),
+      );
+      target.view.pasteHTML(dom.innerHTML);
+      return storedOf(target.state.doc).doc;
+    }
+
+    test("is pasted within a paragraph where it was part of one, though it starts with a mark", () => {
+      // "bold te" of the first paragraph, pasted after "Hello ".
+      expect(
+        copiedAndPasted(
+          doc(p(text("bold", "bold"), text(" text")), p(text("Hello world"))),
+          1,
+          8,
+          18,
+        ),
+      ).toEqual(
+        doc(
+          p(text("bold", "bold"), text(" text")),
+          p(text("Hello "), text("bold", "bold"), text(" teworld")),
+        ),
+      );
+    });
+
+    test("joins the item that it is pasted at the end of, where it was cut from within a list's items", () => {
+      // From within "aaaa" to within "bbbb", pasted at the end of "bbbb".
+      expect(
+        copiedAndPasted(
+          doc(bullets(item(p(text("aaaa"))), item(p(text("bbbb"))))),
+          5,
+          13,
+          15,
+        ),
+      ).toEqual(
+        doc(
+          bullets(
+            item(p(text("aaaa"))),
+            item(p(text("bbbbaa"))),
+            item(p(text("bb"))),
+          ),
+        ),
+      );
+    });
+
+    test("keeps its empty paragraphs and the white space at a paragraph's end", () => {
+      const content = doc(p(text("a  ")), p(), p(text("b")));
+      expect(copiedAndPasted(content, 0, 10, 9)).toEqual(
+        doc(
+          p(text("a  ")),
+          p(),
+          p(text("b")),
+          p(text("a  ")),
+          p(),
+          p(text("b")),
+        ),
+      );
+    });
   });
 
   test("plain text loses the characters that a text may not hold, and each line is a paragraph", () => {

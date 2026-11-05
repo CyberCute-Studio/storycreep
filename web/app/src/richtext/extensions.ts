@@ -3,10 +3,10 @@
 // so that the editor writes the documents that the server stores (PRD
 // FR-TEXT-01, ADR-020, plan note N40).
 
-import { decodeAnyId, type IdKind } from "@storycreep/shared/ids";
 import { MAX_DECIMALS } from "@storycreep/shared/richtext";
 import {
   type AnyExtension,
+  type Editor,
   Extension,
   mergeAttributes,
   Node,
@@ -22,10 +22,17 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Strike } from "@tiptap/extension-strike";
 import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
-import { storedHref } from "./link";
+import type { Node as PMNode } from "@tiptap/pm/model";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { typedHref } from "./link";
 import { normalizer } from "./normalize";
 import { cleanPastedHTML } from "./paste";
-import { sinkFits, startOf } from "./schema";
+import {
+  isMentionElement,
+  isValueRefElement,
+  sinkFits,
+  startOf,
+} from "./schema";
 
 /** What the editor shows of the value references and the mentions of a text, which name what the project holds. */
 export interface RichTextNames {
@@ -35,16 +42,21 @@ export interface RichTextNames {
   value: (ref: string, attribute: string | undefined) => string | undefined;
 }
 
-/** Reports whether id is the public ID of an entity of one of the kinds. */
-function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {
-  if (id === null) {
-    return false;
+/** What a mention shows of its component, and a value reference of its value: their names, or a word for what they are. */
+export interface ChipLabels {
+  mention: (id: string) => string;
+  value: (ref: string, attribute: string | undefined) => string;
+}
+
+/** Returns what a node of the editor shows as its text, if it is a mention or a value reference: @ before the component's name, or the value's name in braces. */
+function chipText(node: PMNode, labels: ChipLabels): string | undefined {
+  switch (node.type.name) {
+    case "mention":
+      return `@${labels.mention(node.attrs.id)}`;
+    case "valueRef":
+      return `{${labels.value(node.attrs.ref, node.attrs.attribute ?? undefined)}}`;
   }
-  try {
-    return kinds.includes(decodeAnyId(id).kind);
-  } catch {
-    return false;
-  }
+  return undefined;
 }
 
 /**
@@ -53,7 +65,7 @@ function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {
  * data-type="mention", which the paste's cleaning keeps, so that a mention
  * copied from one text is one in the text that it is pasted into.
  */
-const Mention = Node.create<{ label: (id: string) => string }>({
+const Mention = Node.create<{ labels: ChipLabels }>({
   name: "mention",
   group: "inline",
   inline: true,
@@ -61,7 +73,7 @@ const Mention = Node.create<{ label: (id: string) => string }>({
   selectable: true,
 
   addOptions() {
-    return { label: (id: string) => id };
+    return { labels: { mention: (id: string) => id, value: (ref) => ref } };
   },
 
   addAttributes() {
@@ -78,8 +90,7 @@ const Mention = Node.create<{ label: (id: string) => string }>({
     return [
       {
         tag: 'span[data-type="mention"]',
-        getAttrs: (element) =>
-          isIdOf(element.getAttribute("data-id"), ["component"]) ? null : false,
+        getAttrs: (element) => (isMentionElement(element) ? null : false),
       },
     ];
   },
@@ -91,12 +102,12 @@ const Mention = Node.create<{ label: (id: string) => string }>({
         "data-type": "mention",
         class: "rich-text-chip",
       }),
-      `@${this.options.label(node.attrs.id)}`,
+      chipText(node, this.options.labels) ?? "",
     ];
   },
 
   renderText({ node }) {
-    return `@${this.options.label(node.attrs.id)}`;
+    return chipText(node, this.options.labels) ?? "";
   },
 });
 
@@ -107,9 +118,7 @@ const Mention = Node.create<{ label: (id: string) => string }>({
  * definition's in attrs.attribute, and attrs.decimals, the digits after the
  * point that a number is shown with, or null for none.
  */
-const ValueRef = Node.create<{
-  label: (ref: string, attribute: string | undefined) => string;
-}>({
+const ValueRef = Node.create<{ labels: ChipLabels }>({
   name: "valueRef",
   group: "inline",
   inline: true,
@@ -117,7 +126,7 @@ const ValueRef = Node.create<{
   selectable: true,
 
   addOptions() {
-    return { label: (ref: string) => ref };
+    return { labels: { mention: (id: string) => id, value: (ref) => ref } };
   },
 
   addAttributes() {
@@ -157,16 +166,7 @@ const ValueRef = Node.create<{
     return [
       {
         tag: 'span[data-type="value-ref"]',
-        getAttrs: (element) => {
-          const ref = element.getAttribute("data-ref");
-          const attribute = element.getAttribute("data-attribute");
-          // A variable's value names no attribute, and a component's names
-          // one of its attribute definitions.
-          return (isIdOf(ref, ["variable"]) && attribute === null) ||
-            (isIdOf(ref, ["component"]) && isIdOf(attribute, ["attribute_def"]))
-            ? null
-            : false;
-        },
+        getAttrs: (element) => (isValueRefElement(element) ? null : false),
       },
     ];
   },
@@ -178,21 +178,69 @@ const ValueRef = Node.create<{
         "data-type": "value-ref",
         class: "rich-text-chip",
       }),
-      `{${this.options.label(node.attrs.ref, node.attrs.attribute ?? undefined)}}`,
+      chipText(node, this.options.labels) ?? "",
     ];
   },
 
   renderText({ node }) {
-    return `{${this.options.label(node.attrs.ref, node.attrs.attribute ?? undefined)}}`;
+    return chipText(node, this.options.labels) ?? "";
   },
 });
+
+/** The key of the plugin that shows the labels of the editor's mentions and value references again (relabel). */
+const relabelKey = new PluginKey<number>("richTextRelabel");
+
+/**
+ * Returns the plugin that, when relabel asks, writes what each mention and
+ * value reference shows as labels now give it: ProseMirror draws a node's
+ * element once, and again only when the node changes, and the element holds
+ * no content of the document, so ProseMirror leaves what it shows alone.
+ */
+function relabeller(labels: ChipLabels): Plugin {
+  return new Plugin({
+    key: relabelKey,
+    state: {
+      init: () => 0,
+      apply: (tr, n) => (tr.getMeta(relabelKey) === true ? n + 1 : n),
+    },
+    view: () => ({
+      update: (view, before) => {
+        if (relabelKey.getState(view.state) === relabelKey.getState(before)) {
+          return;
+        }
+        view.state.doc.descendants((node, pos) => {
+          const text = chipText(node, labels);
+          const element = text === undefined ? null : view.nodeDOM(pos);
+          if (element !== null && element.textContent !== text) {
+            element.textContent = text ?? "";
+          }
+        });
+      },
+    }),
+  });
+}
+
+/**
+ * Has the editor show again what its mentions, its value references, and
+ * its placeholder show, after the names, the words, or the placeholder that
+ * the editor's options give changed, as when the project's names have loaded
+ * or another user renamed a component.
+ */
+export function relabel(editor: Editor) {
+  if (!editor.isDestroyed) {
+    editor.view.dispatch(
+      editor.state.tr.setMeta(relabelKey, true).setMeta("addToHistory", false),
+    );
+  }
+}
 
 /**
  * A link, with its URL in attrs.href and no other attribute: it opens in a
  * new tab, without the page's referrer or a handle on it, and a click in the
  * editor puts the caret in it rather than following it. A URL typed or
- * pasted is linked where a link may lead to it (storedHref), as one that the
- * link's field takes.
+ * pasted is linked where a link may lead to it, as the link's field takes
+ * it (typedHref), as example.com, which linkify links to https://example.com,
+ * and an email address, which it links to a mailto URL.
  */
 const StoredLink = Link.extend({
   addAttributes() {
@@ -207,7 +255,10 @@ const StoredLink = Link.extend({
   openOnClick: false,
   enableClickSelection: false,
   defaultProtocol: "https",
-  isAllowedUri: (url) => storedHref(url) !== undefined,
+  // Autolinking and the paste's linking of a URL ask of linkify's text of
+  // the URL, as typed, which the link leads to with linkify's scheme; the
+  // normalizer writes the link's URL as a link stores it.
+  isAllowedUri: (url) => typedHref(url) !== undefined,
   HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
 });
 
@@ -242,18 +293,17 @@ const NestingListItem = ListItem.extend({
 
 /** The options of the editor's extensions. */
 export interface ExtensionOptions {
-  /** What the editor shows of the references and mentions that a text holds. */
-  names?: RichTextNames;
-  /** What a mention or a value reference shows when names does not know what it refers to. */
-  unknown: { mention: string; value: string };
-  /** What the empty editor shows, or undefined for nothing. */
-  placeholder?: string;
+  /** What the editor shows of the references and mentions that a text holds, which it asks again as relabel says. */
+  labels: ChipLabels;
+  /** What the empty editor shows, which it asks again as relabel says, or undefined for nothing. */
+  placeholder?: () => string;
   /** Called when the user asks to edit a link with the keyboard (Mod-K). */
   onLinkShortcut?: () => void;
 }
 
 /** The editor's extensions, which make the schema of schema/rich-text/README.md and keep the document within it. */
 export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
+  const { labels, placeholder } = options;
   return [
     Document,
     Paragraph,
@@ -267,20 +317,15 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
     Strike,
     Code,
     StoredLink,
-    Mention.configure({
-      label: (id) => options.names?.mention(id) ?? options.unknown.mention,
-    }),
-    ValueRef.configure({
-      label: (ref, attribute) =>
-        options.names?.value(ref, attribute) ?? options.unknown.value,
-    }),
+    Mention.configure({ labels }),
+    ValueRef.configure({ labels }),
     UndoRedo,
-    ...(options.placeholder === undefined
+    ...(placeholder === undefined
       ? []
-      : [Placeholder.configure({ placeholder: options.placeholder })]),
+      : [Placeholder.configure({ placeholder: () => placeholder() })]),
     Extension.create({
       name: "richTextRules",
-      addProseMirrorPlugins: () => [normalizer()],
+      addProseMirrorPlugins: () => [normalizer(), relabeller(labels)],
       addKeyboardShortcuts() {
         return {
           // Code holds no link, as the toolbar's button says.

@@ -24,15 +24,16 @@ if (typeof globalThis.ClipboardEvent !== "function") {
   } as unknown as typeof ClipboardEvent;
 }
 
-const editors: Editor[] = [];
+const editors: { editor: Editor; element: HTMLElement }[] = [];
 
 afterEach(() => {
-  for (const editor of editors.splice(0)) {
+  for (const { editor, element } of editors.splice(0)) {
     editor.destroy();
+    element.remove();
   }
 });
 
-/** Returns an editor of content, attached to the page, which the test's end destroys. */
+/** Returns an editor of content, attached to the page, which the test's end destroys and takes off the page. */
 export function testEditor(content: RichTextDoc = emptyRichText()): Editor {
   const element = document.createElement("div");
   document.body.append(element);
@@ -40,11 +41,11 @@ export function testEditor(content: RichTextDoc = emptyRichText()): Editor {
     element,
     content,
     extensions: richTextExtensions({
-      unknown: { mention: "component", value: "value" },
+      labels: { mention: () => "component", value: () => "value" },
     }),
     injectCSS: false,
     editorProps: pasteProps,
   });
-  editors.push(editor);
+  editors.push({ editor, element });
   return editor;
 }

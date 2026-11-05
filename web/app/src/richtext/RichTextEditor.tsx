@@ -39,6 +39,7 @@ import { type RichTextValue, storedOf } from "./convert";
 import {
   pasteProps,
   type RichTextNames,
+  relabel,
   richTextExtensions,
 } from "./extensions";
 import { typedHref } from "./link";
@@ -102,22 +103,29 @@ export function RichTextEditor({
     [hintId, errorId].filter((s) => s !== undefined).join(" ") || undefined;
   const [linking, setLinking] = useState(false);
   // What the editor's callbacks, made once with it, read as the page renders.
-  const latest = useRef({ onChange, names });
+  const unknownMention = t("richtext.unknown_mention");
+  const unknownValue = t("richtext.unknown_value");
+  const current = {
+    onChange,
+    names,
+    unknown: { mention: unknownMention, value: unknownValue },
+    placeholder,
+  };
+  const latest = useRef(current);
   useEffect(() => {
-    latest.current = { onChange, names };
+    latest.current = current;
   });
   const [initial] = useState(() => ({
     content: defaultValue ?? emptyRichText(),
     extensions: richTextExtensions({
-      names: {
-        mention: (ref) => latest.current.names?.mention(ref),
-        value: (ref, attribute) => latest.current.names?.value(ref, attribute),
+      labels: {
+        mention: (ref) =>
+          latest.current.names?.mention(ref) ?? latest.current.unknown.mention,
+        value: (ref, attribute) =>
+          latest.current.names?.value(ref, attribute) ??
+          latest.current.unknown.value,
       },
-      unknown: {
-        mention: t("richtext.unknown_mention"),
-        value: t("richtext.unknown_value"),
-      },
-      placeholder,
+      placeholder: () => latest.current.placeholder ?? "",
       onLinkShortcut: () => setLinking(true),
     }),
   }));
@@ -159,6 +167,14 @@ export function RichTextEditor({
       editor.setEditable(editable, false);
     }
   }, [editor, editable]);
+  // The editor draws a mention, a value reference, and the placeholder once,
+  // and again as what names them changes, as when the project's names load.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: these are what the editor shows, which it reads from latest.
+  useEffect(() => {
+    if (editor !== null) {
+      relabel(editor);
+    }
+  }, [editor, names, unknownMention, unknownValue, placeholder]);
   return (
     <div className="flex flex-col gap-1">
       <div id={labelId} className="font-medium">
@@ -348,11 +364,11 @@ function FormatBar({
 
 /**
  * The dialog that edits the link of the selection, or of the link that the
- * caret is in, whose URL it shows: it links the selection, or inserts the
- * URL as linked text where nothing is selected, to a URL that a link may
- * lead to, as one typed without a scheme, example.com, is an https URL
- * (typedHref), and says so of one that no link may; and it removes a link.
- * Closed, it gives the focus back to the text.
+ * caret is in, whose URL it shows: it links the selection, or inserts what
+ * the user typed as linked text where nothing is selected, to a URL that a
+ * link may lead to, as one typed without a scheme, example.com, is an https
+ * URL (typedHref), and says so of one that no link may; and it removes a
+ * link. Closed, it gives the focus back to the text.
  */
 function LinkDialog({
   editor,
@@ -376,10 +392,12 @@ function LinkDialog({
     }
     const chain = editor.chain().focus();
     if (editor.state.selection.empty && !editor.isActive("link")) {
+      // The text is what the user typed, as café.example, rather than the
+      // URL as the link stores it, https://xn--caf-dma.example.
       chain
         .insertContent({
           type: "text",
-          text: href,
+          text: typed.trim(),
           marks: [{ type: "link", attrs: { href } }],
         })
         .run();

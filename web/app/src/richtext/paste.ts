@@ -12,7 +12,7 @@
 
 import { MAX_LIST_DEPTH } from "@storycreep/shared/richtext";
 import { storedHref } from "./link";
-import { startOf } from "./schema";
+import { isMentionElement, isValueRefElement, startOf } from "./schema";
 
 /** The marks of a run of text, which a link and the code mark limit (marksOf). */
 interface Marks {
@@ -43,6 +43,8 @@ interface Para {
   runs: Run[];
   item?: ItemOf;
   continues?: number;
+  /** Whether the paragraph is of a pre, whose white space it keeps. */
+  pre: boolean;
 }
 
 /** What the HTML's elements say of the text in them, as the walk reads them. */
@@ -146,6 +148,9 @@ const BLOCKS = new Set([
   "tr",
   "ul",
 ]);
+
+/** The elements of a block of text, which ProseMirror writes of a paragraph, a heading, or a block of code. */
+const TEXTBLOCKS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"]);
 
 /** The white space of HTML, which a paragraph's text collapses. */
 const HTML_SPACE = /^[ \t\n\f\r]*$/;
@@ -274,16 +279,27 @@ class Reader {
   private pendingItem: ItemOf | undefined;
   /** The level of the list item whose paragraphs a paragraph continues, or undefined outside any. */
   private itemLevel: number | undefined;
+  /**
+   * Whether the HTML is ProseMirror's, as the editor copies it, whose every
+   * block of text is a paragraph, as one that holds nothing or only white
+   * space, which a paragraph of another app's HTML that shows nothing is
+   * not.
+   */
+  private readonly faithful: boolean;
+
+  constructor(faithful: boolean) {
+    this.faithful = faithful;
+  }
 
   /** Ends the paragraph that inline content went to. */
   private end() {
     this.current = undefined;
   }
 
-  /** Returns the paragraph that inline content goes to, which begins with the first. */
-  private paragraph(): Para {
+  /** Returns the paragraph that inline content goes to, which begins with the first, and is of a pre if that content is. */
+  private paragraph(pre = false): Para {
     if (this.current === undefined) {
-      const para: Para = { runs: [] };
+      const para: Para = { runs: [], pre };
       if (this.pendingItem !== undefined) {
         para.item = this.pendingItem;
         this.pendingItem = undefined;
@@ -322,13 +338,13 @@ class Reader {
       // ends at the start of a line marks where the selection ended, and is
       // none of the text.
       if (!element.classList.contains("Apple-interchange-newline")) {
-        this.paragraph().runs.push({ kind: "break" });
+        this.paragraph(ctx.pre).runs.push({ kind: "break" });
       }
       return;
     }
     const chip = chipOf(element);
     if (chip !== undefined) {
-      this.paragraph().runs.push({
+      this.paragraph(ctx.pre).runs.push({
         kind: "chip",
         attrs: chip,
         marks: marksOf(ctx.marks),
@@ -368,6 +384,9 @@ class Reader {
       item.level = Math.min(item.level, MAX_LIST_DEPTH);
       this.pendingItem = item;
       this.itemLevel = name === "li" ? item.level : undefined;
+    }
+    if (this.faithful && TEXTBLOCKS.has(name)) {
+      this.paragraph(inner.pre);
     }
     this.children(element, inner);
     if (item !== undefined) {
@@ -426,9 +445,9 @@ class Reader {
       this.paragraph().runs.push({ kind: "text", text: value, marks });
       return;
     }
-    // A pre keeps its lines, each after a line break.
+    // A pre keeps its lines, each after a line break, and their white space.
     value.split(/\r\n?|\n/).forEach((line, i) => {
-      const para = this.paragraph();
+      const para = this.paragraph(true);
       if (i > 0) {
         para.runs.push({ kind: "break" });
       }
@@ -439,16 +458,21 @@ class Reader {
   }
 }
 
-/** Returns the attributes of a mention or a value reference that the editor wrote, which a paste keeps, or undefined for another element. */
+/**
+ * Returns the attributes of a mention or a value reference that the editor
+ * wrote, which a paste keeps, or undefined for another element: one of
+ * another app's, as a mention of a user, which names no component, is read
+ * as the other inline elements are, so that its text stays.
+ */
 function chipOf(element: Element): [string, string][] | undefined {
   if (element.localName !== "span") {
     return undefined;
   }
   const type = element.getAttribute("data-type");
   const names =
-    type === "mention"
+    type === "mention" && isMentionElement(element)
       ? ["data-id"]
-      : type === "value-ref"
+      : type === "value-ref" && isValueRefElement(element)
         ? ["data-ref", "data-attribute", "data-decimals"]
         : undefined;
   if (names === undefined) {
@@ -471,20 +495,28 @@ interface List {
   items: Block[][];
 }
 
-type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
+type Block =
+  | { kind: "p"; runs: Run[]; pre: boolean }
+  | { kind: "list"; list: List };
 
 /**
  * Returns the blocks of the paragraphs, each list item's in its list, nested
  * by their levels: an item one level deeper than the item before it begins
  * a list within that item, one at the same level of another kind of list a
- * list of its own, and one at a level that skips a level is at the next.
+ * list of its own, and one at a level that skips a level is at the next. A
+ * paragraph of the editor's own HTML (faithful) keeps its white space, as
+ * ProseMirror reads it.
  */
-function blocksOf(paras: readonly Para[]): Block[] {
+function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
   const open: List[] = [];
   const lastItem = (list: List) => list.items[list.items.length - 1];
   for (const para of paras) {
-    const runs = tidy(para.runs);
+    const block = {
+      kind: "p" as const,
+      runs: faithful ? para.runs : tidy(para.runs),
+      pre: para.pre,
+    };
     if (para.item !== undefined) {
       const level = Math.min(para.item.level, open.length + 1);
       open.length = Math.min(open.length, level);
@@ -506,13 +538,13 @@ function blocksOf(paras: readonly Para[]): Block[] {
         });
         open.push(list);
       }
-      open[open.length - 1].items.push([{ kind: "p", runs }]);
+      open[open.length - 1].items.push([block]);
     } else if (para.continues !== undefined && open.length > 0) {
       open.length = Math.min(open.length, para.continues);
-      lastItem(open[open.length - 1]).push({ kind: "p", runs });
+      lastItem(open[open.length - 1]).push(block);
     } else {
       open.length = 0;
-      top.push({ kind: "p", runs });
+      top.push(block);
     }
   }
   return top;
@@ -582,7 +614,9 @@ function writeRun(doc: Document, parent: Element, run: Run) {
 function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
   for (const block of blocks) {
     if (block.kind === "p") {
-      const p = doc.createElement("p");
+      // A paragraph of a pre is one too, which the editor's parser reads
+      // without collapsing its white space, as a line's indentation.
+      const p = doc.createElement(block.pre ? "pre" : "p");
       for (const run of block.runs) {
         writeRun(doc, p, run);
       }
@@ -603,18 +637,47 @@ function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
 }
 
 /**
+ * Returns the marker of a slice that ProseMirror wrote on the first element
+ * of what it copied (data-pm-slice: how deep the slice is open at its start
+ * and at its end, and the nodes around it) as it holds of the cleaned HTML,
+ * or undefined for HTML without one, or with one that no editor of this
+ * schema writes: one that elements wrap that are none of its nodes, as a
+ * table's around its rows (-N), whose cells the cleaning makes paragraphs
+ * of. The cleaning puts a slice of inline content, as of part of a
+ * paragraph, in a paragraph, and one of a list's items in a list, and so
+ * the slice is open one deeper at both ends.
+ */
+function sliceOf(source: Document): string | undefined {
+  const element = source.querySelector("[data-pm-slice]");
+  const match =
+    element === null
+      ? null
+      : /^(\d+) (\d+)(?: -(\d+))? (.*)/.exec(
+          element.getAttribute("data-pm-slice") ?? "",
+        );
+  if (element === null || match === null || match[3] !== undefined) {
+    return undefined;
+  }
+  const name = element.localName.toLowerCase();
+  const wrapped = name === "li" || !BLOCKS.has(name) ? 1 : 0;
+  return `${Number(match[1]) + wrapped} ${Number(match[2]) + wrapped} ${match[4]}`;
+}
+
+/**
  * Returns pasted HTML as HTML of only what the schema holds: paragraphs,
  * line breaks, lists and their items, the elements of the marks, links of
  * URLs that a link may lead to, and the spans of the editor's mentions and
  * value references. The HTML is read in a document of its own, without a
  * window, so that none of it runs, loads, or applies a style; and the
  * marker of a slice that ProseMirror wrote, data-pm-slice, is kept on the
- * first block, so that what is copied from an editor is pasted as it was cut
- * from its blocks.
+ * first block, as it holds of the cleaned HTML (sliceOf), with every block
+ * of text a paragraph and its white space kept, so that what is copied from
+ * the editor is pasted as it was cut from its blocks.
  */
 export function cleanPastedHTML(html: string): string {
   const source = new DOMParser().parseFromString(html, "text/html");
-  const reader = new Reader();
+  const slice = sliceOf(source);
+  const reader = new Reader(slice !== undefined);
   reader.read(source.body, {
     marks: { bold: false, italic: false, strike: false, code: false },
     lists: 0,
@@ -622,11 +685,8 @@ export function cleanPastedHTML(html: string): string {
     pre: false,
   });
   const out = document.implementation.createHTMLDocument("");
-  writeBlocks(out, out.body, blocksOf(reader.paras));
-  const slice = source
-    .querySelector("[data-pm-slice]")
-    ?.getAttribute("data-pm-slice");
-  if (slice != null) {
+  writeBlocks(out, out.body, blocksOf(reader.paras, slice !== undefined));
+  if (slice !== undefined) {
     out.body.firstElementChild?.setAttribute("data-pm-slice", slice);
   }
   return out.body.innerHTML;
