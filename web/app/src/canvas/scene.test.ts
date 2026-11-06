@@ -138,6 +138,17 @@ describe("the scene of a board", () => {
       "nd_2",
     ]);
   });
+
+  it("finds the node that holds a tap rather than a later one within its slop, and else the nearest", () => {
+    // Two nodes of 240 units, 80 apart, as a grid's at 10%, where a
+    // finger's 12 px are 120 units.
+    const scene = new Scene("bd_a");
+    scene.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 320, 0)]));
+    expect(scene.nodeAt({ x: 230, y: 60 }, 120)).toBe("nd_1");
+    expect(scene.nodeAt({ x: 300, y: 60 }, 120)).toBe("nd_2");
+    expect(scene.nodeAt({ x: 250, y: 60 }, 120)).toBe("nd_1");
+    expect(scene.nodeAt({ x: 280, y: 400 }, 120)).toBeUndefined();
+  });
 });
 
 describe("the spatial index", () => {

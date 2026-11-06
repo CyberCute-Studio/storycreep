@@ -56,7 +56,6 @@ function fakeEngine() {
         visible: f.scene.nodes.size,
         texts: 0,
         connections: 0,
-        rebuilt: true,
       };
     },
     textures: () => 4,
@@ -250,6 +249,46 @@ describe("the canvas's controller", () => {
     // The centre was 100 + 500 / 2, 100 + 300 / 2.
     expect(c.viewport().x + 300 / 2).toBeCloseTo(350);
     expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
+  });
+
+  it("goes on with an animation from where the canvas is, as it is resized meanwhile", () => {
+    const { c, time } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    // To 200% about the board's point at the centre, 500, 300.
+    c.zoomTo(2);
+    time.tick();
+    c.setSize({ width: 600, height: 1000 }, 1);
+    time.tick(animationTime);
+    expect(c.viewport().zoom).toBe(2);
+    expect(c.viewport().x + 300 / 2).toBeCloseTo(500);
+    expect(c.viewport().y + 500 / 2).toBeCloseTo(300);
+  });
+
+  it("goes on with an animation as a pointer that it ignores goes down, and stops it for one that it follows", () => {
+    const { c, time } = setUp();
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    c.zoomTo(2);
+    time.tick();
+    const right = {
+      id: 1,
+      x: 100,
+      y: 100,
+      kind: "mouse" as const,
+      button: 2,
+      shift: false,
+      additive: false,
+    };
+    expect(c.pointer("down", right)).toBe(false);
+    time.tick(animationTime);
+    expect(c.viewport().zoom).toBe(2);
+    c.zoomTo(1);
+    time.tick();
+    expect(c.pointer("down", { ...right, button: 0 })).toBe(true);
+    const held = c.viewport();
+    expect(held.zoom).toBeGreaterThan(1);
+    time.tick(animationTime);
+    expect(c.viewport()).toEqual(held);
   });
 
   it("tells the zoom as it changes by a percent", () => {

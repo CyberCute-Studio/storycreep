@@ -78,8 +78,6 @@ export interface FrameStats {
   texts: number;
   /** The connections that it draws. */
   connections: number;
-  /** Whether it built the margin's objects anew, rather than moving them. */
-  rebuilt: boolean;
 }
 
 /** The canvas's renderer, once it has started. */
@@ -264,7 +262,7 @@ class PixiEngine implements Engine {
         selectionVersion: number;
         labelsVersion: number;
         theme: Theme;
-        stats: Omit<FrameStats, "rebuilt" | "visible">;
+        stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
         connections: ConnectionItem[];
       }
@@ -382,7 +380,6 @@ class PixiEngine implements Engine {
     return {
       ...built.stats,
       visible: inView ?? countIn(built.shown, visible),
-      rebuilt: stale,
     };
   }
 
@@ -575,6 +572,9 @@ class PixiEngine implements Engine {
     corners(view.ring, 4);
     view.ring.visible = selected;
     view.ring.tint = theme.accent;
+    // The columns of a line, each of an average Latin letter's width, 0.56
+    // of the font's size, of which a wide character, as of Japanese, takes
+    // two (text.ts).
     const inner = Math.max(8, w - 24);
     const perLine = (size: number) =>
       Math.max(4, Math.floor(inner / (size * 0.56)));

@@ -275,16 +275,33 @@ export class Scene {
   }
 
   /**
-   * Returns the ID of the topmost node at p of the board, within slop units
-   * of it, as a finger's tap is less precise than a mouse's click.
+   * Returns the ID of the node at p of the board, the topmost of those that
+   * hold it, or else the nearest within slop units of it, as a finger's tap
+   * is less precise than a mouse's click: a tap on a node near its edge
+   * finds it, rather than one beside it that is drawn above it, as at a
+   * zoom where the slop is wider than the gap between them.
    */
   nodeAt(p: Point, slop = 0): string | undefined {
     let found: NodeItem | undefined;
+    let nearest = Number.POSITIVE_INFINITY;
     this.nodes.query(
       { x: p.x - slop, y: p.y - slop, width: 2 * slop, height: 2 * slop },
       (_, item) => {
-        if (found === undefined || item.order > found.order) {
+        const r = item.rect;
+        const distance = Math.hypot(
+          Math.max(r.x - p.x, 0, p.x - (r.x + r.width)),
+          Math.max(r.y - p.y, 0, p.y - (r.y + r.height)),
+        );
+        if (distance > slop) {
+          return;
+        }
+        if (
+          found === undefined ||
+          distance < nearest ||
+          (distance === nearest && item.order > found.order)
+        ) {
           found = item;
+          nearest = distance;
         }
       },
     );

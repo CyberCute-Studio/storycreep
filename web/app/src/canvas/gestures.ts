@@ -1,12 +1,14 @@
 // How the canvas reads pointers and the wheel (PRD FR-EDIT-01, NFR-TOUCH-03,
 // NFR-TOUCH-07): a mouse's drag, one finger's, or a pen's pans the board in
 // the pan mode, and draws a rubber band that selects the nodes that it
-// overlaps in the select mode, where a drag with the mouse's middle button,
-// or with Space held, still pans; two fingers pinch, zooming about the point
-// between them, which stays under them, and pan as they move together; a
-// third finger is ignored. A tap, or a click, selects the node under it, or
-// adds it to the selection, or takes it out, with Shift, Ctrl, or Cmd, and
-// a tap on the board's empty canvas clears the selection. The wheel pans, and
+// overlaps in the select mode, from the board's point where it started,
+// however the board moves under it meanwhile, where a drag with the mouse's
+// middle button, or with Space held, still pans; two fingers pinch, zooming
+// about the point between them, which stays under them, and pan as they move
+// together; a third finger is ignored. A tap, or a click, selects the node
+// under it, or adds it to the selection, or takes it out, with Shift, Ctrl,
+// or Cmd, and a tap on the board's empty canvas clears the selection; a click
+// of the middle button, which pans, selects nothing. The wheel pans, and
 // Shift turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it,
 // it zooms about the pointer. Nothing needs hover or a right click.
 
@@ -17,6 +19,7 @@ import {
   type Rect,
   rectOf,
   type Size,
+  toScreen,
   toWorld,
   type Viewport,
 } from "./viewport";
@@ -94,11 +97,14 @@ type Gesture =
       kind: "press";
       id: number;
       start: Point;
+      /** The point of the board that the pointer went down on, where a rubber band starts. */
+      at: Point;
       drag: "pan" | "band";
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
-  | { kind: "band"; id: number; start: Point; input: PointerInput }
+  /** A rubber band, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
+  | { kind: "band"; id: number; anchor: Point; input: PointerInput }
   | {
       kind: "pinch";
       ids: [number, number];
@@ -121,9 +127,9 @@ export class Gestures {
     this.space = held;
   }
 
-  /** Reports whether a gesture is under way. */
-  get active(): boolean {
-    return this.gesture.kind !== "idle";
+  /** Reports whether the canvas follows the pointer of id, which went down on it. */
+  tracks(id: number): boolean {
+    return this.pointers.has(id);
   }
 
   /**
@@ -150,6 +156,7 @@ export class Gestures {
       kind: "press",
       id: p.id,
       start: { x: p.x, y: p.y },
+      at: toWorld(this.host.viewport(), p),
       drag: pans ? "pan" : "band",
       input: p,
     };
@@ -180,10 +187,10 @@ export class Gestures {
           this.gesture = {
             kind: "band",
             id: p.id,
-            start: g.start,
+            anchor: g.at,
             input: g.input,
           };
-          this.host.band(rectOf(g.start, p));
+          this.refresh();
         }
         return;
       }
@@ -199,7 +206,7 @@ export class Gestures {
       }
       case "band":
         if (g.id === p.id) {
-          this.host.band(rectOf(g.start, p));
+          this.refresh();
         }
         return;
       case "pinch": {
@@ -244,7 +251,9 @@ export class Gestures {
       case "press":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
-          if (!cancelled) {
+          // A click of the middle button is a pan that did not move.
+          const middle = g.input.kind === "mouse" && g.input.button === 1;
+          if (!cancelled && !middle) {
             this.tap(input, g.input);
           }
         }
@@ -259,8 +268,7 @@ export class Gestures {
           this.gesture = { kind: "idle" };
           this.host.band(undefined);
           if (!cancelled) {
-            const v = this.host.viewport();
-            const r = rectOf(toWorld(v, g.start), toWorld(v, input));
+            const r = rectOf(g.anchor, toWorld(this.host.viewport(), input));
             const additive = g.input.shift || g.input.additive;
             this.host.select(
               this.host.nodesIn(r),
@@ -281,6 +289,19 @@ export class Gestures {
       }
       case "idle":
         return;
+    }
+  }
+
+  /**
+   * Draws the rubber band again, from the point of the board where it
+   * started to its pointer, as the pointer moves, or the board under it, as
+   * once the wheel, a key, or the canvas's new size moved it.
+   */
+  refresh(): void {
+    const g = this.gesture;
+    const p = g.kind === "band" ? this.pointers.get(g.id) : undefined;
+    if (g.kind === "band" && p !== undefined) {
+      this.host.band(rectOf(toScreen(this.host.viewport(), g.anchor), p));
     }
   }
 

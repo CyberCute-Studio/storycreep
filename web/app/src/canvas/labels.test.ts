@@ -10,7 +10,8 @@ const context: LabelContext = {
     args === undefined ? key : `${key}(${Object.values(args).join(",")})`,
   componentName: (id) => (id === "cmp_ada" ? "Ada" : undefined),
   variableKey: (id) => (id === "var_gold" ? "gold" : undefined),
-  nodeTitle: (id) => (id === "nd_dock" ? "The dock" : undefined),
+  nodeTitle: (id) =>
+    id === "nd_dock" ? "The dock" : id === "nd_blank" ? "" : undefined,
 };
 
 describe("a card's labels", () => {
@@ -91,6 +92,22 @@ describe("a card's labels", () => {
     expect(labelsOf(jumper, context).body).toBe(
       "canvas.node.jumper_to(The dock)",
     );
+    // A target without a title is untitled, as its own card says, and one
+    // that the document does not have yet is named by its ID.
+    const untitled = testNode("nd_u", 0, 0, {
+      type: "jumper",
+      target: { board_id: "bd_a", node_id: "nd_blank" },
+    });
+    expect(labelsOf(untitled, context).body).toBe(
+      "canvas.node.jumper_to(canvas.node.untitled)",
+    );
+    const unread = testNode("nd_r", 0, 0, {
+      type: "jumper",
+      target: { board_id: "bd_b", node_id: "nd_far" },
+    });
+    expect(labelsOf(unread, context).body).toBe(
+      "canvas.node.jumper_to(nd_far)",
+    );
   });
 
   it("cuts a long text short", () => {
@@ -124,6 +141,26 @@ describe("a card's text", () => {
     );
     expect(wrapLines("one\ntwo\nthree", 10, 2, true)).toBe("one\ntwo");
     expect(wrapLines("anything", 10, 0, false)).toBe("");
+  });
+
+  it("shows each of a branch's rows, however long the rows before it", () => {
+    const rows = Array.from(
+      { length: 8 },
+      (_, i) => `if inventory.has_lantern && courage > ${i}`,
+    );
+    const shown = wrapLines(rows.join("\n"), 20, 8, true).split("\n");
+    expect(shown).toHaveLength(8);
+    expect(shown.every((row) => row === "if inventory.has_la…")).toBe(true);
+  });
+
+  it("counts a wide character, as of Japanese, as two of a line's columns", () => {
+    expect(clip("灯台守の階段", 8)).toBe("灯台守…");
+    expect(clip("灯台守", 6)).toBe("灯台守");
+    expect(wrapLines("灯台守が階段を上って灯りをともす", 10, 2, false)).toBe(
+      "灯台守が階\n段を上って…",
+    );
+    // An emoji of two code units is cut whole, not in half.
+    expect(clip("ab🌊🌊🌊", 4)).toBe("ab…");
   });
 
   it("draws the glyphs sharper as the zoom grows", () => {

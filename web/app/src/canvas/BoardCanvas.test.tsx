@@ -31,7 +31,6 @@ vi.mock("./engine", () => ({
         visible: f.scene.nodes.size,
         texts: 0,
         connections: f.scene.connections.size,
-        rebuilt: true,
       }),
       textures: () => undefined,
       destroy: () => {
@@ -120,6 +119,32 @@ describe("a board's canvas", () => {
     expect(canvas.className).toContain("touch-none");
     expect(canvas.className).toContain("overscroll-none");
     await waitFor(() => expect(engines.created).toBe(1));
+  });
+
+  it("lets go of Space once the focus leaves the canvas, so that a drag of the select mode draws its rubber band again", async () => {
+    const user = userEvent.setup();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    canvas.focus();
+    // Space goes down on the canvas, and up once the focus has left it.
+    await user.keyboard("[Space>]");
+    await user.tab();
+    expect(document.activeElement).not.toBe(canvas);
+    await user.keyboard("[/Space]");
+    await user.pointer([
+      { keys: "[MouseLeft>]", target: canvas, coords: { x: 10, y: 10 } },
+      { target: canvas, coords: { x: 80, y: 60 } },
+    ]);
+    const band = canvas.querySelector<HTMLElement>(".border-accent");
+    expect(band?.hidden).toBe(false);
+    await user.pointer({ keys: "[/MouseLeft]", target: canvas });
+    expect(band?.hidden).toBe(true);
   });
 
   it("says that a board has no nodes yet", async () => {

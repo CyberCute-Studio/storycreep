@@ -206,7 +206,13 @@ export class CanvasController implements GestureHost {
     this.invalidate();
   }
 
-  /** Takes the canvas's size, in CSS pixels, keeping the board's point at its centre where it is. */
+  /**
+   * Takes the canvas's size, in CSS pixels, keeping the board's point at its
+   * centre where it is, and those of where an animation in progress goes
+   * from and to, so that it goes on from where the canvas is now, rather
+   * than from and to views of the size before, as a fit that the window's
+   * turn interrupts would.
+   */
   setSize(size: Size, resolution: number): void {
     if (
       size.width === this.sz.width &&
@@ -216,12 +222,18 @@ export class CanvasController implements GestureHost {
       return;
     }
     if (this.placed && this.sz.width > 0 && this.sz.height > 0) {
-      const center = centerOf(this.v, this.sz);
-      this.v = anchorAt(
-        center,
-        { x: size.width / 2, y: size.height / 2 },
-        this.v.zoom,
-      );
+      const was = this.sz;
+      const kept = (v: Viewport) =>
+        anchorAt(
+          centerOf(v, was),
+          { x: size.width / 2, y: size.height / 2 },
+          v.zoom,
+        );
+      this.v = kept(this.v);
+      const a = this.animation;
+      if (a !== undefined) {
+        this.animation = { ...a, from: kept(a.from), to: kept(a.to) };
+      }
     }
     this.sz = size;
     this.resolution = resolution;
@@ -463,15 +475,25 @@ export class CanvasController implements GestureHost {
     }
   }
 
-  /** Takes a pointer's event of the browser's, at a point of the canvas. */
+  /**
+   * Takes a pointer's event of the browser's, at a point of the canvas, and
+   * reports, of one that went down, whether the canvas follows it: one that
+   * it does stops an animation in progress where it is, as a finger that
+   * takes the board does, and one that it ignores, as a right click, or a
+   * third finger, leaves it to go on.
+   */
   pointer(
     type: "down" | "move" | "up" | "cancel",
     input: PointerInput,
   ): boolean {
     switch (type) {
-      case "down":
-        this.animation = undefined;
-        return this.gestures.down(input);
+      case "down": {
+        const followed = this.gestures.down(input);
+        if (followed) {
+          this.animation = undefined;
+        }
+        return followed;
+      }
       case "move":
         this.gestures.move(input);
         return true;
@@ -523,6 +545,8 @@ export class CanvasController implements GestureHost {
         this.invalidate();
       }
     }
+    // A rubber band under way stays on the board's point where it started.
+    this.gestures.refresh();
     this.showZoom();
     const engine = this.engine;
     const theme = this.theme;

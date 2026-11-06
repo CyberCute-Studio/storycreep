@@ -65,6 +65,24 @@ test.describe("a board's canvas", () => {
     expect(await violations(page)).toEqual([]);
   });
 
+  test("opens fitted again on a board that the page showed before", async ({
+    page,
+  }) => {
+    const board = await openBoard(page);
+    const fitted = await settled(canvasOf(page, board.name));
+    // The board's nodes are in the project's document already, so that
+    // its read is done before the canvas's first frame, which places it.
+    await press(page.getByRole("link", { name: en["project.nav.boards"] }));
+    await expect(canvasOf(page, board.name)).toHaveCount(0);
+    await page.goBack();
+    const canvas = canvasOf(page, board.name);
+    await drawn(canvas);
+    const again = await settled(canvas);
+    expect(again.zoom).toBeCloseTo(fitted.zoom, 3);
+    expect(again.x).toBeCloseTo(fitted.x, 0);
+    expect(again.y).toBeCloseTo(fitted.y, 0);
+  });
+
   // Verifies: FR-EDIT-01/AC1
   test("keeps the point between two pinching fingers under them, within 2 px", async ({
     page,

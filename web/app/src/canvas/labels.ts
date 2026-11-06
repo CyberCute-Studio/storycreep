@@ -95,6 +95,10 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
     }
     case "jumper": {
       const target = node.target?.node_id;
+      // The node that it goes to by its title, as its own card shows it,
+      // untitled as there, or by its ID while the project's document does
+      // not have it, as of a board not read yet.
+      const name = target === undefined ? undefined : c.nodeTitle(target);
       return {
         title,
         kind: c.t("canvas.node.jumper"),
@@ -102,7 +106,12 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
           target === undefined
             ? c.t("canvas.node.jumper_none")
             : c.t("canvas.node.jumper_to", {
-                target: c.nodeTitle(target) || target,
+                target:
+                  name === undefined
+                    ? target
+                    : name === ""
+                      ? c.t("canvas.node.untitled")
+                      : name,
               }),
       };
     }

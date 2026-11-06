@@ -104,6 +104,17 @@ function ZoomReset({
   );
 }
 
+/**
+ * Returns the size of the canvas's element, in CSS pixels, which the
+ * renderer's canvas, the rubber band, and the points of the pointers are
+ * laid out in: its whole box, as its edge is a ring drawn outside it rather
+ * than a border within it.
+ */
+function sizeOf(host: HTMLElement): { width: number; height: number } {
+  const r = host.getBoundingClientRect();
+  return { width: r.width, height: r.height };
+}
+
 /** Returns the input of a pointer's event, at its point of the element at rect. */
 function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
   return {
@@ -173,7 +184,11 @@ export function BoardCanvas({
   );
 
   // The canvas takes the window's height below where it starts, as a
-  // tablet's screen is the board's.
+  // tablet's screen is the board's, as the window's size changes, and as
+  // what is above it changes its height, as the toolbar that wraps once it
+  // says how many nodes are selected, or an alert at the page's top: the
+  // page, taller than the window once the canvas takes the rest of it,
+  // changes its height with it.
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) {
@@ -185,7 +200,15 @@ export function BoardCanvas({
     };
     measure();
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    const page =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(measure)
+        : undefined;
+    page?.observe(document.body);
+    return () => {
+      window.removeEventListener("resize", measure);
+      page?.disconnect();
+    };
   }, []);
 
   // The elements, their size, the theme, and the browser's events.
@@ -201,11 +224,7 @@ export function BoardCanvas({
     const dark = mediaQueryList(darkQuery);
     dark?.addEventListener("change", theme);
     const resize = () => {
-      const r = host.getBoundingClientRect();
-      controller.setSize(
-        { width: r.width, height: r.height },
-        window.devicePixelRatio || 1,
-      );
+      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
     };
     resize();
     const observer =
@@ -220,6 +239,11 @@ export function BoardCanvas({
           e.target !== host &&
           !surfaceRef.current?.contains(e.target as Node)
         ) {
+          return;
+        }
+        // A pointer that the canvas does not follow, as a mouse that moves
+        // over it with no button down, reads nothing of the page's layout.
+        if (type !== "down" && !controller.gestures.tracks(e.pointerId)) {
           return;
         }
         const followed = controller.pointer(
@@ -328,6 +352,18 @@ export function BoardCanvas({
       window.removeEventListener("blur", blur);
     };
   }, [controller]);
+
+  // The canvas's size once its height is set, at once, rather than once the
+  // observer tells of it, after the next frame: that frame places the canvas
+  // on the board's content where it has been read already, as of a board
+  // that the page showed before, which it fits to the canvas's height, not
+  // to the height of none that the canvas had before, at 10%.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (host !== null && height !== undefined) {
+      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
+    }
+  }, [controller, height]);
 
   // The renderer, on a canvas element of its own in the surface, as a
   // renderer that ends may leave its canvas's context lost.
@@ -459,6 +495,10 @@ export function BoardCanvas({
       controller.gestures.setSpace(false);
     }
   };
+  // Space let go of once the focus has left the canvas goes up elsewhere,
+  // so the canvas lets go of it as the focus leaves, rather than pan on
+  // every drag of the select mode after.
+  const blur = () => controller.gestures.setSpace(false);
   const minimapPointer = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (e.type === "pointermove" && e.buttons === 0) {
       return;
@@ -546,8 +586,9 @@ export function BoardCanvas({
         tabIndex={0}
         onKeyDown={keyDown}
         onKeyUp={keyUp}
+        onBlur={blur}
         style={{ height }}
-        className="relative touch-none overflow-hidden overscroll-none rounded-md border border-border bg-canvas select-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        className="relative touch-none overflow-hidden overscroll-none rounded-md bg-canvas ring-1 ring-border select-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus"
       >
         <div ref={surfaceRef} className="absolute inset-0" />
         <div

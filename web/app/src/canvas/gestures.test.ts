@@ -16,6 +16,8 @@ function host(mode: Mode = "pan") {
     selected: [] as string[],
     selects: [] as { ids: string[]; how: SelectHow }[],
     bands: [] as (Rect | undefined)[],
+    /** The rectangles of the board that a rubber band selected in. */
+    banded: [] as Rect[],
   };
   const node = { x: 100, y: 100, width: 240, height: 120 };
   const inNode = (r: Rect) =>
@@ -39,7 +41,10 @@ function host(mode: Mode = "pan") {
       })
         ? "nd_a"
         : undefined,
-    nodesIn: (r) => (inNode(r) ? ["nd_a"] : []),
+    nodesIn: (r) => {
+      state.banded.push(r);
+      return inNode(r) ? ["nd_a"] : [];
+    },
     select: (ids, how) => {
       state.selects.push({ ids, how });
     },
@@ -173,6 +178,40 @@ describe("the canvas's gestures", () => {
     expect(state.bands).toEqual([]);
   });
 
+  it("keeps a rubber band on the board's point where it started, as the wheel moves the board under it", () => {
+    const { state, gestures } = host("select");
+    gestures.down(mouse(50, 50));
+    gestures.move(mouse(200, 160));
+    // The wheel brings 100 px more of the board below into view.
+    gestures.wheel({
+      x: 200,
+      y: 160,
+      dx: 0,
+      dy: 100,
+      deltaMode: 0,
+      zoom: false,
+      shift: false,
+    });
+    gestures.refresh();
+    expect(state.bands.at(-1)).toEqual({
+      x: 50,
+      y: -50,
+      width: 150,
+      height: 210,
+    });
+    gestures.up(mouse(200, 160));
+    expect(state.banded).toEqual([{ x: 50, y: 50, width: 150, height: 210 }]);
+  });
+
+  it("selects nothing with a click of the middle button, which pans", () => {
+    const { state, gestures } = host("select");
+    gestures.down(mouse(150, 150, { button: 1 }));
+    gestures.up(mouse(150, 150, { button: 1 }));
+    gestures.down(mouse(700, 500, { button: 1 }));
+    gestures.up(mouse(700, 500, { button: 1 }));
+    expect(state.selects).toEqual([]);
+  });
+
   it("does not take a finger's small move for a drag, nor its tap for a pan", () => {
     const { state, gestures } = host();
     gestures.down(touch(1, 200, 150));
@@ -218,7 +257,7 @@ describe("the canvas's gestures", () => {
     gestures.move(touch(1, 260, 300));
     expect(state.v.x).toBeCloseTo(before.x - 60 / before.zoom);
     gestures.up(touch(1, 260, 300));
-    expect(gestures.active).toBe(false);
+    expect(gestures.tracks(1)).toBe(false);
   });
 
   it("pans with the wheel, sideways with Shift, and zooms about the pointer with Ctrl or a trackpad's pinch", () => {
