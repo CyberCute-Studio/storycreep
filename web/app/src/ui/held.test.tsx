@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { describe, expect, test } from "vitest";
@@ -54,6 +54,42 @@ describe("a held form", () => {
     );
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Elsewhere" }),
+    );
+  });
+
+  test("shown anew, gives the focus back to the control that had it, though a toolbar before it, as a rich text's, is there no more", () => {
+    let release = () => {};
+    function ToolbarForm({
+      entity,
+    }: {
+      entity: { rev: number; toolbar: boolean };
+    }) {
+      const held = useHeld(entity);
+      release = held.release;
+      return (
+        <form key={held.key} {...held.props}>
+          <input aria-label="Title" />
+          {held.shown.toolbar && (
+            <div role="toolbar">
+              <button type="button">Bold</button>
+              <button type="button">Italic</button>
+            </div>
+          )}
+          {/* An editable text, as a rich text's, which may not be changed
+              where it has no toolbar. */}
+          <div contentEditable={held.shown.toolbar} />
+          <input aria-label="Name" />
+        </form>
+      );
+    }
+    const { rerender } = render(
+      <ToolbarForm entity={{ rev: 1, toolbar: true }} />,
+    );
+    screen.getByRole("textbox", { name: "Name" }).focus();
+    rerender(<ToolbarForm entity={{ rev: 2, toolbar: false }} />);
+    act(() => release());
+    expect(document.activeElement).toBe(
+      screen.getByRole("textbox", { name: "Name" }),
     );
   });
 });

@@ -991,7 +991,7 @@ if (tide) {}</pre>
     });
   });
 
-  test("a numbered list that is not numbered from where the one before it ends is a list of its own, and Word's nested items are numbered by their own numbers", () => {
+  test("a numbered list that is not numbered from where the one before it ends is a list of its own, as are an ol's items from one that its value numbers otherwise, and Word's nested items are numbered by their own numbers", () => {
     expect(
       pasted(
         '<ol><li>a</li><li>b</li></ol><ol start="10"><li>x</li></ol><ol start="11"><li>y</li></ol><ol><li>z</li></ol>',
@@ -1001,6 +1001,20 @@ if (tide) {}</pre>
         numbers(1, item(p(text("a"))), item(p(text("b")))),
         numbers(10, item(p(text("x"))), item(p(text("y")))),
         numbers(1, item(p(text("z")))),
+      ),
+    );
+    // A value that HTML reads no number of numbers nothing, and one of the
+    // number that the item has anyway leaves it in its list.
+    expect(
+      pasted(
+        '<ol start="5"><li>a</li><li value="9th">b</li><li value="x">c</li><li value="11">d</li></ol><ol><li value="3">e</li></ol><ul><li value="7">f</li></ul>',
+      ),
+    ).toEqual(
+      doc(
+        numbers(5, item(p(text("a")))),
+        numbers(9, item(p(text("b"))), item(p(text("c"))), item(p(text("d")))),
+        numbers(3, item(p(text("e")))),
+        bullets(item(p(text("f")))),
       ),
     );
     const word = (level: number, marker: string, value: string) =>

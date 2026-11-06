@@ -11,8 +11,14 @@ import {
   isLowSurrogate,
   MAX_LIST_DEPTH,
 } from "@storycreep/shared/richtext";
-import { Fragment, type Mark, type Node as PMNode } from "@tiptap/pm/model";
+import {
+  Fragment,
+  type Mark,
+  type Node as PMNode,
+  Slice,
+} from "@tiptap/pm/model";
 import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
+import { ReplaceAroundStep } from "@tiptap/pm/transform";
 import { storedHref } from "./link";
 import { isList, startOf } from "./schema";
 
@@ -237,7 +243,10 @@ function cleanStarts(tr: Transaction) {
  * (MAX_LIST_DEPTH) up a level, into the list of the item that holds it,
  * after that item, so that their text keeps its order: what that item held
  * after the list goes to the end of the last of them. It moves one list at a
- * time, the first that it finds, until none is too deep.
+ * time, the first that it finds, until none is too deep. It moves them as
+ * ProseMirror's lifting of a list item does, by steps that keep what they
+ * move, so that the caret, and whatever else maps its place through the
+ * change, stays in the text that it was in.
  */
 function liftTooDeep(tr: Transaction) {
   for (;;) {
@@ -246,27 +255,45 @@ function liftTooDeep(tr: Transaction) {
       return;
     }
     const { pos, item, index } = found;
-    const before: PMNode[] = [];
-    const after: PMNode[] = [];
-    item.forEach((child, _offset, i) => {
-      if (i < index) {
-        before.push(child);
-      } else if (i > index) {
-        after.push(child);
-      }
-    });
-    const lifted: PMNode[] = [];
-    item.child(index).forEach((child) => {
-      lifted.push(child);
-    });
-    const last = lifted.length - 1;
-    lifted[last] = lifted[last].copy(
-      lifted[last].content.append(Fragment.from(after)),
+    const end = pos + item.nodeSize;
+    let at = pos + 1;
+    for (let i = 0; i < index; i++) {
+      at += item.child(i).nodeSize;
+    }
+    const list = item.child(index);
+    const listEnd = at + list.nodeSize;
+    if (listEnd < end - 1) {
+      // What the item holds after the list goes to the end of the list's
+      // last item, before that item's and the list's ends.
+      const last = list.lastChild as PMNode;
+      tr.step(
+        new ReplaceAroundStep(
+          listEnd - 2,
+          end - 1,
+          listEnd,
+          end - 1,
+          new Slice(
+            Fragment.from(list.type.create(null, last.type.create())),
+            2,
+            0,
+          ),
+          0,
+          true,
+        ),
+      );
+    }
+    // The item ends where the list began, whose items follow it.
+    tr.step(
+      new ReplaceAroundStep(
+        at,
+        end,
+        at + 1,
+        end - 2,
+        new Slice(Fragment.from(item.type.create()), 1, 0),
+        1,
+        true,
+      ),
     );
-    tr.replaceWith(pos, pos + item.nodeSize, [
-      item.copy(Fragment.from(before)),
-      ...lifted,
-    ]);
   }
 }
 

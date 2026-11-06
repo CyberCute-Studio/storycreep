@@ -64,6 +64,103 @@ describe("the editor's extensions", () => {
     ]);
   });
 
+  test("a URL found in pasted text is linked as autolinking links it, and pasted text that a link holds keeps that link", () => {
+    const editor = testEditor();
+    editor.view.pasteText("see example.com now");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "see ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+          { text: " now", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+    // A web page's links whose text is another URL, or the link's own
+    // without its scheme, as the editor's own copy of a typed address.
+    editor.commands.clearContent();
+    editor.view.pasteHTML(
+      '<p><a href="https://github.com/org/repo">https://github.com</a> and <a href="https://example.com">example.com</a></p>',
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [
+              { attrs: { href: "https://github.com/org/repo" }, type: "link" },
+            ],
+            text: "https://github.com",
+            type: "text",
+          },
+          { text: " and ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("a list nested too deeply by what is typed has its items moved up with the caret in the text that it was in", () => {
+    // x is the second paragraph of an item of the fifth list.
+    let list: object = {
+      content: [{ content: [p("y"), p("x")], type: "listItem" }],
+      type: "bulletList",
+    };
+    for (let depth = 4; depth >= 1; depth--) {
+      list = {
+        content: [{ content: [p(`level ${depth}`), list], type: "listItem" }],
+        type: "bulletList",
+      };
+    }
+    const editor = testEditor({
+      content: [list, p("after")],
+      type: "doc",
+    } as RichTextDoc);
+    let x = 0;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.text === "x") {
+        x = pos;
+      }
+    });
+    editor.commands.setTextSelection(x);
+    const { view } = editor;
+    // "- " typed at the start of x, which an input rule makes a list of,
+    // the sixth, and then "Z".
+    for (const typed of ["-", " ", "Z"]) {
+      const { from, to } = view.state.selection;
+      const handled = view.someProp("handleTextInput", (handle) =>
+        handle(view, from, to, typed, () =>
+          view.state.tr.insertText(typed, from, to),
+        ),
+      );
+      if (handled !== true) {
+        view.dispatch(view.state.tr.insertText(typed, from, to));
+      }
+    }
+    type Nested = { content: { content: object[] }[] };
+    let fifth = storedOf(editor.state.doc).doc?.content[0] as Nested;
+    for (let depth = 1; depth < 5; depth++) {
+      fifth = fifth.content[0].content[1] as Nested;
+    }
+    expect(fifth).toEqual({
+      content: [
+        { content: [p("y")], type: "listItem" },
+        { content: [p("Zx")], type: "listItem" },
+      ],
+      type: "bulletList",
+    });
+    expect(storedOf(editor.state.doc).doc?.content[1]).toEqual(p("after"));
+  });
+
   test("keep a change within the schema wherever it is in a long text, though it sets only a mark", () => {
     const paragraphs = Array.from({ length: 50 }, (_, i) => p(`line ${i}`));
     const editor = testEditor({

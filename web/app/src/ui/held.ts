@@ -51,17 +51,26 @@ export interface Held<T> {
 
 /**
  * Returns what of a form the focus may be in, in an order that the form
- * shown anew has it in too: its controls, and then its editable texts, as a
+ * shown anew has it in too: its controls, then its editable texts, as a
  * rich text's, which are no form control: the elements that are editable,
  * or say that they are not, of which none that holds them does (the editing
- * hosts, rather than the atoms within them that ProseMirror marks).
+ * hosts, rather than the atoms within them that ProseMirror marks), and then
+ * the controls of its toolbars, as a rich text's, which one that may not be
+ * changed has none of, so that the other controls keep their places,
+ * though the form shown anew has a toolbar more or fewer.
  */
 function controlsOf(form: HTMLFormElement): Element[] {
+  const controls = [...form.elements];
+  const inToolbar = (element: Element) => {
+    const toolbar = element.closest('[role="toolbar"]');
+    return toolbar !== null && form.contains(toolbar);
+  };
   return [
-    ...form.elements,
+    ...controls.filter((element) => !inToolbar(element)),
     ...Array.from(form.querySelectorAll("[contenteditable]")).filter(
       (element) => !element.parentElement?.closest("[contenteditable]"),
     ),
+    ...controls.filter(inToolbar),
   ];
 }
 

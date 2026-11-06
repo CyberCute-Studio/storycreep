@@ -42,10 +42,10 @@ interface ItemOf {
   level: number;
   ordered: boolean;
   /**
-   * The number of the item, where the HTML gives it: of the first item of an
-   * ol that the walk reads, the ol's start, and of a paragraph of Word's
-   * list, its number; or undefined, as of a later item of an ol, which
-   * continues its list.
+   * The number of the item, where the HTML gives it: of an item of an ol,
+   * its value, and otherwise, of the first item of an ol that the walk
+   * reads, the ol's start, and of a paragraph of Word's list, its number; or
+   * undefined, as of a later item of an ol, which continues its list.
    */
   start?: number;
   /**
@@ -612,10 +612,19 @@ class Reader {
       if (ctx.list !== undefined) {
         this.begun.add(ctx.list);
       }
+      // An item's number is its value, where HTML reads one, as 9 of
+      // "9th", and the first item's otherwise its list's start.
+      const value = element.getAttribute("value");
+      const numbered =
+        value !== null && /^[\t\n\f\r ]*[+-]?\d/.test(value)
+          ? startOf(value)
+          : undefined;
       item = {
         level: levelOf(element) ?? Math.max(ctx.lists, 1),
         ordered: ctx.ordered,
-        start: ctx.ordered && first ? (ctx.start ?? 1) : undefined,
+        start: ctx.ordered
+          ? (numbered ?? (first ? (ctx.start ?? 1) : undefined))
+          : undefined,
         loose: this.faithful && ctx.lists === 0,
         opens: this.faithful && first,
       };

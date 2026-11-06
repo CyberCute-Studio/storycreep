@@ -9,8 +9,10 @@ import {
   type Attributes,
   type Editor,
   Extension,
+  markPasteRule,
   mergeAttributes,
   Node,
+  PasteRule,
 } from "@tiptap/core";
 import { Bold } from "@tiptap/extension-bold";
 import { Code } from "@tiptap/extension-code";
@@ -268,6 +270,38 @@ const StoredLink = Link.extend({
     ];
   },
 
+  // TipTap's rule of the URLs that linkify finds in pasted text, which
+  // leads to an address without a scheme with linkify's own, http, and
+  // links text that a link already holds, as a copied link whose text is a
+  // URL, to that text: an address that it finds leads where autolinking
+  // leads it, as the link's field takes it (typedHref), and pasted text
+  // that a link holds keeps that link.
+  addPasteRules() {
+    const type = this.type;
+    return (this.parent?.() ?? []).map((rule) => {
+      const linking = markPasteRule({
+        find: rule.find,
+        type,
+        getAttributes: (match) => ({ href: typedHref(match[0]) }),
+      });
+      // A match that it skips it answers with nothing, rather than null,
+      // with which TipTap would drop what the rule did of the whole paste.
+      return new PasteRule({
+        find: rule.find,
+        handler: (props) => {
+          const { state, range, match } = props;
+          if (
+            typedHref(match[0]) === undefined ||
+            state.doc.rangeHasMark(range.from, range.to, type)
+          ) {
+            return undefined;
+          }
+          return linking.handler(props);
+        },
+      });
+    });
+  },
+
   addCommands() {
     const parent = this.parent?.() ?? {};
     return {
@@ -299,11 +333,13 @@ const StoredLink = Link.extend({
   enableClickSelection: false,
   defaultProtocol: "https",
   // Autolinking and the paste's linking of a URL ask of linkify's text of
-  // the URL, as typed, which the link leads to with linkify's scheme; the
-  // normalizer writes the link's URL as a link stores it. Pasting a URL over
-  // a selection, which links the selection, asks only shouldAutoLink, so
-  // that a URL that no link may lead to is pasted as text over it, rather
-  // than linking it with a link that the normalizer then takes off.
+  // the URL, as typed, which autolinking leads to with this scheme where it
+  // has none, and the paste as the link's field takes it (addPasteRules),
+  // which is the same URL; the normalizer writes the link's URL as a link
+  // stores it. Pasting a URL over a selection, which links the selection,
+  // asks only shouldAutoLink, so that a URL that no link may lead to is
+  // pasted as text over it, rather than linking it with a link that the
+  // normalizer then takes off.
   isAllowedUri: (url) =>
     typeof url === "string" && typedHref(url) !== undefined,
   shouldAutoLink: (url) => autoLinks(url) && typedHref(url) !== undefined,

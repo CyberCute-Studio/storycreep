@@ -2,8 +2,9 @@ import { describe, expect, test } from "vitest";
 import { storedHref, typedHref } from "./link";
 
 describe("a link's URL", () => {
-  test("typed without a scheme is an https URL, as a host with a port is", () => {
+  test("typed without a scheme is an https URL, as one that begins with // and a host with a port are", () => {
     expect(typedHref("example.com/x")).toBe("https://example.com/x");
+    expect(typedHref("//example.com/x")).toBe("https://example.com/x");
     expect(typedHref("example.com:8080/x")).toBe("https://example.com:8080/x");
     expect(typedHref("localhost:3000")).toBe("https://localhost:3000");
     expect(typedHref(" keeper@example.com ")).toBe("mailto:keeper@example.com");
