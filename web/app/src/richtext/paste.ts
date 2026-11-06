@@ -9,7 +9,12 @@
 // (storedHref) links; its line breaks hard breaks; and its white space,
 // which a pre or a white-space style keeps, kept. What no text shows, as a
 // script, a style sheet, an image, a comment, a hidden element, or the
-// bullet or number of a list item that Word writes out, is left out.
+// bullet or number of a list item that Word writes out, is left out. Neither
+// the pasted HTML, as it is parsed, nor the cleaned HTML has a style
+// attribute or a style element, which the page's Content-Security-Policy
+// refuses (style-src-attr, style-src-elem) in a document that DOMParser
+// makes too, so that the browser reports none and leaves no style unread
+// (unstyled).
 
 import { MAX_LIST_DEPTH } from "@storycreep/shared/richtext";
 import { storedHref } from "./link";
@@ -48,6 +53,8 @@ interface ItemOf {
    * the cleaned HTML leaves it out of too.
    */
   loose?: boolean;
+  /** Whether the item is the first of its list element in ProseMirror's HTML, whose list is one of its own, as one of two lists side by side is. */
+  opens?: boolean;
 }
 
 /** A paragraph of the HTML: one of the document, a list item's first, or one that continues the list item at a level. */
@@ -55,6 +62,12 @@ interface Para {
   runs: Run[];
   item?: ItemOf;
   continues?: number;
+  /**
+   * Whether the paragraph only begins its list item, which has no first
+   * paragraph in ProseMirror's HTML, as where the slice begins within a
+   * list within the item, whose open start ProseMirror's parser keeps.
+   */
+  bare?: boolean;
 }
 
 /** What the HTML's elements say of the text in them, as the walk reads them. */
@@ -172,6 +185,82 @@ const TEXTBLOCKS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"]);
 /** The white space of HTML, which a paragraph's text collapses. */
 const HTML_SPACE = /^[ \t\n\f\r]*$/;
 
+/** The attribute that a style attribute of the pasted HTML is renamed to before the HTML is parsed (unstyled), which the cleaning reads an element's style from. */
+const STYLE = "data-pasted-style";
+
+/**
+ * The parts of HTML that unstyled reads, in order, as HTML's parser reads
+ * them: a comment; an element whose content is text, which no tag within it
+ * ends but its own end tag, as a style sheet or a script, with its start
+ * tag's name and attributes; or an element's start tag, whose attributes'
+ * quoted values may hold ">". A comment or such an element that does not end
+ * goes on to the end, as in HTML.
+ */
+const PART =
+  /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes)(?=[\s/>])((?:"[^"]*"|'[^']*'|[^"'>])*)>[\s\S]*?(?:<\/\1(?=[\s/>])[^>]*>?|$)|<[a-z][^\s/>]*(?:"[^"]*"|'[^']*'|[^"'>])*>?/gi;
+
+/** Within a start tag: a quoted value, which is left as it is, or the name of a style attribute. */
+const STYLE_NAME = /("[^"]*"|'[^']*')|([\s/])style(?=[\s/>=]|$)/gi;
+
+/** Returns a start tag, or its attributes, with the name of its style attribute STYLE. */
+function renamed(tag: string): string {
+  return tag.replace(
+    STYLE_NAME,
+    (_match, quoted: string | undefined, before: string) =>
+      quoted ?? `${before}${STYLE}`,
+  );
+}
+
+/**
+ * Returns HTML with the style attributes of its start tags renamed (STYLE),
+ * and without its style elements, which the cleaning leaves out, so that a
+ * document that DOMParser makes of it has neither: a browser applies the
+ * page's Content-Security-Policy to such a document too, which refuses both
+ * (style-src-attr and style-src-elem), reports them, and leaves the
+ * element's style empty.
+ */
+function unstyled(html: string): string {
+  return html.replace(
+    PART,
+    (part, raw: string | undefined, attributes: string | undefined) => {
+      if (part.startsWith("<!--")) {
+        return part;
+      }
+      if (raw === undefined || attributes === undefined) {
+        return renamed(part);
+      }
+      if (raw.toLowerCase() === "style") {
+        return "";
+      }
+      const start = 1 + raw.length + attributes.length + 1;
+      return `<${raw}${renamed(attributes)}>${part.slice(start)}`;
+    },
+  );
+}
+
+/**
+ * Gives each element of the parsed HTML the style that its attribute (STYLE)
+ * writes, through the CSSOM, which the page's policy allows, so that styleOf
+ * reads it; a style attribute that unstyled did not rename, as in a tag that
+ * a stray quote breaks, which the browser may have refused, is read the same.
+ */
+function applyStyles(source: Document) {
+  for (const element of source.querySelectorAll(`[${STYLE}], [style]`)) {
+    if (!element.hasAttribute(STYLE)) {
+      element.setAttribute(STYLE, element.getAttribute("style") ?? "");
+    }
+    const { style } = element as Partial<ElementCSSInlineStyle>;
+    if (style !== undefined) {
+      style.cssText = element.getAttribute(STYLE) ?? "";
+    }
+  }
+}
+
+/** Returns the text of an element's style as the pasted HTML writes it, as the mso- properties of Word, which the CSSOM does not hold. */
+function rawStyleOf(element: Element): string {
+  return element.getAttribute(STYLE) ?? "";
+}
+
 /** Returns a run's marks as the schema combines them: a link with any but the code mark, and the code mark with no other. */
 function marksOf(marks: Marks): Marks {
   if (marks.href !== undefined) {
@@ -245,7 +334,7 @@ function hidden(element: Element): boolean {
       !element.hasAttribute("open")) ||
     styleOf(element, "display") === "none" ||
     styleOf(element, "visibility") === "hidden" ||
-    /mso-hide\s*:\s*all/i.test(element.getAttribute("style") ?? "")
+    /mso-hide\s*:\s*all/i.test(rawStyleOf(element))
   );
 }
 
@@ -261,8 +350,7 @@ function dropped(element: Element, name: string): boolean {
   return (
     SKIPPED.has(name) ||
     hidden(element) ||
-    (name === "span" &&
-      /mso-list\s*:\s*ignore/i.test(element.getAttribute("style") ?? "")) ||
+    (name === "span" && /mso-list\s*:\s*ignore/i.test(rawStyleOf(element))) ||
     (name === "br" && element.classList.contains("Apple-interchange-newline"))
   );
 }
@@ -285,23 +373,20 @@ function levelOf(element: Element): number | undefined {
  * list's.
  */
 function wordItemOf(element: Element): ItemOf | undefined {
-  const match = /mso-list\s*:\s*l\d+\s+level(\d+)/i.exec(
-    element.getAttribute("style") ?? "",
-  );
+  const match = /mso-list\s*:\s*l\d+\s+level(\d+)/i.exec(rawStyleOf(element));
   if (match === null) {
     return undefined;
   }
   const marker =
     Array.from(element.querySelectorAll("span"))
-      .find((span) =>
-        /mso-list\s*:\s*ignore/i.test(span.getAttribute("style") ?? ""),
-      )
+      .find((span) => /mso-list\s*:\s*ignore/i.test(rawStyleOf(span)))
       ?.textContent?.trim() ?? "";
   // The item's number is the last of those that the marker holds, as 2 of
   // 1.2., where the numbers of the items that hold it go before it.
   const numbered = /^\(?(?:\d+\.)*([0-9]+|[a-z]{1,4})[.)]/i.exec(marker);
   return {
-    level: Number(match[1]),
+    // Word's levels are from 1, as a list item's are; level0 is the first.
+    level: Math.max(1, Number(match[1])),
     ordered: numbered !== null,
     start:
       numbered !== null && /^\d+$/.test(numbered[1])
@@ -386,12 +471,14 @@ class Reader {
       return;
     }
     // A list item that holds a list before any text of its own has an
-    // empty first paragraph, before the list's items.
+    // empty first paragraph, before the list's items; in ProseMirror's HTML
+    // it has none, as where the slice begins within the list, which
+    // ProseMirror's parser keeps open (bare).
     if (
       this.pendingItem !== undefined &&
       (name === "li" || inner.lists > ctx.lists)
     ) {
-      this.paragraph();
+      this.paragraph().bare = this.faithful;
     }
     this.end();
     const outerItem = this.pendingItem;
@@ -410,6 +497,7 @@ class Reader {
         ordered: ctx.ordered,
         start: ctx.ordered && first ? (ctx.start ?? 1) : undefined,
         loose: this.faithful && ctx.lists === 0,
+        opens: this.faithful && first,
       };
     } else if (name === "p" || name === "div") {
       item = wordItemOf(element);
@@ -566,9 +654,12 @@ type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
  * loose one at the top level, or one whose number (ItemOf) is not the one
  * after the list's last item, a list of its own, and one at a level that
  * skips a level is at the next. So Word Online's lists of one item each,
- * each ol numbered from where the one before it ends, are one list. A
- * paragraph of the editor's own HTML (faithful) keeps its white space, as
- * ProseMirror reads it.
+ * each ol numbered from where the one before it ends, are one list. In the
+ * editor's own HTML (faithful), the first item of a list element begins a
+ * list of its own, as ProseMirror reads it, and a paragraph keeps its white
+ * space; in another app's, a paragraph that holds text whose white space is
+ * kept has the rest of its white space collapsed here (collapsed), since
+ * ProseMirror keeps all of the paragraph's (writeBlocks).
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
@@ -577,7 +668,9 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   for (const para of paras) {
     const block = {
       kind: "p" as const,
-      runs: faithful ? para.runs : tidy(para.runs),
+      runs: faithful
+        ? para.runs
+        : tidy(holdsKept(para.runs) ? collapsed(para.runs) : para.runs),
     };
     if (para.item !== undefined) {
       const level = Math.min(para.item.level, open.length + 1);
@@ -588,6 +681,7 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
         open.length === level &&
         (at.ordered !== para.item.ordered ||
           at.loose !== loose ||
+          para.item.opens === true ||
           (para.item.start !== undefined &&
             para.item.start !== at.start + at.items.length))
       ) {
@@ -606,7 +700,7 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
         });
         open.push(list);
       }
-      open[open.length - 1].items.push([block]);
+      open[open.length - 1].items.push(para.bare === true ? [] : [block]);
     } else if (para.continues !== undefined && open.length > 0) {
       open.length = Math.min(open.length, para.continues);
       lastItem(open[open.length - 1]).push(block);
@@ -641,12 +735,41 @@ function tidy(runs: readonly Run[]): Run[] {
   return out;
 }
 
+/** Reports whether runs hold text whose white space is kept. */
+function holdsKept(runs: readonly Run[]): boolean {
+  return runs.some((run) => run.kind === "text" && run.keep);
+}
+
 /**
- * Writes a run into parent, within the elements of its marks: text whose
- * white space is kept within a span of white-space pre-wrap, which the
- * editor's parser reads without collapsing its white space, as a line's
- * indentation.
+ * Returns the runs with the white space of their text that is not kept
+ * collapsed, as a browser shows it and ProseMirror reads it: each run of it
+ * one space, and none at the paragraph's start, after a line break, or after
+ * text that ends with white space.
  */
+function collapsed(runs: readonly Run[]): Run[] {
+  const out: Run[] = [];
+  let spaceBefore = true;
+  for (const run of runs) {
+    if (run.kind !== "text" || run.keep) {
+      out.push(run);
+      spaceBefore =
+        run.kind === "break" ||
+        (run.kind === "text" && /[ \t\n\f\r]$/.test(run.text));
+      continue;
+    }
+    let text = run.text.replace(/[ \t\n\f\r]+/g, " ");
+    if (spaceBefore && text.startsWith(" ")) {
+      text = text.slice(1);
+    }
+    if (text !== "") {
+      out.push({ ...run, text });
+      spaceBefore = text.endsWith(" ");
+    }
+  }
+  return out;
+}
+
+/** Writes a run into parent, within the elements of its marks. */
 function writeRun(doc: Document, parent: Element, run: Run) {
   if (run.kind === "break") {
     parent.append(doc.createElement("br"));
@@ -655,12 +778,6 @@ function writeRun(doc: Document, parent: Element, run: Run) {
   let node: Node;
   if (run.kind === "text") {
     node = doc.createTextNode(run.text);
-    if (run.keep) {
-      const span = doc.createElement("span");
-      span.setAttribute("style", "white-space: pre-wrap");
-      span.append(node);
-      node = span;
-    }
   } else {
     const span = doc.createElement("span");
     for (const [name, value] of run.attrs) {
@@ -690,6 +807,12 @@ function writeRun(doc: Document, parent: Element, run: Run) {
   parent.append(node);
 }
 
+/**
+ * Writes the blocks into parent: a paragraph that holds text whose white
+ * space is kept within a pre, whose white space ProseMirror's parser keeps,
+ * as a line's indentation, rather than in an element of a white-space style,
+ * which the page's policy refuses.
+ */
 function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
   for (const block of blocks) {
     if (block.kind === "p") {
@@ -697,7 +820,13 @@ function writeBlocks(doc: Document, parent: Element, blocks: readonly Block[]) {
       for (const run of block.runs) {
         writeRun(doc, p, run);
       }
-      parent.append(p);
+      if (holdsKept(block.runs)) {
+        const pre = doc.createElement("pre");
+        pre.append(p);
+        parent.append(pre);
+      } else {
+        parent.append(p);
+      }
       continue;
     }
     const items = block.list.items.map((item) => {
@@ -767,17 +896,21 @@ function wrapsInline(element: Element): boolean {
  * Returns pasted HTML as HTML of only what the schema holds: paragraphs,
  * line breaks, lists and their items, the elements of the marks, links of
  * URLs that a link may lead to, the spans of the editor's mentions and value
- * references, and spans of text whose white space is kept (writeRun). The
- * HTML is read in a document of its own, without a window, so that none of
- * it runs, loads, or applies a style; and the marker of a slice that
- * ProseMirror wrote, data-pm-slice, is kept on the first block, as it holds
- * of the cleaned HTML (sliceOf), with every block of text a paragraph and
- * its white space kept, and list items that no list element holds kept so,
- * so that what is copied from the editor is pasted as it was cut from its
- * blocks.
+ * references, and pre elements around paragraphs whose white space is kept
+ * (writeBlocks). The HTML is read in a document of its own, without a
+ * window, so that none of it runs, loads, or applies a style, with its style
+ * attributes renamed and its style elements left out (unstyled), and its
+ * styles read through the CSSOM (applyStyles); and the marker of a slice
+ * that ProseMirror wrote, data-pm-slice, is kept on the first block, as it
+ * holds of the cleaned HTML (sliceOf), with every block of text a paragraph
+ * and its white space kept, list items that no list element holds kept so,
+ * a list item's missing first paragraph missing, and each list element a
+ * list, so that what is copied from the editor is pasted as it was cut from
+ * its blocks.
  */
 export function cleanPastedHTML(html: string): string {
-  const source = new DOMParser().parseFromString(html, "text/html");
+  const source = new DOMParser().parseFromString(unstyled(html), "text/html");
+  applyStyles(source);
   const slice = sliceOf(source);
   const reader = new Reader(slice !== undefined);
   reader.read(source.body, {

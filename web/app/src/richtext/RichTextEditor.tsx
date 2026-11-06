@@ -15,6 +15,8 @@ import {
   MAX_CHARS,
   type RichTextError,
 } from "@storycreep/shared/richtext";
+import { type AnyExtension, getSchema } from "@tiptap/core";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import {
   type Editor,
   EditorContent,
@@ -33,7 +35,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/Button";
-import { DialogFrame } from "../ui/Dialog";
+import { DialogFrame, FormButtons } from "../ui/Dialog";
 import { FieldFrame, fieldDescription, TextField } from "../ui/Field";
 import { type RichTextValue, storedOf } from "./convert";
 import {
@@ -53,7 +55,10 @@ export interface RichTextEditorProps {
   /**
    * The document that the editor starts with, the empty one when it is not
    * given. The editor keeps what the user changes from then on, so a page
-   * that shows another document gives the editor a key of its own.
+   * that shows another document gives the editor a key of its own. One that
+   * the editor's schema cannot read, as one of a node or a mark that a later
+   * version of the app has, it does not let the user change, and says so,
+   * so that no change saves the empty text that it shows over it.
    */
   defaultValue?: RichTextDoc;
   /** Called after each change with the document as the server stores it, or with why the server would refuse it. */
@@ -69,6 +74,27 @@ export interface RichTextEditorProps {
    * useMemo keeps it.
    */
   names?: RichTextNames;
+}
+
+/**
+ * Returns what the editor makes of the document that it starts with, as its
+ * schema reads it: why the server would refuse it, as a text too long, which
+ * the editor says from the start; or that the schema cannot read it, as one
+ * of a node or a mark that a later version of the app gave it, which TipTap
+ * would show as an empty text, which a change would then replace the
+ * document with.
+ */
+function readOf(
+  content: RichTextDoc,
+  extensions: AnyExtension[],
+): { refused?: RichTextError; unreadable: boolean } {
+  let doc: PMNode;
+  try {
+    doc = getSchema(extensions).nodeFromJSON(content);
+  } catch {
+    return { unreadable: true };
+  }
+  return { refused: storedOf(doc).error, unreadable: false };
 }
 
 /** Returns the message of why the server would refuse a document, in the page's locale. */
@@ -97,12 +123,6 @@ export function RichTextEditor({
   const { t } = useTranslation();
   const id = useId();
   const labelId = `${id}-label`;
-  // Why the server would refuse what the editor holds, which the page's own
-  // error goes before.
-  const [refused, setRefused] = useState<RichTextError>();
-  const shownError =
-    error ?? (refused === undefined ? undefined : messageOf(t, refused));
-  const { describedBy } = fieldDescription(id, hint, shownError);
   const [linking, setLinking] = useState(false);
   // What the editor's callbacks, made once with it, read as the page renders.
   const unknownMention = t("richtext.unknown_mention");
@@ -117,9 +137,9 @@ export function RichTextEditor({
   useEffect(() => {
     latest.current = current;
   });
-  const [initial] = useState(() => ({
-    content: defaultValue ?? emptyRichText(),
-    extensions: richTextExtensions({
+  const [initial] = useState(() => {
+    const content = defaultValue ?? emptyRichText();
+    const extensions = richTextExtensions({
       labels: {
         mention: (ref) =>
           latest.current.names?.mention(ref) ?? latest.current.unknown.mention,
@@ -129,8 +149,22 @@ export function RichTextEditor({
       },
       placeholder: () => latest.current.placeholder ?? "",
       onLinkShortcut: () => setLinking(true),
-    }),
-  }));
+    });
+    return { content, extensions, ...readOf(content, extensions) };
+  });
+  // A document that the schema cannot read is shown, empty, but not changed.
+  const changeable = editable && !initial.unreadable;
+  // Why the server would refuse what the editor holds, which the page's own
+  // error goes before.
+  const [refused, setRefused] = useState(initial.refused);
+  const shownError =
+    error ??
+    (initial.unreadable
+      ? t("richtext.error.unreadable")
+      : refused === undefined
+        ? undefined
+        : messageOf(t, refused));
+  const { describedBy } = fieldDescription(id, hint, shownError);
   const editorProps = useMemo(
     () => ({
       ...pasteProps,
@@ -143,16 +177,16 @@ export function RichTextEditor({
           ? {}
           : { "aria-describedby": describedBy }),
         ...(shownError === undefined ? {} : { "aria-invalid": "true" }),
-        ...(editable ? {} : { "aria-readonly": "true" }),
+        ...(changeable ? {} : { "aria-readonly": "true" }),
         class: "rich-text min-h-24 rounded-b-md px-3 py-2 text-fg break-words",
       },
     }),
-    [id, labelId, describedBy, shownError, editable],
+    [id, labelId, describedBy, shownError, changeable],
   );
   const editor = useEditor({
     content: initial.content,
     extensions: initial.extensions,
-    editable,
+    editable: changeable,
     // The editor's styles are the app's stylesheet's (styles.css), since the
     // page's Content-Security-Policy refuses a style element without the
     // response's nonce.
@@ -176,13 +210,13 @@ export function RichTextEditor({
   // may no longer be changed closes the link's dialog, which would change
   // it.
   useEffect(() => {
-    if (editor !== null && editor.isEditable !== editable) {
-      editor.setEditable(editable, false);
+    if (editor !== null && editor.isEditable !== changeable) {
+      editor.setEditable(changeable, false);
     }
-    if (!editable) {
+    if (!changeable) {
       setLinking(false);
     }
-  }, [editor, editable]);
+  }, [editor, changeable]);
   // The editor draws a mention, a value reference, and the placeholder once,
   // and again as what names them changes, as when the project's names load.
   // biome-ignore lint/correctness/useExhaustiveDependencies: these are what the editor shows, which it reads from latest.
@@ -204,7 +238,7 @@ export function RichTextEditor({
           <div
             className={`rounded-md border bg-canvas ${shownError === undefined ? "border-border" : "border-danger"}`}
           >
-            {editable && editor !== null && (
+            {changeable && editor !== null && (
               <FormatBar
                 editor={editor}
                 label={label}
@@ -213,7 +247,7 @@ export function RichTextEditor({
             )}
             <EditorContent editor={editor} />
           </div>
-          {linking && editable && editor !== null && (
+          {linking && changeable && editor !== null && (
             <LinkDialog editor={editor} onClose={() => setLinking(false)} />
           )}
         </>
@@ -460,15 +494,16 @@ function LinkDialog({
             autoFocus
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="primary">
-              {t("richtext.link_save")}
-            </Button>
             {current !== undefined && (
               <Button onClick={remove}>{t("richtext.link_remove")}</Button>
             )}
-            <Dialog.Close asChild>
-              <Button>{t("richtext.link_cancel")}</Button>
-            </Dialog.Close>
+            <div className="ms-auto">
+              <FormButtons
+                cancel={t("richtext.link_cancel")}
+                submit={t("richtext.link_save")}
+                pending={false}
+              />
+            </div>
           </div>
         </form>
       </DialogFrame>

@@ -331,6 +331,7 @@
   "richtext.error.invalid": "This text cannot be saved as it is. Undo the last change, or copy the text into a new one.",
   "richtext.error.too_large": "This text is too large to save. Shorten it, or take out some of its formatting, empty lines, or links.",
   "richtext.error.too_many_chars": "This text is too long to save: it may hold at most {max, number} characters.",
+  "richtext.error.unreadable": "This text holds something that this version of the app cannot show, so it cannot be changed here. Reload the page to see and edit it.",
   "richtext.italic": "Italic",
   "richtext.link": "Link",
   "richtext.link_add": "Add a link",

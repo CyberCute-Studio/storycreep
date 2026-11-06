@@ -78,16 +78,20 @@ export function sinkFits(
 
 /**
  * Returns the start of an ordered list as an attribute writes it, as its
- * HTML's start does: an integer within the range that a document holds, the
- * nearest one to it for one beyond it, and 1 for none, or for what is not an
- * integer.
+ * HTML's start does, by HTML's rules for parsing integers, which read the
+ * digits that it begins with, after white space and a sign, as 5 of "5a" or
+ * "5.0": an integer within the range that a document holds, the nearest one
+ * to it for one beyond it, and 1 for none, or for what does not begin with
+ * an integer.
  */
 export function startOf(start: unknown): number {
+  const digits =
+    typeof start === "string" ? /^[\t\n\f\r ]*([+-]?\d+)/.exec(start) : null;
   const n =
     typeof start === "number"
       ? start
-      : typeof start === "string" && /^\s*[+-]?\d+\s*$/.test(start)
-        ? Number(start)
+      : digits !== null
+        ? Number(digits[1])
         : Number.NaN;
   if (!Number.isFinite(n)) {
     return 1;

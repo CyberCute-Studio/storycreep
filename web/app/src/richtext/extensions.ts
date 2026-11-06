@@ -23,8 +23,9 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Strike } from "@tiptap/extension-strike";
 import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
-import type { Node as PMNode } from "@tiptap/pm/model";
+import type { Node as PMNode, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import { typedHref } from "./link";
 import { normalizer } from "./normalize";
 import { cleanPastedHTML } from "./paste";
@@ -358,7 +359,19 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
   ];
 }
 
-/** The editor's props for what is pasted or dropped: HTML is cleaned to what the schema holds before it is read (FR-TEXT-01 AC2). */
+/**
+ * The editor's props for what is pasted or dropped: HTML is cleaned to what
+ * the schema holds before it is read (FR-TEXT-01 AC2), and pasted HTML of
+ * which the cleaning keeps nothing, as of only a button or a formula, is
+ * pasted as the clipboard's plain text, which ProseMirror reads only where
+ * the clipboard has no HTML.
+ */
 export const pasteProps = {
   transformPastedHTML: (html: string) => cleanPastedHTML(html),
+  handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) => {
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    return slice.content.size === 0 && text.trim() !== ""
+      ? view.pasteText(text)
+      : false;
+  },
 };

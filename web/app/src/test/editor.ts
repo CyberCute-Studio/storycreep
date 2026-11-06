@@ -33,8 +33,15 @@ afterEach(() => {
   }
 });
 
-/** Returns an editor of content, attached to the page, which the test's end destroys and takes off the page. */
-export function testEditor(content: RichTextDoc = emptyRichText()): Editor {
+/**
+ * Returns an editor of content, attached to the page, which the test's end
+ * destroys and takes off the page, with the editor's props for what is
+ * pasted, or with editorProps, as {} for ProseMirror's own paste.
+ */
+export function testEditor(
+  content: RichTextDoc = emptyRichText(),
+  editorProps: object = pasteProps,
+): Editor {
   const element = document.createElement("div");
   document.body.append(element);
   const editor = new Editor({
@@ -44,7 +51,7 @@ export function testEditor(content: RichTextDoc = emptyRichText()): Editor {
       labels: { mention: () => "component", value: () => "value" },
     }),
     injectCSS: false,
-    editorProps: pasteProps,
+    editorProps,
   });
   editors.push({ editor, element });
   return editor;

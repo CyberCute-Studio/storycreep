@@ -153,6 +153,49 @@ describe("the rich-text editor", () => {
     });
   });
 
+  test("says from the start that the text that it starts with is too long to save", () => {
+    const { textbox } = renderEditor({
+      defaultValue: paragraph("a".repeat(MAX_CHARS + 1)),
+    });
+    expect(textbox.getAttribute("aria-invalid")).toBe("true");
+    screen.getByRole("textbox", {
+      name: "Body",
+      description:
+        "This text is too long to save: it may hold at most 100,000 characters.",
+    });
+  });
+
+  test("a text that its schema cannot read, as one of a later version of the app, cannot be changed, so that no change saves over it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { textbox, changes } = renderEditor({
+        defaultValue: {
+          content: [
+            {
+              content: [
+                { marks: [{ type: "underline" }], text: "Tide", type: "text" },
+              ],
+              type: "paragraph",
+            },
+          ],
+          type: "doc",
+        } as unknown as RichTextDoc,
+      });
+      expect(textbox.getAttribute("contenteditable")).toBe("false");
+      expect(textbox.getAttribute("aria-invalid")).toBe("true");
+      screen.getByRole("textbox", {
+        name: "Body",
+        description: /this version of the app cannot show/,
+      });
+      expect(screen.queryByRole("toolbar")).toBeNull();
+      textbox.focus();
+      await userEvent.paste("x");
+      expect(changes).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar", () => {
     const { textbox } = renderEditor({
       defaultValue: paragraph("Read only"),

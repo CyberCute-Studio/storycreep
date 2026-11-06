@@ -108,13 +108,12 @@ function unitOf(node: PMNode | null | undefined, i: number): number {
  * holds none of them.
  */
 function cleanTexts(tr: Transaction, from: number, to: number) {
-  const edits: {
-    from: number;
-    to: number;
-    /** What takes the place of what is between from and to: a hardBreak, the pair of surrogates of a text, or nothing. */
-    with?: "break" | string;
-    marks?: readonly Mark[];
-  }[] = [];
+  /** What takes the place of what is between from and to: nothing, a hardBreak, or a text, as the pair of surrogates that a mark's boundary split, with the marks of the text that it is in. */
+  const edits: ({ from: number; to: number } & (
+    | { kind: "delete" }
+    | { kind: "break"; marks: readonly Mark[] }
+    | { kind: "text"; text: string; marks: readonly Mark[] }
+  ))[] = [];
   tr.doc.nodesBetween(from, to, (node, pos, parent, index) => {
     const text = node.text;
     if (!node.isText || text === undefined) {
@@ -142,7 +141,7 @@ function cleanTexts(tr: Transaction, from: number, to: number) {
         edits.push({
           from: pos + i,
           to: pos + i + length,
-          with: "break",
+          kind: "break",
           marks: node.marks,
         });
         i += length - 1;
@@ -151,7 +150,8 @@ function cleanTexts(tr: Transaction, from: number, to: number) {
           edits.push({
             from: pos + i,
             to: pos + i + 2,
-            with: String.fromCharCode(c, after),
+            kind: "text",
+            text: String.fromCharCode(c, after),
             marks: node.marks,
           });
         }
@@ -162,22 +162,26 @@ function cleanTexts(tr: Transaction, from: number, to: number) {
         isHighSurrogate(c) ||
         isLowSurrogate(c)
       ) {
-        edits.push({ from: pos + i, to: pos + i + 1 });
+        edits.push({ from: pos + i, to: pos + i + 1, kind: "delete" });
       }
     }
   });
   const schema = tr.doc.type.schema;
   for (const edit of edits.reverse()) {
-    if (edit.with === undefined) {
-      tr.delete(edit.from, edit.to);
-    } else {
-      tr.replaceWith(
-        edit.from,
-        edit.to,
-        edit.with === "break"
-          ? schema.nodes.hardBreak.create(null, null, edit.marks)
-          : schema.text(edit.with, edit.marks),
-      );
+    switch (edit.kind) {
+      case "delete":
+        tr.delete(edit.from, edit.to);
+        break;
+      case "break":
+        tr.replaceWith(
+          edit.from,
+          edit.to,
+          schema.nodes.hardBreak.create(null, null, edit.marks),
+        );
+        break;
+      case "text":
+        tr.replaceWith(edit.from, edit.to, schema.text(edit.text, edit.marks));
+        break;
     }
   }
 }

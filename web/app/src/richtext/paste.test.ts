@@ -9,9 +9,10 @@ import {
   type Selection,
   TextSelection,
 } from "@tiptap/pm/state";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { testEditor } from "../test/editor";
 import { storedOf } from "./convert";
+import { cleanPastedHTML } from "./paste";
 
 /** Returns a file of testdata/: what Word, Word Online, and Google Docs put on the clipboard, as Chrome reads it. */
 function fixture(name: string): string {
@@ -231,6 +232,83 @@ if (tide) {}</pre>
     );
   });
 
+  test("the rest of the white space of a paragraph that holds kept white space is collapsed, as a browser shows it", () => {
+    expect(
+      pasted(
+        '<p><span style="white-space:pre">  a  </span>   b \n  c <br>  d</p>',
+      ),
+    ).toEqual(doc(p(text("  a  b c "), { type: "hardBreak" }, text("d"))));
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("styles are read without a style attribute or a style sheet, which the page's policy refuses in a document that DOMParser makes too, and the cleaned HTML has neither", () => {
+    const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
+    const cleaned: string[] = [];
+    let parsed: string[] = [];
+    try {
+      for (const name of [
+        "google-docs.html",
+        "word-online.html",
+        "word.html",
+      ]) {
+        cleaned.push(cleanPastedHTML(fixture(name)));
+      }
+      expect(
+        pasted(
+          `<STYLE>p { color: red }</STYLE ><P STYLE="font-weight:bold">a</P><p style='font-style:italic'>b</p><p style=text-decoration:line-through>c</p>` +
+            `<!-- <style> --><p title=' style="x" <style>'>d style="e"</p><textarea style="x"><p style="y"></textarea><p>f</p>`,
+        ),
+      ).toEqual(
+        doc(
+          p(text("a", "bold")),
+          p(text("b", "italic")),
+          p(text("c", "strike")),
+          p(text('d style="e"')),
+          p(text("f")),
+        ),
+      );
+      parsed = parse.mock.calls.map(([html]) => html);
+    } finally {
+      parse.mockRestore();
+    }
+    // Neither what the cleaning parsed nor what it wrote has a style
+    // attribute or a style element.
+    const styled = (html: string) =>
+      new DOMParser()
+        .parseFromString(html, "text/html")
+        .querySelector("[style], style") !== null;
+    expect(parsed.length).toBeGreaterThanOrEqual(4);
+    expect(parsed.filter(styled)).toEqual([]);
+    expect(cleaned.filter(styled)).toEqual([]);
+  });
+
+  test("a paragraph of Word's list at level 0 is an item at the first level, and a list's start is read as HTML reads it", () => {
+    expect(
+      pasted(
+        '<p style="mso-list:l0 level0 lfo1"><span style="mso-list:Ignore">1.</span>a</p>' +
+          '<p>b</p><ol start="5a"><li>c</li></ol><ol start=" 7.0"><li>d</li></ol>',
+      ),
+    ).toEqual(
+      doc(
+        numbers(1, item(p(text("a")))),
+        p(text("b")),
+        numbers(5, item(p(text("c")))),
+        numbers(7, item(p(text("d")))),
+      ),
+    );
+  });
+
+  test("HTML of which the cleaning keeps nothing, as of only a button, is pasted as the clipboard's plain text", () => {
+    const editor = testEditor();
+    const event = Object.assign(new Event("paste"), {
+      clipboardData: {
+        getData: (type: string) => (type === "text/plain" ? "Save" : ""),
+      },
+    }) as unknown as ClipboardEvent;
+    editor.view.pasteHTML("<button>Save</button>", event);
+    expect(storedOf(editor.state.doc).doc).toEqual(doc(p(text("Save"))));
+  });
+
   test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {
     expect(
       pasted(
@@ -312,6 +390,8 @@ if (tide) {}</pre>
       "text-decoration:line-through",
       "display:none",
       "mso-list:l0 level3 lfo1",
+      "mso-list:l0 level0 lfo1",
+      "white-space:pre-wrap",
       "color:red",
       "white-space:pre",
     ];
@@ -420,16 +500,18 @@ if (tide) {}</pre>
       ).dom.innerHTML;
     }
 
-    /** Returns what pasting html at at of content makes. */
+    /** Returns what pasting html over at to to of content makes, with the editor's props for what is pasted, or with editorProps. */
     function pastedAt(
       html: string,
       content: object,
       at: number,
+      to = at,
+      editorProps?: object,
     ): RichTextDoc | undefined {
-      const target = testEditor(content as RichTextDoc);
+      const target = testEditor(content as RichTextDoc, editorProps);
       target.view.dispatch(
         target.state.tr.setSelection(
-          TextSelection.create(target.state.doc, at),
+          TextSelection.create(target.state.doc, at, to),
         ),
       );
       target.view.pasteHTML(html);
@@ -555,6 +637,110 @@ if (tide) {}</pre>
         ),
       );
     });
+
+    test("keeps a list item that it was cut from within a list within, which lacks its first paragraph, and lists side by side", () => {
+      // From within "bb", of a list within the first item, to within "cc",
+      // pasted over itself, and at the end of "end".
+      const nested = doc(
+        bullets(
+          item(p(text("a")), bullets(item(p(text("bb"))))),
+          item(p(text("cc"))),
+        ),
+        p(text("end")),
+      );
+      const html = copied(nested, (d) => TextSelection.create(d, 9, 17));
+      expect(pastedAt(html, nested, 9, 17)).toEqual(nested);
+      expect(pastedAt(html, nested, 25)).toEqual(
+        doc(
+          bullets(
+            item(p(text("a")), bullets(item(p(text("bb"))))),
+            item(p(text("cc"))),
+          ),
+          p(text("endb")),
+          bullets(item(p(text("c")))),
+        ),
+      );
+      // From the start of "aa" to the end of "bb", of two lists side by
+      // side, pasted at the end of "bb", whose list the second list follows.
+      const sideBySide = doc(
+        bullets(item(p(text("aa")))),
+        bullets(item(p(text("bb")))),
+      );
+      expect(
+        pastedAt(
+          copied(sideBySide, (d) => TextSelection.create(d, 3, 13)),
+          sideBySide,
+          13,
+        ),
+      ).toEqual(
+        doc(
+          bullets(item(p(text("aa")))),
+          bullets(item(p(text("bbaa")))),
+          bullets(item(p(text("bb")))),
+        ),
+      );
+    });
+
+    test("of random documents and selections is pasted as ProseMirror pastes its own HTML", () => {
+      // A seeded generator, so that a failure is the same on every run.
+      let seed = 64;
+      const random = () => {
+        seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+        return seed / 2_147_483_648;
+      };
+      const pick = <T>(items: readonly T[]): T =>
+        items[Math.floor(random() * items.length)];
+      const inline = () =>
+        text(
+          pick(["ab", "cd ", " ef", "g"]),
+          ...(random() < 0.3 ? [pick(["bold", "italic", "code"])] : []),
+        );
+      const block = (depth: number): object => {
+        if (depth < 3 && random() < 0.4) {
+          const items = Array.from(
+            { length: 1 + Math.floor(random() * 3) },
+            () =>
+              item(p(inline()), ...(random() < 0.4 ? [block(depth + 1)] : [])),
+          );
+          return random() < 0.5
+            ? bullets(...items)
+            : numbers(pick([1, 3]), ...items);
+        }
+        return random() < 0.1
+          ? p()
+          : p(...Array.from({ length: 1 + Math.floor(random() * 2) }, inline));
+      };
+      for (let i = 0; i < 200; i++) {
+        const content = doc(
+          ...Array.from({ length: 2 + Math.floor(random() * 3) }, () =>
+            block(0),
+          ),
+        );
+        // The places within the document's paragraphs.
+        const places: number[] = [];
+        testEditor(content as RichTextDoc).state.doc.descendants(
+          (node, pos) => {
+            for (let k = 0; node.isTextblock && k <= node.content.size; k++) {
+              places.push(pos + 1 + k);
+            }
+          },
+        );
+        const [from, to] = [pick(places), pick(places)].sort((a, b) => a - b);
+        if (from === to) {
+          continue;
+        }
+        const html = copied(content, (d) => TextSelection.create(d, from, to));
+        const at = pick(places);
+        for (const [a, b] of [
+          [from, to],
+          [at, at],
+        ]) {
+          expect(pastedAt(html, content, a, b), html).toEqual(
+            pastedAt(html, content, a, b, {}),
+          );
+        }
+      }
+    }, 30_000);
 
     test("another editor's slice that begins with what the cleaning leaves out, as an image, begins with what follows it", () => {
       // The paragraph is closed at its start, after the image, and so is a
