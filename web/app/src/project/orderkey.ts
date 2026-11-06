@@ -90,7 +90,7 @@ function midpoint(low: string, high: string | undefined): string {
  * none (keyBetween): one before those before it that share its key too, as
  * no key goes between two that are the same.
  */
-export function keyBefore(
+export function keyBeforeSibling(
   siblings: readonly { order: string }[],
   at: number,
 ): string | undefined {
@@ -104,7 +104,7 @@ export function keyBefore(
  * the other children of their parent, in order, or undefined if there is
  * none (keyBetween): one after those after it that share its key too.
  */
-export function keyAfter(
+export function keyAfterSibling(
   siblings: readonly { order: string }[],
   at: number,
 ): string | undefined {

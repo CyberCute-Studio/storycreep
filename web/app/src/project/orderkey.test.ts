@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   compareChildren,
   isKey,
-  keyAfter,
-  keyBefore,
+  keyAfterSibling,
+  keyBeforeSibling,
   keyBetween,
   maxKeyLength,
 } from "./orderkey";
 
-describe("keyBefore and keyAfter", () => {
+describe("keyBeforeSibling and keyAfterSibling", () => {
   const siblings = [
     { order: "V" },
     { order: "X" },
@@ -17,14 +17,14 @@ describe("keyBefore and keyAfter", () => {
   ];
 
   it("pick a key between a child and the one before or after it", () => {
-    expect(keyBefore(siblings, 0)).toBe(keyBetween(undefined, "V"));
-    expect(keyAfter(siblings, 3)).toBe(keyBetween("Z", undefined));
-    expect(keyAfter(siblings, 0)).toBe(keyBetween("V", "X"));
+    expect(keyBeforeSibling(siblings, 0)).toBe(keyBetween(undefined, "V"));
+    expect(keyAfterSibling(siblings, 3)).toBe(keyBetween("Z", undefined));
+    expect(keyAfterSibling(siblings, 0)).toBe(keyBetween("V", "X"));
   });
 
   it("go past the children that share the key of the one that they place by", () => {
-    expect(keyBefore(siblings, 2)).toBe(keyBetween("V", "X"));
-    expect(keyAfter(siblings, 1)).toBe(keyBetween("X", "Z"));
+    expect(keyBeforeSibling(siblings, 2)).toBe(keyBetween("V", "X"));
+    expect(keyAfterSibling(siblings, 1)).toBe(keyBetween("X", "Z"));
   });
 });
 

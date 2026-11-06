@@ -74,7 +74,11 @@ export function VariableFields({
   const { t } = useTranslation();
   const [type, setType] = useState(shown.type);
   const [scope, setScope] = useState(shown.scope);
-  const [boardId, setBoardId] = useState(shown.board_id ?? boards[0]?.id ?? "");
+  // The board that the user chose, or that the variable is of, or else the
+  // first, as the list has it now, as once a board was made elsewhere of a
+  // project that had none as the fields were shown.
+  const [chosenBoard, setBoardId] = useState(shown.board_id ?? boards[0]?.id);
+  const boardId = chosenBoard ?? boards[0]?.id ?? "";
   const [reset, setReset] = useState(shown.reset_on_enter);
   const board = boards.find((b) => b.id === boardId);
   // A board that the list does not have, as one that went to the trash

@@ -257,3 +257,20 @@ export function focusBackTo(opener: Opener) {
     }
   };
 }
+
+/**
+ * Returns the onCloseAutoFocus of a dialog that creates an item, whose
+ * panel the page opens once it has been created, as created says, with
+ * the focus on its heading (Panel), which keeps it then: the focus goes
+ * back to opener only once the dialog closes without creating it.
+ */
+export function focusBackUnlessCreated(
+  opener: Opener,
+  created: { readonly current: boolean },
+) {
+  return focusBackTo(() =>
+    created.current
+      ? null
+      : ((typeof opener === "function" ? opener() : opener) ?? null),
+  );
+}

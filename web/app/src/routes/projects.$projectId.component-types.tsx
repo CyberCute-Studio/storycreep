@@ -55,8 +55,10 @@ function TypesPage() {
   const doc = useProjectDocument(projectId);
   const typeMap = useDocumentState(doc, (state) => state.view.componentTypes);
   const types = useMemo(() => liveTypes(typeMap), [typeMap]);
-  const select = (id: string | undefined) =>
-    void navigate({ search: id === undefined ? {} : { type: id } });
+  // As on the variables' page, a deletion replaces the address that named
+  // what it deleted.
+  const select = (id: string | undefined, replace = false) =>
+    void navigate({ search: id === undefined ? {} : { type: id }, replace });
   const [creating, setCreating] = useState<Opener>();
   const [created, setCreated] = useState<string>();
   // While a type's deletion is open, its panel shows it as it was.
@@ -137,7 +139,7 @@ function TypesPage() {
               type={shown}
               editable={editable}
               onDeleting={onDeleting}
-              onDeleted={() => select(undefined)}
+              onDeleted={() => select(undefined, true)}
             />
           </Panel>
         )}

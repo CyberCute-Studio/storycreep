@@ -391,6 +391,31 @@ describe("the variables", () => {
     expect(within(narrowed).getByText("In Quests")).toBeDefined();
   });
 
+  it("lists every scope's variables once the board that the scope filter chose has gone, as the filter's choice shows", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation, input) =>
+      expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("list", { name: "All variables" });
+    await user.selectOptions(screen.getByLabelText("Scope"), "bd_harbour");
+    expect(await screen.findByText("1 of 3 variables matches.")).toBeDefined();
+    // Another session deletes the board, with its variable.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.delete", payload: { id: "bd_harbour" } }],
+        [{ id: "bd_harbour", rev: 2 }],
+      ),
+    );
+    expect(await screen.findByText("2 variables")).toBeDefined();
+    expect(screen.getByLabelText("Scope")).toHaveProperty("value", "");
+  });
+
   // Verifies: FR-VAR-02/AC5
   it("says in plain words what becomes of a variable's value, next to its reset_on_enter, as the flag and the scope change", async () => {
     const user = userEvent.setup();
@@ -631,6 +656,8 @@ describe("the variables", () => {
     });
     const panel = await screen.findByRole("region", { name: "rep" });
     const value = within(panel).getByLabelText("Default");
+    // The keyboard of text, whose digits have the minus.
+    expect(value.getAttribute("inputmode")).toBeNull();
     await user.clear(value);
     await user.type(value, "3.5");
     await user.click(
@@ -923,6 +950,42 @@ describe("the variables", () => {
     ]);
   });
 
+  it("closes the panel of a deleted variable in place of the address that named it, so that Back does not say it is not found", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1)
+        : expected(contentPages(operation, input, content), operation),
+    );
+    const { router } = renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+    });
+    const list = await screen.findByRole("list", { name: "All variables" });
+    await user.click(within(list).getByRole("button", { name: /^rep/ }));
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Delete the variable" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Delete rep?",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(router.state.location.search).toEqual({});
+    act(() => router.history.back());
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        `/projects/${testProject.id}/variables`,
+      ),
+    );
+    expect(router.state.location.search).toEqual({});
+    expect(
+      screen.queryByText(
+        "The variable that the address names is not in the project, or is in its trash.",
+      ),
+    ).toBeNull();
+  });
+
   it("says that a variable deleted elsewhere is gone, once a deletion left open went with the browser's Back", async () => {
     const user = userEvent.setup();
     const realtime = fakeRealtime();
@@ -1088,6 +1151,10 @@ describe("the variables", () => {
     expect(
       await screen.findByRole("region", { name: "door_open" }),
     ).toBeDefined();
+    // The focus is on the panel's heading, and stays there once the dialog
+    // has gone, rather than going back to the folder's menu.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(document.activeElement?.textContent).toBe("door_open");
     expect(batches(calls)).toEqual([
       [
         expect.objectContaining({
@@ -1204,6 +1271,57 @@ describe("the panel", () => {
 });
 
 describe("a new variable or attribute", () => {
+  it("is of the board made elsewhere once the user chooses a board's scope, of a project that had no boards as its dialog opened", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 2)
+        : expected(contentPages(operation, input, {}), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+      realtime,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "New variable" }),
+    );
+    const create = await screen.findByRole("dialog", { name: "New variable" });
+    await user.type(within(create).getByLabelText("Key"), "docked");
+    const board = within(create).getByRole("radio", { name: /^One board/ });
+    expect(board).toHaveProperty("disabled", true);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "board.create",
+            payload: {
+              id: "bd_docks",
+              name: "Docks",
+              slug: "docks",
+              order: "V",
+            },
+          },
+        ],
+        [{ id: "bd_docks", rev: 1 }],
+      ),
+    );
+    await waitFor(() => expect(board).toHaveProperty("disabled", false));
+    await user.click(board);
+    expect(within(create).getByLabelText("Board")).toHaveProperty(
+      "value",
+      "bd_docks",
+    );
+    await user.click(
+      within(create).getByRole("button", { name: "Create the variable" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual(
+      expect.objectContaining({ scope: "board", board_id: "bd_docks" }),
+    );
+  });
+
   it("starts a default of another type at that type's zero value", async () => {
     const user = userEvent.setup();
     fakeApi((operation, input) =>
@@ -1680,6 +1798,96 @@ describe("the component types", () => {
           expected_rev: { atr_mood: 2 },
         }),
       ],
+    ]);
+  });
+
+  it("sends the type that its choice shows once the attribute became the one that the user chose, elsewhere", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) => {
+      switch (operation) {
+        case "listUnconvertibleValues":
+          return { items: [], next_cursor: null };
+        case "applyCommands":
+          return applied(testProject.seq + 2);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+      realtime,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of trust" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change the type…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change the type of trust",
+    });
+    const choice = within(dialog).getByLabelText("New type");
+    expect(choice).toHaveProperty("value", "bool");
+    // Another session makes the int a bool, which is no choice now.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "attribute.retype",
+            payload: {
+              id: "atr_trust",
+              type: "bool",
+              conversion: "reset",
+              default: false,
+            },
+          },
+        ],
+        [{ id: "atr_trust", rev: 3 }],
+      ),
+    );
+    await waitFor(() => expect(choice).toHaveProperty("value", "int"));
+    const value = within(dialog).getByLabelText("Default");
+    await user.clear(value);
+    await user.type(value, "4");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Change the type" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual(
+      expect.objectContaining({ id: "atr_trust", type: "int", default: 4 }),
+    );
+  });
+
+  it("sends an attribute's key without the white space around it, as its creation does", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1)
+        : expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of trust" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit trust" });
+    const key = within(dialog).getByLabelText("Key");
+    await user.clear(key);
+    await user.type(key, "faith ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Save the attribute" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      expect.objectContaining({
+        type: "attribute.set_key",
+        payload: { id: "atr_trust", key: "faith" },
+      }),
     ]);
   });
 

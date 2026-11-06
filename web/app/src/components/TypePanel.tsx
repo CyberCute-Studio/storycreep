@@ -22,7 +22,7 @@ import {
 import { typeName } from "../content/ValueField";
 import { textOf } from "../content/values";
 import { payloadField, useExpected } from "../project/dialogs";
-import { keyAfter, keyBefore } from "../project/orderkey";
+import { keyAfterSibling, keyBeforeSibling } from "../project/orderkey";
 import { type Command, useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
 import {
@@ -143,7 +143,8 @@ function TypeForm({ project, type }: TypePanelProps) {
     const data = new FormData(event.currentTarget);
     const typed = {
       name: String(data.get("name")),
-      key: String(data.get("key")),
+      // As the dialog that creates a type reads it.
+      key: String(data.get("key")).trim(),
       icon: String(data.get("icon")) as ComponentType["icon"],
     };
     const id = against.id;
@@ -276,7 +277,9 @@ function Definitions({ project, type, editable }: TypePanelProps) {
    */
   const placeAt = (i: number, direction: "up" | "down"): string | undefined => {
     const rest = definitions.filter((_, n) => n !== i);
-    return direction === "up" ? keyBefore(rest, i - 1) : keyAfter(rest, i);
+    return direction === "up"
+      ? keyBeforeSibling(rest, i - 1)
+      : keyAfterSibling(rest, i);
   };
   const moveTo = (attribute: Attribute, order: string) =>
     move.mutate([

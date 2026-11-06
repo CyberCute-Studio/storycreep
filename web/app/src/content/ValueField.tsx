@@ -1,6 +1,6 @@
 // The field of a typed value (PRD FR-VAR-01, FR-COMP-01), as a variable's
 // default or a component's value of an attribute: a choice of true or false
-// for a bool, of an option for an enum, a field of digits for a number, and
+// for a bool, of an option for an enum, a field of one line for a number, and
 // of text for a string, of several lines for a text. The page reads what it
 // holds by its name, and parses it with parseValue, which says what of it is
 // none of the type before anything is sent.
@@ -75,10 +75,12 @@ export function ValueField({
     }
     case "int":
     case "float":
+      // The on-screen keyboard is the one of text, whose digits have the
+      // minus too: a keyboard of digits alone, as inputmode's numeric and
+      // decimal give a phone, may have none, and a number may be negative.
       return (
         <TextField
           {...common}
-          inputMode={type === "int" ? "numeric" : "decimal"}
           autoComplete="off"
           spellCheck={false}
           defaultValue={textOf(defaultValue)}

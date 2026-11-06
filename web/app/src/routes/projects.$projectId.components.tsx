@@ -75,9 +75,14 @@ function ComponentsPage() {
     [folders, components],
   );
   // The filter's text, which the list follows in a transition (FilterField),
-  // and its type, which the list follows once it can.
+  // and its type, which the list follows once it can. A type that the user
+  // chose, which went to the trash since, is none of the choices, so the
+  // filter is of every type then, as its choice shows.
   const [filter, setFilter] = useState("");
-  const [typeId, setTypeId] = useState(anyType);
+  const [chosenType, setTypeId] = useState(anyType);
+  const typeId = types.some((type) => type.id === chosenType)
+    ? chosenType
+    : anyType;
   const shownType = useDeferredValue(typeId);
   const matches = useMemo(() => {
     const text = filter.trim().toLocaleLowerCase();
@@ -92,8 +97,13 @@ function ComponentsPage() {
           item.key.toLocaleLowerCase().includes(text)),
     );
   }, [tree, filter, shownType]);
-  const select = (id: string | undefined) =>
-    void navigate({ search: id === undefined ? {} : { component: id } });
+  // As on the variables' page, a deletion replaces the address that named
+  // what it deleted.
+  const select = (id: string | undefined, replace = false) =>
+    void navigate({
+      search: id === undefined ? {} : { component: id },
+      replace,
+    });
   const [creating, setCreating] = useState<{
     parentId: string | undefined;
     opener: Opener;
@@ -236,7 +246,7 @@ function ComponentsPage() {
               tree={tree}
               editable={editable}
               onDeleting={onDeleting}
-              onDeleted={() => select(undefined)}
+              onDeleted={() => select(undefined, true)}
             />
           </Panel>
         )}

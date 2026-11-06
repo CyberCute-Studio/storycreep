@@ -13,7 +13,7 @@ import {
   closesBy,
   DialogFrame,
   FormButtons,
-  focusBackTo,
+  focusBackUnlessCreated,
   type Opener,
 } from "../ui/Dialog";
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
@@ -37,6 +37,9 @@ export function CreateTypeDialog({
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const [id] = useState(() => newId("component_type"));
+  // Whether the type has been created, whose panel, which the page opens
+  // then, has the focus once the dialog has closed.
+  const created = useRef(false);
   const commands = useCommands(projectId);
   const refusal = refusalOf(commands.error, t, createField, {
     key_taken: t("component_type.error.key_taken"),
@@ -61,6 +64,7 @@ export function CreateTypeDialog({
       ],
       {
         onSuccess: () => {
+          created.current = true;
           onCreated(id, name);
           onClose();
         },
@@ -71,7 +75,7 @@ export function CreateTypeDialog({
     <Dialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
       <DialogFrame
         title={t("component_type.create_title")}
-        onCloseAutoFocus={focusBackTo(opener)}
+        onCloseAutoFocus={focusBackUnlessCreated(opener, created)}
       >
         <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
           <Alert message={refusal?.message} />

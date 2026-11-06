@@ -17,7 +17,7 @@ import {
   closesBy,
   DialogFrame,
   FormButtons,
-  focusBackTo,
+  focusBackUnlessCreated,
   type Opener,
 } from "../ui/Dialog";
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
@@ -56,6 +56,9 @@ export function CreateComponentDialog({
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const [id] = useState(() => newId("component"));
+  // Whether the component has been created, whose panel, which the page opens
+  // then, has the focus once the dialog has closed.
+  const created = useRef(false);
   const commands = useCommands(projectId);
   const refusal = refusalOf(commands.error, t, createField, {
     key_taken: t("component.error.key_taken"),
@@ -82,6 +85,7 @@ export function CreateComponentDialog({
       ],
       {
         onSuccess: () => {
+          created.current = true;
           onCreated(id, name);
           onClose();
         },
@@ -92,7 +96,7 @@ export function CreateComponentDialog({
     <Dialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
       <DialogFrame
         title={t("component.create_title")}
-        onCloseAutoFocus={focusBackTo(opener)}
+        onCloseAutoFocus={focusBackUnlessCreated(opener, created)}
       >
         <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
           <Alert message={refusal?.message} />

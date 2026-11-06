@@ -291,6 +291,18 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
     if (field === "type") {
       return typeName(t, String(value));
     }
+    // The scope and reset_on_enter as the form names its choices, rather
+    // than as the API spells them.
+    if (field === "scope") {
+      return value === "global"
+        ? t("variable.scope_global")
+        : t("variable.scope_board");
+    }
+    if (field === "reset_on_enter") {
+      return t("variable.reset_shown", {
+        reset: value === true ? "yes" : "no",
+      });
+    }
     return value === undefined || value === null ? "" : String(value);
   };
   return (

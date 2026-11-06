@@ -707,6 +707,7 @@
   "variable.rename": "Rename…",
   "variable.reset_on_enter": "Reset to its default each time the story enters its board",
   "variable.reset_on_enter_short": "When the board is entered",
+  "variable.reset_shown": "{reset, select, yes {Goes back to its default} other {Keeps its value}}",
   "variable.save": "Save the variable",
   "variable.scope": "Scope",
   "variable.scope_board": "One board's: only that board reads it",

@@ -7,7 +7,7 @@
 // of the children that it lands between (keyBetween).
 
 import type { Board, Folder } from "@storycreep/shared/api";
-import { compareChildren, keyAfter, keyBefore } from "./orderkey";
+import { compareChildren, keyAfterSibling, keyBeforeSibling } from "./orderkey";
 
 /** What a folder holds besides folders: a board, a variable, or a component. */
 export interface Item {
@@ -231,8 +231,8 @@ export function placementOf(
     parentId,
     order:
       drop.position === "before"
-        ? keyBefore(siblings, at)
-        : keyAfter(siblings, at),
+        ? keyBeforeSibling(siblings, at)
+        : keyAfterSibling(siblings, at),
   };
 }
 

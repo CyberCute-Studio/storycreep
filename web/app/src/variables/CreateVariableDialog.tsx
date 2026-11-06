@@ -16,7 +16,7 @@ import {
   closesBy,
   DialogFrame,
   FormButtons,
-  focusBackTo,
+  focusBackUnlessCreated,
   type Opener,
 } from "../ui/Dialog";
 import { TextField, useFocusRefusal } from "../ui/Field";
@@ -58,6 +58,9 @@ export function CreateVariableDialog({
   // The ID of the variable, the same for each attempt, so that an attempt
   // sent again once no answer came to it creates nothing more.
   const [id] = useState(() => newId("variable"));
+  // Whether the variable has been created, whose panel, which the page opens
+  // then, has the focus once the dialog has closed.
+  const created = useRef(false);
   const [invalid, setInvalid] = useState<{ type: Variable["type"] }>();
   const commands = useCommands(projectId);
   const refusal = refusalOf(commands.error, t, createField, {
@@ -103,6 +106,7 @@ export function CreateVariableDialog({
       ],
       {
         onSuccess: () => {
+          created.current = true;
           onCreated(id, key);
           onClose();
         },
@@ -113,7 +117,7 @@ export function CreateVariableDialog({
     <Dialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
       <DialogFrame
         title={t("variable.create_title")}
-        onCloseAutoFocus={focusBackTo(opener)}
+        onCloseAutoFocus={focusBackUnlessCreated(opener, created)}
       >
         <form ref={form} className="space-y-4" onSubmit={submit} noValidate>
           <Alert message={refusal?.message} />

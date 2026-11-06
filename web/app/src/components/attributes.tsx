@@ -370,7 +370,8 @@ export function EditAttributeDialog({
       opened,
       {
         name: String(data.get("name")),
-        key: String(data.get("key")),
+        // As the dialog that adds a definition reads it.
+        key: String(data.get("key")).trim(),
         options: listed,
         default: value,
         runtime: runtime && attribute.type !== "text",
@@ -558,7 +559,11 @@ export function RetypeAttributeDialog({
     (type) =>
       type !== attribute.type && !(attribute.runtime && type === "text"),
   );
-  const [valueType, setValueType] = useState<ValueType>(choices[0]);
+  // The type that the user chose, until it is none of the choices, as once
+  // the attribute became it elsewhere: the choice shows the first then, and
+  // the dialog sends what it shows.
+  const [chosenType, setValueType] = useState<ValueType>(choices[0]);
+  const valueType = choices.includes(chosenType) ? chosenType : choices[0];
   const [options, setOptions] = useState((attribute.options ?? []).join("\n"));
   const [conversion, setConversion] = useState<"convert" | "reset">("convert");
   const [invalid, setInvalid] = useState<{ fields: Record<string, string> }>();

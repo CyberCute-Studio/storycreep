@@ -93,11 +93,24 @@ function VariablesPage() {
       ),
     [folders, variables],
   );
+  const boardNames = useMemo(
+    () => new Map(boards.map((board) => [board.id, board.name])),
+    [boards],
+  );
   // The filter's text, which the list follows in a transition, so that
   // typing in the filter of a thousand variables stays quick (FilterField),
-  // and its scope, which the list follows once it can.
+  // and its scope, which the list follows once it can. A board that the
+  // user chose, which the list of boards no longer has, as one that went to
+  // the trash elsewhere, is none of the choices, so the filter is of every
+  // scope then, as its choice shows.
   const [filter, setFilter] = useState("");
-  const [scope, setScope] = useState(anyScope);
+  const [chosenScope, setScope] = useState(anyScope);
+  const scope =
+    chosenScope === anyScope ||
+    chosenScope === globalScope ||
+    boardNames.has(chosenScope)
+      ? chosenScope
+      : anyScope;
   const shownScope = useDeferredValue(scope);
   const matches = useMemo(() => {
     const text = filter.trim().toLocaleLowerCase();
@@ -118,12 +131,14 @@ function VariablesPage() {
       );
     });
   }, [tree, filter, shownScope]);
-  const boardNames = useMemo(
-    () => new Map(boards.map((board) => [board.id, board.name])),
-    [boards],
-  );
-  const select = (id: string | undefined) =>
-    void navigate({ search: id === undefined ? {} : { variable: id } });
+  // Closing the panel once its variable has been deleted replaces the
+  // address that named it, as a board's deletion does, so that Back does
+  // not show it as not found.
+  const select = (id: string | undefined, replace = false) =>
+    void navigate({
+      search: id === undefined ? {} : { variable: id },
+      replace,
+    });
   const [creating, setCreating] = useState<{
     parentId: string | undefined;
     opener: Opener;
@@ -261,7 +276,7 @@ function VariablesPage() {
               tree={tree}
               editable={editable}
               onDeleting={onDeleting}
-              onDeleted={() => select(undefined)}
+              onDeleted={() => select(undefined, true)}
             />
           </Panel>
         )}
