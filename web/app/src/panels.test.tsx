@@ -829,6 +829,46 @@ describe("the variables", () => {
     await waitFor(() => expect(rename).toHaveProperty("disabled", false));
   });
 
+  it("renames nothing once the key was renamed elsewhere while the user left its field as it opened", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) =>
+      expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+      realtime,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "variable.rename",
+            payload: { id: "var_rep", key: "reputation" },
+          },
+        ],
+        [{ id: "var_rep", rev: 4 }],
+      ),
+    );
+    await within(dialog).findByText("Rename reputation");
+    expect(within(dialog).getByLabelText("New key")).toHaveProperty(
+      "value",
+      "rep",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      calls.mock.calls.filter(
+        ([operation]) => operation === "previewVariableRename",
+      ),
+    ).toEqual([]);
+    expect(batches(calls)).toEqual([]);
+  });
+
   it("does not rename while a rewritten expression would be too long", async () => {
     const user = userEvent.setup();
     fakeApi((operation, input) => {
@@ -1259,9 +1299,15 @@ describe("the panel", () => {
     const panel = await screen.findByRole("region", { name: "rep" });
     await user.click(within(panel).getByRole("button", { name: "Rename…" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
-    // The tablet turns with the dialog open.
+    const key = within(dialog).getByLabelText<HTMLInputElement>("New key");
+    await user.type(key, "_score");
+    // The tablet turns with the dialog open: the focus stays in its field,
+    // with what was typed not selected, so that the next key adds to it.
     act(() => window.resize(640));
     expect(dialog.closest("[inert]")).toBeNull();
+    expect(document.activeElement).toBe(key);
+    expect(key.value).toBe("rep_score");
+    expect(key.selectionStart).toBe(key.value.length);
     const list = screen.getByRole("list", {
       hidden: true,
       name: "All variables",
@@ -1499,6 +1545,53 @@ describe("the components", () => {
     expect(await within(panel).findByLabelText("mood")).toHaveProperty(
       "value",
       "sleepy",
+    );
+    const name = within(panel).getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Elara Vane");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the component" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(batches(calls)).toEqual([
+      [
+        expect.objectContaining({
+          type: "component.rename",
+          payload: { id: "cmp_elara", name: "Elara Vane" },
+        }),
+      ],
+    ]);
+  });
+
+  it("saves a change of a component whose value is no bool, as once its attribute became one elsewhere, leaving that value as it is", async () => {
+    const user = userEvent.setup();
+    const flagged: ComponentType = {
+      ...character,
+      attributes: [
+        attribute("atr_trust", "trust", { type: "bool", default: false }),
+      ],
+    };
+    const held: Content = {
+      ...content,
+      types: [flagged, item],
+      components: [
+        component("cmp_elara", "Elara", "elara", flagged, {
+          attributes: { atr_trust: 3 },
+        }),
+      ],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 5 }])
+        : expected(contentPages(operation, input, held), operation),
+    );
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    expect(await within(panel).findByLabelText("trust")).toHaveProperty(
+      "value",
+      "3",
     );
     const name = within(panel).getByLabelText("Name");
     await user.clear(name);
@@ -1798,6 +1891,46 @@ describe("the component types", () => {
           expected_rev: { atr_mood: 2 },
         }),
       ],
+    ]);
+  });
+
+  it("lists what would not convert to an enum's options once the user has typed them, rather than at every key", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation, input) =>
+      operation === "listUnconvertibleValues"
+        ? { items: [], next_cursor: null }
+        : expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of trust" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change the type…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change the type of trust",
+    });
+    await user.selectOptions(within(dialog).getByLabelText("New type"), "enum");
+    await user.type(
+      within(dialog).getByLabelText("Options"),
+      "Alpha{Enter}Beta",
+    );
+    expect(
+      await within(dialog).findByText("Every value converts to the new type."),
+    ).toBeDefined();
+    const asked = calls.mock.calls
+      .filter(([operation]) => operation === "listUnconvertibleValues")
+      .map(
+        ([, input]) =>
+          (input as { query: { type: string; options?: string } }).query,
+      )
+      .filter((query) => query.type === "enum");
+    expect(asked).toEqual([
+      expect.objectContaining({ options: "Alpha\nBeta" }),
     ]);
   });
 

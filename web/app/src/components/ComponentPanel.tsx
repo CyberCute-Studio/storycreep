@@ -293,9 +293,18 @@ function ComponentForm({
   tree,
 }: Omit<ComponentPanelProps, "component"> & { component: Component }) {
   const { t } = useTranslation();
+  // The component as the document has it now, once a save was refused for
+  // a change made elsewhere; one that the document has without its values,
+  // as once a read of the list took them away, is as the form last had it
+  // whole, which the panel reads again, rather than gone, which would take
+  // away what the user typed.
   const form = useEntityForm(project.id, component, (view, id) => {
     const now = view.components.get(id);
-    return now?.attributes === undefined ? undefined : (now as Component);
+    return now === undefined
+      ? undefined
+      : now.attributes === undefined
+        ? component
+        : (now as Component);
   });
   const { commands, held, shown, against } = form;
   // What the editor of the description gave last, of the form shown now:

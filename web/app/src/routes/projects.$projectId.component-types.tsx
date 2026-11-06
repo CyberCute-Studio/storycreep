@@ -4,7 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CreateTypeDialog } from "../components/CreateTypeDialog";
 import { TypeGlyph, TypePanel } from "../components/TypePanel";
-import { definitionsOf, liveTypes } from "../components/types";
+import { definitionsOf, typesByName } from "../components/types";
 import { itemButton, itemClasses } from "../content/ContentTree";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { editsProject, projectQuery } from "../project/queries";
@@ -54,7 +54,7 @@ function TypesPage() {
     editsProject(project.role) && project.archived_at === undefined;
   const doc = useProjectDocument(projectId);
   const typeMap = useDocumentState(doc, (state) => state.view.componentTypes);
-  const types = useMemo(() => liveTypes(typeMap), [typeMap]);
+  const types = useMemo(() => typesByName(typeMap), [typeMap]);
   // As on the variables' page, a deletion replaces the address that named
   // what it deleted.
   const select = (id: string | undefined, replace = false) =>

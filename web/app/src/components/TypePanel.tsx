@@ -9,7 +9,6 @@ import type {
   ComponentType,
   ProjectBody,
 } from "@storycreep/shared/api";
-import { AlertDialog } from "radix-ui";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
@@ -21,17 +20,11 @@ import {
 } from "../content/form";
 import { typeName } from "../content/ValueField";
 import { textOf } from "../content/values";
-import { payloadField, useExpected } from "../project/dialogs";
+import { Confirm, payloadField, useExpected } from "../project/dialogs";
 import { keyAfterSibling, keyBeforeSibling } from "../project/orderkey";
 import { type Command, useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
-import {
-  ConfirmButtons,
-  ConfirmFrame,
-  closesBy,
-  focusBackTo,
-  type Opener,
-} from "../ui/Dialog";
+import type { Opener } from "../ui/Dialog";
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Alert } from "../ui/Page";
@@ -495,31 +488,27 @@ function DeleteTypeDialog({
   const commands = useCommands(project.id);
   const rev = useExpected(type.rev, commands.error);
   return (
-    <AlertDialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
-      <ConfirmFrame
-        title={t("deletion.title", { name: type.name })}
-        description={t("component_type.delete_body")}
-        onCloseAutoFocus={focusBackTo(opener)}
-      >
-        <Alert message={refusalOf(commands.error, t)?.message} />
-        <ConfirmButtons
-          cancel={t("boards.cancel")}
-          confirm={t("component_type.delete")}
-          pending={commands.isPending}
-          onConfirm={() =>
-            commands.mutate(
-              [
-                {
-                  type: "component_type.delete",
-                  payload: { id: type.id },
-                  expected_rev: { [type.id]: rev },
-                },
-              ],
-              { onSuccess: onDeleted },
-            )
-          }
-        />
-      </ConfirmFrame>
-    </AlertDialog.Root>
+    <Confirm
+      title={t("deletion.title", { name: type.name })}
+      description={t("component_type.delete_body")}
+      confirm={t("component_type.delete")}
+      opener={opener}
+      pending={commands.isPending}
+      onClose={onClose}
+      onConfirm={() =>
+        commands.mutate(
+          [
+            {
+              type: "component_type.delete",
+              payload: { id: type.id },
+              expected_rev: { [type.id]: rev },
+            },
+          ],
+          { onSuccess: onDeleted },
+        )
+      }
+    >
+      <Alert message={refusalOf(commands.error, t)?.message} />
+    </Confirm>
   );
 }

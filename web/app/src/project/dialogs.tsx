@@ -733,7 +733,7 @@ function referencedBy(
  * A confirmation of a destructive change, which stays open while it is
  * under way, and is confirmed once it is ready (ConfirmButtons).
  */
-function Confirm({
+export function Confirm({
   title,
   description,
   confirm,

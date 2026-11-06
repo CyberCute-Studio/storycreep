@@ -14,8 +14,8 @@ import type {
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { AlertDialog, Dialog } from "radix-ui";
-import { type FormEvent, useDeferredValue, useRef, useState } from "react";
+import { Dialog } from "radix-ui";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -29,12 +29,10 @@ import {
   type ValueType,
   zeroOf,
 } from "../content/values";
-import { payloadField, useExpected } from "../project/dialogs";
+import { Confirm, payloadField, useExpected } from "../project/dialogs";
 import { type Command, useCommands } from "../project/queries";
 import { MoreButton } from "../ui/Button";
 import {
-  ConfirmButtons,
-  ConfirmFrame,
   closesBy,
   DialogFrame,
   FormButtons,
@@ -535,6 +533,19 @@ function Unconvertible({
   );
 }
 
+/** How long the typing in a field pauses, in milliseconds, before what follows it reads what was typed (useSettled). */
+const typingPause = 400;
+
+/** Returns value once it has stayed the same for wait milliseconds, as what is typed in a field once the typing pauses. */
+function useSettled<T>(value: T, wait: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), wait);
+    return () => clearTimeout(timer);
+  }, [value, wait]);
+  return settled;
+}
+
 /**
  * The dialog that changes the type of an attribute definition, with what
  * becomes of its components' values: converted, each that converts, and the
@@ -577,7 +588,7 @@ export function RetypeAttributeDialog({
   };
   // The list of what would not convert follows the options once they are
   // typed, rather than at every key.
-  const listed = optionsOf(useDeferredValue(options));
+  const listed = optionsOf(useSettled(options, typingPause));
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -708,31 +719,27 @@ export function DeleteAttributeDialog({
   const commands = useCommands(projectId);
   const rev = useExpected(attribute.rev, commands.error);
   return (
-    <AlertDialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
-      <ConfirmFrame
-        title={t("attribute.delete_title", { name: attribute.name })}
-        description={t("attribute.delete_body")}
-        onCloseAutoFocus={focusBackTo(opener)}
-      >
-        <Alert message={refusalOf(commands.error, t)?.message} />
-        <ConfirmButtons
-          cancel={t("boards.cancel")}
-          confirm={t("attribute.delete")}
-          pending={commands.isPending}
-          onConfirm={() =>
-            commands.mutate(
-              [
-                {
-                  type: "attribute.delete",
-                  payload: { id: attribute.id },
-                  expected_rev: { [attribute.id]: rev },
-                },
-              ],
-              { onSuccess: onClose },
-            )
-          }
-        />
-      </ConfirmFrame>
-    </AlertDialog.Root>
+    <Confirm
+      title={t("attribute.delete_title", { name: attribute.name })}
+      description={t("attribute.delete_body")}
+      confirm={t("attribute.delete")}
+      opener={opener}
+      pending={commands.isPending}
+      onClose={onClose}
+      onConfirm={() =>
+        commands.mutate(
+          [
+            {
+              type: "attribute.delete",
+              payload: { id: attribute.id },
+              expected_rev: { [attribute.id]: rev },
+            },
+          ],
+          { onSuccess: onClose },
+        )
+      }
+    >
+      <Alert message={refusalOf(commands.error, t)?.message} />
+    </Confirm>
   );
 }

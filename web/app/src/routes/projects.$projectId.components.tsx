@@ -4,7 +4,7 @@ import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ComponentPanel } from "../components/ComponentPanel";
 import { CreateComponentDialog } from "../components/CreateComponentDialog";
-import { liveTypes } from "../components/types";
+import { typesByName } from "../components/types";
 import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
 import type { ComponentEntry } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
@@ -64,7 +64,7 @@ function ComponentsPage() {
   const components = useDocumentState(doc, (state) => state.view.components);
   const typeMap = useDocumentState(doc, (state) => state.view.componentTypes);
   const folders = useDocumentState(doc, (state) => state.view.folders);
-  const types = useMemo(() => liveTypes(typeMap), [typeMap]);
+  const types = useMemo(() => typesByName(typeMap), [typeMap]);
   const tree = useMemo(
     () =>
       buildTree(

@@ -107,6 +107,18 @@ export function useDeleting(onDeleting: (deleting: boolean) => void): void {
   }, [onDeleting]);
 }
 
+/** Returns the app's own element that holds within: the child of the document's body that holds it. */
+function appOf(within: HTMLElement): HTMLElement {
+  let element = within;
+  while (
+    element.parentElement !== null &&
+    element.parentElement !== element.ownerDocument.body
+  ) {
+    element = element.parentElement;
+  }
+  return element;
+}
+
 /**
  * Makes everything of the page but within inert, as a modal dialog makes it
  * (WCAG 2.4.3, 2.4.11): every sibling of within and of each element that
@@ -191,7 +203,15 @@ export function Panel({
     const undo = inertAround(element);
     // The focus in what became inert, as the list's, once the window was
     // made narrower, goes to the sheet, as the browser takes it from there.
-    if (!element.contains(element.ownerDocument.activeElement)) {
+    // The focus in a layer that the page opened over itself, as a dialog
+    // that the panel opened, stays there: the dialog holds it, and would
+    // take it back from the sheet, selecting what was typed in its field.
+    const active = element.ownerDocument.activeElement;
+    const inApp =
+      active === null ||
+      active === element.ownerDocument.body ||
+      appOf(element).contains(active);
+    if (inApp && !element.contains(active)) {
       heading.current?.focus();
     }
     return undo;

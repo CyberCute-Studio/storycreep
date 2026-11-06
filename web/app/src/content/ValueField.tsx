@@ -51,13 +51,21 @@ export function ValueField({
   const { t } = useTranslation();
   const common = { label, hint, name, error, disabled };
   switch (type) {
-    case "bool":
+    case "bool": {
+      const value = textOf(defaultValue);
       return (
-        <SelectField {...common} defaultValue={textOf(defaultValue)}>
+        <SelectField {...common} defaultValue={value}>
+          {/* A value that is no bool, as one that a form holds of an
+              attribute that became a bool elsewhere, shows as it is until
+              the user chooses another, as of an enum. */}
+          {value !== "false" && value !== "true" && (
+            <option value={value}>{value}</option>
+          )}
           <option value="false">{t("value.false")}</option>
           <option value="true">{t("value.true")}</option>
         </SelectField>
       );
+    }
     case "enum": {
       const value = textOf(defaultValue);
       return (

@@ -172,6 +172,12 @@ export function RenameKeyDialog({
   const form = useRef<HTMLFormElement>(null);
   const variable = renamed.kind === "variable";
   const [key, setKey] = useState(renamed.key);
+  // The key that the field started at, which the dialog opened with: left
+  // as it is, or made the key that the variable or the component has now,
+  // as once it was renamed elsewhere meanwhile, it renames nothing, rather
+  // than rename the key back to what it was, over the other session's.
+  const [opened] = useState(renamed.key);
+  const unchanged = key === opened || key === renamed.key;
   // The key whose preview the dialog shows, which renaming waits for.
   const [previewed, setPreviewed] = useState<string>();
   const commands = useCommands(projectId);
@@ -236,7 +242,7 @@ export function RenameKeyDialog({
     );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (key === renamed.key) {
+    if (unchanged) {
       onClose();
       return;
     }
@@ -297,7 +303,7 @@ export function RenameKeyDialog({
             onChange={(event) => setKey(event.currentTarget.value)}
             error={refusal?.fields.key}
           />
-          {previewed === key && key !== renamed.key && (
+          {previewed === key && !unchanged && (
             <div className="space-y-4">
               <PreviewList
                 query={renamedQuery}
@@ -325,10 +331,10 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
-                (previewed === key && key !== renamed.key && !ready && !failed)
+                (previewed === key && !unchanged && !ready && !failed)
               }
             >
-              {(previewed === key && !failed) || key === renamed.key
+              {(previewed === key && !failed) || unchanged
                 ? t("rename.submit")
                 : t("rename.preview")}
             </Button>

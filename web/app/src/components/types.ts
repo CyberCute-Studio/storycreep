@@ -1,22 +1,22 @@
 // What the pages of a project's components read of their types (PRD
-// FR-COMP-01): the types that are not in the trash, and a type's attribute
-// definitions, in their order.
+// FR-COMP-01): the types, by their names, and a type's attribute
+// definitions, in their order. The project's document holds none of either
+// that is in the trash: a deletion takes it away, and the lists, and the
+// states that the server gives, leave the trash out.
 
 import type { Attribute, ComponentType } from "@storycreep/shared/api";
 import { compareChildren } from "../project/orderkey";
 
-/** Returns the types of types that are not in the trash, by their names. */
-export function liveTypes(
+/** Returns the types of types by their names. */
+export function typesByName(
   types: ReadonlyMap<string, ComponentType>,
 ): ComponentType[] {
-  return [...types.values()]
-    .filter((type) => type.deleted_at === undefined)
-    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return [...types.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
 }
 
-/** Returns the attribute definitions of type that are not in the trash, in their order. */
+/** Returns the attribute definitions of type, in their order. */
 export function definitionsOf(type: ComponentType | undefined): Attribute[] {
-  return (type?.attributes ?? [])
-    .filter((attribute) => attribute.deleted_at === undefined)
-    .sort(compareChildren);
+  return [...(type?.attributes ?? [])].sort(compareChildren);
 }
