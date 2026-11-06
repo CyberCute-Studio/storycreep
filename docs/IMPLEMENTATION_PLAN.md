@@ -639,7 +639,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEXT-01 AC2 passes.
 
 ### 58. Variables and components panels
-**Status:** todo · **Depends on:** 47, 57
+**Status:** done ([#71](https://github.com/CyberCute-Studio/storycreep/pull/71)) · **Depends on:** 47, 57
 **PRD:** FR-VAR-01 (AC3), FR-VAR-02 (AC5), FR-VAR-03/04 (UI), FR-COMP-01/02 (UI), FR-COMP-04 (UI)
 - A variable panel with a type-appropriate default editor, scope, `reset_on_enter` with its persistence explained in plain language, and folders: the page `/app/projects/{id}/variables`, whose list is the tree of the variables' folders (`web/app/src/content/ContentTree.tsx`, over `project/tree.ts`, which builds the tree of any folder kind), with a filter of keys and descriptions and of a scope, and whose panel (`web/app/src/variables`, `VariablePanel`) sends what of a variable changed in one batch (`content/form.tsx`), reading each value as the server reads its type (`content/values.ts`, N65).
 - Component-type and component panels: the pages `/app/projects/{id}/components` and `/component-types` (`web/app/src/components`), a component read whole as its panel opens (`ProjectDocument.readComponent`), with its rich-text description, values, image, and folder, and a type's name, key, icon, and attribute definitions, whose type changes with a conversion after the list of the values that would not convert (N65).
