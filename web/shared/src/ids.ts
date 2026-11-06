@@ -193,6 +193,17 @@ export function decodeAnyId(id: string): { kind: IdKind; uuid: Uint8Array } {
   return decode(undefined, id);
 }
 
+/**
+ * Returns the public identifier, whatever its type, in its canonical
+ * spelling, as encodeId writes it: the server takes one in either case.
+ *
+ * @throws {IdDecodeError} if the identifier is malformed.
+ */
+export function canonicalAnyId(id: string): string {
+  const { kind, uuid } = decodeAnyId(id);
+  return encodeId(kind, uuid);
+}
+
 // Parses an identifier into its type and UUID. The checks run in the order of
 // the table in schema/ids/README.md, which decides the error when several
 // apply. A type mismatch with expected is left to the caller, so that it is

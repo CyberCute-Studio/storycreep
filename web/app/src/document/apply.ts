@@ -18,7 +18,7 @@
 // the source of truth.
 
 import type { CommandBody } from "@storycreep/shared/api";
-import { decodeAnyId, encodeId } from "@storycreep/shared/ids";
+import { canonicalAnyId } from "@storycreep/shared/ids";
 import { boardAppliers } from "./appliers/board";
 import { componentAppliers } from "./appliers/component";
 import { connectionAppliers } from "./appliers/connection";
@@ -105,8 +105,7 @@ export function canonical(id: string | undefined): string | undefined {
     return undefined;
   }
   try {
-    const { kind, uuid } = decodeAnyId(id);
-    return encodeId(kind, uuid);
+    return canonicalAnyId(id);
   } catch {
     return id;
   }

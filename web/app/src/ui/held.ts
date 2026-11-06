@@ -7,7 +7,8 @@
 // nothing changed, or the form lets go of it, as once it is saved. The form
 // is shown anew, with controls of its own, once what it shows changes (key),
 // and the focus, if it was in the form, is on the control in its place that
-// had it, so that the form holds what it shows for as long as the focus is
+// had it, or that opened what had it in a portal, which goes with the form
+// shown anew, so that the form holds what it shows for as long as the focus is
 // in it, rather than lose the focus to the page, and hold what it showed
 // once the user has left it (FR-RT-02 AC3).
 
@@ -49,6 +50,31 @@ export interface Held<T> {
   release: () => void;
 }
 
+/**
+ * Returns what of a form the focus may be in, in an order that the form
+ * shown anew has it in too: its controls, then its editable texts, as a
+ * rich text's, which are no form control: the elements that are editable,
+ * or say that they are not, of which none that holds them does (the editing
+ * hosts, rather than the atoms within them that ProseMirror marks), and then
+ * the controls of its toolbars, as a rich text's, which one that may not be
+ * changed has none of, so that the other controls keep their places,
+ * though the form shown anew has a toolbar more or fewer.
+ */
+function controlsOf(form: HTMLFormElement): Element[] {
+  const controls = [...form.elements];
+  const inToolbar = (element: Element) => {
+    const toolbar = element.closest('[role="toolbar"]');
+    return toolbar !== null && form.contains(toolbar);
+  };
+  return [
+    ...controls.filter((element) => !inToolbar(element)),
+    ...Array.from(form.querySelectorAll("[contenteditable]")).filter(
+      (element) => !element.parentElement?.closest("[contenteditable]"),
+    ),
+    ...controls.filter(inToolbar),
+  ];
+}
+
 /** Returns what a form of entity shows, and how it holds it. */
 export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   const form = useRef<HTMLFormElement>(null);
@@ -59,9 +85,16 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   // Whether the user has changed something in the form since it held the
   // entity, which the focus leaving it then does not let go.
   const changed = useRef(false);
-  // The place, among the form's controls, of the one that has the focus,
-  // while one has.
+  // The place, among the form's controls (controlsOf), of the one that has
+  // the focus, while one has, or that opened what has it in a portal.
   const focused = useRef<number>(undefined);
+  // The place of the control that the focus last left, until the form lets
+  // go, which the focus in what that control opened in a portal, as a rich
+  // text's link dialog, is at (props.onFocus).
+  const left = useRef<number>(undefined);
+  // The letting go of the form that the focus leaving it waits with
+  // (props.onBlur).
+  const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
   const shown = held?.value ?? entity;
   // The form shown anew has the focus where it had it: its controls before
   // went with it, without the form being told that the focus left them, as
@@ -72,11 +105,12 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
     if (
       node === null ||
       at === undefined ||
+      at < 0 ||
       node.contains(node.ownerDocument.activeElement)
     ) {
       return;
     }
-    const control = node.elements.item(at);
+    const control = controlsOf(node)[at];
     if (control instanceof HTMLElement) {
       control.focus();
     }
@@ -90,9 +124,18 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
     props: {
       ref,
       onFocus: (event) => {
-        focused.current = [...event.currentTarget.elements].indexOf(
+        clearTimeout(leaving.current);
+        leaving.current = undefined;
+        const at = controlsOf(event.currentTarget).indexOf(
           event.target as Element,
         );
+        // The focus in what a control opened in a portal, outside the
+        // form's elements, is at that control, which the form shown anew,
+        // without what was opened, gives it back to, rather than to the page.
+        focused.current =
+          at < 0 && !event.currentTarget.contains(event.target as Node)
+            ? (left.current ?? at)
+            : at;
         holdEntity();
       },
       onChange: () => {
@@ -109,10 +152,24 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         if (event.target === event.currentTarget.ownerDocument.activeElement) {
           return;
         }
+        // The form shown anew meanwhile, as once a save ends, leaves the
+        // focus where the user took it.
+        left.current = focused.current;
         focused.current = undefined;
-        if (!changed.current) {
-          setHeld(undefined);
-        }
+        // What a control of the form opened in a portal, as a rich text's
+        // link dialog or a menu, is outside the form's elements, but React
+        // tells the form of the focus in it (onFocus), right after this, as
+        // the focus moves: the form lets go only once it has not, rather
+        // than let go and hold again, which would show it anew, without
+        // what was opened, where what it shows changed meanwhile.
+        clearTimeout(leaving.current);
+        leaving.current = setTimeout(() => {
+          leaving.current = undefined;
+          left.current = undefined;
+          if (!changed.current) {
+            setHeld(undefined);
+          }
+        });
       },
     },
     hold: (value) => {

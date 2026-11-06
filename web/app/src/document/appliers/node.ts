@@ -28,6 +28,7 @@ import type {
   NodeTarget,
   RichTextDoc,
 } from "@storycreep/shared/api";
+import { emptyRichText, tryParseRichText } from "@storycreep/shared/richtext";
 import {
   compareChildren,
   keyBetween,
@@ -122,202 +123,15 @@ export function idOrNone(id: string | undefined): string | undefined {
   return id === undefined || id === "" ? undefined : canonical(id);
 }
 
-type Json = Record<string, unknown>;
-
-/** The marks, in the order of the canonical form, which is alphabetical. */
-const markOrder: readonly string[] = [
-  "bold",
-  "code",
-  "italic",
-  "link",
-  "strike",
-];
-
-/** Returns a node of rich text as the canonical form writes it: its fields in alphabetical order, without one that holds its default. */
-function wire(
-  type: string,
-  fields: { attrs?: Json; content?: Json[]; marks?: Json[]; text?: string },
-): Json {
-  return {
-    ...(fields.attrs === undefined ? {} : { attrs: fields.attrs }),
-    ...(fields.content?.length ? { content: fields.content } : {}),
-    ...(fields.marks?.length ? { marks: fields.marks } : {}),
-    ...(fields.text === undefined ? {} : { text: fields.text }),
-    type,
-  };
-}
-
-function marksOf(marks: unknown): Json[] | undefined {
-  if (marks === undefined) {
-    return [];
-  }
-  if (!Array.isArray(marks)) {
-    return undefined;
-  }
-  const out: Json[] = [];
-  for (const mark of marks as Json[]) {
-    const type = mark?.type;
-    if (typeof type !== "string" || !markOrder.includes(type)) {
-      return undefined;
-    }
-    out.push(
-      type === "link"
-        ? { attrs: { href: (mark.attrs as Json | undefined)?.href }, type }
-        : { type },
-    );
-  }
-  return out.sort(
-    (a, b) =>
-      markOrder.indexOf(a.type as string) - markOrder.indexOf(b.type as string),
-  );
-}
-
-function inlinesOf(content: unknown): Json[] | undefined {
-  if (content === undefined) {
-    return [];
-  }
-  if (!Array.isArray(content)) {
-    return undefined;
-  }
-  const out: Json[] = [];
-  for (const node of content as Json[]) {
-    const marks = marksOf(node?.marks);
-    const attrs = node?.attrs as Json | undefined;
-    if (marks === undefined) {
-      return undefined;
-    }
-    switch (node.type) {
-      case "text": {
-        if (typeof node.text !== "string") {
-          return undefined;
-        }
-        // A paragraph's neighbouring texts with the same marks are one text.
-        const last = out.at(-1);
-        if (
-          last?.type === "text" &&
-          JSON.stringify(last.marks ?? []) === JSON.stringify(marks)
-        ) {
-          out[out.length - 1] = wire("text", {
-            marks,
-            text: `${last.text}${node.text}`,
-          });
-        } else {
-          out.push(wire("text", { marks, text: node.text }));
-        }
-        break;
-      }
-      case "hardBreak":
-        out.push(wire("hardBreak", { marks }));
-        break;
-      case "mention":
-        if (typeof attrs?.id !== "string") {
-          return undefined;
-        }
-        out.push(
-          wire("mention", { attrs: { id: canonical(attrs.id) }, marks }),
-        );
-        break;
-      case "valueRef": {
-        const { attribute, decimals, ref } = attrs ?? {};
-        if (typeof ref !== "string") {
-          return undefined;
-        }
-        out.push(
-          wire("valueRef", {
-            attrs: {
-              ...(typeof attribute === "string" && attribute !== ""
-                ? { attribute: canonical(attribute) }
-                : {}),
-              ...(decimals == null ? {} : { decimals }),
-              ref: canonical(ref),
-            },
-            marks,
-          }),
-        );
-        break;
-      }
-      default:
-        return undefined;
-    }
-  }
-  return out;
-}
-
-function blocksOf(content: unknown): Json[] | undefined {
-  if (!Array.isArray(content)) {
-    return undefined;
-  }
-  const out: Json[] = [];
-  for (const block of content as Json[]) {
-    switch (block?.type) {
-      case "paragraph": {
-        const inlines = inlinesOf(block.content);
-        if (inlines === undefined) {
-          return undefined;
-        }
-        out.push(wire("paragraph", { content: inlines }));
-        break;
-      }
-      case "bulletList":
-      case "orderedList": {
-        if (!Array.isArray(block.content)) {
-          return undefined;
-        }
-        const items: Json[] = [];
-        for (const item of block.content as Json[]) {
-          const blocks = item?.type === "listItem" && blocksOf(item.content);
-          if (!blocks) {
-            return undefined;
-          }
-          items.push(wire("listItem", { content: blocks }));
-        }
-        // An ordered list that starts at 1, as one that says no start, has
-        // no attrs.
-        const start = (block.attrs as Json | undefined)?.start;
-        out.push(
-          wire(block.type, {
-            attrs:
-              block.type === "orderedList" && start != null && start !== 1
-                ? { start }
-                : undefined,
-            content: items,
-          }),
-        );
-        break;
-      }
-      default:
-        return undefined;
-    }
-  }
-  return out;
-}
-
-/** Returns the empty text, one empty paragraph, which the server stores for a text that a payload leaves out. */
-export function emptyText(): RichTextDoc {
-  return { content: [{ type: "paragraph" }], type: "doc" };
-}
-
 /**
  * Returns text in the canonical form that the server stores it in
- * (schema/rich-text/README.md): no field that holds its default, an inline
- * node's marks in alphabetical order, a paragraph's neighbouring texts with
- * the same marks joined, each ID in its canonical spelling, and each
- * object's fields in alphabetical order; the empty text for none; or
- * undefined for a text that holds what this does not know.
+ * (parseRichText, which the editor's validation shares): the empty text for
+ * none, or undefined for a text that the server refuses.
  */
 export function canonicalText(
   text: RichTextDoc | undefined,
 ): RichTextDoc | undefined {
-  if (text === undefined) {
-    return emptyText();
-  }
-  const blocks = blocksOf(text.content);
-  if (blocks === undefined) {
-    return undefined;
-  }
-  return blocks.length === 0
-    ? emptyText()
-    : (wire("doc", { content: blocks }) as unknown as RichTextDoc);
+  return text === undefined ? emptyRichText() : tryParseRichText(text).doc;
 }
 
 /** Returns the text that a payload's text makes, as the server stores it, and whether the document can tell it. */

@@ -1,0 +1,487 @@
+import type { RichTextDoc } from "@storycreep/shared/api";
+import { Slice } from "@tiptap/pm/model";
+import { describe, expect, test } from "vitest";
+import { testEditor } from "../test/editor";
+import { storedOf } from "./convert";
+import { pasteProps } from "./extensions";
+
+const p = (value: string) => ({
+  content: [{ text: value, type: "text" }],
+  type: "paragraph",
+});
+
+describe("the editor's extensions", () => {
+  test("link an address typed without a scheme, and an email address, as the link's field does", () => {
+    const editor = testEditor();
+    editor.commands.insertContent("see example.com ");
+    editor.commands.insertContent("or keeper@example.com ");
+    const linked = (value: string, href: string) => ({
+      marks: [{ attrs: { href }, type: "link" }],
+      text: value,
+      type: "text",
+    });
+    expect(storedOf(editor.state.doc).doc).toEqual({
+      content: [
+        {
+          content: [
+            { text: "see ", type: "text" },
+            linked("example.com", "https://example.com"),
+            { text: " or ", type: "text" },
+            linked("keeper@example.com", "mailto:keeper@example.com"),
+            { text: " ", type: "text" },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    });
+  });
+
+  test("a URL pasted over the selection links it where a link may lead to the URL, and is pasted as text over it otherwise", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    editor.view.pasteText("ftp://files.example.com");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      p("ftp://files.example.com"),
+    ]);
+    editor.commands.setContent(p("harbour"));
+    editor.commands.selectAll();
+    editor.view.pasteText("example.com");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "harbour",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("a URL found in pasted text is linked as autolinking links it, and pasted text that a link holds keeps that link", () => {
+    const editor = testEditor();
+    editor.view.pasteText("see example.com now");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "see ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+          { text: " now", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+    // A web page's links whose text is another URL, or the link's own
+    // without its scheme, as the editor's own copy of a typed address.
+    editor.commands.clearContent();
+    editor.view.pasteHTML(
+      '<p><a href="https://github.com/org/repo">https://github.com</a> and <a href="https://example.com">example.com</a></p>',
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [
+              { attrs: { href: "https://github.com/org/repo" }, type: "link" },
+            ],
+            text: "https://github.com",
+            type: "text",
+          },
+          { text: " and ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("a URL found in pasted text is linked though another that the paste holds is in code, which holds no link", () => {
+    const editor = testEditor();
+    editor.view.pasteHTML(
+      "<p>See example.com and <code>api.example.com</code></p>",
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "See ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+          { text: " and ", type: "text" },
+          { marks: [{ type: "code" }], text: "api.example.com", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("a list nested too deeply by what is typed has its items moved up with the caret in the text that it was in", () => {
+    // x is the second paragraph of an item of the fifth list.
+    let list: object = {
+      content: [{ content: [p("y"), p("x")], type: "listItem" }],
+      type: "bulletList",
+    };
+    for (let depth = 4; depth >= 1; depth--) {
+      list = {
+        content: [{ content: [p(`level ${depth}`), list], type: "listItem" }],
+        type: "bulletList",
+      };
+    }
+    const editor = testEditor({
+      content: [list, p("after")],
+      type: "doc",
+    } as RichTextDoc);
+    let x = 0;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.text === "x") {
+        x = pos;
+      }
+    });
+    editor.commands.setTextSelection(x);
+    const { view } = editor;
+    // "- " typed at the start of x, which an input rule makes a list of,
+    // the sixth, and then "Z".
+    for (const typed of ["-", " ", "Z"]) {
+      const { from, to } = view.state.selection;
+      const handled = view.someProp("handleTextInput", (handle) =>
+        handle(view, from, to, typed, () =>
+          view.state.tr.insertText(typed, from, to),
+        ),
+      );
+      if (handled !== true) {
+        view.dispatch(view.state.tr.insertText(typed, from, to));
+      }
+    }
+    type Nested = { content: { content: object[] }[] };
+    let fifth = storedOf(editor.state.doc).doc?.content[0] as Nested;
+    for (let depth = 1; depth < 5; depth++) {
+      fifth = fifth.content[0].content[1] as Nested;
+    }
+    expect(fifth).toEqual({
+      content: [
+        { content: [p("y")], type: "listItem" },
+        { content: [p("Zx")], type: "listItem" },
+      ],
+      type: "bulletList",
+    });
+    expect(storedOf(editor.state.doc).doc?.content[1]).toEqual(p("after"));
+  });
+
+  test("keep a change within the schema wherever it is in a long text, though it sets only a mark", () => {
+    const paragraphs = Array.from({ length: 50 }, (_, i) => p(`line ${i}`));
+    const editor = testEditor({
+      content: paragraphs,
+      type: "doc",
+    } as RichTextDoc);
+    const last = editor.state.doc.content.size - 1;
+    editor.view.dispatch(editor.state.tr.insertText("‏!", last));
+    const link = editor.schema.marks.link.create({ href: "javascript:x()" });
+    editor.view.dispatch(editor.state.tr.addMark(200, 204, link));
+    const stored = storedOf(editor.state.doc).doc;
+    expect(stored?.content.at(-1)).toEqual(p("line 49!"));
+    expect(JSON.stringify(stored)).not.toContain("link");
+  });
+
+  test("keep a pair of surrogates, and a carriage return and a line feed, that a mark's boundary splits one character", () => {
+    const editor = testEditor();
+    const { schema } = editor;
+    const bold = schema.marks.bold.create();
+    // x, the two halves of 😀, and y; bold up to the first half.
+    editor.commands.insertContent("x😀y");
+    editor.view.dispatch(editor.state.tr.addMark(1, 3, bold));
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { marks: [{ type: "bold" }], text: "x😀", type: "text" },
+          { text: "y", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+    editor.commands.clearContent();
+    editor.view.dispatch(
+      editor.state.tr.insert(1, [
+        schema.text("a\r"),
+        schema.text("\nb", [bold]),
+      ]),
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "a", type: "text" },
+          { type: "hardBreak" },
+          { marks: [{ type: "bold" }], text: "b", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("Tab nests the selected list items only where none of their lists would nest deeper than lists nest", () => {
+    const item = (text: string, ...lists: object[]) => ({
+      content: [p(text), ...lists],
+      type: "listItem",
+    });
+    const bullets = (...items: object[]) => ({
+      content: items,
+      type: "bulletList",
+    });
+    // a, b, and c, whose list x is in, in a list at depth 4.
+    let list = bullets(item("a"), item("b"), item("c", bullets(item("x"))));
+    for (let depth = 3; depth >= 1; depth--) {
+      list = bullets(item(`level ${depth}`, list));
+    }
+    const content = { content: [list], type: "doc" } as RichTextDoc;
+    const editor = testEditor(content);
+    const at = (text: string) => {
+      let found = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.text === text) {
+          found = pos;
+        }
+      });
+      return found;
+    };
+    // From b into c: c's list would be at depth 6.
+    editor.commands.setTextSelection({ from: at("b"), to: at("c") + 1 });
+    editor.commands.keyboardShortcut("Tab");
+    expect(storedOf(editor.state.doc).doc).toEqual(content);
+    // b alone moves into a list of a, at depth 5.
+    editor.commands.setTextSelection(at("b"));
+    editor.commands.keyboardShortcut("Tab");
+    expect(storedOf(editor.state.doc).doc).not.toEqual(content);
+  });
+
+  test("Shift-Tab moves the selected list items up only into the list that holds their list, and leaves the focus to move back otherwise", () => {
+    const item = (text: string, ...lists: object[]) => ({
+      content: [p(text), ...lists],
+      type: "listItem",
+    });
+    const content = {
+      content: [
+        {
+          content: [item("a", { content: [item("b")], type: "bulletList" })],
+          type: "bulletList",
+        },
+      ],
+      type: "doc",
+    } as RichTextDoc;
+    const editor = testEditor(content);
+    const at = (text: string) => {
+      let found = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.text === text) {
+          found = pos;
+        }
+      });
+      return found;
+    };
+    // Whether the editor takes Shift-Tab, which the browser otherwise takes
+    // to move the focus back.
+    const shiftTab = () =>
+      editor.view.someProp("handleKeyDown", (handle) =>
+        handle(
+          editor.view,
+          new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+        ),
+      ) === true;
+    // a is in no list within a list item.
+    editor.commands.setTextSelection(at("a"));
+    expect(shiftTab()).toBe(false);
+    expect(storedOf(editor.state.doc).doc).toEqual(content);
+    // b moves up into a's list.
+    editor.commands.setTextSelection(at("b"));
+    expect(shiftTab()).toBe(true);
+    expect(storedOf(editor.state.doc).doc).toEqual({
+      content: [{ content: [item("a"), item("b")], type: "bulletList" }],
+      type: "doc",
+    });
+  });
+
+  test("setLink sets a URL as the link's field takes it, and refuses one that no link may lead to", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    expect(editor.commands.setLink({ href: "javascript:alert(1)" })).toBe(
+      false,
+    );
+    expect(editor.commands.setLink({ href: "example.com" })).toBe(true);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "harbour",
+            type: "text",
+          },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
+  test("draw a link's element with its URL only where it is one that a link stores, as not of a link without a URL or with a relative one", () => {
+    const linked = (attrs: object | undefined) => ({
+      content: [
+        {
+          marks: [{ ...(attrs === undefined ? {} : { attrs }), type: "link" }],
+          text: "harbour",
+          type: "text",
+        },
+      ],
+      type: "paragraph",
+    });
+    const editor = testEditor({
+      content: [
+        linked(undefined),
+        linked({ href: 5 }),
+        linked({ href: "example.com" }),
+        linked({ href: "https://example.com/tide" }),
+      ],
+      type: "doc",
+    } as unknown as RichTextDoc);
+    expect(
+      Array.from(editor.view.dom.querySelectorAll("a"), (a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual([null, null, null, "https://example.com/tide"]);
+  });
+
+  test("drop the plain text of what is dropped from outside the editor at the place that it is dropped at, where the cleaning keeps nothing of its HTML", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    const drop = (text: string) =>
+      ({
+        clientX: 0,
+        clientY: 0,
+        dataTransfer: {
+          getData: (type: string) => (type === "text/plain" ? text : ""),
+        },
+      }) as unknown as DragEvent;
+    // The place before "bour", which jsdom, which lays nothing out, cannot
+    // find from the drop's coordinates.
+    editor.view.posAtCoords = () => ({ pos: 4, inside: -1 });
+    const { handleDrop } = pasteProps;
+    expect(handleDrop(editor.view, drop(""), Slice.empty, false)).toBe(false);
+    expect(handleDrop(editor.view, drop("x²"), Slice.empty, true)).toBe(false);
+    expect(handleDrop(editor.view, drop("x²"), Slice.empty, false)).toBe(true);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harx²bour")]);
+  });
+
+  test("a copied link pasted over the selection is pasted as it is, though its text is a URL, rather than linking the selection to its text", () => {
+    const editor = testEditor();
+    const over = (html: string) => {
+      editor.commands.setContent(p("Tide and shore"));
+      // "and"
+      editor.commands.setTextSelection({ from: 6, to: 9 });
+      editor.view.pasteHTML(html);
+      return storedOf(editor.state.doc).doc?.content;
+    };
+    const pastedLink = (value: string, href: string) => [
+      {
+        content: [
+          { text: "Tide ", type: "text" },
+          {
+            marks: [{ attrs: { href }, type: "link" }],
+            text: value,
+            type: "text",
+          },
+          { text: " shore", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ];
+    expect(
+      over('<a href="https://example.com/docs/page">example.com</a>'),
+    ).toEqual(pastedLink("example.com", "https://example.com/docs/page"));
+    expect(
+      over(
+        '<a href="https://github.com/org/repo/blob/main/README.md">README.md</a>',
+      ),
+    ).toEqual(
+      pastedLink(
+        "README.md",
+        "https://github.com/org/repo/blob/main/README.md",
+      ),
+    );
+    expect(over('<a href="https://example.com/docs">the docs</a>')).toEqual(
+      pastedLink("the docs", "https://example.com/docs"),
+    );
+  });
+
+  test("setLink and toggleLink refuse a link without a URL, rather than throw", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    expect(editor.commands.setLink({} as never)).toBe(false);
+    expect(editor.commands.toggleLink({} as never)).toBe(false);
+    // Without attributes, toggleLink only takes a link off.
+    expect(editor.commands.toggleLink()).toBe(false);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harbour")]);
+    expect(editor.commands.setLink({ href: "https://example.com" })).toBe(true);
+    expect(editor.commands.toggleLink()).toBe(true);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harbour")]);
+  });
+
+  test("a mark's input rule takes only delimiters that text follows and precedes without white space, so that typed '2 * 3 * 4' stays as it is typed", () => {
+    const editor = testEditor();
+    const { view } = editor;
+    const typed = (value: string) => {
+      for (const character of value) {
+        const { from, to } = view.state.selection;
+        const handled = view.someProp("handleTextInput", (handle) =>
+          handle(view, from, to, character, () =>
+            view.state.tr.insertText(character, from, to),
+          ),
+        );
+        if (handled !== true) {
+          view.dispatch(view.state.tr.insertText(character, from, to));
+        }
+      }
+    };
+    typed("2 * 3 * 4 and a ** b ** c and x ~~ y ~~ z and a _ b _ c");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      p("2 * 3 * 4 and a ** b ** c and x ~~ y ~~ z and a _ b _ c"),
+    ]);
+    editor.commands.clearContent();
+    typed("an *odd* **bold** ~~gone~~ _keen_ end");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "an ", type: "text" },
+          { marks: [{ type: "italic" }], text: "odd", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "bold" }], text: "bold", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "strike" }], text: "gone", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "italic" }], text: "keen", type: "text" },
+          { text: " end", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+});

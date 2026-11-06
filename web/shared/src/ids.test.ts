@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import rawVectors from "../../../schema/ids/vectors.json" with { type: "json" };
 import {
+  canonicalAnyId,
   decodeAnyId,
   decodeId,
   encodeId,
@@ -250,6 +251,15 @@ describe("decodeId", () => {
         decodeAnyId("constructor_01HQ8Z3XK4F7NAWR5TCQ9M2BVD"),
       ).reason,
     ).toBe("unknown_prefix");
+  });
+});
+
+describe("canonicalAnyId", () => {
+  it("writes an ID of any type as encodeId does, and throws for one that is none", () => {
+    expect(canonicalAnyId("nd_01hq8z3xk4f7nawr5tcq9m2bvd")).toBe(
+      "nd_01HQ8Z3XK4F7NAWR5TCQ9M2BVD",
+    );
+    expect(() => canonicalAnyId("nd_x")).toThrow(IdDecodeError);
   });
 });
 
