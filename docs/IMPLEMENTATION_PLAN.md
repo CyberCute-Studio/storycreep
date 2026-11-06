@@ -629,7 +629,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-08 AC3 and FR-RT-02 AC1 (two server processes) and AC3 pass, and the latency harness reports NFR-PERF-08.
 
 ### 57. Rich-text editor component
-**Status:** todo · **Depends on:** 32, 56
+**Status:** done ([#70](https://github.com/CyberCute-Studio/storycreep/pull/70)) · **Depends on:** 32, 56
 **PRD:** FR-TEXT-01 (AC2), ADR-020
 - TipTap v3 with the constrained schema from item 32, in package `web/app/src/richtext` (`RichTextEditor`), whose extensions have only the attributes that N40 gives them, and which keeps its document within the schema and its limits after every change (N64).
 - Client-side schema validation: the TypeScript twin of the Go validator, in `web/shared/src/richtext` (`parseRichText`, `checkHref`), which runs the vectors of `/schema/rich-text/`, says why the server would refuse what the editor holds, and gives the document's appliers of item 56 the canonical form (N64).
