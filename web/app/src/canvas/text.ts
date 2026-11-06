@@ -11,6 +11,13 @@ export const kindSize = 12;
 export const bodySize = 13;
 export const bodyLine = 18;
 
+/**
+ * Where an element's text, or a jumper's target, starts on its card, under
+ * its title and its type: high enough that a jumper of 72 units, as one
+ * without a size of its own is, has the room of a line for its target.
+ */
+export const bodyTop = 50;
+
 /** The size that the fonts' glyphs are drawn at, in pixels, at their resolution 1. */
 export const glyphSize = 28;
 

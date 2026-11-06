@@ -50,6 +50,13 @@ export const detailZoom = 0.4;
  */
 const extent = 1_000_200_000;
 
+/**
+ * What the canvas shows of a board without nodes: its origin, at 100%, 48
+ * CSS pixels from the canvas's corner, as fit to content leaves 48 around
+ * what it shows.
+ */
+export const emptyView: Viewport = { x: -48, y: -48, zoom: 1 };
+
 /** The zooms that the zoom buttons and keys step through. */
 const stops = [
   0.1, 0.15, 0.2, 0.25, 0.33, 0.4, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4,

@@ -6,6 +6,7 @@
 import type { Scene } from "./scene";
 import { nodeColor, type Theme } from "./theme";
 import {
+  emptyView,
   grow,
   type Point,
   type Rect,
@@ -81,22 +82,24 @@ export class Minimap {
     }
     const content = scene.contentBounds();
     const d = this.drawn;
-    // A board without nodes maps the canvas's own rectangle, as it moves.
-    if (content === undefined) {
-      this.mapping = mappingOf(visibleRect(v, size), { width, height });
-    }
+    // The board's content, or, of a board without nodes, the part of it
+    // that its canvas opens at, its origin at 100%: what the minimap maps
+    // stays where it is as the canvas moves, so that a drag on it follows
+    // the pointer, rather than a map that moves under it.
+    this.mapping = mappingOf(
+      content === undefined
+        ? visibleRect(emptyView, size)
+        : grow(content, 0.05),
+      { width, height },
+    );
     if (
       d === undefined ||
       d.version !== scene.version ||
       d.theme !== theme ||
       d.width !== width ||
       d.height !== height ||
-      d.ratio !== ratio ||
-      content === undefined
+      d.ratio !== ratio
     ) {
-      if (content !== undefined) {
-        this.mapping = mappingOf(grow(content, 0.05), { width, height });
-      }
       this.drawBase(scene, theme, width, height, ratio);
       this.drawn = { version: scene.version, theme, width, height, ratio };
     }

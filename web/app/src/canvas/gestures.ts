@@ -334,11 +334,19 @@ export class Gestures {
 
   /**
    * Takes a step of Safari's pinch of a trackpad, which it sends as a
-   * gesture's scale, from 1 at its start, rather than as a wheel.
+   * gesture's scale, from 1 at its start, rather than as a wheel. Safari on
+   * an iPad sends a touch screen's pinch as a gesture too, as well as the
+   * fingers' pointers, which pinch already: a gesture while a finger is on
+   * the canvas is theirs, and is left to them.
    */
   scale(at: Point, from: number, to: number): void {
     if (from <= 0 || to <= 0) {
       return;
+    }
+    for (const p of this.pointers.values()) {
+      if (p.kind === "touch") {
+        return;
+      }
     }
     const v = this.host.viewport();
     this.host.setViewport(anchorAt(toWorld(v, at), at, v.zoom * (to / from)));

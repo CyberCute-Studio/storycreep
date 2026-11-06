@@ -34,6 +34,16 @@ export function keyAction(e: KeyInput): KeyAction | undefined {
   if (e.ctrlKey || e.metaKey || e.altKey) {
     return undefined;
   }
+  // Shift and a digit go by the key's place, which the key's character, !
+  // or @, or " on another layout, does not tell, and before the character:
+  // Shift and 1 type + on a Swiss keyboard, where = and the keypad's + zoom
+  // in still.
+  if (e.shiftKey && e.code === "Digit1") {
+    return { kind: "fit" };
+  }
+  if (e.shiftKey && e.code === "Digit2") {
+    return { kind: "selection" };
+  }
   const by = e.shiftKey ? 0.5 : 0.1;
   switch (e.key) {
     case "ArrowLeft":
@@ -52,14 +62,6 @@ export function keyAction(e: KeyInput): KeyAction | undefined {
       return { kind: "zoom", direction: -1 };
     case "Escape":
       return { kind: "deselect" };
-  }
-  // Shift and a digit, by the key's place, which the key's character, ! or
-  // @, or " on another layout, does not tell.
-  if (e.shiftKey && e.code === "Digit1") {
-    return { kind: "fit" };
-  }
-  if (e.shiftKey && e.code === "Digit2") {
-    return { kind: "selection" };
   }
   if (!e.shiftKey && (e.key === "0" || e.code === "Digit0")) {
     return { kind: "actual" };

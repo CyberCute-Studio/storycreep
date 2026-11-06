@@ -275,4 +275,18 @@ describe("the canvas's gestures", () => {
     gestures.scale({ x: 0, y: 0 }, 1.5, 3);
     expect(state.v.zoom).toBeCloseTo(3);
   });
+
+  it("leaves the gesture that Safari sends of an iPad's pinch to the fingers' own", () => {
+    const { state, gestures } = host();
+    gestures.down(touch(1, 300, 300));
+    gestures.down(touch(2, 500, 300));
+    gestures.move(touch(2, 700, 300));
+    // The fingers moved apart from 200 px to 400: twice the zoom, once.
+    gestures.scale({ x: 500, y: 300 }, 1, 2);
+    expect(state.v.zoom).toBeCloseTo(2);
+    gestures.up(touch(1, 300, 300));
+    gestures.up(touch(2, 700, 300));
+    gestures.scale({ x: 500, y: 300 }, 2, 3);
+    expect(state.v.zoom).toBeCloseTo(3);
+  });
 });

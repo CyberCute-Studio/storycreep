@@ -25,6 +25,7 @@ import {
   between,
   centerOf,
   clampZoom,
+  emptyView,
   fitTo,
   type Point,
   panBy,
@@ -143,6 +144,8 @@ export class CanvasController implements GestureHost {
     | { from: Viewport; to: Viewport; start: number }
     | undefined;
   private pending = 0;
+  /** Whether the loop stopped, as the canvas went from the page, so that nothing asks for a frame after. */
+  private stopped = false;
   /** Whether the board's content has been read, and whether the canvas has been placed on it once. */
   private ready = false;
   private placed = false;
@@ -175,10 +178,13 @@ export class CanvasController implements GestureHost {
     };
   }
 
-  /** Takes the elements that the canvas writes to, or none once it is gone. */
+  /** Takes the elements that the canvas writes to, which starts the loop again, or none once it is gone. */
   attach(elements: CanvasElements | undefined): void {
     this.elements = elements;
     this.lastData = {};
+    if (elements !== undefined) {
+      this.stopped = false;
+    }
     this.invalidate();
   }
 
@@ -219,16 +225,31 @@ export class CanvasController implements GestureHost {
     }
     this.sz = size;
     this.resolution = resolution;
-    this.engine?.resize(size, resolution);
-    this.invalidate();
+    const engine = this.engine;
+    if (engine === undefined) {
+      this.invalidate();
+      return;
+    }
+    // Resizing the renderer clears its canvas, which the browser would show
+    // so, as a frame of nothing, before the next frame drew it: the canvas
+    // draws at once, as the browser tells of its new size before it paints.
+    engine.resize(size, resolution);
+    this.drawNow();
   }
 
-  /** Takes what the project's document holds of the board. */
+  /**
+   * Takes what the project's document holds of the board, and whether the
+   * names of its components or variables, which cards show, changed.
+   */
   sync(doc: Doc, namesChanged: boolean): void {
+    const targets = this.scene.targetsVersion;
     const changed = this.scene.sync(doc);
-    if (changed || namesChanged) {
-      // A card names other nodes, components, and variables, which may
-      // have changed with it.
+    const relabel = namesChanged || this.scene.targetsVersion !== targets;
+    if (relabel) {
+      // A card names components, variables, and, a jumper's, the node that
+      // it goes to, which may have changed without it: every card is
+      // written anew. A card of a node that changed itself is written anew
+      // alone.
       this.labelsVersion++;
     }
     if (changed) {
@@ -239,7 +260,7 @@ export class CanvasController implements GestureHost {
         this.setSelection(new Set(kept));
       }
     }
-    if (changed || namesChanged) {
+    if (changed || relabel) {
       this.invalidate();
     }
   }
@@ -380,7 +401,7 @@ export class CanvasController implements GestureHost {
   private fitted(): Viewport {
     const bounds = this.scene.contentBounds();
     if (bounds === undefined) {
-      return anchorAt({ x: 0, y: 0 }, { x: 48, y: 48 }, 1);
+      return emptyView;
     }
     return fitTo(bounds, this.sz, 48, fitZoom);
   }
@@ -467,9 +488,21 @@ export class CanvasController implements GestureHost {
 
   /** Asks for a frame, once. */
   invalidate(): void {
-    if (this.pending === 0) {
+    if (this.pending === 0 && !this.stopped) {
       this.pending = this.clock.request(this.frame);
     }
+  }
+
+  /** Draws a frame at once, in place of the one asked for. */
+  private drawNow(): void {
+    if (this.stopped) {
+      return;
+    }
+    if (this.pending !== 0) {
+      this.clock.cancel(this.pending);
+      this.pending = 0;
+    }
+    this.frame(this.clock.now());
   }
 
   private readonly frame = (time: number): void => {
@@ -564,8 +597,9 @@ export class CanvasController implements GestureHost {
     this.lastData = data;
   }
 
-  /** Stops the loop. */
+  /** Stops the loop, until the canvas's elements are attached again. */
   stop(): void {
+    this.stopped = true;
     if (this.pending !== 0) {
       this.clock.cancel(this.pending);
       this.pending = 0;

@@ -24,12 +24,13 @@ import type { Doc } from "../document/doc";
 import { boardPart } from "../document/doc";
 import { useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
+import { mediaQueryList, useMediaQuery } from "../ui/media";
 import {
   type BenchOptions,
   CanvasController,
   renderedMark,
 } from "./controller";
-import { createEngine, type RendererKind } from "./engine";
+import { createEngine, type Engine, type RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
 import { labelsOf } from "./labels";
 import { Minimap } from "./minimap";
@@ -47,22 +48,59 @@ export interface CanvasOptions {
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
 
-/** Returns the media query of query, or undefined for a browser without matchMedia, as the tests' jsdom. */
-function mediaQuery(query: string): MediaQueryList | undefined {
-  return typeof window.matchMedia === "function"
-    ? window.matchMedia(query)
-    : undefined;
+/** The zoom that the toolbar shows, as the canvas tells it. */
+interface ZoomShown {
+  get(): number;
+  set(zoom: number): void;
+  subscribe(changed: () => void): () => void;
 }
 
-/** Reports whether the system asks for reduced motion (NFR-A11Y-07), as it changes. */
-export function useReducedMotion(): boolean {
-  return useSyncExternalStore(
-    (changed) => {
-      const q = mediaQuery(reducedMotionQuery);
-      q?.addEventListener("change", changed);
-      return () => q?.removeEventListener("change", changed);
+function zoomShown(): ZoomShown {
+  let zoom = 1;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => zoom,
+    set: (next) => {
+      zoom = next;
+      for (const changed of listeners) {
+        changed();
+      }
     },
-    () => mediaQuery(reducedMotionQuery)?.matches ?? false,
+    subscribe: (changed) => {
+      listeners.add(changed);
+      return () => {
+        listeners.delete(changed);
+      };
+    },
+  };
+}
+
+/**
+ * The toolbar's button of the zoom, which shows it and shows 100% again: it
+ * alone follows the zoom, which a pinch changes in nearly every frame, so
+ * that the rest of the canvas's page is not rendered again with it.
+ */
+function ZoomReset({
+  zoom,
+  onClick,
+}: {
+  zoom: ZoomShown;
+  onClick: () => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const value = useSyncExternalStore(zoom.subscribe, zoom.get);
+  const percent = formatNumber(i18n.language, value, {
+    style: "percent",
+    maximumFractionDigits: 0,
+  });
+  return (
+    <Button
+      aria-label={t("canvas.zoom_reset", { zoom: percent })}
+      onClick={onClick}
+      className="min-w-20 tabular-nums"
+    >
+      {percent}
+    </Button>
   );
 }
 
@@ -96,7 +134,7 @@ export function BoardCanvas({
   boardName: string;
   options?: CanvasOptions;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
   const helpId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -105,7 +143,7 @@ export function BoardCanvas({
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const [mode, setMode] = useState<Mode>("pan");
   const [selected, setSelected] = useState(0);
-  const [zoom, setZoom] = useState(1);
+  const [zoom] = useState(zoomShown);
   const [content, setContent] = useState<"loading" | "ready" | "failed">(
     "loading",
   );
@@ -116,12 +154,13 @@ export function BoardCanvas({
   const [empty, setEmpty] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const [height, setHeight] = useState<number>();
-  const reducedMotion = useReducedMotion();
+  // Whether the system asks for reduced motion (NFR-A11Y-07), as it changes.
+  const reducedMotion = useMediaQuery(reducedMotionQuery, false);
   const [controller] = useState(
     () =>
       new CanvasController(boardId, {
         selection: (ids) => setSelected(ids.size),
-        zoom: setZoom,
+        zoom: zoom.set,
         rendered: () => {
           try {
             performance.clearMarks(renderedMark);
@@ -159,7 +198,7 @@ export function BoardCanvas({
     controller.attach({ host, band });
     const theme = () => controller.setTheme(readTheme(host));
     theme();
-    const dark = mediaQuery(darkQuery);
+    const dark = mediaQueryList(darkQuery);
     dark?.addEventListener("change", theme);
     const resize = () => {
       const r = host.getBoundingClientRect();
@@ -197,6 +236,15 @@ export function BoardCanvas({
     const move = pointer("move");
     const up = pointer("up");
     const cancel = pointer("cancel");
+    // The host's own capture, once it lost it, rather than that of an
+    // element in it, as the minimap's, or of a finger on the renderer's
+    // canvas, which the browser gives it and the host takes, whose loss
+    // bubbles up to it.
+    const lost = (e: PointerEvent) => {
+      if (e.target === host) {
+        cancel(e);
+      }
+    };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       const r = host.getBoundingClientRect();
@@ -255,7 +303,7 @@ export function BoardCanvas({
     host.addEventListener("pointermove", move);
     host.addEventListener("pointerup", up);
     host.addEventListener("pointercancel", cancel);
-    host.addEventListener("lostpointercapture", cancel);
+    host.addEventListener("lostpointercapture", lost);
     host.addEventListener("wheel", wheel, { passive: false });
     for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
       host.addEventListener(type, gesture);
@@ -272,7 +320,7 @@ export function BoardCanvas({
       host.removeEventListener("pointermove", move);
       host.removeEventListener("pointerup", up);
       host.removeEventListener("pointercancel", cancel);
-      host.removeEventListener("lostpointercapture", cancel);
+      host.removeEventListener("lostpointercapture", lost);
       host.removeEventListener("wheel", wheel);
       for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
         host.removeEventListener(type, gesture);
@@ -281,22 +329,18 @@ export function BoardCanvas({
     };
   }, [controller]);
 
-  // The renderer, on a canvas element of its own, as a renderer that ends
-  // may leave its canvas's context lost.
+  // The renderer, on a canvas element of its own in the surface, as a
+  // renderer that ends may leave its canvas's context lost.
   useEffect(() => {
     const surface = surfaceRef.current;
     const host = hostRef.current;
     if (surface === null || host === null) {
       return;
     }
-    const canvas = document.createElement("canvas");
-    canvas.setAttribute("aria-hidden", "true");
-    canvas.className = "block size-full";
-    surface.append(canvas);
     let ended = false;
-    let started: Awaited<ReturnType<typeof createEngine>> | undefined;
+    let started: Engine | undefined;
     setEngine("starting");
-    createEngine(canvas, {
+    createEngine(surface, {
       preference: options.renderer,
       forced: options.renderer !== undefined,
       fontFamily: getComputedStyle(host).fontFamily || "sans-serif",
@@ -320,7 +364,6 @@ export function BoardCanvas({
       ended = true;
       controller.setEngine(undefined);
       started?.destroy();
-      canvas.remove();
     };
   }, [controller, options.renderer]);
 
@@ -334,7 +377,7 @@ export function BoardCanvas({
 
   // The board's content, from the project's document, as it changes.
   useEffect(() => {
-    let names: Pick<Doc, "components" | "variables" | "nodes"> | undefined;
+    let names: Pick<Doc, "components" | "variables"> | undefined;
     const sync = () => {
       const view = doc.store.getState().view;
       const namesChanged =
@@ -356,16 +399,11 @@ export function BoardCanvas({
         nodeTitle: (id) => view.nodes.get(id)?.title,
       });
     };
+    // The messages of t, which is another as the locale changes.
     controller.relabel();
     sync();
     return doc.store.subscribe(sync);
   }, [controller, doc, t]);
-
-  useEffect(() => {
-    if (i18n.language !== "") {
-      controller.relabel();
-    }
-  }, [controller, i18n.language]);
 
   // The board's nodes and connections, read once, and then the names that
   // its cards show, of its speakers and of the variables that its texts
@@ -434,10 +472,6 @@ export function BoardCanvas({
     controller.centerOnMinimap({ x: e.clientX - r.left, y: e.clientY - r.top });
   };
 
-  const percent = formatNumber(i18n.language, zoom, {
-    style: "percent",
-    maximumFractionDigits: 0,
-  });
   const overlay =
     engine === "unsupported"
       ? { role: "alert" as const, text: t("canvas.unsupported") }
@@ -477,13 +511,7 @@ export function BoardCanvas({
           >
             −
           </Button>
-          <Button
-            aria-label={t("canvas.zoom_reset", { zoom: percent })}
-            onClick={() => controller.zoomTo(1)}
-            className="min-w-20 tabular-nums"
-          >
-            {percent}
-          </Button>
+          <ZoomReset zoom={zoom} onClick={() => controller.zoomTo(1)} />
           <Button
             aria-label={t("canvas.zoom_in")}
             onClick={() => controller.zoomStep(1)}

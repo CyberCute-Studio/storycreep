@@ -72,6 +72,46 @@ describe("the scene of a board", () => {
     expect(scene.connections.size).toBe(0);
   });
 
+  it("does not draw a connection that went while it waited for a node, once the node comes", () => {
+    const scene = new Scene("bd_a");
+    const a = testNode("nd_1", 0, 0);
+    const b = testNode("nd_2", 400, 0);
+    const waiting = docOf([a], [testConnection("cn_1", "nd_1", "nd_2")]);
+    scene.sync(waiting);
+    const deleted = { ...waiting, connections: new Map() };
+    scene.sync(deleted);
+    scene.sync({
+      ...deleted,
+      nodes: new Map([
+        [a.id, a],
+        [b.id, b],
+      ]),
+    });
+    expect(scene.connections.size).toBe(0);
+  });
+
+  it("tells once the title of a node that a jumper goes to changes, of its board or of another", () => {
+    const scene = new Scene("bd_a");
+    const jumper = testNode("nd_j", 0, 0, {
+      type: "jumper",
+      target: { board_id: "bd_b", node_id: "nd_t" },
+    });
+    const other = testNode("nd_o", 400, 0);
+    scene.sync(docOf([jumper, other]));
+    const before = scene.targetsVersion;
+    // The target, of another board, comes.
+    const target = testNode("nd_t", 0, 0, { board_id: "bd_b" });
+    scene.sync(docOf([jumper, other, target]));
+    expect(scene.targetsVersion).toBe(before + 1);
+    // A node that no jumper goes to moves, and the target is the same.
+    scene.sync(
+      docOf([jumper, { ...other, position: { x: 0, y: 400 } }, target]),
+    );
+    expect(scene.targetsVersion).toBe(before + 1);
+    scene.sync(docOf([jumper, other, { ...target, title: "Harbour" }]));
+    expect(scene.targetsVersion).toBe(before + 2);
+  });
+
   // Verifies: FR-EDIT-11/AC1
   it("shows, at one viewport, the same content of a board of 200 nodes as of one of 2,000", () => {
     const small = new Scene("bd_a");

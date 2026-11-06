@@ -3,7 +3,7 @@
 // what a rectangle of the board shows takes the time of the cells that it
 // covers and of what they hold, and not of the board's whole content.
 
-import type { Rect } from "./viewport";
+import { intersects, type Rect } from "./viewport";
 
 /** The side of a cell, in units of the board: a few nodes across. */
 const cellSize = 1024;
@@ -150,7 +150,7 @@ export class GridIndex<T> {
       }
       seen.add(id);
       const e = this.entries.get(id);
-      if (e !== undefined && overlaps(e.rect, r)) {
+      if (e !== undefined && intersects(e.rect, r)) {
         found(id, e.value, e.rect);
       }
     };
@@ -181,13 +181,4 @@ export class GridIndex<T> {
       each(id, e.value, e.rect);
     }
   }
-}
-
-function overlaps(a: Rect, b: Rect): boolean {
-  return (
-    a.x <= b.x + b.width &&
-    b.x <= a.x + a.width &&
-    a.y <= b.y + b.height &&
-    b.y <= a.y + a.height
-  );
 }

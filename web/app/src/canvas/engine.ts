@@ -17,23 +17,19 @@ import {
   BitmapText,
   Container,
   Graphics,
+  isWebGLSupported,
   NineSliceSprite,
   type Renderer,
   Sprite,
   Texture,
 } from "pixi.js";
 import type { NodeLabels } from "./labels";
-import {
-  type Curve,
-  headHeight,
-  outputOffset,
-  outputRow,
-  portPoint,
-} from "./layout";
-import type { NodeItem, Scene } from "./scene";
+import { type Curve, outputOffset, portPoint } from "./layout";
+import type { ConnectionItem, NodeItem, Scene } from "./scene";
 import {
   bodyLine,
   bodySize,
+  bodyTop,
   clip,
   glyphSize,
   kindSize,
@@ -46,6 +42,7 @@ import {
   contains,
   detailZoom,
   grow,
+  intersects,
   type Rect,
   type Size,
   type Viewport,
@@ -98,6 +95,7 @@ export interface Engine {
    * keeps none there.
    */
   textures(): number | undefined;
+  /** Ends the renderer, and takes its canvas element out of the page. */
   destroy(): void;
 }
 
@@ -132,28 +130,91 @@ const zoomSlack = 1.25;
 /** The corner of a card, in units of the board. */
 const cornerRadius = 10;
 
-/** Starts the renderer on canvas, or rejects where the browser has none. */
+/** The renderers in the order that the canvas tries them, without a preference. */
+const renderers: readonly RendererKind[] = ["webgl", "webgpu", "canvas"];
+
+/**
+ * Starts the renderer on a canvas element of its own, which it adds to
+ * surface, or rejects where the browser has none. It tries each renderer in
+ * turn, each on a canvas of its own, as a canvas keeps the kind of context
+ * that it gave first, so that one that a renderer failed to start on, as
+ * where the GPU's process is gone, cannot give the next renderer its own.
+ */
 export async function createEngine(
-  canvas: HTMLCanvasElement,
+  surface: HTMLElement,
   options: EngineOptions,
 ): Promise<Engine> {
-  const renderer = await autoDetectRenderer({
-    canvas,
-    width: Math.max(1, canvas.clientWidth),
-    height: Math.max(1, canvas.clientHeight),
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-    antialias: true,
-    backgroundAlpha: 1,
-    preference: options.preference,
-    failIfMajorPerformanceCaveat: options.forced !== true,
-    // The canvas brings what it draws with its own imports: PixiJS's
-    // accessibility layer, which would add a button of its own to the
-    // page on a tablet, and its events, are not the canvas's (item 63
-    // gives the canvas its accessibility tree).
-    manageImports: false,
-  });
-  return new PixiEngine(renderer, options.fontFamily);
+  const caveat = options.forced !== true;
+  const order =
+    options.preference === undefined
+      ? renderers
+      : [
+          options.preference,
+          ...renderers.filter((k) => k !== options.preference),
+        ];
+  // PixiJS tells whether the page has WebGL once, for the page, with the
+  // caveat that its first caller asked with, so that a board that forces
+  // WebGL after one that did not would find none, and one that does not
+  // after one that did would start a WebGL that the browser runs in
+  // software, and fail: the canvas has PixiJS tell whether the browser has
+  // any, as its own default does, and tells whether it is the GPU's itself,
+  // each time that it starts.
+  isWebGLSupported(false);
+  for (const kind of order) {
+    if (kind === "webgl" && caveat && !hardwareWebGL()) {
+      continue;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.className = "block size-full";
+    surface.append(canvas);
+    try {
+      const renderer = await autoDetectRenderer({
+        canvas,
+        width: Math.max(1, canvas.clientWidth),
+        height: Math.max(1, canvas.clientHeight),
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        antialias: true,
+        backgroundAlpha: 1,
+        // This renderer alone, so that one that fails to start gives way
+        // to the next here, on a canvas of its own.
+        preference: [kind],
+        failIfMajorPerformanceCaveat: caveat,
+        // The canvas brings what it draws with its own imports: PixiJS's
+        // accessibility layer, which would add a button of its own to the
+        // page on a tablet, and its events, are not the canvas's (item 63
+        // gives the canvas its accessibility tree).
+        manageImports: false,
+      });
+      return new PixiEngine(renderer, canvas, options.fontFamily);
+    } catch {
+      canvas.remove();
+    }
+  }
+  throw new Error("No renderer can draw the board in this browser");
+}
+
+/**
+ * Reports whether the browser has a WebGL that its GPU runs, rather than one
+ * that it runs in software, with a major performance caveat, as PixiJS asks
+ * for it, without keeping the answer.
+ */
+function hardwareWebGL(): boolean {
+  try {
+    const gl = document.createElement("canvas").getContext("webgl", {
+      stencil: true,
+      failIfMajorPerformanceCaveat: true,
+    });
+    if (gl === null) {
+      return false;
+    }
+    const stencil = gl.getContextAttributes()?.stencil === true;
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return stencil;
+  } catch {
+    return false;
+  }
 }
 
 /** The objects of a node's card. */
@@ -205,6 +266,7 @@ class PixiEngine implements Engine {
         theme: Theme;
         stats: Omit<FrameStats, "rebuilt" | "visible">;
         shown: NodeItem[];
+        connections: ConnectionItem[];
       }
     | undefined;
   /** The fonts that this renderer installed, which it releases as it ends. */
@@ -212,6 +274,8 @@ class PixiEngine implements Engine {
 
   constructor(
     private readonly renderer: Renderer,
+    /** The canvas element that the renderer draws on, which it takes out of the page as it ends. */
+    private readonly canvas: HTMLCanvasElement,
     private readonly fontFamily: string,
   ) {
     this.kind = kindOf(renderer);
@@ -263,27 +327,49 @@ class PixiEngine implements Engine {
     const { viewport: v, size } = f;
     const visible = visibleRect(v, size);
     const tier = textTier(v.zoom * this.renderer.resolution);
-    const shownCount =
-      this.built === undefined ? 0 : countIn(this.built.shown, visible);
+    const b = this.built;
+    // The nodes in view: of those that the renderer holds, while they are
+    // the scene's as it is and its margin holds the canvas, as in each
+    // frame that moves within it, and else of the scene itself, where the
+    // Canvas 2D renderer needs them to choose its level of detail before
+    // it builds the margin anew, rather than the nodes of the margin that
+    // it built last, as of a board that was not read yet.
+    let inView =
+      b !== undefined &&
+      b.sceneVersion === f.scene.version &&
+      contains(b.region, visible)
+        ? countIn(b.shown, visible)
+        : undefined;
+    if (inView === undefined && this.kind === "canvas") {
+      inView = f.scene.nodesIn(visible).length;
+    }
     const lod: FrameStats["lod"] =
       v.zoom < detailZoom ||
-      (this.kind === "canvas" && shownCount > canvasDetailLimit)
+      (this.kind === "canvas" && (inView ?? 0) > canvasDetailLimit)
         ? "blocks"
         : "detail";
-    const b = this.built;
-    const stale =
+    const moved =
       b === undefined ||
       b.lod !== lod ||
       b.tier !== tier ||
-      b.sceneVersion !== f.scene.version ||
-      b.selectionVersion !== f.selectionVersion ||
-      b.labelsVersion !== f.labelsVersion ||
-      b.theme !== f.theme ||
       v.zoom > b.zoom * zoomSlack ||
       v.zoom < b.zoom / zoomSlack ||
       !contains(b.region, visible);
+    const stale =
+      moved ||
+      b.sceneVersion !== f.scene.version ||
+      b.selectionVersion !== f.selectionVersion ||
+      b.labelsVersion !== f.labelsVersion ||
+      b.theme !== f.theme;
     if (stale) {
-      this.build(f, grow(visible, margin), lod, tier);
+      // A change of what the margin shows, but not of where it is, as of
+      // the selection, builds it again where it was, so that its lines,
+      // which the change left as they were, are not drawn anew.
+      if (moved) {
+        this.build(f, grow(visible, margin), v.zoom, lod, tier);
+      } else {
+        this.build(f, b.region, b.zoom, lod, tier);
+      }
     }
     const built = this.built as NonNullable<typeof this.built>;
     this.world.scale.set(v.zoom);
@@ -295,26 +381,35 @@ class PixiEngine implements Engine {
     this.renderer.render(this.stage);
     return {
       ...built.stats,
-      visible: countIn(built.shown, visible),
+      visible: inView ?? countIn(built.shown, visible),
       rebuilt: stale,
     };
   }
 
+  /** Builds the objects of what region of the board shows, at zoom, from its corner. */
   private build(
     f: Frame,
     region: Rect,
+    zoom: number,
     lod: FrameStats["lod"],
     tier: number,
   ): void {
-    const { scene, theme, viewport: v } = f;
-    const shown = scene.shown(region);
+    const { scene, theme } = f;
+    const was = this.built;
+    const same =
+      was !== undefined &&
+      was.region === region &&
+      was.sceneVersion === scene.version;
+    const shown = same
+      ? { nodes: was.shown, connections: was.connections }
+      : scene.shown(region);
     const origin = { x: Math.floor(region.x), y: Math.floor(region.y) };
     const fresh =
-      this.built === undefined ||
-      this.built.tier !== tier ||
-      this.built.labelsVersion !== f.labelsVersion ||
-      this.built.theme !== theme ||
-      this.built.lod !== lod;
+      was === undefined ||
+      was.tier !== tier ||
+      was.labelsVersion !== f.labelsVersion ||
+      was.theme !== theme ||
+      was.lod !== lod;
     let texts = 0;
     if (lod === "blocks") {
       this.releaseCards(new Set());
@@ -371,11 +466,16 @@ class PixiEngine implements Engine {
         }
       });
     }
-    this.drawLines(shown.connections, origin, v.zoom, lod, theme);
+    // The lines are one stroke of every connection of the margin, drawn
+    // anew only once a connection, the margin, the zoom that their width
+    // follows, the level of detail, or the theme changed.
+    if (!same || was.zoom !== zoom || was.lod !== lod || was.theme !== theme) {
+      this.drawLines(shown.connections, origin, zoom, lod, theme);
+    }
     this.built = {
       region,
       origin,
-      zoom: v.zoom,
+      zoom,
       lod,
       tier,
       sceneVersion: scene.version,
@@ -389,6 +489,7 @@ class PixiEngine implements Engine {
         connections: shown.connections.length,
       },
       shown: shown.nodes,
+      connections: shown.connections,
     };
   }
 
@@ -512,30 +613,30 @@ class PixiEngine implements Engine {
     );
     const branch = node.type === "branch";
     const outputs = node.outputs ?? [];
-    const room = Math.floor(
-      (h - headHeight - 6) / (branch ? outputRow : bodyLine),
-    );
-    const bodyLines = branch ? outputs.length : Math.min(lines, room);
+    // A branch's outputs, each on its row, or, on the row of a first one,
+    // the line that says that it has none; an element's text, or a
+    // jumper's target, in the lines that the card has room for under its
+    // title and its type, which is one in a jumper's 72 units.
+    const rows = Math.max(1, outputs.length);
+    const bodyLines = branch
+      ? rows
+      : Math.min(lines, Math.floor((h - bodyTop - 4) / bodyLine));
     view.body.visible = labels.body !== "" && bodyLines > 0;
     if (view.body.visible) {
-      const rows = wrapLines(labels.body, perLine(bodySize), bodyLines, branch);
-      const lineHeight =
-        branch && outputs.length > 0
-          ? outputOffset(1, outputs.length, h) -
-            outputOffset(0, outputs.length, h)
-          : bodyLine;
+      const text = wrapLines(labels.body, perLine(bodySize), bodyLines, branch);
+      const lineHeight = branch
+        ? outputOffset(1, rows, h) - outputOffset(0, rows, h)
+        : bodyLine;
       if (view.body.style.lineHeight !== lineHeight) {
         view.body.style.lineHeight = lineHeight;
       }
       setText(
         view.body,
         fonts.regular,
-        rows,
+        text,
         branch ? theme.muted : theme.fg,
         12,
-        branch && outputs.length > 0
-          ? outputOffset(0, outputs.length, h) - lineHeight / 2
-          : headHeight,
+        branch ? outputOffset(0, rows, h) - lineHeight / 2 : bodyTop,
       );
     }
     // A port is a dot on the card's edge: the entry, on the left, and each
@@ -659,6 +760,7 @@ class PixiEngine implements Engine {
       }
     }
     this.renderer.destroy();
+    this.canvas.remove();
   }
 }
 
@@ -678,13 +780,7 @@ interface Fonts {
 function countIn(nodes: readonly NodeItem[], r: Rect): number {
   let n = 0;
   for (const item of nodes) {
-    const a = item.rect;
-    if (
-      a.x <= r.x + r.width &&
-      r.x <= a.x + a.width &&
-      a.y <= r.y + r.height &&
-      r.y <= a.y + a.height
-    ) {
+    if (intersects(item.rect, r)) {
       n++;
     }
   }

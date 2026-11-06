@@ -43,8 +43,18 @@ export class Scene {
   private nextOrder = 0;
   private bounds: Rect | undefined;
   private boundsStale = true;
+  /** The node that each of the board's jumpers goes to, by the jumper's ID. */
+  private readonly targets = new Map<string, string>();
+  /** The titles of the nodes that the board's jumpers go to, by their IDs, as the scene saw them last. */
+  private targetTitles: ReadonlyMap<string, string | undefined> = new Map();
   /** Counts the changes of the scene, so that what draws it tells that it changed. */
   version = 0;
+  /**
+   * Counts the changes of the titles of the nodes that the board's jumpers
+   * go to, which their cards show, as of a node of another board, which
+   * comes, or is renamed, without any node of this one changing.
+   */
+  targetsVersion = 0;
 
   constructor(readonly boardId: string) {}
 
@@ -78,6 +88,11 @@ export class Scene {
           order: had?.order ?? this.nextOrder++,
         };
         this.nodes.set(node.id, item.rect, item);
+        if (node.type === "jumper" && node.target?.node_id !== undefined) {
+          this.targets.set(node.id, node.target.node_id);
+        } else {
+          this.targets.delete(node.id);
+        }
         moved.add(node.id);
         this.changed();
       }
@@ -89,10 +104,25 @@ export class Scene {
       });
       for (const id of gone) {
         this.nodes.delete(id);
+        this.targets.delete(id);
         moved.add(id);
         this.changed();
       }
       this.nodesSeen = doc.nodes;
+      const titles = new Map<string, string | undefined>();
+      for (const target of this.targets.values()) {
+        titles.set(target, doc.nodes.get(target)?.title);
+      }
+      if (
+        titles.size !== this.targetTitles.size ||
+        [...titles].some(
+          ([id, title]) =>
+            !this.targetTitles.has(id) || this.targetTitles.get(id) !== title,
+        )
+      ) {
+        this.targetsVersion++;
+      }
+      this.targetTitles = titles;
     }
     if (doc.connections !== this.connectionsSeen) {
       const seen = new Set<string>();
@@ -117,6 +147,12 @@ export class Scene {
           gone.push(id);
         }
       });
+      // And those that waited for a node, which must not come back with it.
+      for (const id of this.waiting.keys()) {
+        if (!seen.has(id)) {
+          gone.push(id);
+        }
+      }
       for (const id of gone) {
         this.unplace(id);
       }

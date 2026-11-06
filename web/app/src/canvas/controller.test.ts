@@ -90,7 +90,7 @@ function setUp() {
   c.setEngine(engine);
   c.setTheme(theme);
   c.setSize({ width: 1000, height: 600 }, 1);
-  return { c, time, events, host, frames };
+  return { c, time, events, host, band, frames };
 }
 
 describe("the canvas's controller", () => {
@@ -184,6 +184,62 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBe(1);
     expect(key("+", { ctrlKey: true })).toBe(false);
     expect(key("a")).toBe(false);
+    // Shift and 1 type + on a Swiss keyboard, and fit the content still.
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    expect(key("+", { code: "Digit1", shiftKey: true })).toBe(true);
+    expect(c.viewport().zoom).toBe(1);
+    expect(c.viewport().x).toBeCloseTo(120 - 500);
+  });
+
+  it("draws at once as the canvas is resized, rather than a frame of nothing first", () => {
+    const { c, time, frames } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    const drawn = frames.length;
+    c.setSize({ width: 800, height: 600 }, 1);
+    expect(frames.length).toBe(drawn + 1);
+    expect(frames[frames.length - 1].size).toEqual({ width: 800, height: 600 });
+    time.tick();
+    expect(frames.length).toBe(drawn + 1);
+  });
+
+  it("asks for no frame once it stopped, until the canvas is attached again", () => {
+    const { c, time, host, band } = setUp();
+    time.tick();
+    c.stop();
+    c.attach(undefined);
+    c.setEngine(undefined);
+    expect(time.pending()).toBe(0);
+    c.attach({ host, band });
+    expect(time.pending()).toBe(1);
+  });
+
+  it("writes every card anew once a name that cards show changes, but not for a node that moves", () => {
+    const { c, time, frames } = setUp();
+    const jumper = testNode("nd_j", 0, 0, {
+      type: "jumper",
+      target: { board_id: "bd_b", node_id: "nd_t" },
+    });
+    const other = testNode("nd_o", 400, 0);
+    const target = testNode("nd_t", 0, 0, { board_id: "bd_b" });
+    c.sync(docOf([jumper, other, target]), false);
+    c.setReady();
+    time.tick();
+    const labels = () => frames[frames.length - 1].labelsVersion;
+    const first = labels();
+    c.sync(
+      docOf([jumper, { ...other, position: { x: 0, y: 400 } }, target]),
+      false,
+    );
+    time.tick();
+    expect(labels()).toBe(first);
+    c.sync(docOf([jumper, other, { ...target, title: "Harbour" }]), false);
+    time.tick();
+    expect(labels()).toBe(first + 1);
+    c.sync(docOf([jumper, other, { ...target, title: "Harbour" }]), true);
+    time.tick();
+    expect(labels()).toBe(first + 2);
   });
 
   it("keeps the board's centre where it is as the canvas is resized", () => {

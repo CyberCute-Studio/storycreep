@@ -134,19 +134,6 @@ export function curveBounds(c: Curve): Rect {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
-/** Returns the point of curve at t, from 0 to 1. */
-export function pointOn(c: Curve, t: number): Point {
-  const u = 1 - t;
-  const a = u * u * u;
-  const b = 3 * u * u * t;
-  const d = 3 * u * t * t;
-  const e = t * t * t;
-  return {
-    x: a * c.p0.x + b * c.c1.x + d * c.c2.x + e * c.p3.x,
-    y: a * c.p0.y + b * c.c1.y + d * c.c2.y + e * c.p3.y,
-  };
-}
-
 /** Returns the curve of connection, between its nodes' rectangles, as the nodes are. */
 export function connectionCurve(
   connection: Connection,
