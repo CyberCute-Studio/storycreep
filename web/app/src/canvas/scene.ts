@@ -186,6 +186,15 @@ export class Scene {
 
   /** Puts connection c into the scene, between its nodes, or keeps it until both are there. */
   private place(c: Connection): void {
+    // A connection whose ends changed, as one reconnected to another node,
+    // leaves the connections of the node that it no longer has, which would
+    // else place it again each time that node changes, and keep it once it
+    // is gone.
+    const had =
+      this.connections.get(c.id)?.connection ?? this.waiting.get(c.id);
+    if (had !== undefined && had !== c) {
+      this.unlink(had, c);
+    }
     for (const end of [c.from_node_id, c.to_node_id]) {
       let set = this.linked.get(end);
       if (set === undefined) {
@@ -215,13 +224,7 @@ export class Scene {
     const item = this.connections.get(id);
     const c = item?.connection ?? this.waiting.get(id);
     if (c !== undefined) {
-      for (const end of [c.from_node_id, c.to_node_id]) {
-        const set = this.linked.get(end);
-        set?.delete(id);
-        if (set?.size === 0) {
-          this.linked.delete(end);
-        }
-      }
+      this.unlink(c);
     }
     this.waiting.delete(id);
     if (item !== undefined) {
@@ -230,16 +233,38 @@ export class Scene {
     }
   }
 
+  /** Takes connection c out of the connections of its nodes, but of those that kept, as it is now, still has. */
+  private unlink(c: Connection, kept?: Connection): void {
+    for (const end of [c.from_node_id, c.to_node_id]) {
+      if (end === kept?.from_node_id || end === kept?.to_node_id) {
+        continue;
+      }
+      const set = this.linked.get(end);
+      set?.delete(c.id);
+      if (set?.size === 0) {
+        this.linked.delete(end);
+      }
+    }
+  }
+
   private changed(): void {
     this.version++;
     this.boundsStale = true;
   }
 
-  /** Returns the rectangle of the board that holds every node, or undefined for a board without one. */
+  /**
+   * Returns the rectangle of the board that holds every node and every
+   * connection, as a loop above its node, or a curve that leaves a node at
+   * the board's edge to go back to one before it, which goes beyond the
+   * nodes, or undefined for a board without nodes.
+   */
   contentBounds(): Rect | undefined {
     if (this.boundsStale) {
       const rects: Rect[] = [];
       this.nodes.forEach((_, __, rect) => {
+        rects.push(rect);
+      });
+      this.connections.forEach((_, __, rect) => {
         rects.push(rect);
       });
       this.bounds = union(rects);

@@ -92,6 +92,16 @@ function setUp() {
   return { c, time, events, host, band, frames };
 }
 
+/**
+ * Reads a board of a node into the canvas, which places it on the node,
+ * fitted, so that what moves the canvas after places it there.
+ */
+function placed(c: CanvasController, time: ReturnType<typeof fakeClock>) {
+  c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+  c.setReady();
+  time.tick();
+}
+
 describe("the canvas's controller", () => {
   it("fits the board's content once it has been read, and tells of its first frame", () => {
     const { c, time, events, host } = setUp();
@@ -242,8 +252,8 @@ describe("the canvas's controller", () => {
   });
 
   it("keeps the board's centre where it is as the canvas is resized", () => {
-    const { c } = setUp();
-    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    const { c, time } = setUp();
+    placed(c, time);
     c.setViewport({ x: 100, y: 100, zoom: 2 });
     c.setSize({ width: 600, height: 1000 }, 2);
     // The centre was 100 + 500 / 2, 100 + 300 / 2.
@@ -251,9 +261,50 @@ describe("the canvas's controller", () => {
     expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
   });
 
+  it("keeps the board's centre where it is through a size of none, as of a host that the page does not display", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    c.setViewport({ x: 100, y: 100, zoom: 2 });
+    c.setSize({ width: 0, height: 0 }, 1);
+    c.setSize({ width: 600, height: 1000 }, 1);
+    expect(c.viewport().x + 300 / 2).toBeCloseTo(350);
+    expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
+  });
+
+  it("opens fitted to the content once it has been read, however the wheel moved the canvas while it was read", () => {
+    const { c, time } = setUp();
+    c.sync(docOf(gridNodes(100, 10)), false);
+    const wheel = { x: 500, y: 300, deltaMode: 0, zoom: false, shift: false };
+    c.gestures.wheel({ ...wheel, dx: 0, dy: 120 });
+    c.gestures.wheel({ ...wheel, dx: 0, dy: 40, zoom: true });
+    time.tick();
+    expect(c.viewport().zoom).toBeLessThan(1);
+    c.setReady();
+    time.tick();
+    expect(c.viewport().zoom).toBeCloseTo(504 / (9 * 200 + 128));
+  });
+
+  it("goes on with an animation, and with the fit to come, as a wheel's event moves nothing", () => {
+    const { c, time } = setUp();
+    c.sync(docOf(gridNodes(100, 10)), false);
+    c.setReady();
+    const still = { x: 500, y: 300, dx: 0, dy: 0, deltaMode: 0, shift: false };
+    c.gestures.wheel({ ...still, zoom: false });
+    // Safari's pinch, as it starts, is of a scale of 1.
+    c.gestures.scale({ x: 500, y: 300 }, 1, 1);
+    time.tick();
+    const fitted = c.viewport();
+    expect(fitted.zoom).toBeCloseTo(504 / (9 * 200 + 128));
+    c.zoomTo(1);
+    time.tick();
+    c.gestures.wheel({ ...still, zoom: true });
+    time.tick(animationTime);
+    expect(c.viewport().zoom).toBe(1);
+  });
+
   it("goes on with an animation from where the canvas is, as it is resized meanwhile", () => {
     const { c, time } = setUp();
-    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    placed(c, time);
     c.setViewport({ x: 0, y: 0, zoom: 1 });
     // To 200% about the board's point at the centre, 500, 300.
     c.zoomTo(2);

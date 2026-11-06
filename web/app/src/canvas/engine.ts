@@ -13,7 +13,8 @@
 import "pixi.js/unsafe-eval";
 import {
   autoDetectRenderer,
-  BitmapFont,
+  type BitmapFont,
+  BitmapFontManager,
   BitmapText,
   Container,
   Graphics,
@@ -31,8 +32,10 @@ import {
   bodySize,
   bodyTop,
   clip,
+  columnsOf,
   glyphSize,
   kindSize,
+  type Measure,
   textTier,
   titleSize,
   wrapLines,
@@ -128,6 +131,9 @@ const zoomSlack = 1.25;
 /** The corner of a card, in units of the board. */
 const cornerRadius = 10;
 
+/** How far a card's ring, 4 units outside it, and its ports, dots of 10 on its edges, reach beyond its node, in units of the board. */
+const cardReach = 8;
+
 /** The renderers in the order that the canvas tries them, without a preference. */
 const renderers: readonly RendererKind[] = ["webgl", "webgpu", "canvas"];
 
@@ -166,8 +172,9 @@ export async function createEngine(
     canvas.setAttribute("aria-hidden", "true");
     canvas.className = "block size-full";
     surface.append(canvas);
+    let renderer: Renderer | undefined;
     try {
-      const renderer = await autoDetectRenderer({
+      renderer = await autoDetectRenderer({
         canvas,
         width: Math.max(1, canvas.clientWidth),
         height: Math.max(1, canvas.clientHeight),
@@ -187,6 +194,16 @@ export async function createEngine(
       });
       return new PixiEngine(renderer, canvas, options.fontFamily);
     } catch {
+      // A renderer that started, but whose engine did not, ends, rather
+      // than keep its context, or its GPU's device, while the next one
+      // starts. One whose own start failed is autoDetectRenderer's, which
+      // returns none to end: nothing of the page holds it once its canvas
+      // is out of the page, and the browser collects it with the canvas.
+      try {
+        renderer?.destroy();
+      } catch {
+        // A renderer that ends half started has nothing more to give back.
+      }
       canvas.remove();
     }
   }
@@ -375,12 +392,51 @@ class PixiEngine implements Engine {
       (built.origin.x - v.x) * v.zoom,
       (built.origin.y - v.y) * v.zoom,
     );
+    if (this.kind === "canvas") {
+      this.cull(visible);
+    }
     this.renderer.background.color = f.theme.canvas;
     this.renderer.render(this.stage);
     return {
       ...built.stats,
       visible: inView ?? countIn(built.shown, visible),
     };
+  }
+
+  /**
+   * Draws, of the nodes of the margin, those in r alone, as the Canvas 2D
+   * renderer draws each object that it is given on its own, each glyph of a
+   * card's text too, whether the canvas shows it or not, since PixiJS culls
+   * nothing by itself: so the margin, which keeps the canvas from building
+   * anything as it pans, costs it nothing to draw, and it draws as many
+   * cards as there are nodes in view, which its limit counts
+   * (canvasDetailLimit), rather than the four times as many that the margin
+   * holds. A GPU's renderer draws the margin whole, in a few batches.
+   */
+  private cull(r: Rect): void {
+    const built = this.built;
+    if (built === undefined) {
+      return;
+    }
+    if (built.lod === "blocks") {
+      built.shown.forEach((item, i) => {
+        this.blockSprites[i].renderable = intersects(item.rect, r);
+      });
+      return;
+    }
+    // A card's ring and its ports reach a few units beyond its node.
+    const around = {
+      x: r.x - cardReach,
+      y: r.y - cardReach,
+      width: r.width + 2 * cardReach,
+      height: r.height + 2 * cardReach,
+    };
+    for (const item of built.shown) {
+      const view = this.cardViews.get(item.node.id);
+      if (view !== undefined) {
+        view.root.renderable = intersects(item.rect, around);
+      }
+    }
   }
 
   /** Builds the objects of what region of the board shows, at zoom, from its corner. */
@@ -455,13 +511,7 @@ class PixiEngine implements Engine {
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;
       }
-      // The order that the cards are drawn in is the scene's.
-      shown.nodes.forEach((item, i) => {
-        const view = this.cardViews.get(item.node.id);
-        if (view !== undefined && this.cards.getChildIndex(view.root) !== i) {
-          this.cards.setChildIndex(view.root, i);
-        }
-      });
+      this.orderCards(shown.nodes);
     }
     // The lines are one stroke of every connection of the margin, drawn
     // anew only once a connection, the margin, the zoom that their width
@@ -488,6 +538,40 @@ class PixiEngine implements Engine {
       shown: shown.nodes,
       connections: shown.connections,
     };
+  }
+
+  /**
+   * Puts the cards in use in the order of nodes, the scene's, which they
+   * are drawn in, in one pass, where they are not in it already, as once a
+   * free card, wherever it was among them, is that of a node that came into
+   * the margin: rather than move each card to its place on its own, which
+   * would look for it, and shift those after it, among every card, in use
+   * and free, for each of them.
+   */
+  private orderCards(nodes: readonly NodeItem[]): void {
+    const roots = nodes.flatMap((item) => {
+      const view = this.cardViews.get(item.node.id);
+      return view === undefined ? [] : [view.root];
+    });
+    const rank = new Map(roots.map((root, i) => [root, i]));
+    let last = -1;
+    let ordered = true;
+    for (const child of this.cards.children) {
+      const r = rank.get(child as Container);
+      if (r === undefined) {
+        continue;
+      }
+      if (r < last) {
+        ordered = false;
+        break;
+      }
+      last = r;
+    }
+    if (ordered) {
+      return;
+    }
+    this.cards.removeChildren();
+    this.cards.addChild(...roots, ...this.freeCards.map((view) => view.root));
   }
 
   /** Frees the cards of the nodes that keep does not hold, for nodes that come into the margin. */
@@ -572,12 +656,18 @@ class PixiEngine implements Engine {
     corners(view.ring, 4);
     view.ring.visible = selected;
     view.ring.tint = theme.accent;
-    // The columns of a line, each of an average Latin letter's width, 0.56
-    // of the font's size, of which a wide character, as of Japanese, takes
-    // two (text.ts).
+    // The room of a line, within the card's padding, which each character
+    // takes the width of that the card's font draws it at (fitted), but at
+    // least that of four average Latin letters.
     const inner = Math.max(8, w - 24);
-    const perLine = (size: number) =>
-      Math.max(4, Math.floor(inner / (size * 0.56)));
+    const cut = (
+      font: string,
+      size: number,
+      text: (room: number, measure: Measure) => string,
+    ) =>
+      fitted(installed.get(font)?.font, size, (measure) =>
+        text(Math.max(inner, 4 * averageLetter * size), measure),
+      );
     const setText = (
       t: BitmapText,
       fontFamily: string,
@@ -598,7 +688,7 @@ class PixiEngine implements Engine {
     setText(
       view.title,
       fonts.bold,
-      clip(labels.title, perLine(titleSize)),
+      cut(fonts.bold, titleSize, (room, m) => clip(labels.title, room, m)),
       theme.fg,
       12,
       12,
@@ -606,7 +696,7 @@ class PixiEngine implements Engine {
     setText(
       view.kind,
       fonts.regular,
-      clip(labels.kind, perLine(kindSize)),
+      cut(fonts.regular, kindSize, (room, m) => clip(labels.kind, room, m)),
       theme.muted,
       12,
       32,
@@ -623,7 +713,9 @@ class PixiEngine implements Engine {
       : Math.min(lines, Math.floor((h - bodyTop - 4) / bodyLine));
     view.body.visible = labels.body !== "" && bodyLines > 0;
     if (view.body.visible) {
-      const text = wrapLines(labels.body, perLine(bodySize), bodyLines, branch);
+      const text = cut(fonts.regular, bodySize, (room, m) =>
+        wrapLines(labels.body, room, bodyLines, branch, m),
+      );
       const lineHeight = branch
         ? outputOffset(1, rows, h) - outputOffset(0, rows, h)
         : bodyLine;
@@ -722,12 +814,12 @@ class PixiEngine implements Engine {
     ] as const) {
       if (!this.fonts.has(name)) {
         this.fonts.add(name);
-        const users = fontUsers.get(name) ?? 0;
-        fontUsers.set(name, users + 1);
-        if (users > 0) {
+        const had = installed.get(name);
+        if (had !== undefined) {
+          had.users++;
           continue;
         }
-        BitmapFont.install({
+        const font = BitmapFontManager.install({
           name,
           style: {
             fontFamily: this.fontFamily,
@@ -736,10 +828,12 @@ class PixiEngine implements Engine {
             fill: 0xffffff,
           },
           resolution: tier,
-          // The glyphs of the Latin alphabet at once, and those of any
-          // other script as the first text that has them comes.
-          chars: [[" ", "~"]],
+          // The glyphs of the Latin alphabet at once, and the ellipsis
+          // that a cut line ends with, and those of any other script as
+          // the first text that has them comes.
+          chars: [[" ", "~"], "…"],
         });
+        installed.set(name, { users: 1, font });
       }
     }
     return fonts;
@@ -751,12 +845,12 @@ class PixiEngine implements Engine {
       t.destroy(true);
     }
     for (const name of this.fonts) {
-      const users = (fontUsers.get(name) ?? 1) - 1;
-      if (users > 0) {
-        fontUsers.set(name, users);
+      const had = installed.get(name);
+      if (had !== undefined && had.users > 1) {
+        had.users--;
       } else {
-        fontUsers.delete(name);
-        BitmapFont.uninstall(name);
+        installed.delete(name);
+        BitmapFontManager.uninstall(name);
       }
     }
     this.renderer.destroy();
@@ -765,10 +859,68 @@ class PixiEngine implements Engine {
 }
 
 /**
- * How many renderers use each bitmap font, which PixiJS keeps for the page,
- * by its name: the last to end uninstalls it.
+ * What the canvas reads of a bitmap font that it installed, and asks of it:
+ * the width that it draws each character that it has at, in the units of
+ * its size of measurement, and the glyphs of more.
  */
-const fontUsers = new Map<string, number>();
+type CardFont = Pick<BitmapFont, "chars" | "baseMeasurementFontSize"> & {
+  ensureCharacters?: (chars: string) => void;
+};
+
+/**
+ * The bitmap fonts that the renderers installed, which PixiJS keeps for the
+ * page, by their names, each with how many renderers use it: the last to
+ * end uninstalls it.
+ */
+const installed = new Map<string, { users: number; font: CardFont }>();
+
+/** An average Latin letter's width, of the font's size, of which text.ts's columns are. */
+const averageLetter = 0.56;
+
+/**
+ * Returns the text that cut makes of a card's label, at size, by the width
+ * that font draws each of its characters at, or, without the font, or for a
+ * character that it has not drawn yet, by text.ts's columns, so that a
+ * line of capitals, or of a bold font's wide letters, stays within its
+ * card. The font draws the glyphs of the characters that the cut shows
+ * then, as the text's layout would as it shows it, and the label is cut
+ * again by their widths, at most twice, so that a character of a script
+ * beyond the Latin alphabet's, which the font draws once a text first has
+ * it, is cut by its width too.
+ */
+function fitted(
+  font: CardFont | undefined,
+  size: number,
+  cut: (measure: Measure) => string,
+): string {
+  const column = averageLetter * size;
+  if (font === undefined) {
+    return cut((ch) => columnsOf(ch) * column);
+  }
+  const scale = size / font.baseMeasurementFontSize;
+  const measure: Measure = (ch) => {
+    const glyph = font.chars[ch];
+    return glyph === undefined
+      ? columnsOf(ch) * column
+      : glyph.xAdvance * scale;
+  };
+  let text = cut(measure);
+  for (let pass = 0; pass < 2 && !drawnIn(font, text); pass++) {
+    font.ensureCharacters?.(text);
+    text = cut(measure);
+  }
+  return text;
+}
+
+/** Reports whether font has drawn each character of text, of a code point, but its line breaks. */
+function drawnIn(font: CardFont, text: string): boolean {
+  for (const ch of text) {
+    if (ch !== "\n" && font.chars[ch] === undefined) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /** The fonts of a tier: a card's regular text, and its title's. */
 interface Fonts {

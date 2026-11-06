@@ -10,7 +10,8 @@
 // or Cmd, and a tap on the board's empty canvas clears the selection; a click
 // of the middle button, which pans, selects nothing. The wheel pans, and
 // Shift turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it,
-// it zooms about the pointer. Nothing needs hover or a right click.
+// it zooms about the pointer. Nothing needs hover or a right click, and a
+// right click, or a pen's barrel button or its eraser, does nothing.
 
 import {
   anchorAt,
@@ -33,7 +34,11 @@ export interface PointerInput {
   x: number;
   y: number;
   kind: "mouse" | "touch" | "pen";
-  /** The button that went down, of a mouse: 0, the primary, or 1, the middle. */
+  /**
+   * The button that went down: 0, the primary, as a finger's touch or a
+   * pen's tip, 1, a mouse's middle, 2, a mouse's right or a pen's barrel
+   * button, or 5, a pen's eraser.
+   */
   button: number;
   shift: boolean;
   /** Whether Ctrl or Cmd is held, which adds to the selection, as Shift does. */
@@ -60,7 +65,7 @@ export type SelectHow = "replace" | "add" | "toggle";
 export interface GestureHost {
   viewport(): Viewport;
   size(): Size;
-  /** Shows v at once, ending a zoom or a move that the canvas animates. */
+  /** Shows v at once, ending a zoom or a move that the canvas animates, unless v moves nothing. */
   setViewport(v: Viewport): void;
   mode(): Mode;
   /** Returns the ID of the topmost node at p of the board, within slop units. */
@@ -134,10 +139,13 @@ export class Gestures {
 
   /**
    * Takes a pointer that went down, and reports whether the canvas follows
-   * it: not a mouse's other buttons, nor a third pointer (NFR-TOUCH-07).
+   * it: the primary button of each, a finger's touch or a pen's tip, and a
+   * mouse's middle button, but no other button, as a mouse's right one, or a
+   * pen's barrel button, which the system takes for a right click, or its
+   * eraser, nor a third pointer (NFR-TOUCH-07).
    */
   down(p: PointerInput): boolean {
-    if (p.kind === "mouse" && p.button !== 0 && p.button !== 1) {
+    if (p.button !== 0 && !(p.kind === "mouse" && p.button === 1)) {
       return false;
     }
     if (this.pointers.size >= 2 || this.pointers.has(p.id)) {

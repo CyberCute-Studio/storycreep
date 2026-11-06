@@ -32,7 +32,7 @@ import {
 } from "./controller";
 import { createEngine, type Engine, type RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
-import { labelsOf } from "./labels";
+import { labelsOf, namesDiffer } from "./labels";
 import { Minimap } from "./minimap";
 import { readTheme } from "./theme";
 
@@ -232,6 +232,26 @@ export function BoardCanvas({
         ? new ResizeObserver(resize)
         : undefined;
     observer?.observe(host);
+    // The screen's pixels to a CSS pixel, which change without the canvas's
+    // size, as the window moves to a screen of another density: a query of
+    // the density as it is tells once it is another, and is made anew for
+    // the one after.
+    let density: MediaQueryList | undefined;
+    const densityChanged = () => {
+      resize();
+      watchDensity();
+    };
+    const watchDensity = () => {
+      density?.removeEventListener("change", densityChanged);
+      density =
+        typeof window.matchMedia === "function"
+          ? window.matchMedia(
+              `(resolution: ${window.devicePixelRatio || 1}dppx)`,
+            )
+          : undefined;
+      density?.addEventListener("change", densityChanged);
+    };
+    watchDensity();
     const pointer =
       (type: "down" | "move" | "up" | "cancel") => (e: PointerEvent) => {
         if (
@@ -338,6 +358,7 @@ export function BoardCanvas({
       controller.attach(undefined);
       dark?.removeEventListener("change", theme);
       observer?.disconnect();
+      density?.removeEventListener("change", densityChanged);
       host.removeEventListener("touchstart", touch);
       host.removeEventListener("touchmove", touch);
       host.removeEventListener("pointerdown", down);
@@ -416,10 +437,13 @@ export function BoardCanvas({
     let names: Pick<Doc, "components" | "variables"> | undefined;
     const sync = () => {
       const view = doc.store.getState().view;
+      // The names that cards show, of components and of variables, rather
+      // than anything else of them, as a component's description, whose
+      // change would write every card anew for nothing.
       const namesChanged =
         names !== undefined &&
-        (names.components !== view.components ||
-          names.variables !== view.variables);
+        (namesDiffer(names.components, view.components, (c) => c.name) ||
+          namesDiffer(names.variables, view.variables, (v) => v.key));
       names = view;
       controller.sync(view, namesChanged);
       setEmpty(controller.scene.nodes.size === 0);

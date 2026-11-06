@@ -131,6 +131,12 @@ export class CanvasController implements GestureHost {
   reducedMotion = false;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
   private sz: Size = { width: 0, height: 0 };
+  /**
+   * The canvas's last size that had an area, whose centre the size after
+   * one of none, as of a host that the page does not display for a while,
+   * keeps, rather than the top-left corner that a size of none has for one.
+   */
+  private shownSize: Size | undefined;
   private resolution = 1;
   private engine: Engine | undefined;
   private minimap: Minimap | undefined;
@@ -211,7 +217,9 @@ export class CanvasController implements GestureHost {
    * centre where it is, and those of where an animation in progress goes
    * from and to, so that it goes on from where the canvas is now, rather
    * than from and to views of the size before, as a fit that the window's
-   * turn interrupts would.
+   * turn interrupts would. A size of none, as of a host that the page does
+   * not display, moves nothing: the size after it keeps the centre of the
+   * last size that had an area.
    */
   setSize(size: Size, resolution: number): void {
     if (
@@ -221,8 +229,12 @@ export class CanvasController implements GestureHost {
     ) {
       return;
     }
-    if (this.placed && this.sz.width > 0 && this.sz.height > 0) {
-      const was = this.sz;
+    const was = this.shownSize;
+    const shown = size.width > 0 && size.height > 0;
+    if (shown) {
+      this.shownSize = size;
+    }
+    if (this.placed && shown && was !== undefined) {
       const kept = (v: Viewport) =>
         anchorAt(
           centerOf(v, was),
@@ -299,13 +311,23 @@ export class CanvasController implements GestureHost {
     return this.sz;
   }
 
+  /**
+   * Shows v at once, ending a zoom or a move that the canvas animates, and,
+   * once the board's content has been read, places the canvas, which is
+   * then not fitted to it. A v that is the viewport moves nothing, so it
+   * neither ends an animation nor places the canvas, as a wheel's event
+   * without a delta, or Safari's gesture as it starts, does not; nor does a
+   * move before the content has been read, as of a wheel turned over the
+   * canvas while it reads it, after which it opens fitted to it still.
+   */
   setViewport(v: Viewport): void {
-    this.animation = undefined;
-    this.placed = true;
-    if (!sameViewport(v, this.v)) {
-      this.v = v;
-      this.invalidate();
+    if (sameViewport(v, this.v)) {
+      return;
     }
+    this.animation = undefined;
+    this.placed ||= this.ready;
+    this.v = v;
+    this.invalidate();
   }
 
   mode(): Mode {
@@ -365,13 +387,17 @@ export class CanvasController implements GestureHost {
 
   // What the toolbar and the keys do.
 
-  /** Moves to v, animated unless the system asks for reduced motion. */
+  /**
+   * Moves to v, animated unless the system asks for reduced motion, which
+   * places the canvas, as setViewport does, once the board's content has
+   * been read.
+   */
   animateTo(v: Viewport): void {
-    this.placed = true;
     if (this.reducedMotion || this.sz.width === 0) {
       this.setViewport(v);
       return;
     }
+    this.placed ||= this.ready;
     this.animation = { from: this.v, to: v, start: this.clock.now() };
     this.invalidate();
   }
@@ -531,7 +557,11 @@ export class CanvasController implements GestureHost {
     this.pending = 0;
     const size = this.sz;
     if (this.ready && !this.placed && size.width > 0 && size.height > 0) {
+      // The fit takes the place of whatever moved the canvas while the
+      // content was read, as a zoom of the toolbar's, which would else go
+      // on after it.
       this.v = this.fitted();
+      this.animation = undefined;
       this.placed = true;
     }
     const a = this.animation;

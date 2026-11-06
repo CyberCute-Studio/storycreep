@@ -239,11 +239,17 @@ describe("the canvas's gestures", () => {
   });
 
   // Verifies: FR-EDIT-01/AC2
-  it("needs no right click: the mouse's other buttons do nothing", () => {
+  it("needs no right click: the mouse's other buttons, and a pen's barrel button and eraser, do nothing", () => {
     const { state, gestures } = host();
     expect(gestures.down(mouse(100, 100, { button: 2 }))).toBe(false);
     gestures.move(mouse(300, 300, { button: 2 }));
     gestures.up(mouse(300, 300, { button: 2 }));
+    for (const button of [2, 5]) {
+      const pen = mouse(100, 100, { id: 2, kind: "pen", button });
+      expect(gestures.down(pen)).toBe(false);
+      gestures.move({ ...pen, x: 300, y: 300 });
+      gestures.up({ ...pen, x: 300, y: 300 });
+    }
     expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
     expect(state.selects).toEqual([]);
   });

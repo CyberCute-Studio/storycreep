@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
 import { keyAction } from "./keyboard";
-import { type LabelContext, labelsOf, plainText } from "./labels";
+import { type LabelContext, labelsOf, namesDiffer, plainText } from "./labels";
 import { clip, textTier, wrapLines } from "./text";
 
 const context: LabelContext = {
@@ -126,13 +126,51 @@ describe("a card's labels", () => {
     expect(text.length).toBe(240);
     expect(text.endsWith("…")).toBe(true);
   });
+
+  it("tells that a name that cards show changed, but not for another change of what has it", () => {
+    const ada = { name: "Ada", description: "" };
+    const ben = { name: "Ben", description: "" };
+    const name = (c: { name: string }) => c.name;
+    const before = new Map([
+      ["cmp_ada", ada],
+      ["cmp_ben", ben],
+    ]);
+    expect(namesDiffer(before, before, name)).toBe(false);
+    // Another description, copied as the document writes it.
+    const described = new Map(before).set("cmp_ada", {
+      ...ada,
+      description: "The keeper",
+    });
+    expect(namesDiffer(before, described, name)).toBe(false);
+    const renamed = new Map(before).set("cmp_ada", { ...ada, name: "Adah" });
+    expect(namesDiffer(before, renamed, name)).toBe(true);
+    // One went, and another came.
+    const swapped = new Map([
+      ["cmp_ada", ada],
+      ["cmp_cy", { name: "Cy", description: "" }],
+    ]);
+    expect(namesDiffer(before, swapped, name)).toBe(true);
+    expect(namesDiffer(before, new Map([["cmp_ada", ada]]), name)).toBe(true);
+  });
 });
 
 describe("a card's text", () => {
-  it("cuts a line to the card's width", () => {
+  it("cuts a line to the card's width, ellipsis and all", () => {
     expect(clip("short", 10)).toBe("short");
     expect(clip("a longer title", 8)).toBe("a longe…");
     expect(clip("two\nlines", 10)).toBe("two…");
+    // A first line that fills the width makes room for the ellipsis of the
+    // lines after it.
+    expect(clip("abcd\nef", 4)).toBe("abc…");
+    expect(wrapLines("abcd efgh ijkl", 4, 2, false)).toBe("abcd\nefg…");
+  });
+
+  it("cuts by the width that the card's font draws each character at", () => {
+    // Capitals twice a lowercase letter's width, as in a bold font.
+    const measure = (ch: string) => (ch >= "A" && ch <= "Z" ? 2 : 1);
+    expect(clip("LIGHTHOUSE", 10, measure)).toBe("LIGH…");
+    expect(clip("lighthouse", 10, measure)).toBe("lighthouse");
+    expect(wrapLines("THE KEEPER", 8, 2, false, measure)).toBe("THE\nKEE…");
   });
 
   it("wraps a text into the card's lines, at spaces", () => {
@@ -157,7 +195,7 @@ describe("a card's text", () => {
     expect(clip("灯台守の階段", 8)).toBe("灯台守…");
     expect(clip("灯台守", 6)).toBe("灯台守");
     expect(wrapLines("灯台守が階段を上って灯りをともす", 10, 2, false)).toBe(
-      "灯台守が階\n段を上って…",
+      "灯台守が階\n段を上っ…",
     );
     // An emoji of two code units is cut whole, not in half.
     expect(clip("ab🌊🌊🌊", 4)).toBe("ab…");

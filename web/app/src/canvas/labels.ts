@@ -118,6 +118,34 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
   }
 }
 
+/**
+ * Reports whether the name that cards show of an entity, as name reads it,
+ * as a component's name or a variable's key, differs between the maps
+ * before and after, or an entity came or went, rather than anything else of
+ * them, as a component's description, which cards do not show: each entity
+ * that did not change is the same object in both, as the document copies
+ * an entity only as it writes it.
+ */
+export function namesDiffer<T>(
+  before: ReadonlyMap<string, T>,
+  after: ReadonlyMap<string, T>,
+  name: (entity: T) => string,
+): boolean {
+  if (before === after) {
+    return false;
+  }
+  if (before.size !== after.size) {
+    return true;
+  }
+  for (const [id, entity] of after) {
+    const was = before.get(id);
+    if (was !== entity && (was === undefined || name(was) !== name(entity))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Returns source on one line, as a card's row shows a condition. */
 function oneLine(source: string): string {
   return source.replace(/\s+/g, " ").trim();

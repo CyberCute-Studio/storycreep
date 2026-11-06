@@ -125,13 +125,64 @@ export function curveOf(from: Point, to: Point, self: boolean): Curve {
   };
 }
 
-/** Returns a rectangle that holds curve whole: that of its four points, which hold it. */
+/**
+ * Returns the smallest rectangle that holds curve whole: that of its ends
+ * and of the points where it turns back, rather than that of its four
+ * points, whose controls lie well beyond it, as a loop's 160 units above
+ * its node, of which the curve reaches 120, so that fit to content, which
+ * shows the board's connections whole, does not show room that they leave
+ * empty.
+ */
 export function curveBounds(c: Curve): Rect {
-  const xs = [c.p0.x, c.c1.x, c.c2.x, c.p3.x];
-  const ys = [c.p0.y, c.c1.y, c.c2.y, c.p3.y];
-  const x = Math.min(...xs);
-  const y = Math.min(...ys);
-  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+  const [x, right] = extent(c.p0.x, c.c1.x, c.c2.x, c.p3.x);
+  const [y, bottom] = extent(c.p0.y, c.c1.y, c.c2.y, c.p3.y);
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+/**
+ * Returns the least and the most that a coordinate of a cubic Bézier curve
+ * takes, of its ends, p0 and p3, and its controls, c1 and c2: those of its
+ * ends, or of where its derivative, a quadratic, is nothing between them.
+ */
+function extent(
+  p0: number,
+  c1: number,
+  c2: number,
+  p3: number,
+): [number, number] {
+  let min = Math.min(p0, p3);
+  let max = Math.max(p0, p3);
+  // The derivative is 3 (a t² + b t + d0).
+  const d0 = c1 - p0;
+  const d1 = c2 - c1;
+  const d2 = p3 - c2;
+  const a = d0 - 2 * d1 + d2;
+  const b = 2 * (d1 - d0);
+  const roots: number[] = [];
+  if (Math.abs(a) < 1e-12) {
+    if (Math.abs(b) > 1e-12) {
+      roots.push(-d0 / b);
+    }
+  } else {
+    const discriminant = b * b - 4 * a * d0;
+    if (discriminant >= 0) {
+      const s = Math.sqrt(discriminant);
+      roots.push((-b + s) / (2 * a), (-b - s) / (2 * a));
+    }
+  }
+  for (const t of roots) {
+    if (t > 0 && t < 1) {
+      const u = 1 - t;
+      const at =
+        u * u * u * p0 +
+        3 * u * u * t * c1 +
+        3 * u * t * t * c2 +
+        t * t * t * p3;
+      min = Math.min(min, at);
+      max = Math.max(max, at);
+    }
+  }
+  return [min, max];
 }
 
 /** Returns the curve of connection, between its nodes' rectangles, as the nodes are. */

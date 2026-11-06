@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { docOf, gridNodes, testConnection, testNode } from "../test/canvas";
 import { elementHeight, nodeWidth } from "./layout";
 import { Scene } from "./scene";
@@ -88,6 +88,47 @@ describe("the scene of a board", () => {
       ]),
     });
     expect(scene.connections.size).toBe(0);
+  });
+
+  it("holds a connection's loop in the board's content, as far as the curve goes", () => {
+    const scene = new Scene("bd_a");
+    scene.sync(
+      docOf([testNode("nd_1", 0, 0)], [testConnection("cn_1", "nd_1", "nd_1")]),
+    );
+    const bounds = scene.contentBounds();
+    // The loop's controls are 160 units above the node's ports, at the
+    // middle of its height, and its curve reaches three quarters of them.
+    expect(bounds?.y).toBeCloseTo(elementHeight / 2 - 120);
+    expect(bounds?.x).toBeLessThan(0);
+    expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeGreaterThan(nodeWidth);
+    expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBe(elementHeight);
+  });
+
+  it("forgets the node that a connection left once it is reconnected, which then moves it no more", () => {
+    const scene = new Scene("bd_a");
+    const a = testNode("nd_1", 0, 0);
+    const b = testNode("nd_2", 400, 0);
+    const c = testNode("nd_3", 400, 400);
+    const nodes = new Map([a, b, c].map((n) => [n.id, n]));
+    const doc = docOf([a, b, c], [testConnection("cn_1", "nd_1", "nd_2")]);
+    scene.sync(doc);
+    const reconnected = {
+      ...doc,
+      connections: new Map([
+        ["cn_1", testConnection("cn_1", "nd_1", "nd_3", { rev: 2 })],
+      ]),
+    };
+    scene.sync(reconnected);
+    expect(scene.connections.get("cn_1")?.curve.p3).toEqual({
+      x: 400,
+      y: 400 + elementHeight / 2,
+    });
+    const placed = vi.spyOn(scene.connections, "set");
+    scene.sync({
+      ...reconnected,
+      nodes: new Map([...nodes, [b.id, { ...b, position: { x: 800, y: 0 } }]]),
+    });
+    expect(placed).not.toHaveBeenCalled();
   });
 
   it("tells once the title of a node that a jumper goes to changes, of its board or of another", () => {
