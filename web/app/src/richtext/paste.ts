@@ -188,26 +188,92 @@ const HTML_SPACE = /^[ \t\n\f\r]*$/;
 /** The attribute that a style attribute of the pasted HTML is renamed to before the HTML is parsed (unstyled), which the cleaning reads an element's style from. */
 const STYLE = "data-pasted-style";
 
+/** HTML's white space, which ends a tag's name and an attribute's, as \s, which holds more, as the no-break space, does not. */
+const SPACE = "[\\t\\n\\f\\r ]";
+
+/** What ends the name of a tag: white space, "/", or ">". */
+const NAME_END = "(?=[\\t\\n\\f\\r />])";
+
+/** The name of an attribute, which may begin with "=", and holds quotes and "<", as HTML's tokenizer reads it. */
+const ATTRIBUTE_NAME = "[^\\t\\n\\f\\r />][^\\t\\n\\f\\r /=>]*";
+
 /**
- * The parts of HTML that unstyled reads, in order, as HTML's parser reads
- * them: a comment; an element whose content is text, which no tag within it
- * ends but its own end tag, as a style sheet or a script, with its start
- * tag's name and attributes; or an element's start tag, whose attributes'
- * quoted values may hold ">". A comment or such an element that does not end
- * goes on to the end, as in HTML.
+ * The value that follows the name of an attribute: one in quotes, up to the
+ * quote that ends it or the end of the HTML, or one without, up to white
+ * space or ">", which holds what else follows, as the "/style" of
+ * href=https://example.com/style.
  */
-const PART =
-  /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes)(?=[\s/>])((?:"[^"]*"|'[^']*'|[^"'>])*)>[\s\S]*?(?:<\/\1(?=[\s/>])[^>]*>?|$)|<[a-z][^\s/>]*(?:"[^"]*"|'[^']*'|[^"'>])*>?/gi;
+const ATTRIBUTE_VALUE = `${SPACE}*=${SPACE}*(?:"[^"]*"?|'[^']*'?|[^\\t\\n\\f\\r >]*)`;
 
-/** Within a start tag: a quoted value, which is left as it is, or the name of a style attribute. */
-const STYLE_NAME = /("[^"]*"|'[^']*')|([\s/])style(?=[\s/>=]|$)/gi;
+/**
+ * The attributes of a tag, up to its ">" or the end of the HTML, as HTML's
+ * tokenizer reads them: white space and "/" between them, and each a name,
+ * with or without a value, as one name follows a quoted value with nothing
+ * between them; a quote that begins no value begins nothing.
+ */
+const ATTRIBUTES = `(?:[\\t\\n\\f\\r /]+|${ATTRIBUTE_NAME}(?:${ATTRIBUTE_VALUE})?)*`;
 
-/** Returns a start tag, or its attributes, with the name of its style attribute STYLE. */
-function renamed(tag: string): string {
-  return tag.replace(
-    STYLE_NAME,
-    (_match, quoted: string | undefined, before: string) =>
-      quoted ?? `${before}${STYLE}`,
+/** An attribute of ATTRIBUTES: what goes before it, its name, and its value. */
+const ATTRIBUTE = new RegExp(
+  `([\\t\\n\\f\\r /]*)(${ATTRIBUTE_NAME})((?:${ATTRIBUTE_VALUE})?)`,
+  "g",
+);
+
+/**
+ * Returns the expression of the parts of HTML that unstyled reads, each
+ * where HTML's tokenizer reads it, as it reads HTML outside SVG and MathML:
+ * a comment, which "-->" or "--!>" ends, or ">" or "->" right after its
+ * "<!--"; a DOCTYPE, a processing instruction, CDATA, and "</" before what
+ * is no letter, which it reads up to the first ">", as a comment; an end
+ * tag; an element of raw, whose content is text up to its end tag, as a
+ * style sheet or a script; where plaintext is true, a plaintext, whose
+ * content is text to the end of the HTML; and a start tag. What nothing ends
+ * goes on to the end of the HTML, as in HTML.
+ */
+function partsOf(raw: readonly string[], plaintext: boolean): RegExp {
+  const name = "[^\\t\\n\\f\\r />]*";
+  return new RegExp(
+    [
+      "<!--(?:-?>|[\\s\\S]*?(?:--!?>|$))",
+      "<[!?][^>]*>?",
+      "</(?![a-z])[^>]*>?",
+      `</[a-z]${name}${ATTRIBUTES}>?`,
+      `<(?<raw>${raw.join("|")})${NAME_END}(?<rawAttributes>${ATTRIBUTES})(?<rawClose>>?)(?<rawText>[\\s\\S]*?)(?<rawEnd></\\k<raw>${NAME_END}${ATTRIBUTES}>?|$)`,
+      ...(plaintext
+        ? [
+            `<(?<plain>plaintext)${NAME_END}(?<plainAttributes>${ATTRIBUTES})(?<plainText>[\\s\\S]*)`,
+          ]
+        : []),
+      `<(?<start>[a-z]${name})(?<attributes>${ATTRIBUTES})(?<close>>?)`,
+    ].join("|"),
+    "gi",
+  );
+}
+
+/** The parts of the pasted HTML (partsOf), of whose elements of text the cleaning shows only xmp's, and leaves the others out (SKIPPED). */
+const PARTS = partsOf(
+  [
+    "script",
+    "style",
+    "textarea",
+    "title",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+  ],
+  true,
+);
+
+/** The parts of the text of an element whose text the cleaning leaves out, as a script's, of which only a style element's content is text: HTML reads it as HTML within SVG and MathML, as in an SVG title, which holds HTML. */
+const TEXT_PARTS = partsOf(["style"], false);
+
+/** Returns the attributes of a tag (ATTRIBUTES) with the name of its style attributes STYLE. */
+function renamed(attributes = ""): string {
+  return attributes.replace(
+    ATTRIBUTE,
+    (attribute, before: string, name: string, value: string) =>
+      /^style$/i.test(name) ? `${before}${STYLE}${value}` : attribute,
   );
 }
 
@@ -217,32 +283,38 @@ function renamed(tag: string): string {
  * document that DOMParser makes of it has neither: a browser applies the
  * page's Content-Security-Policy to such a document too, which refuses both
  * (style-src-attr and style-src-elem), reports them, and leaves the
- * element's style empty.
+ * element's style empty. The text of an element that the cleaning leaves
+ * out, as a script, is read as HTML too (TEXT_PARTS), and xmp's and
+ * plaintext's, which it shows, are left as they are.
  */
-function unstyled(html: string): string {
-  return html.replace(
-    PART,
-    (part, raw: string | undefined, attributes: string | undefined) => {
-      if (part.startsWith("<!--")) {
-        return part;
-      }
-      if (raw === undefined || attributes === undefined) {
-        return renamed(part);
-      }
-      if (raw.toLowerCase() === "style") {
+function unstyled(html: string, parts = PARTS): string {
+  return html.replace(parts, (part, ...args) => {
+    const g = args.at(-1) as Partial<Record<string, string>>;
+    if (g.raw !== undefined) {
+      const name = g.raw.toLowerCase();
+      if (name === "style") {
         return "";
       }
-      const start = 1 + raw.length + attributes.length + 1;
-      return `<${raw}${renamed(attributes)}>${part.slice(start)}`;
-    },
-  );
+      const text =
+        name === "xmp" ? g.rawText : unstyled(g.rawText ?? "", TEXT_PARTS);
+      return `<${g.raw}${renamed(g.rawAttributes)}${g.rawClose}${text}${g.rawEnd}`;
+    }
+    if (g.plain !== undefined) {
+      return `<${g.plain}${renamed(g.plainAttributes)}${g.plainText}`;
+    }
+    if (g.start !== undefined) {
+      return `<${g.start}${renamed(g.attributes)}${g.close}`;
+    }
+    return part;
+  });
 }
 
 /**
  * Gives each element of the parsed HTML the style that its attribute (STYLE)
  * writes, through the CSSOM, which the page's policy allows, so that styleOf
- * reads it; a style attribute that unstyled did not rename, as in a tag that
- * a stray quote breaks, which the browser may have refused, is read the same.
+ * reads it; a style attribute that unstyled did not rename, as within SVG or
+ * MathML, whose elements HTML's tokenizer reads otherwise, which the browser
+ * may have refused, is read the same.
  */
 function applyStyles(source: Document) {
   for (const element of source.querySelectorAll(`[${STYLE}], [style]`)) {
@@ -355,14 +427,16 @@ function dropped(element: Element, name: string): boolean {
   );
 }
 
-/** Returns the level of a list item that its element gives, as Google Docs's aria-level and Word's data-aria-level do, or undefined for none. */
+/** Returns the level of a list item that its element gives, as Google Docs's aria-level and Word Online's data-aria-level do, the first of them that is a level, or undefined for none. */
 function levelOf(element: Element): number | undefined {
-  const level = Number(
-    element.getAttribute("aria-level") ??
-      element.getAttribute("data-aria-level") ??
-      Number.NaN,
-  );
-  return Number.isInteger(level) && level >= 1 ? level : undefined;
+  for (const name of ["aria-level", "data-aria-level"]) {
+    const value = element.getAttribute(name);
+    const level = value === null || value.trim() === "" ? 0 : Number(value);
+    if (Number.isInteger(level) && level >= 1) {
+      return level;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -725,7 +799,8 @@ function tidy(runs: readonly Run[]): Run[] {
     if (last.kind !== "text") {
       break;
     }
-    const text = last.text.replace(/[\s ]+$/u, "");
+    // \s holds the no-break space too.
+    const text = last.text.replace(/\s+$/u, "");
     if (text !== "") {
       out[out.length - 1] = { ...last, text };
       break;

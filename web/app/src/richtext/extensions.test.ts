@@ -147,6 +147,52 @@ describe("the editor's extensions", () => {
     expect(storedOf(editor.state.doc).doc).not.toEqual(content);
   });
 
+  test("Shift-Tab moves the selected list items up only into the list that holds their list, and leaves the focus to move back otherwise", () => {
+    const item = (text: string, ...lists: object[]) => ({
+      content: [p(text), ...lists],
+      type: "listItem",
+    });
+    const content = {
+      content: [
+        {
+          content: [item("a", { content: [item("b")], type: "bulletList" })],
+          type: "bulletList",
+        },
+      ],
+      type: "doc",
+    } as RichTextDoc;
+    const editor = testEditor(content);
+    const at = (text: string) => {
+      let found = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.text === text) {
+          found = pos;
+        }
+      });
+      return found;
+    };
+    // Whether the editor takes Shift-Tab, which the browser otherwise takes
+    // to move the focus back.
+    const shiftTab = () =>
+      editor.view.someProp("handleKeyDown", (handle) =>
+        handle(
+          editor.view,
+          new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+        ),
+      ) === true;
+    // a is in no list within a list item.
+    editor.commands.setTextSelection(at("a"));
+    expect(shiftTab()).toBe(false);
+    expect(storedOf(editor.state.doc).doc).toEqual(content);
+    // b moves up into a's list.
+    editor.commands.setTextSelection(at("b"));
+    expect(shiftTab()).toBe(true);
+    expect(storedOf(editor.state.doc).doc).toEqual({
+      content: [{ content: [item("a"), item("b")], type: "bulletList" }],
+      type: "doc",
+    });
+  });
+
   test("setLink sets a URL as the link's field takes it, and refuses one that no link may lead to", () => {
     const editor = testEditor({
       content: [p("harbour")],

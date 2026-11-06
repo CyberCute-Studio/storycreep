@@ -32,6 +32,7 @@ import { cleanPastedHTML } from "./paste";
 import {
   isMentionElement,
   isValueRefElement,
+  liftKeepsList,
   sinkFits,
   startOf,
 } from "./schema";
@@ -287,8 +288,10 @@ const StoredOrderedList = OrderedList.extend({
 /**
  * A list's item, which Tab moves, with the other items of the selection,
  * into a list of the item before them, as far as lists nest
- * (MAX_LIST_DEPTH), and otherwise leaves to move the focus on, so that the
- * keyboard leaves the editor from any item.
+ * (MAX_LIST_DEPTH), and Shift-Tab moves up into the list of the item that
+ * holds their list. Where one cannot, its key moves the focus on, so that
+ * the keyboard leaves the editor from any item, forwards or back, as to the
+ * toolbar before it, without changing the text.
  */
 const NestingListItem = ListItem.extend({
   addKeyboardShortcuts() {
@@ -299,7 +302,11 @@ const NestingListItem = ListItem.extend({
           this.editor.state.selection.$from,
           this.editor.state.selection.$to,
         ) && this.editor.commands.sinkListItem(this.name),
-      "Shift-Tab": () => this.editor.commands.liftListItem(this.name),
+      "Shift-Tab": () =>
+        liftKeepsList(
+          this.editor.state.selection.$from,
+          this.editor.state.selection.$to,
+        ) && this.editor.commands.liftListItem(this.name),
     };
   },
 });

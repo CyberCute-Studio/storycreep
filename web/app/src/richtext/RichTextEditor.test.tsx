@@ -196,6 +196,56 @@ describe("the rich-text editor", () => {
     }
   });
 
+  // A list of one item of text, nested within as many lists as depth.
+  const nested = (depth: number, start = 1): object => ({
+    ...(start === 1 ? {} : { attrs: { start } }),
+    content: [
+      {
+        content: [
+          paragraph("Tide").content[0],
+          ...(depth > 1 ? [nested(depth - 1)] : []),
+        ],
+        type: "listItem",
+      },
+    ],
+    type: "orderedList",
+  });
+  test.each([
+    {
+      what: "an attribute that this version does not have",
+      content: [
+        {
+          attrs: { align: "center" },
+          content: [{ text: "Tide", type: "text" }],
+          type: "paragraph",
+        },
+      ],
+    },
+    {
+      what: "a list numbered from further than this version allows",
+      content: [nested(1, 5_000_000), paragraph("Shore").content[0]],
+    },
+    {
+      what: "lists nested deeper than this version allows",
+      content: [nested(6), paragraph("Shore").content[0]],
+    },
+  ])(
+    "a text that the server would refuse for anything but its size, as one of $what, cannot be changed either, so that no change elsewhere in it saves it changed",
+    async ({ content }) => {
+      const { textbox, changes } = renderEditor({
+        defaultValue: { content, type: "doc" } as unknown as RichTextDoc,
+      });
+      expect(textbox.getAttribute("contenteditable")).toBe("false");
+      screen.getByRole("textbox", {
+        name: "Body",
+        description: /this version of the app cannot show/,
+      });
+      textbox.focus();
+      await userEvent.paste("x");
+      expect(changes).toEqual([]);
+    },
+  );
+
   test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar", () => {
     const { textbox } = renderEditor({
       defaultValue: paragraph("Read only"),

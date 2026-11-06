@@ -869,9 +869,13 @@ function overMaxBytes(json: string): boolean {
  * order, a paragraph's neighbouring texts with the same marks joined, each
  * ID in its canonical spelling, and every object's fields in alphabetical
  * order, so that stringifyRichText writes what the server writes. The
- * document's JSON, as JSON.stringify writes it, and its canonical form are
- * each held to MAX_BYTES, as the server holds the JSON that it reads and
- * the canonical form.
+ * document's JSON, as JSON.stringify writes it, is held to MAX_BYTES, as the
+ * server holds the JSON that it reads. The canonical form, which the server
+ * holds to MAX_BYTES too, is then within it: it only leaves out and joins
+ * what that JSON holds, whose strings and numbers JSON.stringify writes as
+ * it writes them in the canonical form, as the JSON that the server reads
+ * need not (9e5 is 900000), and an ID in its canonical spelling is as long
+ * as in another.
  *
  * @throws {RichTextError} when the server would refuse the document, with
  * the reason and the pointer that the server gives, or, for one with more
@@ -895,16 +899,7 @@ export function parseRichText(value: unknown): RichTextDoc {
       "the document escapes a lone surrogate, which is not a character",
     );
   }
-  const doc = new Parser().doc(value);
-  if (overMaxBytes(stringifyRichText(doc))) {
-    throw new RichTextError(
-      "too_large",
-      "",
-      `the document's canonical form is longer than ${MAX_BYTES} bytes, with each escape counted as the character that it stands for`,
-      "bytes",
-    );
-  }
-  return doc;
+  return new Parser().doc(value);
 }
 
 /** What tryParseRichText makes of a document: its canonical form, or why the server would refuse it. */

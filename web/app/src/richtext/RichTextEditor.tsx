@@ -14,6 +14,7 @@ import {
   emptyRichText,
   MAX_CHARS,
   type RichTextError,
+  tryParseRichText,
 } from "@storycreep/shared/richtext";
 import { type AnyExtension, getSchema } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
@@ -56,12 +57,19 @@ export interface RichTextEditorProps {
    * The document that the editor starts with, the empty one when it is not
    * given. The editor keeps what the user changes from then on, so a page
    * that shows another document gives the editor a key of its own. One that
-   * the editor's schema cannot read, as one of a node or a mark that a later
-   * version of the app has, it does not let the user change, and says so,
-   * so that no change saves the empty text that it shows over it.
+   * the server of this version would refuse for anything but its size, as
+   * one of a node, a mark, or an attribute that a later version of the app
+   * has, it does not let the user change, and says so, so that no change
+   * saves over it what this version makes of it (readOf).
    */
   defaultValue?: RichTextDoc;
-  /** Called after each change with the document as the server stores it, or with why the server would refuse it. */
+  /**
+   * Called after each change with the document as the server stores it, or
+   * with why the server would refuse it. A change of the text is no change
+   * event of a form's control, which React gives a form's onChange, so a
+   * page tells a form that holds what it shows while it is changed
+   * (useHeld) of it from here, as by calling held.props.onChange.
+   */
   onChange?: (value: RichTextValue) => void;
   /** Whether the user may change the text, as by default; otherwise it is shown, to be read, selected, and copied. */
   editable?: boolean;
@@ -77,17 +85,26 @@ export interface RichTextEditorProps {
 }
 
 /**
- * Returns what the editor makes of the document that it starts with, as its
- * schema reads it: why the server would refuse it, as a text too long, which
- * the editor says from the start; or that the schema cannot read it, as one
- * of a node or a mark that a later version of the app gave it, which TipTap
- * would show as an empty text, which a change would then replace the
- * document with.
+ * Returns what the editor makes of the document that it starts with: why the
+ * server would refuse it for its size, as a text too long, which the editor
+ * says from the start, and lets the user shorten; or that the editor cannot
+ * keep it as it is, since the server of this version would refuse it for
+ * anything else, as a document of a later version of the app, with a node,
+ * a mark, or an attribute that this version does not have, a list nested
+ * deeper or numbered from further than it allows, or a link that it does
+ * not take. TipTap would show such a document without what its schema does
+ * not hold, as an empty text, and the editor would bring it within this
+ * version's limits after any change, wherever it was made, which the page
+ * would then save over the document.
  */
 function readOf(
   content: RichTextDoc,
   extensions: AnyExtension[],
 ): { refused?: RichTextError; unreadable: boolean } {
+  const { error } = tryParseRichText(content);
+  if (error !== undefined && error.reason !== "too_large") {
+    return { unreadable: true };
+  }
   let doc: PMNode;
   try {
     doc = getSchema(extensions).nodeFromJSON(content);
@@ -152,7 +169,8 @@ export function RichTextEditor({
     });
     return { content, extensions, ...readOf(content, extensions) };
   });
-  // A document that the schema cannot read is shown, empty, but not changed.
+  // A document that the editor cannot keep as it is is shown, as its schema
+  // reads it, but not changed.
   const changeable = editable && !initial.unreadable;
   // Why the server would refuse what the editor holds, which the page's own
   // error goes before.

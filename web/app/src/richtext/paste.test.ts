@@ -282,6 +282,148 @@ if (tide) {}</pre>
     expect(cleaned.filter(styled)).toEqual([]);
   });
 
+  test("style attributes and style elements are found where HTML's tokenizer finds them, so that the parsed HTML has neither, and the rest is read as HTML reads it", () => {
+    const bold = '<p style="font-weight:bold">a</p>';
+    const shapes = [
+      // Comments that ">" or "->" right after "<!--", or "--!>", end.
+      `<!-->${bold}`,
+      `<!--->${bold}`,
+      `<!-- x --!>${bold}`,
+      // A name right after a quoted value, and a quote within a value that
+      // is not quoted, which begins nothing.
+      '<p title="x"style="font-weight:bold">a</p>',
+      `<p title=x"y style="font-weight:bold">a</p><p title='z'>`,
+      // White space that HTML does not read as such, which ends no name.
+      `<script\u00a0>${bold}</script\u00a0>`,
+      // What HTML reads as a comment up to its first ">", and the attributes
+      // of an end tag, which hold what is no tag.
+      `<!x <script>${bold}`,
+      `<? <style>${bold}`,
+      `</x a="<script>">${bold}`,
+      // An SVG title, which holds HTML, which the cleaning leaves out.
+      `<svg><title><b style="x">t</b><style>b{}</style></title></svg>${bold}`,
+    ];
+    const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
+    let parsed: string[] = [];
+    try {
+      for (const html of shapes) {
+        expect(pasted(html), html).toEqual(doc(p(text("a", "bold"))));
+      }
+      // A value that is not quoted holds what follows it.
+      expect(
+        pasted(
+          "<p><a href=https://example.com/style/guide>a</a> <a href=https://example.com/style>b</a></p>",
+        ),
+      ).toEqual(
+        doc(
+          p(
+            linked("a", "https://example.com/style/guide"),
+            text(" "),
+            linked("b", "https://example.com/style"),
+          ),
+        ),
+      );
+      parsed = parse.mock.calls.map(([html]) => html);
+    } finally {
+      parse.mockRestore();
+    }
+    expect(
+      parsed.filter(
+        (html) =>
+          new DOMParser()
+            .parseFromString(html, "text/html")
+            .querySelector("[style], style") !== null,
+      ),
+    ).toEqual([]);
+  });
+
+  test("random HTML of tags, quotes, comments, and elements of text is parsed without a style attribute or a style element, and otherwise as HTML parses it", () => {
+    // A seeded generator (mulberry32), so that a failure is the same on
+    // every run.
+    let seed = 64;
+    const random = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+    };
+    const fragments = [
+      ...["<", ">", "</", "<!", "<?", "<!--", "-->", "--!>", "<!-->"],
+      ...['"', "'", "=", "/", " ", "\t", "\n", "\u00a0", "-", "!", "x"],
+      ...["style", "STYLE", "style=", " style=x", "/style", "p", "b"],
+      ...["script", "textarea", "title", "xmp", "noembed", "noscript"],
+      ...["<p ", "<style>", "</style>", "<script>", "</script>"],
+      ...["<title>", "</title>", "<![CDATA[", "]]>", "<a href=x/style>"],
+    ];
+    /** Returns the document of html as the cleaning should parse it: without its style elements, and with its style attributes named as the cleaning reads them, of which the first gives the value. */
+    const expected = (html: string) => {
+      const parsed = new DOMParser().parseFromString(html, "text/html");
+      for (const style of parsed.querySelectorAll("style")) {
+        style.remove();
+      }
+      for (const element of parsed.querySelectorAll("[style]")) {
+        const attributes = Array.from(element.attributes, (a) => [
+          a.name === "style" ? "data-pasted-style" : a.name,
+          a.value,
+        ]);
+        for (const { name } of Array.from(element.attributes)) {
+          element.removeAttribute(name);
+        }
+        for (const [name, value] of attributes) {
+          if (!element.hasAttribute(name)) {
+            element.setAttribute(name, value);
+          }
+        }
+      }
+      return parsed;
+    };
+    /** Returns the HTML of a document's body, which the cleaning reads, without the text of the elements whose text it leaves out, which the cleaning parses as HTML. */
+    const shown = (parsed: Document) => {
+      for (const element of parsed.querySelectorAll(
+        "script, textarea, title, iframe, noembed, noframes",
+      )) {
+        element.textContent = "";
+      }
+      parsed.body.normalize();
+      return parsed.body.outerHTML;
+    };
+    const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
+    const cases: { html: string; parsed: string }[] = [];
+    try {
+      for (let i = 0; i < 200; i++) {
+        const html = Array.from(
+          { length: 3 + Math.floor(random() * 25) },
+          () => fragments[Math.floor(random() * fragments.length)],
+        ).join("");
+        parse.mockClear();
+        cleanPastedHTML(html);
+        cases.push({ html, parsed: parse.mock.calls[0][0] });
+      }
+    } finally {
+      parse.mockRestore();
+    }
+    for (const { html, parsed } of cases) {
+      const result = new DOMParser().parseFromString(parsed, "text/html");
+      expect(result.querySelector("[style], style"), html).toBeNull();
+      expect(shown(result), html).toBe(shown(expected(html)));
+    }
+  });
+
+  test("a list item's level is the first of its aria-level and data-aria-level that is a level", () => {
+    expect(
+      pasted(
+        '<ul><li>a</li><li aria-level="" data-aria-level="2">b</li><li aria-level="x" data-aria-level="1">c</li></ul>',
+      ),
+    ).toEqual(
+      doc(
+        bullets(
+          item(p(text("a")), bullets(item(p(text("b"))))),
+          item(p(text("c"))),
+        ),
+      ),
+    );
+  });
+
   test("a paragraph of Word's list at level 0 is an item at the first level, and a list's start is read as HTML reads it", () => {
     expect(
       pasted(

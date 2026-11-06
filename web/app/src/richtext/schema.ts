@@ -77,6 +77,23 @@ export function sinkFits(
 }
 
 /**
+ * Reports whether the list items from $from to $to, those that Shift-Tab
+ * moves as ProseMirror's liftListItem finds them, are in a list within a
+ * list item, so that they move up into the list that holds that item, rather
+ * than out of the lists, as paragraphs.
+ */
+export function liftKeepsList(
+  $from: ResolvedPos,
+  $to: ResolvedPos = $from,
+): boolean {
+  const range = $from.blockRange(
+    $to,
+    (node) => node.firstChild?.type.name === "listItem",
+  );
+  return range !== null && $from.node(range.depth - 1).type.name === "listItem";
+}
+
+/**
  * Returns the start of an ordered list as an attribute writes it, as its
  * HTML's start does, by HTML's rules for parsing integers, which read the
  * digits that it begins with, after white space and a sign, as 5 of "5a" or
