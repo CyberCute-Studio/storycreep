@@ -25,7 +25,12 @@ import {
 } from "../ui/Dialog";
 import { Alert } from "../ui/Page";
 import { useDeleting } from "../ui/Panel";
-import { type FoundUsage, UsageItem, usageKey } from "./usages";
+import {
+  type FoundUsage,
+  UsageItem,
+  usageKey,
+  useComponentNames,
+} from "./usages";
 
 /**
  * Reports whether the user's role on project may publish its snapshots, and
@@ -142,6 +147,7 @@ export function DeleteContentDialog({
       ? refusalOf(commands.error, t)
       : undefined;
   const listed = inUse?.usages.length ?? 0;
+  const componentName = useComponentNames(project.id, inUse?.usages ?? []);
   return (
     <AlertDialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
       <ConfirmFrame
@@ -185,6 +191,7 @@ export function DeleteContentDialog({
                   projectId={project.id}
                   usage={usage}
                   use={usage.use}
+                  componentName={componentName}
                 />
               ))}
             </ul>

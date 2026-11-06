@@ -9,7 +9,7 @@
 import type { PageUsage, Usage } from "@storycreep/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
@@ -86,27 +86,52 @@ export function componentUsagesQuery(
 }
 
 /**
+ * Returns the names of the project's components by their IDs, as the
+ * project's document has them, by which a list of usages names the
+ * components' descriptions that it lists. On a page that has not read the
+ * components, as the variables' page, the document reads them once the
+ * list holds such a description, so that it is named by its component
+ * rather than as a component's; a read that failed, which the document
+ * records, leaves it named so.
+ */
+export function useComponentNames(
+  projectId: string,
+  usages: readonly Usage[],
+): (id: string) => string | undefined {
+  const doc = useProjectDocument(projectId);
+  const components = useDocumentState(doc, (state) => state.view.components);
+  const describes = usages.some((usage) => usage.component_id !== undefined);
+  useEffect(() => {
+    if (describes && !doc.holds("components")) {
+      void doc.load("components").catch(() => undefined);
+    }
+  }, [doc, describes]);
+  return (id) => components.get(id)?.name;
+}
+
+/**
  * A site that uses a variable or a component: what it is, of its node, and
  * the board that it is on, whose page it links to, or, of a component's
- * description, the component, whose panel it links to.
+ * description, the component, by its name, whose panel it links to.
  */
 export function UsageItem({
   projectId,
   usage,
   use,
+  componentName,
 }: {
   projectId: string;
   usage: Usage;
   /** How it uses what it is listed for, as a refusal of a deletion says. */
   use?: Use;
+  /** The names of the project's components, which a component's description is named by (useComponentNames). */
+  componentName: (id: string) => string | undefined;
 }) {
   const { t } = useTranslation();
-  const doc = useProjectDocument(projectId);
-  const component = useDocumentState(doc, (state) =>
+  const component =
     usage.component_id === undefined
       ? undefined
-      : state.view.components.get(usage.component_id),
-  );
+      : componentName(usage.component_id);
   const node =
     usage.node_title === undefined || usage.node_title === ""
       ? t("boards.untitled_node")
@@ -114,7 +139,7 @@ export function UsageItem({
   const site =
     usage.site === "component_description"
       ? t("usage.component_description", {
-          component: component?.name ?? t("usage.a_component"),
+          component: component ?? t("usage.a_component"),
         })
       : t("usage.site", { site: usage.site, node });
   return (
@@ -168,6 +193,7 @@ function UsageList({
   const list = useInfiniteQuery(query);
   const titleId = useId();
   const items = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const componentName = useComponentNames(projectId, items);
   return (
     <section aria-labelledby={titleId} className="space-y-1">
       <h4 id={titleId} className="font-medium">
@@ -186,6 +212,7 @@ function UsageList({
               key={usageKey(usage)}
               projectId={projectId}
               usage={usage}
+              componentName={componentName}
             />
           ))}
         </ul>

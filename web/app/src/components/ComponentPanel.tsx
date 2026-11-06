@@ -309,13 +309,10 @@ function ComponentForm({
   const { commands, held, shown, against } = form;
   // What the editor of the description gave last, of the form shown now:
   // the document, or why the server would refuse it, or nothing while the
-  // user has not changed it, which it holds as the form shows it.
-  const [description, setDescription] = useState<{
-    key: string;
-    value: RichTextValue;
-  }>();
-  const typedDescription =
-    description?.key === held.key ? description.value : undefined;
+  // user has not changed it, which it holds as the form shows it. Only a
+  // submission reads it, so a change of the text, at each key, does not
+  // render the form, with each of its values, again.
+  const description = useRef<{ key: string; value: RichTextValue }>(undefined);
   // The values that are none of their types, and a description that the
   // server would refuse, which the form refuses itself, with a mark of its
   // own for each attempt (useFocusRefusal).
@@ -349,6 +346,10 @@ function ComponentForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    const typedDescription =
+      description.current?.key === held.key
+        ? description.current.value
+        : undefined;
     const attributes: Record<string, Value> = {};
     const refused: Record<string, string> = {};
     for (const attribute of definitions) {
@@ -474,7 +475,7 @@ function ComponentForm({
           defaultValue={shown.description}
           error={errors.description}
           onChange={(value) => {
-            setDescription({ key: held.key, value });
+            description.current = { key: held.key, value };
             held.props.onChange();
           }}
         />

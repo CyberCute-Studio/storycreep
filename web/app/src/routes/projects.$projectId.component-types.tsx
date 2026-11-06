@@ -4,7 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CreateTypeDialog } from "../components/CreateTypeDialog";
 import { TypeGlyph, TypePanel } from "../components/TypePanel";
-import { definitionsOf, typesByName } from "../components/types";
+import { typesByName } from "../components/types";
 import { itemButton, itemClasses } from "../content/ContentTree";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { editsProject, projectQuery } from "../project/queries";
@@ -117,7 +117,7 @@ function TypesPage() {
                     <span className="text-sm break-all text-fg-muted">
                       {t("component_types.item_detail", {
                         key: type.key,
-                        count: definitionsOf(type).length,
+                        count: type.attributes.length,
                       })}
                     </span>
                   </button>

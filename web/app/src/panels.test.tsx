@@ -1182,6 +1182,46 @@ describe("the variables", () => {
     expect(await within(panel).findByText("Nothing changes it.")).toBeDefined();
   });
 
+  it("names the component whose description reads a variable, reading the components that the variables' page had not", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation, input) => {
+      if (operation === "listVariableUsages") {
+        const { access } = (input as { query: { access: string } }).query;
+        return {
+          items:
+            access === "read"
+              ? [{ site: "component_description", component_id: "cmp_lamp" }]
+              : [],
+          next_cursor: null,
+        };
+      }
+      return expected(
+        contentPages(operation, input, {
+          ...content,
+          types: [item],
+          components: [component("cmp_lamp", "Lamp", "lamp", item)],
+        }),
+        operation,
+      );
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    expect(
+      calls.mock.calls.some(([operation]) => operation === "listComponents"),
+    ).toBe(false);
+    await user.click(
+      within(panel).getByRole("button", { name: "Show where it is used" }),
+    );
+    const reads = await within(panel).findByRole("list", { name: "Read by" });
+    await waitFor(() =>
+      expect(reads.textContent).toBe(
+        "The description of Lamp · Open the component",
+      ),
+    );
+  });
+
   it("creates a variable in the folder that the folder's menu was opened for, and opens its panel", async () => {
     const user = userEvent.setup();
     // The variable as the server creates it, which the document reads
