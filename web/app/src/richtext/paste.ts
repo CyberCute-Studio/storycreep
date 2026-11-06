@@ -10,8 +10,8 @@
 // the line breaks of its text, which a pre or a white-space style keeps,
 // kept. What no text shows, as a script, a style sheet, an image, a comment,
 // a hidden element, or the bullet or number of a list item that Word writes
-// out, which the list shows, is left out; a heading of Word's numbered
-// headings keeps its number as its text. Neither
+// out, which the list shows, or a bullet of Word's anywhere, is left out; a
+// heading of Word's numbered headings keeps its number as its text. Neither
 // the pasted HTML, as it is parsed, nor the cleaned HTML has a style
 // attribute or a style element, which the page's Content-Security-Policy
 // refuses (style-src-attr, style-src-elem) in a document that DOMParser
@@ -70,6 +70,13 @@ interface Para {
    * list within the item, whose open start ProseMirror's parser keeps.
    */
   bare?: boolean;
+  /**
+   * Whether no block of the HTML holds the paragraph, as of a copy from
+   * within one paragraph of a page, which ProseMirror pastes into the
+   * paragraph at the caret, so that, as the paste's last, the text after
+   * the caret follows it.
+   */
+  open?: boolean;
 }
 
 /** What the HTML's elements say of the text in them, as the walk reads them. */
@@ -469,6 +476,20 @@ function isWordMarker(element: Element, name: string): boolean {
   return name === "span" && /mso-list\s*:\s*ignore/i.test(rawStyleOf(element));
 }
 
+/**
+ * Reports whether the text of a marker of Word's list (isWordMarker) is a
+ * bullet, or nothing: one that holds no letter or digit, as Symbol's "·", a
+ * character of the private use area, or Wingdings's "§", or one character
+ * that is no digit, as Courier New's "o" or Wingdings's "Ø", which Word
+ * draws in its font as a bullet, and the editor would show as the letter.
+ */
+function isBullet(marker: string): boolean {
+  return (
+    !/[\p{L}\p{N}]/u.test(marker) ||
+    ([...marker].length === 1 && !/\p{Nd}/u.test(marker))
+  );
+}
+
 /** Returns the level of a list item that its element gives, as Google Docs's aria-level and Word Online's data-aria-level do, the first of them that is a level, or undefined for none. */
 function levelOf(element: Element): number | undefined {
   for (const name of ["aria-level", "data-aria-level"]) {
@@ -498,8 +519,11 @@ function wordItemOf(element: Element): ItemOf | undefined {
       .find((span) => isWordMarker(span, "span"))
       ?.textContent?.trim() ?? "";
   // The item's number is the last of those that the marker holds, as 2 of
-  // 1.2., where the numbers of the items that hold it go before it.
-  const numbered = /^\(?(?:\d+\.)*([0-9]+|[a-z]{1,4})[.)]/i.exec(marker);
+  // 1.2., where the numbers of the items that hold it go before it: digits,
+  // a Roman numeral, as xviii, or up to four letters, as aa.
+  const numbered = /^\(?(?:\d+\.)*([0-9]+|[ivxlcdm]+|[a-z]{1,4})[.)]/i.exec(
+    marker,
+  );
   return {
     // Word's levels are from 1, as a list item's are; level0 is the first.
     level: Math.max(1, Number(match[1])),
@@ -521,6 +545,8 @@ class Reader {
   private itemLevel: number | undefined;
   /** How many paragraphs of Word's list (wordItemOf) hold what the walk reads. */
   private wordItems = 0;
+  /** How many blocks of the HTML, but its body, hold what the walk reads. */
+  private blocks = 0;
   /**
    * Whether the HTML is ProseMirror's, as the editor copies it, whose every
    * block of text is a paragraph, as one that holds nothing or only white
@@ -547,6 +573,9 @@ class Reader {
   private paragraph(): Para {
     if (this.current === undefined) {
       const para: Para = { runs: [] };
+      if (this.blocks === 0) {
+        para.open = true;
+      }
       if (this.pendingItem !== undefined) {
         para.item = this.pendingItem;
         this.pendingItem = undefined;
@@ -581,13 +610,14 @@ class Reader {
       return;
     }
     if (isWordMarker(element, name)) {
-      // The bullet or the number of a paragraph of Word's list is left out,
-      // as its list shows it. That of a heading of Word's list, as of its
-      // numbered headings, which is a paragraph of no list here, is its
+      // The bullet or the number of a paragraph of Word's list, or within a
+      // list's item, is left out, as its list shows it, and so is a bullet
+      // anywhere (isBullet). The number of a heading of Word's list, as of
+      // its numbered headings, which is a paragraph of no list here, is its
       // text, as Word shows it, with a space in place of the white space
       // that Word writes after it.
       const marker = element.textContent?.trim() ?? "";
-      if (this.wordItems === 0 && marker !== "") {
+      if (this.wordItems === 0 && ctx.lists === 0 && !isBullet(marker)) {
         this.text(
           `${marker} `,
           this.contextOf(element, name, { ...ctx, shown }),
@@ -622,6 +652,8 @@ class Reader {
       this.paragraph().bare = this.faithful;
     }
     this.end();
+    const block = name === "body" ? 0 : 1;
+    this.blocks += block;
     const outerItem = this.pendingItem;
     const outerLevel = this.itemLevel;
     // A list item, of a list's element or a paragraph of Word's list, whose
@@ -673,6 +705,7 @@ class Reader {
       this.pendingItem = outerItem;
       this.itemLevel = outerLevel;
     }
+    this.blocks -= block;
     this.end();
   }
 
@@ -830,18 +863,22 @@ type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
  * list of its own, as ProseMirror reads it, and a paragraph keeps its white
  * space; in another app's, a paragraph that holds text whose white space is
  * kept has the rest of its white space collapsed here (collapsed), since
- * ProseMirror keeps all of the paragraph's (writeBlocks).
+ * ProseMirror keeps all of the paragraph's (writeBlocks), and a paragraph
+ * loses the white space at its end (tidy), but for the paste's last where no
+ * block holds it (Para.open).
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
   const open: List[] = [];
   const lastItem = (list: List) => list.items[list.items.length - 1];
-  for (const para of paras) {
+  for (const [i, para] of paras.entries()) {
+    // The paste's last paragraph, where no block holds it, ends where the
+    // text after the caret begins, which shows the white space at its end.
+    const joined = para.open === true && i === paras.length - 1;
+    const runs = holdsKept(para.runs) ? collapsed(para.runs) : para.runs;
     const block = {
       kind: "p" as const,
-      runs: faithful
-        ? para.runs
-        : tidy(holdsKept(para.runs) ? collapsed(para.runs) : para.runs),
+      runs: faithful ? para.runs : joined ? spacedEnd(runs) : tidy(runs),
     };
     if (para.item !== undefined) {
       const level = Math.min(para.item.level, open.length + 1);
@@ -900,6 +937,29 @@ function tidy(runs: readonly Run[]): Run[] {
     out.pop();
     trimEnd(out);
     out.push(last);
+  }
+  return out;
+}
+
+/**
+ * Returns the runs of the paste's last paragraph where no block holds it,
+ * which ProseMirror pastes into the paragraph at the caret, with the spaces
+ * at the end of its text whose white space is kept, as Google Docs's, as
+ * no-break spaces, as a browser's copy writes the space at its end:
+ * ProseMirror's parser takes the spaces at the end of what is pasted off
+ * it, though a pre keeps them, and keeps no-break spaces, which show as the
+ * space between the pasted text and the text after the caret.
+ */
+function spacedEnd(runs: readonly Run[]): Run[] {
+  const out = [...runs];
+  const last = out.at(-1);
+  if (last?.kind === "text" && last.keep) {
+    out[out.length - 1] = {
+      ...last,
+      text: last.text.replace(/ +$/, (spaces) =>
+        "\u00a0".repeat(spaces.length),
+      ),
+    };
   }
   return out;
 }

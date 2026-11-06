@@ -528,6 +528,45 @@ if (tide) {}</pre>
     );
   });
 
+  // Verifies: FR-TEXT-01/AC2
+  test("a bullet that Word writes out is left out wherever it is, as of a bulleted heading or a paragraph whose list its style gives, and a number within a list's item too", () => {
+    const marker = (font: string, bullet: string) =>
+      `<![if !supportLists]><span style='font-family:${font};mso-fareast-font-family:${font}'><span style='mso-list:Ignore'>${bullet}<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp;&nbsp; </span></span></span><![endif]>`;
+    expect(
+      pasted(
+        `<h2 style='margin-left:.25in;text-indent:-.25in;mso-list:l0 level1 lfo1'>${marker("Wingdings", "§")}<span lang=EN-US>Heading<o:p></o:p></span></h2>` +
+          `<p class=MsoListBullet>${marker("Symbol", "·")}<span lang=EN-US>Rope<o:p></o:p></span></p>` +
+          `<p class=MsoListBullet2>${marker('"Courier New"', "o")}<span lang=EN-US>Oil<o:p></o:p></span></p>` +
+          `<p class=MsoListBullet>${marker("Wingdings", "Ø")}<span lang=EN-US>Lamp<o:p></o:p></span></p>` +
+          `<p class=MsoListBullet>${marker("Symbol", "\uf0b7")}<span lang=EN-US>Sail<o:p></o:p></span></p>` +
+          `<p class=MsoListNumber>${marker("Calibri", "1.")}<span lang=EN-US>Return<o:p></o:p></span></p>` +
+          `<ol><li>${marker("Calibri", "1.")}Ebb</li></ol>`,
+      ),
+    ).toEqual(
+      doc(
+        p(text("Heading")),
+        p(text("Rope")),
+        p(text("Oil")),
+        p(text("Lamp")),
+        p(text("Sail")),
+        p(text("1. Return")),
+        numbers(1, item(p(text("Ebb")))),
+      ),
+    );
+  });
+
+  test("a paragraph of Word's list numbered by a Roman numeral of more than four letters, as xviii., is numbered as the items before it", () => {
+    const word = (marker: string, value: string) =>
+      `<p style="mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">${marker}<span style="font:7.0pt">&nbsp;&nbsp;</span></span>${value}</p>`;
+    expect(
+      pasted(word("xvii.", "a") + word("xviii.", "b") + word("XXVIII)", "c")),
+    ).toEqual(
+      doc(
+        numbers(1, item(p(text("a"))), item(p(text("b"))), item(p(text("c")))),
+      ),
+    );
+  });
+
   test("HTML of which the cleaning keeps nothing, as of only a button, is pasted as the clipboard's plain text", () => {
     const editor = testEditor();
     const event = Object.assign(new Event("paste"), {
@@ -558,6 +597,42 @@ if (tide) {}</pre>
     );
     editor.view.pasteHTML("<span> </span>", clipboard(" "));
     expect(storedOf(editor.state.doc).doc).toEqual(doc(p(text("Tide  shore"))));
+    // Word's empty paragraph, of which the cleaning keeps an empty
+    // paragraph, which ProseMirror's paste would put nothing of in place of
+    // the selection, pastes the clipboard's plain text, a paragraph's end.
+    editor.commands.setContent(doc(p(text("Tide and shore"))));
+    editor.commands.setTextSelection({ from: 5, to: 9 });
+    editor.view.pasteHTML(
+      "<p class=MsoNormal><o:p>&nbsp;</o:p></p>",
+      clipboard("\r\n"),
+    );
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("Tide")), p(text(" shore"))),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("a copy from within a paragraph keeps the white space at its end, which the text after the caret follows, as a browser's no-break space and Google Docs's kept space", () => {
+    const editor = testEditor();
+    const at = (html: string) => {
+      // "The |is"
+      editor.commands.setContent(doc(p(text("The is"))));
+      editor.commands.setTextSelection(5);
+      editor.view.pasteHTML(html);
+      return storedOf(editor.state.doc).doc;
+    };
+    expect(at('<span style="color: red;">word&nbsp;</span>')).toEqual(
+      doc(p(text("The word\u00a0is"))),
+    );
+    expect(
+      at(
+        '<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-1"><span style="font-weight:400;white-space:pre;white-space:pre-wrap;">word </span></b>',
+      ),
+    ).toEqual(doc(p(text("The word\u00a0is"))));
+    expect(at("<span>&nbsp;</span>")).toEqual(doc(p(text("The \u00a0is"))));
+    // White space after the copy that a browser does not show, as the line
+    // break that Word or a browser writes after the fragment, is none.
+    expect(at("<span>word</span>\r\n")).toEqual(doc(p(text("The wordis"))));
   });
 
   test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {

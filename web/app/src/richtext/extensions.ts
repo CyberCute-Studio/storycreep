@@ -9,6 +9,7 @@ import {
   type Attributes,
   type Editor,
   Extension,
+  markInputRule,
   markPasteRule,
   mergeAttributes,
   Node,
@@ -25,7 +26,7 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Strike } from "@tiptap/extension-strike";
 import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
-import type { Node as PMNode, Slice } from "@tiptap/pm/model";
+import type { MarkType, Node as PMNode, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { typedHref } from "./link";
@@ -230,6 +231,16 @@ export function relabel(editor: Editor) {
 /** Whether TipTap links a URL that linkify finds as it is typed or pasted, of which StoredLink links only those that a link may lead to. */
 const autoLinks = Link.options.shouldAutoLink;
 
+/** Reports whether any of a slice's content has a mark of type. */
+function holdsMark(slice: Slice, type: MarkType): boolean {
+  let holds = false;
+  slice.content.descendants((node) => {
+    holds ||= type.isInSet(node.marks) !== undefined;
+    return !holds;
+  });
+  return holds;
+}
+
 /**
  * A link, with its URL in attrs.href and no other attribute: it opens in a
  * new tab, without the page's referrer or a handle on it, and a click in the
@@ -239,7 +250,9 @@ const autoLinks = Link.options.shouldAutoLink;
  * and an email address, which it links to a mailto URL. setLink and
  * toggleLink take a URL as the link's field does too, and set it as a link
  * stores it, so that a link that they set is not taken off again by the
- * normalizer, and refuse one that no link may lead to. Its element leads
+ * normalizer, and refuse one that no link may lead to, as of no string. A
+ * URL pasted over a selection links it, but a copied link pasted over it is
+ * pasted as it is, keeping its link. Its element leads
  * only to a URL as a link stores it (checkHref), and to none otherwise, as
  * of a link without a URL, or with one that this version does not take, in
  * a text that the editor shows but cannot keep, rather than to a URL of the
@@ -302,12 +315,43 @@ const StoredLink = Link.extend({
     });
   },
 
+  // TipTap's handler of a paste over a selection, which links the selection
+  // where the pasted text is one URL, to the URL that linkify reads of that
+  // text: pasted text that a link holds, as a copied link whose text is a
+  // URL, as example.com of a link to https://example.com/docs, is pasted
+  // over the selection as it is, as any copied link is, so that it keeps
+  // its link, rather than the selection being linked to its text.
+  addProseMirrorPlugins() {
+    const type = this.type;
+    return (this.parent?.() ?? []).map((plugin) => {
+      const { handlePaste } = plugin.props;
+      if (handlePaste === undefined) {
+        return plugin;
+      }
+      return new Plugin({
+        ...plugin.spec,
+        props: {
+          ...plugin.spec.props,
+          handlePaste: (view, event, slice) =>
+            !holdsMark(slice, type) &&
+            handlePaste.call(plugin, view, event, slice),
+        },
+      });
+    });
+  },
+
   addCommands() {
     const parent = this.parent?.() ?? {};
+    // The URL of a command's attributes, as the link's field takes it, or
+    // undefined for none that a link may lead to, as of no string.
+    const hrefOf = (attributes: { href?: unknown }) =>
+      typeof attributes.href === "string"
+        ? typedHref(attributes.href)
+        : undefined;
     return {
       ...parent,
       setLink: (attributes) => (props) => {
-        const href = typedHref(attributes.href);
+        const href = hrefOf(attributes);
         if (href === undefined || parent.setLink === undefined) {
           return false;
         }
@@ -320,7 +364,7 @@ const StoredLink = Link.extend({
         if (attributes === undefined) {
           return parent.toggleLink()(props);
         }
-        const href = typedHref(attributes.href);
+        const href = hrefOf(attributes);
         return (
           href !== undefined &&
           parent.toggleLink({ ...attributes, href })(props)
@@ -367,14 +411,48 @@ const StoredOrderedList = OrderedList.extend({
 });
 
 /**
- * The marks of the toolbar, whose Markdown-like input rules stay, as "**" or
- * "_" around typed text, but not their paste rules, which would take the
- * characters of pasted text, as the asterisks of "2 * 3 * 4" or the
- * underscores of "__init__", for marks, and leave them out of it.
+ * Returns the pattern of an input rule of a mark of text typed between two
+ * of delimiter, as "**", after white space or at the start, as TipTap's,
+ * but only where no white space is just within either, as CommonMark's
+ * emphasis has it, so that the asterisks of typed "2 * 3 * 4" stay text.
+ * The text is the last group, which markInputRule marks.
  */
-const toolbarMarks = [Bold, Italic, Strike, Code].map((mark) =>
-  mark.extend({ addPasteRules: () => [] }),
-);
+function emphasis(delimiter: string): RegExp {
+  const d = delimiter.replace(/[*]/g, "\\*");
+  const c = delimiter[0];
+  return new RegExp(`(?:^|\\s)(${d}([^\\s${c}](?:[^${c}]*[^\\s${c}])?)${d})$`);
+}
+
+/**
+ * The marks of the toolbar, whose Markdown-like input rules stay, as "**" or
+ * "_" around typed text, those of bold, italic, and struck-through text only
+ * where text follows and precedes the delimiters without white space
+ * (emphasis), but not their paste rules, which would take the characters of
+ * pasted text, as the asterisks of "2 * 3 * 4" or the underscores of
+ * "__init__", for marks, and leave them out of it.
+ */
+const toolbarMarks = [
+  Bold.extend({
+    addInputRules() {
+      return ["**", "__"].map((delimiter) =>
+        markInputRule({ find: emphasis(delimiter), type: this.type }),
+      );
+    },
+  }),
+  Italic.extend({
+    addInputRules() {
+      return ["*", "_"].map((delimiter) =>
+        markInputRule({ find: emphasis(delimiter), type: this.type }),
+      );
+    },
+  }),
+  Strike.extend({
+    addInputRules() {
+      return [markInputRule({ find: emphasis("~~"), type: this.type })];
+    },
+  }),
+  Code,
+].map((mark) => mark.extend({ addPasteRules: () => [] }));
 
 /**
  * A list's item, which Tab moves, with the other items of the selection,
@@ -457,7 +535,9 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
 /**
  * The editor's props for what is pasted or dropped: HTML is cleaned to what
  * the schema holds before it is read (FR-TEXT-01 AC2), and pasted HTML of
- * which the cleaning keeps nothing, as of only a button or a formula, is
+ * which the cleaning keeps nothing, as of only a button or a formula, or
+ * only an empty paragraph, as of Word's, which ProseMirror would paste
+ * nothing of (an open slice of size 0), is
  * pasted as the clipboard's plain text, which ProseMirror reads only where
  * the clipboard has no HTML, though it is only white space, as of a copied
  * space. A paste of neither, as of only an image, changes nothing, rather
@@ -468,7 +548,7 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
 export const pasteProps = {
   transformPastedHTML: (html: string) => cleanPastedHTML(html),
   handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) => {
-    if (slice.content.size > 0) {
+    if (slice.size > 0) {
       return false;
     }
     const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -480,7 +560,7 @@ export const pasteProps = {
     slice: Slice,
     moved: boolean,
   ) => {
-    if (moved || slice.content.size > 0) {
+    if (moved || slice.size > 0) {
       return false;
     }
     const text = event.dataTransfer?.getData("text/plain") ?? "";

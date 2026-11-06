@@ -387,4 +387,96 @@ describe("the editor's extensions", () => {
     expect(handleDrop(editor.view, drop("x²"), Slice.empty, false)).toBe(true);
     expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harx²bour")]);
   });
+
+  test("a copied link pasted over the selection is pasted as it is, though its text is a URL, rather than linking the selection to its text", () => {
+    const editor = testEditor();
+    const over = (html: string) => {
+      editor.commands.setContent(p("Tide and shore"));
+      // "and"
+      editor.commands.setTextSelection({ from: 6, to: 9 });
+      editor.view.pasteHTML(html);
+      return storedOf(editor.state.doc).doc?.content;
+    };
+    const pastedLink = (value: string, href: string) => [
+      {
+        content: [
+          { text: "Tide ", type: "text" },
+          {
+            marks: [{ attrs: { href }, type: "link" }],
+            text: value,
+            type: "text",
+          },
+          { text: " shore", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ];
+    expect(
+      over('<a href="https://example.com/docs/page">example.com</a>'),
+    ).toEqual(pastedLink("example.com", "https://example.com/docs/page"));
+    expect(
+      over(
+        '<a href="https://github.com/org/repo/blob/main/README.md">README.md</a>',
+      ),
+    ).toEqual(
+      pastedLink(
+        "README.md",
+        "https://github.com/org/repo/blob/main/README.md",
+      ),
+    );
+    expect(over('<a href="https://example.com/docs">the docs</a>')).toEqual(
+      pastedLink("the docs", "https://example.com/docs"),
+    );
+  });
+
+  test("setLink and toggleLink refuse a link without a URL, rather than throw", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    editor.commands.selectAll();
+    expect(editor.commands.setLink({} as never)).toBe(false);
+    expect(editor.commands.toggleLink({} as never)).toBe(false);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harbour")]);
+  });
+
+  test("a mark's input rule takes only delimiters that text follows and precedes without white space, so that typed '2 * 3 * 4' stays as it is typed", () => {
+    const editor = testEditor();
+    const { view } = editor;
+    const typed = (value: string) => {
+      for (const character of value) {
+        const { from, to } = view.state.selection;
+        const handled = view.someProp("handleTextInput", (handle) =>
+          handle(view, from, to, character, () =>
+            view.state.tr.insertText(character, from, to),
+          ),
+        );
+        if (handled !== true) {
+          view.dispatch(view.state.tr.insertText(character, from, to));
+        }
+      }
+    };
+    typed("2 * 3 * 4 and a ** b ** c and x ~~ y ~~ z and a _ b _ c");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      p("2 * 3 * 4 and a ** b ** c and x ~~ y ~~ z and a _ b _ c"),
+    ]);
+    editor.commands.clearContent();
+    typed("an *odd* **bold** ~~gone~~ _keen_ end");
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "an ", type: "text" },
+          { marks: [{ type: "italic" }], text: "odd", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "bold" }], text: "bold", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "strike" }], text: "gone", type: "text" },
+          { text: " ", type: "text" },
+          { marks: [{ type: "italic" }], text: "keen", type: "text" },
+          { text: " end", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
 });
