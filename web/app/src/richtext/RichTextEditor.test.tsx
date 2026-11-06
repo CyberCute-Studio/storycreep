@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import { describe, expect, test, vi } from "vitest";
 import { createAppI18n } from "../i18n";
 import "../test/editor";
+import { useHeld } from "../ui/held";
 import type { RichTextValue } from "./convert";
 import { RichTextEditor, type RichTextEditorProps } from "./RichTextEditor";
 
@@ -199,7 +200,7 @@ describe("the rich-text editor", () => {
     }
   });
 
-  test("a text that it cannot keep says so before the page's error, which marks it invalid", () => {
+  test("a text that it cannot keep says so before the page's error, which marks it invalid, and which it says too", () => {
     const { textbox } = renderEditor({
       defaultValue: {
         content: [
@@ -216,8 +217,19 @@ describe("the rich-text editor", () => {
     expect(textbox.getAttribute("aria-invalid")).toBe("true");
     screen.getByRole("textbox", {
       name: "Body",
-      description: /this version of the app cannot show/,
+      description:
+        /this version of the app cannot show.* The server refused it\.$/,
     });
+  });
+
+  test("a text too long to save that may not be changed says nothing of its length, and is not marked invalid, as the user cannot shorten it", () => {
+    const { textbox } = renderEditor({
+      defaultValue: paragraph("a".repeat(MAX_CHARS + 1)),
+      editable: false,
+    });
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+    expect(textbox.getAttribute("aria-invalid")).toBeNull();
+    expect(textbox.getAttribute("aria-describedby")).toBeNull();
   });
 
   // A list of one item of text, nested within as many lists as depth.
@@ -252,6 +264,15 @@ describe("the rich-text editor", () => {
     {
       what: "lists nested deeper than this version allows",
       content: [nested(6), paragraph("Shore").content[0]],
+    },
+    {
+      what: "a link without a URL",
+      content: [
+        {
+          content: [{ marks: [{ type: "link" }], text: "Tide", type: "text" }],
+          type: "paragraph",
+        },
+      ],
     },
     {
       what: "a text too long, with an attribute that this version does not have after the text that takes it over the limit",
@@ -418,6 +439,47 @@ describe("the rich-text editor", () => {
       ],
       type: "paragraph",
     });
+  });
+
+  test("a form that holds the editor holds what it shows while the focus is in the link's dialog, though what it shows changed meanwhile, rather than show it anew without the dialog", async () => {
+    function HeldForm({ entity }: { entity: { rev: number; body: string } }) {
+      const held = useHeld(entity);
+      return (
+        <form key={held.key} {...held.props}>
+          <RichTextEditor
+            label="Body"
+            defaultValue={paragraph(held.shown.body)}
+            onChange={held.props.onChange}
+          />
+        </form>
+      );
+    }
+    const i18n = createAppI18n(["en"], document.documentElement);
+    const form = (rev: number, body: string) => (
+      <I18nextProvider i18n={i18n}>
+        <HeldForm entity={{ rev, body }} />
+      </I18nextProvider>
+    );
+    const { rerender } = render(form(1, "harbour"));
+    const textbox = screen.getByRole("textbox", { name: "Body" });
+    await selectAll(textbox);
+    // Another session changes the text while the user is in it.
+    rerender(form(2, "shore"));
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await screen.findByRole("dialog", { name: "Add a link" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.getByRole("dialog", { name: "Add a link" })).toBeTruthy();
+    expect(textbox.isConnected).toBe(true);
+    expect(textbox.textContent).toBe("harbour");
+    // The focus leaving the form, unchanged, lets go of it.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    textbox.blur();
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Body" }).textContent).toBe(
+        "shore",
+      ),
+    );
   });
 
   test("the text of a link inserted where nothing is selected has the marks of text typed there", async () => {

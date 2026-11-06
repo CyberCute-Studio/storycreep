@@ -214,6 +214,24 @@ if (tide) {}</pre>
     );
   });
 
+  test("a listing and an xmp, which HTML shows as a pre, keep the white space of their lines as a pre does, each a paragraph of its own", () => {
+    expect(
+      pasted(
+        "<p>Tide</p><xmp>  if (a < b)\n    sail();</xmp><listing>\n  x  y</listing>",
+      ),
+    ).toEqual(
+      doc(
+        p(text("Tide")),
+        p(
+          text("  if (a < b)", "code"),
+          { type: "hardBreak" },
+          text("    sail();", "code"),
+        ),
+        p(text("  x  y", "code")),
+      ),
+    );
+  });
+
   test("text whose white-space style keeps its white space, as Google Docs's and a code editor's, keeps it", () => {
     const docs = (value: string) =>
       `<span style="font-weight:400;white-space:pre;white-space:pre-wrap;">${value}</span>`;
@@ -345,7 +363,7 @@ if (tide) {}</pre>
         doc(p()),
       );
       expect(pasted('<xmp><b style="x">t</b></xmp>')).toEqual(
-        doc(p(text('<b style="x">t</b>'))),
+        doc(p(text('<b style="x">t</b>', "code"))),
       );
       // A value that is not quoted holds what follows it.
       expect(

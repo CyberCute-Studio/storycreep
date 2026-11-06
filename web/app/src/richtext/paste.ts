@@ -169,6 +169,7 @@ const BLOCKS = new Set([
   "hr",
   "legend",
   "li",
+  "listing",
   "main",
   "menu",
   "nav",
@@ -185,7 +186,11 @@ const BLOCKS = new Set([
   "thead",
   "tr",
   "ul",
+  "xmp",
 ]);
+
+/** The elements of preformatted text, whose white space is kept, and whose text is code: a pre, and the listing and the xmp that HTML shows as one. */
+const PREFORMATTED = new Set(["listing", "pre", "xmp"]);
 
 /** The elements of a block of text, which ProseMirror writes of a paragraph, a heading, or a block of code. */
 const TEXTBLOCKS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"]);
@@ -657,19 +662,21 @@ class Reader {
     marks.italic = italicOf(element, name) ?? marks.italic;
     marks.strike = marks.strike || strikeOf(element, name);
     marks.code =
-      marks.code || ["code", "kbd", "samp", "tt", "pre"].includes(name);
+      marks.code ||
+      ["code", "kbd", "samp", "tt"].includes(name) ||
+      PREFORMATTED.has(name);
     if (name === "a") {
       const href = element.getAttribute("href");
       // A link within a link is the inner one, as a browser follows it.
       marks.href =
         href === null ? marks.href : (storedHref(href) ?? marks.href);
     }
-    // White space is kept in a pre, and as an element's white-space, which
-    // what it holds takes, says, and so are line breaks, and they alone as
-    // its pre-line says.
+    // White space is kept in a pre (PREFORMATTED), and as an element's
+    // white-space, which what it holds takes, says, and so are line breaks,
+    // and they alone as its pre-line says.
     const space = styleOf(element, "white-space");
     const keep =
-      space === "" ? ctx.keep || name === "pre" : KEPT_SPACE.has(space);
+      space === "" ? ctx.keep || PREFORMATTED.has(name) : KEPT_SPACE.has(space);
     const inner: Context = {
       ...ctx,
       marks,

@@ -50,7 +50,7 @@ export interface RichTextEditorProps {
   /** The field's label, which names the text for a screen reader too. */
   label: string;
   hint?: string;
-  /** What the page says is wrong with the text, as the server's refusal of it, which marks it invalid; a text that the editor cannot keep (defaultValue) shows why instead. */
+  /** What the page says is wrong with the text, as the server's refusal of it, which marks it invalid; a text that the editor cannot keep (defaultValue) shows why before it. */
   error?: string;
   /**
    * The document that the editor starts with, the empty one when it is not
@@ -118,6 +118,17 @@ function readOf(content: RichTextDoc): {
     : { refused: tryParseRichText(whole).error, unreadable: false };
 }
 
+/**
+ * The options of TipTap's own extensions: a text that may not be changed
+ * takes the focus too, as a read-only field does, so that the keyboard
+ * reaches it to read and select it, and a click on its label, or a refusal
+ * of its form, focuses it; TipTap takes it out of the order of Tab
+ * otherwise. It is one object for every render, since useEditor compares
+ * its options by identity, and sets them all again, which redraws the
+ * text's decorations, whenever one is another object.
+ */
+const coreExtensionOptions = { tabindex: { value: "0" } };
+
 /** Returns the message of why the server would refuse a document, in the page's locale. */
 function messageOf(
   t: ReturnType<typeof useTranslation>["t"],
@@ -177,16 +188,20 @@ export function RichTextEditor({
   // reads it, but not changed.
   const changeable = editable && !initial.unreadable;
   // Why the server would refuse what the editor holds, which the page's own
-  // error goes before. A text that the editor cannot keep says so instead of
-  // either, since nothing that the user does in it here mends it; it is not
+  // error goes before, of a text that the user may change, which they can
+  // mend. A text that the editor cannot keep says so before the page's
+  // error, since nothing that the user does in it here mends it; it is not
   // marked invalid for that, as it holds nothing that the user should mend,
   // so that useFocusRefusal does not take the focus to it from the field
   // that a refusal of the form is of.
   const [refused, setRefused] = useState(initial.refused);
   const invalid =
-    error ?? (refused === undefined ? undefined : messageOf(t, refused));
+    error ??
+    (changeable && refused !== undefined ? messageOf(t, refused) : undefined);
   const shownError = initial.unreadable
-    ? t("richtext.error.unreadable")
+    ? [t("richtext.error.unreadable"), error]
+        .filter((message) => message !== undefined)
+        .join(" ")
     : invalid;
   const { describedBy } = fieldDescription(id, hint, shownError);
   const editorProps = useMemo(
@@ -211,11 +226,7 @@ export function RichTextEditor({
     content: initial.content,
     extensions: initial.extensions,
     editable: changeable,
-    // A text that may not be changed takes the focus too, as a read-only
-    // field does, so that the keyboard reaches it to read and select it, and
-    // a click on its label, or a refusal of its form, focuses it; TipTap
-    // takes it out of the order of Tab otherwise.
-    coreExtensionOptions: { tabindex: { value: "0" } },
+    coreExtensionOptions,
     // The editor's styles are the app's stylesheet's (styles.css), since the
     // page's Content-Security-Policy refuses a style element without the
     // response's nonce.

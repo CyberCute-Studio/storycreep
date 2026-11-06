@@ -62,6 +62,9 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   // The place, among the form's controls, of the one that has the focus,
   // while one has.
   const focused = useRef<number>(undefined);
+  // The letting go of the form that the focus's move into a dialog waits
+  // with (props.onBlur).
+  const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
   const shown = held?.value ?? entity;
   // The form shown anew has the focus where it had it: its controls before
   // went with it, without the form being told that the focus left them, as
@@ -90,6 +93,8 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
     props: {
       ref,
       onFocus: (event) => {
+        clearTimeout(leaving.current);
+        leaving.current = undefined;
         focused.current = [...event.currentTarget.elements].indexOf(
           event.target as Element,
         );
@@ -109,10 +114,28 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         if (event.target === event.currentTarget.ownerDocument.activeElement) {
           return;
         }
-        focused.current = undefined;
-        if (!changed.current) {
-          setHeld(undefined);
+        const leave = () => {
+          leaving.current = undefined;
+          focused.current = undefined;
+          if (!changed.current) {
+            setHeld(undefined);
+          }
+        };
+        // A dialog that a control of the form opened, as a rich text's link
+        // dialog, is outside the form's elements, in its portal, but React
+        // tells the form of the focus in it (onFocus), right after this, as
+        // the focus moves: the form lets go only once it has not, rather
+        // than let go and hold again, which would show it anew, without the
+        // dialog, where what it shows changed meanwhile.
+        if (
+          event.relatedTarget instanceof Element &&
+          event.relatedTarget.closest('[role="dialog"], [role="alertdialog"]')
+        ) {
+          clearTimeout(leaving.current);
+          leaving.current = setTimeout(leave);
+          return;
         }
+        leave();
       },
     },
     hold: (value) => {

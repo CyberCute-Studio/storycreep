@@ -3,7 +3,7 @@
 // so that the editor writes the documents that the server stores (PRD
 // FR-TEXT-01, ADR-020, plan note N40).
 
-import { MAX_DECIMALS } from "@storycreep/shared/richtext";
+import { checkHref, MAX_DECIMALS } from "@storycreep/shared/richtext";
 import {
   type AnyExtension,
   type Attributes,
@@ -24,7 +24,7 @@ import { Strike } from "@tiptap/extension-strike";
 import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
 import type { Node as PMNode, Slice } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { typedHref } from "./link";
 import { normalizer } from "./normalize";
@@ -220,7 +220,11 @@ const autoLinks = Link.options.shouldAutoLink;
  * and an email address, which it links to a mailto URL. setLink and
  * toggleLink take a URL as the link's field does too, and set it as a link
  * stores it, so that a link that they set is not taken off again by the
- * normalizer, and refuse one that no link may lead to.
+ * normalizer, and refuse one that no link may lead to. Its element leads
+ * only to a URL as a link stores it (checkHref), and to none otherwise, as
+ * of a link without a URL, or with one that this version does not take, in
+ * a text that the editor shows but cannot keep, rather than to a URL of the
+ * app's own page that a relative one would be.
  */
 const StoredLink = Link.extend({
   addAttributes() {
@@ -230,6 +234,21 @@ const StoredLink = Link.extend({
         parseHTML: (element) => element.getAttribute("href"),
       },
     };
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const { href } = HTMLAttributes;
+    return [
+      "a",
+      mergeAttributes(this.options.HTMLAttributes, {
+        ...HTMLAttributes,
+        href:
+          typeof href === "string" && checkHref(href) === undefined
+            ? href
+            : null,
+      }),
+      0,
+    ];
   },
 
   addCommands() {
@@ -268,7 +287,8 @@ const StoredLink = Link.extend({
   // a selection, which links the selection, asks only shouldAutoLink, so
   // that a URL that no link may lead to is pasted as text over it, rather
   // than linking it with a link that the normalizer then takes off.
-  isAllowedUri: (url) => typedHref(url) !== undefined,
+  isAllowedUri: (url) =>
+    typeof url === "string" && typedHref(url) !== undefined,
   shouldAutoLink: (url) => autoLinks(url) && typedHref(url) !== undefined,
   HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
 });
@@ -374,7 +394,8 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
  * the clipboard has no HTML, though it is only white space, as of a copied
  * space. A paste of neither, as of only an image, changes nothing, rather
  * than take out the selection, which ProseMirror replaces with what is
- * pasted.
+ * pasted. So is a drop from outside the editor, at the place that it is
+ * dropped at, of which ProseMirror would insert nothing.
  */
 export const pasteProps = {
   transformPastedHTML: (html: string) => cleanPastedHTML(html),
@@ -384,5 +405,27 @@ export const pasteProps = {
     }
     const text = event.clipboardData?.getData("text/plain") ?? "";
     return text === "" || view.pasteText(text);
+  },
+  handleDrop: (
+    view: EditorView,
+    event: DragEvent,
+    slice: Slice,
+    moved: boolean,
+  ) => {
+    if (moved || slice.content.size > 0) {
+      return false;
+    }
+    const text = event.dataTransfer?.getData("text/plain") ?? "";
+    const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+    if (text === "" || at === null) {
+      return false;
+    }
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.near(view.state.doc.resolve(at.pos)),
+      ),
+    );
+    view.focus();
+    return view.pasteText(text);
   },
 };

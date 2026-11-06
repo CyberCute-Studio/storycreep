@@ -1,7 +1,9 @@
 import type { RichTextDoc } from "@storycreep/shared/api";
+import { Slice } from "@tiptap/pm/model";
 import { describe, expect, test } from "vitest";
 import { testEditor } from "../test/editor";
 import { storedOf } from "./convert";
+import { pasteProps } from "./extensions";
 
 const p = (value: string) => ({
   content: [{ text: value, type: "text" }],
@@ -215,5 +217,55 @@ describe("the editor's extensions", () => {
         type: "paragraph",
       },
     ]);
+  });
+
+  test("draw a link's element with its URL only where it is one that a link stores, as not of a link without a URL or with a relative one", () => {
+    const linked = (attrs: object | undefined) => ({
+      content: [
+        {
+          marks: [{ ...(attrs === undefined ? {} : { attrs }), type: "link" }],
+          text: "harbour",
+          type: "text",
+        },
+      ],
+      type: "paragraph",
+    });
+    const editor = testEditor({
+      content: [
+        linked(undefined),
+        linked({ href: 5 }),
+        linked({ href: "example.com" }),
+        linked({ href: "https://example.com/tide" }),
+      ],
+      type: "doc",
+    } as unknown as RichTextDoc);
+    expect(
+      Array.from(editor.view.dom.querySelectorAll("a"), (a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual([null, null, null, "https://example.com/tide"]);
+  });
+
+  test("drop the plain text of what is dropped from outside the editor at the place that it is dropped at, where the cleaning keeps nothing of its HTML", () => {
+    const editor = testEditor({
+      content: [p("harbour")],
+      type: "doc",
+    } as RichTextDoc);
+    const drop = (text: string) =>
+      ({
+        clientX: 0,
+        clientY: 0,
+        dataTransfer: {
+          getData: (type: string) => (type === "text/plain" ? text : ""),
+        },
+      }) as unknown as DragEvent;
+    // The place before "bour", which jsdom, which lays nothing out, cannot
+    // find from the drop's coordinates.
+    editor.view.posAtCoords = () => ({ pos: 4, inside: -1 });
+    const { handleDrop } = pasteProps;
+    expect(handleDrop(editor.view, drop(""), Slice.empty, false)).toBe(false);
+    expect(handleDrop(editor.view, drop("x²"), Slice.empty, true)).toBe(false);
+    expect(handleDrop(editor.view, drop("x²"), Slice.empty, false)).toBe(true);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harx²bour")]);
   });
 });
