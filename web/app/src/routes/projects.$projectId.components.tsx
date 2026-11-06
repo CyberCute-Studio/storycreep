@@ -84,19 +84,21 @@ function ComponentsPage() {
     ? chosenType
     : anyType;
   const shownType = useDeferredValue(typeId);
+  // As on the variables' page, the order of the tree is walked once.
+  const ordered = useMemo(() => itemsInOrder(tree), [tree]);
   const matches = useMemo(() => {
     const text = filter.trim().toLocaleLowerCase();
     if (text === "" && shownType === anyType) {
       return undefined;
     }
-    return itemsInOrder(tree).filter(
+    return ordered.filter(
       ({ item }) =>
         (shownType === anyType || item.component_type_id === shownType) &&
         (text === "" ||
           item.name.toLocaleLowerCase().includes(text) ||
           item.key.toLocaleLowerCase().includes(text)),
     );
-  }, [tree, filter, shownType]);
+  }, [ordered, filter, shownType]);
   // As on the variables' page, a deletion replaces the address that named
   // what it deleted.
   const select = (id: string | undefined, replace = false) =>

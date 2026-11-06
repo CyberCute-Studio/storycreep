@@ -19,6 +19,7 @@ import { SelectField } from "../ui/Field";
 import { Page, Status } from "../ui/Page";
 import { besidePanel, Panel, usePanelItem } from "../ui/Panel";
 import { CreateVariableDialog } from "../variables/CreateVariableDialog";
+import { scopeName } from "../variables/fields";
 import { VariablePanel } from "../variables/VariablePanel";
 
 /** The search of the page: the variable whose panel is open, if any. */
@@ -112,12 +113,15 @@ function VariablesPage() {
       ? chosenScope
       : anyScope;
   const shownScope = useDeferredValue(scope);
+  // The variables in the order of the tree, which the filter does not walk
+  // again at each key.
+  const ordered = useMemo(() => itemsInOrder(tree), [tree]);
   const matches = useMemo(() => {
     const text = filter.trim().toLocaleLowerCase();
     if (text === "" && shownScope === anyScope) {
       return undefined;
     }
-    return itemsInOrder(tree).filter(({ item }) => {
+    return ordered.filter(({ item }) => {
       const inScope =
         shownScope === anyScope ||
         (shownScope === globalScope
@@ -130,7 +134,7 @@ function VariablesPage() {
           item.description.toLocaleLowerCase().includes(text))
       );
     });
-  }, [tree, filter, shownScope]);
+  }, [ordered, filter, shownScope]);
   // Closing the panel once its variable has been deleted replaces the
   // address that named it, as a board's deletion does, so that Back does
   // not show it as not found.
@@ -148,13 +152,7 @@ function VariablesPage() {
   const { shown, onDeleting } = usePanelItem(variables, selectedId);
   const listId = useId();
   const scopeOf = (variable: Variable) =>
-    variable.scope === "global"
-      ? t("variable.scope_global")
-      : t("variable.scope_of", {
-          board:
-            boardNames.get(variable.board_id ?? "") ??
-            t("boards.unknown_board"),
-        });
+    scopeName(t, variable.scope, boardNames.get(variable.board_id ?? ""));
   return (
     <Page
       title={t("variables.title")}

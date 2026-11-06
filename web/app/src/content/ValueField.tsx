@@ -20,6 +20,8 @@ export interface ValueFieldProps {
   defaultValue: Value;
   error?: string;
   disabled?: boolean;
+  /** Called with what the field holds as the user changes it. */
+  onChange?: (text: string) => void;
 }
 
 /** Returns the message of a value that is none of type, which the field says. */
@@ -47,9 +49,21 @@ export function ValueField({
   defaultValue,
   error,
   disabled,
+  onChange,
 }: ValueFieldProps) {
   const { t } = useTranslation();
-  const common = { label, hint, name, error, disabled };
+  const common = {
+    label,
+    hint,
+    name,
+    error,
+    disabled,
+    onChange:
+      onChange === undefined
+        ? undefined
+        : (event: { currentTarget: { value: string } }) =>
+            onChange(event.currentTarget.value),
+  };
   switch (type) {
     case "bool": {
       const value = textOf(defaultValue);

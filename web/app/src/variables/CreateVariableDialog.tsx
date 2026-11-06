@@ -64,7 +64,7 @@ export function CreateVariableDialog({
   const [invalid, setInvalid] = useState<{ type: Variable["type"] }>();
   const commands = useCommands(projectId);
   const refusal = refusalOf(commands.error, t, createField, {
-    key_taken: t("variable.error.key_taken_scope"),
+    key_taken: t("variable.error.key_taken"),
   });
   useFocusRefusal(form, invalid ?? commands.error);
   const errors: Record<string, string> = {
@@ -74,7 +74,9 @@ export function CreateVariableDialog({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const key = String(data.get("key"));
+    // Without the white space around it, as the dialog that creates a
+    // component reads its key.
+    const key = String(data.get("key")).trim();
     const typed = typedOf(data);
     const value = parseValue(typed.type, typed.defaultText);
     if (value === undefined) {

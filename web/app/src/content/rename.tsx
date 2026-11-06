@@ -171,7 +171,10 @@ export function RenameKeyDialog({
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
   const variable = renamed.kind === "variable";
-  const [key, setKey] = useState(renamed.key);
+  const [field, setField] = useState(renamed.key);
+  // The key as the field holds it, without the white space around it, as
+  // the dialogs that create a component or a variable read theirs.
+  const key = field.trim();
   // The key that the field started at, which the dialog opened with: left
   // as it is, or made the key that the variable or the component has now,
   // as once it was renamed elsewhere meanwhile, it renames nothing, rather
@@ -229,16 +232,23 @@ export function RenameKeyDialog({
     previewed === key &&
     lists.every((list) => list.isSuccess && !list.isRefetching) &&
     !tooLong;
-  // A preview whose read failed, but for the server's refusal, which would
-  // refuse it again, as once the browser's connection was lost, is read
-  // again once the user asks for it again.
+  // A preview whose read failed, as once the browser's connection was lost,
+  // is read again once the user asks for it again, but for one that the
+  // server refused, which it would refuse again; one that it refused for
+  // when it was asked, a request that took too long (408) or one of too
+  // many (429), which it may not refuse later, is read again too.
   const failed =
     previewed === key &&
     lists.some(
       (list) =>
         list.isError &&
         !list.isFetching &&
-        !(list.error instanceof ApiError && list.error.status < 500),
+        !(
+          list.error instanceof ApiError &&
+          list.error.status < 500 &&
+          list.error.status !== 408 &&
+          list.error.status !== 429
+        ),
     );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -299,8 +309,8 @@ export function RenameKeyDialog({
             required
             maxLength={64}
             className="min-h-11 w-full rounded-md border border-border bg-canvas px-3 font-mono text-fg"
-            value={key}
-            onChange={(event) => setKey(event.currentTarget.value)}
+            value={field}
+            onChange={(event) => setField(event.currentTarget.value)}
             error={refusal?.fields.key}
           />
           {previewed === key && !unchanged && (

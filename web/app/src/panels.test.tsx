@@ -778,6 +778,47 @@ describe("the variables", () => {
     );
   });
 
+  it("reads a rename's preview again once the server refused it for too many requests, as the user asks for it again", async () => {
+    const user = userEvent.setup();
+    let limited = true;
+    fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        if (limited) {
+          throw refused(429, { code: "rate_limited" });
+        }
+        return { items: [], next_cursor: null };
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    // With white space after it, which the rename leaves out.
+    await user.type(key, "trust ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    expect(
+      await within(dialog).findByText(
+        "Too many requests. Try again in a moment.",
+      ),
+    ).toBeDefined();
+    limited = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Rename" }),
+      ).toHaveProperty("disabled", false),
+    );
+  });
+
   it("renames only once the preview has been read again, rather than as a read of the same key before had it", async () => {
     const user = userEvent.setup();
     let reads = 0;
@@ -1177,7 +1218,9 @@ describe("the variables", () => {
       await screen.findByRole("menuitem", { name: "New variable here…" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "New variable" });
-    await user.type(within(dialog).getByLabelText("Key"), "door_open");
+    // With white space after it, as a pasted key may have, which the
+    // dialog leaves out.
+    await user.type(within(dialog).getByLabelText("Key"), "door_open ");
     await user.click(within(dialog).getByRole("radio", { name: /^One board/ }));
     await user.click(
       within(dialog).getByRole("checkbox", { name: /^Reset to its default/ }),
@@ -1518,6 +1561,45 @@ describe("the components", () => {
           id: "cmp_elara",
           description: paragraph("A keeper of lamps"),
         },
+        expected_rev: { cmp_elara: 5 },
+      }),
+    ]);
+  });
+
+  it("saves a value again, without asking, once a save was refused for another value of the component changed elsewhere", async () => {
+    const user = userEvent.setup();
+    const theirs = {
+      ...elara,
+      attributes: { ...elara.attributes, atr_mood: "angry" },
+      rev: 5,
+    };
+    const sent: Sent[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        sent.push((input as { body: { commands: Sent } }).body.commands);
+        if (sent.length === 1) {
+          throw conflict("component.set_attribute", theirs, 4);
+        }
+        return applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 6 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    const trust = await within(panel).findByLabelText("trust");
+    await user.clear(trust);
+    await user.type(trust, "5");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the component" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(within(panel).queryByText(/changed by someone else too/)).toBeNull();
+    expect(sent[1]).toEqual([
+      expect.objectContaining({
+        type: "component.set_attribute",
+        payload: { id: "cmp_elara", attribute_id: "atr_trust", value: 5 },
         expected_rev: { cmp_elara: 5 },
       }),
     ]);
@@ -1934,6 +2016,116 @@ describe("the component types", () => {
     ]);
   });
 
+  it("changes the type only once it has listed what would not convert to the options that it sends", async () => {
+    const user = userEvent.setup();
+    const calls = fakeApi((operation, input) => {
+      switch (operation) {
+        case "listUnconvertibleValues":
+          return { items: [], next_cursor: null };
+        case "applyCommands":
+          return applied(testProject.seq + 1);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of trust" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Change the type…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Change the type of trust",
+    });
+    await user.selectOptions(within(dialog).getByLabelText("New type"), "enum");
+    await user.type(
+      within(dialog).getByLabelText("Options"),
+      "Alpha{Enter}Beta",
+    );
+    // At once, before the typing has paused: the dialog lists what would
+    // not convert to these options first.
+    await user.click(
+      within(dialog).getByRole("button", { name: "Change the type" }),
+    );
+    expect(batches(calls)).toEqual([]);
+    expect(
+      await within(dialog).findByText("Every value converts to the new type."),
+    ).toBeDefined();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Change the type" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual(
+      expect.objectContaining({
+        type: "enum",
+        conversion: "convert",
+        options: ["Alpha", "Beta"],
+      }),
+    );
+    const listed = calls.mock.calls
+      .filter(([operation]) => operation === "listUnconvertibleValues")
+      .map(([, input]) => (input as { query: { options?: string } }).query);
+    expect(listed).toContainEqual(
+      expect.objectContaining({ options: "Alpha\nBeta" }),
+    );
+  });
+
+  it("saves an attribute of the type that its dialog opened with, though the type changed elsewhere meanwhile", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 2)
+        : expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+      realtime,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of trust" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Edit trust" });
+    // Another session makes the int a string, with a default of its own.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "attribute.retype",
+            payload: {
+              id: "atr_trust",
+              type: "string",
+              conversion: "reset",
+              default: "none",
+            },
+          },
+        ],
+        [{ id: "atr_trust", rev: 3 }],
+      ),
+    );
+    const name = within(dialog).getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Faith");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Save the attribute" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // The rename alone, rather than the old default, as a string, over the
+    // other session's.
+    expect(batches(calls)[0]).toEqual([
+      expect.objectContaining({
+        type: "attribute.rename",
+        payload: { id: "atr_trust", name: "Faith" },
+      }),
+    ]);
+  });
+
   it("sends the type that its choice shows once the attribute became the one that the user chose, elsewhere", async () => {
     const user = userEvent.setup();
     const realtime = fakeRealtime();
@@ -2127,7 +2319,7 @@ describe("the component types", () => {
     ]);
   });
 
-  it("adds an attribute of an enum, whose default is one of its options", async () => {
+  it("adds an attribute of an enum, whose default is one of its options, which it keeps as the options change", async () => {
     const user = userEvent.setup();
     const calls = fakeApi((operation, input) =>
       operation === "applyCommands"
@@ -2148,6 +2340,11 @@ describe("the component types", () => {
     await user.selectOptions(within(dialog).getByLabelText("Type"), "enum");
     await user.type(within(dialog).getByLabelText("Options"), "low\nhigh");
     await user.selectOptions(within(dialog).getByLabelText("Default"), "high");
+    await user.type(within(dialog).getByLabelText("Options"), "{Enter}mid");
+    expect(within(dialog).getByLabelText("Default")).toHaveProperty(
+      "value",
+      "high",
+    );
     expect(
       within(dialog).getByRole("checkbox", {
         name: "Part of the game's state",
@@ -2165,7 +2362,7 @@ describe("the component types", () => {
             component_type_id: "ct_character",
             name: "Rank",
             type: "enum",
-            options: ["low", "high"],
+            options: ["low", "high", "mid"],
             default: "high",
           }),
         }),

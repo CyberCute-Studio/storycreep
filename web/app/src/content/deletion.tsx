@@ -12,6 +12,7 @@ import { AlertDialog } from "radix-ui";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { workspaceRoles } from "../auth/roles";
 import { useExpected } from "../project/dialogs";
 import { useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
@@ -26,18 +27,16 @@ import { Alert } from "../ui/Page";
 import { useDeleting } from "../ui/Panel";
 import { type FoundUsage, UsageItem, usageKey } from "./usages";
 
-/** How the roles of a project rank, the least first, as the permission matrix orders them (§5.6). */
-const roleRank: Readonly<Record<ProjectBody["role"], number>> = {
-  viewer: 0,
-  commenter: 1,
-  editor: 2,
-  admin: 3,
-  owner: 4,
-};
-
-/** Reports whether the user's role on project may publish its snapshots, and so force a deletion (FR-VAR-04). */
+/**
+ * Reports whether the user's role on project may publish its snapshots, and
+ * so force a deletion (FR-VAR-04): a role at least publish_min_role, of the
+ * roles that rank highest first (workspaceRoles, §5.6).
+ */
 export function publishes(project: ProjectBody): boolean {
-  return roleRank[project.role] >= roleRank[project.publish_min_role];
+  return (
+    workspaceRoles.indexOf(project.role) <=
+    workspaceRoles.indexOf(project.publish_min_role)
+  );
 }
 
 /** What a refusal of a used variable's or component's deletion says of its usages. */

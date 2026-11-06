@@ -13,7 +13,11 @@ import type {
   PageUnconvertible,
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  type UseInfiniteQueryResult,
+  useInfiniteQuery,
+} from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -63,7 +67,8 @@ const attributeField = payloadField(
 /**
  * The fields of an enum's options, one to a line, and of the default, whose
  * choice offers the options as the field lists them, which the form shows
- * anew as they change.
+ * anew as they change, keeping the option that the user chose while it is
+ * still one of them.
  */
 function OptionsAndDefault({
   type,
@@ -81,6 +86,21 @@ function OptionsAndDefault({
 }) {
   const { t } = useTranslation();
   const listed = optionsOf(options);
+  // What the user chose or typed of the default, of the type that the form
+  // shows, which another type forgets, as it starts its own default.
+  const [picked, setPicked] = useState<{ type: ValueType; text?: string }>({
+    type,
+  });
+  if (picked.type !== type) {
+    setPicked({ type });
+  }
+  const kept =
+    type === "enum" &&
+    picked.type === type &&
+    picked.text !== undefined &&
+    listed.includes(picked.text)
+      ? picked.text
+      : undefined;
   return (
     <>
       {type === "enum" && (
@@ -101,8 +121,9 @@ function OptionsAndDefault({
         name="default"
         type={type}
         options={listed}
-        defaultValue={convertedTo(type, defaultValue, listed)}
+        defaultValue={kept ?? convertedTo(type, defaultValue, listed)}
         error={errors.default}
+        onChange={(text) => setPicked({ type, text })}
       />
     </>
   );
@@ -314,7 +335,12 @@ function editsOf(
  * options gives a value that is none of them the default. It sends what the
  * user changed of the definition as it opened with it, which its fields
  * start with, so that another session's change of a field that the user did
- * not change, made while it is open, is not changed back.
+ * not change, made while it is open, is not changed back. Its fields are of
+ * the type that it opened with, too, so that a change of the type made
+ * elsewhere neither makes the default, as it converts, a change that the
+ * user did not make, nor asks for the options of an enum that the
+ * definition was not; the server refuses a default of the old type that the
+ * user typed.
  */
 export function EditAttributeDialog({
   projectId,
@@ -329,7 +355,8 @@ export function EditAttributeDialog({
 }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  // The definition as the dialog opened with it, which its fields show.
+  // The definition as the dialog opened with it, which its fields show, of
+  // the type that it had then.
   const [opened] = useState(attribute);
   const [options, setOptions] = useState((opened.options ?? []).join("\n"));
   const [runtime, setRuntime] = useState(opened.runtime);
@@ -347,9 +374,9 @@ export function EditAttributeDialog({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const listed = attribute.type === "enum" ? optionsOf(options) : undefined;
+    const listed = opened.type === "enum" ? optionsOf(options) : undefined;
     const value = parseValue(
-      attribute.type,
+      opened.type,
       String(data.get("default") ?? ""),
       listed,
     );
@@ -359,7 +386,7 @@ export function EditAttributeDialog({
         fields:
           listed !== undefined && listed.length === 0
             ? { options: t("attribute.error.no_options") }
-            : { default: valueError(t, attribute.type) },
+            : { default: valueError(t, opened.type) },
       });
       return;
     }
@@ -372,7 +399,7 @@ export function EditAttributeDialog({
         key: String(data.get("key")).trim(),
         options: listed,
         default: value,
-        runtime: runtime && attribute.type !== "text",
+        runtime: runtime && opened.type !== "text",
       },
       rev,
     );
@@ -387,7 +414,7 @@ export function EditAttributeDialog({
       <DialogFrame
         title={t("attribute.edit_title", { name: attribute.name })}
         description={t("attribute.edit_intro", {
-          type: typeName(t, attribute.type),
+          type: typeName(t, opened.type),
         })}
         onCloseAutoFocus={focusBackTo(opener)}
       >
@@ -414,7 +441,7 @@ export function EditAttributeDialog({
             error={errors.key}
           />
           <OptionsAndDefault
-            type={attribute.type}
+            type={opened.type}
             options={options}
             onOptions={setOptions}
             defaultValue={opened.default}
@@ -423,13 +450,13 @@ export function EditAttributeDialog({
           <CheckboxField
             label={t("attribute.runtime")}
             hint={
-              attribute.type === "text"
+              opened.type === "text"
                 ? t("attribute.runtime_text")
                 : t("attribute.runtime_hint")
             }
             name="runtime"
-            checked={runtime && attribute.type !== "text"}
-            disabled={attribute.type === "text"}
+            checked={runtime && opened.type !== "text"}
+            disabled={opened.type === "text"}
             onChange={(event) => setRuntime(event.currentTarget.checked)}
           />
           <FormButtons
@@ -483,22 +510,13 @@ function unconvertibleQuery(
   );
 }
 
-/** The components whose values would not convert, which the retype gives the new default. */
+/** The components whose values would not convert, of list, which the retype gives the new default. */
 function Unconvertible({
-  projectId,
-  attribute,
-  type,
-  options,
+  list,
 }: {
-  projectId: string;
-  attribute: Attribute;
-  type: ValueType;
-  options: readonly string[];
+  list: UseInfiniteQueryResult<InfiniteData<PageUnconvertible>, unknown>;
 }) {
   const { t } = useTranslation();
-  const list = useInfiniteQuery(
-    unconvertibleQuery(projectId, attribute, type, options),
-  );
   const items = list.data?.pages.flatMap((page) => page.items) ?? [];
   return (
     <section className="space-y-2" aria-live="polite">
@@ -536,22 +554,28 @@ function Unconvertible({
 /** How long the typing in a field pauses, in milliseconds, before what follows it reads what was typed (useSettled). */
 const typingPause = 400;
 
-/** Returns value once it has stayed the same for wait milliseconds, as what is typed in a field once the typing pauses. */
-function useSettled<T>(value: T, wait: number): T {
+/**
+ * Returns value once it has stayed the same for wait milliseconds, as what
+ * is typed in a field once the typing pauses, and a function that takes it
+ * as it is at once.
+ */
+function useSettled<T>(value: T, wait: number): [T, () => void] {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
     const timer = setTimeout(() => setSettled(value), wait);
     return () => clearTimeout(timer);
   }, [value, wait]);
-  return settled;
+  return [settled, () => setSettled(value)];
 }
 
 /**
  * The dialog that changes the type of an attribute definition, with what
  * becomes of its components' values: converted, each that converts, and the
- * rest given the new default, which the dialog lists first, or every one
- * given the new default. A definition that is part of the game's state
- * cannot become a text, which is never part of it.
+ * rest given the new default, which the dialog lists first, and converts
+ * only once it has read that list of the type and the options that it
+ * sends (PRD FR-COMP-01 AC2), or every one given the new default. A
+ * definition that is part of the game's state cannot become a text, which
+ * is never part of it.
  */
 export function RetypeAttributeDialog({
   projectId,
@@ -588,11 +612,26 @@ export function RetypeAttributeDialog({
   };
   // The list of what would not convert follows the options once they are
   // typed, rather than at every key.
-  const listed = optionsOf(useSettled(options, typingPause));
+  const [settled, settleNow] = useSettled(options, typingPause);
+  const listed = optionsOf(settled);
+  const typed = optionsOf(options);
+  const lists =
+    conversion === "convert" && (valueType !== "enum" || typed.length > 0);
+  const list = useInfiniteQuery({
+    ...unconvertibleQuery(projectId, attribute, valueType, listed),
+    enabled: lists && (valueType !== "enum" || listed.length > 0),
+  });
+  // Whether the list is of the options that the retype sends, rather than
+  // of those that the field held before the typing paused.
+  const current =
+    valueType !== "enum" || listed.join("\n") === typed.join("\n");
+  // Whether the list that the retype waits for is read, as the project is
+  // now, rather than as a read of it before had it.
+  const read = !lists || (current && list.isSuccess && !list.isFetching);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const newOptions = valueType === "enum" ? optionsOf(options) : undefined;
+    const newOptions = valueType === "enum" ? typed : undefined;
     const value = parseValue(
       valueType,
       String(data.get("default") ?? ""),
@@ -609,6 +648,16 @@ export function RetypeAttributeDialog({
       return;
     }
     setInvalid(undefined);
+    if (!read) {
+      // The list of the options as they are now, which the user sees
+      // before asking again, or the list again, once its read failed.
+      if (!current) {
+        settleNow();
+      } else if (list.isError && !list.isFetching) {
+        void list.refetch();
+      }
+      return;
+    }
     commands.mutate(
       [
         {
@@ -683,18 +732,13 @@ export function RetypeAttributeDialog({
               onChange={() => setConversion("reset")}
             />
           </GroupField>
-          {conversion === "convert" &&
-            (valueType !== "enum" || listed.length > 0) && (
-              <Unconvertible
-                projectId={projectId}
-                attribute={attribute}
-                type={valueType}
-                options={listed}
-              />
-            )}
+          {lists && (valueType !== "enum" || listed.length > 0) && (
+            <Unconvertible list={list} />
+          )}
           <FormButtons
             cancel={t("boards.cancel")}
             pending={commands.isPending}
+            disabled={lists && current && !read && !list.isError}
             submit={t("attribute.retype")}
           />
         </form>

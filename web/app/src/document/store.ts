@@ -2939,6 +2939,7 @@ export class ProjectDocument {
       }
       const mine = this.written(entry, id, base);
       const unread = unreadFields(id, base);
+      const byValue = fieldsOfValues(id);
       const fields = [];
       for (const field of new Set([
         ...Object.keys(base),
@@ -2948,20 +2949,26 @@ export class ProjectDocument {
           continue;
         }
         const value = mine?.[field];
-        // Where the document no longer knows what the page showed at the
-        // revision that the batch expects, a field that the batch changes,
-        // which has another value now than the batch's, may have changed
-        // elsewhere since, and is not written over unasked. One that changed
-        // elsewhere to what the batch writes, as two users who give a board
-        // the same name, is none that the batch would write over.
-        const elsewhere = shown.exact
-          ? !equal(state[field], base[field])
-          : !equal(state[field], value);
-        if (
-          !equal(value, base[field]) &&
-          elsewhere &&
-          !equal(value, state[field])
-        ) {
+        const values = byValue.has(field)
+          ? namedValues(value, base[field], state[field])
+          : undefined;
+        const overlapping =
+          values === undefined
+            ? overlapsAt(shown.exact, value, base[field], state[field])
+            : [
+                ...new Set([
+                  ...Object.keys(values.mine),
+                  ...Object.keys(values.was),
+                ]),
+              ].some((key) =>
+                overlapsAt(
+                  shown.exact,
+                  values.mine[key],
+                  values.was[key],
+                  values.now[key],
+                ),
+              );
+        if (overlapping) {
           fields.push({ field, mine: value, theirs: state[field] });
         }
       }
@@ -2982,6 +2989,59 @@ export class ProjectDocument {
     const after = applyPending(seeded, entry.commands, entry.time);
     return entityOf(after, id) as Record<string, unknown> | undefined;
   }
+}
+
+/**
+ * Reports whether value, what a batch leaves of a field that the page showed
+ * as was, overlaps a change of it made elsewhere, which left it as now: the
+ * batch changes it, it changed elsewhere, and not to what the batch writes,
+ * as two users who give a board the same name, which is none that the batch
+ * would write over. Where the document no longer knows what the page showed
+ * at the revision that the batch expects (exact), a field that the batch
+ * changes, which has another value now than the batch's, may have changed
+ * elsewhere since, and is not written over unasked.
+ */
+function overlapsAt(
+  exact: boolean,
+  value: unknown,
+  was: unknown,
+  now: unknown,
+): boolean {
+  const elsewhere = exact ? !equal(now, was) : !equal(now, value);
+  return !equal(value, was) && elsewhere && !equal(value, now);
+}
+
+/**
+ * Returns the fields of the entity of id that hold a value of each of
+ * several things, as a component's values, one of each of its type's
+ * attribute definitions, which a command of its own sets: a conflict
+ * compares them value by value, so that a change of one made elsewhere does
+ * not overlap the batch's change of another (PRD §7.10 item 1).
+ */
+function fieldsOfValues(id: string): Set<string> {
+  const place = placeOf(id);
+  return place?.of === "kind" && place.kind === "components"
+    ? new Set(["attributes"])
+    : new Set();
+}
+
+/** Returns a field of values as a batch leaves it, as the page showed it, and as it is now, or undefined unless each holds values by their names. */
+function namedValues(
+  mine: unknown,
+  was: unknown,
+  now: unknown,
+):
+  | {
+      mine: Record<string, unknown>;
+      was: Record<string, unknown>;
+      now: Record<string, unknown>;
+    }
+  | undefined {
+  const named = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  return named(mine) && named(was) && named(now)
+    ? { mine, was, now }
+    : undefined;
 }
 
 /**

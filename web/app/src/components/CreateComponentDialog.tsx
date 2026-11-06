@@ -70,6 +70,12 @@ export function CreateComponentDialog({
     const name = String(data.get("name"));
     const key = String(data.get("key")).trim();
     const folder = String(data.get("folder") ?? folderTop);
+    const type = data.get("type");
+    if (type === null) {
+      // The project has no type left, as once its last went to the trash
+      // elsewhere while the dialog was open, which its field says.
+      return;
+    }
     commands.mutate(
       [
         {
@@ -77,7 +83,7 @@ export function CreateComponentDialog({
           payload: {
             id,
             name,
-            component_type_id: String(data.get("type")),
+            component_type_id: String(type),
             ...(key === "" ? {} : { key }),
             ...(folder === folderTop ? {} : { folder_id: folder }),
           },
@@ -122,7 +128,11 @@ export function CreateComponentDialog({
             hint={t("component.type_fixed_hint")}
             name="type"
             defaultValue={typeId ?? types[0]?.id}
-            error={refusal?.fields.component_type_id}
+            error={
+              types.length === 0
+                ? t("components.no_types")
+                : refusal?.fields.component_type_id
+            }
           >
             {types.map((type) => (
               <option key={type.id} value={type.id}>
@@ -139,6 +149,7 @@ export function CreateComponentDialog({
           <FormButtons
             cancel={t("boards.cancel")}
             pending={commands.isPending}
+            disabled={types.length === 0}
             submit={t("component.create")}
           />
         </form>

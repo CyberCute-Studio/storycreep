@@ -35,6 +35,20 @@ export interface VariableShown {
   folder_id?: string;
 }
 
+/**
+ * Returns the name of a variable's scope: global, or of its board, named
+ * board, or undefined for a board that the list of boards does not have.
+ */
+export function scopeName(
+  t: ReturnType<typeof useTranslation>["t"],
+  scope: Variable["scope"],
+  board: string | undefined,
+): string {
+  return scope === "global"
+    ? t("variable.scope_global")
+    : t("variable.scope_of", { board: board ?? t("boards.unknown_board") });
+}
+
 /** The plain words of what becomes of a variable's value as the story goes on (PRD FR-VAR-02 AC5). */
 export function persistenceOf(
   t: ReturnType<typeof useTranslation>["t"],

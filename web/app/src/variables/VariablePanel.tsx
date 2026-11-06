@@ -29,7 +29,7 @@ import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { useFocusRefusal } from "../ui/Field";
 import { Alert } from "../ui/Page";
-import { persistenceOf, typedOf, VariableFields } from "./fields";
+import { persistenceOf, scopeName, typedOf, VariableFields } from "./fields";
 
 /** The fields of a variable's commands' payloads that the form has, by their names in the payloads. */
 const variableField = payloadField(
@@ -107,13 +107,7 @@ function VariableView({ variable, boards, tree }: VariablePanelProps) {
         {textOf(variable.default)}
       </dd>
       <dt className="text-fg-muted">{t("variable.scope")}</dt>
-      <dd>
-        {variable.scope === "global"
-          ? t("variable.scope_global")
-          : t("variable.scope_of", {
-              board: board ?? t("boards.unknown_board"),
-            })}
-      </dd>
+      <dd>{scopeName(t, variable.scope, board)}</dd>
       <dt className="text-fg-muted">{t("variable.reset_on_enter_short")}</dt>
       <dd>
         {persistenceOf(t, variable.scope, variable.reset_on_enter, board)}
@@ -268,8 +262,9 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
       case "default":
         return t("variable.default");
       case "scope":
-      case "board_id":
         return t("variable.scope");
+      case "board_id":
+        return t("variable.board");
       case "reset_on_enter":
         return t("variable.reset_on_enter_short");
       case "description":
@@ -285,8 +280,12 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
         typeof value === "string" ? tree.byId.get(value) : undefined;
       return folder?.kind === "folder" ? folder.folder.name : t("boards.top");
     }
+    // A global variable is of no board, and a board that the list does not
+    // have, as one in the trash, is named as the board's choice names it.
     if (field === "board_id") {
-      return boardName(boards, value as string | undefined) ?? "";
+      return typeof value === "string"
+        ? (boardName(boards, value) ?? t("boards.unknown_board"))
+        : t("variable.scope_global");
     }
     if (field === "type") {
       return typeName(t, String(value));
