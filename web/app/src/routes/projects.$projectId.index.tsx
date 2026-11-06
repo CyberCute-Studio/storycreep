@@ -1,30 +1,16 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { BoardTree } from "../project/BoardTree";
-import { editsProject, projectQuery } from "../project/queries";
-import { found } from "../shell/found";
+import { editsProject, loadParts, projectQuery } from "../project/queries";
 import { Page } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/")({
   // The project, which the layout's loader reads at once with this one,
-  // comes first, so that a project that the account may not see shows the
-  // page of no page before its document reads its tree. A tree that the
-  // document held already, which the real-time channel does not keep
-  // current while it is not live, is shown as it is, and read anew, alone,
-  // rather than with every board that the session has opened.
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
-    );
-    const doc = documents.get(project.id);
-    const held = doc.holds("tree");
-    await found(doc.load("tree"));
-    if (held) {
-      // A read anew that fails is recorded, and tried again later, while
-      // the tree shows what the document held.
-      void doc.refresh("tree").catch(() => undefined);
-    }
-  },
+  // comes first, and then its tree (loadParts): a tree that the document
+  // held already is read anew alone, rather than with every board that the
+  // session has opened.
+  loader: ({ context, params }) =>
+    loadParts(context, params.projectId, ["tree"]),
   // The router keeps no match of the page once it is left, which it would
   // show at once on the way back, before its loader runs again: the
   // project's document, dropped once no page has shown it for a while

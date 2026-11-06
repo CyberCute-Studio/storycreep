@@ -389,6 +389,9 @@ const readsAtOnce = 6;
  */
 const readsOfOnePart = 20;
 
+/** How many times a read of a component whole is tried while what it reads is older than the document's (readComponent). */
+const componentReadAttempts = 3;
+
 /**
  * How long, in milliseconds, the document waits for the real-time channel
  * to bring the operations that it expects before it goes on without them:
@@ -529,8 +532,10 @@ export class ProjectDocument {
    * is forgotten once no read began before it (forgetGone).
    */
   private readonly watchers = new Set<Watcher>();
-  /** How many reads of parts are under way. */
+  /** How many reads of parts, or of components whole, are under way. */
   private partReads = 0;
+  /** The reads of components whole under way, by their IDs (readComponent). */
+  private readonly componentReads = new Map<string, Promise<void>>();
   private started = false;
   /** The reading of the project that the document follows it from, under way, or done, or failed (ready). */
   private starting: Promise<void>;
@@ -1061,6 +1066,76 @@ export class ProjectDocument {
   /** Reports whether the document holds part, read or being read. */
   holds(part: Part): boolean {
     return this.loads.has(part);
+  }
+
+  /**
+   * Reads the component of id whole, with its description and its values,
+   * which the list of the project's components leaves out, as the panel of
+   * a component shows them (PRD FR-COMP-02), once the document holds the
+   * components, and resolves once it holds the component so, or no longer
+   * holds it, as one that went to the trash meanwhile, or rejects with what
+   * the read failed with, which the page that asked for it shows. The
+   * document keeps it current from then on, as operations change it, and
+   * reads it whole again where they change it as it cannot tell, but a read
+   * of the components' list, which answers it without them at a newer
+   * revision, takes them out again (mergeList), and the page asks for them
+   * anew. A read of the component under way resolves with that read. One
+   * that found it older than the document holds it now, as of an operation
+   * that applied meanwhile, whose appliers could not give it what the read
+   * would have, or that a reading anew of the project read over, is tried
+   * again, a few times.
+   */
+  readComponent(id: string): Promise<void> {
+    const reading = this.componentReads.get(id);
+    if (reading !== undefined) {
+      return reading;
+    }
+    const whole = () => {
+      const held = this.confirmed.components.get(id);
+      return held === undefined || held.attributes !== undefined;
+    };
+    this.partReads++;
+    const read = (async () => {
+      try {
+        await this.load("components");
+        for (let attempt = 0; attempt < componentReadAttempts; attempt++) {
+          if (this.disposed || whole()) {
+            return;
+          }
+          const since = this.confirmed.seq;
+          const generation = this.generation;
+          const watcher = this.watch(since);
+          let body: Revised | undefined;
+          try {
+            body = await readOne(this.projectId, id);
+          } catch (error) {
+            // The page shows the failure, and the error console has it, as
+            // a part's failed read; a session that may have ended is asked
+            // for, as the app's queries ask.
+            this.failed(error);
+            throw error;
+          } finally {
+            this.watchers.delete(watcher);
+          }
+          // The project read anew meanwhile read the component as its list
+          // answers it, which this read may be older than.
+          if (this.disposed || this.generation !== generation) {
+            continue;
+          }
+          this.took(
+            mergeEntity(this.confirmed, id, body, since, watcher.changed),
+            [id],
+          );
+          this.readBehind(watcher);
+          this.show();
+        }
+      } finally {
+        this.partReads--;
+        this.componentReads.delete(id);
+      }
+    })();
+    this.componentReads.set(id, read);
+    return read;
   }
 
   /** Applies an operation of the project, of the real-time channel, in the order of seqs. */
@@ -2864,6 +2939,7 @@ export class ProjectDocument {
       }
       const mine = this.written(entry, id, base);
       const unread = unreadFields(id, base);
+      const byValue = fieldsOfValues(id);
       const fields = [];
       for (const field of new Set([
         ...Object.keys(base),
@@ -2873,20 +2949,33 @@ export class ProjectDocument {
           continue;
         }
         const value = mine?.[field];
-        // Where the document no longer knows what the page showed at the
-        // revision that the batch expects, a field that the batch changes,
-        // which has another value now than the batch's, may have changed
-        // elsewhere since, and is not written over unasked. One that changed
-        // elsewhere to what the batch writes, as two users who give a board
-        // the same name, is none that the batch would write over.
-        const elsewhere = shown.exact
-          ? !equal(state[field], base[field])
-          : !equal(state[field], value);
-        if (
-          !equal(value, base[field]) &&
-          elsewhere &&
-          !equal(value, state[field])
-        ) {
+        const values = byValue.has(field)
+          ? namedValues(value, base[field], state[field])
+          : undefined;
+        const overlapping =
+          values === undefined
+            ? overlapsAt(shown.exact, value, base[field], state[field])
+            : [
+                ...new Set([
+                  ...Object.keys(values.mine),
+                  ...Object.keys(values.was),
+                ]),
+              ].some((key) =>
+                overlapsAt(
+                  shown.exact,
+                  values.mine[key],
+                  // The page showed a value that the entity held none of
+                  // as its definition's default, as of a definition that
+                  // another session created after the page showed the
+                  // entity, which gave the entity that default: a change
+                  // of the value made elsewhere is one from the default.
+                  key in values.was
+                    ? values.was[key]
+                    : defaultOf(this.confirmed, key),
+                  values.now[key],
+                ),
+              );
+        if (overlapping) {
           fields.push({ field, mine: value, theirs: state[field] });
         }
       }
@@ -2907,6 +2996,71 @@ export class ProjectDocument {
     const after = applyPending(seeded, entry.commands, entry.time);
     return entityOf(after, id) as Record<string, unknown> | undefined;
   }
+}
+
+/**
+ * Reports whether value, what a batch leaves of a field that the page showed
+ * as was, overlaps a change of it made elsewhere, which left it as now: the
+ * batch changes it, it changed elsewhere, and not to what the batch writes,
+ * as two users who give a board the same name, which is none that the batch
+ * would write over. Where the document no longer knows what the page showed
+ * at the revision that the batch expects (exact), a field that the batch
+ * changes, which has another value now than the batch's, may have changed
+ * elsewhere since, and is not written over unasked.
+ */
+function overlapsAt(
+  exact: boolean,
+  value: unknown,
+  was: unknown,
+  now: unknown,
+): boolean {
+  const elsewhere = exact ? !equal(now, was) : !equal(now, value);
+  return !equal(value, was) && elsewhere && !equal(value, now);
+}
+
+/**
+ * Returns the fields of the entity of id that hold a value of each of
+ * several things, as a component's values, one of each of its type's
+ * attribute definitions, which a command of its own sets: a conflict
+ * compares them value by value, so that a change of one made elsewhere does
+ * not overlap the batch's change of another (PRD §7.10 item 1).
+ */
+function fieldsOfValues(id: string): Set<string> {
+  const place = placeOf(id);
+  return place?.of === "kind" && place.kind === "components"
+    ? new Set(["attributes"])
+    : new Set();
+}
+
+/**
+ * Returns the default of the attribute definition of id, as doc holds it,
+ * which a component's form shows as the component's value of it where the
+ * component holds none (ComponentPanel), or undefined if doc holds no such
+ * definition.
+ */
+function defaultOf(doc: Doc, id: string): unknown {
+  return typeOfAttribute(doc.componentTypes, id)?.attributes.find(
+    (attribute) => attribute.id === id,
+  )?.default;
+}
+
+/** Returns a field of values as a batch leaves it, as the page showed it, and as it is now, or undefined unless each holds values by their names. */
+function namedValues(
+  mine: unknown,
+  was: unknown,
+  now: unknown,
+):
+  | {
+      mine: Record<string, unknown>;
+      was: Record<string, unknown>;
+      now: Record<string, unknown>;
+    }
+  | undefined {
+  const named = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  return named(mine) && named(was) && named(now)
+    ? { mine, was, now }
+    : undefined;
 }
 
 /**

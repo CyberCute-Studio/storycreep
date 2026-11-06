@@ -26,8 +26,11 @@ import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projec
 import { Route as WorkspacesWorkspaceIdRouteImport } from './routes/workspaces.$workspaceId'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects.$projectId.index'
 import { Route as ProjectsProjectIdAccessRouteImport } from './routes/projects.$projectId.access'
+import { Route as ProjectsProjectIdComponentTypesRouteImport } from './routes/projects.$projectId.component-types'
+import { Route as ProjectsProjectIdComponentsRouteImport } from './routes/projects.$projectId.components'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects.$projectId.settings'
 import { Route as ProjectsProjectIdTrashRouteImport } from './routes/projects.$projectId.trash'
+import { Route as ProjectsProjectIdVariablesRouteImport } from './routes/projects.$projectId.variables'
 import { Route as WorkspacesWorkspaceIdIndexRouteImport } from './routes/workspaces.$workspaceId.index'
 import { Route as WorkspacesWorkspaceIdMembersRouteImport } from './routes/workspaces.$workspaceId.members'
 import { Route as WorkspacesWorkspaceIdSettingsRouteImport } from './routes/workspaces.$workspaceId.settings'
@@ -119,6 +122,18 @@ const ProjectsProjectIdAccessRoute = ProjectsProjectIdAccessRouteImport.update({
   path: '/access',
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdComponentTypesRoute =
+  ProjectsProjectIdComponentTypesRouteImport.update({
+    id: '/component-types',
+    path: '/component-types',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
+const ProjectsProjectIdComponentsRoute =
+  ProjectsProjectIdComponentsRouteImport.update({
+    id: '/components',
+    path: '/components',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const ProjectsProjectIdSettingsRoute =
   ProjectsProjectIdSettingsRouteImport.update({
     id: '/settings',
@@ -130,6 +145,12 @@ const ProjectsProjectIdTrashRoute = ProjectsProjectIdTrashRouteImport.update({
   path: '/trash',
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdVariablesRoute =
+  ProjectsProjectIdVariablesRouteImport.update({
+    id: '/variables',
+    path: '/variables',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const WorkspacesWorkspaceIdIndexRoute =
   WorkspacesWorkspaceIdIndexRouteImport.update({
     id: '/',
@@ -178,8 +199,11 @@ export interface FileRoutesByFullPath {
   '/account/': typeof AccountIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
+  '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
   '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
@@ -201,8 +225,11 @@ export interface FileRoutesByTo {
   '/account': typeof AccountIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
+  '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
   '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
@@ -228,8 +255,11 @@ export interface FileRoutesById {
   '/account/': typeof AccountIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
+  '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
   '/workspaces/$workspaceId/trash': typeof WorkspacesWorkspaceIdTrashRoute
@@ -256,8 +286,11 @@ export interface FileRouteTypes {
     | '/account/'
     | '/projects/'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/component-types'
+    | '/projects/$projectId/components'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
     | '/workspaces/$workspaceId/trash'
@@ -279,8 +312,11 @@ export interface FileRouteTypes {
     | '/account'
     | '/projects'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/component-types'
+    | '/projects/$projectId/components'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
     | '/workspaces/$workspaceId/trash'
@@ -305,8 +341,11 @@ export interface FileRouteTypes {
     | '/account/'
     | '/projects/'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/component-types'
+    | '/projects/$projectId/components'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
     | '/workspaces/$workspaceId/trash'
@@ -451,6 +490,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAccessRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/component-types': {
+      id: '/projects/$projectId/component-types'
+      path: '/component-types'
+      fullPath: '/projects/$projectId/component-types'
+      preLoaderRoute: typeof ProjectsProjectIdComponentTypesRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/components': {
+      id: '/projects/$projectId/components'
+      path: '/components'
+      fullPath: '/projects/$projectId/components'
+      preLoaderRoute: typeof ProjectsProjectIdComponentsRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
     '/projects/$projectId/settings': {
       id: '/projects/$projectId/settings'
       path: '/settings'
@@ -463,6 +516,13 @@ declare module '@tanstack/react-router' {
       path: '/trash'
       fullPath: '/projects/$projectId/trash'
       preLoaderRoute: typeof ProjectsProjectIdTrashRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/variables': {
+      id: '/projects/$projectId/variables'
+      path: '/variables'
+      fullPath: '/projects/$projectId/variables'
+      preLoaderRoute: typeof ProjectsProjectIdVariablesRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
     '/workspaces/$workspaceId/': {
@@ -520,16 +580,22 @@ const AccountRouteWithChildren =
 
 interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdAccessRoute: typeof ProjectsProjectIdAccessRoute
+  ProjectsProjectIdComponentTypesRoute: typeof ProjectsProjectIdComponentTypesRoute
+  ProjectsProjectIdComponentsRoute: typeof ProjectsProjectIdComponentsRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdTrashRoute: typeof ProjectsProjectIdTrashRoute
+  ProjectsProjectIdVariablesRoute: typeof ProjectsProjectIdVariablesRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdBoardsBoardIdRoute: typeof ProjectsProjectIdBoardsBoardIdRoute
 }
 
 const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdAccessRoute: ProjectsProjectIdAccessRoute,
+  ProjectsProjectIdComponentTypesRoute: ProjectsProjectIdComponentTypesRoute,
+  ProjectsProjectIdComponentsRoute: ProjectsProjectIdComponentsRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
   ProjectsProjectIdTrashRoute: ProjectsProjectIdTrashRoute,
+  ProjectsProjectIdVariablesRoute: ProjectsProjectIdVariablesRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   ProjectsProjectIdBoardsBoardIdRoute: ProjectsProjectIdBoardsBoardIdRoute,
 }

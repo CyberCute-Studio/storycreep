@@ -153,16 +153,20 @@ export function ConfirmButtons({
 /**
  * The buttons of a dialog's form: Cancel, a Dialog.Close, unless cancel is
  * undefined, as for a form that is not always in a dialog, and the one that
- * submits the form, both disabled while its request is under way (pending).
+ * submits the form, both disabled while its request is under way (pending),
+ * and the one that submits it while what it waits for is not ready
+ * (disabled).
  */
 export function FormButtons({
   cancel,
   submit,
   pending,
+  disabled = false,
 }: {
   cancel?: string;
   submit: string;
   pending: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-2">
@@ -171,7 +175,7 @@ export function FormButtons({
           <Button disabled={pending}>{cancel}</Button>
         </Dialog.Close>
       )}
-      <Button type="submit" variant="primary" disabled={pending}>
+      <Button type="submit" variant="primary" disabled={pending || disabled}>
         {submit}
       </Button>
     </div>
@@ -256,4 +260,21 @@ export function focusBackTo(opener: Opener) {
       focusContentIfLost(document);
     }
   };
+}
+
+/**
+ * Returns the onCloseAutoFocus of a dialog that creates an item, whose
+ * panel the page opens once it has been created, as created says, with
+ * the focus on its heading (Panel), which keeps it then: the focus goes
+ * back to opener only once the dialog closes without creating it.
+ */
+export function focusBackUnlessCreated(
+  opener: Opener,
+  created: { readonly current: boolean },
+) {
+  return focusBackTo(() =>
+    created.current
+      ? null
+      : ((typeof opener === "function" ? opener() : opener) ?? null),
+  );
 }

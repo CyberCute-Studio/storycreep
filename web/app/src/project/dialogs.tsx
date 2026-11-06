@@ -2,7 +2,9 @@
 // creating a board or a folder, renaming one, moving one, which the tree's
 // dragging does too, but for a keyboard, a screen reader, or a single tap
 // (WCAG 2.5.7), and deleting one to the trash, a board after it lists the
-// jumpers on other boards that its deletion would leave broken (AC2). Each
+// jumpers on other boards that its deletion would leave broken (AC2); and
+// those of the folders of the project's variables and components, which
+// create, rename, move, and delete them alike (FR-VAR-01, FR-COMP-02). Each
 // sends a batch of commands (useCommands), expecting the revision of what it
 // changes that it opened with (useExpected), and gives the focus back to the
 // control that opened it, or to the page's content once that control has
@@ -41,9 +43,13 @@ import {
 import {
   childrenOf,
   type Drop,
+  type FolderNode,
   folderChoices,
+  type Item,
+  nameOf,
   type Placement,
   placementOf,
+  revOf,
   type Tree,
   type TreeNode,
 } from "./tree";
@@ -59,17 +65,22 @@ export function payloadField(...fields: string[]) {
 /** The value of the choice of a folder that stands for the top of the tree. */
 const top = "";
 
+/** The value of FolderSelect's choice of the top of the tree. */
+export const folderTop = top;
+
 /**
- * Returns the commands that move node to placement, expecting rev of it, the
- * revision that the tree shows of it unless given.
+ * Returns the commands that move node, a board or a folder of any kind, to
+ * placement, expecting rev of it, the revision that the tree shows of it
+ * unless given. A variable or a component moves in its panel, and to its
+ * folder's end, rather than in a tree's dialog.
  */
 export function moveCommands(
-  node: TreeNode,
+  node: TreeNode | FolderNode<Item>,
   placement: Placement,
   rev = revOf(node),
 ): Command[] {
   const order = placement.order === undefined ? {} : { order: placement.order };
-  return node.kind === "board"
+  return node.kind === "item"
     ? [
         {
           type: "board.move",
@@ -98,16 +109,6 @@ export function moveCommands(
       ];
 }
 
-/** Returns the name of a node of the tree. */
-export function nameOf(node: TreeNode): string {
-  return node.kind === "board" ? node.board.name : node.folder.name;
-}
-
-/** Returns the revision of a node of the tree. */
-function revOf(node: TreeNode): number {
-  return node.kind === "board" ? node.board.rev : node.folder.rev;
-}
-
 /**
  * Returns the revision that a dialog's next attempt expects of what it
  * changes, of which the tree shows rev now: the one that it had once the
@@ -119,7 +120,7 @@ function revOf(node: TreeNode): number {
  * applied since, as a drag that was under way once the dialog opened, which
  * are no change made elsewhere (ProjectDocument.send).
  */
-function useExpected(rev: number, error: unknown): number {
+export function useExpected(rev: number, error: unknown): number {
   const [held, setHeld] = useState({ rev, error });
   if (error !== held.error) {
     const next = { rev: conflictOf(error) ? rev : held.rev, error };
@@ -161,8 +162,8 @@ function TreeDialog({
   );
 }
 
-/** The choice of a folder of the tree, or its top. */
-function FolderSelect({
+/** The choice of a folder of the tree, or its top, whose value is the folder's ID, or folderTop. */
+export function FolderSelect({
   tree,
   node,
   label,
@@ -170,9 +171,9 @@ function FolderSelect({
   onChange,
   error,
 }: {
-  tree: Tree;
+  tree: Tree<Item>;
   /** What moves, which cannot go into itself, nor into a folder within it. */
-  node?: TreeNode;
+  node?: TreeNode<Item>;
   label: string;
   value: string;
   onChange?: (value: string) => void;
@@ -197,21 +198,83 @@ function FolderSelect({
   );
 }
 
+/** The name of the form's field that a FolderField adds once the user has chosen a folder in it (chosenFolder). */
+const folderChosen = "folder_chosen";
+
+/**
+ * The choice of a folder of the tree, or its top, as a form's field named
+ * folder, which starts at initial, the folder's ID or undefined for the
+ * top, and keeps what the user chooses: a form shown anew, with a key of
+ * its own, starts it anew.
+ */
+export function FolderField({
+  tree,
+  label,
+  initial,
+  error,
+}: {
+  tree: Tree<Item>;
+  label: string;
+  initial: string | undefined;
+  error?: string;
+}) {
+  const [chosen, setChosen] = useState<string>();
+  return (
+    <>
+      <FolderSelect
+        tree={tree}
+        label={label}
+        value={chosen ?? initial ?? top}
+        onChange={setChosen}
+        error={error}
+      />
+      {chosen !== undefined && (
+        <input type="hidden" name={folderChosen} value="" />
+      )}
+    </>
+  );
+}
+
+/**
+ * Returns the folder that a form's FolderField holds, of data, the form's,
+ * or undefined for the top, of a form that showed an item of the folder
+ * shown: the folder that the user chose in it, or the top, if the user
+ * chose it, or else shown, as the field started, though the tree does not
+ * have that folder, as one of a page of the folders that a read a page at a
+ * time had not reached, which the field shows as the top, as the tree shows
+ * the item, rather than a move to the top that the user did not ask for.
+ */
+export function chosenFolder(
+  data: FormData,
+  shown: string | undefined,
+): string | undefined {
+  if (!data.has(folderChosen)) {
+    return shown;
+  }
+  const folder = String(data.get("folder") ?? top);
+  return folder === top ? undefined : folder;
+}
+
 const nameField = payloadField("name");
 
-/** The dialog that creates a board, or a folder of boards, in parentId's folder or at the top. */
+/**
+ * The dialog that creates a board, or a folder of folderKind's, of boards
+ * unless it says otherwise, in parentId's folder or at the top.
+ */
 export function CreateDialog({
   projectId,
   tree,
   kind,
+  folderKind = "board",
   parentId,
   opener,
   onClose,
   onCreated,
 }: {
   projectId: string;
-  tree: Tree;
+  tree: Tree<Item>;
   kind: "board" | "folder";
+  folderKind?: Folder["kind"];
   parentId: string | undefined;
   opener: Opener;
   onClose: () => void;
@@ -251,7 +314,7 @@ export function CreateDialog({
             type: "folder.create",
             payload: {
               id,
-              kind: "board",
+              kind: folderKind,
               name,
               ...(folder === top ? {} : { parent_id: folder }),
             },
@@ -306,7 +369,7 @@ export function CreateDialog({
   );
 }
 
-/** The dialog that renames a board or a folder. */
+/** The dialog that renames a board or a folder, of any kind. */
 export function RenameDialog({
   projectId,
   node,
@@ -314,7 +377,7 @@ export function RenameDialog({
   onClose,
 }: {
   projectId: string;
-  node: TreeNode;
+  node: TreeNode | FolderNode<Item>;
   opener: Opener;
   onClose: () => void;
 }) {
@@ -328,7 +391,7 @@ export function RenameDialog({
     event.preventDefault();
     const name = String(new FormData(event.currentTarget).get("name"));
     const command: Command =
-      node.kind === "board"
+      node.kind === "item"
         ? {
             type: "board.rename",
             payload: { id: node.id, name },
@@ -387,8 +450,8 @@ export function MoveDialog({
   onClose,
 }: {
   projectId: string;
-  tree: Tree;
-  node: TreeNode;
+  tree: Tree<Item>;
+  node: TreeNode | FolderNode<Item>;
   opener: Opener;
   onClose: () => void;
 }) {
@@ -670,7 +733,7 @@ function referencedBy(
  * A confirmation of a destructive change, which stays open while it is
  * under way, and is confirmed once it is ready (ConfirmButtons).
  */
-function Confirm({
+export function Confirm({
   title,
   description,
   confirm,
