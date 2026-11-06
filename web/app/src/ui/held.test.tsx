@@ -92,4 +92,42 @@ describe("a held form", () => {
       screen.getByRole("textbox", { name: "Name" }),
     );
   });
+
+  test("shown anew while the focus is in what one of its controls opened in a portal, which goes with it, gives the focus back to that control", () => {
+    let release = () => {};
+    /** A control that opens a field of its own in a portal, as a rich text's link dialog, which the form shown anew is without. */
+    function Opener() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Link
+          </button>
+          {open && createPortal(<input aria-label="URL" />, document.body)}
+        </>
+      );
+    }
+    function PortalForm({ entity }: { entity: { rev: number } }) {
+      const held = useHeld(entity);
+      release = held.release;
+      return (
+        <form key={held.key} {...held.props}>
+          <input aria-label="Title" />
+          <Opener />
+        </form>
+      );
+    }
+    const { rerender } = render(<PortalForm entity={{ rev: 1 }} />);
+    const link = screen.getByRole("button", { name: "Link" });
+    link.focus();
+    act(() => link.click());
+    act(() => screen.getByRole("textbox", { name: "URL" }).focus());
+    // A save ends, of the entity as it is now.
+    rerender(<PortalForm entity={{ rev: 2 }} />);
+    act(() => release());
+    expect(screen.queryByRole("textbox", { name: "URL" })).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Link" }),
+    );
+  });
 });

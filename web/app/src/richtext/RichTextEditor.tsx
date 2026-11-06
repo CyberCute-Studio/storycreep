@@ -113,9 +113,15 @@ function readOf(content: RichTextDoc): {
     error.reason === "too_large"
       ? tryParseRichTextOfAnySize(content).doc
       : undefined;
-  return whole === undefined
-    ? { unreadable: true }
-    : { refused: tryParseRichText(whole).error, unreadable: false };
+  if (whole === undefined) {
+    return { unreadable: true };
+  }
+  // The canonical form holds the same characters, and so is too long for
+  // them too, without being read again; only its bytes may be fewer.
+  return {
+    refused: error.limit === "chars" ? error : tryParseRichText(whole).error,
+    unreadable: false,
+  };
 }
 
 /**

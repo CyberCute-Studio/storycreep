@@ -6,8 +6,10 @@
 // list elements or of Word's paragraphs of a list (mso-list), lists, nested
 // by their levels; its bold, italic, struck-through, and code text, by
 // element or by style, the marks; its links that a link may lead to
-// (storedHref) links; its line breaks hard breaks; a space that a browser
-// wrote as a no-break space in a span of its own as it copied it, a space;
+// (storedHref) links; its line breaks hard breaks, but one between blocks,
+// as Google Docs writes an empty paragraph, an empty paragraph; a space that
+// a browser wrote as a no-break space in a span of its own as it copied it,
+// a space, where ProseMirror's parser keeps one;
 // and its white space and the line breaks of its text, which a pre or a
 // white-space style keeps, kept. What no text shows, as a script, a style
 // sheet, an image, a comment, a hidden element, or the bullet or number of a
@@ -604,6 +606,8 @@ class Reader {
   private wordItems = 0;
   /** How many blocks of the HTML, but its body, hold what the walk reads. */
   private blocks = 0;
+  /** Whether the walk is between blocks: a block has ended since the innermost block that holds what it reads began. */
+  private between = false;
   /**
    * Whether the HTML is ProseMirror's, as the editor copies it, whose every
    * block of text is a paragraph, as one that holds nothing or only white
@@ -663,6 +667,15 @@ class Reader {
       return;
     }
     if (name === "br") {
+      if (this.current === undefined && this.between) {
+        // A line break between blocks, as Google Docs writes each empty
+        // paragraph, is an empty paragraph, which a browser shows as a line
+        // of its own, rather than a line break within one paragraph of
+        // them all.
+        this.paragraph();
+        this.end();
+        return;
+      }
       this.paragraph().runs.push({ kind: "break" });
       return;
     }
@@ -688,11 +701,16 @@ class Reader {
     }
     if (isConvertedSpace(element, name)) {
       // A browser's no-break space of a copied space is a space, but where
-      // it begins its paragraph, where ProseMirror's parser would take a
-      // space off, as at the start of a copy that begins with one.
-      const begun = (this.current?.runs.length ?? 0) > 0;
+      // ProseMirror's parser would take a space off, which it shows: at the
+      // start of its paragraph, as of a copy that begins with one, or of a
+      // line, and after white space.
+      const before = this.current?.runs.at(-1);
+      const kept =
+        before === undefined ||
+        before.kind === "break" ||
+        (before.kind === "text" && /[ \t\n\f\r]$/.test(before.text));
       this.text(
-        begun ? " " : "\u00a0",
+        kept ? "\u00a0" : " ",
         this.contextOf(element, name, { ...ctx, shown }),
       );
       return;
@@ -724,6 +742,7 @@ class Reader {
       this.paragraph().bare = this.faithful;
     }
     this.end();
+    this.between = false;
     const block = name === "body" ? 0 : 1;
     this.blocks += block;
     const outerItem = this.pendingItem;
@@ -779,6 +798,7 @@ class Reader {
     }
     this.blocks -= block;
     this.end();
+    this.between = true;
   }
 
   /** Reads the children of element that show: of a details that is not open, only its summary. */
@@ -937,8 +957,9 @@ type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
  * kept has the rest of its white space collapsed here (collapsed), since
  * ProseMirror keeps all of the paragraph's (writeBlocks), and a paragraph
  * loses the white space at its end (tidy), but for the paste's last where no
- * block holds it (Para.open), whose spaces at its end are no-break spaces
- * (spacedEnd).
+ * block holds it (Para.open), which loses only the white space after the
+ * copy (copiedRuns), before the rest is collapsed, and whose spaces at its
+ * end are no-break spaces (spacedEnd).
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
@@ -948,7 +969,8 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
     // The paste's last paragraph, where no block holds it, ends where the
     // text after the caret begins, which shows the white space at its end.
     const joined = para.open === true && i === paras.length - 1;
-    const runs = holdsKept(para.runs) ? collapsed(para.runs) : para.runs;
+    const own = joined && !faithful ? copiedRuns(para.runs) : para.runs;
+    const runs = holdsKept(own) ? collapsed(own) : own;
     const block = {
       kind: "p" as const,
       runs: faithful ? para.runs : joined ? spacedEnd(runs) : tidy(runs),
@@ -1015,18 +1037,15 @@ function tidy(runs: readonly Run[]): Run[] {
 }
 
 /**
- * Returns the runs of the paste's last paragraph where no block holds it,
- * which ProseMirror pastes into the paragraph at the caret, with the spaces
- * at its end as no-break spaces, as a browser's copy writes the space at its
- * end: ProseMirror's parser takes the spaces at the end of what is pasted
- * off it, though a pre keeps them, and keeps no-break spaces, which show as
- * the space between the pasted text and the text after the caret. The
- * spaces of text whose white space is kept, as Google Docs's, are a no-break
- * space each, and the others one, as a browser shows them; white space after
- * them that holds a line break, as Word or a browser writes after what it
- * copied, shows nothing, and is left out.
+ * Returns the runs of the paste's last paragraph where no block holds it
+ * without the white space after what was copied, which holds a line break,
+ * as Word or a browser writes after the fragment that it copied (Chrome's
+ * "<!--EndFragment-->\r\n" on Windows), and which shows nothing: it is left
+ * out before the paragraph's white space is collapsed (collapsed), which
+ * would make a space of it, as after Google Docs's text, whose white space
+ * is kept.
  */
-function spacedEnd(runs: readonly Run[]): Run[] {
+function copiedRuns(runs: readonly Run[]): Run[] {
   const out = [...runs];
   for (
     let last = out.at(-1);
@@ -1038,6 +1057,22 @@ function spacedEnd(runs: readonly Run[]): Run[] {
   ) {
     out.pop();
   }
+  return out;
+}
+
+/**
+ * Returns the runs of the paste's last paragraph where no block holds it,
+ * which ProseMirror pastes into the paragraph at the caret, without the
+ * white space after the copy (copiedRuns), with the spaces at its end as
+ * no-break spaces, as a browser's copy writes the space at its end:
+ * ProseMirror's parser takes the spaces at the end of what is pasted off it,
+ * though a pre keeps them, and keeps no-break spaces, which show as the
+ * space between the pasted text and the text after the caret. The spaces of
+ * text whose white space is kept, as Google Docs's, are a no-break space
+ * each, and the others one, as a browser shows them.
+ */
+function spacedEnd(runs: readonly Run[]): Run[] {
+  const out = [...runs];
   const last = out.at(-1);
   if (last?.kind === "text") {
     out[out.length - 1] = {

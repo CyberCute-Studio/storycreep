@@ -7,7 +7,8 @@
 // nothing changed, or the form lets go of it, as once it is saved. The form
 // is shown anew, with controls of its own, once what it shows changes (key),
 // and the focus, if it was in the form, is on the control in its place that
-// had it, so that the form holds what it shows for as long as the focus is
+// had it, or that opened what had it in a portal, which goes with the form
+// shown anew, so that the form holds what it shows for as long as the focus is
 // in it, rather than lose the focus to the page, and hold what it showed
 // once the user has left it (FR-RT-02 AC3).
 
@@ -85,8 +86,12 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   // entity, which the focus leaving it then does not let go.
   const changed = useRef(false);
   // The place, among the form's controls (controlsOf), of the one that has
-  // the focus, while one has.
+  // the focus, while one has, or that opened what has it in a portal.
   const focused = useRef<number>(undefined);
+  // The place of the control that the focus last left, until the form lets
+  // go, which the focus in what that control opened in a portal, as a rich
+  // text's link dialog, is at (props.onFocus).
+  const left = useRef<number>(undefined);
   // The letting go of the form that the focus leaving it waits with
   // (props.onBlur).
   const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -121,9 +126,16 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
       onFocus: (event) => {
         clearTimeout(leaving.current);
         leaving.current = undefined;
-        focused.current = controlsOf(event.currentTarget).indexOf(
+        const at = controlsOf(event.currentTarget).indexOf(
           event.target as Element,
         );
+        // The focus in what a control opened in a portal, outside the
+        // form's elements, is at that control, which the form shown anew,
+        // without what was opened, gives it back to, rather than to the page.
+        focused.current =
+          at < 0 && !event.currentTarget.contains(event.target as Node)
+            ? (left.current ?? at)
+            : at;
         holdEntity();
       },
       onChange: () => {
@@ -142,6 +154,7 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         }
         // The form shown anew meanwhile, as once a save ends, leaves the
         // focus where the user took it.
+        left.current = focused.current;
         focused.current = undefined;
         // What a control of the form opened in a portal, as a rich text's
         // link dialog or a menu, is outside the form's elements, but React
@@ -152,6 +165,7 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         clearTimeout(leaving.current);
         leaving.current = setTimeout(() => {
           leaving.current = undefined;
+          left.current = undefined;
           if (!changed.current) {
             setHeld(undefined);
           }

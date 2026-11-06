@@ -698,6 +698,20 @@ if (tide) {}</pre>
         "<!--StartFragment--><span lang=EN-US>word </span><!--EndFragment-->\r\n",
       ),
     ).toEqual(doc(p(text("The word\u00a0is"))));
+    // So is the line break that Chrome writes after Google Docs's fragment
+    // on Windows, though the paragraph's white space is kept, which the rest
+    // of it collapses around.
+    const windows = (fragment: string) =>
+      `<html>\r\n<body>\r\n<!--StartFragment--><meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-1">${fragment}</b><!--EndFragment-->\r\n</body>\r\n</html>`;
+    const docs = (value: string) =>
+      `<span style="font-weight:400;white-space:pre;white-space:pre-wrap;">${value}</span>`;
+    expect(at(windows(docs("word")))).toEqual(doc(p(text("The wordis"))));
+    expect(at(windows(docs("word ")))).toEqual(
+      doc(p(text("The word\u00a0is"))),
+    );
+    expect(at(windows(`${docs("word")}<span> more</span>`))).toEqual(
+      doc(p(text("The word moreis"))),
+    );
   });
 
   // Verifies: FR-TEXT-01/AC2
@@ -729,6 +743,16 @@ if (tide) {}</pre>
         '<p>a<span class="Apple-converted-space">&nbsp;</span><b>b</b><span lang="en">&nbsp;</span>c<span class="x">&nbsp;</span>d</p>',
       ),
     ).toEqual(doc(p(text("a "), text("b", "bold"), text(" c\u00a0d"))));
+    // Where ProseMirror's parser would take the space off, at the start of
+    // a line and after white space, it is the no-break space that shows.
+    expect(
+      pasted("<p>a<br><span>&nbsp;</span>b</p><p>c <span>&nbsp;</span>d</p>"),
+    ).toEqual(
+      doc(
+        p(text("a"), { type: "hardBreak" }, text("\u00a0b")),
+        p(text("c \u00a0d")),
+      ),
+    );
   });
 
   test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {
@@ -744,6 +768,27 @@ if (tide) {}</pre>
         p(text("Low")),
         p(text("Ebb")),
         p(text("Flood"), { type: "hardBreak" }),
+      ),
+    );
+  });
+
+  test("a line break between blocks, as Google Docs writes each empty paragraph, is an empty paragraph, and one within a block a line break", () => {
+    const docs = (value: string) =>
+      `<span style="font-weight:400;white-space:pre;white-space:pre-wrap;">${value}</span>`;
+    expect(
+      pasted(
+        `<b style="font-weight:normal;" id="docs-internal-guid-1"><p dir="ltr">${docs("Tide")}</p><br><br><p dir="ltr">${docs("High")}</p></b>` +
+          "<p>Low</p><p><br><br></p><p>Ebb</p>",
+      ),
+    ).toEqual(
+      doc(
+        p(text("Tide")),
+        p(),
+        p(),
+        p(text("High")),
+        p(text("Low")),
+        p({ type: "hardBreak" }),
+        p(text("Ebb")),
       ),
     );
   });
