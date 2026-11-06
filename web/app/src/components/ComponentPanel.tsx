@@ -9,12 +9,13 @@
 // its values, which the panel reads of it whole as it opens
 // (ProjectDocument.readComponent).
 
-import type {
-  Attribute,
-  Component,
-  ComponentType,
-  ProjectBody,
-  RichTextDoc,
+import {
+  type Attribute,
+  type Component,
+  type ComponentType,
+  type ProjectBody,
+  type RichTextDoc,
+  routes,
 } from "@storycreep/shared/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -519,9 +520,14 @@ function ComponentForm({
   );
 }
 
-/** The URL of an asset's thumbnail, which the browser reads with the page's session. */
+/**
+ * The URL of an asset's thumbnail, which the browser reads with the page's
+ * session, of the path that the API's description gives it.
+ */
 function thumbnailOf(projectId: string, assetId: string): string {
-  return `/api/v1/projects/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(assetId)}/thumbnail`;
+  return routes.getAssetThumbnail.path
+    .replace("{project_id}", encodeURIComponent(projectId))
+    .replace("{asset_id}", encodeURIComponent(assetId));
 }
 
 /** The types of image that the server stores (PRD FR-ASSET-02). */

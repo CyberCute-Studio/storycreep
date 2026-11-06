@@ -179,6 +179,64 @@ test.describe("the variables", () => {
     await expect(item(page, "trust")).toHaveCount(0);
   });
 
+  // Verifies: NFR-TOUCH-06
+  test("a panel opens and closes with the list where it was, and the docked panel stays in view as the list scrolls", async ({
+    page,
+  }) => {
+    const session = await signedIn(page, "Lena Long");
+    const workspace = await firstWorkspace(page.request);
+    const projectId = await createProject(
+      page.request,
+      session,
+      workspace.id,
+      "Archive",
+    );
+    await apply(
+      page.request,
+      session,
+      projectId,
+      Array.from({ length: 120 }, (_, i) => ({
+        type: "variable.create",
+        payload: {
+          id: newId("variable"),
+          key: `flag_${String(i).padStart(3, "0")}`,
+          type: "bool",
+          scope: "global",
+        },
+      })),
+    );
+    await page.goto(`/app/projects/${projectId}/variables`);
+    await expect(page.locator("[data-item-id]")).toHaveCount(120);
+    const far = item(page, "flag_090");
+    await far.scrollIntoViewIfNeeded();
+    const scrolled = await page.evaluate(() => window.scrollY);
+    expect(scrolled).toBeGreaterThan(0);
+
+    // The panel opens over the list, or beside it, as the list was.
+    await press(far);
+    const panel = panelOf(page, "flag_090");
+    const heading = panel.getByRole("heading", { name: "flag_090" });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect(far).toBeInViewport();
+
+    // The docked panel stays at the top of the window as the list scrolls.
+    if (!test.info().project.use.hasTouch) {
+      await page.mouse.wheel(0, 1500);
+      await expect
+        .poll(() => page.evaluate(() => window.scrollY))
+        .toBeGreaterThan(scrolled + 1000);
+      await expect(heading).toBeInViewport();
+      await far.scrollIntoViewIfNeeded();
+    }
+
+    // Once it closes, the item that opened it has the focus, in view.
+    await press(panel.getByRole("button", { name: en["panel.close"] }));
+    await expect(panel).toBeHidden();
+    await expect(far).toBeFocused();
+    await expect(far).toBeInViewport();
+  });
+
   // Verifies: FR-VAR-01/AC3
   test("the list of a thousand variables shows, and filters, within 300 ms", async ({
     page,

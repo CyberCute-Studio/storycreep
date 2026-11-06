@@ -2964,7 +2964,14 @@ export class ProjectDocument {
                 overlapsAt(
                   shown.exact,
                   values.mine[key],
-                  values.was[key],
+                  // The page showed a value that the entity held none of
+                  // as its definition's default, as of a definition that
+                  // another session created after the page showed the
+                  // entity, which gave the entity that default: a change
+                  // of the value made elsewhere is one from the default.
+                  key in values.was
+                    ? values.was[key]
+                    : defaultOf(this.confirmed, key),
                   values.now[key],
                 ),
               );
@@ -3023,6 +3030,18 @@ function fieldsOfValues(id: string): Set<string> {
   return place?.of === "kind" && place.kind === "components"
     ? new Set(["attributes"])
     : new Set();
+}
+
+/**
+ * Returns the default of the attribute definition of id, as doc holds it,
+ * which a component's form shows as the component's value of it where the
+ * component holds none (ComponentPanel), or undefined if doc holds no such
+ * definition.
+ */
+function defaultOf(doc: Doc, id: string): unknown {
+  return typeOfAttribute(doc.componentTypes, id)?.attributes.find(
+    (attribute) => attribute.id === id,
+  )?.default;
 }
 
 /** Returns a field of values as a batch leaves it, as the page showed it, and as it is now, or undefined unless each holds values by their names. */

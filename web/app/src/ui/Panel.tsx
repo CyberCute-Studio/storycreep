@@ -259,7 +259,11 @@ export function Panel({
     }
   };
   return (
-    <div ref={frame}>
+    // A docked panel stays at the top of the window as the list beside it
+    // scrolls, so that it is in view wherever its item is in a long list;
+    // it is the element beside the list that does, as an element under it
+    // has no room of its own to stay in.
+    <div ref={frame} className={sheet ? undefined : "sticky top-4"}>
       {sheet && (
         // A tap beside the sheet closes it, as beside a dialog; a keyboard
         // closes it with Escape or its button.
@@ -278,7 +282,7 @@ export function Panel({
         className={`space-y-4 border border-border bg-canvas p-4 text-fg ${
           sheet
             ? "fixed inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-lg shadow-xl"
-            : "sticky top-4 max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg"
+            : "max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg"
         }`}
       >
         <div className="flex items-start gap-2">

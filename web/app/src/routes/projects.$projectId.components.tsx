@@ -90,11 +90,13 @@ function ComponentsPage() {
     );
   }, [ordered, filter, shownType]);
   // As on the variables' page, a deletion replaces the address that named
-  // what it deleted.
+  // what it deleted, and a panel opens and closes with the page scrolled as
+  // it was.
   const select = (id: string | undefined, replace = false) =>
     void navigate({
       search: id === undefined ? {} : { component: id },
       replace,
+      resetScroll: false,
     });
   const [creating, setCreating] = useState<{
     parentId: string | undefined;

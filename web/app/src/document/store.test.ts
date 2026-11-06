@@ -3515,6 +3515,106 @@ describe("the page's own batches while the channel is not live", () => {
       { cmp_a: 4 },
     ]);
   });
+
+  // A definition created elsewhere gives each component of its type its
+  // default, which a component's form shows as the value of one that held
+  // none of it: a change of that value is compared with the default.
+  for (const [now, sentAgain] of [
+    [0, true],
+    [2, false],
+  ] as const) {
+    it(`${sentAgain ? "are" : "are not"} sent again where one gives a value of a definition created elsewhere to a component held whole without it, which has ${now === 0 ? "the definition's default" : "another value"} now`, async () => {
+      const stamps = {
+        created_at: "2026-11-01T10:00:00Z",
+        updated_at: "2026-11-01T10:00:00Z",
+      };
+      const definition = (id: string, order: string) => ({
+        id,
+        component_type_id: "ct_a",
+        order,
+        key: id,
+        name: id,
+        type: "int",
+        default: 0,
+        runtime: false,
+        rev: 1,
+        ...stamps,
+      });
+      const summary = {
+        id: "cmp_a",
+        project_id: testProject.id,
+        component_type_id: "ct_a",
+        order: "V",
+        key: "elara",
+        name: "Elara",
+        rev: 3,
+        ...stamps,
+      };
+      const whole = {
+        ...summary,
+        description: { type: "doc", content: [{ type: "paragraph" }] },
+        attributes: { atr_a: 1 },
+      };
+      const theirs = { ...whole, attributes: { atr_a: 1, atr_b: now }, rev: 4 };
+      const server = serve({
+        ...tree([]),
+        listComponentTypes: () =>
+          page([
+            {
+              id: "ct_a",
+              project_id: testProject.id,
+              key: "hero",
+              name: "Hero",
+              icon: "none",
+              attributes: [definition("atr_a", "V"), definition("atr_b", "W")],
+              rev: 2,
+              ...stamps,
+            },
+          ]),
+        listComponents: () => page([summary]),
+        getComponent: () => whole,
+        applyCommands: inTurn(
+          refused(409, {
+            code: "revision_conflict",
+            details: {
+              conflicts: [
+                {
+                  command: 0,
+                  command_id: "00000000-0000-7000-8000-000000000001",
+                  type: "component.set_attribute",
+                  id: "cmp_a",
+                  expected_rev: 3,
+                  exists: true,
+                  current_rev: 4,
+                },
+              ],
+              states: { cmp_a: theirs },
+            },
+          }),
+          applied(2, [{ id: "cmp_a", rev: 5 }]),
+        ),
+      });
+      const { doc } = await open();
+      await doc.readComponent("cmp_a");
+      const sent = doc.send([
+        {
+          type: "component.set_attribute",
+          payload: { id: "cmp_a", attribute_id: "atr_b", value: 7 },
+          expected_rev: { cmp_a: 3 },
+        },
+      ]);
+      if (sentAgain) {
+        await sent;
+        expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+          { cmp_a: 3 },
+          { cmp_a: 4 },
+        ]);
+      } else {
+        await expect(sent).rejects.toBeInstanceOf(ConflictError);
+        expect(server.batches).toHaveLength(1);
+      }
+    });
+  }
 });
 
 describe("undo and redo, as answers and reads come", () => {

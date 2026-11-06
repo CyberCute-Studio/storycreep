@@ -47,9 +47,14 @@ function TypesPage() {
   const typeMap = useDocumentState(doc, (state) => state.view.componentTypes);
   const types = useMemo(() => typesByName(typeMap), [typeMap]);
   // As on the variables' page, a deletion replaces the address that named
-  // what it deleted.
+  // what it deleted, and a panel opens and closes with the page scrolled as
+  // it was.
   const select = (id: string | undefined, replace = false) =>
-    void navigate({ search: id === undefined ? {} : { type: id }, replace });
+    void navigate({
+      search: id === undefined ? {} : { type: id },
+      replace,
+      resetScroll: false,
+    });
   const [creating, setCreating] = useState<Opener>();
   const [created, setCreated] = useState<string>();
   // While a type's deletion is open, its panel shows it as it was.

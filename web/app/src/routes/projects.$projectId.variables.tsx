@@ -123,11 +123,15 @@ function VariablesPage() {
   }, [ordered, filter, shownScope]);
   // Closing the panel once its variable has been deleted replaces the
   // address that named it, as a board's deletion does, so that Back does
-  // not show it as not found.
+  // not show it as not found. Opening or closing a panel leaves the page
+  // scrolled as it was, rather than at its top, as the router leaves a page
+  // that it shows anew, so that the list's item that opened the panel, which
+  // gets the focus back once it closes, stays in view.
   const select = (id: string | undefined, replace = false) =>
     void navigate({
       search: id === undefined ? {} : { variable: id },
       replace,
+      resetScroll: false,
     });
   const [creating, setCreating] = useState<{
     parentId: string | undefined;
