@@ -6,12 +6,14 @@
 // list elements or of Word's paragraphs of a list (mso-list), lists, nested
 // by their levels; its bold, italic, struck-through, and code text, by
 // element or by style, the marks; its links that a link may lead to
-// (storedHref) links; its line breaks hard breaks; and its white space and
-// the line breaks of its text, which a pre or a white-space style keeps,
-// kept. What no text shows, as a script, a style sheet, an image, a comment,
-// a hidden element, or the bullet or number of a list item that Word writes
-// out, which the list shows, or a bullet of Word's anywhere, is left out; a
-// heading of Word's numbered headings keeps its number as its text. Neither
+// (storedHref) links; its line breaks hard breaks; a space that a browser
+// wrote as a no-break space in a span of its own as it copied it, a space;
+// and its white space and the line breaks of its text, which a pre or a
+// white-space style keeps, kept. What no text shows, as a script, a style
+// sheet, an image, a comment, a hidden element, or the bullet or number of a
+// list item that Word writes out, which the list shows, or a bullet of
+// Word's anywhere, is left out; a heading of Word's numbered headings keeps
+// its number as its text. Neither
 // the pasted HTML, as it is parsed, nor the cleaned HTML has a style
 // attribute or a style element, which the page's Content-Security-Policy
 // refuses (style-src-attr, style-src-elem) in a document that DOMParser
@@ -476,17 +478,67 @@ function isWordMarker(element: Element, name: string): boolean {
   return name === "span" && /mso-list\s*:\s*ignore/i.test(rawStyleOf(element));
 }
 
+/** The fonts that Word draws a bullet's letter in as a bullet, as Courier New's "o" or Wingdings's "Ø", lowercased. */
+const BULLET_FONTS = new Set([
+  "courier new",
+  "symbol",
+  "webdings",
+  "wingdings",
+  "wingdings 2",
+  "wingdings 3",
+]);
+
+/** Returns the font of an element's text, the first family of the innermost font-family of it and what holds it within its block, unquoted and lowercased, or "" for none. */
+function fontOf(element: Element): string {
+  for (
+    let e: Element | null = element;
+    e !== null && !BLOCKS.has(e.localName.toLowerCase());
+    e = e.parentElement
+  ) {
+    const family = styleOf(e, "font-family");
+    if (family !== "") {
+      return family
+        .split(",")[0]
+        .trim()
+        .replace(/^["']|["']$/g, "");
+    }
+  }
+  return "";
+}
+
 /**
- * Reports whether the text of a marker of Word's list (isWordMarker) is a
- * bullet, or nothing: one that holds no letter or digit, as Symbol's "·", a
- * character of the private use area, or Wingdings's "§", or one character
- * that is no digit, as Courier New's "o" or Wingdings's "Ø", which Word
- * draws in its font as a bullet, and the editor would show as the letter.
+ * Reports whether a marker of Word's list (isWordMarker), of text marker, is
+ * a bullet, or nothing: one that holds no letter or digit, as Symbol's "·",
+ * a character of the private use area, or Wingdings's "§", or one character
+ * that is no digit in a font that Word draws it as a bullet in
+ * (BULLET_FONTS), as Courier New's "o" or Wingdings's "Ø", which the editor
+ * would show as the letter; a letter alone in another font, as "I" or "A" of
+ * a numbered heading, is a number.
  */
-function isBullet(marker: string): boolean {
+function isBullet(marker: string, element: Element): boolean {
   return (
     !/[\p{L}\p{N}]/u.test(marker) ||
-    ([...marker].length === 1 && !/\p{Nd}/u.test(marker))
+    ([...marker].length === 1 &&
+      !/\p{Nd}/u.test(marker) &&
+      BULLET_FONTS.has(fontOf(element)))
+  );
+}
+
+/**
+ * Reports whether an element is a space that a browser wrote as a no-break
+ * space in a span of its own, as it copies a space at the start or the end
+ * of a text: Chrome's span without a class or a style, or Safari's of class
+ * Apple-converted-space, as ProseMirror's paste finds them on those browsers
+ * (restoreReplacedSpaces), which the cleaned HTML would otherwise keep from
+ * it.
+ */
+function isConvertedSpace(element: Element, name: string): boolean {
+  return (
+    name === "span" &&
+    element.childNodes.length === 1 &&
+    element.textContent === "\u00a0" &&
+    (element.classList.contains("Apple-converted-space") ||
+      !["class", "style", STYLE].some((a) => element.hasAttribute(a)))
   );
 }
 
@@ -519,18 +571,23 @@ function wordItemOf(element: Element): ItemOf | undefined {
       .find((span) => isWordMarker(span, "span"))
       ?.textContent?.trim() ?? "";
   // The item's number is the last of those that the marker holds, as 2 of
-  // 1.2., where the numbers of the items that hold it go before it: digits,
-  // a Roman numeral, as xviii, or up to four letters, as aa.
-  const numbered = /^\(?(?:\d+\.)*([0-9]+|[ivxlcdm]+|[a-z]{1,4})[.)]/i.exec(
-    marker,
-  );
+  // 1.2. or 1.2, where the numbers of the items that hold it go before it:
+  // digits, a Roman numeral, as xviii, or up to four letters, as aa, before
+  // "." or ")", or digits alone, as of Word's format "1 / 1.1 / 1.1.1", each
+  // after a word too, as "Step 1." or "Chapter 1". The marker is matched
+  // whole, so that "1.2" is not read as its "1.".
+  const numbered =
+    /^(?:\p{L}+\s+)?\(?(?:\d+\.)*(?:(\d+|[ivxlcdm]+|[a-z]{1,4})[.)]|(\d+))$/iu.exec(
+      marker,
+    );
+  const number = numbered?.[1] ?? numbered?.[2];
   return {
     // Word's levels are from 1, as a list item's are; level0 is the first.
     level: Math.max(1, Number(match[1])),
     ordered: numbered !== null,
     start:
-      numbered !== null && /^\d+$/.test(numbered[1])
-        ? startOf(numbered[1])
+      number !== undefined && /^\d+$/.test(number)
+        ? startOf(number)
         : undefined,
   };
 }
@@ -617,12 +674,27 @@ class Reader {
       // text, as Word shows it, with a space in place of the white space
       // that Word writes after it.
       const marker = element.textContent?.trim() ?? "";
-      if (this.wordItems === 0 && ctx.lists === 0 && !isBullet(marker)) {
+      if (
+        this.wordItems === 0 &&
+        ctx.lists === 0 &&
+        !isBullet(marker, element)
+      ) {
         this.text(
           `${marker} `,
           this.contextOf(element, name, { ...ctx, shown }),
         );
       }
+      return;
+    }
+    if (isConvertedSpace(element, name)) {
+      // A browser's no-break space of a copied space is a space, but where
+      // it begins its paragraph, where ProseMirror's parser would take a
+      // space off, as at the start of a copy that begins with one.
+      const begun = (this.current?.runs.length ?? 0) > 0;
+      this.text(
+        begun ? " " : "\u00a0",
+        this.contextOf(element, name, { ...ctx, shown }),
+      );
       return;
     }
     const chip = chipOf(element);
@@ -865,7 +937,8 @@ type Block = { kind: "p"; runs: Run[] } | { kind: "list"; list: List };
  * kept has the rest of its white space collapsed here (collapsed), since
  * ProseMirror keeps all of the paragraph's (writeBlocks), and a paragraph
  * loses the white space at its end (tidy), but for the paste's last where no
- * block holds it (Para.open).
+ * block holds it (Para.open), whose spaces at its end are no-break spaces
+ * (spacedEnd).
  */
 function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
   const top: Block[] = [];
@@ -944,20 +1017,33 @@ function tidy(runs: readonly Run[]): Run[] {
 /**
  * Returns the runs of the paste's last paragraph where no block holds it,
  * which ProseMirror pastes into the paragraph at the caret, with the spaces
- * at the end of its text whose white space is kept, as Google Docs's, as
- * no-break spaces, as a browser's copy writes the space at its end:
- * ProseMirror's parser takes the spaces at the end of what is pasted off
- * it, though a pre keeps them, and keeps no-break spaces, which show as the
- * space between the pasted text and the text after the caret.
+ * at its end as no-break spaces, as a browser's copy writes the space at its
+ * end: ProseMirror's parser takes the spaces at the end of what is pasted
+ * off it, though a pre keeps them, and keeps no-break spaces, which show as
+ * the space between the pasted text and the text after the caret. The
+ * spaces of text whose white space is kept, as Google Docs's, are a no-break
+ * space each, and the others one, as a browser shows them; white space after
+ * them that holds a line break, as Word or a browser writes after what it
+ * copied, shows nothing, and is left out.
  */
 function spacedEnd(runs: readonly Run[]): Run[] {
   const out = [...runs];
+  for (
+    let last = out.at(-1);
+    last?.kind === "text" &&
+    !last.keep &&
+    HTML_SPACE.test(last.text) &&
+    /[\n\r]/.test(last.text);
+    last = out.at(-1)
+  ) {
+    out.pop();
+  }
   const last = out.at(-1);
-  if (last?.kind === "text" && last.keep) {
+  if (last?.kind === "text") {
     out[out.length - 1] = {
       ...last,
       text: last.text.replace(/ +$/, (spaces) =>
-        "\u00a0".repeat(spaces.length),
+        "\u00a0".repeat(last.keep ? spaces.length : 1),
       ),
     };
   }

@@ -9,6 +9,7 @@ import {
   type Attributes,
   type Editor,
   Extension,
+  isMarkActive,
   markInputRule,
   markPasteRule,
   mergeAttributes,
@@ -250,7 +251,8 @@ function holdsMark(slice: Slice, type: MarkType): boolean {
  * and an email address, which it links to a mailto URL. setLink and
  * toggleLink take a URL as the link's field does too, and set it as a link
  * stores it, so that a link that they set is not taken off again by the
- * normalizer, and refuse one that no link may lead to, as of no string. A
+ * normalizer, and refuse one that no link may lead to, as of no string, and
+ * toggleLink without one only takes a link off the selection that has it. A
  * URL pasted over a selection links it, but a copied link pasted over it is
  * pasted as it is, keeping its link. Its element leads
  * only to a URL as a link stores it (checkHref), and to none otherwise, as
@@ -361,8 +363,12 @@ const StoredLink = Link.extend({
         if (parent.toggleLink === undefined) {
           return false;
         }
+        // Without a URL, it only takes a link off, rather than set one
+        // without a URL, which the normalizer would take off again.
         if (attributes === undefined) {
-          return parent.toggleLink()(props);
+          return (
+            isMarkActive(props.state, this.type) && parent.toggleLink()(props)
+          );
         }
         const href = hrefOf(attributes);
         return (
@@ -438,6 +444,7 @@ const toolbarMarks = [
         markInputRule({ find: emphasis(delimiter), type: this.type }),
       );
     },
+    addPasteRules: () => [],
   }),
   Italic.extend({
     addInputRules() {
@@ -445,14 +452,16 @@ const toolbarMarks = [
         markInputRule({ find: emphasis(delimiter), type: this.type }),
       );
     },
+    addPasteRules: () => [],
   }),
   Strike.extend({
     addInputRules() {
       return [markInputRule({ find: emphasis("~~"), type: this.type })];
     },
+    addPasteRules: () => [],
   }),
-  Code,
-].map((mark) => mark.extend({ addPasteRules: () => [] }));
+  Code.extend({ addPasteRules: () => [] }),
+];
 
 /**
  * A list's item, which Tab moves, with the other items of the selection,
@@ -537,23 +546,19 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
  * the schema holds before it is read (FR-TEXT-01 AC2), and pasted HTML of
  * which the cleaning keeps nothing, as of only a button or a formula, or
  * only an empty paragraph, as of Word's, which ProseMirror would paste
- * nothing of (an open slice of size 0), is
- * pasted as the clipboard's plain text, which ProseMirror reads only where
- * the clipboard has no HTML, though it is only white space, as of a copied
- * space. A paste of neither, as of only an image, changes nothing, rather
+ * nothing of (an open slice of size 0), is pasted as the clipboard's plain
+ * text (pastePlain), which ProseMirror reads only where the clipboard has no
+ * HTML, though it is only white space, as of a copied space, and the
+ * editor's copy of a line break alone as a line break. A paste of neither,
+ * as of only an image, changes nothing, rather
  * than take out the selection, which ProseMirror replaces with what is
  * pasted. So is a drop from outside the editor, at the place that it is
  * dropped at, of which ProseMirror would insert nothing.
  */
 export const pasteProps = {
   transformPastedHTML: (html: string) => cleanPastedHTML(html),
-  handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) => {
-    if (slice.size > 0) {
-      return false;
-    }
-    const text = event.clipboardData?.getData("text/plain") ?? "";
-    return text === "" || view.pasteText(text);
-  },
+  handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) =>
+    slice.size === 0 && pastePlain(view, event.clipboardData),
   handleDrop: (
     view: EditorView,
     event: DragEvent,
@@ -574,6 +579,31 @@ export const pasteProps = {
       ),
     );
     view.focus();
-    return view.pasteText(text);
+    return pastePlain(view, event.dataTransfer);
   },
 };
+
+/**
+ * Pastes the plain text of data, whose HTML gave nothing, over the selection,
+ * or nothing where it has none. ProseMirror's copy of a line break alone,
+ * whose plain text is the line break, and whose HTML's br ProseMirror's
+ * parser leaves out as the last of its paragraph, is a line break, as was
+ * copied, rather than the end of a paragraph that its plain text would be.
+ */
+function pastePlain(view: EditorView, data: DataTransfer | null): boolean {
+  const text = data?.getData("text/plain") ?? "";
+  if (text === "") {
+    return true;
+  }
+  if (
+    /^(?:\r\n?|\n)$/.test(text) &&
+    /\sdata-pm-slice=/.test(data?.getData("text/html") ?? "")
+  ) {
+    const { hardBreak } = view.state.schema.nodes;
+    view.dispatch(
+      view.state.tr.replaceSelectionWith(hardBreak.create()).scrollIntoView(),
+    );
+    return true;
+  }
+  return view.pasteText(text);
+}

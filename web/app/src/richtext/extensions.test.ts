@@ -437,6 +437,11 @@ describe("the editor's extensions", () => {
     editor.commands.selectAll();
     expect(editor.commands.setLink({} as never)).toBe(false);
     expect(editor.commands.toggleLink({} as never)).toBe(false);
+    // Without attributes, toggleLink only takes a link off.
+    expect(editor.commands.toggleLink()).toBe(false);
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harbour")]);
+    expect(editor.commands.setLink({ href: "https://example.com" })).toBe(true);
+    expect(editor.commands.toggleLink()).toBe(true);
     expect(storedOf(editor.state.doc).doc?.content).toEqual([p("harbour")]);
   });
 

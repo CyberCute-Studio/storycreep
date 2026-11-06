@@ -526,6 +526,18 @@ if (tide) {}</pre>
         numbers(2, item(p(text("Item")))),
       ),
     );
+    // A heading numbered by a letter alone, in the heading's font, keeps it,
+    // as one numbered by more than one does.
+    expect(
+      pasted(
+        ["I", "II", "A"]
+          .map(
+            (number) =>
+              `<h1 style='mso-list:l2 level1 lfo3'>${marker(number)}<span lang=EN-US>Part<o:p></o:p></span></h1>`,
+          )
+          .join(""),
+      ),
+    ).toEqual(doc(p(text("I Part")), p(text("II Part")), p(text("A Part"))));
   });
 
   // Verifies: FR-TEXT-01/AC2
@@ -560,6 +572,47 @@ if (tide) {}</pre>
       `<p style="mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">${marker}<span style="font:7.0pt">&nbsp;&nbsp;</span></span>${value}</p>`;
     expect(
       pasted(word("xvii.", "a") + word("xviii.", "b") + word("XXVIII)", "c")),
+    ).toEqual(
+      doc(
+        numbers(1, item(p(text("a"))), item(p(text("b"))), item(p(text("c")))),
+      ),
+    );
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("a paragraph of Word's list numbered without '.' or ')', as of Word's format '1 / 1.1 / 1.1.1', or after a word, as 'Step 1.', is numbered as Word numbers it", () => {
+    const word = (level: number, marker: string, value: string) =>
+      `<p style="mso-list:l0 level${level} lfo1"><span style="mso-list:Ignore">${marker}<span style="font:7.0pt">&nbsp;&nbsp;</span></span>${value}</p>`;
+    expect(
+      pasted(
+        word(1, "1", "a") +
+          word(2, "1.1", "b") +
+          word(2, "1.2", "c") +
+          word(3, "1.2.1", "d") +
+          word(1, "2", "e"),
+      ),
+    ).toEqual(
+      doc(
+        numbers(
+          1,
+          item(
+            p(text("a")),
+            numbers(
+              1,
+              item(p(text("b"))),
+              item(p(text("c")), numbers(1, item(p(text("d"))))),
+            ),
+          ),
+          item(p(text("e"))),
+        ),
+      ),
+    );
+    expect(
+      pasted(
+        word(1, "Step 1.", "a") +
+          word(1, "Step 2.", "b") +
+          word(1, "Chapter 3", "c"),
+      ),
     ).toEqual(
       doc(
         numbers(1, item(p(text("a"))), item(p(text("b"))), item(p(text("c")))),
@@ -630,9 +683,52 @@ if (tide) {}</pre>
       ),
     ).toEqual(doc(p(text("The word\u00a0is"))));
     expect(at("<span>&nbsp;</span>")).toEqual(doc(p(text("The \u00a0is"))));
+    // A plain space at its end is one too, and so are several, as a browser
+    // shows them.
+    expect(at("<span>word </span>")).toEqual(doc(p(text("The word\u00a0is"))));
+    expect(at("<span>word   </span>")).toEqual(
+      doc(p(text("The word\u00a0is"))),
+    );
     // White space after the copy that a browser does not show, as the line
-    // break that Word or a browser writes after the fragment, is none.
+    // break that Word or a browser writes after the fragment, is none, and
+    // the space before it is kept.
     expect(at("<span>word</span>\r\n")).toEqual(doc(p(text("The wordis"))));
+    expect(
+      at(
+        "<!--StartFragment--><span lang=EN-US>word </span><!--EndFragment-->\r\n",
+      ),
+    ).toEqual(doc(p(text("The word\u00a0is"))));
+  });
+
+  // Verifies: FR-TEXT-01/AC2
+  test("a space that Chrome or Safari writes as a no-break space in a span of its own, as they copy a space at the start or the end of a text, is a space", () => {
+    // Chrome's copy of "See the docs for bold details. " of a page, pasted at
+    // "The |is".
+    const style =
+      'style="color: rgb(0, 0, 0); font-size: 20px; white-space: normal;"';
+    const editor = testEditor(doc(p(text("The is"))) as RichTextDoc);
+    editor.commands.setTextSelection(5);
+    editor.view.pasteHTML(
+      `<span ${style}>See<span>&nbsp;</span></span><a href="https://example.com/" ${style}>the docs</a>` +
+        `<span ${style}><span>&nbsp;</span>for<span>&nbsp;</span></span><b ${style}>bold</b>` +
+        `<span ${style}><span>&nbsp;</span>details.<span>&nbsp;</span></span>`,
+    );
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(
+        p(
+          text("The See "),
+          linked("the docs", "https://example.com/"),
+          text(" for "),
+          text("bold", "bold"),
+          text(" details.\u00a0is"),
+        ),
+      ),
+    );
+    expect(
+      pasted(
+        '<p>a<span class="Apple-converted-space">&nbsp;</span><b>b</b><span lang="en">&nbsp;</span>c<span class="x">&nbsp;</span>d</p>',
+      ),
+    ).toEqual(doc(p(text("a "), text("b", "bold"), text(" c\u00a0d"))));
   });
 
   test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {
@@ -876,6 +972,33 @@ if (tide) {}</pre>
         doc(
           p(text("bold", "bold"), text(" text")),
           p(text("Hello "), text("bold", "bold"), text(" teworld")),
+        ),
+      );
+    });
+
+    test("a line break copied alone is pasted as a line break, rather than as the end of a paragraph that its plain text is", () => {
+      const lineBreak = { type: "hardBreak" };
+      const content = doc(
+        p(text("a"), lineBreak, text("b")),
+        p(text("The is")),
+      );
+      // The line break, at 2, pasted at "The |is".
+      const html = copied(content, (d) => TextSelection.create(d, 2, 3));
+      const target = testEditor(content as RichTextDoc);
+      target.commands.setTextSelection(10);
+      target.view.pasteHTML(
+        html,
+        Object.assign(new Event("paste"), {
+          clipboardData: {
+            getData: (type: string) =>
+              type === "text/plain" ? "\n" : type === "text/html" ? html : "",
+          },
+        }) as unknown as ClipboardEvent,
+      );
+      expect(storedOf(target.state.doc).doc).toEqual(
+        doc(
+          p(text("a"), lineBreak, text("b")),
+          p(text("The "), lineBreak, text("is")),
         ),
       );
     });
