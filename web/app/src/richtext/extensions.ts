@@ -273,9 +273,10 @@ const StoredLink = Link.extend({
   // TipTap's rule of the URLs that linkify finds in pasted text, which
   // leads to an address without a scheme with linkify's own, http, and
   // links text that a link already holds, as a copied link whose text is a
-  // URL, to that text: an address that it finds leads where autolinking
-  // leads it, as the link's field takes it (typedHref), and pasted text
-  // that a link holds keeps that link.
+  // URL, to that text: an address that it finds, only one that a link may
+  // lead to (isAllowedUri), leads where autolinking leads it, as the link's
+  // field takes it (typedHref), and pasted text that a link holds keeps
+  // that link.
   addPasteRules() {
     const type = this.type;
     return (this.parent?.() ?? []).map((rule) => {
@@ -284,19 +285,18 @@ const StoredLink = Link.extend({
         type,
         getAttributes: (match) => ({ href: typedHref(match[0]) }),
       });
-      // A match that it skips it answers with nothing, rather than null,
-      // with which TipTap would drop what the rule did of the whole paste.
+      // A match that it skips, as one that a link holds, or one in code,
+      // which TipTap's rule answers with null, it answers with nothing,
+      // rather than null, with which TipTap would drop what the rule did of
+      // the whole paste, and so leave the paste's other URLs unlinked.
       return new PasteRule({
         find: rule.find,
         handler: (props) => {
-          const { state, range, match } = props;
-          if (
-            typedHref(match[0]) === undefined ||
-            state.doc.rangeHasMark(range.from, range.to, type)
-          ) {
+          const { state, range } = props;
+          if (state.doc.rangeHasMark(range.from, range.to, type)) {
             return undefined;
           }
-          return linking.handler(props);
+          return linking.handler(props) ?? undefined;
         },
       });
     });

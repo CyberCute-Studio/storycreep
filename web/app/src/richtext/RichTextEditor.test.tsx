@@ -473,6 +473,30 @@ describe("the rich-text editor", () => {
     });
   });
 
+  test("what the user types right after a link inserted where nothing is selected is no part of the link", async () => {
+    const { textbox, last } = renderEditor();
+    textbox.focus();
+    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await userEvent.type(
+      await screen.findByRole("textbox", { name: "Address" }),
+      "example.com{Enter}",
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    await userEvent.keyboard(", then");
+    expect(last()?.doc?.content[0]).toEqual({
+      content: [
+        {
+          marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+          text: "example.com",
+          type: "text",
+        },
+        { text: ", then", type: "text" },
+      ],
+      type: "paragraph",
+    });
+  });
+
   test("a form that holds the editor holds what it shows while the focus is in the link's dialog, though what it shows changed meanwhile, rather than show it anew without the dialog", async () => {
     function HeldForm({ entity }: { entity: { rev: number; body: string } }) {
       const held = useHeld(entity);

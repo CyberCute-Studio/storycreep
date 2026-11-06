@@ -507,6 +507,27 @@ if (tide) {}</pre>
     );
   });
 
+  // Verifies: FR-TEXT-01/AC2
+  test("a heading of Word's numbered headings is a paragraph that keeps the number that Word writes out of it", () => {
+    const marker = (number: string) =>
+      `<![if !supportLists]><span lang=EN-US style='mso-bidi-font-family:"Calibri Light"'><span style='mso-list:Ignore'>${number}<span style='font:7.0pt "Times New Roman"'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; </span></span></span><![endif]>`;
+    expect(
+      pasted(
+        `<h1 style='margin-left:.3in;text-indent:-.3in;mso-list:l0 level1 lfo1'>${marker("1")}<span lang=EN-US>Introduction<o:p></o:p></span></h1>\n` +
+          "<p class=MsoNormal><span lang=EN-US>Text.<o:p></o:p></span></p>\n" +
+          `<h2 style='margin-left:.4in;text-indent:-.4in;mso-list:l0 level2 lfo1'>${marker("1.1")}<span lang=EN-US>Background<o:p></o:p></span></h2>\n` +
+          `<p class=MsoListParagraph style='text-indent:-.25in;mso-list:l1 level1 lfo2'>${marker("2.")}<span lang=EN-US>Item<o:p></o:p></span></p>`,
+      ),
+    ).toEqual(
+      doc(
+        p(text("1 Introduction")),
+        p(text("Text.")),
+        p(text("1.1 Background")),
+        numbers(2, item(p(text("Item")))),
+      ),
+    );
+  });
+
   test("HTML of which the cleaning keeps nothing, as of only a button, is pasted as the clipboard's plain text", () => {
     const editor = testEditor();
     const event = Object.assign(new Event("paste"), {

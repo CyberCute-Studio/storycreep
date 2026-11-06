@@ -10,7 +10,8 @@
 // the line breaks of its text, which a pre or a white-space style keeps,
 // kept. What no text shows, as a script, a style sheet, an image, a comment,
 // a hidden element, or the bullet or number of a list item that Word writes
-// out, is left out. Neither
+// out, which the list shows, is left out; a heading of Word's numbered
+// headings keeps its number as its text. Neither
 // the pasted HTML, as it is parsed, nor the cleaned HTML has a style
 // attribute or a style element, which the page's Content-Security-Policy
 // refuses (style-src-attr, style-src-elem) in a document that DOMParser
@@ -451,18 +452,21 @@ function visibleWithin(source: Document): Set<Element> {
 /**
  * Reports whether the cleaning leaves an element out, with what it holds: an
  * element that no text shows or that holds none of the document's
- * (SKIPPED), a hidden one, the bullet or number of a list item that Word
- * writes out, in a span of mso-list:Ignore, which the list shows, and the
- * line break that a browser adds where a selection that it copied ends at
- * the start of a line, which marks where the selection ended.
+ * (SKIPPED), a hidden one, and the line break that a browser adds where a
+ * selection that it copied ends at the start of a line, which marks where
+ * the selection ended.
  */
 function dropped(element: Element, name: string): boolean {
   return (
     SKIPPED.has(name) ||
     hidden(element) ||
-    (name === "span" && /mso-list\s*:\s*ignore/i.test(rawStyleOf(element))) ||
     (name === "br" && element.classList.contains("Apple-interchange-newline"))
   );
+}
+
+/** Reports whether an element is the bullet or the number that Word writes out of a paragraph of its list, a span of mso-list:Ignore. */
+function isWordMarker(element: Element, name: string): boolean {
+  return name === "span" && /mso-list\s*:\s*ignore/i.test(rawStyleOf(element));
 }
 
 /** Returns the level of a list item that its element gives, as Google Docs's aria-level and Word Online's data-aria-level do, the first of them that is a level, or undefined for none. */
@@ -491,7 +495,7 @@ function wordItemOf(element: Element): ItemOf | undefined {
   }
   const marker =
     Array.from(element.querySelectorAll("span"))
-      .find((span) => /mso-list\s*:\s*ignore/i.test(rawStyleOf(span)))
+      .find((span) => isWordMarker(span, "span"))
       ?.textContent?.trim() ?? "";
   // The item's number is the last of those that the marker holds, as 2 of
   // 1.2., where the numbers of the items that hold it go before it.
@@ -515,6 +519,8 @@ class Reader {
   private pendingItem: ItemOf | undefined;
   /** The level of the list item whose paragraphs a paragraph continues, or undefined outside any. */
   private itemLevel: number | undefined;
+  /** How many paragraphs of Word's list (wordItemOf) hold what the walk reads. */
+  private wordItems = 0;
   /**
    * Whether the HTML is ProseMirror's, as the editor copies it, whose every
    * block of text is a paragraph, as one that holds nothing or only white
@@ -574,6 +580,21 @@ class Reader {
       this.paragraph().runs.push({ kind: "break" });
       return;
     }
+    if (isWordMarker(element, name)) {
+      // The bullet or the number of a paragraph of Word's list is left out,
+      // as its list shows it. That of a heading of Word's list, as of its
+      // numbered headings, which is a paragraph of no list here, is its
+      // text, as Word shows it, with a space in place of the white space
+      // that Word writes after it.
+      const marker = element.textContent?.trim() ?? "";
+      if (this.wordItems === 0 && marker !== "") {
+        this.text(
+          `${marker} `,
+          this.contextOf(element, name, { ...ctx, shown }),
+        );
+      }
+      return;
+    }
     const chip = chipOf(element);
     if (chip !== undefined) {
       if (shown) {
@@ -607,6 +628,7 @@ class Reader {
     // first paragraph its content begins, and which its later paragraphs
     // continue.
     let item: ItemOf | undefined;
+    let word = false;
     if (name === "li") {
       const first = ctx.list !== undefined && !this.begun.has(ctx.list);
       if (ctx.list !== undefined) {
@@ -630,6 +652,7 @@ class Reader {
       };
     } else if (name === "p" || name === "div") {
       item = wordItemOf(element);
+      word = item !== undefined;
     }
     if (item !== undefined) {
       item.level = Math.min(item.level, MAX_LIST_DEPTH);
@@ -639,7 +662,9 @@ class Reader {
     if (this.faithful && TEXTBLOCKS.has(name) && inner.shown) {
       this.paragraph();
     }
+    this.wordItems += word ? 1 : 0;
     this.children(element, inner);
+    this.wordItems -= word ? 1 : 0;
     if (item !== undefined) {
       if (this.pendingItem === item && inner.shown) {
         // An empty item is an empty paragraph of its list.

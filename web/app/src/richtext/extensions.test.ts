@@ -109,6 +109,28 @@ describe("the editor's extensions", () => {
     ]);
   });
 
+  test("a URL found in pasted text is linked though another that the paste holds is in code, which holds no link", () => {
+    const editor = testEditor();
+    editor.view.pasteHTML(
+      "<p>See example.com and <code>api.example.com</code></p>",
+    );
+    expect(storedOf(editor.state.doc).doc?.content).toEqual([
+      {
+        content: [
+          { text: "See ", type: "text" },
+          {
+            marks: [{ attrs: { href: "https://example.com" }, type: "link" }],
+            text: "example.com",
+            type: "text",
+          },
+          { text: " and ", type: "text" },
+          { marks: [{ type: "code" }], text: "api.example.com", type: "text" },
+        ],
+        type: "paragraph",
+      },
+    ]);
+  });
+
   test("a list nested too deeply by what is typed has its items moved up with the caret in the text that it was in", () => {
     // x is the second paragraph of an item of the fifth list.
     let list: object = {

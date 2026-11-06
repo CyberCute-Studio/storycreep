@@ -465,8 +465,9 @@ function FormatBar({
  * the user typed as linked text where nothing is selected, with the marks
  * of text typed there, to a URL that a link may lead to, as one typed
  * without a scheme, example.com, is an https URL (typedHref), and says so
- * of one that no link may; and it removes a link. Closed, it gives the focus
- * back to the text.
+ * of one that no link may; and it removes a link. What the user types right
+ * after a link that it inserted is no part of the link. Closed, it gives
+ * the focus back to the text.
  */
 function LinkDialog({
   editor,
@@ -498,12 +499,16 @@ function LinkDialog({
       const marks = (storedMarks ?? selection.$from.marks())
         .filter((mark) => !mark.type.excludes(schema.marks.link))
         .map((mark) => mark.toJSON());
+      // What the user types next, after the link, is no part of it, though
+      // a link is inclusive, as autolinking has it, which would extend the
+      // link over what is typed at its end.
       chain
         .insertContent({
           type: "text",
           text: typed.trim(),
           marks: [...marks, { type: "link", attrs: { href } }],
         })
+        .unsetMark("link")
         .run();
     } else {
       chain.extendMarkRange("link").setLink({ href }).run();
