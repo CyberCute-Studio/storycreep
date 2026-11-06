@@ -27,6 +27,7 @@ import {
   parseValue,
   type Value,
   type ValueType,
+  zeroOf,
 } from "../content/values";
 import { payloadField, useExpected } from "../project/dialogs";
 import { type Command, useCommands } from "../project/queries";
@@ -226,7 +227,7 @@ export function CreateAttributeDialog({
             type={valueType}
             options={options}
             onOptions={setOptions}
-            defaultValue={0}
+            defaultValue={zeroOf(valueType, optionsOf(options))}
             errors={errors}
           />
           <CheckboxField

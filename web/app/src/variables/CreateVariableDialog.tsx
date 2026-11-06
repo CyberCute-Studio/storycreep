@@ -128,6 +128,7 @@ export function CreateVariableDialog({
             error={errors.key}
           />
           <VariableFields
+            fresh
             shown={{
               type: "bool",
               default: false,

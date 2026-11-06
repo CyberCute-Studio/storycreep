@@ -878,6 +878,64 @@ describe("the panel", () => {
     );
     expect(list.closest("[inert]")).toBeNull();
   });
+
+  it("leaves a dialog that the docked panel opened usable once the panel becomes a sheet", async () => {
+    const user = userEvent.setup();
+    const window = windowOf(1024);
+    fakeApi((operation, input) =>
+      expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    // The tablet turns with the dialog open.
+    act(() => window.resize(640));
+    expect(dialog.closest("[inert]")).toBeNull();
+    const list = screen.getByRole("list", {
+      hidden: true,
+      name: "All variables",
+    });
+    expect(list.closest("[inert]")).not.toBeNull();
+  });
+});
+
+describe("a new variable or attribute", () => {
+  it("starts a default of another type at that type's zero value", async () => {
+    const user = userEvent.setup();
+    fakeApi((operation, input) =>
+      expected(
+        contentPages(operation, input, { types: [character] }),
+        operation,
+      ),
+    );
+    renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "New variable" }),
+    );
+    const create = await screen.findByRole("dialog", { name: "New variable" });
+    await user.selectOptions(within(create).getByLabelText("Type"), "string");
+    expect(within(create).getByLabelText("Default")).toHaveProperty(
+      "value",
+      "",
+    );
+    await user.click(within(create).getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("link", { name: "Component types" }));
+    await user.click(await screen.findByRole("button", { name: /^Character/ }));
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Add an attribute…" }),
+    );
+    const add = await screen.findByRole("dialog", {
+      name: "New attribute of Character",
+    });
+    await user.selectOptions(within(add).getByLabelText("Type"), "string");
+    expect(within(add).getByLabelText("Default")).toHaveProperty("value", "");
+  });
 });
 
 describe("the components", () => {

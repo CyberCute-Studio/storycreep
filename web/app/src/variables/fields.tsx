@@ -8,7 +8,12 @@ import type { Board, Variable } from "@storycreep/shared/api";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ValueField } from "../content/ValueField";
-import { convertedTo, type Value, variableTypes } from "../content/values";
+import {
+  convertedTo,
+  type Value,
+  variableTypes,
+  zeroOf,
+} from "../content/values";
 import { FolderField, folderTop } from "../project/dialogs";
 import type { Tree } from "../project/tree";
 import {
@@ -56,11 +61,18 @@ export function typeName(
 
 export function VariableFields({
   shown,
+  fresh = false,
   boards,
   tree,
   errors,
 }: {
   shown: VariableShown;
+  /**
+   * Whether the fields are of a variable to create, whose default of
+   * another type is that type's zero value, rather than the default as it
+   * converts, as of a variable that has one already.
+   */
+  fresh?: boolean;
   /** The project's boards, which a board's variable is of one of, in the order of the tree. */
   boards: readonly Board[];
   tree: Tree<Variable>;
@@ -98,11 +110,19 @@ export function VariableFields({
         // Another type shows the default as that type has it.
         key={type}
         label={t("variable.default")}
-        hint={type === shown.type ? undefined : t("variable.default_retyped")}
+        hint={
+          type === shown.type || fresh
+            ? undefined
+            : t("variable.default_retyped")
+        }
         name="default"
         type={type}
         defaultValue={
-          type === shown.type ? shown.default : convertedTo(type, shown.default)
+          type === shown.type
+            ? shown.default
+            : fresh
+              ? zeroOf(type)
+              : convertedTo(type, shown.default)
         }
         error={errors.default}
       />

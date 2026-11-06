@@ -48,18 +48,26 @@ export function useDocked(): boolean {
 /**
  * Makes everything of the page but within inert, as a modal dialog makes it
  * (WCAG 2.4.3, 2.4.11): every sibling of within and of each element that
- * holds it, up to the document's body, which the focus and the pointer then
- * pass over, and a screen reader too. It returns what undoes it, which
- * leaves inert what was inert already.
+ * holds it, up to the app's own element, the document's body's child that
+ * holds it, which the focus and the pointer then pass over, and a screen
+ * reader too. The body's other children are the layers that the page opens
+ * over itself in portals, as a dialog or a menu, which may have been opened
+ * from the panel before it became a sheet, as when a tablet turns with a
+ * dialog of the panel open, and which hold the focus themselves while they
+ * are open. It returns what undoes it, which leaves inert what was inert
+ * already.
  */
 function inertAround(within: HTMLElement): () => void {
   const made: Element[] = [];
+  const body = within.ownerDocument.body;
   for (
     let element: HTMLElement | null = within;
-    element !== null && element !== element.ownerDocument.body;
+    element !== null &&
+    element.parentElement !== null &&
+    element.parentElement !== body;
     element = element.parentElement
   ) {
-    for (const sibling of element.parentElement?.children ?? []) {
+    for (const sibling of element.parentElement.children) {
       if (sibling !== element && !sibling.hasAttribute("inert")) {
         sibling.setAttribute("inert", "");
         made.push(sibling);
