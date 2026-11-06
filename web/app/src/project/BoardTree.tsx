@@ -28,13 +28,13 @@ import {
   DeleteFolderDialog,
   MoveDialog,
   moveCommands,
-  nameOf,
   RenameDialog,
 } from "./dialogs";
 import { useCommands } from "./queries";
 import {
   buildTree,
   type Drop,
+  nameOf,
   type Placement,
   placementOf,
   type Tree,
@@ -224,7 +224,7 @@ export function BoardTree({
         ) : (
           <DeleteBoardDialog
             projectId={project.id}
-            board={node.board}
+            board={node.item}
             boards={data.boards}
             opener={open.opener}
             onClose={close}

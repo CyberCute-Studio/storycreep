@@ -1,0 +1,176 @@
+import type { ComponentType } from "@storycreep/shared/api";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { CreateTypeDialog } from "../components/CreateTypeDialog";
+import { TypeGlyph, TypePanel } from "../components/TypePanel";
+import { definitionsOf, liveTypes } from "../components/types";
+import { itemButton, itemClasses } from "../content/ContentTree";
+import { useDocumentState, useProjectDocument } from "../document/react";
+import { editsProject, projectQuery } from "../project/queries";
+import { canonicalId, found } from "../shell/found";
+import { Button } from "../ui/Button";
+import type { Opener } from "../ui/Dialog";
+import { Page, Status } from "../ui/Page";
+import { Panel } from "../ui/Panel";
+
+/** The search of the page: the type whose panel is open, if any. */
+interface TypesSearch {
+  type?: string;
+}
+
+export const Route = createFileRoute("/projects/$projectId/component-types")({
+  validateSearch: (search: Record<string, unknown>): TypesSearch =>
+    typeof search.type === "string" && search.type !== ""
+      ? { type: canonicalId("component_type", search.type) }
+      : {},
+  // The types are of the components' part (projects.$projectId.components.tsx).
+  loader: async ({ context: { queryClient, documents }, params }) => {
+    const project = await found(
+      queryClient.ensureQueryData(projectQuery(params.projectId)),
+    );
+    const doc = documents.get(project.id);
+    const held = doc.holds("components");
+    await found(doc.load("components"));
+    if (held) {
+      void doc.refresh("components").catch(() => undefined);
+    }
+  },
+  gcTime: 0,
+  component: TypesPage,
+});
+
+// A project's component types (PRD FR-COMP-01): the list of them, by their
+// names, and the panel of the one that the page's address names, with its
+// attribute definitions, beside the list, or a sheet over it on a narrow
+// window (NFR-TOUCH-06).
+function TypesPage() {
+  const { t } = useTranslation();
+  const { projectId } = Route.useParams();
+  const { type: selectedId } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const project = useSuspenseQuery(projectQuery(projectId)).data;
+  const editable =
+    editsProject(project.role) && project.archived_at === undefined;
+  const doc = useProjectDocument(projectId);
+  const typeMap = useDocumentState(doc, (state) => state.view.componentTypes);
+  const types = useMemo(() => liveTypes(typeMap), [typeMap]);
+  const select = (id: string | undefined) =>
+    void navigate({ search: id === undefined ? {} : { type: id } });
+  const [creating, setCreating] = useState<Opener>();
+  const [created, setCreated] = useState<string>();
+  const [deleting, setDeleting] = useState(false);
+  const last = useRef<ComponentType>(undefined);
+  const selected =
+    selectedId === undefined ? undefined : typeMap.get(selectedId);
+  if (selected !== undefined) {
+    last.current = selected;
+  }
+  const shown =
+    selected ??
+    (deleting && last.current?.id === selectedId ? last.current : undefined);
+  const listId = useId();
+  return (
+    <Page
+      title={t("component_types.title")}
+      documentTitle={t("component_types.page_title", { project: project.name })}
+      width="wide"
+    >
+      <p className="text-fg-muted">{t("component_types.intro")}</p>
+      <div
+        className={
+          shown === undefined
+            ? ""
+            : "grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_24rem]"
+        }
+      >
+        <section aria-labelledby={listId} className="min-w-0 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id={listId} className="flex-1 text-lg font-semibold">
+              {t("component_types.list")}
+            </h2>
+            {editable && (
+              <Button
+                variant="primary"
+                aria-haspopup="dialog"
+                onClick={(event) => setCreating(event.currentTarget)}
+              >
+                {t("component_types.new")}
+              </Button>
+            )}
+          </div>
+          <Status
+            message={
+              created === undefined
+                ? undefined
+                : t("boards.created", { name: created })
+            }
+          />
+          {selectedId !== undefined && shown === undefined && (
+            <p className="text-fg-muted">{t("component_types.not_found")}</p>
+          )}
+          {types.length === 0 ? (
+            <p className="text-fg-muted">{t("component_types.empty")}</p>
+          ) : (
+            <ul className="space-y-1" aria-labelledby={listId}>
+              {types.map((type) => (
+                <li key={type.id}>
+                  <button
+                    type="button"
+                    data-item-id={type.id}
+                    aria-current={selectedId === type.id ? "true" : undefined}
+                    className={itemClasses(selectedId === type.id)}
+                    onClick={() => select(type.id)}
+                  >
+                    <span className="break-words">
+                      <TypeGlyph icon={type.icon} />
+                      {type.name}
+                    </span>
+                    <span className="text-sm break-all text-fg-muted">
+                      {t("component_types.item_detail", {
+                        key: type.key,
+                        count: definitionsOf(type).length,
+                      })}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        {shown !== undefined && (
+          <Panel
+            key={shown.id}
+            title={shown.name}
+            subtitle={shown.key}
+            onClose={() => select(undefined)}
+            returnFocus={() => itemButton(shown.id)}
+          >
+            <TypePanel
+              project={project}
+              type={shown}
+              editable={editable}
+              onDeleting={setDeleting}
+              onDeleted={() => {
+                setDeleting(false);
+                select(undefined);
+              }}
+            />
+          </Panel>
+        )}
+      </div>
+      {creating !== undefined && (
+        <CreateTypeDialog
+          projectId={projectId}
+          opener={creating}
+          onClose={() => setCreating(undefined)}
+          onCreated={(id, name) => {
+            setCreated(name);
+            select(id);
+          }}
+        />
+      )}
+    </Page>
+  );
+}

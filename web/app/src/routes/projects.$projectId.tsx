@@ -32,8 +32,10 @@ export const Route = createFileRoute("/projects/$projectId")({
 });
 
 // The pages of a project (PRD FR-PROJ-01, FR-PROJ-02, FR-PROJ-06, FR-TEN-04):
-// the tree of its boards, its trash, the members' grants on it, which its
-// workspace's owners and admins manage, and its settings, under a link back
+// the tree of its boards, its variables, its components, and their types
+// (FR-VAR-01, FR-COMP-01, FR-COMP-02), its trash, the members' grants on
+// it, which its workspace's owners and admins manage, and its settings,
+// under a link back
 // to its workspace's projects, the undo and redo of the user's changes
 // (FR-EDIT-08), and the note that an archived project is read-only. They
 // follow the project's document while they are shown (PRD §10.6), and show
@@ -77,6 +79,33 @@ function ProjectPages({ projectId }: { projectId: string }) {
                 className={navLink}
               >
                 {t("project.nav.boards")}
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/projects/$projectId/variables"
+                params={params}
+                className={navLink}
+              >
+                {t("project.nav.variables")}
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/projects/$projectId/components"
+                params={params}
+                className={navLink}
+              >
+                {t("project.nav.components")}
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/projects/$projectId/component-types"
+                params={params}
+                className={navLink}
+              >
+                {t("project.nav.component_types")}
               </Link>
             </li>
             <li>

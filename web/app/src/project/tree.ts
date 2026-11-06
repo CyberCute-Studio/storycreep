@@ -1,54 +1,87 @@
-// The tree of a project's boards (PRD FR-PROJ-02): its folders of boards,
-// nested, and its boards, each among the children of its folder, or of the
-// top, in the order of their keys (compareChildren), as the server lists
-// them, and where moving one of them lands it: in a folder, after its last
-// child, or before or after another child, with a key between the keys of
-// the children that it lands between (keyBetween).
+// The tree of a project's folders of one kind (PRD FR-PROJ-02, FR-VAR-01,
+// FR-COMP-02): its folders, nested, and what they hold, its boards, its
+// variables, or its components, each among the children of its folder, or
+// of the top, in the order of their keys (compareChildren), as the server
+// lists them, and where moving one of them lands it: in a folder, after its
+// last child, or before or after another child, with a key between the keys
+// of the children that it lands between (keyBetween).
 
 import type { Board, Folder } from "@storycreep/shared/api";
 import { compareChildren, keyBetween } from "./orderkey";
 
+/** What a folder holds besides folders: a board, a variable, or a component. */
+export interface Item {
+  id: string;
+  /** Its folder, or none at the top. */
+  folder_id?: string;
+  order: string;
+  rev: number;
+}
+
 /** A folder of the tree, with its children in order. */
-export interface FolderNode {
+export interface FolderNode<T extends Item = Board> {
   kind: "folder";
   id: string;
   folder: Folder;
   /** The folder's parent, or undefined at the top. */
   parentId: string | undefined;
   order: string;
-  children: TreeNode[];
+  children: TreeNode<T>[];
 }
 
-/** A board of the tree. */
-export interface BoardNode {
-  kind: "board";
+/** What a folder of the tree holds besides folders, as a board. */
+export interface ItemNode<T extends Item = Board> {
+  kind: "item";
   id: string;
-  board: Board;
-  /** The board's folder, or undefined at the top. */
+  item: T;
+  /** What the tree names it, as a board's name or a variable's key. */
+  name: string;
+  /** Its folder, or undefined at the top. */
   parentId: string | undefined;
   order: string;
 }
 
-export type TreeNode = FolderNode | BoardNode;
+export type TreeNode<T extends Item = Board> = FolderNode<T> | ItemNode<T>;
 
-/** The tree of a project's boards, and its nodes by their IDs. */
-export interface Tree {
+/** The tree of a project's folders of one kind, and its nodes by their IDs. */
+export interface Tree<T extends Item = Board> {
   /** The children of the top, in order. */
-  top: TreeNode[];
-  byId: ReadonlyMap<string, TreeNode>;
+  top: TreeNode<T>[];
+  byId: ReadonlyMap<string, TreeNode<T>>;
+}
+
+/** Returns the name of a node of a tree. */
+export function nameOf(node: TreeNode<Item>): string {
+  return node.kind === "folder" ? node.folder.name : node.name;
+}
+
+/** Returns the revision of a node of a tree. */
+export function revOf(node: TreeNode<Item>): number {
+  return node.kind === "folder" ? node.folder.rev : node.item.rev;
 }
 
 /**
- * Returns the tree of folders, a project's folders of boards, and boards. A
- * child whose parent is not among folders, as one that a change made while
- * the lists were read a page at a time moved into a folder of a page read
- * before it, shows at the top, rather than nowhere.
+ * Returns the tree of folders, a project's folders of one kind, and items,
+ * what they hold, each named by name: a project's boards unless it says
+ * otherwise. A child whose parent is not among folders, as one that a
+ * change made while the lists were read a page at a time moved into a
+ * folder of a page read before it, shows at the top, rather than nowhere.
  */
 export function buildTree(
   folders: readonly Folder[],
-  boards: readonly Board[],
-): Tree {
-  const byId = new Map<string, TreeNode>();
+  items: readonly Board[],
+): Tree;
+export function buildTree<T extends Item>(
+  folders: readonly Folder[],
+  items: readonly T[],
+  name: (item: T) => string,
+): Tree<T>;
+export function buildTree<T extends Item>(
+  folders: readonly Folder[],
+  items: readonly T[],
+  name: (item: T) => string = (item) => (item as unknown as Board).name,
+): Tree<T> {
+  const byId = new Map<string, TreeNode<T>>();
   for (const folder of folders) {
     byId.set(folder.id, {
       kind: "folder",
@@ -59,16 +92,17 @@ export function buildTree(
       children: [],
     });
   }
-  for (const board of boards) {
-    byId.set(board.id, {
-      kind: "board",
-      id: board.id,
-      board,
-      parentId: board.folder_id,
-      order: board.order,
+  for (const item of items) {
+    byId.set(item.id, {
+      kind: "item",
+      id: item.id,
+      item,
+      name: name(item),
+      parentId: item.folder_id,
+      order: item.order,
     });
   }
-  const top: TreeNode[] = [];
+  const top: TreeNode<T>[] = [];
   for (const node of byId.values()) {
     const parent =
       node.parentId === undefined ? undefined : byId.get(node.parentId);
@@ -79,7 +113,7 @@ export function buildTree(
       top.push(node);
     }
   }
-  const sort = (children: TreeNode[]) => {
+  const sort = (children: TreeNode<T>[]) => {
     children.sort(compareChildren);
     for (const child of children) {
       if (child.kind === "folder") {
@@ -98,7 +132,7 @@ export function buildTree(
  * moved, is taken for within, so that buildTree breaks it at the top.
  */
 function within(
-  byId: ReadonlyMap<string, TreeNode>,
+  byId: ReadonlyMap<string, TreeNode<Item>>,
   folderId: string,
   ancestorId: string,
 ): boolean {
@@ -118,11 +152,11 @@ function within(
 
 /** Reports whether node is the folder folderId or within it. */
 export function isWithin(
-  tree: Tree,
-  node: TreeNode,
+  tree: Tree<Item>,
+  node: TreeNode<Item>,
   folderId: string,
 ): boolean {
-  for (let n: TreeNode | undefined = node; n !== undefined; ) {
+  for (let n: TreeNode<Item> | undefined = node; n !== undefined; ) {
     if (n.id === folderId) {
       return true;
     }
@@ -132,10 +166,10 @@ export function isWithin(
 }
 
 /** Returns the children of the folder parentId, or of the top for undefined. */
-export function childrenOf(
-  tree: Tree,
+export function childrenOf<T extends Item>(
+  tree: Tree<T>,
   parentId: string | undefined,
-): TreeNode[] {
+): TreeNode<T>[] {
   if (parentId === undefined) {
     return tree.top;
   }
@@ -167,8 +201,8 @@ export interface Placement {
  * share it, as no key goes between two that are the same.
  */
 export function placementOf(
-  tree: Tree,
-  node: TreeNode,
+  tree: Tree<Item>,
+  node: TreeNode<Item>,
   drop: Drop,
 ): Placement | undefined {
   if (drop.position === "inside") {
@@ -214,9 +248,12 @@ export interface FolderChoice {
  * Returns the folders of the tree, in the tree's order, each with its path,
  * but node and the folders within it, which node cannot go into.
  */
-export function folderChoices(tree: Tree, node?: TreeNode): FolderChoice[] {
+export function folderChoices(
+  tree: Tree<Item>,
+  node?: TreeNode<Item>,
+): FolderChoice[] {
   const out: FolderChoice[] = [];
-  const walk = (children: TreeNode[], path: string[]) => {
+  const walk = (children: TreeNode<Item>[], path: string[]) => {
     for (const child of children) {
       if (child.kind === "folder" && child.id !== node?.id) {
         const own = [...path, child.folder.name];
@@ -226,5 +263,21 @@ export function folderChoices(tree: Tree, node?: TreeNode): FolderChoice[] {
     }
   };
   walk(tree.top, []);
+  return out;
+}
+
+/** Returns the items of tree, without its folders, in its order, as a filter lists those that match it. */
+export function itemsInOrder<T extends Item>(tree: Tree<T>): ItemNode<T>[] {
+  const out: ItemNode<T>[] = [];
+  const walk = (nodes: TreeNode<T>[]) => {
+    for (const node of nodes) {
+      if (node.kind === "folder") {
+        walk(node.children);
+      } else {
+        out.push(node);
+      }
+    }
+  };
+  walk(tree.top);
   return out;
 }

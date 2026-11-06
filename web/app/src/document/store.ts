@@ -389,6 +389,9 @@ const readsAtOnce = 6;
  */
 const readsOfOnePart = 20;
 
+/** How many times a read of a component whole is tried while what it reads is older than the document's (readComponent). */
+const componentReadAttempts = 3;
+
 /**
  * How long, in milliseconds, the document waits for the real-time channel
  * to bring the operations that it expects before it goes on without them:
@@ -529,8 +532,10 @@ export class ProjectDocument {
    * is forgotten once no read began before it (forgetGone).
    */
   private readonly watchers = new Set<Watcher>();
-  /** How many reads of parts are under way. */
+  /** How many reads of parts, or of components whole, are under way. */
   private partReads = 0;
+  /** The reads of components whole under way, by their IDs (readComponent). */
+  private readonly componentReads = new Map<string, Promise<void>>();
   private started = false;
   /** The reading of the project that the document follows it from, under way, or done, or failed (ready). */
   private starting: Promise<void>;
@@ -1061,6 +1066,76 @@ export class ProjectDocument {
   /** Reports whether the document holds part, read or being read. */
   holds(part: Part): boolean {
     return this.loads.has(part);
+  }
+
+  /**
+   * Reads the component of id whole, with its description and its values,
+   * which the list of the project's components leaves out, as the panel of
+   * a component shows them (PRD FR-COMP-02), once the document holds the
+   * components, and resolves once it holds the component so, or no longer
+   * holds it, as one that went to the trash meanwhile, or rejects with what
+   * the read failed with, which the page that asked for it shows. The
+   * document keeps it current from then on, as operations change it, and
+   * reads it whole again where they change it as it cannot tell, but a read
+   * of the components' list, which answers it without them at a newer
+   * revision, takes them out again (mergeList), and the page asks for them
+   * anew. A read of the component under way resolves with that read. One
+   * that found it older than the document holds it now, as of an operation
+   * that applied meanwhile, whose appliers could not give it what the read
+   * would have, or that a reading anew of the project read over, is tried
+   * again, a few times.
+   */
+  readComponent(id: string): Promise<void> {
+    const reading = this.componentReads.get(id);
+    if (reading !== undefined) {
+      return reading;
+    }
+    const whole = () => {
+      const held = this.confirmed.components.get(id);
+      return held === undefined || held.attributes !== undefined;
+    };
+    this.partReads++;
+    const read = (async () => {
+      try {
+        await this.load("components");
+        for (let attempt = 0; attempt < componentReadAttempts; attempt++) {
+          if (this.disposed || whole()) {
+            return;
+          }
+          const since = this.confirmed.seq;
+          const generation = this.generation;
+          const watcher = this.watch(since);
+          let body: Revised | undefined;
+          try {
+            body = await readOne(this.projectId, id);
+          } catch (error) {
+            // The page shows the failure, and the error console has it, as
+            // a part's failed read; a session that may have ended is asked
+            // for, as the app's queries ask.
+            this.failed(error);
+            throw error;
+          } finally {
+            this.watchers.delete(watcher);
+          }
+          // The project read anew meanwhile read the component as its list
+          // answers it, which this read may be older than.
+          if (this.disposed || this.generation !== generation) {
+            continue;
+          }
+          this.took(
+            mergeEntity(this.confirmed, id, body, since, watcher.changed),
+            [id],
+          );
+          this.readBehind(watcher);
+          this.show();
+        }
+      } finally {
+        this.partReads--;
+        this.componentReads.delete(id);
+      }
+    })();
+    this.componentReads.set(id, read);
+    return read;
   }
 
   /** Applies an operation of the project, of the real-time channel, in the order of seqs. */
