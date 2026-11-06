@@ -145,12 +145,20 @@ export function VariableFields({
           checked={scope === "global"}
           onChange={() => setScope("global")}
         />
+        {/* A project without boards has no board's scope to choose, but
+            for a variable that is a board's already; a board's scope that
+            the user chose stays a choice too, once the boards went to the
+            trash elsewhere, so that it is sent, rather than left out of the
+            form, as a disabled field is, which would make a global variable
+            of what the form shows as a board's. */}
         <RadioField
           label={t("variable.scope_board")}
           name="scope"
           value="board"
           checked={scope === "board"}
-          disabled={boards.length === 0 && shown.scope !== "board"}
+          disabled={
+            boards.length === 0 && scope !== "board" && shown.scope !== "board"
+          }
           onChange={() => setScope("board")}
         />
       </GroupField>

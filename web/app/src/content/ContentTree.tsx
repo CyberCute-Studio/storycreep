@@ -104,25 +104,44 @@ export function FilterField({
   );
 }
 
-/** Returns the attribute that marks the button of the item of id, by which the page finds it again (itemButton). */
-function itemMark(id: string) {
-  return { "data-item-id": id };
-}
-
-/** Returns the button of the item of id, as the list shows it now, or null. */
+/** Returns the button of the item of id, as the list shows it now, or null (ItemButton). */
 export function itemButton(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(
     `[data-item-id="${CSS.escape(id)}"]`,
   );
 }
 
-/** The classes of an item's button, of the one whose panel is open too, which a bar beside it marks, besides its colour. */
-export function itemClasses(selected: boolean): string {
-  return `flex min-h-11 w-full min-w-0 flex-col items-start justify-center rounded-md border-s-4 px-2 py-1 text-start ${
-    selected
-      ? "border-accent bg-surface"
-      : "border-transparent hover:bg-surface-hover"
-  }`;
+/**
+ * The button of an item of a list, which opens its panel, marked by the
+ * item's ID, by which the page finds it again (itemButton); the one whose
+ * panel is open is marked by a bar beside it too, besides its colour.
+ */
+export function ItemButton({
+  id,
+  selected,
+  onSelect,
+  children,
+}: {
+  id: string;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      data-item-id={id}
+      aria-current={selected ? "true" : undefined}
+      className={`flex min-h-11 w-full min-w-0 flex-col items-start justify-center rounded-md border-s-4 px-2 py-1 text-start ${
+        selected
+          ? "border-accent bg-surface"
+          : "border-transparent hover:bg-surface-hover"
+      }`}
+      onClick={() => onSelect(id)}
+    >
+      {children}
+    </button>
+  );
 }
 
 export function ContentTree<T extends Item>(props: ContentTreeProps<T>) {
@@ -168,12 +187,10 @@ export function ContentTree<T extends Item>(props: ContentTreeProps<T>) {
         <ul className="space-y-1" aria-labelledby={labelledBy}>
           {matches.map((node) => (
             <li key={node.id}>
-              <button
-                type="button"
-                {...itemMark(node.id)}
-                aria-current={props.selected === node.id ? "true" : undefined}
-                className={itemClasses(props.selected === node.id)}
-                onClick={() => props.onSelect(node.id)}
+              <ItemButton
+                id={node.id}
+                selected={props.selected === node.id}
+                onSelect={props.onSelect}
               >
                 {props.renderItem(node.item)}
                 {node.parentId !== undefined && (
@@ -183,7 +200,7 @@ export function ContentTree<T extends Item>(props: ContentTreeProps<T>) {
                     })}
                   </span>
                 )}
-              </button>
+              </ItemButton>
             </li>
           ))}
         </ul>
@@ -261,15 +278,13 @@ function TreeList<T extends Item>({
           <FolderItem key={node.id} node={node} {...props} />
         ) : (
           <li key={node.id}>
-            <button
-              type="button"
-              {...itemMark(node.id)}
-              aria-current={props.selected === node.id ? "true" : undefined}
-              className={itemClasses(props.selected === node.id)}
-              onClick={() => props.onSelect(node.id)}
+            <ItemButton
+              id={node.id}
+              selected={props.selected === node.id}
+              onSelect={props.onSelect}
             >
               {props.renderItem(node.item)}
-            </button>
+            </ItemButton>
           </li>
         ),
       )}

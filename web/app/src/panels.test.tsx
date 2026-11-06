@@ -572,6 +572,50 @@ describe("the variables", () => {
     ]);
   });
 
+  it("keeps the notice of a change made elsewhere once the form refuses a default itself, as it still saves over that change", async () => {
+    const user = userEvent.setup();
+    const theirs = variable("var_rep", "rep", {
+      type: "int",
+      default: 5,
+      description: "Standing with the guild",
+      rev: 4,
+    });
+    const calls = fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        throw conflict("variable.describe", theirs, 3);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.type(
+      within(panel).getByLabelText("Description"),
+      "Standing in town",
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    const notice =
+      "Description: now “Standing with the guild”, yours “Standing in town”";
+    expect(await within(panel).findByText(notice)).toBeDefined();
+    const value = within(panel).getByLabelText("Default");
+    await user.clear(value);
+    await user.type(value, "3.5");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    expect(
+      await within(panel).findByText("Enter a whole number, such as 3 or -12."),
+    ).toBeDefined();
+    expect(within(panel).getByText(notice)).toBeDefined();
+    expect(
+      within(panel).getByRole("button", { name: "Use their version" }),
+    ).toBeDefined();
+    expect(batches(calls)).toHaveLength(1);
+  });
+
   it("names a move's place in its folder, rather than its folder, once the variable was put elsewhere in its folder by another session", async () => {
     const user = userEvent.setup();
     const theirs = variable("var_rep", "rep", {
@@ -937,6 +981,66 @@ describe("the variables", () => {
     expect(rename).toHaveProperty("disabled", true);
     act(() => answer?.());
     await waitFor(() => expect(rename).toHaveProperty("disabled", false));
+  });
+
+  it("renames only once the preview has been read again, after the rename was refused for a change made elsewhere", async () => {
+    const user = userEvent.setup();
+    const theirs = variable("var_rep", "reputation", { rev: 4 });
+    let reads = 0;
+    let sends = 0;
+    let answer: (() => void) | undefined;
+    const calls = fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        reads += 1;
+        const page = { items: [], next_cursor: null };
+        // The reads after the refusal wait for the test.
+        return reads <= 2
+          ? page
+          : new Promise((resolve) => {
+              const earlier = answer;
+              answer = () => {
+                earlier?.();
+                resolve(page);
+              };
+            });
+      }
+      if (operation === "applyCommands") {
+        sends += 1;
+        if (sends === 1) {
+          throw conflict("variable.rename", theirs, 3);
+        }
+        return applied(testProject.seq + 1, [{ id: "var_rep", rev: 5 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    await user.type(key, "trust");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    const rename = within(dialog).getByRole("button", { name: "Rename" });
+    await waitFor(() => expect(rename).toHaveProperty("disabled", false));
+    await user.click(rename);
+    await waitFor(() => expect(reads).toBe(4));
+    expect(rename).toHaveProperty("disabled", true);
+    act(() => answer?.());
+    await waitFor(() => expect(rename).toHaveProperty("disabled", false));
+    await user.click(rename);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(batches(calls)[1]).toEqual([
+      expect.objectContaining({
+        type: "variable.rename",
+        payload: { id: "var_rep", key: "trust" },
+        expected_rev: { var_rep: 4 },
+      }),
+    ]);
   });
 
   it("renames nothing once the key was renamed elsewhere while the user left its field as it opened", async () => {
@@ -1481,6 +1585,18 @@ describe("the panel", () => {
     );
     expect(list.closest("[inert]")).toBeNull();
     act(() => window.resize(640));
+    // An Escape that ends what an input method was composing is its own,
+    // which leaves the sheet open, with what was typed, as typing goes on.
+    fireEvent.keyDown(within(sheet).getByLabelText("Description"), {
+      key: "Escape",
+      isComposing: true,
+    });
+    await user.type(within(sheet).getByLabelText("Description"), "!");
+    expect(screen.getByRole("dialog", { name: "rep" })).toBe(sheet);
+    expect(within(sheet).getByLabelText("Description")).toHaveProperty(
+      "value",
+      "kept!",
+    );
     // Escape closes the sheet, and the focus goes back to the variable's item.
     fireEvent.keyDown(within(sheet).getByLabelText("Description"), {
       key: "Escape",
@@ -1650,6 +1766,54 @@ describe("a new variable or attribute", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0][0].payload).toEqual(
       expect.objectContaining({ scope: "board", board_id: "bd_docks" }),
+    );
+  });
+
+  it("stays of a board's scope that the user chose, once every board went to the trash elsewhere, rather than made global", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 2)
+        : expected(
+            contentPages(operation, input, {
+              boards: [board("bd_harbour", "Harbour")],
+            }),
+            operation,
+          ),
+    );
+    renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+      realtime,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "New variable" }),
+    );
+    const create = await screen.findByRole("dialog", { name: "New variable" });
+    await user.type(within(create).getByLabelText("Key"), "docked");
+    const scope = within(create).getByRole("radio", { name: /^One board/ });
+    await user.click(scope);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.delete", payload: { id: "bd_harbour" } }],
+        [{ id: "bd_harbour", rev: 2 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(within(create).getByLabelText("Board")).toHaveProperty(
+        "value",
+        "",
+      ),
+    );
+    expect(scope).toHaveProperty("checked", true);
+    expect(scope).toHaveProperty("disabled", false);
+    await user.click(
+      within(create).getByRole("button", { name: "Create the variable" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual(
+      expect.objectContaining({ scope: "board" }),
     );
   });
 

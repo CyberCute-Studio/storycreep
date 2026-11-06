@@ -61,6 +61,20 @@ export function revOf(node: TreeNode<Item>): number {
 }
 
 /**
+ * Returns the name of the folder of id, an item's folder_id, of tree, or
+ * undefined for none, of an item at the top, and for a folder that the tree
+ * does not have, which the choice of a folder shows as the top too
+ * (FolderSelect).
+ */
+export function folderNameOf(
+  tree: Tree<Item>,
+  id: unknown,
+): string | undefined {
+  const node = typeof id === "string" ? tree.byId.get(id) : undefined;
+  return node?.kind === "folder" ? node.folder.name : undefined;
+}
+
+/**
  * Returns the tree of folders, a project's folders of one kind, and items,
  * what they hold, each named by name: a project's boards unless it says
  * otherwise. A child whose parent is not among folders, as one that a

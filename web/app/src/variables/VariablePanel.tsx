@@ -24,7 +24,7 @@ import { typeName, valueError, valueText } from "../content/ValueField";
 import { parseValue, type Value } from "../content/values";
 import { chosenFolder, payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
-import type { Tree } from "../project/tree";
+import { folderNameOf, type Tree } from "../project/tree";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { useFocusRefusal } from "../ui/Field";
@@ -94,10 +94,6 @@ function boardName(boards: readonly Board[], id: string | undefined) {
 function VariableView({ variable, boards, tree }: VariablePanelProps) {
   const { t } = useTranslation();
   const board = boardName(boards, variable.board_id);
-  const folder =
-    variable.folder_id === undefined
-      ? undefined
-      : tree.byId.get(variable.folder_id);
   return (
     <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
       <dt className="text-fg-muted">{t("variable.type")}</dt>
@@ -120,7 +116,7 @@ function VariableView({ variable, boards, tree }: VariablePanelProps) {
       </dd>
       <dt className="text-fg-muted">{t("content.folder")}</dt>
       <dd className="break-words">
-        {folder?.kind === "folder" ? folder.folder.name : t("boards.top")}
+        {folderNameOf(tree, variable.folder_id) ?? t("boards.top")}
       </dd>
     </dl>
   );
@@ -283,9 +279,7 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
       return undefined;
     }
     if (field === "folder_id") {
-      const folder =
-        typeof value === "string" ? tree.byId.get(value) : undefined;
-      return folder?.kind === "folder" ? folder.folder.name : t("boards.top");
+      return folderNameOf(tree, value) ?? t("boards.top");
     }
     // A global variable is of no board, and a board that the list does not
     // have, as one in the trash, is named as the board's choice names it.

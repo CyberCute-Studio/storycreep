@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { CreateTypeDialog } from "../components/CreateTypeDialog";
 import { TypeGlyph, TypePanel } from "../components/TypePanel";
 import { typesByName } from "../components/types";
-import { itemButton, itemClasses } from "../content/ContentTree";
+import { ItemButton, itemButton } from "../content/ContentTree";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { editsProject, loadParts, projectQuery } from "../project/queries";
 import { canonicalId } from "../shell/found";
@@ -94,12 +94,10 @@ function TypesPage() {
             <ul className="space-y-1" aria-labelledby={listId}>
               {types.map((type) => (
                 <li key={type.id}>
-                  <button
-                    type="button"
-                    data-item-id={type.id}
-                    aria-current={selectedId === type.id ? "true" : undefined}
-                    className={itemClasses(selectedId === type.id)}
-                    onClick={() => select(type.id)}
+                  <ItemButton
+                    id={type.id}
+                    selected={selectedId === type.id}
+                    onSelect={select}
                   >
                     <span className="break-words">
                       <TypeGlyph icon={type.icon} />
@@ -111,7 +109,7 @@ function TypesPage() {
                         count: type.attributes.length,
                       })}
                     </span>
-                  </button>
+                  </ItemButton>
                 </li>
               ))}
             </ul>

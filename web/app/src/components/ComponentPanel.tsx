@@ -46,7 +46,7 @@ import { useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
 import { chosenFolder, FolderField, payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
-import type { Tree } from "../project/tree";
+import { folderNameOf, type Tree } from "../project/tree";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { Button } from "../ui/Button";
@@ -177,10 +177,6 @@ function ComponentView({
   tree,
 }: Omit<ComponentPanelProps, "component"> & { component: Component }) {
   const { t } = useTranslation();
-  const folder =
-    component.folder_id === undefined
-      ? undefined
-      : tree.byId.get(component.folder_id);
   return (
     <div className="space-y-4">
       {/* Shown anew once the component changes, as its description does
@@ -201,7 +197,7 @@ function ComponentView({
         ))}
         <dt className="text-fg-muted">{t("content.folder")}</dt>
         <dd className="break-words">
-          {folder?.kind === "folder" ? folder.folder.name : t("boards.top")}
+          {folderNameOf(tree, component.folder_id) ?? t("boards.top")}
         </dd>
       </dl>
     </div>
@@ -443,9 +439,7 @@ function ComponentForm({
             : t("content.folder");
   const shownValue = (field: string, value: unknown) => {
     if (field === "folder_id") {
-      const folder =
-        typeof value === "string" ? tree.byId.get(value) : undefined;
-      return folder?.kind === "folder" ? folder.folder.name : t("boards.top");
+      return folderNameOf(tree, value) ?? t("boards.top");
     }
     if (field === "name") {
       return String(value ?? "");

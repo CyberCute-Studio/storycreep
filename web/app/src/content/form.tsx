@@ -70,9 +70,16 @@ export function useEntityForm<T extends { id: string; rev: number }>(
     against,
     unchanged,
     overlaps,
-    /** Forgets what the form's last save said, as once the form refused a save itself. */
+    /**
+     * Forgets what the form's last save said, as once the form refused a
+     * save itself, but for a refusal for a change made elsewhere, whose
+     * notice stays, with its button that shows the entity as it is now,
+     * while the form still saves over that change.
+     */
     refused: () => {
-      commands.reset();
+      if (!conflictOf(commands.error)) {
+        commands.reset();
+      }
       setUnchanged(false);
     },
     /**

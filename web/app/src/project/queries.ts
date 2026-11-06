@@ -46,13 +46,14 @@ export function projectQuery(projectId: string) {
 
 /**
  * Reads what a page of the project of projectId shows before it shows, as
- * its loader: the project first, as for the tree of its boards
- * (projects.$projectId.index.tsx), so that a project that the account may
- * not see shows the page of no page before its document reads anything,
- * and then the parts of its document that the page shows, at once. A part
- * that the document held already, which the real-time channel does not
- * keep current while it is not live, is shown as it is, and read anew; a
- * read anew that fails is recorded, and tried again later.
+ * its loader, as the page of the tree of its boards does
+ * (projects.$projectId.index.tsx): the project first, so that a project
+ * that the account may not see shows the page of no page before its
+ * document reads anything, and then the parts of its document that the
+ * page shows, at once. A part that the document held already, which the
+ * real-time channel does not keep current while it is not live, is shown
+ * as it is, and read anew; a read anew that fails is recorded, and tried
+ * again later.
  */
 export async function loadParts(
   context: { queryClient: QueryClient; documents: Documents },

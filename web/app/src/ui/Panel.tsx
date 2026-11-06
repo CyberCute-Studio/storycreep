@@ -245,10 +245,12 @@ export function Panel({
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     // A key of what the panel opened in a portal, as a dialog, which closes
     // itself on Escape, comes through React here too, but is not the
-    // sheet's.
+    // sheet's; nor is an Escape that ends what an input method was
+    // composing in one of the sheet's fields, as of Japanese or Chinese.
     if (
       sheet &&
       event.key === "Escape" &&
+      !event.nativeEvent.isComposing &&
       !event.defaultPrevented &&
       event.currentTarget.contains(event.target as Node)
     ) {
