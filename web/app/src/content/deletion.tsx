@@ -23,6 +23,7 @@ import {
   type Opener,
 } from "../ui/Dialog";
 import { Alert } from "../ui/Page";
+import { useDeleting } from "../ui/Panel";
 import { type FoundUsage, UsageItem, usageKey } from "./usages";
 
 /** How the roles of a project rank, the least first, as the permission matrix orders them (§5.6). */
@@ -92,15 +93,19 @@ export function DeleteContentDialog({
   deleted,
   opener,
   onClose,
+  onDeleting,
   onDeleted,
 }: {
   project: ProjectBody;
   deleted: Deleted;
   opener: Opener;
   onClose: () => void;
+  /** Told true as the confirmation opens, and false once it has gone, however it goes (useDeleting). */
+  onDeleting: (deleting: boolean) => void;
   onDeleted: () => void;
 }) {
   const { t } = useTranslation();
+  useDeleting(onDeleting);
   const variable = deleted.kind === "variable";
   const commands = useCommands(project.id);
   const rev = useExpected(deleted.rev, commands.error);

@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useDeferredValue, useId, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ComponentPanel } from "../components/ComponentPanel";
 import { CreateComponentDialog } from "../components/CreateComponentDialog";
@@ -15,7 +15,7 @@ import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { SelectField } from "../ui/Field";
 import { Page, Status, textLink } from "../ui/Page";
-import { Panel } from "../ui/Panel";
+import { besidePanel, Panel, usePanelItem } from "../ui/Panel";
 
 /** The search of the page: the component whose panel is open, if any. */
 interface ComponentsSearch {
@@ -99,16 +99,8 @@ function ComponentsPage() {
     opener: Opener;
   }>();
   const [created, setCreated] = useState<string>();
-  const [deleting, setDeleting] = useState(false);
-  const last = useRef<ComponentEntry>(undefined);
-  const selected =
-    selectedId === undefined ? undefined : components.get(selectedId);
-  if (selected !== undefined) {
-    last.current = selected;
-  }
-  const shown =
-    selected ??
-    (deleting && last.current?.id === selectedId ? last.current : undefined);
+  // While a component's deletion is open, its panel shows it as it was.
+  const { shown, onDeleting } = usePanelItem(components, selectedId);
   const listId = useId();
   const typeName = (id: string) =>
     typeMap.get(id)?.name ?? t("component.unknown_type");
@@ -119,13 +111,7 @@ function ComponentsPage() {
       width="wide"
     >
       <p className="text-fg-muted">{t("components.intro")}</p>
-      <div
-        className={
-          shown === undefined
-            ? ""
-            : "grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_24rem]"
-        }
-      >
+      <div className={shown === undefined ? "" : besidePanel}>
         <section aria-labelledby={listId} className="min-w-0 space-y-4">
           <ContentTree
             projectId={projectId}
@@ -249,11 +235,8 @@ function ComponentsPage() {
               type={typeMap.get(shown.component_type_id)}
               tree={tree}
               editable={editable}
-              onDeleting={setDeleting}
-              onDeleted={() => {
-                setDeleting(false);
-                select(undefined);
-              }}
+              onDeleting={onDeleting}
+              onDeleted={() => select(undefined)}
             />
           </Panel>
         )}

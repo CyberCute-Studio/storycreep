@@ -238,7 +238,8 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const typed = typedOf(new FormData(event.currentTarget));
+    const data = new FormData(event.currentTarget);
+    const typed = typedOf(data);
     const value = parseValue(typed.type, typed.defaultText);
     if (value === undefined) {
       form.refused();
@@ -253,7 +254,7 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
       board_id: typed.boardId,
       reset_on_enter: typed.reset,
       description: typed.description,
-      folder_id: chosenFolder(tree, typed.folderId, shown.folder_id),
+      folder_id: chosenFolder(data, shown.folder_id),
     };
     form.save(
       changesOf(against, values, against.rev),
@@ -354,10 +355,9 @@ function VariableActions({
         <Button
           variant="danger"
           aria-haspopup="dialog"
-          onClick={(event) => {
-            onDeleting(true);
-            setOpen({ dialog: "delete", opener: event.currentTarget });
-          }}
+          onClick={(event) =>
+            setOpen({ dialog: "delete", opener: event.currentTarget })
+          }
         >
           {t("variable.delete")}
         </Button>
@@ -380,10 +380,8 @@ function VariableActions({
             rev: variable.rev,
           }}
           opener={open.opener}
-          onClose={() => {
-            setOpen(undefined);
-            onDeleting(false);
-          }}
+          onClose={() => setOpen(undefined)}
+          onDeleting={onDeleting}
           onDeleted={onDeleted}
         />
       )}

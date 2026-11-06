@@ -198,6 +198,9 @@ export function FolderSelect({
   );
 }
 
+/** The name of the form's field that a FolderField adds once the user has chosen a folder in it (chosenFolder). */
+const folderChosen = "folder_chosen";
+
 /**
  * The choice of a folder of the tree, or its top, as a form's field named
  * folder, which starts at initial, the folder's ID or undefined for the
@@ -215,37 +218,41 @@ export function FolderField({
   initial: string | undefined;
   error?: string;
 }) {
-  const [value, setValue] = useState(initial ?? top);
+  const [chosen, setChosen] = useState<string>();
   return (
-    <FolderSelect
-      tree={tree}
-      label={label}
-      value={value}
-      onChange={setValue}
-      error={error}
-    />
+    <>
+      <FolderSelect
+        tree={tree}
+        label={label}
+        value={chosen ?? initial ?? top}
+        onChange={setChosen}
+        error={error}
+      />
+      {chosen !== undefined && (
+        <input type="hidden" name={folderChosen} value="" />
+      )}
+    </>
   );
 }
 
 /**
- * Returns the folder that a form's FolderField chose, chosen, of the tree,
+ * Returns the folder that a form's FolderField holds, of data, the form's,
  * or undefined for the top, of a form that showed an item of the folder
- * shown: the item's own folder where the field is at the top and the tree
- * does not have that folder, as one of a page of the folders that a read a
- * page at a time had not reached, which the field shows as the top, as the
- * tree shows the item, rather than a move to the top that the user did not
- * ask for.
+ * shown: the folder that the user chose in it, or the top, if the user
+ * chose it, or else shown, as the field started, though the tree does not
+ * have that folder, as one of a page of the folders that a read a page at a
+ * time had not reached, which the field shows as the top, as the tree shows
+ * the item, rather than a move to the top that the user did not ask for.
  */
 export function chosenFolder(
-  tree: Tree<Item>,
-  chosen: string | undefined,
+  data: FormData,
   shown: string | undefined,
 ): string | undefined {
-  return chosen === undefined &&
-    shown !== undefined &&
-    tree.byId.get(shown)?.kind !== "folder"
-    ? shown
-    : chosen;
+  if (!data.has(folderChosen)) {
+    return shown;
+  }
+  const folder = String(data.get("folder") ?? top);
+  return folder === top ? undefined : folder;
 }
 
 const nameField = payloadField("name");

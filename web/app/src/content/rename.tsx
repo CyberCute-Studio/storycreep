@@ -8,7 +8,11 @@
 // rewritten source would pass the 16,384 characters that a source may have,
 // which refuses the rename.
 
-import type { PageRenameSite, RenameSite } from "@storycreep/shared/api";
+import {
+  ApiError,
+  type PageRenameSite,
+  type RenameSite,
+} from "@storycreep/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
 import { type FormEvent, useId, useRef, useState } from "react";
@@ -211,11 +215,25 @@ export function RenameKeyDialog({
     (previewed === key ? (preview.error ?? qualified.error) : null);
   const refusal = refusalOf(error, t, keyField, own);
   useFocusRefusal(form, error as object | null);
+  const lists = variable ? [preview, qualified] : [preview];
+  // The preview as it is now, rather than as a read of the same key before
+  // had it, which the dialog shows while it is read again, as once it was
+  // opened again: the rename waits for it.
   const ready =
     previewed === key &&
-    preview.isSuccess &&
-    (!variable || qualified.isSuccess) &&
+    lists.every((list) => list.isSuccess && !list.isRefetching) &&
     !tooLong;
+  // A preview whose read failed, but for the server's refusal, which would
+  // refuse it again, as once the browser's connection was lost, is read
+  // again once the user asks for it again.
+  const failed =
+    previewed === key &&
+    lists.some(
+      (list) =>
+        list.isError &&
+        !list.isFetching &&
+        !(list.error instanceof ApiError && list.error.status < 500),
+    );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (key === renamed.key) {
@@ -225,6 +243,14 @@ export function RenameKeyDialog({
     if (previewed !== key) {
       commands.reset();
       setPreviewed(key);
+      return;
+    }
+    if (failed) {
+      for (const list of lists) {
+        if (list.isError) {
+          void list.refetch();
+        }
+      }
       return;
     }
     if (!ready) {
@@ -299,10 +325,10 @@ export function RenameKeyDialog({
               variant="primary"
               disabled={
                 commands.isPending ||
-                (previewed === key && key !== renamed.key && !ready)
+                (previewed === key && key !== renamed.key && !ready && !failed)
               }
             >
-              {previewed === key || key === renamed.key
+              {(previewed === key && !failed) || key === renamed.key
                 ? t("rename.submit")
                 : t("rename.preview")}
             </Button>

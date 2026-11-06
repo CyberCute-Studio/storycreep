@@ -13,6 +13,7 @@
 // project's expressions that name it again (renames).
 
 import type { Attribute, ComponentType } from "@storycreep/shared/api";
+import { zeroOf } from "../../content/values";
 import { compareChildren } from "../../project/orderkey";
 import { type Appliers, canonical } from "../apply";
 import { type ComponentEntry, type Draft, typeOfAttribute } from "../doc";
@@ -55,20 +56,6 @@ function derivedKey(name: string, fallback: string): string {
     return fallback;
   }
   return (/^[0-9]/.test(key) ? `_${key}` : key).slice(0, 64).replace(/_+$/, "");
-}
-
-/** Returns the zero value of a definition of type, with options, which the server gives one that is created or retyped without a default. */
-function zeroOf(type: Attribute["type"], options: readonly string[]): Value {
-  switch (type) {
-    case "bool":
-      return false;
-    case "int":
-    case "float":
-      return 0;
-    case "enum":
-      return options[0] ?? "";
-  }
-  return "";
 }
 
 /** Returns a payload's values by the canonical IDs of what they are values of. */

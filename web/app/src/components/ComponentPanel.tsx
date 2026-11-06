@@ -38,13 +38,9 @@ import { typeName, ValueField, valueError } from "../content/ValueField";
 import { parseValue, textOf, type Value } from "../content/values";
 import type { ComponentEntry } from "../document/doc";
 import { useProjectDocument } from "../document/react";
-import {
-  chosenFolder,
-  FolderField,
-  folderTop,
-  payloadField,
-} from "../project/dialogs";
-import { type Command, useCommands } from "../project/queries";
+import { equal } from "../document/reconcile";
+import { chosenFolder, FolderField, payloadField } from "../project/dialogs";
+import type { Command } from "../project/queries";
 import type { Tree } from "../project/tree";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
@@ -233,11 +229,6 @@ interface ComponentTyped {
   folder_id: string | undefined;
 }
 
-/** Reports whether two descriptions are the same document. */
-function sameDescription(a: RichTextDoc, b: RichTextDoc): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
-}
-
 /** Returns the commands that change against, as the form showed it, to typed, each expecting rev. */
 function changesOf(
   against: Component,
@@ -255,7 +246,7 @@ function changesOf(
       expected_rev,
     });
   }
-  if (!sameDescription(typed.description, against.description)) {
+  if (!equal(typed.description, against.description)) {
     changes.push({
       type: "component.describe",
       payload: { id, description: typed.description },
@@ -380,7 +371,6 @@ function ComponentForm({
       return;
     }
     setInvalid(undefined);
-    const folder = String(data.get("folder") ?? folderTop);
     const typed: ComponentTyped = {
       name: String(data.get("name")),
       // The editor starts with the description as the form shows it, which
@@ -388,11 +378,7 @@ function ComponentForm({
       // elsewhere, which the form holds.
       description: typedDescription?.doc ?? shown.description,
       attributes,
-      folder_id: chosenFolder(
-        tree,
-        folder === folderTop ? undefined : folder,
-        shown.folder_id,
-      ),
+      folder_id: chosenFolder(data, shown.folder_id),
     };
     const changes = changesOf(against, typed, definitions, against.rev);
     setLastSent(changes);
@@ -410,7 +396,7 @@ function ComponentForm({
       changes,
       {
         ...(typed.name === against.name ? {} : { name: typed.name }),
-        ...(sameDescription(typed.description, against.description)
+        ...(equal(typed.description, against.description)
           ? {}
           : { description: typed.description }),
         ...(Object.keys(changedValues).length === 0
@@ -527,50 +513,64 @@ function thumbnailOf(projectId: string, assetId: string): string {
 /** The types of image that the server stores (PRD FR-ASSET-02). */
 const imageTypes = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml";
 
-/** The component's image: its thumbnail, and, for an editor, its upload and its removal, each a change of its own. */
+/**
+ * The component's image: its thumbnail, and, for an editor, its upload and
+ * its removal, each a change of its own, expecting the revision that the
+ * panel showed as the user asked for it.
+ */
 function ComponentImage({ project, component, editable }: ComponentPanelProps) {
   const { t } = useTranslation();
   const inputId = useId();
   const session = useQuery(sessionQuery).data;
-  const commands = useCommands(project.id);
-  const upload = useMutation({
-    mutationFn: async (file: File) =>
-      (
-        await api.call("uploadAsset", {
-          path: { project_id: project.id },
-          headers: csrfHeaders(session),
-          body: file,
-        })
-      ).body,
-  });
-  const setImage = (assetId: string | undefined) =>
-    commands.mutate([
-      {
-        type: "component.set_image",
-        payload: {
-          id: component.id,
-          ...(assetId === undefined ? {} : { image_asset_id: assetId }),
+  const doc = useProjectDocument(project.id);
+  // An upload and the command that sets the image to what it uploaded are
+  // one request of the page's, which goes on to set the image once the
+  // panel has gone, as once the user opened another component meanwhile,
+  // rather than leave the asset uploaded and the component without it. The
+  // removal, without a file, is the command alone. Each attempt says what
+  // became of it alone, rather than what became of the one before it.
+  const image = useMutation({
+    mutationFn: async ({ file, rev }: { file?: File; rev: number }) => {
+      const asset =
+        file === undefined
+          ? undefined
+          : (
+              await api.call("uploadAsset", {
+                path: { project_id: project.id },
+                headers: csrfHeaders(session),
+                body: file,
+              })
+            ).body;
+      return doc.send([
+        {
+          type: "component.set_image",
+          payload: {
+            id: component.id,
+            ...(asset === undefined ? {} : { image_asset_id: asset.id }),
+          },
+          expected_rev: { [component.id]: rev },
         },
-        expected_rev: { [component.id]: component.rev },
-      },
-    ]);
+      ]);
+    },
+  });
   const chosen = (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (file === undefined) {
       return;
     }
-    commands.reset();
-    upload.mutate(file, {
-      onSuccess: (asset) => setImage(asset.id),
-      // The same file chosen again is a change of the input's own.
-      onSettled: () => {
-        input.value = "";
+    image.mutate(
+      { file, rev: component.rev },
+      {
+        // The same file chosen again is a change of the input's own.
+        onSettled: () => {
+          input.value = "";
+        },
       },
-    });
+    );
   };
-  const pending = upload.isPending || commands.isPending;
-  const refusal = refusalOf(upload.error ?? commands.error, t);
+  const pending = image.isPending;
+  const refusal = refusalOf(image.error, t);
   return (
     <section className="space-y-2">
       <h3 className="text-lg font-semibold">{t("component.image")}</h3>
@@ -602,7 +602,10 @@ function ComponentImage({ project, component, editable }: ComponentPanelProps) {
             />
           </div>
           {component.image_asset_id !== undefined && (
-            <Button disabled={pending} onClick={() => setImage(undefined)}>
+            <Button
+              disabled={pending}
+              onClick={() => image.mutate({ rev: component.rev })}
+            >
               {t("component.remove_image")}
             </Button>
           )}
@@ -640,10 +643,9 @@ function ComponentActions({
         <Button
           variant="danger"
           aria-haspopup="dialog"
-          onClick={(event) => {
-            onDeleting(true);
-            setOpen({ dialog: "delete", opener: event.currentTarget });
-          }}
+          onClick={(event) =>
+            setOpen({ dialog: "delete", opener: event.currentTarget })
+          }
         >
           {t("component.delete")}
         </Button>
@@ -666,10 +668,8 @@ function ComponentActions({
             rev: component.rev,
           }}
           opener={open.opener}
-          onClose={() => {
-            setOpen(undefined);
-            onDeleting(false);
-          }}
+          onClose={() => setOpen(undefined)}
+          onDeleting={onDeleting}
           onDeleted={onDeleted}
         />
       )}

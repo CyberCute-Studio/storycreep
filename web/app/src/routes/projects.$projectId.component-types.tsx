@@ -1,7 +1,6 @@
-import type { ComponentType } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CreateTypeDialog } from "../components/CreateTypeDialog";
 import { TypeGlyph, TypePanel } from "../components/TypePanel";
@@ -13,7 +12,7 @@ import { canonicalId, found } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { Page, Status } from "../ui/Page";
-import { Panel } from "../ui/Panel";
+import { besidePanel, Panel, usePanelItem } from "../ui/Panel";
 
 /** The search of the page: the type whose panel is open, if any. */
 interface TypesSearch {
@@ -60,16 +59,8 @@ function TypesPage() {
     void navigate({ search: id === undefined ? {} : { type: id } });
   const [creating, setCreating] = useState<Opener>();
   const [created, setCreated] = useState<string>();
-  const [deleting, setDeleting] = useState(false);
-  const last = useRef<ComponentType>(undefined);
-  const selected =
-    selectedId === undefined ? undefined : typeMap.get(selectedId);
-  if (selected !== undefined) {
-    last.current = selected;
-  }
-  const shown =
-    selected ??
-    (deleting && last.current?.id === selectedId ? last.current : undefined);
+  // While a type's deletion is open, its panel shows it as it was.
+  const { shown, onDeleting } = usePanelItem(typeMap, selectedId);
   const listId = useId();
   return (
     <Page
@@ -78,13 +69,7 @@ function TypesPage() {
       width="wide"
     >
       <p className="text-fg-muted">{t("component_types.intro")}</p>
-      <div
-        className={
-          shown === undefined
-            ? ""
-            : "grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_24rem]"
-        }
-      >
+      <div className={shown === undefined ? "" : besidePanel}>
         <section aria-labelledby={listId} className="min-w-0 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <h2 id={listId} className="flex-1 text-lg font-semibold">
@@ -151,11 +136,8 @@ function TypesPage() {
               project={project}
               type={shown}
               editable={editable}
-              onDeleting={setDeleting}
-              onDeleted={() => {
-                setDeleting(false);
-                select(undefined);
-              }}
+              onDeleting={onDeleting}
+              onDeleted={() => select(undefined)}
             />
           </Panel>
         )}

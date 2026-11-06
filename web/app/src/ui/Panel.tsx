@@ -13,6 +13,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -24,13 +25,29 @@ export const dockedFrom = 900;
 
 const dockedQuery = `(min-width: ${dockedFrom}px)`;
 
-function subscribe(changed: () => void): () => void {
+/** The window's media query of a docked panel, made once for the window's matchMedia, which each panel reads as it renders. */
+let docked:
+  | { matchMedia: typeof window.matchMedia; query: MediaQueryList }
+  | undefined;
+
+/** Returns the window's media query of a docked panel, or undefined for a browser without matchMedia, as the tests' jsdom. */
+function dockedList(): MediaQueryList | undefined {
   if (typeof window.matchMedia !== "function") {
-    return () => undefined;
+    return undefined;
   }
-  const query = window.matchMedia(dockedQuery);
-  query.addEventListener("change", changed);
-  return () => query.removeEventListener("change", changed);
+  if (docked?.matchMedia !== window.matchMedia) {
+    docked = {
+      matchMedia: window.matchMedia,
+      query: window.matchMedia(dockedQuery),
+    };
+  }
+  return docked.query;
+}
+
+function subscribe(changed: () => void): () => void {
+  const query = dockedList();
+  query?.addEventListener("change", changed);
+  return () => query?.removeEventListener("change", changed);
 }
 
 /**
@@ -38,11 +55,56 @@ function subscribe(changed: () => void): () => void {
  * changes: a browser without matchMedia, as the tests' jsdom, has the room.
  */
 export function useDocked(): boolean {
-  return useSyncExternalStore(subscribe, () =>
-    typeof window.matchMedia === "function"
-      ? window.matchMedia(dockedQuery).matches
-      : true,
-  );
+  return useSyncExternalStore(subscribe, () => dockedList()?.matches ?? true);
+}
+
+/**
+ * The classes of what holds a page's list and the panel beside it while the
+ * panel is open: the list and the docked panel side by side from the width
+ * of a docked panel, and one under the other below it, where the panel is a
+ * sheet over the page.
+ */
+export const besidePanel =
+  "grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_24rem]";
+
+/**
+ * Returns what a page's panel shows of the item of selectedId, the one
+ * that the page's address names, of items: the item as items have it, or,
+ * while the confirmation of its deletion is open, as it was last, as the
+ * project's document takes it away at once once its deletion is sent, so
+ * that the confirmation stays, and says what became of it. The
+ * confirmation tells onDeleting whether it is open (useDeleting).
+ */
+export function usePanelItem<T extends { id: string }>(
+  items: ReadonlyMap<string, T>,
+  selectedId: string | undefined,
+): { shown: T | undefined; onDeleting: (deleting: boolean) => void } {
+  const [deleting, setDeleting] = useState(false);
+  const last = useRef<T>(undefined);
+  const selected = selectedId === undefined ? undefined : items.get(selectedId);
+  if (selected !== undefined) {
+    last.current = selected;
+  }
+  return {
+    shown:
+      selected ??
+      (deleting && last.current?.id === selectedId ? last.current : undefined),
+    onDeleting: setDeleting,
+  };
+}
+
+/**
+ * Tells onDeleting true as a confirmation of a deletion opens, and false
+ * once it has gone, however it goes: closed, or with its panel, as once the
+ * deletion applied and the page's address no longer names what it deleted,
+ * or as the address names another item, after the browser's Back, so that
+ * the page no longer shows the item as it was (usePanelItem).
+ */
+export function useDeleting(onDeleting: (deleting: boolean) => void): void {
+  useLayoutEffect(() => {
+    onDeleting(true);
+    return () => onDeleting(false);
+  }, [onDeleting]);
 }
 
 /**

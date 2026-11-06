@@ -1,7 +1,7 @@
 import type { Variable } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useDeferredValue, useId, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
 import { typeName } from "../content/ValueField";
@@ -17,7 +17,7 @@ import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { SelectField } from "../ui/Field";
 import { Page, Status } from "../ui/Page";
-import { Panel } from "../ui/Panel";
+import { besidePanel, Panel, usePanelItem } from "../ui/Panel";
 import { CreateVariableDialog } from "../variables/CreateVariableDialog";
 import { VariablePanel } from "../variables/VariablePanel";
 
@@ -33,17 +33,19 @@ export const Route = createFileRoute("/projects/$projectId/variables")({
       : {},
   // The project comes first, as for the tree of its boards, and then the
   // variables and the boards, which a board's variable is of, at once. What
-  // the document held already, which the real-time channel does not keep
-  // current while it is not live, is shown as it is, and read anew.
+  // the document held already of either, which the real-time channel does
+  // not keep current while it is not live, is shown as it is, and read anew.
   loader: async ({ context: { queryClient, documents }, params }) => {
     const project = await found(
       queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
     const doc = documents.get(project.id);
-    const held = doc.holds("variables");
+    const held = (["variables", "tree"] as const).filter((part) =>
+      doc.holds(part),
+    );
     await Promise.all([found(doc.load("variables")), found(doc.load("tree"))]);
-    if (held) {
-      void doc.refresh("variables").catch(() => undefined);
+    for (const part of held) {
+      void doc.refresh(part).catch(() => undefined);
     }
   },
   // As for the tree of the project's boards (projects.$projectId.index.tsx).
@@ -127,19 +129,8 @@ function VariablesPage() {
     opener: Opener;
   }>();
   const [created, setCreated] = useState<string>();
-  // While a variable's deletion is open, its panel shows it as it was, as
-  // the document takes it away at once, once its deletion is sent, so that
-  // the confirmation stays, and says what became of it.
-  const [deleting, setDeleting] = useState(false);
-  const last = useRef<Variable>(undefined);
-  const selected =
-    selectedId === undefined ? undefined : variables.get(selectedId);
-  if (selected !== undefined) {
-    last.current = selected;
-  }
-  const shown =
-    selected ??
-    (deleting && last.current?.id === selectedId ? last.current : undefined);
+  // While a variable's deletion is open, its panel shows it as it was.
+  const { shown, onDeleting } = usePanelItem(variables, selectedId);
   const listId = useId();
   const scopeOf = (variable: Variable) =>
     variable.scope === "global"
@@ -156,13 +147,7 @@ function VariablesPage() {
       width="wide"
     >
       <p className="text-fg-muted">{t("variables.intro")}</p>
-      <div
-        className={
-          shown === undefined
-            ? ""
-            : "grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_24rem]"
-        }
-      >
+      <div className={shown === undefined ? "" : besidePanel}>
         <section aria-labelledby={listId} className="min-w-0 space-y-4">
           <ContentTree
             projectId={projectId}
@@ -275,11 +260,8 @@ function VariablesPage() {
               boards={boards}
               tree={tree}
               editable={editable}
-              onDeleting={setDeleting}
-              onDeleted={() => {
-                setDeleting(false);
-                select(undefined);
-              }}
+              onDeleting={onDeleting}
+              onDeleted={() => select(undefined)}
             />
           </Panel>
         )}

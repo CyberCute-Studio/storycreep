@@ -1,11 +1,12 @@
-import type {
-  Attribute,
-  Board,
-  Component,
-  ComponentType,
-  Folder,
-  ProjectBody,
-  Variable,
+import {
+  type Attribute,
+  type Board,
+  type Component,
+  type ComponentType,
+  type Folder,
+  NetworkError,
+  type ProjectBody,
+  type Variable,
 } from "@storycreep/shared/api";
 import {
   act,
@@ -20,6 +21,7 @@ import { convertedTo, optionsOf, parseValue } from "./content/values";
 import { renderApp, testSession } from "./test/app";
 import "./test/editor";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
+import { fakeRealtime } from "./test/realtime";
 
 // The panels of a project's variables, components, and component types, as
 // the router shows them, over a fake of the API's client: the lists and
@@ -277,7 +279,10 @@ function batches(calls: ReturnType<typeof fakeApi>): Sent[] {
 function windowOf(width: number) {
   const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query === "(min-width: 900px)" && width >= 900,
+    // A media query list follows the window, as a browser's does.
+    get matches() {
+      return query === "(min-width: 900px)" && width >= 900;
+    },
     media: query,
     addEventListener: (_: string, listener: () => void) =>
       listeners.add(listener),
@@ -578,6 +583,44 @@ describe("the variables", () => {
     ]);
   });
 
+  it("moves a variable whose folder the list does not have to the top once the user chooses the top", async () => {
+    const user = userEvent.setup();
+    const filed: Content = {
+      ...content,
+      variables: [
+        variable("var_rep", "rep", {
+          type: "int",
+          default: 0,
+          folder_id: "fld_unread",
+        }),
+      ],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1, [{ id: "var_rep", rev: 4 }])
+        : expected(contentPages(operation, input, filed), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    const field = within(panel).getByLabelText("Folder");
+    await user.selectOptions(field, "fld_quests");
+    await user.selectOptions(field, "None, at the top");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(batches(calls)).toEqual([
+      [
+        expect.objectContaining({
+          type: "variable.move",
+          payload: { id: "var_rep" },
+        }),
+      ],
+    ]);
+  });
+
   it("refuses a default that is none of the variable's type before it sends anything", async () => {
     const user = userEvent.setup();
     const calls = fakeApi((operation, input) =>
@@ -664,6 +707,99 @@ describe("the variables", () => {
         }),
       ],
     ]);
+  });
+
+  it("reads a rename's preview again once its read failed, as the user asks for it again", async () => {
+    const user = userEvent.setup();
+    // No answer comes to the preview's reads, as while the browser has no
+    // connection, until the test says so.
+    let failing = true;
+    fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        if (failing) {
+          throw new NetworkError(new TypeError("Failed to fetch"));
+        }
+        return { items: [], next_cursor: null };
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    await user.type(key, "trust");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    expect(
+      await within(dialog).findByText(
+        "The server could not be reached. Check your connection, and try again.",
+      ),
+    ).toBeDefined();
+    failing = false;
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Rename" }),
+      ).toHaveProperty("disabled", false),
+    );
+  });
+
+  it("renames only once the preview has been read again, rather than as a read of the same key before had it", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    let answer: (() => void) | undefined;
+    fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        reads += 1;
+        const page = { items: [], next_cursor: null };
+        // The reads of the dialog opened again wait for the test.
+        return reads <= 2
+          ? page
+          : new Promise((resolve) => {
+              const before = answer;
+              answer = () => {
+                before?.();
+                resolve(page);
+              };
+            });
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    const preview = async () => {
+      await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+      const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+      const key = within(dialog).getByLabelText("New key");
+      await user.clear(key);
+      await user.type(key, "trust");
+      await user.click(
+        within(dialog).getByRole("button", { name: "Show what changes" }),
+      );
+      return dialog;
+    };
+    const first = await preview();
+    await waitFor(() =>
+      expect(
+        within(first).getByRole("button", { name: "Rename" }),
+      ).toHaveProperty("disabled", false),
+    );
+    await user.click(within(first).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const again = await preview();
+    const rename = within(again).getByRole("button", { name: "Rename" });
+    expect(rename).toHaveProperty("disabled", true);
+    act(() => answer?.());
+    await waitFor(() => expect(rename).toHaveProperty("disabled", false));
   });
 
   it("does not rename while a rewritten expression would be too long", async () => {
@@ -785,6 +921,43 @@ describe("the variables", () => {
       { id: "var_rep" },
       { id: "var_rep", force: true },
     ]);
+  });
+
+  it("says that a variable deleted elsewhere is gone, once a deletion left open went with the browser's Back", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    fakeApi((operation, input) =>
+      expected(contentPages(operation, input, content), operation),
+    );
+    const { router } = renderApp(
+      `/projects/${testProject.id}/variables?variable=var_met`,
+      { session: testSession, realtime },
+    );
+    await screen.findByRole("region", { name: "met_elara" });
+    const list = screen.getByRole("list", { name: "All variables" });
+    await user.click(within(list).getByRole("button", { name: /^rep/ }));
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Delete the variable" }),
+    );
+    await screen.findByRole("alertdialog");
+    act(() => router.history.back());
+    await screen.findByRole("region", { name: "met_elara" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    // Another session deletes the variable whose panel is open now.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "variable.delete", payload: { id: "var_met" } }],
+        [{ id: "var_met", rev: 4 }],
+      ),
+    );
+    expect(
+      await screen.findByText(
+        "The variable that the address names is not in the project, or is in its trash.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByRole("region", { name: "met_elara" })).toBeNull();
   });
 
   it("offers no deletion anyway to a role that may not publish", async () => {
@@ -1305,6 +1478,80 @@ describe("the components", () => {
     ).toBe("true");
   });
 
+  it("sets the image that it uploaded once the panel has gone meanwhile", async () => {
+    const user = userEvent.setup();
+    let uploaded: ((asset: { id: string }) => void) | undefined;
+    const calls = fakeApi((operation, input) => {
+      switch (operation) {
+        case "uploadAsset":
+          return new Promise((resolve) => {
+            uploaded = resolve;
+          });
+        case "applyCommands":
+          return applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 5 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    await user.upload(
+      within(panel).getByLabelText("Upload an image"),
+      new File(["png"], "elara.png", { type: "image/png" }),
+    );
+    await waitFor(() => expect(uploaded).toBeDefined());
+    await user.click(within(panel).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Elara" })).toBeNull(),
+    );
+    act(() => uploaded?.({ id: "ast_elara" }));
+    await waitFor(() =>
+      expect(batches(calls)).toEqual([
+        [
+          expect.objectContaining({
+            type: "component.set_image",
+            payload: { id: "cmp_elara", image_asset_id: "ast_elara" },
+            expected_rev: { cmp_elara: 4 },
+          }),
+        ],
+      ]),
+    );
+  });
+
+  it("says what became of the image's last change alone", async () => {
+    const user = userEvent.setup();
+    const framed: Content = {
+      ...content,
+      components: [{ ...elara, image_asset_id: "ast_old" }],
+    };
+    fakeApi((operation, input) => {
+      switch (operation) {
+        case "uploadAsset":
+          throw new NetworkError(new TypeError("Failed to fetch"));
+        case "applyCommands":
+          return applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 5 }]);
+      }
+      return expected(contentPages(operation, input, framed), operation);
+    });
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    await user.upload(
+      within(panel).getByLabelText("Replace the image"),
+      new File(["png"], "elara.png", { type: "image/png" }),
+    );
+    const failure =
+      "The server could not be reached. Check your connection, and try again.";
+    expect(await within(panel).findByText(failure)).toBeDefined();
+    await user.click(
+      within(panel).getByRole("button", { name: "Remove the image" }),
+    );
+    await waitFor(() => expect(within(panel).queryByRole("img")).toBeNull());
+    await waitFor(() => expect(within(panel).queryByText(failure)).toBeNull());
+  });
+
   it("lists what uses a component when its deletion is refused, by use", async () => {
     const user = userEvent.setup();
     fakeApi((operation, input) => {
@@ -1493,6 +1740,50 @@ describe("the component types", () => {
     const { order } = move.payload as { order: string };
     // After a, and before c, whose key b shares.
     expect(order > "V" && order < "X").toBe(true);
+  });
+
+  it("deletes a type expecting the revision that it has as its confirmation opens", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 2)
+        : expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("region", { name: "Character" });
+    // Another session renames the type while its panel is open.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "component_type.rename",
+            payload: { id: "ct_character", name: "Person" },
+          },
+        ],
+        [{ id: "ct_character", rev: 2 }],
+      ),
+    );
+    const panel = await screen.findByRole("region", { name: "Person" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Delete the type" }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete the type" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      expect.objectContaining({
+        type: "component_type.delete",
+        payload: { id: "ct_character" },
+        expected_rev: { ct_character: 2 },
+      }),
+    ]);
   });
 
   it("adds an attribute of an enum, whose default is one of its options", async () => {

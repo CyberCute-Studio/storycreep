@@ -32,7 +32,11 @@ export const attributeTypes = [
 /** The largest whole number that every runtime holds exactly, which an int is within (PRD §5.8.9). */
 const intBound = 2 ** 53 - 1;
 
-/** Returns the zero value of type, with options for an enum, which the server gives one created without a value. */
+/**
+ * Returns the zero value of type, with options for an enum, which the server
+ * gives a variable or an attribute definition that is created or retyped
+ * without a default, as the document's appliers give it too.
+ */
 export function zeroOf(
   type: ValueType,
   options: readonly string[] = [],

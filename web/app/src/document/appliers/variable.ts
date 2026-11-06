@@ -8,6 +8,7 @@
 // compile the project's expressions that name it again (renames).
 
 import type { Variable } from "@storycreep/shared/api";
+import { zeroOf } from "../../content/values";
 import { type Appliers, canonical } from "../apply";
 import type { Draft } from "../doc";
 import {
@@ -27,11 +28,6 @@ type Value = Variable["default"];
 /** Returns value in its canonical form, as the server stores a value of a variable or of an attribute definition. */
 export function canonicalValue<V extends Value>(value: V): V {
   return (value === 0 ? 0 : value) as V;
-}
-
-/** Returns the zero value of type, which the server gives a variable that is created or retyped without a default. */
-function zeroOf(type: Variable["type"]): Value {
-  return type === "bool" ? false : type === "string" ? "" : 0;
 }
 
 /** Changes the variable of id with change, if draft holds it. */

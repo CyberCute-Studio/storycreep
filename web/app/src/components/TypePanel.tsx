@@ -35,6 +35,7 @@ import {
 import { SelectField, TextField, useFocusRefusal } from "../ui/Field";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Alert } from "../ui/Page";
+import { useDeleting } from "../ui/Panel";
 import {
   CreateAttributeDialog,
   DeleteAttributeDialog,
@@ -450,15 +451,9 @@ function Definitions({ project, type, editable }: TypePanelProps) {
 }
 
 /** The deletion of the type, which the server refuses while a component of it is not in the trash. */
-function DeleteType({ project, type, onDeleting, onDeleted }: TypePanelProps) {
+function DeleteType(props: TypePanelProps) {
   const { t } = useTranslation();
   const [opener, setOpener] = useState<HTMLElement>();
-  const commands = useCommands(project.id);
-  const rev = useExpected(type.rev, commands.error);
-  const close = () => {
-    setOpener(undefined);
-    onDeleting(false);
-  };
   return (
     <section className="space-y-2">
       <h3 className="text-lg font-semibold">
@@ -468,47 +463,60 @@ function DeleteType({ project, type, onDeleting, onDeleted }: TypePanelProps) {
       <Button
         variant="danger"
         aria-haspopup="dialog"
-        onClick={(event) => {
-          onDeleting(true);
-          setOpener(event.currentTarget);
-        }}
+        onClick={(event) => setOpener(event.currentTarget)}
       >
         {t("component_type.delete")}
       </Button>
       {opener !== undefined && (
-        <AlertDialog.Root
-          open
-          onOpenChange={closesBy(() => {
-            commands.reset();
-            close();
-          }, commands.isPending)}
-        >
-          <ConfirmFrame
-            title={t("deletion.title", { name: type.name })}
-            description={t("component_type.delete_body")}
-            onCloseAutoFocus={focusBackTo(opener)}
-          >
-            <Alert message={refusalOf(commands.error, t)?.message} />
-            <ConfirmButtons
-              cancel={t("boards.cancel")}
-              confirm={t("component_type.delete")}
-              pending={commands.isPending}
-              onConfirm={() =>
-                commands.mutate(
-                  [
-                    {
-                      type: "component_type.delete",
-                      payload: { id: type.id },
-                      expected_rev: { [type.id]: rev },
-                    },
-                  ],
-                  { onSuccess: onDeleted },
-                )
-              }
-            />
-          </ConfirmFrame>
-        </AlertDialog.Root>
+        <DeleteTypeDialog
+          {...props}
+          opener={opener}
+          onClose={() => setOpener(undefined)}
+        />
       )}
     </section>
+  );
+}
+
+/** The confirmation that deletes the type, expecting the revision that it opened with (useExpected). */
+function DeleteTypeDialog({
+  project,
+  type,
+  opener,
+  onClose,
+  onDeleting,
+  onDeleted,
+}: TypePanelProps & { opener: Opener; onClose: () => void }) {
+  const { t } = useTranslation();
+  useDeleting(onDeleting);
+  const commands = useCommands(project.id);
+  const rev = useExpected(type.rev, commands.error);
+  return (
+    <AlertDialog.Root open onOpenChange={closesBy(onClose, commands.isPending)}>
+      <ConfirmFrame
+        title={t("deletion.title", { name: type.name })}
+        description={t("component_type.delete_body")}
+        onCloseAutoFocus={focusBackTo(opener)}
+      >
+        <Alert message={refusalOf(commands.error, t)?.message} />
+        <ConfirmButtons
+          cancel={t("boards.cancel")}
+          confirm={t("component_type.delete")}
+          pending={commands.isPending}
+          onConfirm={() =>
+            commands.mutate(
+              [
+                {
+                  type: "component_type.delete",
+                  payload: { id: type.id },
+                  expected_rev: { [type.id]: rev },
+                },
+              ],
+              { onSuccess: onDeleted },
+            )
+          }
+        />
+      </ConfirmFrame>
+    </AlertDialog.Root>
   );
 }
