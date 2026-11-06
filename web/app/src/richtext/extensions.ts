@@ -371,14 +371,18 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
  * the schema holds before it is read (FR-TEXT-01 AC2), and pasted HTML of
  * which the cleaning keeps nothing, as of only a button or a formula, is
  * pasted as the clipboard's plain text, which ProseMirror reads only where
- * the clipboard has no HTML.
+ * the clipboard has no HTML, though it is only white space, as of a copied
+ * space. A paste of neither, as of only an image, changes nothing, rather
+ * than take out the selection, which ProseMirror replaces with what is
+ * pasted.
  */
 export const pasteProps = {
   transformPastedHTML: (html: string) => cleanPastedHTML(html),
   handlePaste: (view: EditorView, event: ClipboardEvent, slice: Slice) => {
+    if (slice.content.size > 0) {
+      return false;
+    }
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    return slice.content.size === 0 && text.trim() !== ""
-      ? view.pasteText(text)
-      : false;
+    return text === "" || view.pasteText(text);
   },
 };

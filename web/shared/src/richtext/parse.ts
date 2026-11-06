@@ -322,6 +322,12 @@ class Parser {
   private path: string[] = [];
   /** The code points of the texts read so far. */
   private chars = 0;
+  /** The code points that the texts may hold: MAX_CHARS, or Infinity for a document read whatever its size (tryParseRichTextOfAnySize). */
+  private readonly maxChars: number;
+
+  constructor(maxChars = MAX_CHARS) {
+    this.maxChars = maxChars;
+  }
 
   private push(key: string | number) {
     this.path.push(typeof key === "number" ? String(key) : escapeToken(key));
@@ -570,7 +576,7 @@ class Parser {
       );
     }
     this.chars += codePoints(s);
-    if (this.chars > MAX_CHARS) {
+    if (this.chars > this.maxChars) {
       this.path = [];
       throw this.fail(
         "too_large",
@@ -882,9 +888,15 @@ function overMaxBytes(json: string): boolean {
  * than one thing wrong, of one of them.
  */
 export function parseRichText(value: unknown): RichTextDoc {
-  // The server reads the length first, whatever else is wrong.
+  return parse(value, true);
+}
+
+/** Reads value as parseRichText does, or, where sized is false, as though no document were too large. */
+function parse(value: unknown, sized: boolean): RichTextDoc {
+  // The server reads the length first, whatever else is wrong. What is no
+  // JSON, as a value that holds itself, JSON.stringify refuses either way.
   const json = JSON.stringify(value);
-  if (json !== undefined && overMaxBytes(json)) {
+  if (sized && json !== undefined && overMaxBytes(json)) {
     throw new RichTextError(
       "too_large",
       "",
@@ -899,7 +911,7 @@ export function parseRichText(value: unknown): RichTextDoc {
       "the document escapes a lone surrogate, which is not a character",
     );
   }
-  return new Parser().doc(value);
+  return new Parser(sized ? MAX_CHARS : Number.POSITIVE_INFINITY).doc(value);
 }
 
 /** What tryParseRichText makes of a document: its canonical form, or why the server would refuse it. */
@@ -907,16 +919,35 @@ export type RichTextResult =
   | { doc: RichTextDoc; error?: undefined }
   | { doc?: undefined; error: RichTextError };
 
-/** Returns what parseRichText returns of value, or the RichTextError that it throws, as a value. */
-export function tryParseRichText(value: unknown): RichTextResult {
+/** Returns what parse returns of value, or the RichTextError that it throws, as a value. */
+function tryParse(value: unknown, sized: boolean): RichTextResult {
   try {
-    return { doc: parseRichText(value) };
+    return { doc: parse(value, sized) };
   } catch (error) {
     if (error instanceof RichTextError) {
       return { error };
     }
     throw error;
   }
+}
+
+/** Returns what parseRichText returns of value, or the RichTextError that it throws, as a value. */
+export function tryParseRichText(value: unknown): RichTextResult {
+  return tryParse(value, true);
+}
+
+/**
+ * Returns what tryParseRichText returns of value, but as though no document
+ * were too large: its canonical form, whatever its size, or why the server
+ * would refuse it for anything else. tryParseRichText says only that a
+ * document is too large, since it holds the JSON to MAX_BYTES before it reads
+ * the document, and stops at the text that takes it over MAX_CHARS; this
+ * reads every text, as of a document of a later version of the app, whose
+ * limits may be higher, with a node, a mark, or an attribute that this
+ * version does not have after that text.
+ */
+export function tryParseRichTextOfAnySize(value: unknown): RichTextResult {
+  return tryParse(value, false);
 }
 
 /**

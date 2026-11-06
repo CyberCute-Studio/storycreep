@@ -15,9 +15,8 @@ import {
   MAX_CHARS,
   type RichTextError,
   tryParseRichText,
+  tryParseRichTextOfAnySize,
 } from "@storycreep/shared/richtext";
-import { type AnyExtension, getSchema } from "@tiptap/core";
-import type { Node as PMNode } from "@tiptap/pm/model";
 import {
   type Editor,
   EditorContent,
@@ -51,7 +50,7 @@ export interface RichTextEditorProps {
   /** The field's label, which names the text for a screen reader too. */
   label: string;
   hint?: string;
-  /** What the page says is wrong with the text, as the server's refusal of it. */
+  /** What the page says is wrong with the text, as the server's refusal of it, which marks it invalid; a text that the editor cannot keep (defaultValue) shows why instead. */
   error?: string;
   /**
    * The document that the editor starts with, the empty one when it is not
@@ -59,8 +58,9 @@ export interface RichTextEditorProps {
    * that shows another document gives the editor a key of its own. One that
    * the server of this version would refuse for anything but its size, as
    * one of a node, a mark, or an attribute that a later version of the app
-   * has, it does not let the user change, and says so, so that no change
-   * saves over it what this version makes of it (readOf).
+   * has, though it is too large too, it does not let the user change, and
+   * says so, so that no change saves over it what this version makes of it
+   * (readOf).
    */
   defaultValue?: RichTextDoc;
   /**
@@ -89,29 +89,33 @@ export interface RichTextEditorProps {
  * server would refuse it for its size, as a text too long, which the editor
  * says from the start, and lets the user shorten; or that the editor cannot
  * keep it as it is, since the server of this version would refuse it for
- * anything else, as a document of a later version of the app, with a node,
- * a mark, or an attribute that this version does not have, a list nested
- * deeper or numbered from further than it allows, or a link that it does
- * not take. TipTap would show such a document without what its schema does
- * not hold, as an empty text, and the editor would bring it within this
- * version's limits after any change, wherever it was made, which the page
- * would then save over the document.
+ * anything else, though it is too large too, which the server reads first,
+ * as a document of a later version of the app, with a node, a mark, or an
+ * attribute that this version does not have, a list nested deeper or
+ * numbered from further than it allows, or a link that it does not take.
+ * TipTap would show such a document without what its schema does not hold,
+ * as an empty text, and the editor would bring it within this version's
+ * limits after any change, wherever it was made, which the page would then
+ * save over the document. Of one that only its size is wrong with, the
+ * refusal is that of its canonical form, which the editor's document is, as
+ * ProseMirror joins its neighbouring texts, and which may be within the
+ * limits that its JSON is not.
  */
-function readOf(
-  content: RichTextDoc,
-  extensions: AnyExtension[],
-): { refused?: RichTextError; unreadable: boolean } {
+function readOf(content: RichTextDoc): {
+  refused?: RichTextError;
+  unreadable: boolean;
+} {
   const { error } = tryParseRichText(content);
-  if (error !== undefined && error.reason !== "too_large") {
-    return { unreadable: true };
+  if (error === undefined) {
+    return { unreadable: false };
   }
-  let doc: PMNode;
-  try {
-    doc = getSchema(extensions).nodeFromJSON(content);
-  } catch {
-    return { unreadable: true };
-  }
-  return { refused: storedOf(doc).error, unreadable: false };
+  const whole =
+    error.reason === "too_large"
+      ? tryParseRichTextOfAnySize(content).doc
+      : undefined;
+  return whole === undefined
+    ? { unreadable: true }
+    : { refused: tryParseRichText(whole).error, unreadable: false };
 }
 
 /** Returns the message of why the server would refuse a document, in the page's locale. */
@@ -167,21 +171,23 @@ export function RichTextEditor({
       placeholder: () => latest.current.placeholder ?? "",
       onLinkShortcut: () => setLinking(true),
     });
-    return { content, extensions, ...readOf(content, extensions) };
+    return { content, extensions, ...readOf(content) };
   });
   // A document that the editor cannot keep as it is is shown, as its schema
   // reads it, but not changed.
   const changeable = editable && !initial.unreadable;
   // Why the server would refuse what the editor holds, which the page's own
-  // error goes before.
+  // error goes before. A text that the editor cannot keep says so instead of
+  // either, since nothing that the user does in it here mends it; it is not
+  // marked invalid for that, as it holds nothing that the user should mend,
+  // so that useFocusRefusal does not take the focus to it from the field
+  // that a refusal of the form is of.
   const [refused, setRefused] = useState(initial.refused);
-  const shownError =
-    error ??
-    (initial.unreadable
-      ? t("richtext.error.unreadable")
-      : refused === undefined
-        ? undefined
-        : messageOf(t, refused));
+  const invalid =
+    error ?? (refused === undefined ? undefined : messageOf(t, refused));
+  const shownError = initial.unreadable
+    ? t("richtext.error.unreadable")
+    : invalid;
   const { describedBy } = fieldDescription(id, hint, shownError);
   const editorProps = useMemo(
     () => ({
@@ -194,17 +200,22 @@ export function RichTextEditor({
         ...(describedBy === undefined
           ? {}
           : { "aria-describedby": describedBy }),
-        ...(shownError === undefined ? {} : { "aria-invalid": "true" }),
+        ...(invalid === undefined ? {} : { "aria-invalid": "true" }),
         ...(changeable ? {} : { "aria-readonly": "true" }),
         class: "rich-text min-h-24 rounded-b-md px-3 py-2 text-fg break-words",
       },
     }),
-    [id, labelId, describedBy, shownError, changeable],
+    [id, labelId, describedBy, invalid, changeable],
   );
   const editor = useEditor({
     content: initial.content,
     extensions: initial.extensions,
     editable: changeable,
+    // A text that may not be changed takes the focus too, as a read-only
+    // field does, so that the keyboard reaches it to read and select it, and
+    // a click on its label, or a refusal of its form, focuses it; TipTap
+    // takes it out of the order of Tab otherwise.
+    coreExtensionOptions: { tabindex: { value: "0" } },
     // The editor's styles are the app's stylesheet's (styles.css), since the
     // page's Content-Security-Policy refuses a style element without the
     // response's nonce.
@@ -249,7 +260,12 @@ export function RichTextEditor({
       label={label}
       hint={hint}
       error={shownError}
-      focus={{ labelId, onLabelClick: () => editor?.commands.focus() }}
+      focus={{
+        labelId,
+        // ProseMirror focuses only a text that may be changed.
+        onLabelClick: () =>
+          changeable ? editor?.commands.focus() : editor?.view.dom.focus(),
+      }}
     >
       {() => (
         <>

@@ -9,6 +9,8 @@ import {
   type RichTextReason,
   richTextLength,
   stringifyRichText,
+  tryParseRichText,
+  tryParseRichTextOfAnySize,
 } from "./parse";
 
 // schema/rich-text/vectors.json, which the Go package runs too
@@ -145,6 +147,45 @@ describe("the limits", () => {
     const href = `https://example.com/${'"'.repeat(2000)}`;
     expect(richTextLength(JSON.stringify({ href }))).toBe(
       JSON.stringify({ href }).length - 2000,
+    );
+  });
+
+  test("a document of any size is read whole, so that what else the server would refuse of it is found after the text that takes it over the limit", () => {
+    const long = { type: "text", text: "a".repeat(MAX_CHARS + 1) };
+    // An attribute that a later version of the app may have, after the text
+    // that takes the document over MAX_CHARS.
+    const later = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [long] },
+        {
+          type: "paragraph",
+          attrs: { align: "center" },
+          content: [{ type: "text", text: "b" }],
+        },
+      ],
+    };
+    expect(tryParseRichText(later).error).toMatchObject({
+      reason: "too_large",
+      limit: "chars",
+    });
+    expect(tryParseRichTextOfAnySize(later).error).toMatchObject({
+      reason: "unknown_field",
+      pointer: "/content/1/attrs",
+    });
+    // One whose only problem is its size, of its characters or of its
+    // bytes, which it is read before the rest for, is read whole.
+    const tooLong = paragraphOf(long, { type: "text", text: "b" });
+    expect(tryParseRichTextOfAnySize(tooLong).doc).toEqual(
+      paragraphOf({ text: `${"a".repeat(MAX_CHARS + 1)}b`, type: "text" }),
+    );
+    const tooLarge = {
+      type: "doc",
+      content: Array.from({ length: 60_000 }, () => ({ type: "paragraph" })),
+    };
+    expect(tryParseRichText(tooLarge).error?.limit).toBe("bytes");
+    expect(tryParseRichTextOfAnySize(tooLarge).doc?.content).toHaveLength(
+      60_000,
     );
   });
 });

@@ -232,6 +232,20 @@ if (tide) {}</pre>
     );
   });
 
+  test("text whose white-space style is pre-line keeps its line breaks, and collapses the rest of its white space, as a browser shows it", () => {
+    expect(
+      pasted(
+        '<div style="white-space:pre-line"><p>line  one  \n   line two</p><p><span>a</span>\n<span>b</span></p><p style="white-space:normal">c\nd</p></div>',
+      ),
+    ).toEqual(
+      doc(
+        p(text("line one"), { type: "hardBreak" }, text("line two")),
+        p(text("a"), { type: "hardBreak" }, text("b")),
+        p(text("c d")),
+      ),
+    );
+  });
+
   test("the rest of the white space of a paragraph that holds kept white space is collapsed, as a browser shows it", () => {
     expect(
       pasted(
@@ -302,6 +316,14 @@ if (tide) {}</pre>
       `</x a="<script>">${bold}`,
       // An SVG title, which holds HTML, which the cleaning leaves out.
       `<svg><title><b style="x">t</b><style>b{}</style></title></svg>${bold}`,
+      // The text of an element of text that HTML reads as HTML, within SVG
+      // or a select, whose end HTML reads within a value, and that of a
+      // script whose "<!--<script" takes it past its first end tag.
+      `<svg><title><b title="</title>" style="x">t</b></svg>${bold}`,
+      `<select><title><option title="</title>" style="x"></select>${bold}`,
+      `<script><!--<script></script><b title="</script><b style=x>">${bold}`,
+      // An xmp within SVG, whose text HTML reads as HTML.
+      `<svg><xmp><style>*{}</style><b style="font-style:italic">x</b></xmp></svg>${bold}`,
     ];
     const parse = vi.spyOn(DOMParser.prototype, "parseFromString");
     let parsed: string[] = [];
@@ -309,6 +331,22 @@ if (tide) {}</pre>
       for (const html of shapes) {
         expect(pasted(html), html).toEqual(doc(p(text("a", "bold"))));
       }
+      // A "<" before a style element begins no tag with what follows it.
+      expect(
+        pasted(
+          `<<style></style>textarea><!--</textarea><b style="x">-->${bold}`,
+        ),
+      ).toEqual(doc(p(text("<textarea>")), p(text("a", "bold"))));
+      // A plaintext within MathML, and an xmp within a frameset, of which
+      // HTML reads the text as HTML, show nothing, and an xmp elsewhere
+      // shows its text.
+      expect(pasted('<math><plaintext><b style="x">t</b>')).toEqual(doc(p()));
+      expect(pasted('<frameset><xmp><frame style="x"></xmp>')).toEqual(
+        doc(p()),
+      );
+      expect(pasted('<xmp><b style="x">t</b></xmp>')).toEqual(
+        doc(p(text('<b style="x">t</b>'))),
+      );
       // A value that is not quoted holds what follows it.
       expect(
         pasted(
@@ -377,12 +415,23 @@ if (tide) {}</pre>
       }
       return parsed;
     };
-    /** Returns the HTML of a document's body, which the cleaning reads, without the text of the elements whose text it leaves out, which the cleaning parses as HTML. */
+    /** Returns the HTML of a document's body, which the cleaning reads, without the text of the elements whose text it leaves out, which the cleaning leaves out before it parses the HTML, or the comments, as the one that a style element leaves. */
     const shown = (parsed: Document) => {
       for (const element of parsed.querySelectorAll(
         "script, textarea, title, iframe, noembed, noframes",
       )) {
         element.textContent = "";
+      }
+      const comments = parsed.createTreeWalker(
+        parsed.body,
+        NodeFilter.SHOW_COMMENT,
+      );
+      const found: Node[] = [];
+      while (comments.nextNode() !== null) {
+        found.push(comments.currentNode);
+      }
+      for (const comment of found) {
+        comment.parentNode?.removeChild(comment);
       }
       parsed.body.normalize();
       return parsed.body.outerHTML;
@@ -451,17 +500,40 @@ if (tide) {}</pre>
     expect(storedOf(editor.state.doc).doc).toEqual(doc(p(text("Save"))));
   });
 
+  test("a paste of which nothing is kept, as of only an image, leaves the selection, and one of only white space pastes it over the selection", () => {
+    const editor = testEditor();
+    const clipboard = (plain: string) =>
+      Object.assign(new Event("paste"), {
+        clipboardData: {
+          getData: (type: string) => (type === "text/plain" ? plain : ""),
+        },
+      }) as unknown as ClipboardEvent;
+    editor.commands.setContent(doc(p(text("Tide and shore"))));
+    editor.commands.setTextSelection({ from: 5, to: 9 });
+    editor.view.pasteHTML(
+      '<img src="https://example.com/a.png">',
+      clipboard(""),
+    );
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("Tide and shore"))),
+    );
+    editor.view.pasteHTML("<span> </span>", clipboard(" "));
+    expect(storedOf(editor.state.doc).doc).toEqual(doc(p(text("Tide  shore"))));
+  });
+
   test("a paragraph loses the line break that ends it, though white space follows it, and Word's line break that ends a paragraph, which Word writes twice, is one", () => {
     expect(
       pasted(
         "<p class=MsoNormal>Tide<br>\r\n<![if !supportLineBreakNewLine]><br>\r\n<![endif]><o:p></o:p></p>" +
-          "<p>High<br> </p><p>Low<br>&nbsp;</p>",
+          "<p>High<br> </p><p>Low<br>&nbsp;</p><p>Ebb <br></p><p>Flood<br><br></p>",
       ),
     ).toEqual(
       doc(
         p(text("Tide"), { type: "hardBreak" }),
         p(text("High")),
         p(text("Low")),
+        p(text("Ebb")),
+        p(text("Flood"), { type: "hardBreak" }),
       ),
     );
   });
@@ -473,7 +545,9 @@ if (tide) {}</pre>
         "<dialog><p>secret</p></dialog><dialog open><p>open dialog</p></dialog>" +
           "<details><summary>Folded</summary><p>folded away</p></details>" +
           "<details open><summary>Unfolded</summary><p>shown</p></details>" +
-          "<noembed><p>embed</p></noembed><noframes><p>frames</p></noframes><p>end</p>",
+          "<noembed><p>embed</p></noembed><noframes><p>frames</p></noframes>" +
+          '<div style="visibility:hidden"><p>unseen</p><p>not <span style="visibility:visible">seen</span> but</p></div>' +
+          '<p style="visibility:hidden"><b>hidden</b></p><p>end</p>',
       ),
     ).toEqual(
       doc(
@@ -481,6 +555,7 @@ if (tide) {}</pre>
         p(text("Folded")),
         p(text("Unfolded")),
         p(text("shown")),
+        p(text("seen")),
         p(text("end")),
       ),
     );

@@ -153,10 +153,11 @@ describe("the rich-text editor", () => {
     });
   });
 
-  test("says from the start that the text that it starts with is too long to save", () => {
+  test("says from the start that the text that it starts with is too long to save, and lets the user shorten it", () => {
     const { textbox } = renderEditor({
       defaultValue: paragraph("a".repeat(MAX_CHARS + 1)),
     });
+    expect(textbox.getAttribute("contenteditable")).toBe("true");
     expect(textbox.getAttribute("aria-invalid")).toBe("true");
     screen.getByRole("textbox", {
       name: "Body",
@@ -182,7 +183,9 @@ describe("the rich-text editor", () => {
         } as unknown as RichTextDoc,
       });
       expect(textbox.getAttribute("contenteditable")).toBe("false");
-      expect(textbox.getAttribute("aria-invalid")).toBe("true");
+      // It holds nothing that the user should mend, so that a refusal of
+      // the form takes the focus to the field that it is of instead.
+      expect(textbox.getAttribute("aria-invalid")).toBeNull();
       screen.getByRole("textbox", {
         name: "Body",
         description: /this version of the app cannot show/,
@@ -194,6 +197,27 @@ describe("the rich-text editor", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test("a text that it cannot keep says so before the page's error, which marks it invalid", () => {
+    const { textbox } = renderEditor({
+      defaultValue: {
+        content: [
+          {
+            attrs: { align: "center" },
+            content: [{ text: "Tide", type: "text" }],
+            type: "paragraph",
+          },
+        ],
+        type: "doc",
+      } as unknown as RichTextDoc,
+      error: "The server refused it.",
+    });
+    expect(textbox.getAttribute("aria-invalid")).toBe("true");
+    screen.getByRole("textbox", {
+      name: "Body",
+      description: /this version of the app cannot show/,
+    });
   });
 
   // A list of one item of text, nested within as many lists as depth.
@@ -229,6 +253,17 @@ describe("the rich-text editor", () => {
       what: "lists nested deeper than this version allows",
       content: [nested(6), paragraph("Shore").content[0]],
     },
+    {
+      what: "a text too long, with an attribute that this version does not have after the text that takes it over the limit",
+      content: [
+        paragraph("a".repeat(MAX_CHARS + 1)).content[0],
+        {
+          attrs: { align: "center" },
+          content: [{ text: "Tide", type: "text" }],
+          type: "paragraph",
+        },
+      ],
+    },
   ])(
     "a text that the server would refuse for anything but its size, as one of $what, cannot be changed either, so that no change elsewhere in it saves it changed",
     async ({ content }) => {
@@ -246,7 +281,7 @@ describe("the rich-text editor", () => {
     },
   );
 
-  test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar", () => {
+  test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar, and takes the focus, as from a click on its label", async () => {
     const { textbox } = renderEditor({
       defaultValue: paragraph("Read only"),
       editable: false,
@@ -254,11 +289,15 @@ describe("the rich-text editor", () => {
     });
     expect(textbox.getAttribute("aria-readonly")).toBe("true");
     expect(textbox.getAttribute("contenteditable")).toBe("false");
+    expect(textbox.getAttribute("aria-invalid")).toBe("true");
     screen.getByRole("textbox", {
       name: "Body",
       description: "The server refused it.",
     });
     expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(textbox.tabIndex).toBe(0);
+    await userEvent.click(screen.getByText("Body"));
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
   });
 
   test("shows a mention and a value reference by the names that the page gives, and by what they are when it knows none", () => {

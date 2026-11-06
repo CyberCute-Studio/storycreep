@@ -6,10 +6,11 @@
 // list elements or of Word's paragraphs of a list (mso-list), lists, nested
 // by their levels; its bold, italic, struck-through, and code text, by
 // element or by style, the marks; its links that a link may lead to
-// (storedHref) links; its line breaks hard breaks; and its white space,
-// which a pre or a white-space style keeps, kept. What no text shows, as a
-// script, a style sheet, an image, a comment, a hidden element, or the
-// bullet or number of a list item that Word writes out, is left out. Neither
+// (storedHref) links; its line breaks hard breaks; and its white space and
+// the line breaks of its text, which a pre or a white-space style keeps,
+// kept. What no text shows, as a script, a style sheet, an image, a comment,
+// a hidden element, or the bullet or number of a list item that Word writes
+// out, is left out. Neither
 // the pasted HTML, as it is parsed, nor the cleaned HTML has a style
 // attribute or a style element, which the page's Content-Security-Policy
 // refuses (style-src-attr, style-src-elem) in a document that DOMParser
@@ -83,10 +84,17 @@ interface Context {
   list?: Element;
   /** Whether white space and line breaks are kept, as in a pre, or in an element whose white-space is one of KEPT_SPACE. */
   keep: boolean;
+  /** Whether line breaks are kept, as where white space is, or in an element whose white-space is pre-line, which collapses the rest of the white space. */
+  lines: boolean;
+  /** Whether the text is shown, as no visibility:hidden hides it, which visibility:visible undoes within it. */
+  shown: boolean;
 }
 
 /** The values of the white-space style that keep white space and line breaks, as a pre does, and as Google Docs's and Word Online's text has them. */
 const KEPT_SPACE = new Set(["pre", "pre-wrap", "break-spaces"]);
+
+/** The value of the white-space style that keeps line breaks, but collapses the rest of the white space. */
+const KEPT_LINES = "pre-line";
 
 /** The elements whose content no text shows, or that hold no text of the document's. */
 const SKIPPED = new Set([
@@ -219,54 +227,40 @@ const ATTRIBUTE = new RegExp(
   "g",
 );
 
-/**
- * Returns the expression of the parts of HTML that unstyled reads, each
- * where HTML's tokenizer reads it, as it reads HTML outside SVG and MathML:
- * a comment, which "-->" or "--!>" ends, or ">" or "->" right after its
- * "<!--"; a DOCTYPE, a processing instruction, CDATA, and "</" before what
- * is no letter, which it reads up to the first ">", as a comment; an end
- * tag; an element of raw, whose content is text up to its end tag, as a
- * style sheet or a script; where plaintext is true, a plaintext, whose
- * content is text to the end of the HTML; and a start tag. What nothing ends
- * goes on to the end of the HTML, as in HTML.
- */
-function partsOf(raw: readonly string[], plaintext: boolean): RegExp {
-  const name = "[^\\t\\n\\f\\r />]*";
-  return new RegExp(
-    [
-      "<!--(?:-?>|[\\s\\S]*?(?:--!?>|$))",
-      "<[!?][^>]*>?",
-      "</(?![a-z])[^>]*>?",
-      `</[a-z]${name}${ATTRIBUTES}>?`,
-      `<(?<raw>${raw.join("|")})${NAME_END}(?<rawAttributes>${ATTRIBUTES})(?<rawClose>>?)(?<rawText>[\\s\\S]*?)(?<rawEnd></\\k<raw>${NAME_END}${ATTRIBUTES}>?|$)`,
-      ...(plaintext
-        ? [
-            `<(?<plain>plaintext)${NAME_END}(?<plainAttributes>${ATTRIBUTES})(?<plainText>[\\s\\S]*)`,
-          ]
-        : []),
-      `<(?<start>[a-z]${name})(?<attributes>${ATTRIBUTES})(?<close>>?)`,
-    ].join("|"),
-    "gi",
-  );
-}
+/** The name of a tag, after its first letter, as HTML's tokenizer reads it. */
+const TAG_NAME = "[^\\t\\n\\f\\r />]*";
 
-/** The parts of the pasted HTML (partsOf), of whose elements of text the cleaning shows only xmp's, and leaves the others out (SKIPPED). */
-const PARTS = partsOf(
+/**
+ * The parts of HTML that unstyled reads, each where HTML's tokenizer reads
+ * it, as it reads HTML outside SVG and MathML: a comment, which "-->" or
+ * "--!>" ends, or ">" or "->" right after its "<!--"; a DOCTYPE, a
+ * processing instruction, CDATA, and "</" before what is no letter, which it
+ * reads up to the first ">", as a comment; an end tag; an element of text,
+ * whose content is text up to its end tag, as a style sheet, a script, or an
+ * xmp, of which the cleaning shows only xmp's, and leaves the others out
+ * (SKIPPED); a plaintext, whose content is text to the end of the HTML; and a
+ * start tag. What nothing ends goes on to the end of the HTML, as in HTML.
+ */
+const PARTS = new RegExp(
   [
-    "script",
-    "style",
-    "textarea",
-    "title",
-    "xmp",
-    "iframe",
-    "noembed",
-    "noframes",
-  ],
-  true,
+    "<!--(?:-?>|[\\s\\S]*?(?:--!?>|$))",
+    "<[!?][^>]*>?",
+    "</(?![a-z])[^>]*>?",
+    `</[a-z]${TAG_NAME}${ATTRIBUTES}>?`,
+    `<(?<raw>script|style|textarea|title|xmp|iframe|noembed|noframes)${NAME_END}(?<rawAttributes>${ATTRIBUTES})(?<rawClose>>?)(?<rawText>[\\s\\S]*?)(?<rawEnd></\\k<raw>${NAME_END}${ATTRIBUTES}>?|$)`,
+    `<(?<plain>plaintext)${NAME_END}(?<plainAttributes>${ATTRIBUTES})(?<plainClose>>?)(?<plainText>[\\s\\S]*)`,
+    `<(?<start>[a-z]${TAG_NAME})(?<attributes>${ATTRIBUTES})(?<close>>?)`,
+  ].join("|"),
+  "gi",
 );
 
-/** The parts of the text of an element whose text the cleaning leaves out, as a script's, of which only a style element's content is text: HTML reads it as HTML within SVG and MathML, as in an SVG title, which holds HTML. */
-const TEXT_PARTS = partsOf(["style"], false);
+/**
+ * The start tags after which HTML may read what follows an xmp's or a
+ * plaintext's start tag as HTML, rather than as their text: SVG's and
+ * MathML's, within which they are elements of no text, and a select's and a
+ * frameset's, within which HTML may leave their start tags out.
+ */
+const MARKUP_AFTER = /^(?:svg|math|select|frameset)$/i;
 
 /** Returns the attributes of a tag (ATTRIBUTES) with the name of its style attributes STYLE. */
 function renamed(attributes = ""): string {
@@ -283,26 +277,36 @@ function renamed(attributes = ""): string {
  * document that DOMParser makes of it has neither: a browser applies the
  * page's Content-Security-Policy to such a document too, which refuses both
  * (style-src-attr and style-src-elem), reports them, and leaves the
- * element's style empty. The text of an element that the cleaning leaves
- * out, as a script, is read as HTML too (TEXT_PARTS), and xmp's and
- * plaintext's, which it shows, are left as they are.
+ * element's style empty. A style element leaves an empty comment in its
+ * place, so that a "<" before it begins no tag with what follows it. The
+ * other elements of text whose text the cleaning leaves out, as a script or
+ * a title, keep their tags but not their text: HTML reads that text as HTML
+ * within SVG, MathML, a select, or a frameset, and a script's up to a later
+ * end tag than its first where it holds "<!--" and "<script", which unstyled
+ * cannot tell apart, and an element without text is the same either way. So
+ * are an xmp and a plaintext, whose text the cleaning shows, after a start
+ * tag of SVG, MathML, a select, or a frameset (MARKUP_AFTER). So HTML reads
+ * all that is left as unstyled reads it.
  */
-function unstyled(html: string, parts = PARTS): string {
-  return html.replace(parts, (part, ...args) => {
+function unstyled(html: string): string {
+  // Whether a start tag has been read after which HTML may read the text of
+  // an xmp or a plaintext as HTML.
+  let markup = false;
+  return html.replace(PARTS, (part, ...args) => {
     const g = args.at(-1) as Partial<Record<string, string>>;
     if (g.raw !== undefined) {
       const name = g.raw.toLowerCase();
       if (name === "style") {
-        return "";
+        return "<!---->";
       }
-      const text =
-        name === "xmp" ? g.rawText : unstyled(g.rawText ?? "", TEXT_PARTS);
+      const text = name === "xmp" && !markup ? g.rawText : "";
       return `<${g.raw}${renamed(g.rawAttributes)}${g.rawClose}${text}${g.rawEnd}`;
     }
     if (g.plain !== undefined) {
-      return `<${g.plain}${renamed(g.plainAttributes)}${g.plainText}`;
+      return `<${g.plain}${renamed(g.plainAttributes)}${g.plainClose}${markup ? "" : g.plainText}`;
     }
     if (g.start !== undefined) {
+      markup ||= MARKUP_AFTER.test(g.start);
       return `<${g.start}${renamed(g.attributes)}${g.close}`;
     }
     return part;
@@ -312,9 +316,9 @@ function unstyled(html: string, parts = PARTS): string {
 /**
  * Gives each element of the parsed HTML the style that its attribute (STYLE)
  * writes, through the CSSOM, which the page's policy allows, so that styleOf
- * reads it; a style attribute that unstyled did not rename, as within SVG or
- * MathML, whose elements HTML's tokenizer reads otherwise, which the browser
- * may have refused, is read the same.
+ * reads it; a style attribute that unstyled did not rename, should HTML have
+ * read one where unstyled reads none, which the browser may have refused, is
+ * read the same.
  */
 function applyStyles(source: Document) {
   for (const element of source.querySelectorAll(`[${STYLE}], [style]`)) {
@@ -398,16 +402,43 @@ function strikeOf(element: Element, name: string): boolean {
   );
 }
 
-/** Reports whether the element is not shown, by its style or its hidden attribute, or as a dialog that is not open. */
+/** Reports whether the element is not shown, with what it holds, by its style or its hidden attribute, or as a dialog that is not open. */
 function hidden(element: Element): boolean {
   return (
     element.hasAttribute("hidden") ||
     (element.localName.toLowerCase() === "dialog" &&
       !element.hasAttribute("open")) ||
     styleOf(element, "display") === "none" ||
-    styleOf(element, "visibility") === "hidden" ||
     /mso-hide\s*:\s*all/i.test(rawStyleOf(element))
   );
+}
+
+/** Returns whether an element's text is shown by its visibility, of which what holds it says shown: hidden hides it, and visible shows it within what is hidden. */
+function shownOf(element: Element, shown: boolean): boolean {
+  const visibility = styleOf(element, "visibility");
+  return visibility === "hidden"
+    ? false
+    : visibility === "visible"
+      ? true
+      : shown;
+}
+
+/** Returns the elements of source that hold an element of visibility:visible, which shows what it holds within one of visibility:hidden. */
+function visibleWithin(source: Document): Set<Element> {
+  const holders = new Set<Element>();
+  for (const element of source.querySelectorAll(`[${STYLE}]`)) {
+    if (styleOf(element, "visibility") !== "visible") {
+      continue;
+    }
+    for (
+      let e = element.parentElement;
+      e !== null && !holders.has(e);
+      e = e.parentElement
+    ) {
+      holders.add(e);
+    }
+  }
+  return holders;
 }
 
 /**
@@ -486,9 +517,12 @@ class Reader {
   private readonly faithful: boolean;
   /** The list elements of which the walk has read an item. */
   private readonly begun = new Set<Element>();
+  /** The elements that hold one of visibility:visible (visibleWithin), which the walk reads though they are not shown. */
+  private readonly holdsVisible: Set<Element>;
 
-  constructor(faithful: boolean) {
+  constructor(faithful: boolean, holdsVisible: Set<Element>) {
     this.faithful = faithful;
+    this.holdsVisible = holdsVisible;
   }
 
   /** Ends the paragraph that inline content went to. */
@@ -523,7 +557,10 @@ class Reader {
     }
     const element = node as Element;
     const name = element.localName.toLowerCase();
-    if (dropped(element, name)) {
+    // What is not shown is left out with what it holds, but for what shows
+    // within it.
+    const shown = shownOf(element, ctx.shown);
+    if (dropped(element, name) || (!shown && !this.holdsVisible.has(element))) {
       return;
     }
     if (name === "br") {
@@ -532,14 +569,16 @@ class Reader {
     }
     const chip = chipOf(element);
     if (chip !== undefined) {
-      this.paragraph().runs.push({
-        kind: "chip",
-        attrs: chip,
-        marks: marksOf(ctx.marks),
-      });
+      if (shown) {
+        this.paragraph().runs.push({
+          kind: "chip",
+          attrs: chip,
+          marks: marksOf(ctx.marks),
+        });
+      }
       return;
     }
-    const inner = this.contextOf(element, name, ctx);
+    const inner = this.contextOf(element, name, { ...ctx, shown });
     if (!BLOCKS.has(name)) {
       this.children(element, inner);
       return;
@@ -581,12 +620,12 @@ class Reader {
       this.pendingItem = item;
       this.itemLevel = name === "li" ? item.level : undefined;
     }
-    if (this.faithful && TEXTBLOCKS.has(name)) {
+    if (this.faithful && TEXTBLOCKS.has(name) && inner.shown) {
       this.paragraph();
     }
     this.children(element, inner);
     if (item !== undefined) {
-      if (this.pendingItem === item) {
+      if (this.pendingItem === item && inner.shown) {
         // An empty item is an empty paragraph of its list.
         this.paragraph();
       }
@@ -626,12 +665,16 @@ class Reader {
         href === null ? marks.href : (storedHref(href) ?? marks.href);
     }
     // White space is kept in a pre, and as an element's white-space, which
-    // what it holds takes, says.
+    // what it holds takes, says, and so are line breaks, and they alone as
+    // its pre-line says.
     const space = styleOf(element, "white-space");
+    const keep =
+      space === "" ? ctx.keep || name === "pre" : KEPT_SPACE.has(space);
     const inner: Context = {
       ...ctx,
       marks,
-      keep: space === "" ? ctx.keep || name === "pre" : KEPT_SPACE.has(space),
+      keep,
+      lines: keep || (space === "" ? ctx.lines : space === KEPT_LINES),
     };
     if (name === "ul" || name === "ol" || name === "menu" || name === "dir") {
       inner.lists = ctx.lists + 1;
@@ -653,11 +696,14 @@ class Reader {
 
   private text(value: string, ctx: Context) {
     // White space between blocks is no paragraph, but where it is kept.
-    if (this.current === undefined && !ctx.keep && HTML_SPACE.test(value)) {
+    if (
+      !ctx.shown ||
+      (this.current === undefined && !ctx.keep && HTML_SPACE.test(value))
+    ) {
       return;
     }
     const marks = marksOf(ctx.marks);
-    if (!ctx.keep) {
+    if (!ctx.lines) {
       this.paragraph().runs.push({
         kind: "text",
         text: value,
@@ -666,15 +712,23 @@ class Reader {
       });
       return;
     }
-    // Kept text keeps its lines, each after a line break, and their white
-    // space.
-    value.split(/\r\n?|\n/).forEach((line, i) => {
+    // Text whose line breaks are kept keeps its lines, each after a line
+    // break, and their white space where it is kept too; otherwise the white
+    // space around a line break goes, as pre-line has it, and the rest
+    // collapses (collapsed).
+    const lines = value.split(/\r\n?|\n/);
+    lines.forEach((line, i) => {
       const para = this.paragraph();
       if (i > 0) {
         para.runs.push({ kind: "break" });
       }
-      if (line !== "") {
-        para.runs.push({ kind: "text", text: line, marks, keep: true });
+      const text = ctx.keep
+        ? line
+        : line
+            .replace(i > 0 ? /^[ \t\f]+/ : /^/, "")
+            .replace(i < lines.length - 1 ? /[ \t\f]+$/ : /$/, "");
+      if (text !== "") {
+        para.runs.push({ kind: "text", text, marks, keep: ctx.keep });
       }
     });
   }
@@ -787,27 +841,41 @@ function blocksOf(paras: readonly Para[], faithful: boolean): Block[] {
 }
 
 /**
- * Returns a paragraph's runs as a block shows them: without the line break
- * that ends it, which a browser shows nothing of, and without the white
- * space at its end, as the no-break spaces of Word's empty paragraphs and of
- * Word Online's ends of paragraphs.
+ * Returns a paragraph's runs as a block shows them: without the white space
+ * at its end, as the no-break spaces of Word's empty paragraphs and of Word
+ * Online's ends of paragraphs, or before the line break that ends it, which
+ * a browser shows nothing of, and which ProseMirror's parser of what is
+ * pasted leaves out of the cleaned HTML as it is the last of its paragraph,
+ * so that a paragraph that ends in two line breaks, which shows the first,
+ * keeps it.
  */
 function tidy(runs: readonly Run[]): Run[] {
-  const out = runs.at(-1)?.kind === "break" ? runs.slice(0, -1) : [...runs];
-  while (out.length > 0) {
-    const last = out[out.length - 1];
+  const out = [...runs];
+  trimEnd(out);
+  const last = out.at(-1);
+  if (last?.kind === "break") {
+    out.pop();
+    trimEnd(out);
+    out.push(last);
+  }
+  return out;
+}
+
+/** Takes the white space at the end of runs off them, up to what is no text. */
+function trimEnd(runs: Run[]) {
+  while (runs.length > 0) {
+    const last = runs[runs.length - 1];
     if (last.kind !== "text") {
-      break;
+      return;
     }
     // \s holds the no-break space too.
     const text = last.text.replace(/\s+$/u, "");
     if (text !== "") {
-      out[out.length - 1] = { ...last, text };
-      break;
+      runs[runs.length - 1] = { ...last, text };
+      return;
     }
-    out.pop();
+    runs.pop();
   }
-  return out;
 }
 
 /** Reports whether runs hold text whose white space is kept. */
@@ -987,12 +1055,14 @@ export function cleanPastedHTML(html: string): string {
   const source = new DOMParser().parseFromString(unstyled(html), "text/html");
   applyStyles(source);
   const slice = sliceOf(source);
-  const reader = new Reader(slice !== undefined);
+  const reader = new Reader(slice !== undefined, visibleWithin(source));
   reader.read(source.body, {
     marks: { bold: false, italic: false, strike: false, code: false },
     lists: 0,
     ordered: false,
     keep: false,
+    lines: false,
+    shown: true,
   });
   const out = document.implementation.createHTMLDocument("");
   writeBlocks(out, out.body, blocksOf(reader.paras, slice !== undefined));

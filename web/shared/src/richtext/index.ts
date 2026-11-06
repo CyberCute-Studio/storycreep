@@ -21,4 +21,5 @@ export {
   richTextLength,
   stringifyRichText,
   tryParseRichText,
+  tryParseRichTextOfAnySize,
 } from "./parse";
