@@ -7,7 +7,13 @@ import type {
   ProjectBody,
   Variable,
 } from "@storycreep/shared/api";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertedTo, optionsOf, parseValue } from "./content/values";
@@ -312,13 +318,18 @@ describe("the variables", () => {
       session: testSession,
     });
     const list = await screen.findByRole("list", { name: "All variables" });
-    expect(within(list).getByRole("button", { name: /^met_elara/ })).toBeDefined();
+    expect(
+      within(list).getByRole("button", { name: /^met_elara/ }),
+    ).toBeDefined();
     expect(
       within(list).getByRole("button", { name: "Quests", expanded: true }),
     ).toBeDefined();
     expect(within(list).getByRole("button", { name: /^tries/ })).toBeDefined();
     expect(screen.getByText("3 variables")).toBeDefined();
-    await user.type(screen.getByLabelText("Filter by key or description"), "SPOKE");
+    await user.type(
+      screen.getByLabelText("Filter by key or description"),
+      "SPOKE",
+    );
     await waitFor(() =>
       expect(screen.getByText("1 of 3 variables matches.")).toBeDefined(),
     );
@@ -399,7 +410,10 @@ describe("the variables", () => {
     await user.clear(value);
     await user.type(value, "2.5");
     await user.type(within(panel).getByLabelText("Description"), "Tries left");
-    await user.selectOptions(within(panel).getByLabelText("Folder"), "fld_quests");
+    await user.selectOptions(
+      within(panel).getByLabelText("Folder"),
+      "fld_quests",
+    );
     await user.click(
       within(panel).getByRole("button", { name: "Save the variable" }),
     );
@@ -622,7 +636,7 @@ describe("the variables", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(
       await within(dialog).findByText(
-        "101 parts of the project use it: 100 reading it, and 1 changing it. So it was not deleted.",
+        "It is used 101 times in the project: read 100 times, and changed once. So it was not deleted.",
       ),
     ).toBeDefined();
     const listed = within(dialog).getByRole("list", { name: "What uses rep" });
@@ -733,7 +747,9 @@ describe("the variables", () => {
       if (operation === "applyCommands") {
         const [command] = (
           input as {
-            body: { commands: { payload: Partial<Variable> & { id: string } }[] };
+            body: {
+              commands: { payload: Partial<Variable> & { id: string } }[];
+            };
           }
         ).body.commands;
         created = variable(command.payload.id, command.payload.key ?? "", {
@@ -768,7 +784,9 @@ describe("the variables", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "New variable" })).toBeNull(),
     );
-    expect(await screen.findByRole("region", { name: "door_open" })).toBeDefined();
+    expect(
+      await screen.findByRole("region", { name: "door_open" }),
+    ).toBeDefined();
     expect(batches(calls)).toEqual([
       [
         expect.objectContaining({
@@ -831,7 +849,10 @@ describe("the panel", () => {
       expect(document.activeElement?.textContent).toBe("rep"),
     );
     // The rest of the page is inert while the sheet is open.
-    const list = screen.getByRole("list", { hidden: true, name: "All variables" });
+    const list = screen.getByRole("list", {
+      hidden: true,
+      name: "All variables",
+    });
     expect(list.closest("[inert]")).not.toBeNull();
     const description = within(sheet).getByLabelText("Description");
     await user.type(description, "kept");
@@ -926,7 +947,11 @@ describe("the components", () => {
         }),
         expect.objectContaining({
           type: "component.set_attribute",
-          payload: { id: "cmp_elara", attribute_id: "atr_mood", value: "angry" },
+          payload: {
+            id: "cmp_elara",
+            attribute_id: "atr_mood",
+            value: "angry",
+          },
           expected_rev: { cmp_elara: 4 },
         }),
       ],
@@ -1008,15 +1033,20 @@ describe("the components", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(
       await within(dialog).findByText(
-        "2 parts of the project use it: 1 as a speaker, 0 in mentions, 1 reading its attributes, and 0 changing them. So it was not deleted.",
+        "It is used 2 times in the project: as a speaker once, in mentions nowhere, reading its attributes once, and changing them nowhere. So it was not deleted.",
       ),
     ).toBeDefined();
-    const listed = within(dialog).getByRole("list", { name: "What uses Elara" });
-    expect(within(listed).getAllByRole("listitem").map((i) => i.textContent))
-      .toEqual([
-        "Speaker · The speaker of Hello · Harbour",
-        "Reads · The description of Lamp · Open the component",
-      ]);
+    const listed = within(dialog).getByRole("list", {
+      name: "What uses Elara",
+    });
+    expect(
+      within(listed)
+        .getAllByRole("listitem")
+        .map((i) => i.textContent),
+    ).toEqual([
+      "Speaker · The speaker of Hello · Harbour",
+      "Reads · The description of Lamp · Open the component",
+    ]);
   });
 });
 
@@ -1057,10 +1087,7 @@ describe("the component types", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Change the type of mood",
     });
-    await user.selectOptions(
-      within(dialog).getByLabelText("New type"),
-      "bool",
-    );
+    await user.selectOptions(within(dialog).getByLabelText("New type"), "bool");
     expect(
       await within(dialog).findByText("Elara (elara), in the trash"),
     ).toBeDefined();
@@ -1073,7 +1100,9 @@ describe("the component types", () => {
         name: "Give every value the new default",
       }),
     );
-    expect(within(dialog).queryByText("Elara (elara), in the trash")).toBeNull();
+    expect(
+      within(dialog).queryByText("Elara (elara), in the trash"),
+    ).toBeNull();
     await user.click(
       within(dialog).getByRole("button", { name: "Change the type" }),
     );
@@ -1139,7 +1168,9 @@ describe("the component types", () => {
     await user.type(within(dialog).getByLabelText("Options"), "low\nhigh");
     await user.selectOptions(within(dialog).getByLabelText("Default"), "high");
     expect(
-      within(dialog).getByRole("checkbox", { name: "Part of the game's state" }),
+      within(dialog).getByRole("checkbox", {
+        name: "Part of the game's state",
+      }),
     ).toHaveProperty("disabled", false);
     await user.click(
       within(dialog).getByRole("button", { name: "Add the attribute" }),
