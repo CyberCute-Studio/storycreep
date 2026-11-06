@@ -10,9 +10,9 @@ import {
   useProjectDocument,
   useTree,
 } from "../document/react";
-import { editsProject, projectQuery } from "../project/queries";
+import { editsProject, loadParts, projectQuery } from "../project/queries";
 import { buildTree, itemsInOrder } from "../project/tree";
-import { canonicalId, found } from "../shell/found";
+import { canonicalId } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { SelectField } from "../ui/Field";
@@ -32,23 +32,9 @@ export const Route = createFileRoute("/projects/$projectId/variables")({
     typeof search.variable === "string" && search.variable !== ""
       ? { variable: canonicalId("variable", search.variable) }
       : {},
-  // The project comes first, as for the tree of its boards, and then the
-  // variables and the boards, which a board's variable is of, at once. What
-  // the document held already of either, which the real-time channel does
-  // not keep current while it is not live, is shown as it is, and read anew.
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
-    );
-    const doc = documents.get(project.id);
-    const held = (["variables", "tree"] as const).filter((part) =>
-      doc.holds(part),
-    );
-    await Promise.all([found(doc.load("variables")), found(doc.load("tree"))]);
-    for (const part of held) {
-      void doc.refresh(part).catch(() => undefined);
-    }
-  },
+  // The variables, and the boards, which a board's variable is of.
+  loader: ({ context, params }) =>
+    loadParts(context, params.projectId, ["variables", "tree"]),
   // As for the tree of the project's boards (projects.$projectId.index.tsx).
   gcTime: 0,
   component: VariablesPage,

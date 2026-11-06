@@ -18,8 +18,7 @@ import {
   SaveStatus,
   useEntityForm,
 } from "../content/form";
-import { typeName } from "../content/ValueField";
-import { textOf } from "../content/values";
+import { typeName, valueText } from "../content/ValueField";
 import { Confirm, payloadField, useExpected } from "../project/dialogs";
 import { keyAfterSibling, keyBeforeSibling } from "../project/orderkey";
 import { type Command, useCommands } from "../project/queries";
@@ -333,7 +332,7 @@ function Definitions({ project, type, editable }: TypePanelProps) {
                   <p className="text-sm break-words text-fg-muted">
                     {t("component_type.attribute_detail", {
                       type: typeName(t, definition.type),
-                      default: textOf(definition.default),
+                      default: valueText(t, definition.default),
                       runtime: definition.runtime ? "yes" : "no",
                     })}
                   </p>

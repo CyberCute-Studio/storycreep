@@ -8,9 +8,9 @@ import { typesByName } from "../components/types";
 import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
 import type { ComponentEntry } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
-import { editsProject, projectQuery } from "../project/queries";
+import { editsProject, loadParts, projectQuery } from "../project/queries";
 import { buildTree, itemsInOrder } from "../project/tree";
-import { canonicalId, found } from "../shell/found";
+import { canonicalId } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { SelectField } from "../ui/Field";
@@ -27,19 +27,9 @@ export const Route = createFileRoute("/projects/$projectId/components")({
     typeof search.component === "string" && search.component !== ""
       ? { component: canonicalId("component", search.component) }
       : {},
-  // As for the variables (projects.$projectId.variables.tsx): the
-  // components' part holds their types and folders too.
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
-    );
-    const doc = documents.get(project.id);
-    const held = doc.holds("components");
-    await found(doc.load("components"));
-    if (held) {
-      void doc.refresh("components").catch(() => undefined);
-    }
-  },
+  // The components' part holds their types and folders too.
+  loader: ({ context, params }) =>
+    loadParts(context, params.projectId, ["components"]),
   gcTime: 0,
   component: ComponentsPage,
 });

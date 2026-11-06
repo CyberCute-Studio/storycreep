@@ -175,12 +175,13 @@ export function RenameKeyDialog({
   // The key as the field holds it, without the white space around it, as
   // the dialogs that create a component or a variable read theirs.
   const key = field.trim();
-  // The key that the field started at, which the dialog opened with: left
-  // as it is, or made the key that the variable or the component has now,
-  // as once it was renamed elsewhere meanwhile, it renames nothing, rather
-  // than rename the key back to what it was, over the other session's.
-  const [opened] = useState(renamed.key);
-  const unchanged = key === opened || key === renamed.key;
+  // The field left as it opened, or made the key that the variable or the
+  // component has now, renames nothing: left so, once the key was renamed
+  // elsewhere meanwhile, it does not rename the key back to what it was,
+  // over the other session's, while a key that the user typed, the old one
+  // too, renames it.
+  const [edited, setEdited] = useState(false);
+  const unchanged = !edited || key === renamed.key;
   // The key whose preview the dialog shows, which renaming waits for.
   const [previewed, setPreviewed] = useState<string>();
   const commands = useCommands(projectId);
@@ -310,7 +311,10 @@ export function RenameKeyDialog({
             maxLength={64}
             className="min-h-11 w-full rounded-md border border-border bg-canvas px-3 font-mono text-fg"
             value={field}
-            onChange={(event) => setField(event.currentTarget.value)}
+            onChange={(event) => {
+              setField(event.currentTarget.value);
+              setEdited(true);
+            }}
             error={refusal?.fields.key}
           />
           {previewed === key && !unchanged && (

@@ -17,7 +17,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { focusContentIfLost } from "../shell/focus";
+import { focusContentIfLost, focusIsNowhere } from "../shell/focus";
 import { Button } from "./Button";
 
 /** The width of the window, in CSS pixels, from which a panel is docked rather than a sheet. */
@@ -166,9 +166,9 @@ export interface PanelProps {
    */
   onClose: () => void;
   /**
-   * Returns the control that gets the focus once the panel has gone, as the
-   * list's item that opened it, or null for none, as once the item has gone,
-   * when the page's content gets it.
+   * Returns the control that gets the focus once the panel has gone, if the
+   * panel had it, as the list's item that opened it, or null for none, as
+   * once the item has gone, when the page's content gets it.
    */
   returnFocus: () => HTMLElement | null;
   children: ReactNode;
@@ -179,7 +179,8 @@ export interface PanelProps {
  * keyboard or a screen reader is in it, rather than in the list that it is
  * beside, which may be a thousand items long; a page shows another thing's
  * panel anew, keyed by the thing, which gives that one's heading the focus
- * too. Once it has gone, the focus goes back to what returnFocus finds.
+ * too. Once it has gone, the focus that it had goes back to what
+ * returnFocus finds.
  */
 export function Panel({
   title,
@@ -217,8 +218,20 @@ export function Panel({
     return undo;
   }, [sheet]);
   useLayoutEffect(() => {
+    const element = frame.current;
     heading.current?.focus();
     return () => {
+      // The focus goes back to the list from the panel alone, or from
+      // nowhere: the focus elsewhere stays where it is, as in a dialog of
+      // the list's folders while another session deletes what the panel
+      // shows, which would take it back from the list's item, selecting
+      // what was typed in its field.
+      if (
+        !focusIsNowhere(document) &&
+        !(element?.contains(document.activeElement) ?? false)
+      ) {
+        return;
+      }
       // React undoes a component's effects in the order that it declares
       // them, so the page's other controls are no longer inert by now.
       const control = back.current();

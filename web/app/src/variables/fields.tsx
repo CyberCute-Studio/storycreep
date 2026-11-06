@@ -90,8 +90,9 @@ export function VariableFields({
   const [scope, setScope] = useState(shown.scope);
   // The board that the user chose, or that the variable is of, or else the
   // first, as the list has it now, as once a board was made elsewhere of a
-  // project that had none as the fields were shown.
-  const [chosenBoard, setBoardId] = useState(shown.board_id ?? boards[0]?.id);
+  // project that had none as the fields were shown, or once the board that
+  // was first then went to the trash elsewhere.
+  const [chosenBoard, setBoardId] = useState(shown.board_id);
   const boardId = chosenBoard ?? boards[0]?.id ?? "";
   const [reset, setReset] = useState(shown.reset_on_enter);
   const board = boards.find((b) => b.id === boardId);

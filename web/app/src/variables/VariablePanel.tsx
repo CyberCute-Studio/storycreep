@@ -20,8 +20,8 @@ import {
 } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
 import { Usages, variableUsagesQuery } from "../content/usages";
-import { typeName, valueError } from "../content/ValueField";
-import { parseValue, textOf, type Value } from "../content/values";
+import { typeName, valueError, valueText } from "../content/ValueField";
+import { parseValue, type Value } from "../content/values";
 import { chosenFolder, payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
 import type { Tree } from "../project/tree";
@@ -104,7 +104,7 @@ function VariableView({ variable, boards, tree }: VariablePanelProps) {
       <dd>{typeName(t, variable.type)}</dd>
       <dt className="text-fg-muted">{t("variable.default")}</dt>
       <dd className="font-mono break-all whitespace-pre-wrap">
-        {textOf(variable.default)}
+        {valueText(t, variable.default)}
       </dd>
       <dt className="text-fg-muted">{t("variable.scope")}</dt>
       <dd>{scopeName(t, variable.scope, board)}</dd>
@@ -271,10 +271,17 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
         return t("variable.description");
       case "key":
         return t("variable.key");
+      // Its place in its folder, which a move changes with the folder.
+      case "order":
+        return t("content.place");
     }
     return t("content.folder");
   };
   const shownValue = (field: string, value: unknown) => {
+    // A place in a folder is a key of the order, which reads as nothing.
+    if (field === "order") {
+      return undefined;
+    }
     if (field === "folder_id") {
       const folder =
         typeof value === "string" ? tree.byId.get(value) : undefined;
@@ -301,6 +308,11 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
       return t("variable.reset_shown", {
         reset: value === true ? "yes" : "no",
       });
+    }
+    // A default as the view of the variable shows it, a bool's as its
+    // choice names it.
+    if (field === "default" && value !== undefined && value !== null) {
+      return valueText(t, value as Value);
     }
     return value === undefined || value === null ? "" : String(value);
   };

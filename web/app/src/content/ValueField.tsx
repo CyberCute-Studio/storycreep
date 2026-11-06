@@ -40,6 +40,18 @@ export function typeName(
   return t("value.type", { type });
 }
 
+/** Returns the text that a page shows of value where no field holds it, as a viewer's panel: a bool as its field's choice names it, in the page's locale. */
+export function valueText(
+  t: ReturnType<typeof useTranslation>["t"],
+  value: Value,
+): string {
+  return typeof value === "boolean"
+    ? value
+      ? t("value.true")
+      : t("value.false")
+    : textOf(value);
+}
+
 export function ValueField({
   label,
   hint,

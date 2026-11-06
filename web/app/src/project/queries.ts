@@ -19,8 +19,11 @@ import {
   useMutation,
 } from "@tanstack/react-query";
 import { allAtOnce, api, everyPage, pagedQuery } from "../api";
+import type { Part } from "../document/doc";
+import type { Documents } from "../document/documents";
 import { useProjectDocument } from "../document/react";
 import type { Command } from "../document/store";
+import { found } from "../shell/found";
 
 export type { Command } from "../document/store";
 
@@ -39,6 +42,32 @@ export function projectQuery(projectId: string) {
         )
       ).body,
   });
+}
+
+/**
+ * Reads what a page of the project of projectId shows before it shows, as
+ * its loader: the project first, as for the tree of its boards
+ * (projects.$projectId.index.tsx), so that a project that the account may
+ * not see shows the page of no page before its document reads anything,
+ * and then the parts of its document that the page shows, at once. A part
+ * that the document held already, which the real-time channel does not
+ * keep current while it is not live, is shown as it is, and read anew; a
+ * read anew that fails is recorded, and tried again later.
+ */
+export async function loadParts(
+  context: { queryClient: QueryClient; documents: Documents },
+  projectId: string,
+  parts: readonly Part[],
+): Promise<void> {
+  const project = await found(
+    context.queryClient.ensureQueryData(projectQuery(projectId)),
+  );
+  const doc = context.documents.get(project.id);
+  const held = parts.filter((part) => doc.holds(part));
+  await Promise.all(parts.map((part) => found(doc.load(part))));
+  for (const part of held) {
+    void doc.refresh(part).catch(() => undefined);
+  }
 }
 
 /** Reports whether role changes a project's settings: renames, archives, and describes it (§5.6). */

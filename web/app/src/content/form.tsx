@@ -179,11 +179,17 @@ export function ConflictNotice({
   if (form.overlaps.length === 0) {
     return null;
   }
+  // An item's place in its folder (order), which a move to another folder
+  // changes with the folder, is what the folder's line says, where the
+  // folder changed elsewhere too.
+  const listed = form.overlaps.some((o) => o.field === "folder_id")
+    ? form.overlaps.filter((o) => o.field !== "order")
+    : form.overlaps;
   return (
     <div className="space-y-2 rounded-md border border-danger px-4 py-3">
       <p>{t("conflict.intro")}</p>
       <ul className="list-disc ps-5">
-        {form.overlaps.map((o) => {
+        {listed.map((o) => {
           const theirs = shownValue(o.field, o.theirs);
           const mine = shownValue(o.field, o.mine);
           return (

@@ -34,7 +34,12 @@ import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
 import { componentUsagesQuery, Usages } from "../content/usages";
-import { typeName, ValueField, valueError } from "../content/ValueField";
+import {
+  typeName,
+  ValueField,
+  valueError,
+  valueText,
+} from "../content/ValueField";
 import { parseValue, textOf, type Value } from "../content/values";
 import type { ComponentEntry } from "../document/doc";
 import { useProjectDocument } from "../document/react";
@@ -210,11 +215,12 @@ function AttributeValue({
   attribute: Attribute;
   value: Value;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       <dt className="break-words text-fg-muted">{attribute.name}</dt>
       <dd className="font-mono break-all whitespace-pre-wrap">
-        {textOf(value)}
+        {valueText(t, value)}
       </dd>
     </>
   );
@@ -423,6 +429,8 @@ function ComponentForm({
       }),
     );
   };
+  // The order is the component's place in its folder, which a move changes
+  // with the folder.
   const fieldName = (field: string) =>
     field === "name"
       ? t("component.name")
@@ -430,7 +438,9 @@ function ComponentForm({
         ? t("component.description")
         : field === "attributes"
           ? t("component.values")
-          : t("content.folder");
+          : field === "order"
+            ? t("content.place")
+            : t("content.folder");
   const shownValue = (field: string, value: unknown) => {
     if (field === "folder_id") {
       const folder =

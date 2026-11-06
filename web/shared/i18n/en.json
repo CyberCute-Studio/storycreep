@@ -249,6 +249,7 @@
   "content.folder": "Folder",
   "content.in_folder": "In {path}",
   "content.key_hint": "Letters, digits, and underscores, not starting with a digit, such as met_elara.",
+  "content.place": "Place in its folder",
   "crash.body": "An error kept the app from being shown. Its details are below: you can copy them into a report of the problem. Reloading the page may help.",
   "crash.reload": "Reload the page",
   "crash.title": "Storycreep stopped working",

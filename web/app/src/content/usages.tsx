@@ -11,6 +11,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
@@ -92,21 +93,27 @@ export function componentUsagesQuery(
  * components, as the variables' page, the document reads them once the
  * list holds such a description, so that it is named by its component
  * rather than as a component's; a read that failed, which the document
- * records, leaves it named so.
+ * records, leaves it named so. The list follows the names of the
+ * components that it lists alone, rather than every change of the
+ * project's components.
  */
 export function useComponentNames(
   projectId: string,
   usages: readonly Usage[],
 ): (id: string) => string | undefined {
   const doc = useProjectDocument(projectId);
-  const components = useDocumentState(doc, (state) => state.view.components);
-  const describes = usages.some((usage) => usage.component_id !== undefined);
+  const ids = [...new Set(usages.flatMap((usage) => usage.component_id ?? []))];
+  const names = useDocumentState(
+    doc,
+    useShallow((state) => ids.map((id) => state.view.components.get(id)?.name)),
+  );
+  const describes = ids.length > 0;
   useEffect(() => {
     if (describes && !doc.holds("components")) {
       void doc.load("components").catch(() => undefined);
     }
   }, [doc, describes]);
-  return (id) => components.get(id)?.name;
+  return (id) => names[ids.indexOf(id)];
 }
 
 /**

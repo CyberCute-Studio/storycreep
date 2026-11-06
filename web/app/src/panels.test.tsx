@@ -572,6 +572,75 @@ describe("the variables", () => {
     ]);
   });
 
+  it("names a move's place in its folder, rather than its folder, once the variable was put elsewhere in its folder by another session", async () => {
+    const user = userEvent.setup();
+    const theirs = variable("var_rep", "rep", {
+      type: "int",
+      default: 0,
+      order: "zz",
+      rev: 4,
+    });
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        throw conflict("variable.move", theirs, 3);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.selectOptions(within(panel).getByLabelText("Folder"), "Quests");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    expect(
+      await within(panel).findByText(
+        "Place in its folder: changed by someone else too",
+      ),
+    ).toBeDefined();
+    expect(within(panel).queryByText(/^Folder:/)).toBeNull();
+  });
+
+  it("says a move's folder alone once another session moved the variable to another folder", async () => {
+    const user = userEvent.setup();
+    const filed: Content = {
+      ...content,
+      folders: [
+        ...(content.folders ?? []),
+        folder("fld_side", "Side quests", "variable"),
+      ],
+    };
+    const theirs = variable("var_rep", "rep", {
+      type: "int",
+      default: 0,
+      folder_id: "fld_side",
+      order: "zz",
+      rev: 4,
+    });
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        throw conflict("variable.move", theirs, 3);
+      }
+      return expected(contentPages(operation, input, filed), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.selectOptions(within(panel).getByLabelText("Folder"), "Quests");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    expect(
+      await within(panel).findByText(
+        "Folder: now “Side quests”, yours “Quests”",
+      ),
+    ).toBeDefined();
+    expect(within(panel).getAllByText(/^Folder:/)).toHaveLength(1);
+    expect(within(panel).queryByText(/^Place in its folder/)).toBeNull();
+  });
+
   it("leaves a variable whose folder the list does not have in it, rather than move it to the top unasked", async () => {
     const user = userEvent.setup();
     const filed: Content = {
@@ -908,6 +977,61 @@ describe("the variables", () => {
       ),
     ).toEqual([]);
     expect(batches(calls)).toEqual([]);
+  });
+
+  it("renames the key back to the one that the dialog opened with, once it was renamed elsewhere, as the user types it", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = fakeApi((operation, input) => {
+      if (operation === "previewVariableRename") {
+        return { items: [], next_cursor: null };
+      }
+      if (operation === "applyCommands") {
+        return applied(testProject.seq + 2, [{ id: "var_rep", rev: 5 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+      realtime,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.click(within(panel).getByRole("button", { name: "Rename…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rename rep" });
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "variable.rename",
+            payload: { id: "var_rep", key: "reputation" },
+          },
+        ],
+        [{ id: "var_rep", rev: 4 }],
+      ),
+    );
+    await within(dialog).findByText("Rename reputation");
+    const key = within(dialog).getByLabelText("New key");
+    await user.clear(key);
+    await user.type(key, "rep");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show what changes" }),
+    );
+    const rename = within(dialog).getByRole("button", { name: "Rename" });
+    await waitFor(() => expect(rename).toHaveProperty("disabled", false));
+    await user.click(rename);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Expecting the revision that the dialog opened with, as each first
+    // attempt of the dialog does (useExpected).
+    expect(batches(calls)).toEqual([
+      [
+        expect.objectContaining({
+          type: "variable.rename",
+          payload: { id: "var_rep", key: "rep" },
+          expected_rev: { var_rep: 3 },
+        }),
+      ],
+    ]);
   });
 
   it("does not rename while a rewritten expression would be too long", async () => {
@@ -1397,6 +1521,41 @@ describe("the panel", () => {
     });
     expect(list.closest("[inert]")).not.toBeNull();
   });
+
+  it("leaves what was typed in a dialog of the list as it was once the docked panel beside it closes as another session deletes its variable", async () => {
+    const user = userEvent.setup();
+    windowOf(1024);
+    const realtime = fakeRealtime();
+    fakeApi((operation, input) =>
+      expected(contentPages(operation, input, content), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("region", { name: "rep" });
+    await user.click(screen.getByRole("button", { name: "New folder" }));
+    const dialog = await screen.findByRole("dialog", { name: "New folder" });
+    const name =
+      within(dialog).getByLabelText<HTMLInputElement>("Name of the folder");
+    await user.type(name, "Side");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "variable.delete", payload: { id: "var_rep" } }],
+        [{ id: "var_rep", rev: 4 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { hidden: true, name: "rep" }),
+      ).toBeNull(),
+    );
+    // The focus stays in the dialog's field, with what was typed not
+    // selected, so that the next key adds to it.
+    expect(document.activeElement).toBe(name);
+    expect(name.selectionStart).toBe(name.value.length);
+  });
 });
 
 describe("a new variable or attribute", () => {
@@ -1441,6 +1600,49 @@ describe("a new variable or attribute", () => {
     expect(within(create).getByLabelText("Board")).toHaveProperty(
       "value",
       "bd_docks",
+    );
+    await user.click(
+      within(create).getByRole("button", { name: "Create the variable" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual(
+      expect.objectContaining({ scope: "board", board_id: "bd_docks" }),
+    );
+  });
+
+  it("is of the board that is first now once the user chooses a board's scope, though the one that was first as its dialog opened went to the trash elsewhere", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const boards: Content = {
+      boards: [board("bd_harbour", "Harbour", "M"), board("bd_docks", "Docks")],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 2)
+        : expected(contentPages(operation, input, boards), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables`, {
+      session: testSession,
+      realtime,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "New variable" }),
+    );
+    const create = await screen.findByRole("dialog", { name: "New variable" });
+    await user.type(within(create).getByLabelText("Key"), "docked");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.delete", payload: { id: "bd_harbour" } }],
+        [{ id: "bd_harbour", rev: 2 }],
+      ),
+    );
+    await user.click(within(create).getByRole("radio", { name: /^One board/ }));
+    await waitFor(() =>
+      expect(within(create).getByLabelText("Board")).toHaveProperty(
+        "value",
+        "bd_docks",
+      ),
     );
     await user.click(
       within(create).getByRole("button", { name: "Create the variable" }),

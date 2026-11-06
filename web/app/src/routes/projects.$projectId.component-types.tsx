@@ -7,8 +7,8 @@ import { TypeGlyph, TypePanel } from "../components/TypePanel";
 import { typesByName } from "../components/types";
 import { itemButton, itemClasses } from "../content/ContentTree";
 import { useDocumentState, useProjectDocument } from "../document/react";
-import { editsProject, projectQuery } from "../project/queries";
-import { canonicalId, found } from "../shell/found";
+import { editsProject, loadParts, projectQuery } from "../project/queries";
+import { canonicalId } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { Page, Status } from "../ui/Page";
@@ -25,17 +25,8 @@ export const Route = createFileRoute("/projects/$projectId/component-types")({
       ? { type: canonicalId("component_type", search.type) }
       : {},
   // The types are of the components' part (projects.$projectId.components.tsx).
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
-    );
-    const doc = documents.get(project.id);
-    const held = doc.holds("components");
-    await found(doc.load("components"));
-    if (held) {
-      void doc.refresh("components").catch(() => undefined);
-    }
-  },
+  loader: ({ context, params }) =>
+    loadParts(context, params.projectId, ["components"]),
   gcTime: 0,
   component: TypesPage,
 });
