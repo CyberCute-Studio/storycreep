@@ -13,10 +13,16 @@ import { AlertDialog } from "radix-ui";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
+import {
+  ConflictNotice,
+  changedOf,
+  SaveStatus,
+  useEntityForm,
+} from "../content/form";
+import { typeName } from "../content/ValueField";
 import { textOf } from "../content/values";
 import { payloadField, useExpected } from "../project/dialogs";
-import { keyBetween } from "../project/orderkey";
+import { keyAfter, keyBefore } from "../project/orderkey";
 import { type Command, useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
 import {
@@ -170,7 +176,7 @@ function TypeForm({ project, type }: TypePanelProps) {
             },
           ]),
     ];
-    form.save(changes, typed);
+    form.save(changes, changedOf(typed, against));
   };
   const fieldName = (field: string) =>
     field === "name"
@@ -262,10 +268,14 @@ function Definitions({ project, type, editable }: TypePanelProps) {
     open === undefined || open.dialog === "create"
       ? undefined
       : (definitions.find((a) => a.id === open.attribute.id) ?? open.attribute);
-  /** Returns the key that places the definition at i before the one at at, among those of the type, or undefined for none. */
-  const placeAt = (i: number, at: number): string | undefined => {
+  /**
+   * Returns the key that moves the definition at i one place up, before the
+   * one before it, or down, after the one after it, among those of the
+   * type, or undefined for none.
+   */
+  const placeAt = (i: number, direction: "up" | "down"): string | undefined => {
     const rest = definitions.filter((_, n) => n !== i);
-    return keyBetween(rest[at - 1]?.order, rest[at]?.order);
+    return direction === "up" ? keyBefore(rest, i - 1) : keyAfter(rest, i);
   };
   const moveTo = (attribute: Attribute, order: string) =>
     move.mutate([
@@ -304,9 +314,9 @@ function Definitions({ project, type, editable }: TypePanelProps) {
       ) : (
         <ol className="space-y-2">
           {definitions.map((definition, i) => {
-            const up = i > 0 ? placeAt(i, i - 1) : undefined;
+            const up = i > 0 ? placeAt(i, "up") : undefined;
             const down =
-              i < definitions.length - 1 ? placeAt(i, i + 1) : undefined;
+              i < definitions.length - 1 ? placeAt(i, "down") : undefined;
             const opener = () =>
               document.querySelector<HTMLElement>(
                 `[data-attribute-actions="${CSS.escape(definition.id)}"]`,
@@ -325,7 +335,7 @@ function Definitions({ project, type, editable }: TypePanelProps) {
                   </p>
                   <p className="text-sm break-words text-fg-muted">
                     {t("component_type.attribute_detail", {
-                      type: t("value.type", { type: definition.type }),
+                      type: typeName(t, definition.type),
                       default: textOf(definition.default),
                       runtime: definition.runtime ? "yes" : "no",
                     })}

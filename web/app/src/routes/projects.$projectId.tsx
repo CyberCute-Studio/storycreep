@@ -35,12 +35,11 @@ export const Route = createFileRoute("/projects/$projectId")({
 // the tree of its boards, its variables, its components, and their types
 // (FR-VAR-01, FR-COMP-01, FR-COMP-02), its trash, the members' grants on
 // it, which its workspace's owners and admins manage, and its settings,
-// under a link back
-// to its workspace's projects, the undo and redo of the user's changes
-// (FR-EDIT-08), and the note that an archived project is read-only. They
-// follow the project's document while they are shown (PRD §10.6), and show
-// the page of no page once the project can no longer be read, as once it
-// went to the trash elsewhere.
+// under a link back to its workspace's projects, the undo and redo of the
+// user's changes (FR-EDIT-08), and the note that an archived project is
+// read-only. They follow the project's document while they are shown (PRD
+// §10.6), and show the page of no page once the project can no longer be
+// read, as once it went to the trash elsewhere.
 function ProjectLayout() {
   const { projectId } = Route.useParams();
   const gone = useDocumentState(

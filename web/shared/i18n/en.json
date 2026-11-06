@@ -188,6 +188,7 @@
   "component.type": "Type",
   "component.type_fixed_hint": "A component keeps its type once it is created.",
   "component.unknown_type": "a type that the project no longer has",
+  "component.unsettled": "The component kept changing while it was read.",
   "component.upload_image": "Upload an image",
   "component.usage_empty": "{use, select, speaker {No node has it as its speaker.} mention {No text mentions it.} read {Nothing reads its attributes.} write {Nothing changes its attributes.} other {Nothing uses it.}}",
   "component.usage_list": "{use, select, speaker {Speaker of} mention {Mentioned in} read {Its attributes read by} write {Its attributes changed by} other {Used by}}",

@@ -8,7 +8,7 @@
 // items that match it alone, each with the path of its folder.
 
 import type { Folder } from "@storycreep/shared/api";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, startTransition, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CreateDialog,
@@ -26,6 +26,7 @@ import {
 } from "../project/tree";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
+import { TextField } from "../ui/Field";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Status } from "../ui/Page";
 
@@ -57,6 +58,12 @@ export interface ContentTreeProps<T extends Item> {
   renderItem: (item: T) => ReactNode;
   /** The label of a folder's menu's item that creates an item in it. */
   newItemHere: string;
+  /**
+   * Whether that item of the menu may be chosen now, as it may unless the
+   * page says otherwise, as for components while the project has no types
+   * to give one.
+   */
+  createsItems?: boolean;
   /** Creates an item in the folder parentId, as its menu asks, from opener. */
   onCreateIn: (parentId: string, opener: Opener) => void;
   /**
@@ -64,6 +71,37 @@ export interface ContentTreeProps<T extends Item> {
    * opens the dialog that creates a folder at the top.
    */
   header: (newFolder: (opener: Opener) => void) => ReactNode;
+}
+
+/**
+ * The field of a list's filter, which shows each key typed at once, and has
+ * the page follow what it holds in a transition (onFilter), which React sets
+ * aside for the next key, so that typing in the filter of a thousand items
+ * stays quick: a key shows the field anew alone, rather than the whole list
+ * once for the key and once more for the filter's text.
+ */
+export function FilterField({
+  label,
+  onFilter,
+}: {
+  label: string;
+  onFilter: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <TextField
+      label={label}
+      type="search"
+      autoComplete="off"
+      spellCheck={false}
+      value={text}
+      onChange={(event) => {
+        const typed = event.currentTarget.value;
+        setText(typed);
+        startTransition(() => onFilter(typed));
+      }}
+    />
+  );
 }
 
 /** Returns the attribute that marks the button of the item of id, by which the page finds it again (itemButton). */
@@ -276,7 +314,10 @@ function FolderItem<T extends Item>({
               </Button>
             }
           >
-            <MenuItem onSelect={() => props.onCreateIn(node.id, opener)}>
+            <MenuItem
+              disabled={props.createsItems === false}
+              onSelect={() => props.onCreateIn(node.id, opener)}
+            >
               {props.newItemHere}
             </MenuItem>
             <MenuItem

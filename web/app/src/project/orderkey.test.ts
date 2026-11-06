@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { compareChildren, isKey, keyBetween, maxKeyLength } from "./orderkey";
+import {
+  compareChildren,
+  isKey,
+  keyAfter,
+  keyBefore,
+  keyBetween,
+  maxKeyLength,
+} from "./orderkey";
+
+describe("keyBefore and keyAfter", () => {
+  const siblings = [
+    { order: "V" },
+    { order: "X" },
+    { order: "X" },
+    { order: "Z" },
+  ];
+
+  it("pick a key between a child and the one before or after it", () => {
+    expect(keyBefore(siblings, 0)).toBe(keyBetween(undefined, "V"));
+    expect(keyAfter(siblings, 3)).toBe(keyBetween("Z", undefined));
+    expect(keyAfter(siblings, 0)).toBe(keyBetween("V", "X"));
+  });
+
+  it("go past the children that share the key of the one that they place by", () => {
+    expect(keyBefore(siblings, 2)).toBe(keyBetween("V", "X"));
+    expect(keyAfter(siblings, 1)).toBe(keyBetween("X", "Z"));
+  });
+});
 
 describe("keyBetween", () => {
   it("picks the keys that the server's documentation names", () => {

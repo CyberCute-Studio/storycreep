@@ -18,6 +18,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertedTo, optionsOf, parseValue } from "./content/values";
 import { renderApp, testSession } from "./test/app";
+import "./test/editor";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
 
 // The panels of a project's variables, components, and component types, as
@@ -137,6 +138,14 @@ const item: ComponentType = {
 /** The empty description, one empty paragraph, as the editor's empty document is. */
 const emptyDescription = { type: "doc", content: [{ type: "paragraph" }] };
 
+/** A description of one paragraph of text. */
+function paragraph(text: string): Component["description"] {
+  return {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  } as unknown as Component["description"];
+}
+
 function component(
   id: string,
   name: string,
@@ -227,6 +236,35 @@ function applied(seq: number, revisions: { id: string; rev: number }[] = []) {
 }
 
 type Sent = { type: string; payload: unknown; expected_rev?: unknown }[];
+
+/**
+ * Returns the server's refusal of a batch of one command of type for the
+ * revision of state, which changed elsewhere since the page read it at
+ * expected, with state as it is now.
+ */
+function conflict(
+  type: string,
+  state: { id: string; rev: number },
+  expected: number,
+) {
+  return refused(409, {
+    code: "revision_conflict",
+    details: {
+      conflicts: [
+        {
+          command: 0,
+          command_id: "00000000-0000-7000-8000-000000000001",
+          type,
+          id: state.id,
+          expected_rev: expected,
+          exists: true,
+          current_rev: state.rev,
+        },
+      ],
+      states: { [state.id]: state },
+    },
+  });
+}
 
 /** Returns the commands of the batches that calls, a fake of the client, sent. */
 function batches(calls: ReturnType<typeof fakeApi>): Sent[] {
@@ -445,6 +483,96 @@ describe("the variables", () => {
           type: "variable.move",
           payload: { id: "var_tries", folder_id: "fld_quests" },
           expected_rev,
+        }),
+      ],
+    ]);
+  });
+
+  it("keeps what the user changed once a save refused for a change made elsewhere is saved again, and what the user did not change as it was made elsewhere", async () => {
+    const user = userEvent.setup();
+    // The other session changed the default too, which the user did not,
+    // and which saving again leaves as it made it.
+    const theirs = variable("var_rep", "rep", {
+      type: "int",
+      default: 5,
+      description: "Standing with the guild",
+      rev: 4,
+    });
+    const sent: Sent[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        sent.push((input as { body: { commands: Sent } }).body.commands);
+        if (sent.length === 1) {
+          throw conflict("variable.describe", theirs, 3);
+        }
+        return applied(testProject.seq + 1, [{ id: "var_rep", rev: 5 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.type(
+      within(panel).getByLabelText("Description"),
+      "Standing in town",
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    expect(
+      await within(panel).findByText(
+        "Description: now “Standing with the guild”, yours “Standing in town”",
+      ),
+    ).toBeDefined();
+    expect(within(panel).getByLabelText("Default")).toHaveProperty(
+      "value",
+      "5",
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(sent[1]).toEqual([
+      expect.objectContaining({
+        type: "variable.describe",
+        payload: { id: "var_rep", description: "Standing in town" },
+        expected_rev: { var_rep: 4 },
+      }),
+    ]);
+  });
+
+  it("leaves a variable whose folder the list does not have in it, rather than move it to the top unasked", async () => {
+    const user = userEvent.setup();
+    const filed: Content = {
+      ...content,
+      variables: [
+        variable("var_rep", "rep", {
+          type: "int",
+          default: 0,
+          folder_id: "fld_unread",
+        }),
+      ],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1, [{ id: "var_rep", rev: 4 }])
+        : expected(contentPages(operation, input, filed), operation),
+    );
+    renderApp(`/projects/${testProject.id}/variables?variable=var_rep`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "rep" });
+    await user.type(within(panel).getByLabelText("Description"), "Standing");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the variable" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(batches(calls)).toEqual([
+      [
+        expect.objectContaining({
+          type: "variable.describe",
+          payload: { id: "var_rep", description: "Standing" },
         }),
       ],
     ]);
@@ -1016,6 +1144,133 @@ describe("the components", () => {
     ]);
   });
 
+  it("keeps a description that the user changed once a save refused for a change made elsewhere is saved again", async () => {
+    const user = userEvent.setup();
+    const theirs = { ...elara, description: paragraph("A guard"), rev: 5 };
+    const sent: Sent[] = [];
+    fakeApi((operation, input) => {
+      if (operation === "applyCommands") {
+        sent.push((input as { body: { commands: Sent } }).body.commands);
+        if (sent.length === 1) {
+          throw conflict("component.describe", theirs, 4);
+        }
+        return applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 6 }]);
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    await user.click(
+      await within(panel).findByRole("textbox", { name: "Description" }),
+    );
+    await user.keyboard("A keeper of lamps");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the component" }),
+    );
+    await within(panel).findByText("Description: changed by someone else too");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the component" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(sent[1]).toEqual([
+      expect.objectContaining({
+        type: "component.describe",
+        payload: {
+          id: "cmp_elara",
+          description: paragraph("A keeper of lamps"),
+        },
+        expected_rev: { cmp_elara: 5 },
+      }),
+    ]);
+  });
+
+  it("saves a change of a component whose value is none of its attribute's options now, as once they changed elsewhere, leaving that value as it is", async () => {
+    const user = userEvent.setup();
+    const sleepy: Content = {
+      ...content,
+      components: [
+        component("cmp_elara", "Elara", "elara", character, {
+          attributes: { atr_trust: 0, atr_mood: "sleepy" },
+        }),
+      ],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1, [{ id: "cmp_elara", rev: 5 }])
+        : expected(contentPages(operation, input, sleepy), operation),
+    );
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    expect(await within(panel).findByLabelText("mood")).toHaveProperty(
+      "value",
+      "sleepy",
+    );
+    const name = within(panel).getByLabelText("Name");
+    await user.clear(name);
+    await user.type(name, "Elara Vane");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save the component" }),
+    );
+    await within(panel).findByText("Saved.");
+    expect(batches(calls)).toEqual([
+      [
+        expect.objectContaining({
+          type: "component.rename",
+          payload: { id: "cmp_elara", name: "Elara Vane" },
+        }),
+      ],
+    ]);
+  });
+
+  it("offers to read a component again once it kept changing while it was read", async () => {
+    const user = userEvent.setup();
+    // The component's own read answers it at a revision older than the
+    // list's, as though another session changed it meanwhile, until the
+    // user tries again.
+    let reads = 0;
+    fakeApi((operation, input) => {
+      if (operation === "getComponent") {
+        reads++;
+        return reads <= 3 ? { ...elara, rev: 3 } : elara;
+      }
+      return expected(contentPages(operation, input, content), operation);
+    });
+    renderApp(`/projects/${testProject.id}/components?component=cmp_elara`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Elara" });
+    await within(panel).findByText(
+      "The component kept changing while it was read.",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Try again" }));
+    expect(await within(panel).findByLabelText("trust")).toBeDefined();
+  });
+
+  it("offers no component's creation in a folder while the project has no types", async () => {
+    const user = userEvent.setup();
+    const untyped: Content = {
+      folders: [folder("fld_cast", "Cast", "component")],
+    };
+    fakeApi((operation, input) =>
+      expected(contentPages(operation, input, untyped), operation),
+    );
+    renderApp(`/projects/${testProject.id}/components`, {
+      session: testSession,
+    });
+    await user.click(
+      await screen.findByRole("button", { name: "Actions of Cast" }),
+    );
+    expect(
+      (
+        await screen.findByRole("menuitem", { name: "New component here…" })
+      ).getAttribute("aria-disabled"),
+    ).toBe("true");
+  });
+
   it("shows the server's refusal of a value at the field of its attribute", async () => {
     const user = userEvent.setup();
     fakeApi((operation, input) => {
@@ -1202,6 +1457,42 @@ describe("the component types", () => {
     const { order } = move.payload as { order: string };
     // Before trust, whose key is V.
     expect(order < "V").toBe(true);
+  });
+
+  it("moves an attribute up past two before it that share a key", async () => {
+    const user = userEvent.setup();
+    const shared: Content = {
+      ...content,
+      types: [
+        {
+          ...character,
+          attributes: [
+            attribute("atr_a", "a", { order: "V" }),
+            attribute("atr_b", "b", { order: "X" }),
+            attribute("atr_c", "c", { order: "X" }),
+            attribute("atr_d", "d", { order: "Z" }),
+          ],
+        },
+      ],
+    };
+    const calls = fakeApi((operation, input) =>
+      operation === "applyCommands"
+        ? applied(testProject.seq + 1)
+        : expected(contentPages(operation, input, shared), operation),
+    );
+    renderApp(`/projects/${testProject.id}/component-types?type=ct_character`, {
+      session: testSession,
+    });
+    const panel = await screen.findByRole("region", { name: "Character" });
+    await user.click(
+      within(panel).getByRole("button", { name: "Actions of d" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const [[move]] = batches(calls);
+    const { order } = move.payload as { order: string };
+    // After a, and before c, whose key b shares.
+    expect(order > "V" && order < "X").toBe(true);
   });
 
   it("adds an attribute of an enum, whose default is one of its options", async () => {

@@ -23,6 +23,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,11 +34,16 @@ import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
 import { componentUsagesQuery, Usages } from "../content/usages";
-import { ValueField, valueError } from "../content/ValueField";
+import { typeName, ValueField, valueError } from "../content/ValueField";
 import { parseValue, textOf, type Value } from "../content/values";
 import type { ComponentEntry } from "../document/doc";
 import { useProjectDocument } from "../document/react";
-import { FolderField, folderTop, payloadField } from "../project/dialogs";
+import {
+  chosenFolder,
+  FolderField,
+  folderTop,
+  payloadField,
+} from "../project/dialogs";
 import { type Command, useCommands } from "../project/queries";
 import type { Tree } from "../project/tree";
 import type { RichTextValue } from "../richtext/convert";
@@ -93,11 +99,17 @@ export function ComponentPanel(props: ComponentPanelProps) {
   );
 }
 
+/** What a read of a component whole ended with, where it ended without the component whole, as it kept changing while it was read. */
+const unsettled = Symbol("unsettled");
+
 /**
  * The component's form, or what a reader sees of it, once the document
  * holds the component whole, which it reads as the panel opens, and again
  * once a read of the components' list has taken its description and its
- * values away, as of a newer revision.
+ * values away, as of a newer revision, while which the panel shows it as it
+ * was last whole, rather than take the form away, with what the user typed
+ * in it (FR-RT-02 AC3). A read that ended without it whole, or that failed,
+ * is offered again.
  */
 function WholeComponent(props: ComponentPanelProps) {
   const { t } = useTranslation();
@@ -107,30 +119,53 @@ function WholeComponent(props: ComponentPanelProps) {
   const [failure, setFailure] = useState<unknown>();
   const readWhole = useCallback(() => {
     setFailure(undefined);
-    doc.readComponent(component.id).catch(setFailure);
+    doc.readComponent(component.id).then(() => {
+      const now = doc.store.getState().view.components.get(component.id);
+      if (now !== undefined && now.attributes === undefined) {
+        setFailure(unsettled);
+      }
+    }, setFailure);
   }, [doc, component.id]);
   useEffect(() => {
     if (!whole) {
       readWhole();
     }
   }, [whole, readWhole]);
-  if (!whole) {
-    return failure === undefined ? (
-      <p role="status" className="text-fg-muted">
-        {t("component.loading")}
-      </p>
-    ) : (
-      <div className="space-y-2">
-        <Alert message={refusalOf(failure, t)?.message} />
-        <Button onClick={readWhole}>{t("component.try_again")}</Button>
-      </div>
+  const last = useRef<Component>(undefined);
+  if (whole) {
+    last.current = component as Component;
+  }
+  const read = last.current;
+  const failed = failure !== undefined && (
+    <div className="space-y-2">
+      <Alert
+        message={
+          failure === unsettled
+            ? t("component.unsettled")
+            : refusalOf(failure, t)?.message
+        }
+      />
+      <Button onClick={readWhole}>{t("component.try_again")}</Button>
+    </div>
+  );
+  if (read === undefined) {
+    return (
+      failed || (
+        <p role="status" className="text-fg-muted">
+          {t("component.loading")}
+        </p>
+      )
     );
   }
-  const read = component as Component;
-  return editable ? (
-    <ComponentForm {...props} component={read} />
-  ) : (
-    <ComponentView {...props} component={read} />
+  return (
+    <>
+      {!whole && failed}
+      {editable ? (
+        <ComponentForm {...props} component={read} />
+      ) : (
+        <ComponentView {...props} component={read} />
+      )}
+    </>
   );
 }
 
@@ -147,7 +182,10 @@ function ComponentView({
       : tree.byId.get(component.folder_id);
   return (
     <div className="space-y-4">
+      {/* Shown anew once the component changes, as its description does
+          elsewhere, which the editor shows only as it starts. */}
       <RichTextEditor
+        key={component.rev}
         label={t("component.description")}
         defaultValue={component.description}
         editable={false}
@@ -189,10 +227,15 @@ function AttributeValue({
 /** What the form of a component holds, as its submission reads it. */
 interface ComponentTyped {
   name: string;
-  /** The description as the editor gives it, or undefined if the user did not change it. */
-  description: RichTextDoc | undefined;
+  /** The description as the editor holds it. */
+  description: RichTextDoc;
   attributes: Record<string, Value>;
   folder_id: string | undefined;
+}
+
+/** Reports whether two descriptions are the same document. */
+function sameDescription(a: RichTextDoc, b: RichTextDoc): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Returns the commands that change against, as the form showed it, to typed, each expecting rev. */
@@ -212,10 +255,7 @@ function changesOf(
       expected_rev,
     });
   }
-  if (
-    typed.description !== undefined &&
-    JSON.stringify(typed.description) !== JSON.stringify(against.description)
-  ) {
+  if (!sameDescription(typed.description, against.description)) {
     changes.push({
       type: "component.describe",
       payload: { id, description: typed.description },
@@ -268,7 +308,8 @@ function ComponentForm({
   });
   const { commands, held, shown, against } = form;
   // What the editor of the description gave last, of the form shown now:
-  // the document, or why the server would refuse it.
+  // the document, or why the server would refuse it, or nothing while the
+  // user has not changed it, which it holds as the form shows it.
   const [description, setDescription] = useState<{
     key: string;
     value: RichTextValue;
@@ -312,11 +353,18 @@ function ComponentForm({
     const refused: Record<string, string> = {};
     for (const attribute of definitions) {
       const field = attributeFieldOf(attribute.id);
-      const value = parseValue(
-        attribute.type,
-        String(data.get(field) ?? ""),
-        attribute.options ?? [],
-      );
+      const text = String(data.get(field) ?? "");
+      const was = shown.attributes[attribute.id] ?? attribute.default;
+      // A value that the user left as the form shows it is kept as it is,
+      // though it is none of its definition's type or options now, as once
+      // they changed elsewhere while the form held it, which the server
+      // gave a value of their own, rather than refuse a save of another
+      // field for it.
+      if (text === textOf(was)) {
+        attributes[attribute.id] = was;
+        continue;
+      }
+      const value = parseValue(attribute.type, text, attribute.options ?? []);
       if (value === undefined) {
         refused[field] = valueError(t, attribute.type);
       } else {
@@ -335,20 +383,49 @@ function ComponentForm({
     const folder = String(data.get("folder") ?? folderTop);
     const typed: ComponentTyped = {
       name: String(data.get("name")),
-      description: typedDescription?.doc,
+      // The editor starts with the description as the form shows it, which
+      // is what the user changed once a save was refused for a change made
+      // elsewhere, which the form holds.
+      description: typedDescription?.doc ?? shown.description,
       attributes,
-      folder_id: folder === folderTop ? undefined : folder,
+      folder_id: chosenFolder(
+        tree,
+        folder === folderTop ? undefined : folder,
+        shown.folder_id,
+      ),
     };
     const changes = changesOf(against, typed, definitions, against.rev);
     setLastSent(changes);
-    form.save(changes, {
-      name: typed.name,
-      ...(typed.description === undefined
-        ? {}
-        : { description: typed.description }),
-      attributes: { ...against.attributes, ...typed.attributes },
-      folder_id: typed.folder_id,
-    });
+    // What the user changed, and nothing else of what the form shows, which
+    // a save refused for a change made elsewhere holds over the component as
+    // it is now: of its values, those that the batch sets.
+    const changedValues: Record<string, Value> = Object.fromEntries(
+      changes.flatMap((c) =>
+        c.type === "component.set_attribute"
+          ? [[c.payload.attribute_id, c.payload.value]]
+          : [],
+      ),
+    );
+    form.save(
+      changes,
+      {
+        ...(typed.name === against.name ? {} : { name: typed.name }),
+        ...(sameDescription(typed.description, against.description)
+          ? {}
+          : { description: typed.description }),
+        ...(Object.keys(changedValues).length === 0
+          ? {}
+          : { attributes: changedValues }),
+        ...(typed.folder_id === against.folder_id
+          ? {}
+          : { folder_id: typed.folder_id }),
+      },
+      (now, changed) => ({
+        ...now,
+        ...changed,
+        attributes: { ...now.attributes, ...changed.attributes },
+      }),
+    );
   };
   const fieldName = (field: string) =>
     field === "name"
@@ -415,7 +492,7 @@ function ComponentForm({
                 label={attribute.name}
                 hint={t("component.value_hint", {
                   key: attribute.key,
-                  type: t("value.type", { type: attribute.type }),
+                  type: typeName(t, attribute.type),
                 })}
                 name={attributeFieldOf(attribute.id)}
                 type={attribute.type}
@@ -574,7 +651,7 @@ function ComponentActions({
       {open?.dialog === "rename" && (
         <RenameKeyDialog
           projectId={project.id}
-          renamed={component}
+          renamed={{ kind: "component", ...component }}
           opener={open.opener}
           onClose={() => setOpen(undefined)}
         />
@@ -583,6 +660,7 @@ function ComponentActions({
         <DeleteContentDialog
           project={project}
           deleted={{
+            kind: "component",
             id: component.id,
             name: component.name,
             rev: component.rev,

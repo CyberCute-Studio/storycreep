@@ -30,6 +30,14 @@ export function valueError(
   return t("value.error", { type });
 }
 
+/** Returns the name of a value's type, as a variable's or an attribute definition's, in the page's locale. */
+export function typeName(
+  t: ReturnType<typeof useTranslation>["t"],
+  type: string,
+): string {
+  return t("value.type", { type });
+}
+
 export function ValueField({
   label,
   hint,

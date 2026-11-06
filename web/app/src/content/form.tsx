@@ -1,13 +1,15 @@
-// What a panel's form of an entity of a project's content does as it saves,
-// as a variable's, a component's, or a component type's: it sends what of
-// the entity changed in one batch, each command expecting the revision that
-// the form shows, and shows the entity as the page has it until the user is
-// in the form, and then as it was (useHeld), as the board's form does. A
-// save refused for a change made elsewhere of another field is sent again by
-// the document (PRD §7.10); one of a field that the form changes too names
-// each such field with both values (ConflictError), and shows the entity as
-// it is now, but for what the user changed, which it keeps, so that saving
-// again keeps it, over the entity as it is now; using theirs shows the
+// What a form of an entity of a project does as it saves, as a board's
+// settings', or a panel's of a variable, a component, or a component type:
+// it sends what of the entity changed in one batch, each command expecting
+// the revision that the form shows, and shows the entity as the page has it
+// until the user is in the form, and then as it was (useHeld). A save
+// refused for a change made elsewhere of another field is sent again by the
+// document (PRD §7.10); one of a field that the form changes too names each
+// such field with both values (ConflictError), and shows the entity as it is
+// now, but for what the user changed, which it keeps, and nothing else of
+// what the form showed, so that saving again keeps what the user changed,
+// over the entity as it is now, and leaves another session's change of a
+// field that the user did not change as it made it; using theirs shows the
 // entity as it is now.
 
 import { useState } from "react";
@@ -19,6 +21,24 @@ import { type Command, conflictOf, useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
 import { useHeld } from "../ui/held";
 import { Status } from "../ui/Page";
+
+/**
+ * Returns the fields of values, what a form holds, that are not what
+ * against has, the entity that its changes are made against: what the user
+ * changed of what the form showed, or, once a save was refused for a change
+ * made elsewhere, of the entity as the server had it then, which the form
+ * shows but for what the user changed.
+ */
+export function changedOf<V extends object>(
+  values: V,
+  against: Partial<V>,
+): Partial<V> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([field, value]) => value !== against[field as keyof V],
+    ),
+  ) as Partial<V>;
+}
 
 /**
  * Returns the form of entity, as the document of projectId has it, which
@@ -56,12 +76,23 @@ export function useEntityForm<T extends { id: string; rev: number }>(
       setUnchanged(false);
     },
     /**
-     * Saves changes, the commands of what the user changed over against,
-     * which typed holds, as the entity's fields: none says that nothing
-     * changed, and holds the entity as it is now while the focus is in the
-     * form.
+     * Saves changes, the commands of what the user changed over against, of
+     * which typed holds the entity's fields that the user changed, and no
+     * others (changedOf). A save refused for a change made elsewhere of
+     * what the form changes too shows them over the entity as it is now,
+     * field by field, or as over says, as of a field of several values, as
+     * a component's, of which the user changed some. No changes say that
+     * nothing changed, and hold the entity as it is now while the focus is
+     * in the form.
      */
-    save: (changes: Command[], typed: Partial<T>) => {
+    save: (
+      changes: Command[],
+      typed: Partial<T>,
+      over: (now: T, typed: Partial<T>) => T = (now, typed) => ({
+        ...now,
+        ...typed,
+      }),
+    ) => {
       setUnchanged(changes.length === 0);
       if (changes.length === 0) {
         commands.reset();
@@ -95,7 +126,7 @@ export function useEntityForm<T extends { id: string; rev: number }>(
             return;
           }
           setTheirs(now);
-          held.hold({ ...now, ...typed });
+          held.hold(over(now, typed));
         },
       });
     },

@@ -84,6 +84,35 @@ function midpoint(low: string, high: string | undefined): string {
   return digits[lowDigit] + midpoint(low.slice(1), undefined);
 }
 
+/**
+ * Returns the key that places a child before the one at at among siblings,
+ * the other children of their parent, in order, or undefined if there is
+ * none (keyBetween): one before those before it that share its key too, as
+ * no key goes between two that are the same.
+ */
+export function keyBefore(
+  siblings: readonly { order: string }[],
+  at: number,
+): string | undefined {
+  const target = siblings[at];
+  const earlier = siblings.slice(0, at).findLast((c) => c.order < target.order);
+  return keyBetween(earlier?.order, target.order);
+}
+
+/**
+ * Returns the key that places a child after the one at at among siblings,
+ * the other children of their parent, in order, or undefined if there is
+ * none (keyBetween): one after those after it that share its key too.
+ */
+export function keyAfter(
+  siblings: readonly { order: string }[],
+  at: number,
+): string | undefined {
+  const target = siblings[at];
+  const later = siblings.slice(at + 1).find((c) => c.order > target.order);
+  return keyBetween(target.order, later?.order);
+}
+
 /** What compareChildren reads of a child: its key and its ID. */
 export interface Ordered {
   /** The child's ID, as bd_… or fld_…. */

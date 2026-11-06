@@ -68,23 +68,14 @@ const top = "";
 /** The value of FolderSelect's choice of the top of the tree. */
 export const folderTop = top;
 
-/** The type of the command that moves an item of a tree into a folder of its kind, by the item's ID. */
-function itemMoveType(
-  id: string,
-): "board.move" | "variable.move" | "component.move" {
-  return id.startsWith("var_")
-    ? "variable.move"
-    : id.startsWith("cmp_")
-      ? "component.move"
-      : "board.move";
-}
-
 /**
- * Returns the commands that move node to placement, expecting rev of it, the
- * revision that the tree shows of it unless given.
+ * Returns the commands that move node, a board or a folder of any kind, to
+ * placement, expecting rev of it, the revision that the tree shows of it
+ * unless given. A variable or a component moves in its panel, and to its
+ * folder's end, rather than in a tree's dialog.
  */
 export function moveCommands(
-  node: TreeNode<Item>,
+  node: TreeNode | FolderNode<Item>,
   placement: Placement,
   rev = revOf(node),
 ): Command[] {
@@ -92,7 +83,7 @@ export function moveCommands(
   return node.kind === "item"
     ? [
         {
-          type: itemMoveType(node.id),
+          type: "board.move",
           payload: {
             id: node.id,
             ...(placement.parentId === undefined
@@ -234,6 +225,27 @@ export function FolderField({
       error={error}
     />
   );
+}
+
+/**
+ * Returns the folder that a form's FolderField chose, chosen, of the tree,
+ * or undefined for the top, of a form that showed an item of the folder
+ * shown: the item's own folder where the field is at the top and the tree
+ * does not have that folder, as one of a page of the folders that a read a
+ * page at a time had not reached, which the field shows as the top, as the
+ * tree shows the item, rather than a move to the top that the user did not
+ * ask for.
+ */
+export function chosenFolder(
+  tree: Tree<Item>,
+  chosen: string | undefined,
+  shown: string | undefined,
+): string | undefined {
+  return chosen === undefined &&
+    shown !== undefined &&
+    tree.byId.get(shown)?.kind !== "folder"
+    ? shown
+    : chosen;
 }
 
 const nameField = payloadField("name");
@@ -432,7 +444,7 @@ export function MoveDialog({
 }: {
   projectId: string;
   tree: Tree<Item>;
-  node: TreeNode<Item>;
+  node: TreeNode | FolderNode<Item>;
   opener: Opener;
   onClose: () => void;
 }) {

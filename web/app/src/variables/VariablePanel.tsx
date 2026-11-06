@@ -12,19 +12,24 @@ import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { DeleteContentDialog } from "../content/deletion";
-import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
+import {
+  ConflictNotice,
+  changedOf,
+  SaveStatus,
+  useEntityForm,
+} from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
 import { Usages, variableUsagesQuery } from "../content/usages";
-import { valueError } from "../content/ValueField";
+import { typeName, valueError } from "../content/ValueField";
 import { parseValue, textOf, type Value } from "../content/values";
-import { payloadField } from "../project/dialogs";
+import { chosenFolder, payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
 import type { Tree } from "../project/tree";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { useFocusRefusal } from "../ui/Field";
 import { Alert } from "../ui/Page";
-import { persistenceOf, typedOf, typeName, VariableFields } from "./fields";
+import { persistenceOf, typedOf, VariableFields } from "./fields";
 
 /** The fields of a variable's commands' payloads that the form has, by their names in the payloads. */
 const variableField = payloadField(
@@ -248,9 +253,12 @@ function VariableForm({ project, variable, boards, tree }: VariablePanelProps) {
       board_id: typed.boardId,
       reset_on_enter: typed.reset,
       description: typed.description,
-      folder_id: typed.folderId,
+      folder_id: chosenFolder(tree, typed.folderId, shown.folder_id),
     };
-    form.save(changesOf(against, values, against.rev), values);
+    form.save(
+      changesOf(against, values, against.rev),
+      changedOf(values, against),
+    );
   };
   const fieldName = (field: string) => {
     switch (field) {
@@ -357,7 +365,7 @@ function VariableActions({
       {open?.dialog === "rename" && (
         <RenameKeyDialog
           projectId={project.id}
-          renamed={variable}
+          renamed={{ kind: "variable", ...variable }}
           opener={open.opener}
           onClose={() => setOpen(undefined)}
         />
@@ -365,7 +373,12 @@ function VariableActions({
       {open?.dialog === "delete" && (
         <DeleteContentDialog
           project={project}
-          deleted={{ id: variable.id, name: variable.key, rev: variable.rev }}
+          deleted={{
+            kind: "variable",
+            id: variable.id,
+            name: variable.key,
+            rev: variable.rev,
+          }}
           opener={open.opener}
           onClose={() => {
             setOpen(undefined);

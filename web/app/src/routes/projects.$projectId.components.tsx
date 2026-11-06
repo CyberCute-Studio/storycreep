@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ComponentPanel } from "../components/ComponentPanel";
 import { CreateComponentDialog } from "../components/CreateComponentDialog";
 import { liveTypes } from "../components/types";
-import { ContentTree, itemButton } from "../content/ContentTree";
+import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
 import type { ComponentEntry } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { editsProject, projectQuery } from "../project/queries";
@@ -13,7 +13,7 @@ import { buildTree, itemsInOrder } from "../project/tree";
 import { canonicalId, found } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
-import { SelectField, TextField } from "../ui/Field";
+import { SelectField } from "../ui/Field";
 import { Page, Status, textLink } from "../ui/Page";
 import { Panel } from "../ui/Panel";
 
@@ -74,12 +74,13 @@ function ComponentsPage() {
       ),
     [folders, components],
   );
+  // The filter's text, which the list follows in a transition (FilterField),
+  // and its type, which the list follows once it can.
   const [filter, setFilter] = useState("");
   const [typeId, setTypeId] = useState(anyType);
-  const shownFilter = useDeferredValue(filter);
   const shownType = useDeferredValue(typeId);
   const matches = useMemo(() => {
-    const text = shownFilter.trim().toLocaleLowerCase();
+    const text = filter.trim().toLocaleLowerCase();
     if (text === "" && shownType === anyType) {
       return undefined;
     }
@@ -90,7 +91,7 @@ function ComponentsPage() {
           item.name.toLocaleLowerCase().includes(text) ||
           item.key.toLocaleLowerCase().includes(text)),
     );
-  }, [tree, shownFilter, shownType]);
+  }, [tree, filter, shownType]);
   const select = (id: string | undefined) =>
     void navigate({ search: id === undefined ? {} : { component: id } });
   const [creating, setCreating] = useState<{
@@ -136,6 +137,7 @@ function ComponentsPage() {
             selected={selectedId}
             onSelect={select}
             newItemHere={t("components.new_here")}
+            createsItems={types.length > 0}
             onCreateIn={(parentId, opener) => setCreating({ parentId, opener })}
             renderItem={(component) => (
               <>
@@ -191,13 +193,9 @@ function ComponentsPage() {
                   </p>
                 )}
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <TextField
+                  <FilterField
                     label={t("components.filter")}
-                    type="search"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={filter}
-                    onChange={(event) => setFilter(event.currentTarget.value)}
+                    onFilter={setFilter}
                   />
                   <SelectField
                     label={t("components.filter_type")}

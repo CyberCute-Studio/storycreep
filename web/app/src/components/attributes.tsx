@@ -19,7 +19,7 @@ import { type FormEvent, useDeferredValue, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { ValueField, valueError } from "../content/ValueField";
+import { typeName, ValueField, valueError } from "../content/ValueField";
 import {
   attributeTypes,
   convertedTo,
@@ -61,11 +61,6 @@ const attributeField = payloadField(
   "runtime",
   "conversion",
 );
-
-/** Returns the name of a value's type, in the page's locale. */
-function typeName(t: ReturnType<typeof useTranslation>["t"], type: string) {
-  return t("value.type", { type });
-}
 
 /**
  * The fields of an enum's options, one to a line, and of the default, whose
@@ -318,7 +313,10 @@ function editsOf(
  * The dialog that changes an attribute definition: its name, its key, an
  * enum's options, its default, which the components created later are
  * given, and whether it is part of the game's state. A change of an enum's
- * options gives a value that is none of them the default.
+ * options gives a value that is none of them the default. It sends what the
+ * user changed of the definition as it opened with it, which its fields
+ * start with, so that another session's change of a field that the user did
+ * not change, made while it is open, is not changed back.
  */
 export function EditAttributeDialog({
   projectId,
@@ -333,8 +331,10 @@ export function EditAttributeDialog({
 }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  const [options, setOptions] = useState((attribute.options ?? []).join("\n"));
-  const [runtime, setRuntime] = useState(attribute.runtime);
+  // The definition as the dialog opened with it, which its fields show.
+  const [opened] = useState(attribute);
+  const [options, setOptions] = useState((opened.options ?? []).join("\n"));
+  const [runtime, setRuntime] = useState(opened.runtime);
   const [invalid, setInvalid] = useState<{ fields: Record<string, string> }>();
   const commands = useCommands(projectId);
   const rev = useExpected(attribute.rev, commands.error);
@@ -367,7 +367,7 @@ export function EditAttributeDialog({
     }
     setInvalid(undefined);
     const changes = editsOf(
-      attribute,
+      opened,
       {
         name: String(data.get("name")),
         key: String(data.get("key")),
@@ -400,7 +400,7 @@ export function EditAttributeDialog({
             autoComplete="off"
             required
             maxLength={100}
-            defaultValue={attribute.name}
+            defaultValue={opened.name}
             error={errors.name}
           />
           <TextField
@@ -411,14 +411,14 @@ export function EditAttributeDialog({
             spellCheck={false}
             required
             maxLength={64}
-            defaultValue={attribute.key}
+            defaultValue={opened.key}
             error={errors.key}
           />
           <OptionsAndDefault
             type={attribute.type}
             options={options}
             onOptions={setOptions}
-            defaultValue={attribute.default}
+            defaultValue={opened.default}
             errors={errors}
           />
           <CheckboxField

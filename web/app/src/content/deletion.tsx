@@ -74,6 +74,7 @@ function inUseOf(error: unknown): InUse | undefined {
 
 /** What the deletion deletes, with the revision that the page shows. */
 export interface Deleted {
+  kind: "variable" | "component";
   id: string;
   /** What the page names it, as a variable's key or a component's name. */
   name: string;
@@ -100,7 +101,7 @@ export function DeleteContentDialog({
   onDeleted: () => void;
 }) {
   const { t } = useTranslation();
-  const variable = deleted.id.startsWith("var_");
+  const variable = deleted.kind === "variable";
   const commands = useCommands(project.id);
   const rev = useExpected(deleted.rev, commands.error);
   // The usages that the last refusal listed, which the confirmation shows

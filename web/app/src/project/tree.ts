@@ -7,7 +7,7 @@
 // of the children that it lands between (keyBetween).
 
 import type { Board, Folder } from "@storycreep/shared/api";
-import { compareChildren, keyBetween } from "./orderkey";
+import { compareChildren, keyAfter, keyBefore } from "./orderkey";
 
 /** What a folder holds besides folders: a board, a variable, or a component. */
 export interface Item {
@@ -227,14 +227,13 @@ export function placementOf(
   }
   const siblings = childrenOf(tree, parentId).filter((c) => c.id !== node.id);
   const at = siblings.indexOf(target);
-  if (drop.position === "before") {
-    const earlier = siblings
-      .slice(0, at)
-      .findLast((c) => c.order < target.order);
-    return { parentId, order: keyBetween(earlier?.order, target.order) };
-  }
-  const later = siblings.slice(at + 1).find((c) => c.order > target.order);
-  return { parentId, order: keyBetween(target.order, later?.order) };
+  return {
+    parentId,
+    order:
+      drop.position === "before"
+        ? keyBefore(siblings, at)
+        : keyAfter(siblings, at),
+  };
 }
 
 /** A folder of the tree as a choice of where to move or create something. */

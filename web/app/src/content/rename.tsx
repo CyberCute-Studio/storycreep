@@ -28,14 +28,15 @@ export type Rewrite = "renamed" | "qualified";
 /** What the rename of a variable's or a component's key to key rewrites, a page at a time. */
 export function renamePreviewQuery(
   projectId: string,
-  id: string,
+  renamed: Pick<Renamed, "kind" | "id">,
   key: string,
   rewrite: Rewrite,
 ) {
+  const { id } = renamed;
   return pagedQuery(
     ["projects", projectId, "rename-preview", id, key, rewrite],
     async (query, signal): Promise<PageRenameSite> =>
-      id.startsWith("var_")
+      renamed.kind === "variable"
         ? (
             await api.call(
               "previewVariableRename",
@@ -139,6 +140,7 @@ function PreviewList({
 
 /** What the rename dialog renames: a variable, or a component, with the key and the revision that the page shows. */
 export interface Renamed {
+  kind: "variable" | "component";
   id: string;
   key: string;
   rev: number;
@@ -164,7 +166,7 @@ export function RenameKeyDialog({
 }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
-  const variable = renamed.id.startsWith("var_");
+  const variable = renamed.kind === "variable";
   const [key, setKey] = useState(renamed.key);
   // The key whose preview the dialog shows, which renaming waits for.
   const [previewed, setPreviewed] = useState<string>();
@@ -172,13 +174,13 @@ export function RenameKeyDialog({
   const rev = useExpected(renamed.rev, commands.error);
   const renamedQuery = renamePreviewQuery(
     projectId,
-    renamed.id,
+    renamed,
     previewed ?? "",
     "renamed",
   );
   const qualifiedQuery = renamePreviewQuery(
     projectId,
-    renamed.id,
+    renamed,
     previewed ?? "",
     "qualified",
   );

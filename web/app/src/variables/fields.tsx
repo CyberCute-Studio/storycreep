@@ -7,7 +7,7 @@
 import type { Board, Variable } from "@storycreep/shared/api";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ValueField } from "../content/ValueField";
+import { typeName, ValueField } from "../content/ValueField";
 import {
   convertedTo,
   type Value,
@@ -49,14 +49,6 @@ export function persistenceOf(
   return reset
     ? t("variable.persistence_reset", { board: named })
     : t("variable.persistence_kept", { board: named });
-}
-
-/** Returns the name of a variable's type, in the page's locale. */
-export function typeName(
-  t: ReturnType<typeof useTranslation>["t"],
-  type: string,
-): string {
-  return t("value.type", { type });
 }
 
 export function VariableFields({

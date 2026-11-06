@@ -1,29 +1,24 @@
-import type { Board, Variable } from "@storycreep/shared/api";
+import type { Variable } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useDeferredValue, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ContentTree, itemButton } from "../content/ContentTree";
+import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
+import { typeName } from "../content/ValueField";
 import {
   useDocumentState,
   useProjectDocument,
   useTree,
 } from "../document/react";
 import { editsProject, projectQuery } from "../project/queries";
-import {
-  buildTree,
-  itemsInOrder,
-  type Tree,
-  type TreeNode,
-} from "../project/tree";
+import { buildTree, itemsInOrder } from "../project/tree";
 import { canonicalId, found } from "../shell/found";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
-import { SelectField, TextField } from "../ui/Field";
+import { SelectField } from "../ui/Field";
 import { Page, Status } from "../ui/Page";
 import { Panel } from "../ui/Panel";
 import { CreateVariableDialog } from "../variables/CreateVariableDialog";
-import { typeName } from "../variables/fields";
 import { VariablePanel } from "../variables/VariablePanel";
 
 /** The search of the page: the variable whose panel is open, if any. */
@@ -56,22 +51,6 @@ export const Route = createFileRoute("/projects/$projectId/variables")({
   component: VariablesPage,
 });
 
-/** Returns the boards of tree, a project's tree of boards, in its order. */
-function boardsInOrder(tree: Tree): Board[] {
-  const out: Board[] = [];
-  const walk = (nodes: TreeNode[]) => {
-    for (const node of nodes) {
-      if (node.kind === "folder") {
-        walk(node.children);
-      } else {
-        out.push(node.item);
-      }
-    }
-  };
-  walk(tree.top);
-  return out;
-}
-
 /** The value of the choice of the scope filter that shows every variable. */
 const anyScope = "";
 /** The value of the choice of the scope filter that shows the global variables. */
@@ -95,8 +74,12 @@ function VariablesPage() {
   const variables = useDocumentState(doc, (state) => state.view.variables);
   const folders = useDocumentState(doc, (state) => state.view.folders);
   const boardData = useTree(doc);
+  // The project's boards, in the order of their tree.
   const boards = useMemo(
-    () => boardsInOrder(buildTree(boardData.folders, boardData.boards)),
+    () =>
+      itemsInOrder(buildTree(boardData.folders, boardData.boards)).map(
+        (node) => node.item,
+      ),
     [boardData],
   );
   const tree = useMemo(
@@ -108,14 +91,14 @@ function VariablesPage() {
       ),
     [folders, variables],
   );
+  // The filter's text, which the list follows in a transition, so that
+  // typing in the filter of a thousand variables stays quick (FilterField),
+  // and its scope, which the list follows once it can.
   const [filter, setFilter] = useState("");
   const [scope, setScope] = useState(anyScope);
-  // The list follows what is typed once it can, rather than at every key,
-  // so that typing in the filter of a thousand variables stays quick.
-  const shownFilter = useDeferredValue(filter);
   const shownScope = useDeferredValue(scope);
   const matches = useMemo(() => {
-    const text = shownFilter.trim().toLocaleLowerCase();
+    const text = filter.trim().toLocaleLowerCase();
     if (text === "" && shownScope === anyScope) {
       return undefined;
     }
@@ -132,7 +115,7 @@ function VariablesPage() {
           item.description.toLocaleLowerCase().includes(text))
       );
     });
-  }, [tree, shownFilter, shownScope]);
+  }, [tree, filter, shownScope]);
   const boardNames = useMemo(
     () => new Map(boards.map((board) => [board.id, board.name])),
     [boards],
@@ -233,13 +216,9 @@ function VariablesPage() {
                   )}
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <TextField
+                  <FilterField
                     label={t("variables.filter")}
-                    type="search"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={filter}
-                    onChange={(event) => setFilter(event.currentTarget.value)}
+                    onFilter={setFilter}
                   />
                   <SelectField
                     label={t("variables.filter_scope")}
