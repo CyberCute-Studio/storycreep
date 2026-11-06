@@ -1,0 +1,185 @@
+import type { Board } from "@storycreep/shared/api";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderApp, testSession } from "../test/app";
+import { testNode } from "../test/canvas";
+import { fakeApi, refused, startPage, testProject } from "../test/fake";
+import type { Engine } from "./engine";
+
+const engines = vi.hoisted(() => ({
+  fail: false,
+  created: 0,
+  destroyed: 0,
+}));
+
+// PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
+// tests draw with an engine that draws nothing.
+vi.mock("./engine", () => ({
+  canvasDetailLimit: 300,
+  createEngine: async (): Promise<Engine> => {
+    if (engines.fail) {
+      throw new Error("no renderer");
+    }
+    engines.created++;
+    return {
+      kind: "canvas",
+      resize: () => {},
+      render: (f) => ({
+        lod: "detail",
+        nodes: f.scene.nodes.size,
+        visible: f.scene.nodes.size,
+        texts: 0,
+        connections: f.scene.connections.size,
+        rebuilt: true,
+      }),
+      textures: () => undefined,
+      destroy: () => {
+        engines.destroyed++;
+      },
+    };
+  },
+}));
+
+beforeEach(() => {
+  engines.fail = false;
+  engines.created = 0;
+  engines.destroyed = 0;
+});
+
+const harbour: Board = {
+  id: "bd_a",
+  project_id: testProject.id,
+  name: "Harbour",
+  slug: "harbour",
+  description: "",
+  color: "none",
+  order: "V",
+  rev: 3,
+  created_at: "2026-11-01T10:00:00Z",
+  updated_at: "2026-11-01T10:00:00Z",
+};
+
+/** Answers the board's page, of a board of nodes, whose nodes' read fails with failNodes. */
+function boardPage(
+  nodes: ReturnType<typeof testNode>[] = [],
+  failNodes?: () => boolean,
+) {
+  return fakeApi((operation) => {
+    switch (operation) {
+      case "getProject":
+        return testProject;
+      case "listFolders":
+      case "listBoardConnections":
+      case "listComponentTypes":
+      case "listComponents":
+      case "listVariables":
+        return { items: [], next_cursor: null };
+      case "listBoards":
+        return { items: [harbour], next_cursor: null };
+      case "listBoardNodes":
+        if (failNodes?.()) {
+          throw refused(500, { code: "internal" });
+        }
+        return { items: nodes, next_cursor: null };
+    }
+    const answer = startPage(operation);
+    if (answer === undefined) {
+      throw new Error(`unexpected ${operation}`);
+    }
+    return answer;
+  });
+}
+
+describe("a board's canvas", () => {
+  // Verifies: NFR-TOUCH-03
+  it("pans by default, and switches to selecting with a visible toggle", async () => {
+    const user = userEvent.setup();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const controls = await screen.findByRole("group", {
+      name: "What a drag does",
+    });
+    const pan = within(controls).getByRole("button", { name: "Pan" });
+    const select = within(controls).getByRole("button", { name: "Select" });
+    expect(pan.getAttribute("aria-pressed")).toBe("true");
+    expect(select.getAttribute("aria-pressed")).toBe("false");
+    await user.click(select);
+    expect(select.getAttribute("aria-pressed")).toBe("true");
+    expect(pan.getAttribute("aria-pressed")).toBe("false");
+    expect(
+      screen.getByRole("button", { name: "Zoom to selection" }),
+    ).toHaveProperty("disabled", true);
+    const canvas = screen.getByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    // NFR-TOUCH-08: the browser's own gestures, as pull-to-refresh, are off
+    // over the canvas.
+    expect(canvas.className).toContain("touch-none");
+    expect(canvas.className).toContain("overscroll-none");
+    await waitFor(() => expect(engines.created).toBe(1));
+  });
+
+  it("says that a board has no nodes yet", async () => {
+    boardPage([]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByText("This board has no nodes yet."),
+    ).toBeDefined();
+  });
+
+  it("says that the board's nodes could not be loaded, and reads them again as the user asks", async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    boardPage([testNode("nd_1", 0, 0)], () => fail);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const alert = await screen.findByText(
+      "The board's nodes could not be loaded.",
+      {
+        exact: false,
+      },
+    );
+    fail = false;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("The board's nodes could not be loaded.", {
+          exact: false,
+        }),
+      ).toBeNull(),
+    );
+  });
+
+  it("says that the browser cannot draw the board", async () => {
+    engines.fail = true;
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByText(
+        "This browser cannot draw the board: it has neither WebGL nor a 2D canvas.",
+      ),
+    ).toBeDefined();
+  });
+
+  it("keeps the board's settings under the canvas", async () => {
+    boardPage([]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const settings = await screen.findByRole("region", {
+      name: "Board settings",
+    });
+    expect(within(settings).getByLabelText("Name")).toHaveProperty(
+      "value",
+      "Harbour",
+    );
+  });
+});

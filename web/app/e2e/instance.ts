@@ -22,6 +22,8 @@ export function build(): void {
   for (const [command, tags] of [
     ["storycreep", ["-tags", "webdist"]],
     ["e2ehelper", []],
+    // The canvas's benchmark loads the fixtures with it (bench/).
+    ["fixturegen", []],
   ] as const) {
     const built = spawnSync(
       "go",

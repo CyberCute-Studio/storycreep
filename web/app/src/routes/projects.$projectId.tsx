@@ -1,5 +1,10 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useMatch,
+} from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useDocumentState, useProjectDocument } from "../document/react";
@@ -56,8 +61,15 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const params = { projectId };
   const settings =
     managesProject(project.role) || managesWorkspace(workspace.role);
+  // A board's page takes the window's width, for its canvas.
+  const board = useMatch({
+    from: "/projects/$projectId/boards/$boardId",
+    shouldThrow: false,
+  });
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div
+      className={`mx-auto space-y-6 ${board === undefined ? "max-w-3xl" : ""}`}
+    >
       <div className="space-y-4">
         <p>
           <Link

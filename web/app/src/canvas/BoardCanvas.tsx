@@ -1,0 +1,576 @@
+// A board's canvas (PRD FR-EDIT-01, FR-EDIT-11, ADR-013): the board's nodes
+// and connections, as the project's document holds them, drawn by PixiJS,
+// with a toolbar that switches what one finger's drag does, pan or select
+// (NFR-TOUCH-03), zooms, fits the content, and zooms to the selection, and a
+// minimap. The canvas suppresses the browser's own gestures over it, as
+// pull-to-refresh and overscroll (NFR-TOUCH-08), and the toolbar's buttons
+// are of the size of a finger (NFR-TOUCH-01).
+
+import { formatNumber } from "@storycreep/shared/i18n";
+import {
+  lazy,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  Suspense,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { useTranslation } from "react-i18next";
+import type { Doc } from "../document/doc";
+import { boardPart } from "../document/doc";
+import { useProjectDocument } from "../document/react";
+import { Button } from "../ui/Button";
+import {
+  type BenchOptions,
+  CanvasController,
+  renderedMark,
+} from "./controller";
+import { createEngine, type RendererKind } from "./engine";
+import type { Mode, PointerInput } from "./gestures";
+import { labelsOf } from "./labels";
+import { Minimap } from "./minimap";
+import { readTheme } from "./theme";
+
+const Bench = lazy(() => import("./bench"));
+
+/** What the board's page asks of its canvas. */
+export interface CanvasOptions {
+  /** The renderer to use, whatever the browser's would be, as the benchmark and the tablet's checklist compare them. */
+  renderer?: RendererKind;
+  bench?: BenchOptions;
+}
+
+const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
+const darkQuery = "(prefers-color-scheme: dark)";
+
+/** Returns the media query of query, or undefined for a browser without matchMedia, as the tests' jsdom. */
+function mediaQuery(query: string): MediaQueryList | undefined {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(query)
+    : undefined;
+}
+
+/** Reports whether the system asks for reduced motion (NFR-A11Y-07), as it changes. */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      const q = mediaQuery(reducedMotionQuery);
+      q?.addEventListener("change", changed);
+      return () => q?.removeEventListener("change", changed);
+    },
+    () => mediaQuery(reducedMotionQuery)?.matches ?? false,
+  );
+}
+
+/** Returns the input of a pointer's event, at its point of the element at rect. */
+function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
+  return {
+    id: e.pointerId,
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+    kind:
+      e.pointerType === "touch"
+        ? "touch"
+        : e.pointerType === "pen"
+          ? "pen"
+          : "mouse",
+    button: e.button,
+    shift: e.shiftKey,
+    additive: e.ctrlKey || e.metaKey,
+  };
+}
+
+/** The canvas of a board of a project. */
+export function BoardCanvas({
+  projectId,
+  boardId,
+  boardName,
+  options = {},
+}: {
+  projectId: string;
+  boardId: string;
+  boardName: string;
+  options?: CanvasOptions;
+}) {
+  const { t, i18n } = useTranslation();
+  const doc = useProjectDocument(projectId);
+  const helpId = useId();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const bandRef = useRef<HTMLDivElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
+  const [mode, setMode] = useState<Mode>("pan");
+  const [selected, setSelected] = useState(0);
+  const [zoom, setZoom] = useState(1);
+  const [content, setContent] = useState<"loading" | "ready" | "failed">(
+    "loading",
+  );
+  const [attempt, setAttempt] = useState(0);
+  const [engine, setEngine] = useState<"starting" | "running" | "unsupported">(
+    "starting",
+  );
+  const [empty, setEmpty] = useState(false);
+  const [showMinimap, setShowMinimap] = useState(true);
+  const [height, setHeight] = useState<number>();
+  const reducedMotion = useReducedMotion();
+  const [controller] = useState(
+    () =>
+      new CanvasController(boardId, {
+        selection: (ids) => setSelected(ids.size),
+        zoom: setZoom,
+        rendered: () => {
+          try {
+            performance.clearMarks(renderedMark);
+            performance.mark(renderedMark, { detail: { boardId } });
+          } catch {
+            // A browser without marks' details has no harness to read them.
+          }
+        },
+      }),
+  );
+
+  // The canvas takes the window's height below where it starts, as a
+  // tablet's screen is the board's.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (host === null) {
+      return;
+    }
+    const measure = () => {
+      const top = host.getBoundingClientRect().top + window.scrollY;
+      setHeight(Math.max(320, window.innerHeight - top - 16));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  // The elements, their size, the theme, and the browser's events.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    const band = bandRef.current;
+    if (host === null || band === null) {
+      return;
+    }
+    controller.attach({ host, band });
+    const theme = () => controller.setTheme(readTheme(host));
+    theme();
+    const dark = mediaQuery(darkQuery);
+    dark?.addEventListener("change", theme);
+    const resize = () => {
+      const r = host.getBoundingClientRect();
+      controller.setSize(
+        { width: r.width, height: r.height },
+        window.devicePixelRatio || 1,
+      );
+    };
+    resize();
+    const observer =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(resize)
+        : undefined;
+    observer?.observe(host);
+    const pointer =
+      (type: "down" | "move" | "up" | "cancel") => (e: PointerEvent) => {
+        if (
+          type === "down" &&
+          e.target !== host &&
+          !surfaceRef.current?.contains(e.target as Node)
+        ) {
+          return;
+        }
+        const followed = controller.pointer(
+          type,
+          pointerInput(e, host.getBoundingClientRect()),
+        );
+        if (type === "down" && followed) {
+          host.focus({ preventScroll: true });
+          host.setPointerCapture?.(e.pointerId);
+          e.preventDefault();
+        }
+      };
+    const down = pointer("down");
+    const move = pointer("move");
+    const up = pointer("up");
+    const cancel = pointer("cancel");
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = host.getBoundingClientRect();
+      controller.gestures.wheel({
+        x: e.clientX - r.left,
+        y: e.clientY - r.top,
+        dx: e.deltaX,
+        dy: e.deltaY,
+        deltaMode: e.deltaMode,
+        zoom: e.ctrlKey || e.metaKey,
+        shift: e.shiftKey,
+      });
+    };
+    // Safari's pinch of a trackpad, which comes as a gesture's scale.
+    let scale = 1;
+    const gesture = (e: Event) => {
+      e.preventDefault();
+      const g = e as Event & {
+        scale?: number;
+        clientX?: number;
+        clientY?: number;
+      };
+      const r = host.getBoundingClientRect();
+      if (e.type === "gesturestart") {
+        scale = 1;
+      }
+      const next = g.scale ?? 1;
+      controller.gestures.scale(
+        {
+          x: (g.clientX ?? r.left + r.width / 2) - r.left,
+          y: (g.clientY ?? r.top + r.height / 2) - r.top,
+        },
+        scale,
+        next,
+      );
+      scale = next;
+    };
+    // A touch on the canvas, or on its minimap, is the canvas's alone:
+    // cancelling it keeps the browser from taking it for a scroll or a
+    // fling of its own, which a tap right after, as of the toolbar's
+    // button, would only stop, rather than press, and from zooming the page
+    // with a double tap (NFR-TOUCH-08). A button over the canvas, as the
+    // one that reads its content again, keeps its taps.
+    const touch = (e: TouchEvent) => {
+      if (!(e.target instanceof Element && e.target.closest("button"))) {
+        e.preventDefault();
+      }
+    };
+    const blur = () => {
+      controller.gestures.cancelAll();
+      controller.gestures.setSpace(false);
+    };
+    host.addEventListener("touchstart", touch, { passive: false });
+    host.addEventListener("touchmove", touch, { passive: false });
+    host.addEventListener("pointerdown", down);
+    host.addEventListener("pointermove", move);
+    host.addEventListener("pointerup", up);
+    host.addEventListener("pointercancel", cancel);
+    host.addEventListener("lostpointercapture", cancel);
+    host.addEventListener("wheel", wheel, { passive: false });
+    for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+      host.addEventListener(type, gesture);
+    }
+    window.addEventListener("blur", blur);
+    return () => {
+      controller.stop();
+      controller.attach(undefined);
+      dark?.removeEventListener("change", theme);
+      observer?.disconnect();
+      host.removeEventListener("touchstart", touch);
+      host.removeEventListener("touchmove", touch);
+      host.removeEventListener("pointerdown", down);
+      host.removeEventListener("pointermove", move);
+      host.removeEventListener("pointerup", up);
+      host.removeEventListener("pointercancel", cancel);
+      host.removeEventListener("lostpointercapture", cancel);
+      host.removeEventListener("wheel", wheel);
+      for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+        host.removeEventListener(type, gesture);
+      }
+      window.removeEventListener("blur", blur);
+    };
+  }, [controller]);
+
+  // The renderer, on a canvas element of its own, as a renderer that ends
+  // may leave its canvas's context lost.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    const host = hostRef.current;
+    if (surface === null || host === null) {
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("aria-hidden", "true");
+    canvas.className = "block size-full";
+    surface.append(canvas);
+    let ended = false;
+    let started: Awaited<ReturnType<typeof createEngine>> | undefined;
+    setEngine("starting");
+    createEngine(canvas, {
+      preference: options.renderer,
+      forced: options.renderer !== undefined,
+      fontFamily: getComputedStyle(host).fontFamily || "sans-serif",
+    }).then(
+      (e) => {
+        if (ended) {
+          e.destroy();
+          return;
+        }
+        started = e;
+        controller.setEngine(e);
+        setEngine("running");
+      },
+      () => {
+        if (!ended) {
+          setEngine("unsupported");
+        }
+      },
+    );
+    return () => {
+      ended = true;
+      controller.setEngine(undefined);
+      started?.destroy();
+      canvas.remove();
+    };
+  }, [controller, options.renderer]);
+
+  // The minimap, while it is shown.
+  useEffect(() => {
+    const canvas = minimapRef.current;
+    controller.setMinimap(
+      showMinimap && canvas !== null ? new Minimap(canvas) : undefined,
+    );
+  }, [controller, showMinimap]);
+
+  // The board's content, from the project's document, as it changes.
+  useEffect(() => {
+    let names: Pick<Doc, "components" | "variables" | "nodes"> | undefined;
+    const sync = () => {
+      const view = doc.store.getState().view;
+      const namesChanged =
+        names !== undefined &&
+        (names.components !== view.components ||
+          names.variables !== view.variables);
+      names = view;
+      controller.sync(view, namesChanged);
+      setEmpty(controller.scene.nodes.size === 0);
+    };
+    controller.labels = (item) => {
+      const view = doc.store.getState().view;
+      return labelsOf(item.node, {
+        // The keys that labels names, each a literal there, are the
+        // catalog's, as extraction reads them.
+        t,
+        componentName: (id) => view.components.get(id)?.name,
+        variableKey: (id) => view.variables.get(id)?.key,
+        nodeTitle: (id) => view.nodes.get(id)?.title,
+      });
+    };
+    controller.relabel();
+    sync();
+    return doc.store.subscribe(sync);
+  }, [controller, doc, t]);
+
+  useEffect(() => {
+    if (i18n.language !== "") {
+      controller.relabel();
+    }
+  }, [controller, i18n.language]);
+
+  // The board's nodes and connections, read once, and then the names that
+  // its cards show, of its speakers and of the variables that its texts
+  // show, which the board's first frame does not wait for.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's content again, as the user asks for it.
+  useEffect(() => {
+    let ended = false;
+    setContent("loading");
+    doc.load(boardPart(boardId)).then(
+      () => {
+        if (ended) {
+          return;
+        }
+        setContent("ready");
+        controller.setReady();
+        void doc.load("components").catch(() => {});
+        void doc.load("variables").catch(() => {});
+      },
+      () => {
+        if (!ended) {
+          setContent("failed");
+        }
+      },
+    );
+    return () => {
+      ended = true;
+    };
+  }, [controller, doc, boardId, attempt]);
+
+  useEffect(() => {
+    controller.reducedMotion = reducedMotion;
+  }, [controller, reducedMotion]);
+
+  useEffect(() => {
+    controller.setMode(mode);
+  }, [controller, mode]);
+
+  const keyDown = (e: ReactKeyboardEvent) => {
+    if (e.target !== e.currentTarget) {
+      return;
+    }
+    if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      controller.gestures.setSpace(true);
+      e.preventDefault();
+      return;
+    }
+    if (controller.key(e)) {
+      e.preventDefault();
+    }
+  };
+  const keyUp = (e: ReactKeyboardEvent) => {
+    if (e.key === " ") {
+      controller.gestures.setSpace(false);
+    }
+  };
+  const minimapPointer = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (e.type === "pointermove" && e.buttons === 0) {
+      return;
+    }
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.type === "pointerdown") {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    controller.centerOnMinimap({ x: e.clientX - r.left, y: e.clientY - r.top });
+  };
+
+  const percent = formatNumber(i18n.language, zoom, {
+    style: "percent",
+    maximumFractionDigits: 0,
+  });
+  const overlay =
+    engine === "unsupported"
+      ? { role: "alert" as const, text: t("canvas.unsupported") }
+      : content === "failed"
+        ? { role: "alert" as const, text: t("canvas.load_failed") }
+        : content === "loading"
+          ? { role: "status" as const, text: t("canvas.loading") }
+          : empty
+            ? { role: "status" as const, text: t("canvas.empty") }
+            : undefined;
+
+  return (
+    <div className="space-y-2">
+      <fieldset className="flex min-w-0 flex-wrap items-center gap-2">
+        <legend className="sr-only">{t("canvas.controls")}</legend>
+        <fieldset className="flex min-w-0 gap-1">
+          <legend className="sr-only">{t("canvas.mode")}</legend>
+          <Button
+            aria-pressed={mode === "pan"}
+            onClick={() => setMode("pan")}
+            className={mode === "pan" ? "outline-2 outline-accent" : ""}
+          >
+            {t("canvas.mode_pan")}
+          </Button>
+          <Button
+            aria-pressed={mode === "select"}
+            onClick={() => setMode("select")}
+            className={mode === "select" ? "outline-2 outline-accent" : ""}
+          >
+            {t("canvas.mode_select")}
+          </Button>
+        </fieldset>
+        <div className="flex gap-1">
+          <Button
+            aria-label={t("canvas.zoom_out")}
+            onClick={() => controller.zoomStep(-1)}
+          >
+            −
+          </Button>
+          <Button
+            aria-label={t("canvas.zoom_reset", { zoom: percent })}
+            onClick={() => controller.zoomTo(1)}
+            className="min-w-20 tabular-nums"
+          >
+            {percent}
+          </Button>
+          <Button
+            aria-label={t("canvas.zoom_in")}
+            onClick={() => controller.zoomStep(1)}
+          >
+            +
+          </Button>
+        </div>
+        <Button onClick={() => controller.fit()}>{t("canvas.fit")}</Button>
+        <Button
+          disabled={selected === 0}
+          onClick={() => controller.zoomToSelection()}
+        >
+          {t("canvas.zoom_selection")}
+        </Button>
+        <Button
+          aria-pressed={showMinimap}
+          onClick={() => setShowMinimap((shown) => !shown)}
+        >
+          {t("canvas.minimap")}
+        </Button>
+        <p className="text-sm text-fg-muted" aria-live="polite">
+          {selected > 0 && t("canvas.selected", { count: selected })}
+        </p>
+      </fieldset>
+      <div
+        ref={hostRef}
+        role="application"
+        aria-roledescription={t("canvas.roledescription")}
+        aria-label={t("canvas.label", { board: boardName })}
+        aria-describedby={helpId}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas takes the keys that pan and zoom it (NFR-A11Y-04).
+        tabIndex={0}
+        onKeyDown={keyDown}
+        onKeyUp={keyUp}
+        style={{ height }}
+        className="relative touch-none overflow-hidden overscroll-none rounded-md border border-border bg-canvas select-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus"
+      >
+        <div ref={surfaceRef} className="absolute inset-0" />
+        <div
+          ref={bandRef}
+          hidden
+          aria-hidden="true"
+          className="pointer-events-none absolute top-0 left-0 border-2 border-accent bg-accent/10"
+        />
+        {overlay !== undefined && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <p
+              role={overlay.role}
+              className="pointer-events-auto max-w-md rounded-md border border-border bg-surface px-4 py-3 text-center"
+            >
+              {overlay.text}
+              {content === "failed" && engine !== "unsupported" && (
+                <>
+                  {" "}
+                  <Button onClick={() => setAttempt((n) => n + 1)}>
+                    {t("canvas.retry")}
+                  </Button>
+                </>
+              )}
+            </p>
+          </div>
+        )}
+        {showMinimap && (
+          // The minimap is a pointer's shortcut: the keys pan and fit the
+          // board as it does (NFR-A11Y-04), so it is hidden from the
+          // accessibility tree, as the canvas's pixels are.
+          <div
+            aria-hidden="true"
+            className="absolute right-3 bottom-3 h-32 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-md"
+          >
+            <canvas
+              ref={minimapRef}
+              onPointerDown={minimapPointer}
+              onPointerMove={minimapPointer}
+              className="block size-full cursor-pointer"
+            />
+          </div>
+        )}
+      </div>
+      <p id={helpId} className="text-sm text-fg-muted">
+        {t("canvas.help")}
+      </p>
+      {options.bench !== undefined && (
+        <Suspense>
+          <Bench handle={controller.handle} options={options.bench} />
+        </Suspense>
+      )}
+    </div>
+  );
+}

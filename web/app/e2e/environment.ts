@@ -47,7 +47,9 @@ export const serverModule = fileURLToPath(
 export const binaries = join(tmpdir(), `storycreep-e2e-${port}`);
 
 /** Returns the path of the binary of command, as built into binaries. */
-export function binary(command: "storycreep" | "e2ehelper"): string {
+export function binary(
+  command: "storycreep" | "e2ehelper" | "fixturegen",
+): string {
   return join(
     binaries,
     process.platform === "win32" ? `${command}.exe` : command,

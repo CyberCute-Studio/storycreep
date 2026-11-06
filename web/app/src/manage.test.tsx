@@ -90,6 +90,13 @@ function projectPages(operation: string, boards: Board[]): unknown {
       return { items: [], next_cursor: null };
     case "listBoards":
       return { items: boards, next_cursor: null };
+    // The canvas's nodes and connections, and the names that its cards show.
+    case "listBoardNodes":
+    case "listBoardConnections":
+    case "listComponentTypes":
+    case "listComponents":
+    case "listVariables":
+      return { items: [], next_cursor: null };
   }
   return startPage(operation as Parameters<typeof startPage>[0]);
 }

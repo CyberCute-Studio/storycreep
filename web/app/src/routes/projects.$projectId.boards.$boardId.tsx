@@ -1,15 +1,19 @@
 import type { Board } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
+import type { RendererKind } from "../canvas/engine";
+import type { Rect } from "../canvas/viewport";
 import {
   ConflictNotice,
   changedOf,
   SaveStatus,
   useEntityForm,
 } from "../content/form";
+import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { type Command, editsProject, projectQuery } from "../project/queries";
@@ -22,13 +26,62 @@ import {
   TextField,
   useFocusRefusal,
 } from "../ui/Field";
-import { Alert, Page } from "../ui/Page";
+import { Alert } from "../ui/Page";
+import { useDocumentTitle } from "../ui/title";
+
+/**
+ * The search of the board's page, which the canvas's benchmark and the
+ * reference tablet's checklist read (docs/canvas-checklist.md): the
+ * renderer to use, whatever the browser's would be, and a scripted run of
+ * the canvas, of how many seconds, across which rectangle of the board.
+ */
+export interface BoardSearch {
+  renderer?: RendererKind;
+  bench?: "pan" | "panzoom" | "load";
+  seconds?: number;
+  area?: string;
+  warm?: number | "pass";
+}
+
+/** The longest run that the benchmark makes, in seconds: an hour. */
+const maxBenchSeconds = 3600;
 
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   // The board's ID as the server writes it, however the address spells it
   // (canonicalId), as the project's.
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
+  },
+  validateSearch: (search: Record<string, unknown>): BoardSearch => {
+    const out: BoardSearch = {};
+    if (
+      search.renderer === "webgl" ||
+      search.renderer === "webgpu" ||
+      search.renderer === "canvas"
+    ) {
+      out.renderer = search.renderer;
+    }
+    if (
+      search.bench === "pan" ||
+      search.bench === "panzoom" ||
+      search.bench === "load"
+    ) {
+      out.bench = search.bench;
+    }
+    const seconds = Number(search.seconds);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      out.seconds = Math.min(maxBenchSeconds, seconds);
+    }
+    const warm = Number(search.warm);
+    if (search.warm === "pass") {
+      out.warm = "pass";
+    } else if (Number.isFinite(warm) && warm >= 0) {
+      out.warm = Math.min(maxBenchSeconds, warm);
+    }
+    if (typeof search.area === "string" && areaOf(search.area) !== undefined) {
+      out.area = search.area;
+    }
+    return out;
   },
   // The project comes first, as for the tree of its boards, which its
   // document reads, and which holds the board, but for one in the trash. A
@@ -50,6 +103,10 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     if (!has()) {
       throw notFound();
     }
+    // The board's nodes and connections, which the canvas shows, start to
+    // load as the page does; the canvas says so while they do, and what
+    // their read failed with.
+    doc.load(boardPart(params.boardId)).catch(() => {});
   },
   // The router keeps no match of the page once it is left, as for the tree
   // of the project's boards: the project's document may be made anew by the
@@ -76,12 +133,12 @@ const colors = [
   "gray",
 ] as const satisfies readonly Board["color"][];
 
-// A board's page (PRD FR-PROJ-02): its name, its slug, its description, and
-// its colour, which an editor changes, and its deletion to the project's
-// trash. The canvas of its nodes joins it later (plan item 59). It shows the
-// board as the project's document has it, so a change that another session
-// makes shows as it commits (FR-RT-02), and the page of no page once the
-// board has gone to the trash.
+// A board's page (PRD FR-PROJ-02, FR-EDIT-01): the canvas of its nodes and
+// connections, and under it its name, its slug, its description, and its
+// colour, which an editor changes, and its deletion to the project's trash.
+// It shows the board as the project's document has it, so a change that
+// another session makes shows as it commits (FR-RT-02), and the page of no
+// page once the board has gone to the trash.
 function BoardPage() {
   const { projectId, boardId } = Route.useParams();
   const doc = useProjectDocument(projectId);
@@ -107,6 +164,19 @@ function BoardPage() {
   );
 }
 
+/** Returns the rectangle of a search's area, x,y,width,height of the board, or undefined for one that is none. */
+function areaOf(area: string | undefined): Rect | undefined {
+  if (area === undefined) {
+    return undefined;
+  }
+  const parts = area.split(",").map(Number);
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) {
+    return undefined;
+  }
+  const [x, y, width, height] = parts;
+  return width > 0 && height > 0 ? { x, y, width, height } : undefined;
+}
+
 function BoardContent({
   projectId,
   board,
@@ -119,42 +189,70 @@ function BoardContent({
 }) {
   const { t } = useTranslation();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
+  const search = Route.useSearch();
   const editable =
     editsProject(project.role) && project.archived_at === undefined;
+  useDocumentTitle(
+    t("board.page_title", { board: board.name, project: project.name }),
+  );
+  const options = useMemo<CanvasOptions>(
+    () => ({
+      renderer: search.renderer,
+      bench:
+        search.bench === undefined
+          ? undefined
+          : {
+              scenario: search.bench,
+              seconds: search.seconds ?? 30,
+              area: areaOf(search.area),
+              warm: search.warm,
+            },
+    }),
+    [search.renderer, search.bench, search.seconds, search.area, search.warm],
+  );
   return (
-    <Page
-      title={board.name}
-      documentTitle={t("board.page_title", {
-        board: board.name,
-        project: project.name,
-      })}
-      width="wide"
-    >
-      <p className="text-fg-muted">{t("board.no_canvas")}</p>
-      {editable ? (
-        <BoardForm projectId={projectId} board={board} />
-      ) : (
-        <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
-          <dt className="text-fg-muted">{t("board.slug")}</dt>
-          <dd className="break-words">{board.slug}</dd>
-          <dt className="text-fg-muted">{t("board.description")}</dt>
-          <dd className="break-words whitespace-pre-line">
-            {board.description === ""
-              ? t("board.no_description")
-              : board.description}
-          </dd>
-          <dt className="text-fg-muted">{t("board.color")}</dt>
-          <dd>{colorName(t, board.color)}</dd>
-        </dl>
-      )}
-      {editable && (
-        <DeleteBoard
-          projectId={projectId}
-          board={board}
-          onDeleting={onDeleting}
-        />
-      )}
-    </Page>
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">{board.name}</h1>
+      <BoardCanvas
+        // A renderer asked for anew starts the canvas anew.
+        key={search.renderer ?? ""}
+        projectId={projectId}
+        boardId={board.id}
+        boardName={board.name}
+        options={options}
+      />
+      <section
+        aria-labelledby="board-settings"
+        className="mx-auto max-w-3xl space-y-6"
+      >
+        <h2 id="board-settings" className="text-lg font-semibold">
+          {t("board.settings_title")}
+        </h2>
+        {editable ? (
+          <BoardForm projectId={projectId} board={board} />
+        ) : (
+          <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
+            <dt className="text-fg-muted">{t("board.slug")}</dt>
+            <dd className="break-words">{board.slug}</dd>
+            <dt className="text-fg-muted">{t("board.description")}</dt>
+            <dd className="break-words whitespace-pre-line">
+              {board.description === ""
+                ? t("board.no_description")
+                : board.description}
+            </dd>
+            <dt className="text-fg-muted">{t("board.color")}</dt>
+            <dd>{colorName(t, board.color)}</dd>
+          </dl>
+        )}
+        {editable && (
+          <DeleteBoard
+            projectId={projectId}
+            board={board}
+            onDeleting={onDeleting}
+          />
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -371,9 +469,9 @@ function DeleteBoard({
   const deleted = useRef(false);
   return (
     <section className="space-y-2" aria-labelledby="board-delete">
-      <h2 id="board-delete" className="text-lg font-semibold">
+      <h3 id="board-delete" className="font-semibold">
         {t("board.delete_title")}
-      </h2>
+      </h3>
       <p>{t("board.delete_intro")}</p>
       <Button
         variant="danger"
