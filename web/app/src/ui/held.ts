@@ -49,6 +49,22 @@ export interface Held<T> {
   release: () => void;
 }
 
+/**
+ * Returns what of a form the focus may be in, in an order that the form
+ * shown anew has it in too: its controls, and then its editable texts, as a
+ * rich text's, which are no form control: the elements that are editable,
+ * or say that they are not, of which none that holds them does (the editing
+ * hosts, rather than the atoms within them that ProseMirror marks).
+ */
+function controlsOf(form: HTMLFormElement): Element[] {
+  return [
+    ...form.elements,
+    ...Array.from(form.querySelectorAll("[contenteditable]")).filter(
+      (element) => !element.parentElement?.closest("[contenteditable]"),
+    ),
+  ];
+}
+
 /** Returns what a form of entity shows, and how it holds it. */
 export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   const form = useRef<HTMLFormElement>(null);
@@ -59,11 +75,11 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
   // Whether the user has changed something in the form since it held the
   // entity, which the focus leaving it then does not let go.
   const changed = useRef(false);
-  // The place, among the form's controls, of the one that has the focus,
-  // while one has.
+  // The place, among the form's controls (controlsOf), of the one that has
+  // the focus, while one has.
   const focused = useRef<number>(undefined);
-  // The letting go of the form that the focus's move into a dialog waits
-  // with (props.onBlur).
+  // The letting go of the form that the focus leaving it waits with
+  // (props.onBlur).
   const leaving = useRef<ReturnType<typeof setTimeout>>(undefined);
   const shown = held?.value ?? entity;
   // The form shown anew has the focus where it had it: its controls before
@@ -75,11 +91,12 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
     if (
       node === null ||
       at === undefined ||
+      at < 0 ||
       node.contains(node.ownerDocument.activeElement)
     ) {
       return;
     }
-    const control = node.elements.item(at);
+    const control = controlsOf(node)[at];
     if (control instanceof HTMLElement) {
       control.focus();
     }
@@ -95,7 +112,7 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
       onFocus: (event) => {
         clearTimeout(leaving.current);
         leaving.current = undefined;
-        focused.current = [...event.currentTarget.elements].indexOf(
+        focused.current = controlsOf(event.currentTarget).indexOf(
           event.target as Element,
         );
         holdEntity();
@@ -114,28 +131,22 @@ export function useHeld<T extends { rev: number }>(entity: T): Held<T> {
         if (event.target === event.currentTarget.ownerDocument.activeElement) {
           return;
         }
-        const leave = () => {
+        // The form shown anew meanwhile, as once a save ends, leaves the
+        // focus where the user took it.
+        focused.current = undefined;
+        // What a control of the form opened in a portal, as a rich text's
+        // link dialog or a menu, is outside the form's elements, but React
+        // tells the form of the focus in it (onFocus), right after this, as
+        // the focus moves: the form lets go only once it has not, rather
+        // than let go and hold again, which would show it anew, without
+        // what was opened, where what it shows changed meanwhile.
+        clearTimeout(leaving.current);
+        leaving.current = setTimeout(() => {
           leaving.current = undefined;
-          focused.current = undefined;
           if (!changed.current) {
             setHeld(undefined);
           }
-        };
-        // A dialog that a control of the form opened, as a rich text's link
-        // dialog, is outside the form's elements, in its portal, but React
-        // tells the form of the focus in it (onFocus), right after this, as
-        // the focus moves: the form lets go only once it has not, rather
-        // than let go and hold again, which would show it anew, without the
-        // dialog, where what it shows changed meanwhile.
-        if (
-          event.relatedTarget instanceof Element &&
-          event.relatedTarget.closest('[role="dialog"], [role="alertdialog"]')
-        ) {
-          clearTimeout(leaving.current);
-          leaving.current = setTimeout(leave);
-          return;
-        }
-        leave();
+        });
       },
     },
     hold: (value) => {

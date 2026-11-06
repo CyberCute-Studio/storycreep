@@ -174,9 +174,14 @@ export function RichTextEditor({
     const extensions = richTextExtensions({
       labels: {
         mention: (ref) =>
-          latest.current.names?.mention(ref) ?? latest.current.unknown.mention,
+          (ref === undefined
+            ? undefined
+            : latest.current.names?.mention(ref)) ??
+          latest.current.unknown.mention,
         value: (ref, attribute) =>
-          latest.current.names?.value(ref, attribute) ??
+          (ref === undefined
+            ? undefined
+            : latest.current.names?.value(ref, attribute)) ??
           latest.current.unknown.value,
       },
       placeholder: () => latest.current.placeholder ?? "",

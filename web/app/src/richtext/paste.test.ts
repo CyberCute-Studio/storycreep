@@ -1040,4 +1040,49 @@ if (tide) {}</pre>
       doc(p(text("first line")), p(text("second\ttabbed"))),
     );
   });
+
+  test("pasted text keeps the characters of Markdown's marks and of a numbered list's lines, which no paste takes for marks or a list, as plain text pasted within a paragraph", () => {
+    const editor = testEditor();
+    // A paste of plain text alone, as from a text editor, without HTML.
+    const paste = (plain: string) =>
+      editor.view.pasteText(
+        plain,
+        Object.assign(new Event("paste"), {
+          clipboardData: {
+            getData: (type: string) => (type === "text/plain" ? plain : ""),
+          },
+        }) as unknown as ClipboardEvent,
+      );
+    editor.commands.setContent(doc(p(text("Tide and shore"))));
+    editor.commands.setTextSelection(5);
+    paste(" C. S. Lewis wrote it.");
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("Tide C. S. Lewis wrote it. and shore"))),
+    );
+    editor.commands.clearContent();
+    paste("1. Rope\n2. Hook");
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("1. Rope")), p(text("2. Hook"))),
+    );
+    editor.commands.clearContent();
+    paste("2 * 3 * 4 and def __init__(self), `x` ~~y~~");
+    expect(storedOf(editor.state.doc).doc).toEqual(
+      doc(p(text("2 * 3 * 4 and def __init__(self), `x` ~~y~~"))),
+    );
+    expect(pasted("<p>2 * 3 * 4 and **bold**</p>")).toEqual(
+      doc(p(text("2 * 3 * 4 and **bold**"))),
+    );
+  });
+
+  test("a plaintext, which HTML shows as a pre, keeps its white space as a pre does, and a search is a block of its own", () => {
+    expect(pasted("<div>Tide<search>Find</search>shore</div>")).toEqual(
+      doc(p(text("Tide")), p(text("Find")), p(text("shore"))),
+    );
+    expect(pasted("<p>Tide</p><plaintext>  a  b\n  c")).toEqual(
+      doc(
+        p(text("Tide")),
+        p(text("  a  b", "code"), { type: "hardBreak" }, text("  c", "code")),
+      ),
+    );
+  });
 });

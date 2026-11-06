@@ -175,7 +175,9 @@ const BLOCKS = new Set([
   "nav",
   "ol",
   "p",
+  "plaintext",
   "pre",
+  "search",
   "section",
   "summary",
   "table",
@@ -189,8 +191,8 @@ const BLOCKS = new Set([
   "xmp",
 ]);
 
-/** The elements of preformatted text, whose white space is kept, and whose text is code: a pre, and the listing and the xmp that HTML shows as one. */
-const PREFORMATTED = new Set(["listing", "pre", "xmp"]);
+/** The elements of preformatted text, whose white space is kept, and whose text is code: a pre, and the listing, the plaintext, and the xmp that HTML shows as one. */
+const PREFORMATTED = new Set(["listing", "plaintext", "pre", "xmp"]);
 
 /** The elements of a block of text, which ProseMirror writes of a paragraph, a heading, or a block of code. */
 const TEXTBLOCKS = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"]);

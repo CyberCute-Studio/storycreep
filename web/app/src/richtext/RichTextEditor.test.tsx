@@ -1,6 +1,6 @@
 import type { RichTextDoc } from "@storycreep/shared/api";
 import { MAX_CHARS } from "@storycreep/shared/richtext";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
 import { describe, expect, test, vi } from "vitest";
@@ -302,6 +302,38 @@ describe("the rich-text editor", () => {
     },
   );
 
+  test("a text whose mention and value reference have IDs that are no strings shows them by what they are, without giving the page's names those IDs, and cannot be changed", () => {
+    const names = {
+      mention: vi.fn((id: string) => id.toUpperCase()),
+      value: vi.fn((ref: string) => ref.toUpperCase()),
+    };
+    const { textbox } = renderEditor({
+      defaultValue: {
+        content: [
+          {
+            content: [
+              { attrs: { id: 5 }, type: "mention" },
+              { text: " has ", type: "text" },
+              { attrs: { ref: null }, type: "valueRef" },
+              { text: " and ", type: "text" },
+              {
+                attrs: { attribute: 7, ref: "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BVD" },
+                type: "valueRef",
+              },
+            ],
+            type: "paragraph",
+          },
+        ],
+        type: "doc",
+      } as unknown as RichTextDoc,
+      names,
+    });
+    expect(textbox.textContent).toBe("@component has {value} and {value}");
+    expect(names.mention).not.toHaveBeenCalled();
+    expect(names.value).not.toHaveBeenCalled();
+    expect(textbox.getAttribute("contenteditable")).toBe("false");
+  });
+
   test("the page's own error goes before the editor's, and a text that may not be changed has no toolbar, and takes the focus, as from a click on its label", async () => {
     const { textbox } = renderEditor({
       defaultValue: paragraph("Read only"),
@@ -480,6 +512,40 @@ describe("the rich-text editor", () => {
         "shore",
       ),
     );
+  });
+
+  test("a form that holds the editor, shown anew while the focus is in the text, as once it is saved, gives the focus back to the text", async () => {
+    let release = () => {};
+    function HeldForm({ entity }: { entity: { rev: number; body: string } }) {
+      const held = useHeld(entity);
+      release = held.release;
+      return (
+        <form key={held.key} {...held.props}>
+          <input aria-label="Title" />
+          <RichTextEditor
+            label="Body"
+            defaultValue={paragraph(held.shown.body)}
+            onChange={held.props.onChange}
+          />
+        </form>
+      );
+    }
+    const i18n = createAppI18n(["en"], document.documentElement);
+    const form = (rev: number, body: string) => (
+      <I18nextProvider i18n={i18n}>
+        <HeldForm entity={{ rev, body }} />
+      </I18nextProvider>
+    );
+    const { rerender } = render(form(1, "harbour"));
+    const textbox = screen.getByRole("textbox", { name: "Body" });
+    textbox.focus();
+    rerender(form(2, "shore"));
+    expect(textbox.textContent).toBe("harbour");
+    act(() => release());
+    const shown = screen.getByRole("textbox", { name: "Body" });
+    expect(shown).not.toBe(textbox);
+    expect(shown.textContent).toBe("shore");
+    expect(document.activeElement).toBe(shown);
   });
 
   test("the text of a link inserted where nothing is selected has the marks of text typed there", async () => {

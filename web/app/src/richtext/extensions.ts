@@ -45,19 +45,34 @@ export interface RichTextNames {
   value: (ref: string, attribute: string | undefined) => string | undefined;
 }
 
-/** What a mention shows of its component, and a value reference of its value: their names, or a word for what they are. */
+/**
+ * What a mention shows of its component, and a value reference of its value:
+ * their names, or a word for what they are, as of an ID that is undefined,
+ * where the node's is no string.
+ */
 export interface ChipLabels {
-  mention: (id: string) => string;
-  value: (ref: string, attribute: string | undefined) => string;
+  mention: (id: string | undefined) => string;
+  value: (ref: string | undefined, attribute: string | undefined) => string;
 }
 
-/** Returns what a node of the editor shows as its text, if it is a mention or a value reference: @ before the component's name, or the value's name in braces. */
+/**
+ * Returns what a node of the editor shows as its text, if it is a mention or
+ * a value reference: @ before the component's name, or the value's name in
+ * braces. The labels are asked of the node's IDs only where they are strings,
+ * as the schema has them, and of none otherwise, as of a text that the editor
+ * cannot keep, which may hold any JSON there (readOf), so that a page's names
+ * are given only the strings that they take.
+ */
 function chipText(node: PMNode, labels: ChipLabels): string | undefined {
+  const { id, ref, attribute } = node.attrs;
   switch (node.type.name) {
     case "mention":
-      return `@${labels.mention(node.attrs.id)}`;
+      return `@${labels.mention(typeof id === "string" ? id : undefined)}`;
     case "valueRef":
-      return `{${labels.value(node.attrs.ref, node.attrs.attribute ?? undefined)}}`;
+      return typeof ref === "string" &&
+        (attribute === null || typeof attribute === "string")
+        ? `{${labels.value(ref, attribute ?? undefined)}}`
+        : `{${labels.value(undefined, undefined)}}`;
   }
   return undefined;
 }
@@ -83,7 +98,9 @@ function chipNode(
     selectable: true,
 
     addOptions() {
-      return { labels: { mention: (id: string) => id, value: (ref) => ref } };
+      return {
+        labels: { mention: (id) => id ?? "", value: (ref) => ref ?? "" },
+      };
     },
 
     addAttributes: () => attributes,
@@ -293,7 +310,14 @@ const StoredLink = Link.extend({
   HTMLAttributes: { rel: "noopener noreferrer nofollow", target: "_blank" },
 });
 
-/** An ordered list, with the number of its first item in attrs.start and no other attribute. */
+/**
+ * An ordered list, with the number of its first item in attrs.start and no
+ * other attribute. Pasted plain text is ProseMirror's, a paragraph a line,
+ * rather than the list that TipTap's plugin of an ordered list makes of
+ * lines that each begin with a number, a Roman numeral, or one or two letters
+ * before "." or ")", which would take "C." of "C. S. Lewis" for the number
+ * 100, and leave it out of the text.
+ */
 const StoredOrderedList = OrderedList.extend({
   addAttributes() {
     return {
@@ -303,7 +327,18 @@ const StoredOrderedList = OrderedList.extend({
       },
     };
   },
+  addProseMirrorPlugins: () => [],
 });
+
+/**
+ * The marks of the toolbar, whose Markdown-like input rules stay, as "**" or
+ * "_" around typed text, but not their paste rules, which would take the
+ * characters of pasted text, as the asterisks of "2 * 3 * 4" or the
+ * underscores of "__init__", for marks, and leave them out of it.
+ */
+const toolbarMarks = [Bold, Italic, Strike, Code].map((mark) =>
+  mark.extend({ addPasteRules: () => [] }),
+);
 
 /**
  * A list's item, which Tab moves, with the other items of the selection,
@@ -352,10 +387,7 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
     BulletList,
     StoredOrderedList,
     NestingListItem,
-    Bold,
-    Italic,
-    Strike,
-    Code,
+    ...toolbarMarks,
     StoredLink,
     Mention.configure({ labels }),
     ValueRef.configure({ labels }),
