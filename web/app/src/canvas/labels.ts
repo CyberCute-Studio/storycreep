@@ -11,7 +11,7 @@ import type {
   RichTextInline,
 } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
-import { excerptLength, wholeStart } from "./text";
+import { excerpt, excerptLength } from "./text";
 
 /** What a card shows of a node, as text. */
 export interface NodeLabels {
@@ -266,15 +266,11 @@ export function plainText(
     }
   };
   blocks(doc.content);
-  const text = lines.join("\n").trim();
-  if (text.length <= excerptLength) {
-    return text;
-  }
   // Whole characters, as a reader sees them, as the card's lines cut it
   // (text.ts): a cut within one, as between the two code units of an emoji,
   // or a letter and its accent, would leave a part of it, which a font
   // draws as a broken glyph.
-  return `${text.slice(0, wholeStart(text, excerptLength - 1))}…`;
+  return excerpt(lines.join("\n").trim());
 }
 
 function inline(

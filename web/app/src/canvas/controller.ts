@@ -227,7 +227,7 @@ export class CanvasController implements GestureHost {
    * than from and to views of the size before, as a fit that the window's
    * turn interrupts would. A size of none, as of a host that the page does
    * not display, moves nothing: the size after it keeps the centre of the
-   * last size that had an area.
+   * last size that had an area, which a move meanwhile is about (shown).
    */
   setSize(size: Size, resolution: number): void {
     if (
@@ -321,6 +321,25 @@ export class CanvasController implements GestureHost {
   }
 
   /**
+   * The size that a move of the toolbar's, the keys', or the minimap's is
+   * about: the canvas's, or, while it has none, as of a host that the page
+   * does not display, the last that had an area, whose centre the size
+   * after keeps (setSize), so that the move is about the centre that the
+   * canvas shows again, rather than about the top-left corner of none.
+   */
+  private shown(): Size {
+    return this.sz.width > 0 && this.sz.height > 0
+      ? this.sz
+      : (this.shownSize ?? this.sz);
+  }
+
+  /** The centre of the canvas, of its size as a move is about it (shown). */
+  private centre(): Point {
+    const size = this.shown();
+    return { x: size.width / 2, y: size.height / 2 };
+  }
+
+  /**
    * Shows v at once, ending a zoom or a move that the canvas animates, and,
    * once the board's content has been read, places the canvas, which is
    * then not fitted to it. A v that is the viewport moves nothing, so it
@@ -379,6 +398,25 @@ export class CanvasController implements GestureHost {
     this.invalidate();
   }
 
+  /**
+   * Gives back the capture of the pointer of id, which the host took as it
+   * went down, once the gestures no longer follow it, as once a press whose
+   * release the canvas did not hear of ended, or another pointer's press,
+   * or the window's blur, ended it: the browser, which did not hear of the
+   * release either, might else send the pointer's next press, as of a
+   * button of the toolbar, to the host rather than to the button.
+   */
+  release(id: number): void {
+    const host = this.elements?.host;
+    try {
+      if (host?.hasPointerCapture?.(id)) {
+        host.releasePointerCapture(id);
+      }
+    } catch {
+      // A pointer that the browser no longer has keeps no capture.
+    }
+  }
+
   band(r: Rect | undefined): void {
     const el = this.elements?.band;
     if (el === undefined) {
@@ -419,25 +457,13 @@ export class CanvasController implements GestureHost {
   /** Zooms in or out by a step, about the canvas's centre. */
   zoomStep(direction: 1 | -1): void {
     const v = this.target();
-    this.animateTo(
-      zoomAt(
-        v,
-        { x: this.sz.width / 2, y: this.sz.height / 2 },
-        stepZoom(v.zoom, direction),
-      ),
-    );
+    this.animateTo(zoomAt(v, this.centre(), stepZoom(v.zoom, direction)));
   }
 
   /** Zooms to zoom about the canvas's centre. */
   zoomTo(zoom: number): void {
     const v = this.target();
-    this.animateTo(
-      zoomAt(
-        v,
-        { x: this.sz.width / 2, y: this.sz.height / 2 },
-        clampZoom(zoom),
-      ),
-    );
+    this.animateTo(zoomAt(v, this.centre(), clampZoom(zoom)));
   }
 
   /** Shows the board's content whole, or the board's origin at 100% for a board without any. */
@@ -450,7 +476,7 @@ export class CanvasController implements GestureHost {
     if (bounds === undefined) {
       return emptyView;
     }
-    return fitTo(bounds, this.sz, 48, fitZoom);
+    return fitTo(bounds, this.shown(), 48, fitZoom);
   }
 
   /** Shows the selected nodes whole, and reports whether there were any. */
@@ -459,7 +485,7 @@ export class CanvasController implements GestureHost {
     if (bounds === undefined) {
       return false;
     }
-    this.animateTo(fitTo(bounds, this.sz, 48, fitZoom));
+    this.animateTo(fitTo(bounds, this.shown(), 48, fitZoom));
     return true;
   }
 
@@ -470,13 +496,7 @@ export class CanvasController implements GestureHost {
    * gives.
    */
   centerOn(p: Point): void {
-    this.setViewport(
-      anchorAt(
-        p,
-        { x: this.sz.width / 2, y: this.sz.height / 2 },
-        this.target().zoom,
-      ),
-    );
+    this.setViewport(anchorAt(p, this.centre(), this.target().zoom));
   }
 
   /** Centres the canvas on the board's point at p of the minimap, in its CSS pixels. */
@@ -496,8 +516,9 @@ export class CanvasController implements GestureHost {
     switch (action.kind) {
       case "pan": {
         const v = this.target();
+        const size = this.shown();
         this.animateTo(
-          panBy(v, action.dx * this.sz.width, action.dy * this.sz.height),
+          panBy(v, action.dx * size.width, action.dy * size.height),
         );
         return true;
       }
@@ -513,9 +534,13 @@ export class CanvasController implements GestureHost {
       case "selection":
         this.zoomToSelection();
         return true;
-      case "deselect":
+      case "deselect": {
+        // Escape is the canvas's while there is a selection to clear, and
+        // else the page's, as of what around the canvas closes with it.
+        const had = this.selected.size > 0;
         this.select([], "replace");
-        return true;
+        return had;
+      }
     }
   }
 

@@ -18,6 +18,8 @@ function host(mode: Mode = "pan") {
     bands: [] as (Rect | undefined)[],
     /** The rectangles of the board that a rubber band selected in. */
     banded: [] as Rect[],
+    /** The pointers that the gestures gave back, as they no longer follow them. */
+    released: [] as number[],
   };
   const node = { x: 100, y: 100, width: 240, height: 120 };
   const inNode = (r: Rect) =>
@@ -50,6 +52,9 @@ function host(mode: Mode = "pan") {
     },
     band: (r) => {
       state.bands.push(r);
+    },
+    release: (id) => {
+      state.released.push(id);
     },
   };
   return { state, gestures: new Gestures(h) };
@@ -333,7 +338,7 @@ describe("the canvas's gestures", () => {
     expect(state.bands.at(-1)).toBeDefined();
   });
 
-  it("pinches with two fingers alone, and lets a press of another kind of pointer take the canvas from the one before", () => {
+  it("pinches with two fingers alone, lets a press of another kind of pointer take the canvas from the one before, but a palm's under a pen, and gives back each pointer that it no longer follows", () => {
     const { state, gestures } = host();
     // A mouse whose release the canvas did not hear of, and that stays
     // still, and a finger that touches the screen: the finger pans.
@@ -347,6 +352,11 @@ describe("the canvas's gestures", () => {
     expect(gestures.down(pen)).toBe(true);
     expect(gestures.tracks(2)).toBe(false);
     gestures.move(touch(2, 700, 300));
+    // A palm that rests on the screen as the pen draws is ignored, and the
+    // pen goes on.
+    expect(gestures.down(touch(6, 500, 500))).toBe(false);
+    gestures.move(touch(6, 600, 500));
+    expect(gestures.tracks(3)).toBe(true);
     gestures.move({ ...pen, x: 300, y: 400 });
     expect(state.v).toEqual({ x: -60, y: -100, zoom: 1 });
     gestures.up({ ...pen, x: 300, y: 400 });
@@ -357,6 +367,9 @@ describe("the canvas's gestures", () => {
     expect(gestures.tracks(4) || gestures.tracks(5)).toBe(false);
     gestures.move(touch(5, 600, 300));
     expect(state.v.zoom).toBe(1);
+    // Each pointer that a press took the canvas from, and the pen that went
+    // up, but not the palm, which the canvas never followed.
+    expect(state.released).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("goes on panning with the finger that stays once the other lifts", () => {

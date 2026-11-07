@@ -385,8 +385,11 @@ test.describe("a board's canvas", () => {
   }) => {
     const board = await openBoard(page);
     const canvas = canvasOf(page, board.name);
-    /** Returns the zooms that the canvas shows while fit to content moves it from 100%. */
-    const zoomsOfFit = async () => {
+    /** Returns how many zooms the canvas showed since fit to content last moved it from 100%. */
+    const zooms = () =>
+      page.evaluate(() => (window as { zooms?: string[] }).zooms?.length ?? 0);
+    /** Moves the canvas to 100%, and fits it to the content, which it then shows whole. */
+    const fitContent = async () => {
       await press(zoomButton(page));
       await expect(canvas).toHaveAttribute("data-zoom", "1");
       await canvas.evaluate((el) => {
@@ -404,12 +407,21 @@ test.describe("a board's canvas", () => {
         "data-visible",
         String(board.nodeIds.length),
       );
-      await page.waitForTimeout(400);
-      return page.evaluate(() => (window as { zooms?: string[] }).zooms ?? []);
     };
-    expect((await zoomsOfFit()).length).toBeGreaterThan(2);
+    // Animated, the zoom passes through the frames between, as they come.
+    await fitContent();
+    await expect.poll(zooms).toBeGreaterThan(2);
     await page.emulateMedia({ reducedMotion: "reduce" });
-    expect((await zoomsOfFit()).length).toBe(1);
+    // At once, the frame after the press shows where the fit goes, and the
+    // frames after it, which an animation would go on in, move nothing.
+    await fitContent();
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    expect(await zooms()).toBe(1);
   });
 
   // Verifies: FR-EDIT-11/AC1

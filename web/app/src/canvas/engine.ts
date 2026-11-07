@@ -116,10 +116,17 @@ export interface EngineOptions {
   /**
    * The renderer to try first, or undefined for WebGL, then WebGPU, then
    * Canvas 2D. A WebGL that the browser runs in software, with a major
-   * performance caveat, counts as none, so that the Canvas 2D renderer,
-   * which is faster on such a device, draws, unless forced asks for it.
+   * performance caveat, counts as none, as does a WebGPU of a fallback
+   * adapter, so that the Canvas 2D renderer, which is faster on such a
+   * device, draws, unless forced asks for it.
    */
   preference?: RendererKind;
+  /**
+   * Whether the preference is asked for whatever the device runs it in, as
+   * the page's `?renderer=` asks: of it alone, so that a renderer that the
+   * canvas falls back to, once the one asked for failed to start, counts a
+   * software one as none still, as without a preference.
+   */
   forced?: boolean;
   /** The font of the page, which the cards' text is in. */
   fontFamily: string;
@@ -158,7 +165,10 @@ export async function createEngine(
   surface: HTMLElement,
   options: EngineOptions,
 ): Promise<Engine> {
-  const caveat = options.forced !== true;
+  // Whether a renderer of kind counts one that the browser runs in
+  // software as none: each but the one that the page asked for.
+  const caveat = (kind: RendererKind) =>
+    options.forced !== true || kind !== options.preference;
   const order =
     options.preference === undefined
       ? renderers
@@ -175,10 +185,10 @@ export async function createEngine(
   // each time that it starts.
   isWebGLSupported(false);
   for (const kind of order) {
-    if (kind === "webgl" && caveat && !hardwareWebGL()) {
+    if (kind === "webgl" && caveat(kind) && !hardwareWebGL()) {
       continue;
     }
-    if (kind === "webgpu" && caveat && !(await hardwareWebGPU())) {
+    if (kind === "webgpu" && caveat(kind) && !(await hardwareWebGPU())) {
       continue;
     }
     const canvas = document.createElement("canvas");
@@ -198,7 +208,7 @@ export async function createEngine(
         // This renderer alone, so that one that fails to start gives way
         // to the next here, on a canvas of its own.
         preference: [kind],
-        failIfMajorPerformanceCaveat: caveat,
+        failIfMajorPerformanceCaveat: caveat(kind),
         // The canvas brings what it draws with its own imports: PixiJS's
         // accessibility layer, which would add a button of its own to the
         // page on a tablet, and its events, are not the canvas's (item 63
@@ -457,10 +467,13 @@ class PixiEngine implements Engine {
     }
     const lod: FrameStats["lod"] =
       v.zoom < detailZoom || this.crowded ? "blocks" : "detail";
+    // A change of the text's resolution builds the margin anew where it
+    // shows text, and not where it shows blocks, of none, as the Canvas 2D
+    // renderer's of a crowded view, at a zoom that may cross a tier's edge.
     const moved =
       b === undefined ||
       b.lod !== lod ||
-      b.tier !== tier ||
+      (lod === "detail" && b.tier !== tier) ||
       v.zoom > b.zoom * zoomSlack ||
       v.zoom < b.zoom / zoomSlack ||
       !contains(b.region, visible);

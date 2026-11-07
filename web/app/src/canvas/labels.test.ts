@@ -272,6 +272,12 @@ describe("a card's text", () => {
       context,
     );
     expect(text).toBe(`${"a".repeat(236)}…`);
+    // And so do the lines of a jumper's target, which no excerpt cut before
+    // them, on a card large enough for the whole of what a card shows, with
+    // the ellipsis that says that more of it follows.
+    expect(wrapLines(`To ${"🌊".repeat(150)}`, 1000, 4, false)).toBe(
+      `To ${"🌊".repeat(118)}…`,
+    );
   });
 
   it("finds a text's characters as the browser's segmenter does, which PixiJS keys its glyphs by, of the marks that are letters too", () => {

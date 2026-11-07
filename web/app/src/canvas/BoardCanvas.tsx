@@ -35,6 +35,7 @@ import {
 import { createEngine, type Engine, type RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
 import {
+  type LabelContext,
   type LabelSources,
   labelContext,
   labelsOf,
@@ -239,28 +240,9 @@ export function BoardCanvas({
       density?.addEventListener("change", densityChanged);
     };
     watchDensity();
-    // The pointers whose capture the host took as they went down, which it
-    // gives back once the canvas no longer follows them, as once a press
-    // whose release the canvas did not hear of ended, or another pointer's
-    // press, or the window's blur, ended it: the browser, which did not
-    // hear of the release either, might else send the pointer's next press,
-    // as of a button of the toolbar, to the host rather than to the button.
-    const captured = new Set<number>();
-    const letGo = () => {
-      for (const id of captured) {
-        if (controller.gestures.tracks(id)) {
-          continue;
-        }
-        captured.delete(id);
-        try {
-          if (host.hasPointerCapture?.(id)) {
-            host.releasePointerCapture(id);
-          }
-        } catch {
-          // A pointer that the browser no longer has keeps no capture.
-        }
-      }
-    };
+    // A pointer that the canvas follows is the host's, whose capture it
+    // takes as the pointer goes down, and which the controller gives back
+    // as soon as the gestures no longer follow it (GestureHost's release).
     const pointer =
       (type: "down" | "move" | "up" | "cancel") => (e: PointerEvent) => {
         if (
@@ -282,10 +264,8 @@ export function BoardCanvas({
         if (type === "down" && followed) {
           host.focus({ preventScroll: true });
           host.setPointerCapture?.(e.pointerId);
-          captured.add(e.pointerId);
           e.preventDefault();
         }
-        letGo();
       };
     const down = pointer("down");
     const move = pointer("move");
@@ -354,7 +334,6 @@ export function BoardCanvas({
     };
     const blur = () => {
       controller.gestures.cancelAll();
-      letGo();
       controller.gestures.setSpace(false);
     };
     host.addEventListener("touchstart", own, { passive: false });
@@ -462,9 +441,16 @@ export function BoardCanvas({
       setEmpty(controller.scene.nodes.size === 0);
     };
     // The keys that labels names, each a literal there, are the catalog's,
-    // as extraction reads them.
-    controller.labels = (item) =>
-      labelsOf(item.node, labelContext(doc.store.getState().view, t));
+    // as extraction reads them. What labels read of the document is made
+    // once for each state of it that they read, rather than for each card.
+    let context: { view: LabelSources; c: LabelContext } | undefined;
+    controller.labels = (item) => {
+      const view = doc.store.getState().view;
+      if (context?.view !== view) {
+        context = { view, c: labelContext(view, t) };
+      }
+      return labelsOf(item.node, context.c);
+    };
     // The messages of t, which is another as the locale changes.
     controller.relabel();
     sync();

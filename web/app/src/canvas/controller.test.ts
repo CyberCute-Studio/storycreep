@@ -211,6 +211,11 @@ describe("the canvas's controller", () => {
     expect(key("+", { code: "Digit1", shiftKey: true })).toBe(true);
     expect(c.viewport().zoom).toBe(1);
     expect(c.viewport().x).toBeCloseTo(120 - 500);
+    // Escape is the canvas's while there is a selection that it clears, and
+    // the page's else.
+    c.select(["nd_1"], "replace");
+    expect(key("Escape")).toBe(true);
+    expect(key("Escape")).toBe(false);
   });
 
   it("draws at once as the canvas is resized, rather than a frame of nothing first", () => {
@@ -274,7 +279,7 @@ describe("the canvas's controller", () => {
     expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
   });
 
-  it("keeps the board's centre where it is through a size of none, as of a host that the page does not display", () => {
+  it("keeps the board's centre where it is through a size of none, as of a host that the page does not display, and a move's meanwhile", () => {
     const { c, time } = setUp();
     placed(c, time);
     c.setViewport({ x: 100, y: 100, zoom: 2 });
@@ -282,6 +287,13 @@ describe("the canvas's controller", () => {
     c.setSize({ width: 600, height: 1000 }, 1);
     expect(c.viewport().x + 300 / 2).toBeCloseTo(350);
     expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
+    // A move while the canvas has no size, as the minimap's, is about the
+    // centre that it shows again, not about the corner of none.
+    c.setSize({ width: 0, height: 0 }, 1);
+    c.centerOn({ x: 1000, y: 2000 });
+    c.setSize({ width: 800, height: 400 }, 1);
+    expect(c.viewport().x + 400 / 2).toBeCloseTo(1000);
+    expect(c.viewport().y + 200 / 2).toBeCloseTo(2000);
   });
 
   it("opens fitted to the content once it has been read, however the wheel moved the canvas while it was read", () => {

@@ -197,7 +197,13 @@ export function wrapLines(
       .map((line) => clip(line, perLine, measure))
       .join("\n");
   }
-  const source = value.slice(0, excerptLength + 1).split("\n");
+  // At most an excerpt of it, as an element's text is already cut to
+  // (labels.ts), but a jumper's target may not be, as one whose title is of
+  // emoji, each of two code units: cut between whole characters, with its
+  // ellipsis, which a card large enough for the whole excerpt shows too,
+  // rather than end within an emoji, as a broken glyph, with no sign that
+  // more of it follows.
+  const source = excerpt(value).split("\n");
   const out: string[] = [];
   for (const paragraph of source) {
     let rest = paragraph;
@@ -233,10 +239,25 @@ function firstLength(value: string): number {
 }
 
 /**
+ * Returns value, or, of one longer than excerptLength UTF-16 code units,
+ * its start, cut between whole characters, as a reader sees them
+ * (wholeStart), and an ellipsis, in excerptLength at most: what a card
+ * shows of an element's text (labels.ts) and of any text that its lines
+ * wrap (wrapLines), which never ends within a character, as within an
+ * emoji, which a font would draw as a broken glyph.
+ */
+export function excerpt(value: string): string {
+  if (value.length <= excerptLength) {
+    return value;
+  }
+  return `${value.slice(0, wholeStart(value, excerptLength - 1))}…`;
+}
+
+/**
  * Returns how long, in UTF-16 code units, the longest start of value is of
  * at most max of them that ends between two characters, as a reader sees
- * them, as a text's excerpt is cut (labels.ts), so that it never ends
- * within one, as an emoji, which a font would draw as a broken glyph.
+ * them, as a text's excerpt is cut (excerpt), so that it never ends within
+ * one, as an emoji, which a font would draw as a broken glyph.
  */
 export function wholeStart(value: string, max: number): number {
   if (value.length <= max) {

@@ -5,17 +5,20 @@
 // however the board moves under it meanwhile, where a drag with the mouse's
 // middle button, or with Space held, still pans; two fingers pinch, zooming
 // about the point between them, which stays under them, and pan as they move
-// together; a third finger is ignored, and a press of a mouse or a pen
-// takes the canvas from any other pointer, as a finger's does from a mouse
-// or a pen. A tap, or a click, selects the node under it, or adds it to the
-// selection, or takes it out, with Shift, Ctrl, or Cmd, and a tap on the
-// board's empty canvas clears the selection; a click of the middle button,
-// which pans, selects nothing. The wheel pans, and Shift turns it sideways;
-// with Ctrl or Cmd, as a trackpad's pinch sends it, it zooms about the
-// pointer. Nothing needs hover or a right click, and a right click, or a
-// pen's barrel button or its eraser, does nothing; a press ends, as
-// cancelled, once its mouse or its pen moves without the button that
-// pressed it.
+// together; a third finger is ignored, as is a finger while a pen is down,
+// as a palm that rests on the screen as the pen draws, and a press of a
+// mouse or a pen takes the canvas from any other pointer, as a finger's
+// does from a mouse. A tap, or a click, selects the node under it, or adds
+// it to the selection, or takes it out, with Shift, Ctrl, or Cmd, and a tap
+// on the board's empty canvas clears the selection; a click of the middle
+// button, which pans, selects nothing. The wheel pans, and Shift turns it
+// sideways; with Ctrl or Cmd, as a trackpad's pinch sends it, it zooms
+// about the pointer. Nothing needs hover or a right click, and a right
+// click, or a pen's barrel button or its eraser, does nothing; a press
+// ends, as cancelled, once its mouse or its pen moves without the button
+// that pressed it. The canvas gives back the capture of a pointer as soon
+// as it no longer follows it, however its gesture ended (GestureHost's
+// release).
 
 import { dragThreshold } from "../ui/drag";
 import {
@@ -88,6 +91,12 @@ export interface GestureHost {
   select(ids: string[], how: SelectHow): void;
   /** Shows the rubber band at r of the canvas, or none. */
   band(r: Rect | undefined): void;
+  /**
+   * Gives back the pointer of id, which went down on the canvas, and which
+   * the gestures no longer follow, however its gesture ended: its capture,
+   * which the canvas took as it went down.
+   */
+  release(id: number): void;
 }
 
 /**
@@ -166,17 +175,27 @@ export class Gestures {
    * over the page, took the release of: its gesture ends, as cancelled,
    * rather than refuse every press of it after. Only fingers share the
    * canvas, two of them, to pinch: a press of a mouse or a pen while
-   * another pointer is down, or of a finger while a mouse or a pen is,
-   * takes the canvas from it, whose gesture ends, as cancelled, rather than
-   * pinch with it about a point that neither is on, as a mouse that is
-   * still, whose release the canvas did not hear of, would with a finger
-   * that touches the screen of a laptop.
+   * another pointer is down, or of a finger while a mouse is, takes the
+   * canvas from it, whose gesture ends, as cancelled, rather than pinch
+   * with it about a point that neither is on, as a mouse that is still,
+   * whose release the canvas did not hear of, would with a finger that
+   * touches the screen of a laptop. A finger that touches the screen while
+   * a pen is down is ignored, as a palm that rests on it as the pen draws,
+   * where the system rejects none, which would else end the pen's rubber
+   * band, or its pan; a pen whose release the canvas did not hear of ends
+   * as it hovers after it (move), or goes down again.
    */
   down(p: PointerInput): boolean {
     if (this.pointers.has(p.id)) {
       this.end(p, true);
     }
     if (p.button !== 0 && !(p.kind === "mouse" && p.button === 1)) {
+      return false;
+    }
+    if (
+      p.kind === "touch" &&
+      [...this.pointers.values()].some((other) => other.kind === "pen")
+    ) {
       return false;
     }
     for (const other of [...this.pointers.values()]) {
@@ -319,6 +338,7 @@ export class Gestures {
     }
     const input = this.pointers.get(p.id) as PointerInput;
     this.pointers.delete(p.id);
+    this.host.release(p.id);
     const g = this.gesture;
     switch (g.kind) {
       case "press":
