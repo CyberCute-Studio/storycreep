@@ -336,6 +336,33 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBeCloseTo(fitted.zoom * (330 / 300));
   });
 
+  it("fits the content, though a pinch moves after it has been read and before the frame that fits it, as a browser sends a frame's moves before its callbacks", () => {
+    const { c, time } = setUp();
+    c.sync(docOf(gridNodes(100, 10)), false);
+    const finger = (id: number, x: number) => ({
+      id,
+      x,
+      y: 300,
+      kind: "touch" as const,
+      button: 0,
+      buttons: 1,
+      shift: false,
+      additive: false,
+    });
+    c.pointer("down", finger(1, 400));
+    c.pointer("down", finger(2, 600));
+    time.tick();
+    c.setReady();
+    // The fingers' move of the frame that the read asked for, which the
+    // browser sends before the frame's callback.
+    c.pointer("move", finger(2, 700));
+    time.tick();
+    const fitted = c.viewport();
+    expect(fitted.zoom).toBeCloseTo(504 / (9 * 200 + 128));
+    c.pointer("move", finger(2, 730));
+    expect(c.viewport().zoom).toBeCloseTo(fitted.zoom * (330 / 300));
+  });
+
   it("goes on with an animation, and with the fit to come, as a wheel's event moves nothing", () => {
     const { c, time } = setUp();
     c.sync(docOf(gridNodes(100, 10)), false);

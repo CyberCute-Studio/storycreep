@@ -22,7 +22,7 @@ import { allAtOnce, api, everyPage, pagedQuery } from "../api";
 import type { Part } from "../document/doc";
 import type { Documents } from "../document/documents";
 import { useProjectDocument } from "../document/react";
-import type { Command } from "../document/store";
+import type { Command, ProjectDocument } from "../document/store";
 import { found } from "../shell/found";
 
 export type { Command } from "../document/store";
@@ -64,11 +64,23 @@ export async function loadParts(
     context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
-  const held = parts.filter((part) => doc.holds(part));
-  await Promise.all(parts.map((part) => found(doc.load(part))));
-  for (const part of held) {
-    void doc.refresh(part).catch(() => undefined);
+  await Promise.all(parts.map((part) => found(loadPart(doc, part))));
+}
+
+/**
+ * Reads part of doc, as a page that shows it does, resolving once the
+ * document holds it: a part that the document held already, which the
+ * real-time channel does not keep current while it is not live, resolves
+ * as it is, and is read anew after; a read anew that fails is recorded,
+ * and tried again later (ProjectDocument.refresh).
+ */
+export function loadPart(doc: ProjectDocument, part: Part): Promise<void> {
+  const held = doc.holds(part);
+  const load = doc.load(part);
+  if (held) {
+    void load.then(() => doc.refresh(part)).catch(() => undefined);
   }
+  return load;
 }
 
 /** Reports whether role changes a project's settings: renames, archives, and describes it (§5.6). */

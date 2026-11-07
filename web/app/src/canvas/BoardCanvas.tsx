@@ -5,7 +5,9 @@
 // to the board's settings under the canvas, and a minimap. The canvas
 // suppresses the browser's own gestures over it, as pull-to-refresh and
 // overscroll (NFR-TOUCH-08), and its menu, and the toolbar's controls are of
-// the size of a finger (NFR-TOUCH-01).
+// the size of a finger, and 8 px apart, within a group as between groups,
+// so that a tap a little off one does not press its neighbour
+// (NFR-TOUCH-01).
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
@@ -24,6 +26,7 @@ import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart } from "../document/doc";
 import { useProjectDocument } from "../document/react";
+import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
 import { Button, buttonClass } from "../ui/Button";
 import { mediaQueryList, useMediaQuery } from "../ui/media";
@@ -124,6 +127,7 @@ export function BoardCanvas({
   boardId,
   boardName,
   settingsId,
+  read,
   options = {},
 }: {
   projectId: string;
@@ -131,6 +135,11 @@ export function BoardCanvas({
   boardName: string;
   /** The ID of the heading of the board's settings, under the canvas, which the toolbar links to, whose element takes the focus. */
   settingsId?: string;
+  /**
+   * The read of the board's nodes and connections that the page's loader
+   * started, which is the canvas's first, rather than a read of its own.
+   */
+  read?: Promise<void>;
   options?: CanvasOptions;
 }) {
   const { t } = useTranslation();
@@ -149,6 +158,7 @@ export function BoardCanvas({
     "loading",
   );
   const [attempt, setAttempt] = useState(0);
+  const loaderRead = useRef(read);
   const [engine, setEngine] = useState<"starting" | "running" | "unsupported">(
     "starting",
   );
@@ -403,7 +413,9 @@ export function BoardCanvas({
   // wait for the browser to fetch and parse it first. A chunk that cannot
   // be fetched, as once the server has a version of the app other than the
   // page's, is the page's error, as a chunk of the page's own is, rather
-  // than a browser that cannot draw.
+  // than a browser that cannot draw. A renderer that the page asks for
+  // anew, as by its address, starts in place of the one before, on the
+  // canvas as it is.
   useEffect(() => {
     const surface = surfaceRef.current;
     const host = hostRef.current;
@@ -485,22 +497,29 @@ export function BoardCanvas({
     return doc.store.subscribe(sync);
   }, [controller, doc, t]);
 
-  // The board's nodes and connections, read once, and then the names that
+  // The board's nodes and connections, read once, first by the read that
+  // the page's loader started (read), whose failure the canvas says, rather
+  // than ask the server again as it mounts, after a read that failed before
+  // it, which the document takes the part out for, and then the names that
   // its cards show, of its speakers and of the variables that its texts
-  // show, which the board's first frame does not wait for.
+  // show, which the board's first frame does not wait for, and which are
+  // read anew where the document held them already, as the parts that a
+  // page shows are (loadPart).
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's content again, as the user asks for it.
   useEffect(() => {
     let ended = false;
     setContent("loading");
-    doc.load(boardPart(boardId)).then(
+    const first = loaderRead.current;
+    loaderRead.current = undefined;
+    (first ?? doc.load(boardPart(boardId))).then(
       () => {
         if (ended) {
           return;
         }
         setContent("ready");
         controller.setReady();
-        void doc.load("components").catch(() => {});
-        void doc.load("variables").catch(() => {});
+        void loadPart(doc, "components").catch(() => {});
+        void loadPart(doc, "variables").catch(() => {});
       },
       () => {
         if (!ended) {
@@ -593,7 +612,7 @@ export function BoardCanvas({
     <div className="space-y-2">
       <fieldset className="flex min-w-0 flex-wrap items-center gap-2">
         <legend className="sr-only">{t("canvas.controls")}</legend>
-        <fieldset className="flex min-w-0 gap-1">
+        <fieldset className="flex min-w-0 gap-2">
           <legend className="sr-only">{t("canvas.mode")}</legend>
           <Button
             aria-pressed={mode === "pan"}
@@ -610,7 +629,7 @@ export function BoardCanvas({
             {t("canvas.mode_select")}
           </Button>
         </fieldset>
-        <div className="flex gap-1">
+        <div className="flex gap-2">
           <Button
             aria-label={t("canvas.zoom_out")}
             onClick={() => controller.zoomStep(-1)}

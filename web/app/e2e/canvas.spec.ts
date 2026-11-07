@@ -393,6 +393,38 @@ test.describe("a board's canvas", () => {
     expect(new URL(page.url()).hash).toBe("");
   });
 
+  // Verifies: NFR-TOUCH-01
+  test("gives its toolbar's controls a finger's size, 8 px apart", async ({
+    page,
+  }) => {
+    await openBoard(page);
+    const boxes = await page
+      .getByRole("group", { name: en["canvas.controls"] })
+      .locator("button, a")
+      .evaluateAll((controls) =>
+        controls.map((control) => {
+          const r = control.getBoundingClientRect();
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        }),
+      );
+    expect(boxes.length).toBeGreaterThan(1);
+    for (const [i, a] of boxes.entries()) {
+      expect(a.right - a.left).toBeGreaterThanOrEqual(44);
+      expect(a.bottom - a.top).toBeGreaterThanOrEqual(44);
+      for (const b of boxes.slice(i + 1)) {
+        // How far apart two controls are, across or down, as a row that
+        // wraps sets them, to the layout's fraction of a pixel.
+        const gap = Math.max(
+          b.left - a.right,
+          a.left - b.right,
+          b.top - a.bottom,
+          a.top - b.bottom,
+        );
+        expect(Math.round(gap)).toBeGreaterThanOrEqual(8);
+      }
+    }
+  });
+
   // Verifies: NFR-A11Y-07
   test("moves at once, without animating, where the system asks for reduced motion", async ({
     page,

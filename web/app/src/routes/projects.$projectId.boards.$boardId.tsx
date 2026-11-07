@@ -16,7 +16,12 @@ import {
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
-import { type Command, editsProject, projectQuery } from "../project/queries";
+import {
+  type Command,
+  editsProject,
+  loadPart,
+  projectQuery,
+} from "../project/queries";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
 import { Button } from "../ui/Button";
@@ -121,9 +126,16 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
       throw notFound();
     }
     // The board's nodes and connections, which the canvas shows, start to
-    // load as the page does; the canvas says so while they do, and what
-    // their read failed with.
-    doc.load(boardPart(params.boardId)).catch(() => {});
+    // load as the page does, and are read anew where the document held them
+    // already, as the parts that the project's other pages show are
+    // (loadPart). The canvas says so while they load, and what this read
+    // failed with, which the loader hands to it, rather than start a read
+    // of its own as it mounts, which, after this one failed before it, as
+    // while the page's chunk was fetched, would ask the server again, and
+    // say what the second failed with a round trip later.
+    const read = loadPart(doc, boardPart(params.boardId));
+    read.catch(() => {});
+    return { doc, read };
   },
   // The router keeps no match of the page once it is left, as for the tree
   // of the project's boards: the project's document may be made anew by the
@@ -160,6 +172,11 @@ function BoardPage() {
   const { projectId, boardId } = Route.useParams();
   const doc = useProjectDocument(projectId);
   const board = useBoard(doc, boardId);
+  // The loader's read of the board's content, of the document that the
+  // page shows, as it is unless the page's documents made the project's
+  // anew since, as once the session was of another account.
+  const loaded = Route.useLoaderData();
+  const read = loaded.doc === doc ? loaded.read : undefined;
   // While the board's deletion is open, the board is shown as it was, as
   // the document takes it away at once, once its deletion is sent, so that
   // the dialog stays, and says what became of the deletion, after which the
@@ -176,6 +193,7 @@ function BoardPage() {
     <BoardContent
       projectId={projectId}
       board={shown}
+      read={read}
       onDeleting={setDeleting}
     />
   );
@@ -197,10 +215,13 @@ function areaOf(area: string | undefined): Rect | undefined {
 function BoardContent({
   projectId,
   board,
+  read,
   onDeleting,
 }: {
   projectId: string;
   board: Board;
+  /** The read of the board's nodes and connections that the loader started. */
+  read: Promise<void> | undefined;
   /** Tells whether the board's deletion is open. */
   onDeleting: (deleting: boolean) => void;
 }) {
@@ -231,12 +252,11 @@ function BoardContent({
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">{board.name}</h1>
       <BoardCanvas
-        // A renderer asked for anew starts the canvas anew.
-        key={search.renderer ?? ""}
         projectId={projectId}
         boardId={board.id}
         boardName={board.name}
         settingsId="board-settings"
+        read={read}
         options={options}
       />
       <section

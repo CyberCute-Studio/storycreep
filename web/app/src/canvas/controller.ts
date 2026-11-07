@@ -159,7 +159,11 @@ export class CanvasController implements GestureHost {
   private pending = 0;
   /** Whether the loop stopped, as the canvas went from the page, so that nothing asks for a frame after. */
   private stopped = false;
-  /** Whether the board's content has been read, and whether the canvas has been placed on it once. */
+  /**
+   * Whether the board's content has been read, and whether the canvas has
+   * been placed on it once, as the first frame that it draws after fits it
+   * to the content, whatever moved it before (frame).
+   */
   private ready = false;
   private placed = false;
   private renderedOnce = false;
@@ -333,20 +337,21 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Shows v at once, ending a zoom or a move that the canvas animates, and,
-   * once the board's content has been read, places the canvas, which is
-   * then not fitted to it. A v that is the viewport moves nothing, so it
-   * neither ends an animation nor places the canvas, as a wheel's event
-   * without a delta, or Safari's gesture as it starts, does not; nor does a
-   * move before the content has been read, as of a wheel turned over the
-   * canvas while it reads it, after which it opens fitted to it still.
+   * Shows v at once, ending a zoom or a move that the canvas animates. A v
+   * that is the viewport moves nothing, so it does not end an animation, as
+   * a wheel's event without a delta, or Safari's gesture as it starts, does
+   * not. A move does not place the canvas on the board's content: the
+   * frame that fits the canvas to it, the first after it has been read,
+   * takes the place of every move before, as of a wheel turned over the
+   * canvas while it reads it, and as of a pinch's move that comes after the
+   * read and before that frame, as a browser sends the moves of a frame
+   * before its callbacks, once a finger moves in each.
    */
   setViewport(v: Viewport): void {
     if (sameViewport(v, this.v)) {
       return;
     }
     this.animation = undefined;
-    this.placed ||= this.ready;
     this.v = v;
     this.invalidate();
   }
@@ -429,15 +434,14 @@ export class CanvasController implements GestureHost {
 
   /**
    * Moves to v, animated unless the system asks for reduced motion, which
-   * places the canvas, as setViewport does, once the board's content has
-   * been read.
+   * the fit to the board's content, once it has been read, takes the place
+   * of, as it does of a move of setViewport's.
    */
   animateTo(v: Viewport): void {
     if (this.reducedMotion || !this.displayed) {
       this.setViewport(v);
       return;
     }
-    this.placed ||= this.ready;
     this.animation = { from: this.v, to: v, start: this.clock.now() };
     this.invalidate();
   }
@@ -608,10 +612,12 @@ export class CanvasController implements GestureHost {
     this.pending = 0;
     const size = this.sz;
     if (this.ready && !this.placed && this.displayed) {
-      // The fit takes the place of whatever moved the canvas while the
-      // content was read, as a zoom of the toolbar's, which would else go
-      // on after it, and a gesture under way, as a pinch, goes on from it,
-      // rather than take the board back with its next move.
+      // The fit takes the place of whatever moved the canvas before it, as
+      // while the content was read, or since, before this frame: a zoom of
+      // the toolbar's, which would else go on after it, or a pinch's move,
+      // which the browser sent before this frame's callback. A gesture
+      // under way, as the pinch, goes on from it, rather than take the
+      // board back with its next move.
       const from = this.v;
       this.v = this.fitted();
       this.animation = undefined;

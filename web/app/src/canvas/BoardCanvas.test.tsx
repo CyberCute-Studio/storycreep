@@ -1,5 +1,11 @@
 import type { Board } from "@storycreep/shared/api";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
@@ -208,7 +214,11 @@ describe("a board's canvas", () => {
   it("says that the board's nodes could not be loaded, and reads them again as the user asks", async () => {
     const user = userEvent.setup();
     let fail = true;
-    boardPage([testNode("nd_1", 0, 0)], () => fail);
+    let reads = 0;
+    boardPage([testNode("nd_1", 0, 0)], () => {
+      reads++;
+      return fail;
+    });
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
       session: testSession,
     });
@@ -218,6 +228,9 @@ describe("a board's canvas", () => {
         exact: false,
       },
     );
+    // What the loader's read failed with, which the canvas says rather
+    // than read the nodes again as it mounts.
+    expect(reads).toBe(1);
     fail = false;
     await user.click(within(alert).getByRole("button", { name: "Try again" }));
     await waitFor(() =>
@@ -227,6 +240,37 @@ describe("a board's canvas", () => {
         }),
       ).toBeNull(),
     );
+    expect(reads).toBe(2);
+  });
+
+  it("reads the board's nodes anew as the user comes back to it, which another session may have changed while the project's document was not kept current", async () => {
+    const nodes: ReturnType<typeof testNode>[] = [];
+    boardPage(nodes);
+    const { router } = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByText("This board has no nodes yet."),
+    ).toBeDefined();
+    // Another session adds a node, which no real-time channel tells of.
+    nodes.push(testNode("nd_1", 0, 0));
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId",
+        params: { projectId: testProject.id },
+      }),
+    );
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_a" },
+      }),
+    );
+    await screen.findByRole("application", { name: "Nodes of Harbour" });
+    await waitFor(() => {
+      expect(screen.queryByText("Loading the board's nodes…")).toBeNull();
+      expect(screen.queryByText("This board has no nodes yet.")).toBeNull();
+    });
   });
 
   it("says that the browser cannot draw the board", async () => {

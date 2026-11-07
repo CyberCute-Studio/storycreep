@@ -779,8 +779,7 @@ class PixiEngine implements Engine {
     corners(view.card, 0);
     view.card.tint = theme.surface;
     corners(view.edge, 0);
-    view.edge.tint =
-      node.color === "none" ? theme.border : nodeColor(node.color, theme);
+    view.edge.tint = nodeColor(node.color, theme);
     view.stripe.visible = node.color !== "none";
     view.stripe.tint = nodeColor(node.color, theme);
     view.stripe.position.set(cornerRadius, 0);
