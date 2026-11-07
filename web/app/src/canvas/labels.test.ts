@@ -1,4 +1,4 @@
-import type { Node } from "@storycreep/shared/api";
+import type { Node, RichTextDoc } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
@@ -334,6 +334,35 @@ describe("a node of a type that the canvas does not know", () => {
       kind: "",
       body: "",
     });
+  });
+
+  it("shows the text of an element without the blocks of a type that the canvas does not know, as a newer server's may send", () => {
+    const node = testNode("nd_1", 0, 0, {
+      text: {
+        type: "doc",
+        content: [
+          { type: "heading", content: [{ type: "text", text: "Night" }] },
+          { type: "horizontalRule" },
+          { type: "paragraph", content: [{ type: "text", text: "The tide" }] },
+          {
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: "one" }],
+                  },
+                  { type: "codeBlock" },
+                ],
+              },
+            ],
+          },
+        ],
+      } as unknown as RichTextDoc,
+    });
+    expect(labelsOf(node, context).body).toBe("The tide\none");
   });
 });
 

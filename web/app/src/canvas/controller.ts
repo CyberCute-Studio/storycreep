@@ -139,6 +139,8 @@ export class CanvasController implements GestureHost {
   private shownSize: Size | undefined;
   private resolution = 1;
   private engine: Engine | undefined;
+  /** Stops the call of the engine's onRestore. */
+  private stopRestore: (() => void) | undefined;
   private minimap: Minimap | undefined;
   private elements: CanvasElements | undefined;
   private selected: ReadonlySet<string> = new Set();
@@ -196,7 +198,13 @@ export class CanvasController implements GestureHost {
 
   /** Takes the renderer, once it has started, or none once it ends. */
   setEngine(engine: Engine | undefined): void {
+    this.stopRestore?.();
     this.engine = engine;
+    // The renderer's context, or its GPU's device, that the browser gives
+    // back after it took it, as from a tablet's tab in the background,
+    // leaves the canvas blank: the canvas draws again then, as it would
+    // else only once something moved it or changed.
+    this.stopRestore = engine?.onRestore(() => this.invalidate());
     engine?.resize(this.sz, this.resolution);
     this.lastData = {};
     this.invalidate();

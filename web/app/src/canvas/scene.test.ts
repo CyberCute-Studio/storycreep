@@ -53,6 +53,28 @@ describe("the scene of a board", () => {
     expect(scene.nodeAt({ x: 410, y: 10 })).toBeUndefined();
   });
 
+  it("keeps the connections of a node that changed without moving them, as of its title, as they were", () => {
+    const scene = new Scene("bd_a");
+    const a = testNode("nd_1", 0, 0);
+    const b = testNode("nd_2", 400, 0);
+    const doc = docOf([a, b], [testConnection("cn_1", "nd_1", "nd_2")]);
+    scene.sync(doc);
+    const item = scene.connections.get("cn_1");
+    const connections = scene.connectionsVersion;
+    const renamed = new Map(doc.nodes).set(b.id, { ...b, title: "The dock" });
+    expect(scene.sync({ ...doc, nodes: renamed })).toBe(true);
+    expect(scene.connections.get("cn_1")).toBe(item);
+    expect(scene.connectionsVersion).toBe(connections);
+    // A move of the node moves its connections' curves.
+    const moved = new Map(renamed).set(b.id, {
+      ...b,
+      position: { x: 400, y: 80 },
+    });
+    scene.sync({ ...doc, nodes: moved });
+    expect(scene.connections.get("cn_1")).not.toBe(item);
+    expect(scene.connectionsVersion).toBe(connections + 1);
+  });
+
   it("draws a connection once both of its nodes are there", () => {
     const scene = new Scene("bd_a");
     const a = testNode("nd_1", 0, 0);

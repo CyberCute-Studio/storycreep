@@ -42,9 +42,10 @@ function fakeClock() {
   };
 }
 
-/** An engine that records the frames that it is asked to draw. */
+/** An engine that records the frames that it is asked to draw, and whose context the test gives back. */
 function fakeEngine() {
   const frames: Frame[] = [];
+  const restores = new Set<() => void>();
   const engine: Engine = {
     kind: "webgl",
     resize: () => {},
@@ -59,9 +60,21 @@ function fakeEngine() {
       };
     },
     textures: () => 4,
+    onRestore: (listener) => {
+      restores.add(listener);
+      return () => {
+        restores.delete(listener);
+      };
+    },
     destroy: () => {},
   };
-  return { engine, frames };
+  /** Gives back the context that the browser took. */
+  const restore = () => {
+    for (const listener of restores) {
+      listener();
+    }
+  };
+  return { engine, frames, restore };
 }
 
 function setUp() {
@@ -85,11 +98,11 @@ function setUp() {
   const host = document.createElement("div");
   const band = document.createElement("div");
   c.attach({ host, band });
-  const { engine, frames } = fakeEngine();
+  const { engine, frames, restore } = fakeEngine();
   c.setEngine(engine);
   c.setTheme(theme);
   c.setSize({ width: 1000, height: 600 }, 1);
-  return { c, time, events, host, band, frames };
+  return { c, time, events, host, band, frames, engine, restore };
 }
 
 /**
@@ -379,11 +392,32 @@ describe("the canvas's controller", () => {
         };
       },
       textures: () => undefined,
+      onRestore: () => () => {},
       destroy: () => {},
     });
     expect(() => c.setSize({ width: 800, height: 600 }, 1)).not.toThrow();
     time.tick();
     expect(drawn).toEqual([{ width: 800, height: 600 }]);
+  });
+
+  it("draws again once the browser gives back the renderer's context that it took, and not once the renderer has ended", () => {
+    const { c, time, frames, engine, restore } = setUp();
+    placed(c, time);
+    time.tick();
+    const drawn = frames.length;
+    expect(time.pending()).toBe(0);
+    restore();
+    time.tick();
+    expect(frames.length).toBe(drawn + 1);
+    c.setEngine(undefined);
+    time.tick();
+    restore();
+    expect(time.pending()).toBe(0);
+    // A renderer taken again is followed again.
+    c.setEngine(engine);
+    time.tick();
+    restore();
+    expect(time.pending()).toBe(1);
   });
 
   it("tells the zoom as it changes by a percent", () => {

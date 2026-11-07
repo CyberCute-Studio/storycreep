@@ -13,6 +13,7 @@
 // it zooms about the pointer. Nothing needs hover or a right click, and a
 // right click, or a pen's barrel button or its eraser, does nothing.
 
+import { dragThreshold } from "../ui/drag";
 import {
   anchorAt,
   type Point,
@@ -80,9 +81,14 @@ export interface GestureHost {
 
 /**
  * How far, in CSS pixels, a pointer moves before a press is a drag rather
- * than a tap (NFR-TOUCH-05): a finger's 8, and a mouse's 4.
+ * than a tap (NFR-TOUCH-05): a finger's 8, as the app's every drag, and a
+ * pen's, and a mouse's 4.
  */
-export const dragThreshold = { touch: 8, pen: 8, mouse: 4 } as const;
+const dragThresholds = {
+  touch: dragThreshold,
+  pen: dragThreshold,
+  mouse: 4,
+} as const;
 
 /** How far from a node, in CSS pixels, a tap still finds it. */
 const tapSlop = { touch: 12, pen: 6, mouse: 1 } as const;
@@ -186,7 +192,7 @@ export class Gestures {
           return;
         }
         const moved = Math.hypot(p.x - g.start.x, p.y - g.start.y);
-        if (moved < dragThreshold[g.input.kind]) {
+        if (moved < dragThresholds[g.input.kind]) {
           return;
         }
         if (g.drag === "pan") {
@@ -232,8 +238,14 @@ export class Gestures {
     }
   }
 
-  /** Takes a pointer that went up. */
+  /**
+   * Takes a pointer that went up, where it went up, which a move may not
+   * have told of, as a pen's or a finger's lift after moves that the
+   * browser coalesced: the tap finds the node there, and a drag, a rubber
+   * band, or a pinch ends there.
+   */
   up(p: PointerInput): void {
+    this.move(p);
     this.end(p, false);
   }
 

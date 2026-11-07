@@ -70,30 +70,43 @@ const wide =
   /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f1e6}-\u{1f1ff}\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
 
 /**
- * The code points that may join another into one character, as a reader
- * sees it, by each rule of Unicode's (UAX #29) that keeps two code points
- * together, whatever the version of it that the browser's segmenter has:
- * those that are no character of their own (not Grapheme_Base), as the
- * joiners within an emoji of a family, an emoji's tags, the controls, of
- * which a carriage return joins the line feed after it, the format marks
- * that number signs of Arabic are, which join the digits after them, and
- * the halfwidth katakana's voiced marks, which join the letter before;
- * combining marks, as of an accent written after its letter, or a vowel of
- * Devanagari or Thai; the letters that join as such a mark does, or as a
- * mark before a letter does, as Thai's and Lao's vowel AM, after its
- * consonant, Kirat Rai's vowels, and Malayalam's dot reph, before one; the
- * conjoining jamo of Hangul, which a syllable is written of, or ends in;
- * the regional indicators, two of which are a flag; and an emoji's skin
- * tones. The line feed alone is none, as the cut lines that the canvas
- * checks (engine.ts) have it between them. A text of none of them is of
- * characters of a code point each, as the segmenter, which PixiJS keys its
- * glyphs by, finds them too, and the canvas reads it without segmenting
- * it, as segmenting takes ten times as long; a text of any of them, which
- * may not join, is segmented, as is any of a code point that Unicode has
- * not given a character yet, which a newer segmenter may join.
+ * Whether a text is of the scripts whose letters join no other into one
+ * character, as a reader sees it, by any rule of Unicode's (UAX #29),
+ * whatever the version of it that the browser's segmenter has, but by the
+ * code points that joining finds: the Latin, Greek, Cyrillic, Armenian,
+ * Georgian, Hebrew, and Arabic alphabets, Chinese, Japanese, and Korean,
+ * what scripts share, as digits, punctuation, symbols, and emoji, and line
+ * feeds, between the cut lines that the canvas checks (engine.ts). The
+ * letters that a script joins as a mark does, after the letter before or
+ * before the one after, as Thai's and Lao's vowel AM, Kirat Rai's vowels,
+ * or Malayalam's dot reph, are of the other scripts, of Brahmi's line, of
+ * which Unicode adds more as it adds their scripts, and for which a text
+ * of any other script is segmented, as is one of a code point that Unicode
+ * has not given a character yet, of no script.
+ */
+const separate =
+  /^[\n\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Armenian}\p{Script=Georgian}\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Bopomofo}\p{Script=Hangul}\p{Script=Common}]*$/u;
+
+/**
+ * The code points of those scripts that may join another into one
+ * character, as a reader sees it: those that are no character of their own
+ * (not Grapheme_Base), as the joiners within an emoji of a family, an
+ * emoji's tags, the controls, of which a carriage return joins the line
+ * feed after it, the format marks that number signs of Arabic are, which
+ * join the digits after them, and the halfwidth katakana's voiced marks,
+ * which join the letter before; combining marks, as of an accent written
+ * after its letter; the conjoining jamo of Hangul, which a syllable is
+ * written of, or ends in; the regional indicators, two of which are a
+ * flag; and an emoji's skin tones. A text of those scripts and of none of
+ * these is of characters of a code point each, as the segmenter, which
+ * PixiJS keys its glyphs by, finds them too, as a check of each of their
+ * code points against Node's (ICU 78, Unicode 17), beside each kind of
+ * neighbour that they have, found, and the canvas reads it without
+ * segmenting it, as segmenting takes ten times as long; any other text,
+ * which may join, is segmented.
  */
 const joining =
-  /[^\p{Grapheme_Base}\n]|\p{M}|[\u0d4e\u0e33\u0eb3\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff\u{111c2}\u{111c3}\u{113d1}\u{1193f}\u{11941}\u{11a3a}\u{11a84}-\u{11a89}\u{11d46}\u{11f02}\u{16d63}\u{16d67}-\u{16d6a}\u{1f1e6}-\u{1f1ff}\u{1f3fb}-\u{1f3ff}]/u;
+  /[^\p{Grapheme_Base}\n]|\p{M}|[\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff\u{1f1e6}-\u{1f1ff}\u{1f3fb}-\u{1f3ff}]/u;
 
 /** The browser's segmenter of a text's characters, as a reader sees them. */
 const segmenter =
@@ -108,7 +121,10 @@ const segmenter =
  * code point each, as PixiJS reads them then.
  */
 export function graphemes(value: string): Iterable<string> {
-  if (segmenter === undefined || !joining.test(value)) {
+  if (
+    segmenter === undefined ||
+    (separate.test(value) && !joining.test(value))
+  ) {
     return value;
   }
   return Array.from(segmenter.segment(value), (s) => s.segment);

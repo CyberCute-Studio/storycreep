@@ -187,7 +187,7 @@
   "canvas.controls": "Canvas controls",
   "canvas.empty": "This board has no nodes yet.",
   "canvas.fit": "Fit to content",
-  "canvas.help": "Drag to pan, or, in the select mode, to select the nodes in a rectangle; tap or click a node to select it, with Shift to add it. Pinch, or turn the wheel with Ctrl or Cmd, to zoom. On the canvas, the arrow keys pan, + and − zoom, 0 shows 100%, Shift+1 fits the content, Shift+2 zooms to the selection, and Escape clears it.",
+  "canvas.help": "Drag to pan, or, in the select mode, to select the nodes in a rectangle, with Shift, Ctrl, or Cmd to add them; tap or click a node to select it, or, with Shift, Ctrl, or Cmd, to add it to the selection or take it out. Pinch, or turn the wheel with Ctrl or Cmd, to zoom. On the canvas, the arrow keys pan, + and − zoom, 0 shows 100%, Shift+1 fits the content, Shift+2 zooms to the selection, and Escape clears it.",
   "canvas.label": "Nodes of {board}",
   "canvas.load_failed": "The board's nodes could not be loaded.",
   "canvas.loading": "Loading the board's nodes…",

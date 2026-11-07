@@ -203,6 +203,19 @@ describe("the canvas's gestures", () => {
     expect(state.banded).toEqual([{ x: 50, y: 50, width: 150, height: 210 }]);
   });
 
+  it("ends a rubber band, and finds a click's node, where the pointer went up, though no move told of it", () => {
+    const { state, gestures } = host("select");
+    gestures.down(mouse(50, 50));
+    gestures.move(mouse(120, 90));
+    gestures.up(mouse(200, 160));
+    expect(state.banded).toEqual([{ x: 50, y: 50, width: 150, height: 110 }]);
+    // Pressed 2 px beside the node, beyond a mouse's slop, and let go of on
+    // its edge, within a mouse's threshold of a drag.
+    gestures.down(mouse(342, 150));
+    gestures.up(mouse(340, 150));
+    expect(state.selects.at(-1)).toEqual({ ids: ["nd_a"], how: "replace" });
+  });
+
   it("selects nothing with a click of the middle button, which pans", () => {
     const { state, gestures } = host("select");
     gestures.down(mouse(150, 150, { button: 1 }));

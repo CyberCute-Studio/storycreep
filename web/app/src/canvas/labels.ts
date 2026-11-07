@@ -10,6 +10,7 @@ import type {
   RichTextDoc,
   RichTextInline,
 } from "@storycreep/shared/api";
+import type { Doc } from "../document/doc";
 import { excerptLength, wholeStart } from "./text";
 
 /** What a card shows of a node, as text. */
@@ -32,6 +33,53 @@ export interface LabelContext {
   nodeTitle: (id: string) => string | undefined;
   /** Returns the name of the board of id, if the project's document has it. */
   boardName: (id: string) => string | undefined;
+}
+
+/** What a card's labels read of the project's document, beyond its node: the names of what the node refers to. */
+export type LabelSources = Pick<
+  Doc,
+  "nodes" | "components" | "variables" | "boards"
+>;
+
+/**
+ * Returns what labels read of view, the project's document, as it is when
+ * they are read, with the page's messages, t: every name that a card
+ * shows, of what its node refers to, each of which namesChanged follows,
+ * so that what cards read and what writes them again, once it changes, are
+ * the same names, here.
+ */
+export function labelContext(
+  view: LabelSources,
+  t: LabelContext["t"],
+): LabelContext {
+  return {
+    t,
+    componentName: (id) => view.components.get(id)?.name,
+    variableKey: (id) => view.variables.get(id)?.key,
+    nodeTitle: (id) => view.nodes.get(id)?.title,
+    boardName: (id) => view.boards.get(id)?.name,
+  };
+}
+
+/**
+ * Reports whether a name that labelContext reads changed from before to
+ * after, the project's document before and after a change, of a component,
+ * a variable, or a board, rather than anything else of them, as a
+ * component's description, whose change would write every card anew for
+ * nothing; but the titles of nodes, which the board's jumpers alone show,
+ * and which the scene follows for them (Scene.targetsVersion), rather than
+ * the title of every node of the project, whose map changes with each
+ * change of any of them.
+ */
+export function namesChanged(
+  before: LabelSources,
+  after: LabelSources,
+): boolean {
+  return (
+    namesDiffer(before.components, after.components, (c) => c.name) ||
+    namesDiffer(before.variables, after.variables, (v) => v.key) ||
+    namesDiffer(before.boards, after.boards, (b) => b.name)
+  );
 }
 
 /** The messages that a card's labels use. */
@@ -205,11 +253,16 @@ export function plainText(
         const line = (block.content ?? []).map((i) => inline(i, c)).join("");
         lines.push(line);
         length += line.length + 1;
-      } else {
+      } else if (block.type === "bulletList" || block.type === "orderedList") {
         for (const item of block.content) {
           blocks(item.content);
         }
       }
+      // A block of a type that the canvas does not know, as a newer
+      // server's may send to a page loaded before it, shows nothing, rather
+      // than content that it may not have, which labels, and then each
+      // frame, would throw at, leaving the board blank, as a node's type
+      // that it does not know shows its title alone (labelsOf).
     }
   };
   blocks(doc.content);

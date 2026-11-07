@@ -34,6 +34,20 @@ export interface Shown {
   connections: ConnectionItem[];
 }
 
+/** Reports whether curves a and b are the same curve. */
+function sameCurve(a: Curve, b: Curve): boolean {
+  return (
+    a.p0.x === b.p0.x &&
+    a.p0.y === b.p0.y &&
+    a.c1.x === b.c1.x &&
+    a.c1.y === b.c1.y &&
+    a.c2.x === b.c2.x &&
+    a.c2.y === b.c2.y &&
+    a.p3.x === b.p3.x &&
+    a.p3.y === b.p3.y
+  );
+}
+
 /** The nodes and connections of one board, as the project's document holds them. */
 export class Scene {
   readonly nodes = new GridIndex<NodeItem>();
@@ -51,6 +65,13 @@ export class Scene {
   private targetTitles: ReadonlyMap<string, string | undefined> = new Map();
   /** Counts the changes of the scene, so that what draws it tells that it changed. */
   version = 0;
+  /**
+   * Counts the changes of the scene's connections alone, as one comes,
+   * goes, or changes, or its curve moves with a node that it leaves or
+   * enters, so that what draws their lines draws them anew only then,
+   * rather than for every change of a node, as of its title.
+   */
+  connectionsVersion = 0;
   /**
    * Counts the changes of the titles of the nodes that the board's jumpers
    * go to, which their cards show, as of a node of another board, which
@@ -210,16 +231,22 @@ export class Scene {
     if (from === undefined || to === undefined) {
       if (this.connections.get(c.id) !== undefined) {
         this.connections.delete(c.id);
-        this.changed();
+        this.connectionsChanged();
       }
       this.waiting.set(c.id, c);
       return;
     }
     this.waiting.delete(c.id);
     const curve = connectionCurve(c, from, to);
+    // A connection of a node that changed without moving its ends, as of
+    // its title, or its text, is as it was.
+    const was = this.connections.get(c.id);
+    if (was?.connection === c && sameCurve(was.curve, curve)) {
+      return;
+    }
     const bounds = curveBounds(curve);
     this.connections.set(c.id, bounds, { connection: c, curve, bounds });
-    this.changed();
+    this.connectionsChanged();
   }
 
   /** Takes the connection of id out of the scene. */
@@ -232,7 +259,7 @@ export class Scene {
     this.waiting.delete(id);
     if (item !== undefined) {
       this.connections.delete(id);
-      this.changed();
+      this.connectionsChanged();
     }
   }
 
@@ -253,6 +280,11 @@ export class Scene {
   private changed(): void {
     this.version++;
     this.boundsStale = true;
+  }
+
+  private connectionsChanged(): void {
+    this.connectionsVersion++;
+    this.changed();
   }
 
   /**

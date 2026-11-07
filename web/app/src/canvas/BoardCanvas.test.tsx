@@ -32,6 +32,7 @@ vi.mock("./engine", () => ({
         connections: f.scene.connections.size,
       }),
       textures: () => undefined,
+      onRestore: () => () => {},
       destroy: () => {
         engines.destroyed++;
       },

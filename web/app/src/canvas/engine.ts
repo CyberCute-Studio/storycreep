@@ -99,6 +99,14 @@ export interface Engine {
    * keeps none there.
    */
   textures(): number | undefined;
+  /**
+   * Calls listener each time that the browser gives back the renderer's
+   * WebGL context, or its GPU's device, that it took, as from a tablet's
+   * tab in the background, or as the GPU's process went, which leaves the
+   * canvas blank until it draws again, and returns what stops it. The
+   * Canvas 2D renderer's context is never taken.
+   */
+  onRestore(listener: () => void): () => void;
   /** Ends the renderer, and takes its canvas element out of the page. */
   destroy(): void;
 }
@@ -197,7 +205,7 @@ export async function createEngine(
         // gives the canvas its accessibility tree).
         manageImports: false,
       });
-      return new PixiEngine(renderer, canvas, options.fontFamily);
+      return new PixiEngine(kind, renderer, canvas, options.fontFamily);
     } catch {
       // A renderer that started, but whose engine did not, ends, rather
       // than keep its context, or its GPU's device, while the next one
@@ -282,7 +290,8 @@ interface CardView {
   ports: Sprite[];
   /** What the card shows, so that a card of the same node, at the same versions, is not drawn anew. */
   item?: NodeItem;
-  key?: string;
+  /** Whether it shows its node selected. */
+  selected?: boolean;
   /** The labels that it shows, so that a change of the names that cards show writes again only the cards that it changes. */
   labels?: NodeLabels;
 }
@@ -294,7 +303,6 @@ interface LineTile {
 }
 
 class PixiEngine implements Engine {
-  readonly kind: RendererKind;
   private readonly stage = new Container();
   /** The board, at the zoom, positioned from the origin of the margin. */
   private readonly world = new Container();
@@ -330,6 +338,7 @@ class PixiEngine implements Engine {
         lod: FrameStats["lod"];
         tier: number;
         sceneVersion: number;
+        connectionsVersion: number;
         selectionVersion: number;
         labelsVersion: number;
         theme: Theme;
@@ -342,29 +351,47 @@ class PixiEngine implements Engine {
   private readonly fonts = new Set<string>();
   /** Whether the Canvas 2D renderer shows blocks for the nodes in view, which it does until fewer are than bring its cards back (crowdedAt). */
   private crowded = false;
+  /** What onRestore calls. */
+  private readonly restoreListeners = new Set<() => void>();
+  /**
+   * What PixiJS tells of a context, or a device, that the browser gave
+   * back, once it has told its own systems, which give the GPU again what
+   * it lost, as the textures and the lines' geometry, as they draw next.
+   */
+  private readonly restored = {
+    contextChange: () => {
+      for (const listener of this.restoreListeners) {
+        listener();
+      }
+    },
+  };
 
   constructor(
+    /** The renderer that started, the only one that autoDetectRenderer was asked for. */
+    readonly kind: RendererKind,
     private readonly renderer: Renderer,
     /** The canvas element that the renderer draws on, which it takes out of the page as it ends. */
     private readonly canvas: HTMLCanvasElement,
     private readonly fontFamily: string,
   ) {
-    this.kind = kindOf(renderer);
     this.world.addChild(this.lines, this.blocks, this.cards);
     this.stage.addChild(this.world);
     this.art = {
       card: canvasTexture(64, (g) => {
-        roundRect(g, 0.5, 0.5, 63, 63, 16);
+        g.beginPath();
+        g.roundRect(0.5, 0.5, 63, 63, 16);
         g.fill();
       }),
       edge: canvasTexture(64, (g) => {
         g.lineWidth = 3;
-        roundRect(g, 1.5, 1.5, 61, 61, 15);
+        g.beginPath();
+        g.roundRect(1.5, 1.5, 61, 61, 15);
         g.stroke();
       }),
       ring: canvasTexture(64, (g) => {
         g.lineWidth = 6;
-        roundRect(g, 3, 3, 58, 58, 17);
+        g.beginPath();
+        g.roundRect(3, 3, 58, 58, 17);
         g.stroke();
       }),
       dot: canvasTexture(32, (g) => {
@@ -372,6 +399,14 @@ class PixiEngine implements Engine {
         g.arc(16, 16, 14, 0, Math.PI * 2);
         g.fill();
       }),
+    };
+    renderer.runners.contextChange.add(this.restored);
+  }
+
+  onRestore(listener: () => void): () => void {
+    this.restoreListeners.add(listener);
+    return () => {
+      this.restoreListeners.delete(listener);
     };
   }
 
@@ -572,14 +607,13 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
-        const key = `${selected}`;
-        const stale = fresh || view.item !== item || view.key !== key;
+        const stale = fresh || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
           const labels = f.labels(item);
           if (stale || !sameLabels(labels, view.labels)) {
             this.drawCard(view, item, labels, f, fonts, selected, lines);
             view.item = item;
-            view.key = key;
+            view.selected = selected;
             view.labels = labels;
           }
         }
@@ -590,8 +624,17 @@ class PixiEngine implements Engine {
     }
     // The lines are one stroke of every connection of the margin, or of a
     // tile's, drawn anew only once a connection, the margin, the zoom that
-    // their width follows, the level of detail, or the theme changed.
-    if (!same || was.zoom !== zoom || was.lod !== lod || was.theme !== theme) {
+    // their width follows, the level of detail, or the theme changed, and
+    // not for a change of a node alone, as of its title, which leaves its
+    // connections' curves as they were.
+    if (
+      was === undefined ||
+      was.region !== region ||
+      was.connectionsVersion !== scene.connectionsVersion ||
+      was.zoom !== zoom ||
+      was.lod !== lod ||
+      was.theme !== theme
+    ) {
       this.drawLines(shown.connections, region, origin, zoom, lod, theme);
     }
     this.built = {
@@ -601,6 +644,7 @@ class PixiEngine implements Engine {
       lod,
       tier,
       sceneVersion: scene.version,
+      connectionsVersion: scene.connectionsVersion,
       selectionVersion: f.selectionVersion,
       labelsVersion: f.labelsVersion,
       theme,
@@ -952,6 +996,8 @@ class PixiEngine implements Engine {
   }
 
   destroy(): void {
+    this.renderer.runners.contextChange.remove(this.restored);
+    this.restoreListeners.clear();
     this.stage.destroy({ children: true });
     for (const t of Object.values(this.art)) {
       t.destroy(true);
@@ -1058,17 +1104,6 @@ function countIn(nodes: readonly NodeItem[], r: Rect): number {
   return n;
 }
 
-function kindOf(renderer: Renderer): RendererKind {
-  switch (renderer.name) {
-    case "webgpu":
-      return "webgpu";
-    case "canvas":
-      return "canvas";
-    default:
-      return "webgl";
-  }
-}
-
 /** Returns a white texture of size pixels square, drawn by draw on a Canvas 2D context. */
 function canvasTexture(
   size: number,
@@ -1084,16 +1119,4 @@ function canvasTexture(
     draw(g);
   }
   return Texture.from(canvas);
-}
-
-function roundRect(
-  g: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-): void {
-  g.beginPath();
-  g.roundRect(x, y, w, h, r);
 }
