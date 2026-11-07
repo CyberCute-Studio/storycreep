@@ -461,9 +461,23 @@ test.describe("a board's canvas", () => {
         String(board.nodeIds.length),
       );
     };
-    // Animated, the zoom passes through the frames between, as they come.
+    // Animated, the zoom passes through frames between where it starts and
+    // where the fit goes, as many as come in the animation's time: on a
+    // runner without a GPU, whose frames take much of it, as few as one, so
+    // the test counts the frames that show a zoom between the two rather
+    // than how many frames there were.
     await fitContent();
-    await expect.poll(zooms).toBeGreaterThan(2);
+    const fitted = (await settled(canvas)).zoom;
+    const between = await page.evaluate(
+      ([from, to]) =>
+        ((window as { zooms?: string[] }).zooms ?? [])
+          .map(Number)
+          .filter((z) => z > Math.min(from, to) && z < Math.max(from, to))
+          .length,
+      [1, fitted],
+    );
+    expect(fitted).not.toBeCloseTo(1, 3);
+    expect(between).toBeGreaterThan(0);
     await page.emulateMedia({ reducedMotion: "reduce" });
     // At once, the frame after the press shows where the fit goes, and the
     // frames after it, which an animation would go on in, move nothing.
