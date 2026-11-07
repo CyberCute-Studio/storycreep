@@ -11,12 +11,20 @@ if (typeof HTMLCanvasElement !== "undefined") {
 
 // Vitest's globals are off, so Testing Library cannot unmount the components
 // of a test after it on its own. What a page kept in the browser's storage,
-// as the workspace that it last showed, is the test's alone.
+// as the workspace that it last showed, or in its cookies, as the board that
+// it last showed, is the test's alone.
 afterEach(() => {
   cleanup();
   // The tests of the lint rules run in Node, which has no window.
   if (typeof window !== "undefined") {
     window.localStorage.clear();
     window.sessionStorage.clear();
+    for (const pair of document.cookie.split(";")) {
+      const name = pair.split("=")[0].trim();
+      if (name !== "") {
+        // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API, and the app writes its cookie so.
+        document.cookie = `${name}=; Path=/; Max-Age=0`;
+      }
+    }
   }
 });

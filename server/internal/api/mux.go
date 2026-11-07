@@ -347,9 +347,11 @@ func (m *Mux) Handle(c Capability, method, pattern string, h http.Handler) {
 // HandlePage registers h for GET requests to pattern, which serve a page of
 // the web interface, or a file of one, rather than an operation of the API.
 // A page requires no credentials, because it holds no user's data: the
-// interface fetches that from the API. The OpenAPI document does not
-// describe pages, and IsPage tells which routes they are. h writes its own
-// errors, with WriteError.
+// interface fetches that from the API. A page that reads a session, as / does
+// to send a signed-in user on to the tool (PRD FR-PUB-05), reads it itself,
+// and answers a request without one as any other. The OpenAPI document does
+// not describe pages, and IsPage tells which routes they are. h writes its
+// own errors, with WriteError.
 func (m *Mux) HandlePage(pattern string, h http.Handler) {
 	m.Handle(Public, http.MethodGet, pattern, h)
 	m.pages[pattern] = true

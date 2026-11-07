@@ -3,6 +3,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
 import type { RendererKind } from "../canvas/engine";
@@ -16,6 +17,7 @@ import {
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
+import { useLastOpened } from "../project/lastOpened";
 import {
   type Command,
   editsProject,
@@ -230,6 +232,15 @@ function BoardContent({
   const search = Route.useSearch();
   const editable =
     editsProject(project.role) && project.archived_at === undefined;
+  // The device opens this board next, and its canvas where the user left
+  // it, with its selection (PRD FR-PROJ-04), but for the benchmark's runs,
+  // which start where they choose, and leave nothing for the next.
+  const userId = useSuspenseQuery(sessionQuery).data?.user_id;
+  const last = useLastOpened(
+    search.bench === undefined ? userId : undefined,
+    projectId,
+    board.id,
+  );
   useDocumentTitle(
     t("board.page_title", { board: board.name, project: project.name }),
   );
@@ -258,6 +269,8 @@ function BoardContent({
         settingsId="board-settings"
         read={read}
         options={options}
+        initial={last.initial}
+        onView={last.onView}
       />
       <section
         aria-labelledby="board-settings"

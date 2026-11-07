@@ -26,7 +26,10 @@ import (
 // token that it is made with, if it is, before it reads the request's body.
 // Only the health and readiness probes, /version, and the pages of the web
 // interface count in none, because they answer without the database, in which
-// the limits count. An operation's answers to the requests that it counts,
+// the limits count: but for a request to / or /login made with a session,
+// which the landing counts in the read bucket itself once it has read the
+// session, as the authenticator does for an operation, before it reads the
+// board that it sends the account to (landing.go). An operation's answers to the requests that it counts,
 // but not to those that the router's middleware, the authenticator, or a
 // guard refused before, say how much of the limit is left in the RateLimit
 // headers of draft-ietf-httpapi-ratelimit-headers: RateLimit-Limit, how many
