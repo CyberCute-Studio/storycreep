@@ -206,4 +206,27 @@ describe("a board's canvas", () => {
       "Harbour",
     );
   });
+
+  it("leads from the toolbar to the board's settings, and gives their heading the focus", async () => {
+    const user = userEvent.setup();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const link = await screen.findByRole("link", { name: "Board settings" });
+    // Of a finger's size, as the toolbar's buttons are (NFR-TOUCH-01).
+    expect(link.className).toContain("min-h-11");
+    const heading = screen.getByRole("heading", { name: "Board settings" });
+    const scrolled = vi.fn();
+    heading.scrollIntoView = scrolled;
+    await user.click(link);
+    expect(document.activeElement).toBe(heading);
+    expect(scrolled).toHaveBeenCalledWith({ block: "start" });
+    // By the keys too, without changing the page's address.
+    link.focus();
+    await user.keyboard("{Enter}");
+    expect(document.activeElement).toBe(heading);
+    expect(scrolled).toHaveBeenCalledTimes(2);
+    expect(window.location.hash).toBe("");
+  });
 });

@@ -10,9 +10,7 @@ import type {
   RichTextDoc,
   RichTextInline,
 } from "@storycreep/shared/api";
-
-/** The most characters of a text that a card shows, which its lines cut shorter. */
-export const excerptLength = 240;
+import { excerptLength, wholeStart } from "./text";
 
 /** What a card shows of a node, as text. */
 export interface NodeLabels {
@@ -32,6 +30,8 @@ export interface LabelContext {
   variableKey: (id: string) => string | undefined;
   /** Returns the title of the node of id, if the project's document has it. */
   nodeTitle: (id: string) => string | undefined;
+  /** Returns the name of the board of id, if the project's document has it. */
+  boardName: (id: string) => string | undefined;
 }
 
 /** The messages that a card's labels use. */
@@ -44,6 +44,7 @@ export type LabelKey =
   | "canvas.node.jumper"
   | "canvas.node.kind_ending"
   | "canvas.node.jumper_to"
+  | "canvas.node.jumper_to_board"
   | "canvas.node.jumper_none"
   | "canvas.node.output_if"
   | "canvas.node.output_elseif"
@@ -95,27 +96,42 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
     }
     case "jumper": {
       const target = node.target?.node_id;
-      // The node that it goes to by its title, as its own card shows it,
-      // untitled as there, or by its ID while the project's document does
-      // not have it, as of a board not read yet.
-      const name = target === undefined ? undefined : c.nodeTitle(target);
       return {
         title,
         kind: c.t("canvas.node.jumper"),
         body:
           target === undefined
             ? c.t("canvas.node.jumper_none")
-            : c.t("canvas.node.jumper_to", {
-                target:
-                  name === undefined
-                    ? target
-                    : name === ""
-                      ? c.t("canvas.node.untitled")
-                      : name,
-              }),
+            : jumperTarget(target, node.target?.board_id, c),
       };
     }
   }
+}
+
+/**
+ * Returns what a jumper's card says of the node of ID target, on the board
+ * of ID board, that it goes to: its title, as its own card shows it,
+ * untitled as there; or, while the project's document does not have the
+ * node, as of a board that the page has not read, which the canvas reads
+ * nothing of, or a node gone to the trash, the name of its board, which
+ * the project's tree, read with the board's page, has; or, of a board that
+ * the tree does not have either, the node's ID.
+ */
+function jumperTarget(
+  target: string,
+  board: string | undefined,
+  c: LabelContext,
+): string {
+  const name = c.nodeTitle(target);
+  if (name !== undefined) {
+    return c.t("canvas.node.jumper_to", {
+      target: name === "" ? c.t("canvas.node.untitled") : name,
+    });
+  }
+  const boardName = board === undefined ? undefined : c.boardName(board);
+  return boardName === undefined
+    ? c.t("canvas.node.jumper_to", { target })
+    : c.t("canvas.node.jumper_to_board", { board: boardName });
 }
 
 /** Reports whether a, a card's labels, shows the same as b, those that it was drawn with, or none, of a card not drawn yet. */
@@ -196,15 +212,11 @@ export function plainText(
   if (text.length <= excerptLength) {
     return text;
   }
-  // Whole characters, as the card's lines cut it (text.ts): a cut between
-  // the two code units of one, as of an emoji, would leave half of it,
-  // which a font draws as a broken glyph.
-  let end = excerptLength - 1;
-  const last = text.charCodeAt(end - 1);
-  if (last >= 0xd800 && last <= 0xdbff) {
-    end--;
-  }
-  return `${text.slice(0, end)}…`;
+  // Whole characters, as a reader sees them, as the card's lines cut it
+  // (text.ts): a cut within one, as between the two code units of an emoji,
+  // or a letter and its accent, would leave a part of it, which a font
+  // draws as a broken glyph.
+  return `${text.slice(0, wholeStart(text, excerptLength - 1))}…`;
 }
 
 function inline(

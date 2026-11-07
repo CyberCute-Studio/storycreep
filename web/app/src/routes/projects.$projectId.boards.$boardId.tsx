@@ -219,13 +219,15 @@ function BoardContent({
         projectId={projectId}
         boardId={board.id}
         boardName={board.name}
+        settingsId="board-settings"
         options={options}
       />
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"
       >
-        <h2 id="board-settings" className="text-lg font-semibold">
+        {/* The canvas's toolbar leads here, and gives the heading the focus. */}
+        <h2 id="board-settings" tabIndex={-1} className="text-lg font-semibold">
           {t("board.settings_title")}
         </h2>
         {editable ? (

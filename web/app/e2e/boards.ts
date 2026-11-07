@@ -1,9 +1,9 @@
-// What the end-to-end tests of the canvas, and its benchmark, start from: an
-// account signed in, a project, and boards of many nodes, made through the
-// API, and how they read what the canvas shows, which PixiJS draws as
-// pixels, from the data attributes of its element (src/canvas/controller.ts).
+// What the end-to-end tests of the canvas, and its benchmark, start from: a
+// project and boards of many nodes, made through the API, as an account
+// signed in (content.ts), and how they read what the canvas shows, which
+// PixiJS draws as pixels, from the data attributes of its element
+// (src/canvas/controller.ts).
 
-import { randomUUID } from "node:crypto";
 import type {
   APIRequestContext,
   CDPSession,
@@ -11,53 +11,13 @@ import type {
   Page,
 } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
-import { createProject, firstWorkspace, sessionOf } from "./content.ts";
 import {
-  type ApiSession,
-  atStart,
-  expect,
-  message,
-  registerAccount,
-  signIn,
-} from "./fixtures.ts";
-
-/** Registers an account, signs the page in as it, and returns the page's session. */
-export async function signedIn(page: Page, name: string): Promise<ApiSession> {
-  const account = await registerAccount(page.request, name);
-  await signIn(page, account.email);
-  await atStart(page, name);
-  return sessionOf(page.request);
-}
-
-/** A command of a batch, without its ID, which apply gives it. */
-export interface Command {
-  type: string;
-  payload: Record<string, unknown>;
-}
-
-/** The most commands that the API takes in one batch. */
-const batchSize = 1000;
-
-/** Applies commands to projectId through the API, as request's account, in batches as large as the API takes. */
-export async function apply(
-  request: APIRequestContext,
-  session: ApiSession,
-  projectId: string,
-  commands: Command[],
-): Promise<void> {
-  for (let i = 0; i < commands.length; i += batchSize) {
-    const res = await request.post(`/api/v1/projects/${projectId}/commands`, {
-      headers: { "X-CSRF-Token": session.csrf },
-      data: {
-        commands: commands
-          .slice(i, i + batchSize)
-          .map((c) => ({ command_id: randomUUID(), ...c })),
-      },
-      timeout: 120_000,
-    });
-    expect(res.status(), await res.text()).toBe(200);
-  }
-}
+  apply,
+  type Command,
+  createProject,
+  firstWorkspace,
+} from "./content.ts";
+import { type ApiSession, expect, message } from "./fixtures.ts";
 
 /** The words of the nodes' texts, of which each text takes some, by its node's place. */
 const words =

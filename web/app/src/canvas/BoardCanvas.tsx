@@ -1,10 +1,11 @@
 // A board's canvas (PRD FR-EDIT-01, FR-EDIT-11, ADR-013): the board's nodes
 // and connections, as the project's document holds them, drawn by PixiJS,
 // with a toolbar that switches what one finger's drag does, pan or select
-// (NFR-TOUCH-03), zooms, fits the content, and zooms to the selection, and a
-// minimap. The canvas suppresses the browser's own gestures over it, as
-// pull-to-refresh and overscroll (NFR-TOUCH-08), and the toolbar's buttons
-// are of the size of a finger (NFR-TOUCH-01).
+// (NFR-TOUCH-03), zooms, fits the content, zooms to the selection, and leads
+// to the board's settings under the canvas, and a minimap. The canvas
+// suppresses the browser's own gestures over it, as pull-to-refresh and
+// overscroll (NFR-TOUCH-08), and the toolbar's controls are of the size of a
+// finger (NFR-TOUCH-01).
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
@@ -24,7 +25,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { Doc } from "../document/doc";
 import { boardPart } from "../document/doc";
 import { useProjectDocument } from "../document/react";
-import { Button } from "../ui/Button";
+import { Button, buttonClass } from "../ui/Button";
 import { mediaQueryList, useMediaQuery } from "../ui/media";
 import {
   type BenchOptions,
@@ -110,16 +111,47 @@ function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
   };
 }
 
+/**
+ * Follows the toolbar's link to the board's settings, under the canvas:
+ * brings the settings' heading, of ID id, into view and gives it the focus,
+ * as the link's #id would, without changing the page's address, which the
+ * router owns, so that a finger, a mouse, and the keys reach them in one
+ * action, as neither a swipe nor the wheel scrolls the page over the
+ * canvas, which keeps the browser's gestures off over it (NFR-TOUCH-08),
+ * and whose wheel pans the board (N66).
+ */
+function showSettings(
+  event: {
+    preventDefault(): void;
+    currentTarget: { ownerDocument: Document };
+  },
+  id: string,
+): void {
+  const heading = event.currentTarget.ownerDocument.getElementById(id);
+  if (heading === null) {
+    return;
+  }
+  event.preventDefault();
+  // At the top of the window, where the page lets it be, with what follows
+  // it under it, rather than at its bottom, as the focus alone would leave
+  // it; jsdom scrolls nothing.
+  heading.scrollIntoView?.({ block: "start" });
+  heading.focus({ preventScroll: true });
+}
+
 /** The canvas of a board of a project. */
 export function BoardCanvas({
   projectId,
   boardId,
   boardName,
+  settingsId,
   options = {},
 }: {
   projectId: string;
   boardId: string;
   boardName: string;
+  /** The ID of the heading of the board's settings, under the canvas, which the toolbar links to, whose element takes the focus. */
+  settingsId?: string;
   options?: CanvasOptions;
 }) {
   const { t } = useTranslation();
@@ -411,16 +443,18 @@ export function BoardCanvas({
 
   // The board's content, from the project's document, as it changes.
   useEffect(() => {
-    let names: Pick<Doc, "components" | "variables"> | undefined;
+    let names: Pick<Doc, "components" | "variables" | "boards"> | undefined;
     const sync = () => {
       const view = doc.store.getState().view;
-      // The names that cards show, of components and of variables, rather
-      // than anything else of them, as a component's description, whose
-      // change would write every card anew for nothing.
+      // The names that cards show, of components, of variables, and of the
+      // boards of the nodes that jumpers go to, rather than anything else
+      // of them, as a component's description, whose change would write
+      // every card anew for nothing.
       const namesChanged =
         names !== undefined &&
         (namesDiffer(names.components, view.components, (c) => c.name) ||
-          namesDiffer(names.variables, view.variables, (v) => v.key));
+          namesDiffer(names.variables, view.variables, (v) => v.key) ||
+          namesDiffer(names.boards, view.boards, (b) => b.name));
       names = view;
       controller.sync(view, namesChanged);
       setEmpty(controller.scene.nodes.size === 0);
@@ -434,6 +468,7 @@ export function BoardCanvas({
         componentName: (id) => view.components.get(id)?.name,
         variableKey: (id) => view.variables.get(id)?.key,
         nodeTitle: (id) => view.nodes.get(id)?.title,
+        boardName: (id) => view.boards.get(id)?.name,
       });
     };
     // The messages of t, which is another as the locale changes.
@@ -577,6 +612,17 @@ export function BoardCanvas({
         >
           {t("canvas.minimap")}
         </Button>
+        {settingsId !== undefined && (
+          // The board's settings, under the canvas, which a swipe or the
+          // wheel over the canvas does not scroll the page to.
+          <a
+            href={`#${settingsId}`}
+            onClick={(e) => showSettings(e, settingsId)}
+            className={buttonClass()}
+          >
+            {t("canvas.settings")}
+          </a>
+        )}
         <p className="text-sm text-fg-muted" aria-live="polite">
           {selected > 0 && t("canvas.selected", { count: selected })}
         </p>

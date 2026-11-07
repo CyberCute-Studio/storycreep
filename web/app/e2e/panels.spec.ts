@@ -1,19 +1,7 @@
-import { randomUUID } from "node:crypto";
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
-import { createProject, firstWorkspace, sessionOf } from "./content.ts";
-import {
-  type ApiSession,
-  atStart,
-  en,
-  expect,
-  message,
-  press,
-  registerAccount,
-  signIn,
-  test,
-  violations,
-} from "./fixtures.ts";
+import { apply, createProject, firstWorkspace, signedIn } from "./content.ts";
+import { en, expect, message, press, test, violations } from "./fixtures.ts";
 
 // The panels of a project's variables, components, and component types (PRD
 // FR-VAR-01 to FR-VAR-04, FR-COMP-01, FR-COMP-02, FR-COMP-04), on the
@@ -23,36 +11,6 @@ import {
 // usages, a component's values and key, an attribute's change of type, and
 // the time that the list of a thousand variables takes to show and to
 // filter (FR-VAR-01 AC3).
-
-/** Registers an account, signs the page in as it, and returns the page's session. */
-async function signedIn(page: Page, name: string): Promise<ApiSession> {
-  const account = await registerAccount(page.request, name);
-  await signIn(page, account.email);
-  await atStart(page, name);
-  return sessionOf(page.request);
-}
-
-/** A command of a batch, without its ID, which apply gives it. */
-interface Command {
-  type: string;
-  payload: Record<string, unknown>;
-}
-
-/** Applies a batch of commands to projectId through the API, as request's account. */
-async function apply(
-  request: APIRequestContext,
-  session: ApiSession,
-  projectId: string,
-  commands: Command[],
-): Promise<void> {
-  const res = await request.post(`/api/v1/projects/${projectId}/commands`, {
-    headers: { "X-CSRF-Token": session.csrf },
-    data: {
-      commands: commands.map((c) => ({ command_id: randomUUID(), ...c })),
-    },
-  });
-  expect(res.status(), await res.text()).toBe(200);
-}
 
 /** The panel of the page: a region beside the list on the desktop, a dialog over the page on the tablet. */
 function panelOf(page: Page, name: string) {

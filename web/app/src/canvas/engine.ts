@@ -34,6 +34,7 @@ import {
   clip,
   columnsOf,
   glyphSize,
+  graphemes,
   kindSize,
   type Measure,
   textTier,
@@ -169,6 +170,9 @@ export async function createEngine(
     if (kind === "webgl" && caveat && !hardwareWebGL()) {
       continue;
     }
+    if (kind === "webgpu" && caveat && !(await hardwareWebGPU())) {
+      continue;
+    }
     const canvas = document.createElement("canvas");
     canvas.setAttribute("aria-hidden", "true");
     canvas.className = "block size-full";
@@ -228,6 +232,38 @@ function hardwareWebGL(): boolean {
     const stencil = gl.getContextAttributes()?.stencil === true;
     gl.getExtension("WEBGL_lose_context")?.loseContext();
     return stencil;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the canvas reads of a WebGPU adapter: whether it is a fallback
+ * adapter, in its info, or, of a browser that has no such info yet, of
+ * itself, as the page's types no longer have it.
+ */
+type AdapterOf = GPUAdapter & { isFallbackAdapter?: boolean };
+
+/**
+ * Reports whether the browser has a WebGPU that its GPU runs, rather than
+ * none, or a fallback adapter, which the browser may run in software, with
+ * the performance caveat that a WebGL of the kind has, so that a device
+ * without a GPU gets the Canvas 2D renderer (ADR-013) by either.
+ */
+async function hardwareWebGPU(): Promise<boolean> {
+  // A browser without WebGPU, or a page that is not of a secure context,
+  // has no gpu, whatever the page's types say.
+  const gpu: GPU | undefined = navigator.gpu;
+  if (gpu === undefined) {
+    return false;
+  }
+  try {
+    const adapter: AdapterOf | null = await gpu.requestAdapter();
+    return (
+      adapter !== null &&
+      adapter.info?.isFallbackAdapter !== true &&
+      adapter.isFallbackAdapter !== true
+    );
   } catch {
     return false;
   }
@@ -985,9 +1021,16 @@ function fitted(
   return text;
 }
 
-/** Reports whether font has drawn each character of text, of a code point, but its line breaks. */
+/**
+ * Reports whether font has drawn each character of text, but its line
+ * breaks, as a reader sees them, of a code point or more, as the font
+ * keeps its glyphs (graphemes): a letter and its accent, or an emoji of a
+ * family, is one glyph of the font, never a glyph of each of its code
+ * points, which the font would never have, and the label would be cut
+ * again, twice, each time that its card is drawn.
+ */
 function drawnIn(font: CardFont, text: string): boolean {
-  for (const ch of text) {
+  for (const ch of graphemes(text)) {
     if (ch !== "\n" && font.chars[ch] === undefined) {
       return false;
     }

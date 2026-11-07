@@ -1,3 +1,4 @@
+import type { Node } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
@@ -10,6 +11,7 @@ import {
   sameLabels,
 } from "./labels";
 import { clip, textTier, wrapLines } from "./text";
+import { nodeColor, type Theme } from "./theme";
 
 const context: LabelContext = {
   t: (key, args) =>
@@ -18,6 +20,8 @@ const context: LabelContext = {
   variableKey: (id) => (id === "var_gold" ? "gold" : undefined),
   nodeTitle: (id) =>
     id === "nd_dock" ? "The dock" : id === "nd_blank" ? "" : undefined,
+  boardName: (id) =>
+    id === "bd_a" ? "Harbour" : id === "bd_b" ? "Lighthouse" : undefined,
 };
 
 describe("a card's labels", () => {
@@ -98,8 +102,10 @@ describe("a card's labels", () => {
     expect(labelsOf(jumper, context).body).toBe(
       "canvas.node.jumper_to(The dock)",
     );
-    // A target without a title is untitled, as its own card says, and one
-    // that the document does not have yet is named by its ID.
+    // A target without a title is untitled, as its own card says; one that
+    // the document does not have, as of a board that the page has not
+    // read, is named by its board; and one of a board that the project's
+    // tree does not have either by its ID.
     const untitled = testNode("nd_u", 0, 0, {
       type: "jumper",
       target: { board_id: "bd_a", node_id: "nd_blank" },
@@ -112,8 +118,13 @@ describe("a card's labels", () => {
       target: { board_id: "bd_b", node_id: "nd_far" },
     });
     expect(labelsOf(unread, context).body).toBe(
-      "canvas.node.jumper_to(nd_far)",
+      "canvas.node.jumper_to_board(Lighthouse)",
     );
+    const lost = testNode("nd_l", 0, 0, {
+      type: "jumper",
+      target: { board_id: "bd_gone", node_id: "nd_lost" },
+    });
+    expect(labelsOf(lost, context).body).toBe("canvas.node.jumper_to(nd_lost)");
   });
 
   it("cuts a long text short", () => {
@@ -233,10 +244,58 @@ describe("a card's text", () => {
     expect(clip("ab🌊🌊🌊", 4)).toBe("ab…");
   });
 
+  it("cuts between characters as a reader sees them, not within an emoji of several, a flag, or a letter and its accent", () => {
+    const zwj = String.fromCodePoint(0x200d);
+    const family = `👨${zwj}👩${zwj}👧`;
+    expect(clip(`ab${family}cd`, 5)).toBe(`ab${family}…`);
+    expect(clip(`ab${family}cd`, 4)).toBe("ab…");
+    // A flag is two regional indicators, and as wide as an emoji.
+    const czech = String.fromCodePoint(0x1f1e8, 0x1f1ff);
+    expect(clip(`Prague ${czech} trip`, 9)).toBe("Prague …");
+    expect(clip(`Prague ${czech}`, 9)).toBe(`Prague ${czech}`);
+    // An accent written after its letter takes none of the line's room.
+    const cafe = `Cafe${String.fromCodePoint(0x301)}s`;
+    expect(clip(cafe, 5)).toBe(cafe);
+    expect(wrapLines(`${cafe} ${cafe}`, 5, 2, false)).toBe(`${cafe}\n${cafe}`);
+    // A text's excerpt ends between whole characters too.
+    const text = plainText(
+      {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: `${"a".repeat(236)}${family}b` }],
+          },
+        ],
+      },
+      context,
+    );
+    expect(text).toBe(`${"a".repeat(236)}…`);
+  });
+
   it("draws the glyphs sharper as the zoom grows", () => {
     expect(textTier(1)).toBe(1);
     expect(textTier(3)).toBe(2);
     expect(textTier(8)).toBe(4);
+  });
+});
+
+describe("a node's colour", () => {
+  it("marks a node by its palette's colour, in the light theme or the dark, and one of a colour that the palette does not have by the theme's edge", () => {
+    const light: Theme = {
+      canvas: 0xffffff,
+      surface: 0xf3f4f6,
+      border: 0x7c8494,
+      fg: 0x15171c,
+      muted: 0x4b5260,
+      accent: 0x2b50c8,
+      dark: false,
+    };
+    expect(nodeColor("red", light)).toBe(0xc62828);
+    expect(nodeColor("red", { ...light, dark: true })).toBe(0xff7b72);
+    expect(nodeColor("none", light)).toBe(light.border);
+    // As a newer server's palette may send, to a page loaded before it.
+    expect(nodeColor("crimson" as Node["color"], light)).toBe(light.border);
   });
 });
 

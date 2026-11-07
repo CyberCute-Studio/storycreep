@@ -86,12 +86,13 @@ export class Minimap {
     // that its canvas opens at, its origin at 100%: what the minimap maps
     // stays where it is as the canvas moves, so that a drag on it follows
     // the pointer, rather than a map that moves under it.
-    this.mapping = mappingOf(
+    const m = mappingOf(
       content === undefined
         ? visibleRect(emptyView, size)
         : grow(content, 0.05),
       { width, height },
     );
+    this.mapping = m;
     if (
       d === undefined ||
       d.version !== scene.version ||
@@ -100,7 +101,7 @@ export class Minimap {
       d.height !== height ||
       d.ratio !== ratio
     ) {
-      this.drawBase(scene, theme, width, height, ratio);
+      this.drawBase(scene, theme, m, width, height, ratio);
       this.drawn = { version: scene.version, theme, width, height, ratio };
     }
     if (this.canvas.width !== Math.round(width * ratio)) {
@@ -112,10 +113,6 @@ export class Minimap {
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, this.canvas.width, this.canvas.height);
     g.drawImage(this.base, 0, 0);
-    const m = this.mapping;
-    if (m === undefined) {
-      return;
-    }
     g.setTransform(ratio, 0, 0, ratio, 0, 0);
     const r = visibleRect(v, size);
     const x = m.dx + (r.x - m.bounds.x) * m.scale;
@@ -134,6 +131,7 @@ export class Minimap {
   private drawBase(
     scene: Scene,
     theme: Theme,
+    m: Mapping,
     width: number,
     height: number,
     ratio: number,
@@ -141,8 +139,7 @@ export class Minimap {
     this.base.width = Math.round(width * ratio);
     this.base.height = Math.round(height * ratio);
     const g = this.base.getContext("2d");
-    const m = this.mapping;
-    if (g === null || m === undefined) {
+    if (g === null) {
       return;
     }
     g.setTransform(ratio, 0, 0, ratio, 0, 0);

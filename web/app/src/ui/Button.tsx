@@ -16,6 +16,14 @@ export interface ButtonProps extends ComponentProps<"button"> {
   variant?: keyof typeof variants;
 }
 
+/**
+ * Returns the classes of a button of variant, which a link that looks like
+ * one, as among a toolbar's buttons, has too, of the same size.
+ */
+export function buttonClass(variant: keyof typeof variants = "secondary") {
+  return `inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-md px-4 font-medium disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]}`;
+}
+
 /** A button, which does not submit a form unless its type says so. */
 export function Button({
   variant = "secondary",
@@ -26,7 +34,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-md px-4 font-medium disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]} ${className}`}
+      className={`${buttonClass(variant)} ${className}`}
       {...props}
     />
   );

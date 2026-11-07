@@ -6,11 +6,11 @@ import {
   makeProject,
   onPage,
   settled,
-  signedIn,
   type TestBoard,
   touchGesture,
   viewOf,
 } from "./boards.ts";
+import { signedIn } from "./content.ts";
 import { en, expect, press, test, violations } from "./fixtures.ts";
 
 // A board's canvas (PRD FR-EDIT-01, FR-EDIT-11, ADR-013), on the desktop,
@@ -358,6 +358,25 @@ test.describe("a board's canvas", () => {
         })),
       ).toEqual({ scrolled: 0, kept: true });
     }
+  });
+
+  test("leads from its toolbar to the board's settings under it, in one tap or click", async ({
+    page,
+  }) => {
+    await openBoard(page);
+    const heading = page.getByRole("heading", {
+      name: en["board.settings_title"],
+    });
+    // The canvas fills the window under its top, and neither a swipe nor
+    // the wheel over it scrolls the page down to its settings.
+    await expect(heading).not.toBeInViewport();
+    const link = page.getByRole("link", { name: en["canvas.settings"] });
+    expect((await link.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await press(link);
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    // The page's address is the router's, and stays as it was.
+    expect(new URL(page.url()).hash).toBe("");
   });
 
   // Verifies: NFR-A11Y-07

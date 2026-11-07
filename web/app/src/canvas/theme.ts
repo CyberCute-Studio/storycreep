@@ -103,10 +103,15 @@ const palette: Record<Exclude<Node["color"], "none">, [number, number]> = {
   gray: [0x5f6672, 0xa8afbc],
 };
 
-/** Returns the colour that marks a node of color, in theme: none's is the theme's edge. */
+/**
+ * Returns the colour that marks a node of color, in theme: none's is the
+ * theme's edge, as is that of a colour that the palette does not have, as
+ * one that a newer server's palette has, of a page loaded before it, rather
+ * than a frame that throws, and a board drawn as nothing.
+ */
 export function nodeColor(color: Node["color"], theme: Theme): number {
   if (color === "none") {
     return theme.border;
   }
-  return palette[color][theme.dark ? 1 : 0];
+  return palette[color]?.[theme.dark ? 1 : 0] ?? theme.border;
 }
