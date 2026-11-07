@@ -105,6 +105,11 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
             : jumperTarget(target, node.target?.board_id, c),
       };
     }
+    default:
+      // A type that the canvas does not know, as a newer server's may send
+      // to a page loaded before it, shows its title alone, rather than
+      // labels that each frame would throw at, leaving the board blank.
+      return { title, kind: "", body: "" };
   }
 }
 

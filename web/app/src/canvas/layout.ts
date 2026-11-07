@@ -47,6 +47,12 @@ export function nodeRect(node: Node): Rect {
         width: nodeWidth,
         height: branchHeight(node.outputs?.length ?? 0),
       };
+    default:
+      // A type that the canvas does not know, as a newer server's may send
+      // to a page loaded before it, is laid out as an element is, rather
+      // than as nothing, which the spatial index, and then each frame,
+      // would throw at, leaving the board blank.
+      return { x, y, width: nodeWidth, height: elementHeight };
   }
 }
 

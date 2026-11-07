@@ -10,7 +10,8 @@ import {
   plainText,
   sameLabels,
 } from "./labels";
-import { clip, textTier, wrapLines } from "./text";
+import { nodeRect } from "./layout";
+import { clip, graphemes, textTier, wrapLines } from "./text";
 import { nodeColor, type Theme } from "./theme";
 
 const context: LabelContext = {
@@ -273,10 +274,66 @@ describe("a card's text", () => {
     expect(text).toBe(`${"a".repeat(236)}…`);
   });
 
+  it("finds a text's characters as the browser's segmenter does, which PixiJS keys its glyphs by, of the marks that are letters too", () => {
+    const segmenter = new Intl.Segmenter();
+    for (const value of [
+      // Thai's and Lao's vowel AM, after its consonant, of no other mark.
+      "ทำงาน",
+      "ກຳລັງ",
+      // A syllable of Hangul written in its conjoining jamo.
+      String.fromCodePoint(0x1100, 0x1161, 0x11a8, 0x1100, 0x1161),
+      // Halfwidth katakana, with its voiced marks.
+      String.fromCodePoint(0xff76, 0xff9e, 0xff77, 0xff9e, 0xff78),
+      // A carriage return and the line feed after it.
+      `one${String.fromCodePoint(0x0d, 0x0a)}two`,
+      // Arabic's number sign, which joins the digits after it.
+      String.fromCodePoint(0x600, 0x661, 0x662),
+      // Malayalam's dot reph, before its consonant.
+      String.fromCodePoint(0xd4e, 0xd30),
+      "plain Latin text",
+      "灯台守",
+    ]) {
+      expect([...graphemes(value)]).toEqual(
+        Array.from(segmenter.segment(value), (s) => s.segment),
+      );
+    }
+    // A cut keeps a consonant and its vowel together.
+    expect(clip("ทำงาน", 2)).toBe("ทำ…");
+    expect(clip("ทำงาน", 3)).toBe("ทำง…");
+  });
+
   it("draws the glyphs sharper as the zoom grows", () => {
     expect(textTier(1)).toBe(1);
     expect(textTier(3)).toBe(2);
     expect(textTier(8)).toBe(4);
+  });
+
+  it("keeps the glyphs' resolution as the zoom falls a little below it, and raises it as soon as the zoom needs it", () => {
+    // A tier's edge is where the title's 15 units take the glyphs' 28
+    // pixels: a scale of 1.87 between 1 and 2, and of 3.73 between 2 and 4.
+    expect(textTier(1.8)).toBe(1);
+    expect(textTier(1.8, 2)).toBe(2);
+    expect(textTier(1.6, 2)).toBe(1);
+    expect(textTier(1.9, 1)).toBe(2);
+    expect(textTier(3.6, 4)).toBe(4);
+    expect(textTier(3, 4)).toBe(2);
+    expect(textTier(1, 4)).toBe(1);
+    expect(textTier(3.8, 2)).toBe(4);
+  });
+});
+
+describe("a node of a type that the canvas does not know", () => {
+  it("is laid out and labelled as a card of its title, as a newer server's may send to a page loaded before it", () => {
+    const node = {
+      ...testNode("nd_1", 40, 80, { title: "The dock" }),
+      type: "hub",
+    } as unknown as Node;
+    expect(nodeRect(node)).toEqual({ x: 40, y: 80, width: 240, height: 128 });
+    expect(labelsOf(node, context)).toEqual({
+      title: "The dock",
+      kind: "",
+      body: "",
+    });
   });
 });
 

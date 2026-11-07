@@ -26,13 +26,32 @@ export const bodyTop = 50;
 export const glyphSize = 28;
 
 /**
+ * How far below the least resolution that a tier is needed at a zoom goes
+ * before the glyphs are drawn at the tier below, which writes every card of
+ * the renderer's margin anew, as a pinch that rests about a tier's edge,
+ * its fingers' tremor across it, would else do in each frame that crosses
+ * it: a tenth, over which a glyph is drawn at a little more than twice the
+ * size that it shows at, rather than twice at most, as sharp.
+ */
+const tierSlack = 1.1;
+
+/**
  * Returns the resolution that the fonts' glyphs are drawn at for a zoom of
  * the board's units to device pixels of scale: 1, 2, or 4, so that text
- * stays sharp to 400% on a screen of two device pixels to one.
+ * stays sharp to 400% on a screen of two device pixels to one; with the
+ * tier that they are drawn at now, current, a higher one stays as the zoom
+ * falls, until it falls by a tenth below the tier's (tierSlack), and a
+ * lower one goes up as soon as the zoom needs it, as the glyphs would else
+ * be blurred.
  */
-export function textTier(scale: number): number {
+export function textTier(scale: number, current?: number): number {
   const needed = (scale * titleSize) / glyphSize;
-  return needed <= 1 ? 1 : needed <= 2 ? 2 : 4;
+  const tier = needed <= 1 ? 1 : needed <= 2 ? 2 : 4;
+  return current !== undefined &&
+    tier < current &&
+    needed * tierSlack > current / 2
+    ? current
+    : tier;
 }
 
 /**
@@ -51,16 +70,30 @@ const wide =
   /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f1e6}-\u{1f1ff}\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
 
 /**
- * The code points that join the one before them into one character, as a
- * reader sees it: combining marks, as of an accent written after its
- * letter, or a vowel of Devanagari or Thai, the joiners, as within an emoji
- * of a family, an emoji's skin tones and tags, and the regional indicators,
- * two of which are a flag. A text without them is of characters of a code
- * point each, which the canvas reads without segmenting it, as segmenting
- * takes ten times as long.
+ * The code points that may join another into one character, as a reader
+ * sees it, by each rule of Unicode's (UAX #29) that keeps two code points
+ * together, whatever the version of it that the browser's segmenter has:
+ * those that are no character of their own (not Grapheme_Base), as the
+ * joiners within an emoji of a family, an emoji's tags, the controls, of
+ * which a carriage return joins the line feed after it, the format marks
+ * that number signs of Arabic are, which join the digits after them, and
+ * the halfwidth katakana's voiced marks, which join the letter before;
+ * combining marks, as of an accent written after its letter, or a vowel of
+ * Devanagari or Thai; the letters that join as such a mark does, or as a
+ * mark before a letter does, as Thai's and Lao's vowel AM, after its
+ * consonant, Kirat Rai's vowels, and Malayalam's dot reph, before one; the
+ * conjoining jamo of Hangul, which a syllable is written of, or ends in;
+ * the regional indicators, two of which are a flag; and an emoji's skin
+ * tones. The line feed alone is none, as the cut lines that the canvas
+ * checks (engine.ts) have it between them. A text of none of them is of
+ * characters of a code point each, as the segmenter, which PixiJS keys its
+ * glyphs by, finds them too, and the canvas reads it without segmenting
+ * it, as segmenting takes ten times as long; a text of any of them, which
+ * may not join, is segmented, as is any of a code point that Unicode has
+ * not given a character yet, which a newer segmenter may join.
  */
 const joining =
-  /\p{M}|\u200c|\u200d|[\u{1f1e6}-\u{1f1ff}]|[\u{1f3fb}-\u{1f3ff}]|[\u{e0020}-\u{e007f}]/u;
+  /[^\p{Grapheme_Base}\n]|\p{M}|[\u0d4e\u0e33\u0eb3\u1100-\u11ff\ua960-\ua97f\ud7b0-\ud7ff\u{111c2}\u{111c3}\u{113d1}\u{1193f}\u{11941}\u{11a3a}\u{11a84}-\u{11a89}\u{11d46}\u{11f02}\u{16d63}\u{16d67}-\u{16d6a}\u{1f1e6}-\u{1f1ff}\u{1f3fb}-\u{1f3ff}]/u;
 
 /** The browser's segmenter of a text's characters, as a reader sees them. */
 const segmenter =

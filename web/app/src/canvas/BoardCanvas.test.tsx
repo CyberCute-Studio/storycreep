@@ -1,5 +1,5 @@
 import type { Board } from "@storycreep/shared/api";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
@@ -228,5 +228,27 @@ describe("a board's canvas", () => {
     expect(document.activeElement).toBe(heading);
     expect(scrolled).toHaveBeenCalledTimes(2);
     expect(window.location.hash).toBe("");
+    // A click that asks for a new tab or window is the browser's, which
+    // opens the board's page there, at its settings: the test's listener,
+    // after the page's, reads whether the page took it, and takes it from
+    // jsdom, which would follow the link.
+    const taken: boolean[] = [];
+    const browser = (e: Event) => {
+      taken.push(e.defaultPrevented);
+      e.preventDefault();
+    };
+    document.addEventListener("click", browser);
+    try {
+      for (const key of ["ctrlKey", "metaKey", "shiftKey"]) {
+        link.focus();
+        fireEvent.click(link, { [key]: true });
+        expect(document.activeElement).toBe(link);
+      }
+      fireEvent.click(link);
+    } finally {
+      document.removeEventListener("click", browser);
+    }
+    expect(taken).toEqual([false, false, false, true]);
+    expect(scrolled).toHaveBeenCalledTimes(3);
   });
 });

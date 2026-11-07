@@ -397,8 +397,11 @@ class PixiEngine implements Engine {
   render(f: Frame): FrameStats {
     const { viewport: v, size } = f;
     const visible = visibleRect(v, size);
-    const tier = textTier(v.zoom * this.renderer.resolution);
     const b = this.built;
+    // The glyphs' resolution, which stays a little as the zoom falls below
+    // its tier (textTier), as every card of the margin is written anew
+    // where it changes.
+    const tier = textTier(v.zoom * this.renderer.resolution, b?.tier);
     // The nodes in view: of those that the renderer holds, while they are
     // the scene's as it is and its margin holds the canvas, as in each
     // frame that moves within it, and else of the scene itself, where the

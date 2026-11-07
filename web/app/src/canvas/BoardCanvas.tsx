@@ -118,15 +118,25 @@ function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
  * router owns, so that a finger, a mouse, and the keys reach them in one
  * action, as neither a swipe nor the wheel scrolls the page over the
  * canvas, which keeps the browser's gestures off over it (NFR-TOUCH-08),
- * and whose wheel pans the board (N66).
+ * and whose wheel pans the board (N66). A click with a key that asks the
+ * browser to open the link elsewhere, as Ctrl's, Cmd's, or Shift's, in a
+ * new tab or window, of the board's page at its settings, or Alt's, is the
+ * browser's.
  */
 function showSettings(
   event: {
     preventDefault(): void;
     currentTarget: { ownerDocument: Document };
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
   },
   id: string,
 ): void {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    return;
+  }
   const heading = event.currentTarget.ownerDocument.getElementById(id);
   if (heading === null) {
     return;
@@ -650,15 +660,22 @@ export function BoardCanvas({
         />
         {overlay !== undefined && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            {/* The message lets a press on it through to the canvas under
+                it, so that a drag that starts on it, as on an empty board,
+                pans as one beside it does, as the wheel over it does; its
+                button alone, which reads the content again, takes its own. */}
             <p
               role={overlay.role}
-              className="pointer-events-auto max-w-md rounded-md border border-border bg-surface px-4 py-3 text-center"
+              className="max-w-md rounded-md border border-border bg-surface px-4 py-3 text-center"
             >
               {overlay.text}
               {content === "failed" && engine !== "unsupported" && (
                 <>
                   {" "}
-                  <Button onClick={() => setAttempt((n) => n + 1)}>
+                  <Button
+                    onClick={() => setAttempt((n) => n + 1)}
+                    className="pointer-events-auto"
+                  >
                     {t("canvas.retry")}
                   </Button>
                 </>
