@@ -661,7 +661,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-01 AC1–AC4 and FR-EDIT-11 AC1–AC2 pass, and the harness reports NFR-PERF-01, 02, 04, 05, and 18.
 
 ### 60. Last-opened state and authenticated landing
-**Status:** todo · **Depends on:** 59
+**Status:** done ([#73](https://github.com/CyberCute-Studio/storycreep/pull/73)) · **Depends on:** 59
 **PRD:** FR-PROJ-04, FR-PUB-05
 - Last project, board, viewport, and selection stored per user and device: in the browser's storage under the account (`web/app/src/project/lastOpened.ts`), which the board's canvas opens with in place of the fit, in the first frame of the board's content, and the board alone in a cookie of the app's, `sc_last_board`, `__Host-` prefixed on an https page, for the server (N67).
 - Stale state never blocks startup: the app's start page, `/app/`, opens the last board while the account may still read it, and the project list otherwise, forgetting a board that has gone (N67).
