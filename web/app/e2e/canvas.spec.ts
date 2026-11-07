@@ -66,22 +66,24 @@ test.describe("a board's canvas", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("opens fitted again on a board that the page showed before", async ({
+  test("opens where it was left on the board that the page showed last", async ({
     page,
   }) => {
     const board = await openBoard(page);
-    const fitted = await settled(canvasOf(page, board.name));
+    await press(page.getByRole("button", { name: en["canvas.zoom_in"] }));
+    const left = await settled(canvasOf(page, board.name));
     // The board's nodes are in the project's document already, so that
-    // its read is done before the canvas's first frame, which places it.
+    // its read is done before the canvas's first frame, which places it
+    // where it was left (PRD FR-PROJ-04), at the canvas's height.
     await press(page.getByRole("link", { name: en["project.nav.boards"] }));
     await expect(canvasOf(page, board.name)).toHaveCount(0);
     await page.goBack();
     const canvas = canvasOf(page, board.name);
     await drawn(canvas);
     const again = await settled(canvas);
-    expect(again.zoom).toBeCloseTo(fitted.zoom, 3);
-    expect(again.x).toBeCloseTo(fitted.x, 0);
-    expect(again.y).toBeCloseTo(fitted.y, 0);
+    expect(again.zoom).toBeCloseTo(left.zoom, 3);
+    expect(again.x).toBeCloseTo(left.x, 0);
+    expect(again.y).toBeCloseTo(left.y, 0);
   });
 
   // Verifies: FR-EDIT-01/AC1
@@ -459,9 +461,23 @@ test.describe("a board's canvas", () => {
         String(board.nodeIds.length),
       );
     };
-    // Animated, the zoom passes through the frames between, as they come.
+    // Animated, the zoom passes through frames between where it starts and
+    // where the fit goes, as many as come in the animation's time: on a
+    // runner without a GPU, whose frames take much of it, as few as one, so
+    // the test counts the frames that show a zoom between the two rather
+    // than how many frames there were.
     await fitContent();
-    await expect.poll(zooms).toBeGreaterThan(2);
+    const fitted = (await settled(canvas)).zoom;
+    const between = await page.evaluate(
+      ([from, to]) =>
+        ((window as { zooms?: string[] }).zooms ?? [])
+          .map(Number)
+          .filter((z) => z > Math.min(from, to) && z < Math.max(from, to))
+          .length,
+      [1, fitted],
+    );
+    expect(fitted).not.toBeCloseTo(1, 3);
+    expect(between).toBeGreaterThan(0);
     await page.emulateMedia({ reducedMotion: "reduce" });
     // At once, the frame after the press shows where the fit goes, and the
     // frames after it, which an animation would go on in, move nothing.

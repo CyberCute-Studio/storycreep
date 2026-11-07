@@ -78,6 +78,28 @@ export interface FrameRecord {
   stats: FrameStats;
 }
 
+/**
+ * What the canvas shows of its board: the viewport, the canvas's size that
+ * the viewport is of, and the selected nodes, which the board's page keeps
+ * for the next time that it opens the board (PRD FR-PROJ-04).
+ */
+export interface CanvasView {
+  viewport: Viewport;
+  size: Size;
+  selection: ReadonlySet<string>;
+}
+
+/**
+ * What the canvas showed of its board before, which it opens with again in
+ * place of the fit to the board's content (restore): its viewport, the size
+ * of the canvas then, and the IDs of the nodes selected.
+ */
+export interface SavedView {
+  viewport: Viewport;
+  size: Size;
+  selection: readonly string[];
+}
+
 /** What the canvas tells the page of. */
 export interface CanvasEvents {
   /** The selection changed. */
@@ -86,6 +108,12 @@ export interface CanvasEvents {
   zoom(zoom: number): void;
   /** The first frame of the board's content was drawn. */
   rendered(): void;
+  /**
+   * What the canvas shows changed, its viewport, its size, or its
+   * selection, from the frame that placed it on the board's content on,
+   * once in each frame at most, as each frame of a pan's or an animation's.
+   */
+  view(view: CanvasView): void;
 }
 
 /** What the benchmark reads of a canvas, and drives (bench.tsx). */
@@ -197,6 +225,12 @@ export class CanvasController implements GestureHost {
    */
   private ready = false;
   private placed = false;
+  /** What the canvas places itself at in place of the fit, until it is placed (restore). */
+  private saved: SavedView | undefined;
+  /** What the canvas last told the page that it shows (report). */
+  private reported:
+    | { viewport: Viewport; size: Size; selection: number }
+    | undefined;
   private renderedOnce = false;
   private shownZoom = 0;
   private lastData: Record<string, string> = {};
@@ -356,6 +390,26 @@ export class CanvasController implements GestureHost {
   setReady(): void {
     this.ready = true;
     this.invalidate();
+  }
+
+  /**
+   * Has the canvas placed on the board's content as view says it was, once
+   * the content has been read, rather than fitted to it (PRD FR-PROJ-04):
+   * the board's point at the centre of the canvas then at the centre of the
+   * canvas now, at the zoom then, so that a canvas of the same size shows
+   * the same part of the board, and one of another, as a tablet turned
+   * since, the part about the same centre, as a resize keeps it; and the
+   * nodes that it selected that the board still has, selected again, unless
+   * the user has selected others since. It does nothing once the canvas has
+   * been placed. It asks for no frame, so that a page may call it as it
+   * renders, as the frame that places the canvas comes once the content has
+   * been read (setReady) and the canvas has a size (setSize), which each ask
+   * for one.
+   */
+  restore(view: SavedView): void {
+    if (!this.placed) {
+      this.saved = view;
+    }
   }
 
   // The gestures' host.
@@ -631,17 +685,39 @@ export class CanvasController implements GestureHost {
     this.pending = 0;
     const size = this.sz;
     if (this.ready && !this.placed && this.displayed) {
-      // The fit takes the place of whatever moved the canvas before it, as
-      // while the content was read, or since, before this frame: a zoom of
-      // the toolbar's, which would else go on after it, or a pinch's move,
-      // which the browser sent before this frame's callback. A gesture
-      // under way, as the pinch, goes on from it, rather than take the
-      // board back with its next move.
+      // The fit, or the view that the canvas restores, takes the place of
+      // whatever moved the canvas before it, as while the content was read,
+      // or since, before this frame: a zoom of the toolbar's, which would
+      // else go on after it, or a pinch's move, which the browser sent
+      // before this frame's callback. A gesture under way, as the pinch,
+      // goes on from it, rather than take the board back with its next
+      // move. A restored view is the first that the board's content is
+      // drawn at, with its selection, rather than a fit that it moves from,
+      // but for a selection that the user made before it, as of a board
+      // whose nodes the document had, which the canvas showed while it read
+      // them anew, which stays.
       const from = this.v;
-      this.v = this.fitted();
+      const saved = this.saved;
+      this.saved = undefined;
+      this.v =
+        saved === undefined
+          ? this.fitted()
+          : anchorAt(
+              centerOf(saved.viewport, saved.size),
+              this.centre(),
+              saved.viewport.zoom,
+            );
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);
+      if (saved !== undefined && this.selected.size === 0) {
+        this.select(
+          saved.selection.filter(
+            (id) => this.scene.nodes.get(id) !== undefined,
+          ),
+          "replace",
+        );
+      }
     }
     const a = this.animation;
     if (a !== undefined) {
@@ -657,6 +733,9 @@ export class CanvasController implements GestureHost {
     // A rubber band under way stays on the board's point where it started.
     this.gestures.refresh();
     this.showZoom();
+    if (this.placed) {
+      this.report();
+    }
     const theme = this.theme;
     if (theme === undefined || !this.displayed) {
       return;
@@ -705,6 +784,33 @@ export class CanvasController implements GestureHost {
       listener({ time, work, stats, scheduled });
     }
   };
+
+  /**
+   * Tells the page what the canvas shows, where its viewport, its size, or
+   * its selection is another than it last told: each is replaced rather
+   * than changed, so the same objects are the same view.
+   */
+  private report(): void {
+    const r = this.reported;
+    if (
+      r !== undefined &&
+      r.viewport === this.v &&
+      r.size === this.sz &&
+      r.selection === this.selectionVersion
+    ) {
+      return;
+    }
+    this.reported = {
+      viewport: this.v,
+      size: this.sz,
+      selection: this.selectionVersion,
+    };
+    this.events.view({
+      viewport: this.v,
+      size: this.sz,
+      selection: this.selected,
+    });
+  }
 
   private showZoom(): void {
     const percent = Math.round(this.v.zoom * 100);

@@ -90,27 +90,48 @@ func typeOf(name string) fileType {
 // binary embeds (package webassets), app the tool's and site the public
 // site's: the tool's files under /app/, and at / the public site's home page
 // if publicSite, the PublicSite capability, is on, or else the tool's entry
-// page, which is where its sign-in screen will be (PRD
-// FR-PUB-04). The tool's entry page is served for every path under /app/
-// that is not a file of its bundle, but for one that names a file, whose last
-// segment has an extension, as a file of an older bundle does, so that the
-// app's router shows the page of a link to it. Until plan item 108 builds the
-// site, its home page is a placeholder, and that item adds the routes that it
-// needs.
-func registerPages(m *api.Mux, app, site fs.FS, publicSite bool) {
+// page, whose router shows its sign-in screen there (PRD FR-PUB-04), and at
+// /login a redirect to the sign-in screen, with the request's query, whose
+// redirect names where signing in goes back to. An authenticated request to
+// / or /login goes where land says instead (FR-PUB-05), with a 302, whatever
+// the public site; a nil land, as of a test of the files alone, answers every
+// request as without a session. The tool's entry page is served for every
+// path under /app/ that is not a file of its bundle, but for one that names a
+// file, whose last segment has an extension, as a file of an older bundle
+// does, so that the app's router shows the page of a link to it. Until plan
+// item 108 builds the site, its home page is a placeholder, and that item adds
+// the routes that it needs.
+func registerPages(m *api.Mux, app, site fs.FS, publicSite bool, land lander) {
 	entry, err := fs.ReadFile(app, "index.html")
 	if err != nil {
 		// The bundle and the placeholder both have one, which TestPages
 		// checks of the placeholder, and the image's tests of the bundle.
 		panic(err)
 	}
+	if land == nil {
+		land = func(http.ResponseWriter, *http.Request) (string, bool) { return "", false }
+	}
 	appFiles, siteFiles := newFiles(app), newFiles(site)
 	m.HandlePage("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if target, ok := land(w, r); ok {
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
 		if publicSite {
 			siteFiles.serve(w, r, "index.html", "")
 			return
 		}
 		serveEntry(w, entry)
+	}))
+	m.HandlePage("/login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target, ok := land(w, r)
+		if !ok {
+			target = appPrefix + "login"
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 	}))
 	// The tool's relative links resolve against /app/, so /app redirects
 	// there, and so does /app/index.html, whose path the app's router has no

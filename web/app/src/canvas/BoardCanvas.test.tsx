@@ -9,7 +9,8 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lastOpened, rememberView } from "../project/lastOpened";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
@@ -64,6 +65,12 @@ beforeEach(() => {
   engines.destroyed = 0;
   engines.hold = undefined;
   engines.signals = [];
+});
+
+// A test that measures the canvas's host (getBoundingClientRect) leaves the
+// tests after it to jsdom's, which lays nothing out.
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const harbour: Board = {
@@ -218,6 +225,53 @@ describe("a board's canvas", () => {
     expect(captures.has(1)).toBe(false);
     // The browser's menu, which would take that release, does not open.
     expect(fireEvent.contextMenu(canvas)).toBe(false);
+  });
+
+  // Verifies: FR-PROJ-04/AC1
+  it("opens where the device left the board, with its selection, and keeps where the user takes it for the next time", async () => {
+    // jsdom lays nothing out: the canvas is 800 by 600 here, as it was when
+    // the device left the board.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return this.getAttribute("role") === "application"
+          ? new DOMRect(0, 0, 800, 600)
+          : new DOMRect();
+      },
+    );
+    boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    rememberView(testSession.user_id, testProject.id, "bd_a", {
+      viewport: { x: 120, y: -40, zoom: 1.5 },
+      size: { width: 800, height: 600 },
+      selection: new Set(["nd_2", "nd_gone"]),
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    expect([canvas.dataset.x, canvas.dataset.y, canvas.dataset.zoom]).toEqual([
+      "120",
+      "-40",
+      "1.5",
+    ]);
+    expect(canvas.dataset.selected).toBe("1");
+    expect(screen.getByText("1 node selected")).toBeDefined();
+    // The board is the one that the device opens next.
+    expect(document.cookie).toContain(
+      `sc_last_board=${testSession.user_id}:${testProject.id}:bd_a`,
+    );
+    // Where the user takes it is kept, within half a second.
+    fireEvent.keyDown(canvas, { key: "ArrowRight" });
+    await waitFor(
+      () =>
+        expect(
+          lastOpened(testSession.user_id)?.view?.viewport.x,
+        ).toBeGreaterThan(120),
+      { timeout: 2000 },
+    );
+    expect(lastOpened(testSession.user_id)?.view?.selection).toEqual(["nd_2"]);
   });
 
   it("says that a board has no nodes yet", async () => {

@@ -62,8 +62,9 @@ func checkEntry(t *testing.T, method, path string, res response, page []byte) st
 // and at / the public site's home page or, with the public site off, the
 // tool's entry page, with a nonce of its own in each response, which its
 // Content-Security-Policy allows the page's scripts and styles with (PRD
-// NFR-SEC-09). They are served while the server starts, because they need no
-// database.
+// NFR-SEC-09), and /login, which leads to the tool's sign-in screen. They
+// are served while the server starts, because a request without a session
+// needs no database (TestLanding has those with one).
 //
 // Verifies: NFR-SEC-09, FR-PUB-04/AC3
 func TestPages(t *testing.T) {
@@ -140,6 +141,19 @@ func TestPages(t *testing.T) {
 						res.header.Get("Location"), want)
 				}
 			}
+			// The sign-in screen goes back to the page that its query's
+			// redirect names, once signed in.
+			for path, want := range map[string]string{
+				"/login": "/app/login", "/login?redirect=%2Fprojects": "/app/login?redirect=%2Fprojects",
+			} {
+				for _, method := range []string{http.MethodGet, http.MethodHead} {
+					res := do(s.main, method, path, nil)
+					if res.status != http.StatusFound || res.header.Get("Location") != want {
+						t.Errorf("%s %s: status %d, Location %q; want 302 to %s", method, path, res.status,
+							res.header.Get("Location"), want)
+					}
+				}
+			}
 
 			for _, path := range []string{
 				"/app/missing.js", "/app/index.html/", "/app/../site/index.html", "/app/%2e%2e/site/index.html",
@@ -182,7 +196,7 @@ func TestPagesOfBundle(t *testing.T) {
 	m := api.NewMux(api.MuxOptions{
 		Middleware: []func(http.Handler) http.Handler{securityHeaders(false)},
 	})
-	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false)
+	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false, nil)
 
 	for path, want := range map[string]struct{ ctype, cache, body string }{
 		"/app/assets/index-abc.js":   {"text/javascript; charset=utf-8", immutable, "export {};"},
@@ -265,7 +279,7 @@ func TestPagesCompressed(t *testing.T) {
 		"assets/image-abc.png": {Data: image},
 	}
 	m := api.NewMux(api.MuxOptions{})
-	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false)
+	registerPages(m, app, fstest.MapFS{"index.html": {Data: []byte("site")}}, false, nil)
 
 	for _, tt := range []struct {
 		path, accept    string

@@ -33,7 +33,9 @@ import { useMediaQuery } from "../ui/media";
 import {
   type BenchOptions,
   CanvasController,
+  type CanvasView,
   renderedMark,
+  type SavedView,
 } from "./controller";
 import type { Engine, RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
@@ -138,6 +140,14 @@ interface BoardCanvasProps {
    */
   read?: Promise<void>;
   options?: CanvasOptions;
+  /**
+   * What the canvas showed of the board before, which it opens with in
+   * place of the fit to the board's content (PRD FR-PROJ-04), as it was
+   * when the canvas was mounted.
+   */
+  initial?: SavedView;
+  /** Tells what the canvas shows, from the frame that placed it on, as it changes (CanvasEvents' view). */
+  onView?: (view: CanvasView) => void;
 }
 
 /**
@@ -162,9 +172,16 @@ function BoardCanvasOf({
   settingsId,
   read,
   options = {},
+  initial,
+  onView,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // The page's latest onView, which the controller's events call.
+  const onViewRef = useRef(onView);
+  useLayoutEffect(() => {
+    onViewRef.current = onView;
+  });
   const helpId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -207,21 +224,25 @@ function BoardCanvasOf({
   // contrast themes do, which the browser draws the page's elements in, but
   // not the canvas's pixels, which the canvas draws in them itself.
   const forcedColors = useMediaQuery(forcedColorsQuery, false);
-  const [controller] = useState(
-    () =>
-      new CanvasController(boardId, {
-        selection: (ids) => setSelected(ids.size),
-        zoom: (z) => zoom.setState(z, true),
-        rendered: () => {
-          try {
-            performance.clearMarks(renderedMark);
-            performance.mark(renderedMark, { detail: { boardId } });
-          } catch {
-            // A browser without marks' details has no harness to read them.
-          }
-        },
-      }),
-  );
+  const [controller] = useState(() => {
+    const c = new CanvasController(boardId, {
+      selection: (ids) => setSelected(ids.size),
+      zoom: (z) => zoom.setState(z, true),
+      rendered: () => {
+        try {
+          performance.clearMarks(renderedMark);
+          performance.mark(renderedMark, { detail: { boardId } });
+        } catch {
+          // A browser without marks' details has no harness to read them.
+        }
+      },
+      view: (view) => onViewRef.current?.(view),
+    });
+    if (initial !== undefined) {
+      c.restore(initial);
+    }
+    return c;
+  });
 
   // The canvas takes the window's height below where it starts, as a
   // tablet's screen is the board's, as the window's size changes, and as

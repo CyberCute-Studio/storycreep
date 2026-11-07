@@ -49,8 +49,13 @@ export function Shell({ children }: { children: ReactNode }) {
         <header className="border-b border-border bg-surface">
           {unencrypted(window.location) && <UnencryptedWarning />}
           <div className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-1">
+            {/* The product's name leads a signed-in user to the project
+                list, rather than to the start page, which opens the board
+                that the device last showed them, and so, from that board's
+                page, would lead nowhere (PRD FR-PROJ-04); and a signed-out
+                one to the start page, which signing in goes back to. */}
             <Link
-              to="/"
+              to={session ? "/projects" : "/"}
               className="flex min-h-11 items-center text-lg font-semibold text-fg"
             >
               {PRODUCT_NAME}
