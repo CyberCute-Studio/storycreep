@@ -245,7 +245,9 @@ test.describe("a board's canvas", () => {
     await page.mouse.down();
     await page.mouse.move(box.x + 260, box.y + 150, { steps: 5 });
     await page.mouse.up();
-    const v1 = await viewOf(canvas);
+    // The canvas writes the view in the frame after each move, which may
+    // not have run yet as the release has.
+    const v1 = await settled(canvas);
     expect(v1.x - v0.x).toBeCloseTo(40, 0);
     expect(v1.y - v0.y).toBeCloseTo(50, 0);
     // The wheel pans, and zooms about the pointer with Ctrl.
@@ -281,7 +283,7 @@ test.describe("a board's canvas", () => {
     await page.mouse.down({ button: "right" });
     await page.mouse.move(box.x + 100, box.y + 100, { steps: 5 });
     await page.mouse.up({ button: "right" });
-    expect(await viewOf(canvas)).toEqual(v3);
+    expect(await settled(canvas)).toEqual(v3);
     // Nor on the minimap, where a click of the primary button centres the
     // canvas.
     const minimap = canvas.locator("canvas").last();

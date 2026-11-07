@@ -239,6 +239,13 @@ export function sameViewport(a: Viewport, b: Viewport): boolean {
   );
 }
 
+/** Reports whether rectangles a and b are the same rectangle. */
+export function sameRect(a: Rect, b: Rect): boolean {
+  return (
+    a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+  );
+}
+
 /** Returns the smallest rectangle that holds every one of rects, or undefined for none. */
 export function union(rects: Iterable<Rect>): Rect | undefined {
   let minX = Number.POSITIVE_INFINITY;

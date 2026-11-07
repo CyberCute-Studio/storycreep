@@ -13,7 +13,7 @@ import type { Connection, Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
 import { type Curve, connectionCurve, curveBounds, nodeRect } from "./layout";
 import { GridIndex } from "./spatial";
-import { type Point, type Rect, union } from "./viewport";
+import { type Point, type Rect, sameRect, union } from "./viewport";
 
 /** A node of the scene. */
 export interface NodeItem {
@@ -48,13 +48,6 @@ function sameCurve(a: Curve, b: Curve): boolean {
     a.c2.y === b.c2.y &&
     a.p3.x === b.p3.x &&
     a.p3.y === b.p3.y
-  );
-}
-
-/** Reports whether rectangles a and b are the same rectangle. */
-function sameRect(a: Rect, b: Rect): boolean {
-  return (
-    a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
   );
 }
 

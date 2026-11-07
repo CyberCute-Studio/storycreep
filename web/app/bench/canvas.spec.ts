@@ -245,8 +245,16 @@ test.describe("the canvas's benchmark", () => {
       { heapWarm: warm, heapEnd: end, growth },
     );
     expect(growth).toBeLessThan(0.1);
-    if (r.textures.start !== undefined && r.textures.end !== undefined) {
-      expect(r.textures.end).toBeLessThanOrEqual(r.textures.start * 1.1 + 2);
+    // The Canvas 2D renderer keeps no textures on a GPU. One of the GPU's
+    // that tells of none could not read PixiJS's count of them, as a
+    // version of PixiJS that keeps it otherwise, which fails here, rather
+    // than leave the check of the textures out unseen.
+    if (r.renderer !== "canvas") {
+      expect(r.textures.start, "the GPU's textures").toBeDefined();
+      expect(r.textures.end, "the GPU's textures").toBeDefined();
+      expect(r.textures.end ?? 0).toBeLessThanOrEqual(
+        (r.textures.start ?? 0) * 1.1 + 2,
+      );
     }
   });
 });

@@ -232,6 +232,25 @@ describe("a card's text", () => {
     expect(wrapLines("anything", 10, 0, false)).toBe("");
   });
 
+  it("spends no line on a paragraph's indentation", () => {
+    // An indented word too long for the rest of the line is cut where the
+    // line ends, not at a space of its indentation, which left a blank line.
+    const indented = `intro\n${" ".repeat(10)}Antidisestablishmentarianism forever`;
+    expect(wrapLines(indented, 20, 4, false)).toBe(
+      `intro\n${" ".repeat(10)}Antidisest\nablishmentarianism\nforever`,
+    );
+    // Indentation as wide as the line is dropped.
+    expect(wrapLines(`intro\n${" ".repeat(25)}word`, 20, 2, false)).toBe(
+      "intro\nword",
+    );
+    // A short indented line keeps its indentation, and a paragraph of
+    // spaces alone its line.
+    expect(wrapLines(`intro\n${" ".repeat(4)}a word`, 20, 2, false)).toBe(
+      `intro\n${" ".repeat(4)}a word`,
+    );
+    expect(wrapLines(`${" ".repeat(30)}\nend`, 20, 2, false)).toBe("\nend");
+  });
+
   it("shows each of a branch's rows, however long the rows before it", () => {
     const rows = Array.from(
       { length: 8 },

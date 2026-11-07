@@ -218,11 +218,24 @@ export function wrapLines(
         rest = "";
       } else {
         // A line takes at least a character, as of a card narrower than a
-        // wide one, which is of a code unit or more.
+        // wide one, which is of a code unit or more. It breaks at a space
+        // after its first word starts, not at one of the indentation that
+        // a paragraph after the first may start with, which would leave a
+        // line of nothing, as of an indented word too long for the rest of
+        // the line, which is cut where the line ends instead. Indentation
+        // as wide as the line, which leaves no room for any of the word,
+        // is dropped, rather than take a line of its own, blank, in place
+        // of the text after it; a paragraph of spaces alone keeps its line.
         const fit = end > 0 ? end : firstLength(rest);
+        const indent = rest.length - rest.trimStart().length;
         const space = rest.lastIndexOf(" ", fit);
-        const cut = space > fit / 3 ? space : fit;
-        out.push(rest.slice(0, cut).trimEnd());
+        const cut = space > fit / 3 && space > indent ? space : fit;
+        const line = rest.slice(0, cut).trimEnd();
+        if (line === "" && indent < rest.length) {
+          rest = rest.trimStart();
+          continue;
+        }
+        out.push(line);
         rest = rest.slice(cut).trimStart();
       }
     } while (rest !== "");

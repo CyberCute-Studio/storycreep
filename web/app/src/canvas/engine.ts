@@ -167,6 +167,27 @@ const cardReach = 8;
 const freeCardFloor = 256;
 
 /**
+ * How long a card stays free before the renderer may destroy it
+ * (trimCards), in milliseconds: longer than a pinch out and back in, as the
+ * benchmark's swing of 6 s between 25% and 150% (bench.tsx), so that a zoom
+ * out after a zoom in takes back the cards that the zoom in freed, rather
+ * than build them anew, with their sprites and their text's geometry, a
+ * moment after it destroyed them.
+ */
+const freeCardHold = 10_000;
+
+/**
+ * The free cards that the renderer destroys at most in one frame
+ * (trimCards): each of them takes its card out of the cards' list, which it
+ * looks for it in and shifts, of thousands of cards once the margin was a
+ * large screen's just above detailZoom, so that a frame that trims destroys
+ * a few hundred microseconds' worth on a desktop, about a millisecond's on
+ * the reference tablet, rather than all of thousands at once, of tens of
+ * milliseconds there.
+ */
+const freeCardTrim = 128;
+
+/**
  * The bytes of the glyphs' atlases that a renderer's fonts may take before
  * it draws them anew, of the text of its margin alone. A page of an atlas
  * is 512 pixels square at its font's resolution, of 1, 4, or 16 MB at the
@@ -390,6 +411,8 @@ interface CardView {
   labels?: NodeLabels;
   /** The version of the names that cards show that its labels were read at (Frame's labelsVersion). */
   labelsVersion?: number;
+  /** When it was last freed (releaseCards), in milliseconds of the page's clock, which trimCards waits freeCardHold after. */
+  freedAt: number;
 }
 
 /** A tile of the connections' lines: its Graphics, and the rectangle of the board that its lines take, or none for a tile without any. */
@@ -694,9 +717,10 @@ class PixiEngine implements Engine {
     // and writes again only the cards whose labels it changed, as the few
     // jumpers to the node, rather than every card of the margin.
     const relabel = was !== undefined && was.labelsVersion !== f.labelsVersion;
+    const now = performance.now();
     let texts = 0;
     if (lod === "blocks") {
-      this.releaseCards(new Set());
+      this.releaseCards(new Set(), now);
       this.cards.visible = false;
       this.blocks.visible = true;
       let i = 0;
@@ -723,7 +747,7 @@ class PixiEngine implements Engine {
       this.blocks.visible = false;
       this.cards.visible = true;
       const keep = new Set(shown.nodes.map((n) => n.node.id));
-      this.releaseCards(keep);
+      this.releaseCards(keep, now);
       // Fonts whose atlases outgrew their budget, as of the glyphs of every
       // character of a board of Chinese that a pan passed, are given back,
       // of every tier, and drawn anew, as a set of their own, of the glyphs
@@ -773,7 +797,7 @@ class PixiEngine implements Engine {
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;
       }
-      this.trimCards();
+      this.trimCards(now);
       this.orderCards(shown.nodes);
       if (anew) {
         this.glyphBudget = Math.max(glyphFloor, 2 * this.glyphBytes());
@@ -851,36 +875,50 @@ class PixiEngine implements Engine {
   }
 
   /**
-   * Destroys the free cards beyond as many as are in use, or freeCardFloor,
+   * Destroys free cards beyond as many as are in use, or freeCardFloor,
    * once the margin has taken those that it needs: so that the cards that
-   * the renderer keeps follow what its margin shows in detail, at most
-   * twice as many, rather than the most that it ever did, until the board
-   * is left, as of the thousands of nodes of a margin of a large screen at
-   * a zoom just above detailZoom, after a zoom in that shows a few hundred,
-   * each card with its sprites and its text's geometry, which every
-   * reorder of the cards (orderCards) would else put back among them. A
-   * pan, which frees about as many cards as it takes, keeps those that it
-   * frees; the blocks, which free every card, keep them for the cards of
-   * the zoom in after them.
+   * the renderer keeps come to follow what its margin shows in detail, at
+   * most twice as many, rather than the most that it ever did, until the
+   * board is left, as of the thousands of nodes of a margin of a large
+   * screen at a zoom just above detailZoom, after a zoom in that shows a
+   * few hundred, each card with its sprites and its text's geometry, which
+   * every reorder of the cards (orderCards) would else put back among them.
+   * It destroys only the cards that have been free for freeCardHold, so
+   * that a zoom out again soon after, as a pinch's swing, takes back those
+   * that the zoom in freed rather than build them anew, and at most
+   * freeCardTrim of them in a frame, so that the trim of thousands spreads
+   * over the frames that build the margin after it rather than hold one up.
+   * The cards free longest come first: the free cards are a stack, which
+   * the margin takes the latest freed of, and frees onto, so that they stay
+   * in the order that they were freed in. A pan, which frees about as many
+   * cards as it takes, keeps those that it frees; the blocks, which free
+   * every card, keep them for the cards of the zoom in after them.
    */
-  private trimCards(): void {
-    const keep = Math.max(freeCardFloor, this.cardViews.size);
-    if (this.freeCards.length <= keep) {
-      return;
+  private trimCards(now: number): void {
+    const excess =
+      this.freeCards.length - Math.max(freeCardFloor, this.cardViews.size);
+    let n = 0;
+    while (
+      n < excess &&
+      n < freeCardTrim &&
+      now - this.freeCards[n].freedAt >= freeCardHold
+    ) {
+      n++;
     }
-    for (const view of this.freeCards.splice(keep)) {
+    for (const view of this.freeCards.splice(0, n)) {
       view.root.destroy({ children: true });
     }
   }
 
-  /** Frees the cards of the nodes that keep does not hold, for nodes that come into the margin. */
-  private releaseCards(keep: ReadonlySet<string>): void {
+  /** Frees, at now, the cards of the nodes that keep does not hold, for nodes that come into the margin. */
+  private releaseCards(keep: ReadonlySet<string>, now: number): void {
     for (const [id, view] of this.cardViews) {
       if (!keep.has(id)) {
         this.cardViews.delete(id);
         view.root.visible = false;
         view.item = undefined;
         view.labels = undefined;
+        view.freedAt = now;
         this.freeCards.push(view);
       }
     }
@@ -907,6 +945,7 @@ class PixiEngine implements Engine {
       kind: text(fonts.regular, kindSize),
       body: text(fonts.regular, bodySize),
       ports: [],
+      freedAt: 0,
     };
     view.root.addChild(
       view.card,

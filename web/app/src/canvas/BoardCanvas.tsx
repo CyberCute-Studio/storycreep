@@ -125,15 +125,8 @@ function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
   };
 }
 
-/** The canvas of a board of a project. */
-export function BoardCanvas({
-  projectId,
-  boardId,
-  boardName,
-  settingsId,
-  read,
-  options = {},
-}: {
+/** What the canvas of a board is given. */
+interface BoardCanvasProps {
   projectId: string;
   boardId: string;
   boardName: string;
@@ -145,7 +138,31 @@ export function BoardCanvas({
    */
   read?: Promise<void>;
   options?: CanvasOptions;
-}) {
+}
+
+/**
+ * The canvas of a board of a project. Its controller, whose scene holds the
+ * nodes of one board alone, and the loader's read, are of the board that it
+ * was first given: a page that gives it another board in place, without
+ * the router's remount that the board's page has, shows that board's canvas
+ * anew, rather than read the other board's content into a scene that keeps
+ * none of it, under a toolbar that names it.
+ */
+export function BoardCanvas(props: BoardCanvasProps) {
+  return (
+    <BoardCanvasOf key={`${props.projectId}/${props.boardId}`} {...props} />
+  );
+}
+
+/** The canvas of the one board that it was mounted with (BoardCanvas). */
+function BoardCanvasOf({
+  projectId,
+  boardId,
+  boardName,
+  settingsId,
+  read,
+  options = {},
+}: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
   const helpId = useId();
@@ -489,8 +506,19 @@ export function BoardCanvas({
               e.destroy();
               return;
             }
+            // A renderer that throws as the canvas takes it, as it sizes
+            // it, is one that cannot draw, which the canvas says, rather
+            // than reject this handler unheard, after which the canvas
+            // would say that it is starting for as long as the page stays.
+            try {
+              controller.setEngine(e);
+            } catch {
+              controller.setEngine(undefined);
+              setEngine("unsupported");
+              e.destroy();
+              return;
+            }
             started = e;
-            controller.setEngine(e);
             setEngine("running");
           },
           () => {

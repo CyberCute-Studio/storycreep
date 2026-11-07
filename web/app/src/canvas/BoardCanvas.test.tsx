@@ -15,6 +15,8 @@ import type { Engine, EngineOptions } from "./engine";
 
 const engines = vi.hoisted(() => ({
   fail: false,
+  /** Whether the engine throws as the canvas sizes it. */
+  resizeFails: false,
   created: 0,
   destroyed: 0,
   /** What the engine's start waits for, as the fetch of its chunk. */
@@ -38,7 +40,11 @@ vi.mock("./engine", () => ({
     engines.created++;
     return {
       kind: "canvas",
-      resize: () => {},
+      resize: () => {
+        if (engines.resizeFails) {
+          throw new Error("the device is lost");
+        }
+      },
       render: (f) => ({
         lod: "detail",
         nodes: f.scene.nodes.size,
@@ -57,6 +63,7 @@ vi.mock("./engine", () => ({
 
 beforeEach(() => {
   engines.fail = false;
+  engines.resizeFails = false;
   engines.created = 0;
   engines.destroyed = 0;
   engines.hold = undefined;
@@ -370,6 +377,20 @@ describe("a board's canvas", () => {
         "This browser cannot draw the board: it has neither WebGL nor a 2D canvas.",
       ),
     ).toBeDefined();
+  });
+
+  it("says that the browser cannot draw the board where its renderer throws as the canvas takes it, rather than that it is starting", async () => {
+    engines.resizeFails = true;
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByText(
+        "This browser cannot draw the board: it has neither WebGL nor a 2D canvas.",
+      ),
+    ).toBeDefined();
+    expect(engines.destroyed).toBe(engines.created);
   });
 
   it("keeps the board's settings under the canvas, which takes the window's width rather than the project's column", async () => {
