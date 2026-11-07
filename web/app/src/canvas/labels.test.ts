@@ -423,10 +423,35 @@ describe("the benchmark's path", () => {
     expect(pathAt("panzoom", 3, area, size).zoom).toBeCloseTo(1.5);
   });
 
+  it("moves panzoom's path as fast on the screen at 25% as at 150%", () => {
+    const area = { x: 0, y: 0, width: 90_000, height: 1000 };
+    const size = { width: 800, height: 600 };
+    // The board's point at the canvas's centre, and its speed on the
+    // screen, in CSS pixels a second, over a hundredth of a second.
+    const centre = (s: number) => {
+      const v = pathAt("panzoom", s, area, size);
+      return v.x + size.width / 2 / v.zoom;
+    };
+    const onScreen = (s: number) =>
+      ((centre(s + 0.01) - centre(s)) / 0.01) *
+      pathAt("panzoom", s, area, size).zoom;
+    for (const s of [0, 1.5, 3, 7.5, 9]) {
+      expect(onScreen(s)).toBeCloseTo(900, -1);
+    }
+  });
+
   it("warms up for a pass of the area, row after row a canvas apart", () => {
-    expect(
-      passOf({ x: 0, y: 0, width: 9000, height: 1000 }, { height: 600 }),
-    ).toBe(30);
+    const area = { x: 0, y: 0, width: 9000, height: 1000 };
+    expect(passOf("pan", area, { height: 600 })).toBe(30);
+    // Panzoom's path, at the zoom of each moment, gets to the end of its
+    // third row, the area's bottom right, as the pass ends.
+    const pass = passOf("panzoom", area, { height: 600 });
+    const end = pathAt("panzoom", pass - 1e-6, area, {
+      width: 800,
+      height: 600,
+    });
+    expect(end.x + 400 / end.zoom).toBeCloseTo(9000, 0);
+    expect(end.y + 300 / end.zoom).toBeCloseTo(1000, 0);
   });
 
   it("summarises its frames", () => {

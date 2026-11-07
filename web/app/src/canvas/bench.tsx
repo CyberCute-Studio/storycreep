@@ -25,12 +25,33 @@ import { anchorAt, type Rect, type Viewport, visibleRect } from "./viewport";
  */
 export const warmUp = 2;
 
-/** How fast the path moves on the screen, in CSS pixels a second. */
+/** How fast the path moves on the screen, in CSS pixels a second, at whatever zoom. */
 const speed = 900;
 
 /** The zooms that panzoom swings between, and how long one swing takes, in seconds. */
 const zoomRange = [0.25, 1.5] as const;
 const zoomPeriod = 6;
+
+/** The steps of a swing of panzoom's zoom that the path's distance is summed over: a hundredth of a second each. */
+const swingSteps = 600;
+
+/**
+ * How far along its rows the path of panzoom has gone at each step of a
+ * swing of its zoom, in units of the board: the speed on the screen, at the
+ * zoom of each moment, summed by the trapezoid rule, so that the screen
+ * moves as fast at 25% as at 150%, rather than four times slower, and half
+ * as fast again, as at 100%.
+ */
+const swing: readonly number[] = (() => {
+  const dt = zoomPeriod / swingSteps;
+  const along = [0];
+  for (let i = 1; i <= swingSteps; i++) {
+    const before = 1 / zoomAt("panzoom", (i - 1) * dt);
+    const after = 1 / zoomAt("panzoom", i * dt);
+    along.push(along[i - 1] + (speed * dt * (before + after)) / 2);
+  }
+  return along;
+})();
 
 /** What a run measured. */
 export interface BenchResult {
@@ -83,6 +104,51 @@ export function statsOf(values: readonly number[]): Stats {
   };
 }
 
+/** Returns the zoom of the path of scenario at seconds into it: 1 for pan, and swinging between 25% and 150% for panzoom. */
+function zoomAt(scenario: "pan" | "panzoom", seconds: number): number {
+  return scenario === "pan"
+    ? 1
+    : Math.exp(
+        Math.log(zoomRange[0]) +
+          (Math.log(zoomRange[1]) - Math.log(zoomRange[0])) *
+            ((1 - Math.cos((2 * Math.PI * seconds) / zoomPeriod)) / 2),
+      );
+}
+
+/** Returns how far along its rows the path of scenario has gone at seconds into it, in units of the board. */
+function distanceAt(scenario: "pan" | "panzoom", seconds: number): number {
+  if (scenario === "pan") {
+    return seconds * speed;
+  }
+  const swings = Math.floor(seconds / zoomPeriod);
+  const at = ((seconds - swings * zoomPeriod) / zoomPeriod) * swingSteps;
+  const i = Math.min(swingSteps - 1, Math.floor(at));
+  return (
+    swings * swing[swingSteps] + swing[i] + (swing[i + 1] - swing[i]) * (at - i)
+  );
+}
+
+/** Returns how long the path of scenario takes to go distance along its rows, in seconds: the inverse of distanceAt. */
+function timeTo(scenario: "pan" | "panzoom", distance: number): number {
+  if (scenario === "pan") {
+    return distance / speed;
+  }
+  const swings = Math.floor(distance / swing[swingSteps]);
+  const rest = distance - swings * swing[swingSteps];
+  let low = 0;
+  let high = swingSteps;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (swing[mid] <= rest) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  const into = (rest - swing[low]) / (swing[low + 1] - swing[low]);
+  return (swings + (low + into) / swingSteps) * zoomPeriod;
+}
+
 /**
  * Returns the viewport of the run at seconds into it, over area, of the
  * board, in a canvas of size: a serpentine across it, row after row, at a
@@ -95,20 +161,13 @@ export function pathAt(
   area: Rect,
   size: { width: number; height: number },
 ): Viewport {
-  const zoom =
-    scenario === "pan"
-      ? 1
-      : Math.exp(
-          Math.log(zoomRange[0]) +
-            (Math.log(zoomRange[1]) - Math.log(zoomRange[0])) *
-              ((1 - Math.cos((2 * Math.PI * seconds) / zoomPeriod)) / 2),
-        );
+  const zoom = zoomAt(scenario, seconds);
   // The rows are a canvas apart, at a zoom of 1, so that a pass shows the
   // whole area, each row what the row before did not.
   const gap = Math.max(1, size.height);
   const rows = rowsOf(area, size);
   const width = Math.max(1, area.width);
-  const along = (seconds * speed) % (rows * width);
+  const along = distanceAt(scenario, seconds) % (rows * width);
   const row = Math.floor(along / width);
   const into = along - row * width;
   const x = row % 2 === 0 ? area.x + into : area.x + width - into;
@@ -122,12 +181,17 @@ function rowsOf(area: Rect, size: { height: number }): number {
 }
 
 /**
- * Returns how long the path takes to cross area once, in seconds, in a
- * canvas of size: the warm-up of a run that measures memory, after which
- * PixiJS's caches of text, which are bounded, hold what the area shows.
+ * Returns how long the path of scenario takes to cross area once, in
+ * seconds, in a canvas of size: the warm-up of a run that measures memory,
+ * after which PixiJS's caches of text, which are bounded, hold what the
+ * area shows.
  */
-export function passOf(area: Rect, size: { height: number }): number {
-  return (rowsOf(area, size) * Math.max(1, area.width)) / speed;
+export function passOf(
+  scenario: "pan" | "panzoom",
+  area: Rect,
+  size: { height: number },
+): number {
+  return timeTo(scenario, rowsOf(area, size) * Math.max(1, area.width));
 }
 
 /** Returns the JavaScript heap's size, in MiB, where the browser tells it (Chrome's performance.memory). */
@@ -253,7 +317,7 @@ export default function Bench({
       started = performance.now();
       warm =
         options.warm === "pass"
-          ? warmUp + passOf(areaOf(), handle.size())
+          ? warmUp + passOf(scenario, areaOf(), handle.size())
           : (options.warm ?? warmUp);
       setPhase("warm");
       handle.setViewport(pathAt(scenario, 0, areaOf(), handle.size()));

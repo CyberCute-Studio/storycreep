@@ -322,9 +322,9 @@ describe("the canvas's controller", () => {
       shift: false,
       additive: false,
     });
-    c.pointer("down", finger(1, 400));
-    c.pointer("down", finger(2, 600));
-    c.pointer("move", finger(2, 700));
+    c.down(finger(1, 400));
+    c.down(finger(2, 600));
+    c.gestures.move(finger(2, 700));
     time.tick();
     c.setReady();
     time.tick();
@@ -332,7 +332,7 @@ describe("the canvas's controller", () => {
     expect(fitted.zoom).toBeCloseTo(504 / (9 * 200 + 128));
     // The fingers' next move zooms from the fit, by the ratio of their
     // distance since, rather than back to where they held the board.
-    c.pointer("move", finger(2, 730));
+    c.gestures.move(finger(2, 730));
     expect(c.viewport().zoom).toBeCloseTo(fitted.zoom * (330 / 300));
   });
 
@@ -349,17 +349,17 @@ describe("the canvas's controller", () => {
       shift: false,
       additive: false,
     });
-    c.pointer("down", finger(1, 400));
-    c.pointer("down", finger(2, 600));
+    c.down(finger(1, 400));
+    c.down(finger(2, 600));
     time.tick();
     c.setReady();
     // The fingers' move of the frame that the read asked for, which the
     // browser sends before the frame's callback.
-    c.pointer("move", finger(2, 700));
+    c.gestures.move(finger(2, 700));
     time.tick();
     const fitted = c.viewport();
     expect(fitted.zoom).toBeCloseTo(504 / (9 * 200 + 128));
-    c.pointer("move", finger(2, 730));
+    c.gestures.move(finger(2, 730));
     expect(c.viewport().zoom).toBeCloseTo(fitted.zoom * (330 / 300));
   });
 
@@ -410,12 +410,12 @@ describe("the canvas's controller", () => {
       shift: false,
       additive: false,
     };
-    expect(c.pointer("down", right)).toBe(false);
+    expect(c.down(right)).toBe(false);
     time.tick(animationTime);
     expect(c.viewport().zoom).toBe(2);
     c.zoomTo(1);
     time.tick();
-    expect(c.pointer("down", { ...right, button: 0, buttons: 1 })).toBe(true);
+    expect(c.down({ ...right, button: 0, buttons: 1 })).toBe(true);
     const held = c.viewport();
     expect(held.zoom).toBeGreaterThan(1);
     time.tick(animationTime);

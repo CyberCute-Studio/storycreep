@@ -541,37 +541,19 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Takes a pointer's event of the browser's, at a point of the canvas, and
-   * reports, of one that went down, whether the canvas follows it: one that
-   * it does stops an animation in progress where it is, as a finger that
-   * takes the board does, and one that it ignores, as a right click, or a
-   * third finger, leaves it to go on.
+   * Takes a pointer that went down on the canvas, at a point of it, and
+   * reports whether the canvas follows it (Gestures' down): one that it
+   * does stops an animation in progress where it is, as a finger that takes
+   * the board does, and one that it ignores, as a right click, or a third
+   * finger, leaves it to go on. What the pointer does after, as it moves,
+   * leaves, goes up, or is cancelled, goes to the gestures as it comes.
    */
-  pointer(
-    type: "down" | "move" | "leave" | "up" | "cancel",
-    input: PointerInput,
-  ): boolean {
-    switch (type) {
-      case "down": {
-        const followed = this.gestures.down(input);
-        if (followed) {
-          this.animation = undefined;
-        }
-        return followed;
-      }
-      case "move":
-        this.gestures.move(input);
-        return true;
-      case "leave":
-        this.gestures.leave(input);
-        return true;
-      case "up":
-        this.gestures.up(input);
-        return true;
-      case "cancel":
-        this.gestures.cancel(input);
-        return true;
+  down(input: PointerInput): boolean {
+    const followed = this.gestures.down(input);
+    if (followed) {
+      this.animation = undefined;
     }
+    return followed;
   }
 
   // The loop.
@@ -638,9 +620,16 @@ export class CanvasController implements GestureHost {
     // A rubber band under way stays on the board's point where it started.
     this.gestures.refresh();
     this.showZoom();
-    const engine = this.engine;
     const theme = this.theme;
-    if (engine === undefined || theme === undefined || !this.displayed) {
+    if (theme === undefined || !this.displayed) {
+      return;
+    }
+    // The minimap draws on a 2D canvas of its own, which needs nothing of
+    // the renderer's, so that it maps the board, and takes a tap, while the
+    // renderer starts too.
+    this.minimap?.draw(this.scene, this.v, size, theme);
+    const engine = this.engine;
+    if (engine === undefined) {
       return;
     }
     const start = this.clock.now();
@@ -655,7 +644,6 @@ export class CanvasController implements GestureHost {
       theme,
     });
     const work = this.clock.now() - start;
-    this.minimap?.draw(this.scene, this.v, size, theme);
     this.writeData(engine.kind, stats);
     if (this.ready && !this.renderedOnce) {
       this.renderedOnce = true;

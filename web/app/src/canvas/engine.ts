@@ -176,19 +176,27 @@ export async function createEngine(
           options.preference,
           ...renderers.filter((k) => k !== options.preference),
         ];
-  // PixiJS tells whether the page has WebGL once, for the page, with the
-  // caveat that its first caller asked with, so that a board that forces
-  // WebGL after one that did not would find none, and one that does not
-  // after one that did would start a WebGL that the browser runs in
-  // software, and fail: the canvas has PixiJS tell whether the browser has
-  // any, as its own default does, and tells whether it is the GPU's itself,
-  // each time that it starts.
-  isWebGLSupported(false);
+  // PixiJS tells whether the page has WebGL, and whether it has WebGPU,
+  // once, for the page, and keeps the answer, with the caveat that its
+  // first caller asked with, so that a board that forces WebGL after one
+  // that did not would find none, and one that does not after one that did
+  // would start a WebGL that the browser runs in software, and fail, and
+  // keeps that the page has none as well, as from a start while the GPU's
+  // process was gone, which would leave every board after it, until the
+  // page is loaded again, without either. The canvas tells whether the
+  // browser has one, and whether its GPU runs it, itself, each time that
+  // it starts, and has PixiJS tell only once it found one, without the
+  // caveat, as PixiJS's own default does, so that what PixiJS keeps is
+  // that the page has it: a renderer that the browser no longer has, after
+  // it, fails to start, and gives way to the next.
   for (const kind of order) {
-    if (kind === "webgl" && caveat(kind) && !hardwareWebGL()) {
-      continue;
+    if (kind === "webgl") {
+      if (!hasWebGL(caveat(kind))) {
+        continue;
+      }
+      isWebGLSupported(false);
     }
-    if (kind === "webgpu" && caveat(kind) && !(await hardwareWebGPU())) {
+    if (kind === "webgpu" && !(await hasWebGPU(caveat(kind)))) {
       continue;
     }
     const canvas = document.createElement("canvas");
@@ -234,15 +242,15 @@ export async function createEngine(
 }
 
 /**
- * Reports whether the browser has a WebGL that its GPU runs, rather than one
- * that it runs in software, with a major performance caveat, as PixiJS asks
- * for it, without keeping the answer.
+ * Reports whether the browser has a WebGL, as PixiJS asks for it, or, with
+ * caveat, one that its GPU runs, rather than one that it runs in software,
+ * with a major performance caveat, without keeping the answer.
  */
-function hardwareWebGL(): boolean {
+function hasWebGL(caveat: boolean): boolean {
   try {
     const gl = document.createElement("canvas").getContext("webgl", {
       stencil: true,
-      failIfMajorPerformanceCaveat: true,
+      failIfMajorPerformanceCaveat: caveat,
     });
     if (gl === null) {
       return false;
@@ -263,12 +271,13 @@ function hardwareWebGL(): boolean {
 type AdapterOf = GPUAdapter & { isFallbackAdapter?: boolean };
 
 /**
- * Reports whether the browser has a WebGPU that its GPU runs, rather than
- * none, or a fallback adapter, which the browser may run in software, with
- * the performance caveat that a WebGL of the kind has, so that a device
- * without a GPU gets the Canvas 2D renderer (ADR-013) by either.
+ * Reports whether the browser has a WebGPU adapter, or, with caveat, one
+ * that its GPU runs, rather than a fallback adapter, which the browser may
+ * run in software, with the performance caveat that a WebGL of the kind
+ * has, so that a device without a GPU gets the Canvas 2D renderer
+ * (ADR-013) by either, without keeping the answer.
  */
-async function hardwareWebGPU(): Promise<boolean> {
+async function hasWebGPU(caveat: boolean): Promise<boolean> {
   // A browser without WebGPU, or a page that is not of a secure context,
   // has no gpu, whatever the page's types say.
   const gpu: GPU | undefined = navigator.gpu;
@@ -279,8 +288,9 @@ async function hardwareWebGPU(): Promise<boolean> {
     const adapter: AdapterOf | null = await gpu.requestAdapter();
     return (
       adapter !== null &&
-      adapter.info?.isFallbackAdapter !== true &&
-      adapter.isFallbackAdapter !== true
+      (!caveat ||
+        (adapter.info?.isFallbackAdapter !== true &&
+          adapter.isFallbackAdapter !== true))
     );
   } catch {
     return false;
@@ -304,6 +314,8 @@ interface CardView {
   selected?: boolean;
   /** The labels that it shows, so that a change of the names that cards show writes again only the cards that it changes. */
   labels?: NodeLabels;
+  /** The version of the names that cards show that its labels were read at (Frame's labelsVersion). */
+  labelsVersion?: number;
 }
 
 /** A tile of the connections' lines: its Graphics, and the rectangle of the board that its lines take, or none for a tile without any. */
@@ -622,13 +634,24 @@ class PixiEngine implements Engine {
         const selected = f.selection.has(item.node.id);
         const stale = fresh || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
-          const labels = f.labels(item);
+          // A card's labels follow its node and the names that cards show
+          // alone, so that a card drawn anew for the text's resolution, the
+          // level of detail, the theme, or its selection, as every card of
+          // the margin once a pinch crosses a resolution, keeps those that
+          // it has, rather than read its node's text again.
+          const labels =
+            view.labels !== undefined &&
+            view.item === item &&
+            view.labelsVersion === f.labelsVersion
+              ? view.labels
+              : f.labels(item);
           if (stale || !sameLabels(labels, view.labels)) {
             this.drawCard(view, item, labels, f, fonts, selected, lines);
             view.item = item;
             view.selected = selected;
-            view.labels = labels;
           }
+          view.labels = labels;
+          view.labelsVersion = f.labelsVersion;
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;

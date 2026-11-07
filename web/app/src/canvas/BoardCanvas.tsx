@@ -24,12 +24,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { boardPart } from "../document/doc";
+import { boardPart, type Part } from "../document/doc";
 import { useProjectDocument } from "../document/react";
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
 import { Button, buttonClass } from "../ui/Button";
-import { mediaQueryList, useMediaQuery } from "../ui/media";
+import { useMediaQuery } from "../ui/media";
 import {
   type BenchOptions,
   CanvasController,
@@ -58,6 +58,9 @@ export interface CanvasOptions {
 
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
+
+/** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show. */
+const nameParts: readonly Part[] = ["components", "variables"];
 
 /** The zoom that the toolbar shows, as the canvas tells it, in a store of its own. */
 type ZoomShown = StoreApi<number>;
@@ -158,7 +161,16 @@ export function BoardCanvas({
     "loading",
   );
   const [attempt, setAttempt] = useState(0);
-  const loaderRead = useRef(read);
+  // The loader's read, of the document that it was of, which the canvas's
+  // first read of that document takes, as often as React runs its effect,
+  // as twice under StrictMode, rather than once, after which the second
+  // would ask the server again.
+  const [loaderRead] = useState(() => ({ doc, read }));
+  // The reads of the names that cards show, counted, which each read of
+  // the board's content that succeeded starts, and a failure of which the
+  // toolbar says, with Try again, which starts another.
+  const [namesRead, setNamesRead] = useState(0);
+  const [namesFailed, setNamesFailed] = useState(false);
   const [engine, setEngine] = useState<"starting" | "running" | "unsupported">(
     "starting",
   );
@@ -170,6 +182,9 @@ export function BoardCanvas({
   const [height, setHeight] = useState<number>();
   // Whether the system asks for reduced motion (NFR-A11Y-07), as it changes.
   const reducedMotion = useMediaQuery(reducedMotionQuery, false);
+  // Whether the system's theme is dark, which the page's colours, and so
+  // the canvas's, follow, as it changes.
+  const dark = useMediaQuery(darkQuery, false);
   const [controller] = useState(
     () =>
       new CanvasController(boardId, {
@@ -222,10 +237,6 @@ export function BoardCanvas({
       return;
     }
     controller.attach({ host, band });
-    const theme = () => controller.setTheme(readTheme(host));
-    theme();
-    const dark = mediaQueryList(darkQuery);
-    dark?.addEventListener("change", theme);
     const resize = () => {
       controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
     };
@@ -276,11 +287,12 @@ export function BoardCanvas({
         if (type !== "down" && !controller.gestures.tracks(e.pointerId)) {
           return;
         }
-        const followed = controller.pointer(
-          type,
-          pointerInput(e, host.getBoundingClientRect()),
-        );
-        if (type === "down" && followed) {
+        const input = pointerInput(e, host.getBoundingClientRect());
+        if (type !== "down") {
+          controller.gestures[type](input);
+          return;
+        }
+        if (controller.down(input)) {
           host.focus({ preventScroll: true });
           host.setPointerCapture?.(e.pointerId);
           e.preventDefault();
@@ -373,7 +385,6 @@ export function BoardCanvas({
     return () => {
       controller.stop();
       controller.attach(undefined);
-      dark?.removeEventListener("change", theme);
       observer?.disconnect();
       density?.removeEventListener("change", densityChanged);
       host.removeEventListener("touchstart", own);
@@ -392,6 +403,16 @@ export function BoardCanvas({
       window.removeEventListener("blur", blur);
     };
   }, [controller]);
+
+  // The theme, of the page's colours, which the canvas reads again as the
+  // system's theme changes them.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dark reads the page's colours again, which it changes.
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (host !== null) {
+      controller.setTheme(readTheme(host));
+    }
+  }, [controller, dark]);
 
   // The canvas's size once its height is set, at once, rather than once the
   // observer tells of it, after the next frame: that frame places the canvas
@@ -461,9 +482,13 @@ export function BoardCanvas({
     };
   }, [controller, options.renderer]);
 
-  // The minimap, while it is shown.
+  // The minimap, while it is shown. A press that went down on the minimap
+  // before, which React tells nothing more of once its canvas is gone, as
+  // the minimap is hidden under it, is none of the one shown after, which
+  // a drag that went down elsewhere and crosses it does not move.
   useEffect(() => {
     const canvas = minimapRef.current;
+    minimapPress.current = undefined;
     controller.setMinimap(
       showMinimap && canvas !== null ? new Minimap(canvas) : undefined,
     );
@@ -501,16 +526,13 @@ export function BoardCanvas({
   // the page's loader started (read), whose failure the canvas says, rather
   // than ask the server again as it mounts, after a read that failed before
   // it, which the document takes the part out for, and then the names that
-  // its cards show, of its speakers and of the variables that its texts
-  // show, which the board's first frame does not wait for, and which are
-  // read anew where the document held them already, as the parts that a
-  // page shows are (loadPart).
+  // its cards show (namesRead).
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's content again, as the user asks for it.
   useEffect(() => {
     let ended = false;
     setContent("loading");
-    const first = loaderRead.current;
-    loaderRead.current = undefined;
+    const first =
+      attempt === 0 && loaderRead.doc === doc ? loaderRead.read : undefined;
     (first ?? doc.load(boardPart(boardId))).then(
       () => {
         if (ended) {
@@ -518,8 +540,7 @@ export function BoardCanvas({
         }
         setContent("ready");
         controller.setReady();
-        void loadPart(doc, "components").catch(() => {});
-        void loadPart(doc, "variables").catch(() => {});
+        setNamesRead((n) => n + 1);
       },
       () => {
         if (!ended) {
@@ -531,6 +552,33 @@ export function BoardCanvas({
       ended = true;
     };
   }, [controller, doc, boardId, attempt]);
+
+  // The names that cards show, of the project's speakers and of the
+  // variables that their texts show, which the board's first frame does not
+  // wait for, and which are read anew where the document held them already,
+  // as the parts that a page shows are (loadPart). A read of them that
+  // fails, which leaves the cards without them, is said in the toolbar,
+  // with Try again, rather than leave the user to wonder why while they
+  // stay on the board, as the document reads a part that it does not hold
+  // only as it is asked for it.
+  useEffect(() => {
+    if (namesRead === 0) {
+      return;
+    }
+    let ended = false;
+    setNamesFailed(false);
+    Promise.all(nameParts.map((part) => loadPart(doc, part))).then(
+      () => {},
+      () => {
+        if (!ended) {
+          setNamesFailed(true);
+        }
+      },
+    );
+    return () => {
+      ended = true;
+    };
+  }, [doc, namesRead]);
 
   useEffect(() => {
     controller.reducedMotion = reducedMotion;
@@ -597,6 +645,11 @@ export function BoardCanvas({
     throw engineFailure.error;
   }
 
+  // What the canvas says over it: that it cannot draw, that the board's
+  // content failed to load, that it loads, that the renderer, whose chunk
+  // the canvas fetches after the page's, still starts once the content has
+  // been read, rather than show a canvas as blank as of a board without
+  // nodes, or that the board has none.
   const overlay =
     engine === "unsupported"
       ? { role: "alert" as const, text: t("canvas.unsupported") }
@@ -604,9 +657,11 @@ export function BoardCanvas({
         ? { role: "alert" as const, text: t("canvas.load_failed") }
         : content === "loading"
           ? { role: "status" as const, text: t("canvas.loading") }
-          : empty
-            ? { role: "status" as const, text: t("canvas.empty") }
-            : undefined;
+          : engine === "starting"
+            ? { role: "status" as const, text: t("canvas.starting") }
+            : empty
+              ? { role: "status" as const, text: t("canvas.empty") }
+              : undefined;
 
   return (
     <div className="space-y-2">
@@ -675,6 +730,14 @@ export function BoardCanvas({
         <p className="text-sm text-fg-muted" aria-live="polite">
           {selected > 0 && t("canvas.selected", { count: selected })}
         </p>
+        {namesFailed && (
+          <p role="alert" className="flex flex-wrap items-center gap-2 text-sm">
+            {t("canvas.names_failed")}
+            <Button onClick={() => setNamesRead((n) => n + 1)}>
+              {t("canvas.retry")}
+            </Button>
+          </p>
+        )}
       </fieldset>
       <div
         ref={hostRef}

@@ -17,12 +17,15 @@ const engines = vi.hoisted(() => ({
   fail: false,
   created: 0,
   destroyed: 0,
+  /** What the engine's start waits for, as the fetch of its chunk. */
+  hold: undefined as Promise<void> | undefined,
 }));
 
 // PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
 // tests draw with an engine that draws nothing.
 vi.mock("./engine", () => ({
   createEngine: async (): Promise<Engine> => {
+    await engines.hold;
     if (engines.fail) {
       throw new Error("no renderer");
     }
@@ -50,6 +53,7 @@ beforeEach(() => {
   engines.fail = false;
   engines.created = 0;
   engines.destroyed = 0;
+  engines.hold = undefined;
 });
 
 const harbour: Board = {
@@ -65,19 +69,24 @@ const harbour: Board = {
   updated_at: "2026-11-01T10:00:00Z",
 };
 
-/** Answers the board's page, of a board of nodes, whose nodes' read fails with failNodes. */
+/** Answers the board's page, of a board of nodes, whose nodes' read fails with failNodes, and its components' with failComponents. */
 function boardPage(
   nodes: ReturnType<typeof testNode>[] = [],
   failNodes?: () => boolean,
+  failComponents?: () => boolean,
 ) {
   return fakeApi((operation) => {
     switch (operation) {
       case "getProject":
         return testProject;
+      case "listComponents":
+        if (failComponents?.()) {
+          throw refused(500, { code: "internal" });
+        }
+        return { items: [], next_cursor: null };
       case "listFolders":
       case "listBoardConnections":
       case "listComponentTypes":
-      case "listComponents":
       case "listVariables":
         return { items: [], next_cursor: null };
       case "listBoards":
@@ -271,6 +280,46 @@ describe("a board's canvas", () => {
       expect(screen.queryByText("Loading the board's nodes…")).toBeNull();
       expect(screen.queryByText("This board has no nodes yet.")).toBeNull();
     });
+  });
+
+  it("says that the names that cards show could not be loaded, and reads them again as the user asks", async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    let reads = 0;
+    boardPage([testNode("nd_1", 0, 0)], undefined, () => {
+      reads++;
+      return fail;
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const text =
+      "The names of the speakers and the variables that the cards show could not be loaded.";
+    const alert = await screen.findByText(text, { exact: false });
+    expect(reads).toBe(1);
+    fail = false;
+    await user.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(screen.queryByText(text, { exact: false })).toBeNull(),
+    );
+    expect(reads).toBe(2);
+  });
+
+  it("says that the canvas starts while its renderer does, once the board's content has been read", async () => {
+    let start = () => {};
+    engines.hold = new Promise((resolve) => {
+      start = resolve;
+    });
+    boardPage([]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(await screen.findByText("Starting the canvas…")).toBeDefined();
+    start();
+    expect(
+      await screen.findByText("This board has no nodes yet."),
+    ).toBeDefined();
+    expect(screen.queryByText("Starting the canvas…")).toBeNull();
   });
 
   it("says that the browser cannot draw the board", async () => {
