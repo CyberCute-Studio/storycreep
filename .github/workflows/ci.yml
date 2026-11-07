@@ -233,6 +233,88 @@ jobs:
             web/app/test-results/
           if-no-files-found: ignore
 
+  # PRD §9.1 and plan item 59: the canvas's benchmark harness (web/app/bench),
+  # on the medium, dense, and large fixtures, which cmd/fixturegen loads, and
+  # on boards of 200, 2,000, and 5,000 nodes, in a desktop browser and on an
+  # emulated tablet. The runner is neither reference device, and draws WebGL
+  # in software, so the job reports the frame rates and the tablet's load
+  # time, which the reference tablet's checklist holds to their targets
+  # (docs/canvas-checklist.md), and fails only on what a runner can tell:
+  # that drawing is bounded by what the canvas shows (FR-EDIT-11 AC1), that
+  # panning does not grow the heap (FR-EDIT-11 AC2, NFR-PERF-18), and the
+  # desktop's load of the large fixture (NFR-PERF-05). As the server's
+  # benchmarks, it measures pull requests and pushes alone.
+  canvas-bench:
+    name: Canvas benchmarks
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: storycreep
+          POSTGRES_PASSWORD: storycreep-e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=postgres --dbname=storycreep"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      STORYCREEP_E2E_DATABASE_URL: postgres://storycreep:storycreep-e2e@localhost:5432/storycreep
+      STORYCREEP_E2E_DATABASE_ADMIN_URL: postgres://postgres:storycreep-e2e@localhost:5432/storycreep
+      STORYCREEP_E2E_DATABASE_MAINTENANCE_URL: postgres://storycreep_maintainer:storycreep-e2e@localhost:5432/storycreep
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          cache: true
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the browser
+        working-directory: web/app
+        run: pnpm exec playwright install --with-deps chromium
+
+      # It builds the app and the server, which Playwright starts, loads the
+      # fixtures, and runs the benchmark.
+      - name: Canvas benchmarks
+        working-directory: web/app
+        run: pnpm bench
+
+      - name: Report what the runs measured
+        if: always()
+        shell: bash
+        run: |
+          if [ -f web/app/bench-results/summary.md ]; then
+            cat web/app/bench-results/summary.md | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: canvas-bench
+          path: |
+            web/app/bench-results/
+            web/app/playwright-report/
+            web/app/test-results/bench/
+          if-no-files-found: ignore
+
   # PRD FR-ADMIN-04 AC2: merged migrations are immutable, and every change is
   # tested as an upgrade. Until the first release, the upgrade seeds the
   # database from the migrations of the main branch (plan note N8); item 119

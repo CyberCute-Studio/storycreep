@@ -20,6 +20,7 @@ import { refusalOf } from "../auth/refusal";
 import { useProjectDocument, useTree } from "../document/react";
 import { Button } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
+import { dragThreshold } from "../ui/drag";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Alert, Status, textLink } from "../ui/Page";
 import {
@@ -54,9 +55,6 @@ type Open =
       node: TreeNode;
       opener: Opener;
     };
-
-/** How far, in pixels, a handle moves before it drags, so that a tap does not (PRD NFR-TOUCH-04). */
-const dragThreshold = 8;
 
 /** A drag of a child of the tree that has started, and where it would drop it. */
 interface Dragging {

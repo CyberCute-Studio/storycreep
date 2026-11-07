@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     "./api": "./src/api/index.ts",
+    "./contrast": "./src/tokens/contrast.ts",
     "./expr": "./src/expr/index.ts",
     "./expr/compile": "./src/expr/compile.ts",
     "./flow": "./src/flow/index.ts",

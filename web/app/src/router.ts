@@ -58,4 +58,12 @@ declare module "@tanstack/react-router" {
   interface Register {
     router: ReturnType<typeof createAppRouter>;
   }
+  interface StaticDataRouteOption {
+    /**
+     * Whether the page takes the window's width, as a board's page does for
+     * its canvas, rather than the column of the layout that it is in, which
+     * the layout reads of the pages under it.
+     */
+    wide?: boolean;
+  }
 }

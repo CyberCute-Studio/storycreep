@@ -34,7 +34,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "../ui/Button";
+import { Button, pressedClass } from "../ui/Button";
 import { DialogFrame, FormButtons } from "../ui/Dialog";
 import { FieldFrame, fieldDescription, TextField } from "../ui/Field";
 import { type RichTextValue, storedOf } from "./convert";
@@ -342,7 +342,7 @@ function FormatButton({
       // keyboard.
       onMouseDown={(event) => event.preventDefault()}
       onClick={onPress}
-      className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded text-fg hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60 aria-pressed:bg-accent aria-pressed:text-accent-fg aria-pressed:hover:bg-accent-hover"
+      className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded text-fg hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-60 ${pressedClass}`}
     >
       <svg
         aria-hidden="true"

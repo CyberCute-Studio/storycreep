@@ -14,48 +14,23 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { focusContentIfLost, focusIsNowhere } from "../shell/focus";
 import { Button } from "./Button";
+import { useMediaQuery } from "./media";
 
 /** The width of the window, in CSS pixels, from which a panel is docked rather than a sheet. */
 export const dockedFrom = 900;
 
 const dockedQuery = `(min-width: ${dockedFrom}px)`;
 
-/** The window's media query of a docked panel, made once for the window's matchMedia, which each panel reads as it renders. */
-let docked:
-  | { matchMedia: typeof window.matchMedia; query: MediaQueryList }
-  | undefined;
-
-/** Returns the window's media query of a docked panel, or undefined for a browser without matchMedia, as the tests' jsdom. */
-function dockedList(): MediaQueryList | undefined {
-  if (typeof window.matchMedia !== "function") {
-    return undefined;
-  }
-  if (docked?.matchMedia !== window.matchMedia) {
-    docked = {
-      matchMedia: window.matchMedia,
-      query: window.matchMedia(dockedQuery),
-    };
-  }
-  return docked.query;
-}
-
-function subscribe(changed: () => void): () => void {
-  const query = dockedList();
-  query?.addEventListener("change", changed);
-  return () => query?.removeEventListener("change", changed);
-}
-
 /**
  * Reports whether the window is wide enough for a docked panel, as it
  * changes: a browser without matchMedia, as the tests' jsdom, has the room.
  */
 export function useDocked(): boolean {
-  return useSyncExternalStore(subscribe, () => dockedList()?.matches ?? true);
+  return useMediaQuery(dockedQuery, true);
 }
 
 /**

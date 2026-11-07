@@ -116,16 +116,50 @@ export function keepFocusOnPage(frame: HTMLElement): () => void {
   };
 }
 
-/**
- * Follows the skip link: gives the page's content the focus, as the link's
- * #main would, without changing the URL. The fragment of a link's page holds
- * the link's token, as an invitation's (auth/fragment.ts), which following
- * #main would replace, and the page would lose.
- */
-export function skipToContent(event: {
+/** What followInPage reads of a link's click. */
+export interface InPageClick {
   preventDefault(): void;
   currentTarget: { ownerDocument: Document };
-}): void {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}
+
+/**
+ * Follows a link to the element of ID id on its own page, as the link's #id
+ * would: brings the element to the top of the window, where the page lets
+ * it be, with what follows it under it, and gives it the focus, without
+ * changing the URL. The router owns the page's address, and the fragment of
+ * a link's page holds the link's token, as an invitation's
+ * (auth/fragment.ts), which following #id would replace, and the page would
+ * lose. A click with a key that asks the browser to open the link
+ * elsewhere, as Ctrl's, Cmd's, or Shift's, in a new tab or window, of the
+ * page at the element, or Alt's, is the browser's; jsdom scrolls nothing.
+ */
+export function followInPage(event: InPageClick, id: string): void {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    return;
+  }
   event.preventDefault();
-  event.currentTarget.ownerDocument.getElementById(CONTENT_ID)?.focus();
+  showInPage(event.currentTarget.ownerDocument, id);
+}
+
+/** Brings the element of ID id of doc to the top of the window, and gives it the focus (followInPage). */
+function showInPage(doc: Document, id: string): void {
+  const target = doc.getElementById(id);
+  target?.scrollIntoView?.({ block: "start" });
+  target?.focus({ preventScroll: true });
+}
+
+/**
+ * Follows the skip link: gives the page's content the focus, as
+ * followInPage does, whatever key the click is with, since the skip link
+ * leads to the content of the page that it is on, and is no link to open
+ * elsewhere: a new tab's copy of a link's page, at #main, would have lost
+ * the token that the page's fragment holds.
+ */
+export function skipToContent(event: InPageClick): void {
+  event.preventDefault();
+  showInPage(event.currentTarget.ownerDocument, CONTENT_ID);
 }

@@ -12,7 +12,7 @@ import {
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createQueryClient, sessionQuery } from "../api";
 import { createErrorLog } from "../errors/log";
-import { projectQuery } from "../project/queries";
+import { loadPart, projectQuery } from "../project/queries";
 import { testSession } from "../test/app";
 import { fakeApi, refused, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
@@ -391,6 +391,30 @@ describe("the project document's reads", () => {
     expect(view.project?.name).toBe("Harbour");
     expect(view.seq).toBe(testProject.seq);
     expect(doc.holds("tree")).toBe(true);
+  });
+
+  it("reads a part that a page asks for during its first read once, and anew as a page asks for it after, while the channel is not live (loadPart)", async () => {
+    const first = Promise.withResolvers<unknown>();
+    let reads = 0;
+    serve({
+      ...tree([board("bd_a", "Harbour")]),
+      listVariables: () =>
+        ++reads === 1 ? first.promise : page([variable("var_met")]),
+    });
+    const { doc } = await open();
+    // A page's loader, and its effect, as React runs it twice.
+    const asked = [loadPart(doc, "variables"), loadPart(doc, "variables")];
+    expect(doc.holds("variables")).toBe(true);
+    expect(doc.hasRead("variables")).toBe(false);
+    first.resolve(page([variable("var_met")]));
+    await Promise.all(asked);
+    expect(doc.hasRead("variables")).toBe(true);
+    await flush();
+    expect(reads).toBe(1);
+    // The document does not keep the part current while the channel is not
+    // live, so a page that shows it after reads it anew.
+    await loadPart(doc, "variables");
+    await vi.waitFor(() => expect(reads).toBe(2));
   });
 
   it("reads the project again once its first read failed, as a page asks for a part again, rather than fail as that read did for as long as the document is kept", async () => {

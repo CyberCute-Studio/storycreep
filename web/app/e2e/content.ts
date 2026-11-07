@@ -1,11 +1,20 @@
 // What the end-to-end tests of the workspaces and the projects start from,
 // made through the API, as the account of a request context signed in with
-// apiSignIn (fixtures.ts): a workspace, a project, and an invitation that
+// apiSignIn (fixtures.ts): an account that a page is signed in as, a
+// workspace, a project, the commands of a batch, and an invitation that
 // another account accepts; and dragging a control to another, as the
 // project's device does, with a mouse or a finger.
 
+import { randomUUID } from "node:crypto";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
-import { type ApiSession, expect, test } from "./fixtures.ts";
+import {
+  type ApiSession,
+  atStart,
+  expect,
+  registerAccount,
+  signIn,
+  test,
+} from "./fixtures.ts";
 
 /**
  * Returns the session that request has, as a page's request, which shares
@@ -19,6 +28,44 @@ export async function sessionOf(
   expect(res.status(), await res.text()).toBe(200);
   const body = (await res.json()) as { csrf_token: string; user_id: string };
   return { csrf: body.csrf_token, userID: body.user_id };
+}
+
+/** Registers an account, signs the page in as it, and returns the page's session. */
+export async function signedIn(page: Page, name: string): Promise<ApiSession> {
+  const account = await registerAccount(page.request, name);
+  await signIn(page, account.email);
+  await atStart(page, name);
+  return sessionOf(page.request);
+}
+
+/** A command of a batch, without its ID, which apply gives it. */
+export interface Command {
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+/** The most commands that the API takes in one batch. */
+const batchSize = 1000;
+
+/** Applies commands to projectId through the API, as request's account, in batches as large as the API takes. */
+export async function apply(
+  request: APIRequestContext,
+  session: ApiSession,
+  projectId: string,
+  commands: Command[],
+): Promise<void> {
+  for (let i = 0; i < commands.length; i += batchSize) {
+    const res = await request.post(`/api/v1/projects/${projectId}/commands`, {
+      headers: { "X-CSRF-Token": session.csrf },
+      data: {
+        commands: commands
+          .slice(i, i + batchSize)
+          .map((c) => ({ command_id: randomUUID(), ...c })),
+      },
+      timeout: 120_000,
+    });
+    expect(res.status(), await res.text()).toBe(200);
+  }
 }
 
 /** A workspace as the API lists it, with the role of the account's membership. */

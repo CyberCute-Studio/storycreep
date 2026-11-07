@@ -1,7 +1,7 @@
 import { type AccountBody, NetworkError } from "@storycreep/shared/api";
 import { catalogs } from "@storycreep/shared/i18n";
 import { focusManager } from "@tanstack/react-query";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { accountQuery, sessionQuery } from "./api";
@@ -1221,6 +1221,14 @@ describe("the skip link", () => {
     expect(window.location.href).toBe(before);
     expect(router.state.location.hash).toBe("token=secret");
     expect(screen.getByLabelText("New password")).toBeDefined();
+    // With a key that would open #main in a new tab or window, without the
+    // token, as well.
+    for (const key of ["ctrlKey", "metaKey", "shiftKey", "altKey"]) {
+      skip.focus();
+      expect(fireEvent.click(skip, { [key]: true })).toBe(false);
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+    }
+    expect(window.location.href).toBe(before);
   });
 });
 

@@ -1,5 +1,10 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useChildMatches,
+} from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useDocumentState, useProjectDocument } from "../document/react";
@@ -56,8 +61,13 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const params = { projectId };
   const settings =
     managesProject(project.role) || managesWorkspace(workspace.role);
+  // A page that takes the window's width, as a board's for its canvas,
+  // says so of itself (staticData), rather than the layout knowing it.
+  const wide = useChildMatches({
+    select: (matches) => matches.some((m) => m.staticData.wide === true),
+  });
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className={`mx-auto space-y-6 ${wide ? "" : "max-w-3xl"}`}>
       <div className="space-y-4">
         <p>
           <Link

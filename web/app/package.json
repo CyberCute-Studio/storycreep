@@ -9,7 +9,8 @@
     "build": "vite build",
     "typecheck": "tsc && tsc -p tsconfig.browser.json",
     "test": "vitest run",
-    "e2e": "vite build && playwright test"
+    "e2e": "vite build && playwright test",
+    "bench": "vite build && playwright test -c playwright.bench.config.ts"
   },
   "dependencies": {
     "@storycreep/shared": "workspace:*",
@@ -31,6 +32,7 @@
     "@tiptap/react": "3.32.0",
     "get-nonce": "1.0.1",
     "i18next": "26.4.2",
+    "pixi.js": "8.22.0",
     "radix-ui": "1.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",

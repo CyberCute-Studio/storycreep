@@ -6,10 +6,10 @@ import {
   firstWorkspace,
   inviteByLink,
   sessionOf,
+  signedIn,
 } from "./content.ts";
 import { port } from "./environment.ts";
 import {
-  type ApiSession,
   apiSignIn,
   atStart,
   en,
@@ -29,14 +29,6 @@ import { startInstance } from "./instance.ts";
 // boards, which a drag or a dialog changes, a board's page and its trash,
 // and the members' grants on it; and the limit of a workspace's projects on
 // a self-hosted instance that caps it, which offers no plan (FR-ENT-03).
-
-/** Registers an account, signs the page in as it, and returns the page's session. */
-async function signedIn(page: Page, name: string): Promise<ApiSession> {
-  const account = await registerAccount(page.request, name);
-  await signIn(page, account.email);
-  await atStart(page, name);
-  return sessionOf(page.request);
-}
 
 /** The boards and the folders of a project, as the API lists them. */
 async function treeOf(request: APIRequestContext, projectId: string) {

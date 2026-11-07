@@ -16,6 +16,26 @@ export interface ButtonProps extends ComponentProps<"button"> {
   variant?: keyof typeof variants;
 }
 
+/**
+ * Returns the classes of a button of variant, which a link that looks like
+ * one, as among a toolbar's buttons, has too, of the same size.
+ */
+export function buttonClass(variant: keyof typeof variants = "secondary") {
+  return `inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-md px-4 font-medium disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]}`;
+}
+
+/**
+ * The classes of a toggle button that is pressed, as a toolbar's, with
+ * aria-pressed: filled with the accent, rather than ringed with it, which
+ * the focus ring, of the same colour and width, would only move 2 px out on
+ * the button pressed (NFR-A11Y-04); and, in a system's forced colours,
+ * which replace the page's own and drop the fill, filled with the system's
+ * colours of a selection. The rich-text editor's toolbar and the canvas's
+ * share them.
+ */
+export const pressedClass =
+  "aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-accent-fg aria-pressed:hover:bg-accent-hover forced-colors:aria-pressed:bg-[Highlight] forced-colors:aria-pressed:hover:bg-[Highlight] forced-colors:aria-pressed:text-[HighlightText]";
+
 /** A button, which does not submit a form unless its type says so. */
 export function Button({
   variant = "secondary",
@@ -26,7 +46,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2 rounded-md px-4 font-medium disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]} ${className}`}
+      className={`${buttonClass(variant)} ${className}`}
       {...props}
     />
   );
