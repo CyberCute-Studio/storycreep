@@ -60,6 +60,17 @@ const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
 const forcedColorsQuery = "(forced-colors: active)";
 
+/**
+ * The classes of the toolbar's mode button that is pressed: filled with the
+ * accent, as the rich-text editor's toolbar shows its own, rather than
+ * ringed with it, which the focus ring, of the same colour and width, would
+ * only move 2 px out on the button pressed (NFR-A11Y-04); and, in a
+ * system's forced colours, which replace the page's own, filled with the
+ * system's colours of a selection.
+ */
+const pressedClass =
+  "aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-accent-fg aria-pressed:hover:bg-accent-hover forced-colors:aria-pressed:bg-[Highlight] forced-colors:aria-pressed:hover:bg-[Highlight] forced-colors:aria-pressed:text-[HighlightText]";
+
 /** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show. */
 const nameParts: readonly Part[] = ["components", "variables"];
 
@@ -506,18 +517,12 @@ function BoardCanvasOf({
               e.destroy();
               return;
             }
-            // A renderer that throws as the canvas takes it, as it sizes
-            // it, is one that cannot draw, which the canvas says, rather
-            // than reject this handler unheard, after which the canvas
-            // would say that it is starting for as long as the page stays.
-            try {
-              controller.setEngine(e);
-            } catch {
-              controller.setEngine(undefined);
-              setEngine("unsupported");
-              e.destroy();
-              return;
-            }
+            // The renderer is sized in the frame that draws it, where what
+            // it throws, as once its GPU's device is lost, is tried again
+            // as what it throws as it draws is (CanvasController's sized),
+            // rather than here, where the canvas would say that the browser
+            // has no renderer, of one that started.
+            controller.setEngine(e);
             started = e;
             setEngine("running");
           },
@@ -731,14 +736,14 @@ function BoardCanvasOf({
           <Button
             aria-pressed={mode === "pan"}
             onClick={() => setMode("pan")}
-            className={mode === "pan" ? "outline-2 outline-accent" : ""}
+            className={pressedClass}
           >
             {t("canvas.mode_pan")}
           </Button>
           <Button
             aria-pressed={mode === "select"}
             onClick={() => setMode("select")}
-            className={mode === "select" ? "outline-2 outline-accent" : ""}
+            className={pressedClass}
           >
             {t("canvas.mode_select")}
           </Button>

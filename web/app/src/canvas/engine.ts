@@ -108,7 +108,7 @@ export interface Engine {
    * Canvas 2D renderer's context is never taken.
    */
   onRestore(listener: () => void): () => void;
-  /** Ends the renderer, and takes its canvas element out of the page. */
+  /** Ends the renderer, and takes its canvas element out of the page, whatever the renderer throws as it ends. */
   destroy(): void;
 }
 
@@ -178,12 +178,11 @@ const freeCardHold = 10_000;
 
 /**
  * The free cards that the renderer destroys at most in one frame
- * (trimCards): each of them takes its card out of the cards' list, which it
- * looks for it in and shifts, of thousands of cards once the margin was a
- * large screen's just above detailZoom, so that a frame that trims destroys
- * a few hundred microseconds' worth on a desktop, about a millisecond's on
- * the reference tablet, rather than all of thousands at once, of tens of
- * milliseconds there.
+ * (trimCards): each of them destroys its sprites and its text's geometry,
+ * so that a frame destroys this many at most, rather than all of the
+ * thousands that a zoom in from a margin of a large screen just above
+ * detailZoom frees at once, which would hold that frame up on the reference
+ * tablet.
  */
 const freeCardTrim = 128;
 
@@ -630,6 +629,7 @@ class PixiEngine implements Engine {
       }
     }
     const built = this.built as NonNullable<typeof this.built>;
+    this.trimCards(performance.now());
     this.world.scale.set(v.zoom);
     this.world.position.set(
       (built.origin.x - v.x) * v.zoom,
@@ -721,6 +721,8 @@ class PixiEngine implements Engine {
     let texts = 0;
     if (lod === "blocks") {
       this.releaseCards(new Set(), now);
+      // Every card is free, and out of the cards' list (orderCards).
+      this.cards.removeChildren();
       this.cards.visible = false;
       this.blocks.visible = true;
       let i = 0;
@@ -753,11 +755,11 @@ class PixiEngine implements Engine {
       // of every tier, and drawn anew, as a set of their own, of the glyphs
       // of the margin's text alone, as every card of it is written anew.
       // The cards that are free keep the names of the fonts before, but are
-      // hidden, and drawn with the new ones as they are used again. PixiJS
-      // warns in the console, of each page of an atlas that it destroys,
-      // that a batch that it keeps still held it, which is all that it does:
-      // a batch of a page that is gone is never drawn again, and no board
-      // of the Latin alphabet comes here.
+      // out of the stage, and drawn with the new ones as they are used
+      // again. PixiJS warns in the console, of each page of an atlas that it
+      // destroys, that a batch that it keeps still held it, which is all
+      // that it does: a batch of a page that is gone is never drawn again,
+      // and no board of the Latin alphabet comes here.
       const anew = this.glyphBytes() > this.glyphBudget;
       if (anew) {
         this.releaseFonts();
@@ -797,7 +799,6 @@ class PixiEngine implements Engine {
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;
       }
-      this.trimCards(now);
       this.orderCards(shown.nodes);
       if (anew) {
         this.glyphBudget = Math.max(glyphFloor, 2 * this.glyphBytes());
@@ -841,58 +842,51 @@ class PixiEngine implements Engine {
   }
 
   /**
-   * Puts the cards in use in the order of nodes, the scene's, which they
-   * are drawn in, in one pass, where they are not in it already, as once a
-   * free card, wherever it was among them, is that of a node that came into
-   * the margin: rather than move each card to its place on its own, which
-   * would look for it, and shift those after it, among every card, in use
-   * and free, for each of them.
+   * Makes the cards in use, in the order of nodes, the scene's, which they
+   * are drawn in, the cards' list, in one pass, where they are not it
+   * already, as once a free card is that of a node that came into the
+   * margin, or once the margin freed some: rather than move each card to
+   * its place on its own, which would look for it, and shift those after
+   * it, among every card, for each of them. The free cards are out of the
+   * list, so that neither a reorder nor the destruction of one of them
+   * (trimCards) goes through those that the margin no longer shows.
    */
   private orderCards(nodes: readonly NodeItem[]): void {
     const roots = nodes.flatMap((item) => {
       const view = this.cardViews.get(item.node.id);
       return view === undefined ? [] : [view.root];
     });
-    const rank = new Map(roots.map((root, i) => [root, i]));
-    let last = -1;
-    let ordered = true;
-    for (const child of this.cards.children) {
-      const r = rank.get(child as Container);
-      if (r === undefined) {
-        continue;
-      }
-      if (r < last) {
-        ordered = false;
-        break;
-      }
-      last = r;
-    }
-    if (ordered) {
+    const children = this.cards.children;
+    if (
+      children.length === roots.length &&
+      roots.every((root, i) => children[i] === root)
+    ) {
       return;
     }
     this.cards.removeChildren();
-    this.cards.addChild(...roots, ...this.freeCards.map((view) => view.root));
+    this.cards.addChild(...roots);
   }
 
   /**
-   * Destroys free cards beyond as many as are in use, or freeCardFloor,
-   * once the margin has taken those that it needs: so that the cards that
-   * the renderer keeps come to follow what its margin shows in detail, at
-   * most twice as many, rather than the most that it ever did, until the
-   * board is left, as of the thousands of nodes of a margin of a large
-   * screen at a zoom just above detailZoom, after a zoom in that shows a
-   * few hundred, each card with its sprites and its text's geometry, which
-   * every reorder of the cards (orderCards) would else put back among them.
-   * It destroys only the cards that have been free for freeCardHold, so
-   * that a zoom out again soon after, as a pinch's swing, takes back those
-   * that the zoom in freed rather than build them anew, and at most
-   * freeCardTrim of them in a frame, so that the trim of thousands spreads
-   * over the frames that build the margin after it rather than hold one up.
-   * The cards free longest come first: the free cards are a stack, which
-   * the margin takes the latest freed of, and frees onto, so that they stay
-   * in the order that they were freed in. A pan, which frees about as many
-   * cards as it takes, keeps those that it frees; the blocks, which free
-   * every card, keep them for the cards of the zoom in after them.
+   * Destroys free cards beyond as many as are in use, or freeCardFloor, in
+   * each frame, once the margin has taken those that it needs: so that the
+   * cards that the renderer keeps come to follow what its margin shows in
+   * detail, at most twice as many, rather than the most that it ever did,
+   * until the board is left, as of the thousands of nodes of a margin of a
+   * large screen at a zoom just above detailZoom, after a zoom in that
+   * shows a few hundred, or after a zoom out to the blocks, each card with
+   * its sprites and its text's geometry. It destroys only the cards that
+   * have been free for freeCardHold, so that a zoom out or in again soon
+   * after, as a pinch's swing, takes back those that the zoom before freed
+   * rather than build them anew, and at most freeCardTrim of them in a
+   * frame, so that the trim of thousands spreads over the frames after it
+   * rather than hold one up. A canvas that draws no frame, as one that
+   * nothing moves or changes, keeps them until it draws again, and does
+   * nothing with them meanwhile. The cards free longest come first: the
+   * free cards are a stack, which the margin takes the latest freed of,
+   * and frees onto, so that they stay in the order that they were freed
+   * in. A pan, which frees about as many cards as it takes, keeps those
+   * that it frees.
    */
   private trimCards(now: number): void {
     const excess =
@@ -910,12 +904,11 @@ class PixiEngine implements Engine {
     }
   }
 
-  /** Frees, at now, the cards of the nodes that keep does not hold, for nodes that come into the margin. */
+  /** Frees, at now, the cards of the nodes that keep does not hold, for nodes that come into the margin, which orderCards takes out of the cards' list. */
   private releaseCards(keep: ReadonlySet<string>, now: number): void {
     for (const [id, view] of this.cardViews) {
       if (!keep.has(id)) {
         this.cardViews.delete(id);
-        view.root.visible = false;
         view.item = undefined;
         view.labels = undefined;
         view.freedAt = now;
@@ -1262,11 +1255,24 @@ class PixiEngine implements Engine {
     this.renderer.runners.contextChange.remove(this.restored);
     this.restoreListeners.clear();
     this.stage.destroy({ children: true });
+    // The free cards, which are out of the stage (orderCards).
+    for (const view of this.freeCards.splice(0)) {
+      view.root.destroy({ children: true });
+    }
     for (const t of Object.values(this.art)) {
       t.destroy(true);
     }
     this.releaseFonts();
-    this.renderer.destroy();
+    // A renderer whose context, or whose GPU's device, is lost may throw as
+    // it gives back what it held, which the browser collects with its
+    // canvas: the canvas leaves the page all the same, and the page, which
+    // ends the renderer from a promise's handler, or as React unmounts the
+    // canvas, hears nothing of it.
+    try {
+      this.renderer.destroy();
+    } catch {
+      // A renderer that ends without its context has nothing more to give back.
+    }
     this.canvas.remove();
   }
 }

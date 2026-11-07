@@ -50,10 +50,7 @@ export function projectQuery(projectId: string) {
  * (projects.$projectId.index.tsx): the project first, so that a project
  * that the account may not see shows the page of no page before its
  * document reads anything, and then the parts of its document that the
- * page shows, at once. A part that the document had read already, which
- * the real-time channel does not keep current while it is not live, is
- * shown as it is, and read anew once every part is held, as loadPart reads
- * one; a read anew that fails is recorded, and tried again later.
+ * page shows, at once, each as loadPart reads it.
  */
 export async function loadParts(
   context: { queryClient: QueryClient; documents: Documents },
@@ -64,11 +61,7 @@ export async function loadParts(
     context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
-  const read = parts.filter((part) => doc.hasRead(part));
-  await Promise.all(parts.map((part) => found(doc.load(part))));
-  for (const part of read) {
-    void doc.refresh(part).catch(() => undefined);
-  }
+  await Promise.all(parts.map((part) => found(loadPart(doc, part))));
 }
 
 /**

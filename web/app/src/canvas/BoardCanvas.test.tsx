@@ -1,4 +1,5 @@
 import type { Board } from "@storycreep/shared/api";
+import { createRootRoute, createRoute } from "@tanstack/react-router";
 import {
   act,
   fireEvent,
@@ -7,16 +8,16 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
+import { BoardCanvas } from "./BoardCanvas";
 import type { Engine, EngineOptions } from "./engine";
 
 const engines = vi.hoisted(() => ({
   fail: false,
-  /** Whether the engine throws as the canvas sizes it. */
-  resizeFails: false,
   created: 0,
   destroyed: 0,
   /** What the engine's start waits for, as the fetch of its chunk. */
@@ -40,11 +41,7 @@ vi.mock("./engine", () => ({
     engines.created++;
     return {
       kind: "canvas",
-      resize: () => {
-        if (engines.resizeFails) {
-          throw new Error("the device is lost");
-        }
-      },
+      resize: () => {},
       render: (f) => ({
         lod: "detail",
         nodes: f.scene.nodes.size,
@@ -63,7 +60,6 @@ vi.mock("./engine", () => ({
 
 beforeEach(() => {
   engines.fail = false;
-  engines.resizeFails = false;
   engines.created = 0;
   engines.destroyed = 0;
   engines.hold = undefined;
@@ -379,18 +375,79 @@ describe("a board's canvas", () => {
     ).toBeDefined();
   });
 
-  it("says that the browser cannot draw the board where its renderer throws as the canvas takes it, rather than that it is starting", async () => {
-    engines.resizeFails = true;
-    boardPage([testNode("nd_1", 0, 0)]);
-    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+  it("shows another board's canvas anew where a page gives it another board in place, rather than read that board into the scene of the one before", async () => {
+    const user = userEvent.setup();
+    const lighthouse: Board = {
+      ...harbour,
+      id: "bd_b",
+      name: "Lighthouse",
+      slug: "lighthouse",
+    };
+    // Harbour has no nodes, and Lighthouse one.
+    fakeApi((operation, input) => {
+      if (operation === "listBoardNodes") {
+        const board = (input as { path: { board_id: string } }).path.board_id;
+        return {
+          items:
+            board === "bd_b"
+              ? [testNode("nd_b", 0, 0, { board_id: "bd_b" })]
+              : [],
+          next_cursor: null,
+        };
+      }
+      if (operation === "getProject") {
+        return testProject;
+      }
+      if (operation === "listBoards") {
+        return { items: [harbour, lighthouse], next_cursor: null };
+      }
+      return startPage(operation) ?? { items: [], next_cursor: null };
+    });
+    // A page that gives the canvas another board in place, without the
+    // remount of the board's page.
+    function Boards() {
+      const [board, setBoard] = useState(harbour);
+      return (
+        <>
+          <button type="button" onClick={() => setBoard(lighthouse)}>
+            Show Lighthouse
+          </button>
+          <BoardCanvas
+            projectId={testProject.id}
+            boardId={board.id}
+            boardName={board.name}
+          />
+        </>
+      );
+    }
+    // A root of its own, rather than the app's, whose children it would
+    // replace for the tests after this one.
+    const root = createRootRoute();
+    renderApp("/boards", {
       session: testSession,
+      routes: root.addChildren([
+        createRoute({
+          getParentRoute: () => root,
+          path: "/boards",
+          component: Boards,
+        }),
+      ]),
     });
     expect(
-      await screen.findByText(
-        "This browser cannot draw the board: it has neither WebGL nor a 2D canvas.",
-      ),
+      await screen.findByText("This board has no nodes yet."),
     ).toBeDefined();
-    expect(engines.destroyed).toBe(engines.created);
+    await user.click(screen.getByRole("button", { name: "Show Lighthouse" }));
+    expect(
+      await screen.findByRole("application", { name: "Nodes of Lighthouse" }),
+    ).toBeDefined();
+    await waitFor(() => expect(engines.created).toBe(2));
+    // Once Lighthouse's node has been read, and its renderer started, the
+    // canvas says nothing over it: the scene holds Lighthouse's node.
+    await waitFor(() => {
+      expect(screen.queryByText("Loading the board's nodes…")).toBeNull();
+      expect(screen.queryByText("Starting the canvas…")).toBeNull();
+    });
+    expect(screen.queryByText("This board has no nodes yet.")).toBeNull();
   });
 
   it("keeps the board's settings under the canvas, which takes the window's width rather than the project's column", async () => {

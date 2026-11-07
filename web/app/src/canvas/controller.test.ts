@@ -496,6 +496,46 @@ describe("the canvas's controller", () => {
     expect(drawn).toEqual([{ width: 800, height: 600 }]);
   });
 
+  it("sizes a renderer that throws as it is sized in the next frame, rather than throw into the page, or into the start that gives it", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    let lost = true;
+    const sized: { width: number; height: number }[] = [];
+    const drawn: { width: number; height: number }[] = [];
+    const engine: Engine = {
+      kind: "webgl",
+      resize: (size) => {
+        if (lost) {
+          throw new Error("the GPU's device is lost");
+        }
+        sized.push(size);
+      },
+      render: (f) => {
+        drawn.push(f.size);
+        return {
+          lod: "detail",
+          nodes: 1,
+          visible: 1,
+          texts: 0,
+          connections: 0,
+        };
+      },
+      textures: () => undefined,
+      onRestore: () => () => {},
+      destroy: () => {},
+    };
+    expect(() => c.setEngine(engine)).not.toThrow();
+    expect(() => time.tick()).toThrow("the GPU's device is lost");
+    expect(() => c.setSize({ width: 800, height: 600 }, 1)).not.toThrow();
+    expect(drawn).toEqual([]);
+    lost = false;
+    time.tick();
+    expect(sized).toEqual([{ width: 800, height: 600 }]);
+    expect(drawn).toEqual([{ width: 800, height: 600 }]);
+    time.tick();
+    expect(sized).toHaveLength(1);
+  });
+
   it("draws again once the browser gives back the renderer's context that it took, and not once the renderer has ended", () => {
     const { c, time, frames, engine, restore } = setUp();
     placed(c, time);

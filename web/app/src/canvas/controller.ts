@@ -152,6 +152,17 @@ export class CanvasController implements GestureHost {
   private displayed = false;
   private resolution = 1;
   private engine: Engine | undefined;
+  /**
+   * Whether the renderer has the canvas's size and resolution, which the
+   * frame that draws next gives it where it has not, rather than setSize
+   * or setEngine as they take them: a renderer that throws as it is sized,
+   * as one whose GPU's device is lost, throws in that frame, as it would as
+   * it draws, which is tried again (drawNow), and once the browser gives
+   * its context back, rather than into the page's own work, as React's
+   * commit, or the start's handler, which would say that the browser has
+   * no renderer at all.
+   */
+  private sized = false;
   /** Stops the call of the engine's onRestore. */
   private stopRestore: (() => void) | undefined;
   private minimap: Minimap | undefined;
@@ -222,7 +233,7 @@ export class CanvasController implements GestureHost {
     // leaves the canvas blank: the canvas draws again then, as it would
     // else only once something moved it or changed.
     this.stopRestore = engine?.onRestore(() => this.invalidate());
-    engine?.resize(this.sz, this.resolution);
+    this.sized = false;
     this.lastData = {};
     this.invalidate();
   }
@@ -281,15 +292,15 @@ export class CanvasController implements GestureHost {
     }
     this.displayed = displayed;
     this.resolution = resolution;
-    const engine = this.engine;
-    if (engine === undefined) {
+    this.sized = false;
+    if (this.engine === undefined) {
       this.invalidate();
       return;
     }
     // Resizing the renderer clears its canvas, which the browser would show
     // so, as a frame of nothing, before the next frame drew it: the canvas
-    // draws at once, as the browser tells of its new size before it paints.
-    engine.resize(this.sz, resolution);
+    // sizes the renderer, and draws, at once, as the browser tells of its
+    // new size before it paints.
     this.drawNow();
   }
 
@@ -644,6 +655,10 @@ export class CanvasController implements GestureHost {
     const engine = this.engine;
     if (engine === undefined) {
       return;
+    }
+    if (!this.sized) {
+      engine.resize(size, this.resolution);
+      this.sized = true;
     }
     const start = this.clock.now();
     const stats = engine.render({
