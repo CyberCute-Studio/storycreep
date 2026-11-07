@@ -277,8 +277,15 @@ export default function Bench({
           textureStart = handle.textures();
           setPhase("running");
         }
-        if (last !== undefined) {
-          intervals.push(f.time - last);
+        // The time between frames is of the browser's frames, whose times
+        // are of when each began: a frame that the page drew of its own
+        // work between two of them, as once the canvas's size changed, at
+        // the time that the clock read then, would cut one of them in two.
+        if (f.scheduled) {
+          if (last !== undefined) {
+            intervals.push(f.time - last);
+          }
+          last = f.time;
         }
         work.push(f.work);
         visible.push(f.stats.visible);
@@ -290,7 +297,6 @@ export default function Bench({
             heap.push(mib);
           }
         }
-        last = f.time;
       }
       if (elapsed >= warm + options.seconds) {
         finish();

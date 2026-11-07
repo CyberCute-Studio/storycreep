@@ -112,13 +112,15 @@ test.describe("a board's canvas", () => {
         to: { x: mid.x + 160, y: mid.y + 40 },
       },
     ]);
-    const after = await viewOf(canvas);
+    // The canvas writes what it shows in the frame after each move, which
+    // may not have come yet as the last one has been sent.
+    const after = await settled(canvas);
     expect(after.zoom).toBeGreaterThan(before.zoom * 3);
     const shown = await onPage(canvas, after, anchor);
     expect(Math.hypot(shown.x - mid.x, shown.y - mid.y)).toBeLessThan(2);
     // Closer together, and moving together, they zoom out and pan, and the
     // point between them stays under it.
-    const v = await viewOf(canvas);
+    const v = after;
     const start = { x: mid.x, y: mid.y };
     const end = { x: mid.x + 120, y: mid.y - 60 };
     const held = {
@@ -135,7 +137,7 @@ test.describe("a board's canvas", () => {
         to: { x: end.x + 60, y: end.y },
       },
     ]);
-    const moved = await viewOf(canvas);
+    const moved = await settled(canvas);
     expect(moved.zoom).toBeLessThan(v.zoom);
     const kept = await onPage(canvas, moved, held);
     expect(Math.hypot(kept.x - end.x, kept.y - end.y)).toBeLessThan(2);
@@ -159,7 +161,7 @@ test.describe("a board's canvas", () => {
     await touchGesture(cdp, [
       { from, to: { x: from.x - 200, y: from.y - 100 } },
     ]);
-    const v1 = await viewOf(canvas);
+    const v1 = await settled(canvas);
     expect((v1.x - v0.x) * v1.zoom).toBeCloseTo(200, 0);
     expect((v1.y - v0.y) * v1.zoom).toBeCloseTo(100, 0);
     // The zoom's buttons.

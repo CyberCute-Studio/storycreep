@@ -63,8 +63,16 @@ const fitZoom = 1;
 
 /** A frame that the canvas drew, which the benchmark records. */
 export interface FrameRecord {
-  /** When the frame began, as requestAnimationFrame gives it. */
+  /** When the frame began, as requestAnimationFrame gives it, or, of one that the page drew of its own work (scheduled), as the clock read then. */
   time: number;
+  /**
+   * Whether the browser's frame drew it, rather than the page's own work,
+   * as the observer's callback of the canvas's size, which draws at once,
+   * between two of the browser's frames, at a time of its own, rather
+   * than the one that the browser's next frame begins at: the benchmark
+   * counts the time between the browser's frames alone.
+   */
+  scheduled: boolean;
   /** How long building and drawing it took the page, in milliseconds. */
   work: number;
   stats: FrameStats;
@@ -589,13 +597,13 @@ export class CanvasController implements GestureHost {
       this.pending = 0;
     }
     try {
-      this.frame(this.clock.now());
+      this.frame(this.clock.now(), false);
     } catch {
       this.invalidate();
     }
   }
 
-  private readonly frame = (time: number): void => {
+  private readonly frame = (time: number, scheduled = true): void => {
     this.pending = 0;
     const size = this.sz;
     if (this.ready && !this.placed && this.displayed) {
@@ -655,7 +663,7 @@ export class CanvasController implements GestureHost {
       this.events.rendered();
     }
     for (const listener of this.listeners) {
-      listener({ time, work, stats });
+      listener({ time, work, stats, scheduled });
     }
   };
 

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { contrast, relativeLuminance } from "./contrast";
 
 // The colours of tokens.css that are shown together, which must contrast as
 // PRD NFR-A11Y-06 asks, in the light mode and in the dark: text on its
@@ -47,20 +48,19 @@ function readColours(): Record<string, Record<Mode, string>> {
   return colours;
 }
 
-/** The relative luminance of a colour #rrggbb, as WCAG 2.2 defines it. */
-function luminance(hex: string): number {
-  const channels = [1, 3, 5].map((i) => {
-    const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+/** Returns a colour #rrggbb of tokens.css as 0xRRGGBB. */
+function rgb(hex: string): number {
+  return Number.parseInt(hex.slice(1), 16);
 }
 
-/** The contrast ratio of two colours, as WCAG 2.2 defines it. */
-function contrast(a: string, b: string): number {
-  const [lighter, darker] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (lighter + 0.05) / (darker + 0.05);
-}
+it("measures contrast as WCAG 2.2 does", () => {
+  expect(contrast(0x000000, 0xffffff)).toBeCloseTo(21);
+  expect(contrast(0xffffff, 0x000000)).toBeCloseTo(21);
+  expect(contrast(0x767676, 0x767676)).toBeCloseTo(1);
+  expect(contrast(0x767676, 0xffffff)).toBeCloseTo(4.54, 2);
+  expect(relativeLuminance(0xffffff)).toBeCloseTo(1);
+  expect(relativeLuminance(0x000000)).toBe(0);
+});
 
 // Verifies: NFR-A11Y-01, NFR-A11Y-06
 it("the tokens' colours contrast enough in both modes", () => {
@@ -78,7 +78,7 @@ it("the tokens' colours contrast enough in both modes", () => {
           problems.push(`${front} or ${back} is not a colour of tokens.css`);
           continue;
         }
-        const ratio = contrast(f, b);
+        const ratio = contrast(rgb(f), rgb(b));
         if (ratio < least) {
           problems.push(
             `${front} on ${back} in the ${mode} mode: ${ratio.toFixed(2)}:1, want at least ${least}:1`,

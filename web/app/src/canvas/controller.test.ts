@@ -146,6 +146,18 @@ describe("the canvas's controller", () => {
     expect(frames.length).toBe(drawn + 1);
   });
 
+  it("tells the benchmark which frames the browser's frame drew, and which the page's own work did, as once the canvas's size changed", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    const scheduled: boolean[] = [];
+    const stop = c.handle.onFrame((f) => scheduled.push(f.scheduled));
+    c.setViewport({ x: 10, y: 10, zoom: 1 });
+    time.tick();
+    c.setSize({ width: 800, height: 600 }, 1);
+    stop();
+    expect(scheduled).toEqual([true, false]);
+  });
+
   it("draws again for a theme of other colours, but not for the same colours read again, as once the window gets the focus back in forced colours", () => {
     const { c, time, frames } = setUp();
     c.sync(docOf(gridNodes(4, 2)), false);

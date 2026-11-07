@@ -16,6 +16,7 @@ import {
   type BitmapFont,
   BitmapFontManager,
   BitmapText,
+  CanvasPool,
   Container,
   Graphics,
   isWebGLSupported,
@@ -1141,6 +1142,7 @@ class PixiEngine implements Engine {
    * that drew with one uninstalls it, with its atlases.
    */
   private releaseFonts(): void {
+    let uninstalled = false;
     for (const name of this.fonts) {
       const had = installed.get(name);
       if (had !== undefined && had.users > 1) {
@@ -1148,9 +1150,24 @@ class PixiEngine implements Engine {
       } else {
         installed.delete(name);
         BitmapFontManager.uninstall(name);
+        uninstalled = true;
       }
     }
     this.fonts.clear();
+    // A font that PixiJS uninstalls gives the GPU back its pages, but puts
+    // the canvas of each, of 1, 4, or 16 MB, back into PixiJS's pool of
+    // canvases for the page, CanvasPool, which keeps every one until the
+    // page is loaded again: of each tier, as many pages as its fonts ever
+    // had at once, which, of a board of Chinese, come to more than
+    // glyphFloor together, and, of any board, after the canvas has ended.
+    // The pool is emptied of those idle canvases, which the browser then
+    // collects, so that the fonts drawn anew take as many as the margin's
+    // text needs, and that a page without the canvas keeps none. A canvas
+    // in use, as of another renderer's font, is not in the pool, and stays
+    // its own.
+    if (uninstalled) {
+      CanvasPool.clear();
+    }
   }
 
   destroy(): void {

@@ -4,6 +4,7 @@
 // FR-EDIT-06), which is the boards' (FR-PROJ-02).
 
 import type { Node } from "@storycreep/shared/api";
+import { contrast } from "@storycreep/shared/contrast";
 
 /** The colours of the canvas, each as 0xRRGGBB. */
 export interface Theme {
@@ -95,7 +96,10 @@ export function readTheme(element: HTMLElement, forced = false): Theme {
       fg: read("fg"),
       muted: read("muted"),
       accent: read("accent"),
-      dark: luminance(canvas) < 0.5,
+      // Dark where the board stands out of white more than of black, as
+      // light text would on it, by the contrast that the palette's colours
+      // are measured by against it.
+      dark: contrast(canvas, 0xffffff) > contrast(canvas, 0x000000),
     };
   } finally {
     probe.remove();
@@ -113,30 +117,6 @@ export function sameTheme(a: Theme, b: Theme): boolean {
     a.accent === b.accent &&
     a.dark === b.dark
   );
-}
-
-function luminance(color: number): number {
-  const r = (color >> 16) & 0xff;
-  const g = (color >> 8) & 0xff;
-  const b = color & 0xff;
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-}
-
-/** Returns the contrast of colours a and b, from 1 to 21, as WCAG 2 measures it of their relative luminance. */
-export function contrast(a: number, b: number): number {
-  const relative = (color: number) => {
-    const linear = (c: number) => {
-      const s = c / 255;
-      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-    };
-    return (
-      0.2126 * linear((color >> 16) & 0xff) +
-      0.7152 * linear((color >> 8) & 0xff) +
-      0.0722 * linear(color & 0xff)
-    );
-  };
-  const [hi, lo] = [relative(a), relative(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
 }
 
 /** The contrast that NFR-A11Y-06 asks of a boundary of the UI, as a node's colour on its card and on the board. */

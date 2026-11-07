@@ -1,4 +1,5 @@
 import type { Node, RichTextDoc } from "@storycreep/shared/api";
+import { contrast } from "@storycreep/shared/contrast";
 import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
@@ -13,7 +14,6 @@ import {
 import { nodeRect } from "./layout";
 import { clip, graphemes, textTier, wrapLines } from "./text";
 import {
-  contrast,
   nodeColor,
   parseColor,
   readTheme,
@@ -441,13 +441,6 @@ describe("a node's colour", () => {
     for (const color of colors) {
       expect(nodeColor(color, grey), color).toBe(grey.border);
     }
-  });
-
-  it("measures contrast as WCAG 2 does", () => {
-    expect(contrast(0x000000, 0xffffff)).toBeCloseTo(21);
-    expect(contrast(0xffffff, 0x000000)).toBeCloseTo(21);
-    expect(contrast(0x767676, 0x767676)).toBeCloseTo(1);
-    expect(contrast(0x767676, 0xffffff)).toBeCloseTo(4.54, 2);
   });
 
   it("tells a theme read again of the same colours from one of others", () => {
