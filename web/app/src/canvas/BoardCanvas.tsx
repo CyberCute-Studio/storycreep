@@ -28,7 +28,7 @@ import { boardPart, type Part } from "../document/doc";
 import { useProjectDocument } from "../document/react";
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
-import { Button, buttonClass } from "../ui/Button";
+import { Button, buttonClass, pressedClass } from "../ui/Button";
 import { useMediaQuery } from "../ui/media";
 import {
   type BenchOptions,
@@ -59,17 +59,6 @@ export interface CanvasOptions {
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
 const forcedColorsQuery = "(forced-colors: active)";
-
-/**
- * The classes of the toolbar's mode button that is pressed: filled with the
- * accent, as the rich-text editor's toolbar shows its own, rather than
- * ringed with it, which the focus ring, of the same colour and width, would
- * only move 2 px out on the button pressed (NFR-A11Y-04); and, in a
- * system's forced colours, which replace the page's own, filled with the
- * system's colours of a selection.
- */
-const pressedClass =
-  "aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-accent-fg aria-pressed:hover:bg-accent-hover forced-colors:aria-pressed:bg-[Highlight] forced-colors:aria-pressed:hover:bg-[Highlight] forced-colors:aria-pressed:text-[HighlightText]";
 
 /** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show. */
 const nameParts: readonly Part[] = ["components", "variables"];
@@ -773,6 +762,7 @@ function BoardCanvasOf({
         <Button
           aria-pressed={showMinimap}
           onClick={() => setShowMinimap((shown) => !shown)}
+          className={pressedClass}
         >
           {t("canvas.minimap")}
         </Button>

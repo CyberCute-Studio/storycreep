@@ -536,6 +536,51 @@ describe("the canvas's controller", () => {
     expect(sized).toHaveLength(1);
   });
 
+  it("draws in the frame after one whose renderer threw, but asks for none after two that threw", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    let throws = 1;
+    const drawn: Frame[] = [];
+    c.setEngine({
+      kind: "webgl",
+      resize: () => {},
+      render: (f) => {
+        if (throws > 0) {
+          throws--;
+          throw new Error("the GPU's device is lost");
+        }
+        drawn.push(f);
+        return {
+          lod: "detail",
+          nodes: 1,
+          visible: 1,
+          texts: 0,
+          connections: 0,
+        };
+      },
+      textures: () => undefined,
+      onRestore: () => () => {},
+      destroy: () => {},
+    });
+    // The frame that setEngine asked for throws, and the next draws, with
+    // nothing else asking for it.
+    expect(() => time.tick()).toThrow("the GPU's device is lost");
+    time.tick();
+    expect(drawn).toHaveLength(1);
+    // A renderer that throws in each frame is tried once more, and then
+    // once something asks for a frame.
+    throws = Number.POSITIVE_INFINITY;
+    c.setViewport({ x: 10, y: 0, zoom: 1 });
+    expect(() => time.tick()).toThrow("the GPU's device is lost");
+    expect(() => time.tick()).toThrow("the GPU's device is lost");
+    expect(time.pending()).toBe(0);
+    throws = 0;
+    c.setViewport({ x: 20, y: 0, zoom: 1 });
+    time.tick();
+    expect(drawn).toHaveLength(2);
+    expect(drawn[1]?.viewport.x).toBe(20);
+  });
+
   it("draws again once the browser gives back the renderer's context that it took, and not once the renderer has ended", () => {
     const { c, time, frames, engine, restore } = setUp();
     placed(c, time);

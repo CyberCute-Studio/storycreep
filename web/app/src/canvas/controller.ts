@@ -157,12 +157,24 @@ export class CanvasController implements GestureHost {
    * frame that draws next gives it where it has not, rather than setSize
    * or setEngine as they take them: a renderer that throws as it is sized,
    * as one whose GPU's device is lost, throws in that frame, as it would as
-   * it draws, which is tried again (drawNow), and once the browser gives
-   * its context back, rather than into the page's own work, as React's
-   * commit, or the start's handler, which would say that the browser has
-   * no renderer at all.
+   * it draws, which is tried again in the next frame (threw), and once the
+   * browser gives its context back, rather than into the page's own work,
+   * as React's commit, or the start's handler, which would say that the
+   * browser has no renderer at all.
    */
   private sized = false;
+  /**
+   * Whether the renderer threw in the last frame, as it was sized or as it
+   * drew. A frame whose renderer throws asks for the next frame, which tries
+   * again, so that a renderer that throws once, as in the frame that
+   * setEngine asked for, draws in the next, rather than once something
+   * moves the canvas or changes: but not after a frame whose renderer threw
+   * too, so that a renderer that throws in each frame, as one whose context
+   * the browser never gives back, does not spin the loop at the display's
+   * rate, reporting each, but throws again once something asks for a frame,
+   * or the browser gives its context back (onRestore).
+   */
+  private threw = false;
   /** Stops the call of the engine's onRestore. */
   private stopRestore: (() => void) | undefined;
   private minimap: Minimap | undefined;
@@ -234,6 +246,7 @@ export class CanvasController implements GestureHost {
     // else only once something moved it or changed.
     this.stopRestore = engine?.onRestore(() => this.invalidate());
     this.sized = false;
+    this.threw = false;
     this.lastData = {};
     this.invalidate();
   }
@@ -656,21 +669,32 @@ export class CanvasController implements GestureHost {
     if (engine === undefined) {
       return;
     }
-    if (!this.sized) {
-      engine.resize(size, this.resolution);
-      this.sized = true;
+    let start: number;
+    let stats: FrameStats;
+    try {
+      if (!this.sized) {
+        engine.resize(size, this.resolution);
+        this.sized = true;
+      }
+      start = this.clock.now();
+      stats = engine.render({
+        viewport: this.v,
+        size,
+        scene: this.scene,
+        selection: this.selected,
+        selectionVersion: this.selectionVersion,
+        labels: this.labels,
+        labelsVersion: this.labelsVersion,
+        theme,
+      });
+    } catch (error) {
+      if (!this.threw) {
+        this.threw = true;
+        this.invalidate();
+      }
+      throw error;
     }
-    const start = this.clock.now();
-    const stats = engine.render({
-      viewport: this.v,
-      size,
-      scene: this.scene,
-      selection: this.selected,
-      selectionVersion: this.selectionVersion,
-      labels: this.labels,
-      labelsVersion: this.labelsVersion,
-      theme,
-    });
+    this.threw = false;
     const work = this.clock.now() - start;
     this.writeData(engine.kind, stats);
     if (this.ready && !this.renderedOnce) {
