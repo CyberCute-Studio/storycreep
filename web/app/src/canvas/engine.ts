@@ -699,6 +699,12 @@ class PixiEngine implements Engine {
   ): void {
     const { scene, theme } = f;
     const was = this.built;
+    // What the renderer built is told only once this build has finished:
+    // one that throws partway, having freed the cards of the margin before
+    // and taken them out of the stage, leaves the next frame to build the
+    // margin whole, rather than draw what was built before without its
+    // cards, where the view went back into it.
+    this.built = undefined;
     const same =
       was !== undefined &&
       was.region === region &&
@@ -864,7 +870,12 @@ class PixiEngine implements Engine {
       return;
     }
     this.cards.removeChildren();
-    this.cards.addChild(...roots);
+    // PixiJS's addChild reads its first child without asking whether it
+    // has one, and throws given none, as of a margin that holds no node
+    // after one that held some, as past the board's content.
+    if (roots.length > 0) {
+      this.cards.addChild(...roots);
+    }
   }
 
   /**

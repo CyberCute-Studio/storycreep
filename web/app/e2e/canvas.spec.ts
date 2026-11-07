@@ -7,11 +7,12 @@ import {
   onPage,
   settled,
   type TestBoard,
+  test,
   touchGesture,
   viewOf,
 } from "./boards.ts";
 import { signedIn } from "./content.ts";
-import { en, expect, press, test, violations } from "./fixtures.ts";
+import { en, expect, press, violations } from "./fixtures.ts";
 
 // A board's canvas (PRD FR-EDIT-01, FR-EDIT-11, ADR-013), on the desktop,
 // with a mouse, a wheel, and keys, and on the tablet, with fingers alone:
@@ -493,6 +494,16 @@ test.describe("a board's canvas", () => {
       Math.ceil((box.height * 2) / 200 + 1);
     expect(held).toBeLessThanOrEqual(most);
     expect(held).toBeLessThan(board.nodeIds.length);
+    // Past the content, by ten canvases' heights, where the margin around
+    // the canvas holds no node, it holds no card, and throws nothing (the
+    // test fails on what the page throws), as it frees the cards that it
+    // showed.
+    await canvas.focus();
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press("Shift+ArrowDown");
+    }
+    await expect(canvas).toHaveAttribute("data-nodes", "0");
+    await expect(canvas).toHaveAttribute("data-lod", "detail");
   });
 
   // ADR-013: the Canvas 2D renderer, where the browser has no WebGL.

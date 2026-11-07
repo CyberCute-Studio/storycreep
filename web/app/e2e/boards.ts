@@ -1,8 +1,9 @@
 // What the end-to-end tests of the canvas, and its benchmark, start from: a
 // project and boards of many nodes, made through the API, as an account
-// signed in (content.ts), and how they read what the canvas shows, which
+// signed in (content.ts), how they read what the canvas shows, which
 // PixiJS draws as pixels, from the data attributes of its element
-// (src/canvas/controller.ts).
+// (src/canvas/controller.ts), and the test that they run in, which fails
+// on an error that the page threw and nothing caught.
 
 import type {
   APIRequestContext,
@@ -17,7 +18,31 @@ import {
   createProject,
   firstWorkspace,
 } from "./content.ts";
-import { type ApiSession, expect, message } from "./fixtures.ts";
+import { type ApiSession, test as base, expect, message } from "./fixtures.ts";
+
+/**
+ * The test of fixtures.ts, which fails too on an error that the page threw
+ * and nothing caught, as a frame of the canvas's throws of a bug of its
+ * renderer: the canvas draws again in the next frame, whose data
+ * attributes, which the tests read, would not tell of it. The tests of the
+ * canvas and its benchmark run in it; those of the error console, which
+ * throw such errors on purpose, do not. thrown holds those so far.
+ */
+export const test = base.extend<{ thrown: string[] }>({
+  thrown: [
+    async ({ page }, use) => {
+      const thrown: string[] = [];
+      page.on("pageerror", (error) => {
+        thrown.push(error.stack ?? String(error));
+      });
+      await use(thrown);
+      expect(thrown, "errors that the page threw and nothing caught").toEqual(
+        [],
+      );
+    },
+    { auto: true },
+  ],
+});
 
 /** The words of the nodes' texts, of which each text takes some, by its node's place. */
 const words =

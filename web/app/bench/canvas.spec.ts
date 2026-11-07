@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
-import { expect, test } from "../e2e/fixtures.ts";
+import { test } from "../e2e/boards.ts";
+import { expect } from "../e2e/fixtures.ts";
 import type { BenchResult } from "../src/canvas/bench.tsx";
 import { type BenchBoard, benchBoards, resultsDir } from "./state.ts";
 
