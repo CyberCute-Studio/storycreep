@@ -12,7 +12,14 @@ import {
 } from "./labels";
 import { nodeRect } from "./layout";
 import { clip, graphemes, textTier, wrapLines } from "./text";
-import { nodeColor, parseColor, readTheme, type Theme } from "./theme";
+import {
+  contrast,
+  nodeColor,
+  parseColor,
+  readTheme,
+  sameTheme,
+  type Theme,
+} from "./theme";
 
 const context: LabelContext = {
   t: (key, args) =>
@@ -373,21 +380,80 @@ describe("a node of a type that the canvas does not know", () => {
 });
 
 describe("a node's colour", () => {
-  it("marks a node by its palette's colour, in the light theme or the dark, and one of a colour that the palette does not have by the theme's edge", () => {
-    const light: Theme = {
-      canvas: 0xffffff,
-      surface: 0xf3f4f6,
-      border: 0x7c8494,
-      fg: 0x15171c,
-      muted: 0x4b5260,
-      accent: 0x2b50c8,
-      dark: false,
-    };
+  // The light and the dark theme's tokens (web/shared/src/tokens).
+  const light: Theme = {
+    canvas: 0xffffff,
+    surface: 0xf3f4f6,
+    border: 0x7c8494,
+    fg: 0x15171c,
+    muted: 0x4b5260,
+    accent: 0x2b50c8,
+    dark: false,
+  };
+  const dark: Theme = {
+    canvas: 0x121419,
+    surface: 0x1c1f26,
+    border: 0x727b8c,
+    fg: 0xeceef2,
+    muted: 0xa8afbc,
+    accent: 0x8fa8ff,
+    dark: true,
+  };
+  const colors = [
+    "red",
+    "orange",
+    "yellow",
+    "green",
+    "teal",
+    "blue",
+    "purple",
+    "pink",
+    "gray",
+  ] as const;
+
+  it("marks a node by its palette's colour, in the light theme or the dark, each 3:1 or more against the card and the board, and one of a colour that the palette does not have by the theme's edge", () => {
+    for (const theme of [light, dark]) {
+      for (const color of colors) {
+        const mark = nodeColor(color, theme);
+        expect(mark, color).not.toBe(theme.border);
+        expect(contrast(mark, theme.surface)).toBeGreaterThanOrEqual(3);
+        expect(contrast(mark, theme.canvas)).toBeGreaterThanOrEqual(3);
+      }
+    }
     expect(nodeColor("red", light)).toBe(0xc62828);
-    expect(nodeColor("red", { ...light, dark: true })).toBe(0xff7b72);
+    expect(nodeColor("red", dark)).toBe(0xff7b72);
     expect(nodeColor("none", light)).toBe(light.border);
     // As a newer server's palette may send, to a page loaded before it.
     expect(nodeColor("crimson" as Node["color"], light)).toBe(light.border);
+  });
+
+  it("marks a node by the theme's edge where its colour would stand out of the card by less than 3:1, as on a contrast theme's Canvas of a middle grey", () => {
+    // The system's colours of a contrast theme of the user's own.
+    const grey: Theme = {
+      canvas: 0x767676,
+      surface: 0x767676,
+      border: 0xffffff,
+      fg: 0xffffff,
+      muted: 0xffffff,
+      accent: 0xffff00,
+      dark: true,
+    };
+    for (const color of colors) {
+      expect(nodeColor(color, grey), color).toBe(grey.border);
+    }
+  });
+
+  it("measures contrast as WCAG 2 does", () => {
+    expect(contrast(0x000000, 0xffffff)).toBeCloseTo(21);
+    expect(contrast(0xffffff, 0x000000)).toBeCloseTo(21);
+    expect(contrast(0x767676, 0x767676)).toBeCloseTo(1);
+    expect(contrast(0x767676, 0xffffff)).toBeCloseTo(4.54, 2);
+  });
+
+  it("tells a theme read again of the same colours from one of others", () => {
+    expect(sameTheme(light, { ...light })).toBe(true);
+    expect(sameTheme(light, { ...light, accent: 0x000000 })).toBe(false);
+    expect(sameTheme(light, dark)).toBe(false);
   });
 });
 

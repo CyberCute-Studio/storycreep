@@ -50,10 +50,10 @@ export function projectQuery(projectId: string) {
  * (projects.$projectId.index.tsx): the project first, so that a project
  * that the account may not see shows the page of no page before its
  * document reads anything, and then the parts of its document that the
- * page shows, at once. A part that the document held already, which the
- * real-time channel does not keep current while it is not live, is shown
- * as it is, and read anew; a read anew that fails is recorded, and tried
- * again later.
+ * page shows, at once. A part that the document had read already, which
+ * the real-time channel does not keep current while it is not live, is
+ * shown as it is, and read anew once every part is held, as loadPart reads
+ * one; a read anew that fails is recorded, and tried again later.
  */
 export async function loadParts(
   context: { queryClient: QueryClient; documents: Documents },
@@ -64,21 +64,28 @@ export async function loadParts(
     context.queryClient.ensureQueryData(projectQuery(projectId)),
   );
   const doc = context.documents.get(project.id);
-  await Promise.all(parts.map((part) => found(loadPart(doc, part))));
+  const read = parts.filter((part) => doc.hasRead(part));
+  await Promise.all(parts.map((part) => found(doc.load(part))));
+  for (const part of read) {
+    void doc.refresh(part).catch(() => undefined);
+  }
 }
 
 /**
  * Reads part of doc, as a page that shows it does, resolving once the
- * document holds it: a part that the document held already, which the
+ * document holds it: a part that the document had read already, which the
  * real-time channel does not keep current while it is not live, resolves
- * as it is, and is read anew after; a read anew that fails is recorded,
- * and tried again later (ProjectDocument.refresh).
+ * as it is, and is read anew; a read anew that fails is recorded, and
+ * tried again later (ProjectDocument.refresh). A part that the document
+ * reads still, as one that another page asked for a moment before, or the
+ * same page as React runs its effect twice, resolves with that read, which
+ * is as new as a read after it would be, rather than read anew after it.
  */
 export function loadPart(doc: ProjectDocument, part: Part): Promise<void> {
-  const held = doc.holds(part);
+  const read = doc.hasRead(part);
   const load = doc.load(part);
-  if (held) {
-    void load.then(() => doc.refresh(part)).catch(() => undefined);
+  if (read) {
+    void doc.refresh(part).catch(() => undefined);
   }
   return load;
 }

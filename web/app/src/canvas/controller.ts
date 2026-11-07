@@ -19,7 +19,7 @@ import { type KeyInput, keyAction } from "./keyboard";
 import type { NodeLabels } from "./labels";
 import type { Minimap } from "./minimap";
 import { type NodeItem, Scene } from "./scene";
-import type { Theme } from "./theme";
+import { sameTheme, type Theme } from "./theme";
 import {
   anchorAt,
   between,
@@ -225,6 +225,11 @@ export class CanvasController implements GestureHost {
   }
 
   setTheme(theme: Theme): void {
+    // The same colours, read again, as once the window gets the focus back
+    // in forced colours, draw nothing anew.
+    if (this.theme !== undefined && sameTheme(this.theme, theme)) {
+      return;
+    }
     this.theme = theme;
     this.invalidate();
   }

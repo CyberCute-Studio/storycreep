@@ -130,6 +130,12 @@ export interface EngineOptions {
   forced?: boolean;
   /** The font of the page, which the cards' text is in. */
   fontFamily: string;
+  /**
+   * What tells that the page no longer wants the renderer, as once its
+   * address asks for another while this one starts: the start then tries
+   * no renderer after the one under way, and adds no canvas after it.
+   */
+  signal?: AbortSignal;
 }
 
 /** How far around the canvas the renderer builds objects, in canvases: half of one on each side. */
@@ -151,12 +157,42 @@ const cornerRadius = 10;
 /** How far a card's ring, 4 units outside it, and its ports, dots of 10 on its edges, reach beyond its node, in units of the board. */
 const cardReach = 8;
 
+/**
+ * The bytes of the glyphs' atlases that a renderer's fonts may take before
+ * it draws them anew, of the text of its margin alone. A page of an atlas
+ * is 512 pixels square at its font's resolution, of 1, 4, or 16 MB at the
+ * text's tiers 1, 2, and 4 (textTier), and about as much again on the GPU,
+ * and a font keeps each glyph that it drew, in more pages as they fill. The
+ * Latin alphabet takes a page of each of the two fonts at each tier, 42 MB
+ * at most with all three, under this, so that a board of it never draws
+ * its fonts anew; but a page holds about 150 of the glyphs of Chinese or
+ * Japanese, so that a pan over a board of either would else keep a glyph
+ * of each character that it passed, as many as the board has, rather than
+ * as its view shows (FR-EDIT-11), on a tablet in a few hundred megabytes.
+ */
+const glyphFloor = 64 * 2 ** 20;
+
+/**
+ * Counts the sets of fonts that renderers drew anew (glyphFloor), each of
+ * names of its own, so that one renderer's, which it gives back, are not
+ * those that another one still draws with: the renderers that start share
+ * the first set, of 0, as one that starts in place of another does.
+ */
+let fontSets = 0;
+
 /** The renderers in the order that the canvas tries them, without a preference. */
 const renderers: readonly RendererKind[] = ["webgl", "webgpu", "canvas"];
 
 /**
+ * Whether the canvas has had PixiJS tell whether the page has WebGPU, which
+ * it does as it starts its WebGPU renderer, and keeps for the page.
+ */
+let webGPUTold = false;
+
+/**
  * Starts the renderer on a canvas element of its own, which it adds to
- * surface, or rejects where the browser has none. It tries each renderer in
+ * surface, or rejects where the browser has none, or once options' signal
+ * tells that the page no longer wants it. It tries each renderer in
  * turn, each on a canvas of its own, as a canvas keeps the kind of context
  * that it gave first, so that one that a renderer failed to start on, as
  * where the GPU's process is gone, cannot give the next renderer its own.
@@ -189,20 +225,34 @@ export async function createEngine(
   // and has PixiJS tell only once it found one, without the caveat, as
   // PixiJS's own default does, so that what PixiJS keeps is that the page
   // has it: a renderer that the browser no longer has, after it, fails to
-  // start, and gives way to the next.
+  // start, and gives way to the next. Once PixiJS has told of WebGPU, it
+  // keeps that answer, whatever the canvas finds after, so that the canvas
+  // asks its adapter for a device of its own only before then.
   for (const kind of order) {
+    // A start that the page no longer wants, as once its address asks for
+    // another renderer, tries none after, and neither probes the GPU nor
+    // adds a canvas to the surface beside the one that the page wants.
+    options.signal?.throwIfAborted();
     if (kind === "webgl") {
       if (!hasWebGL(caveat(kind))) {
         continue;
       }
       isWebGLSupported(false);
     }
-    if (kind === "webgpu" && !(await hasWebGPU(caveat(kind)))) {
-      continue;
+    if (kind === "webgpu") {
+      if (!(await hasWebGPU(caveat(kind), !webGPUTold))) {
+        continue;
+      }
+      options.signal?.throwIfAborted();
+      webGPUTold = true;
     }
+    // Each canvas lies over the surface, rather than under the one before
+    // it, so that a canvas of a start that the page no longer wants, which
+    // stays until its renderer has started, and ends, does not push the
+    // one that the page wants out of the host's view meanwhile.
     const canvas = document.createElement("canvas");
     canvas.setAttribute("aria-hidden", "true");
-    canvas.className = "block size-full";
+    canvas.className = "absolute inset-0 size-full";
     surface.append(canvas);
     let renderer: Renderer | undefined;
     try {
@@ -276,11 +326,11 @@ type AdapterOf = GPUAdapter & { isFallbackAdapter?: boolean };
  * that its GPU runs, rather than a fallback adapter, which the browser may
  * run in software, with the performance caveat that a WebGL of the kind
  * has, so that a device without a GPU gets the Canvas 2D renderer
- * (ADR-013) by either, and whether the adapter gives a device, as PixiJS
- * asks of it as it tells whether the page has WebGPU, without keeping the
- * answer.
+ * (ADR-013) by either, and, with device, whether the adapter gives a
+ * device, as PixiJS asks of it as it tells whether the page has WebGPU,
+ * without keeping the answer.
  */
-async function hasWebGPU(caveat: boolean): Promise<boolean> {
+async function hasWebGPU(caveat: boolean, device: boolean): Promise<boolean> {
   // A browser without WebGPU, or a page that is not of a secure context,
   // has no gpu, whatever the page's types say.
   const gpu: GPU | undefined = navigator.gpu;
@@ -300,8 +350,12 @@ async function hasWebGPU(caveat: boolean): Promise<boolean> {
     // PixiJS keeps that the page has no WebGPU once an adapter that it
     // asked for gave no device, which the canvas finds first, so that it
     // has PixiJS tell only of an adapter that gave the canvas its own,
-    // which it ends at once.
-    (await adapter.requestDevice()).destroy();
+    // which it ends at once. Once PixiJS has told, a device of the canvas's
+    // own changes nothing that it keeps, and the renderer's start, which
+    // asks for one, gives way to the next renderer where it gets none.
+    if (device) {
+      (await adapter.requestDevice()).destroy();
+    }
     return true;
   } catch {
     return false;
@@ -380,8 +434,18 @@ class PixiEngine implements Engine {
         connections: ConnectionItem[];
       }
     | undefined;
-  /** The fonts that this renderer installed, which it releases as it ends. */
+  /** The fonts that this renderer installed, which it releases as it ends, or as their atlases outgrow glyphBudget. */
   private readonly fonts = new Set<string>();
+  /** The set of fonts that this renderer draws with (fontSets). */
+  private fontSet = 0;
+  /**
+   * The bytes of the fonts' atlases past which the next build of cards
+   * draws the fonts anew: glyphFloor, or, once it has, twice what the
+   * glyphs of its margin took then, so that a margin whose text needs more
+   * than the floor draws its glyphs anew at most once for as many as it
+   * drew since, rather than in each build.
+   */
+  private glyphBudget = glyphFloor;
   /** Whether the Canvas 2D renderer shows blocks for the nodes in view, which it does until fewer are than bring its cards back (crowdedAt). */
   private crowded = false;
   /** What onRestore calls. */
@@ -634,6 +698,21 @@ class PixiEngine implements Engine {
       this.cards.visible = true;
       const keep = new Set(shown.nodes.map((n) => n.node.id));
       this.releaseCards(keep);
+      // Fonts whose atlases outgrew their budget, as of the glyphs of every
+      // character of a board of Chinese that a pan passed, are given back,
+      // of every tier, and drawn anew, as a set of their own, of the glyphs
+      // of the margin's text alone, as every card of it is written anew.
+      // The cards that are free keep the names of the fonts before, but are
+      // hidden, and drawn with the new ones as they are used again. PixiJS
+      // warns in the console, of each page of an atlas that it destroys,
+      // that a batch that it keeps still held it, which is all that it does:
+      // a batch of a page that is gone is never drawn again, and no board
+      // of the Latin alphabet comes here.
+      const anew = this.glyphBytes() > this.glyphBudget;
+      if (anew) {
+        this.releaseFonts();
+        this.fontSet = ++fontSets;
+      }
       const fonts = this.fontsOf(tier);
       const lines = this.kind === "canvas" ? 2 : 4;
       for (const item of shown.nodes) {
@@ -643,7 +722,8 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
-        const stale = fresh || view.item !== item || view.selected !== selected;
+        const stale =
+          fresh || anew || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
           // A card's labels follow its node and the names that cards show
           // alone, so that a card drawn anew for the text's resolution, the
@@ -668,6 +748,9 @@ class PixiEngine implements Engine {
         texts += view.body.visible ? 3 : 2;
       }
       this.orderCards(shown.nodes);
+      if (anew) {
+        this.glyphBudget = Math.max(glyphFloor, 2 * this.glyphBytes());
+      }
     }
     // The lines are one stroke of every connection of the margin, or of a
     // tile's, drawn anew only once a connection, the margin, the zoom that
@@ -1004,11 +1087,11 @@ class PixiEngine implements Engine {
     });
   }
 
-  /** Returns the fonts of tier, installing them once. */
+  /** Returns the fonts of tier, of this renderer's set (fontSet), installing them once. */
   private fontsOf(tier: number): Fonts {
     const fonts = {
-      regular: `storycreep-regular-${tier}`,
-      bold: `storycreep-bold-${tier}`,
+      regular: `storycreep-regular-${tier}-${this.fontSet}`,
+      bold: `storycreep-bold-${tier}-${this.fontSet}`,
     };
     for (const [name, weight] of [
       [fonts.regular, "400"],
@@ -1041,13 +1124,23 @@ class PixiEngine implements Engine {
     return fonts;
   }
 
-  destroy(): void {
-    this.renderer.runners.contextChange.remove(this.restored);
-    this.restoreListeners.clear();
-    this.stage.destroy({ children: true });
-    for (const t of Object.values(this.art)) {
-      t.destroy(true);
+  /** The bytes of the atlases of the fonts that this renderer installed, of four to a pixel. */
+  private glyphBytes(): number {
+    let bytes = 0;
+    for (const name of this.fonts) {
+      for (const page of installed.get(name)?.font.pages ?? []) {
+        const source = page.texture.source;
+        bytes += source.pixelWidth * source.pixelHeight * 4;
+      }
     }
+    return bytes;
+  }
+
+  /**
+   * Gives back the fonts that this renderer installed: the last renderer
+   * that drew with one uninstalls it, with its atlases.
+   */
+  private releaseFonts(): void {
     for (const name of this.fonts) {
       const had = installed.get(name);
       if (had !== undefined && had.users > 1) {
@@ -1057,6 +1150,17 @@ class PixiEngine implements Engine {
         BitmapFontManager.uninstall(name);
       }
     }
+    this.fonts.clear();
+  }
+
+  destroy(): void {
+    this.renderer.runners.contextChange.remove(this.restored);
+    this.restoreListeners.clear();
+    this.stage.destroy({ children: true });
+    for (const t of Object.values(this.art)) {
+      t.destroy(true);
+    }
+    this.releaseFonts();
     this.renderer.destroy();
     this.canvas.remove();
   }
@@ -1065,9 +1169,13 @@ class PixiEngine implements Engine {
 /**
  * What the canvas reads of a bitmap font that it installed, and asks of it:
  * the width that it draws each character that it has at, in the units of
- * its size of measurement, and the glyphs of more.
+ * its size of measurement, the pages of its atlas, whose bytes it counts
+ * (glyphFloor), and the glyphs of more.
  */
-type CardFont = Pick<BitmapFont, "chars" | "baseMeasurementFontSize"> & {
+type CardFont = Pick<
+  BitmapFont,
+  "chars" | "baseMeasurementFontSize" | "pages"
+> & {
   ensureCharacters?: (chars: string) => void;
 };
 

@@ -415,13 +415,27 @@ export function BoardCanvas({
   }, [controller]);
 
   // The theme, of the page's colours, or of the system's forced colours,
-  // which the canvas reads again as the system's theme changes them.
+  // which the canvas reads again as the system's theme changes them. A
+  // change from one contrast theme to another of the same lightness, as
+  // from Windows's Aquatic to its Night sky, changes neither query, and the
+  // page hears of it by no event, while the browser draws the page's own
+  // elements in the new colours, so in forced colours the canvas reads them
+  // again too as its window gets the focus back, as from the system's
+  // settings, where the theme changes; it draws again only where they did
+  // (setTheme).
   // biome-ignore lint/correctness/useExhaustiveDependencies: dark reads the page's colours again, which it changes.
   useLayoutEffect(() => {
     const host = hostRef.current;
-    if (host !== null) {
-      controller.setTheme(readTheme(host, forcedColors));
+    if (host === null) {
+      return;
     }
+    const read = () => controller.setTheme(readTheme(host, forcedColors));
+    read();
+    if (!forcedColors) {
+      return;
+    }
+    window.addEventListener("focus", read);
+    return () => window.removeEventListener("focus", read);
   }, [controller, dark, forcedColors]);
 
   // The canvas's size once its height is set, at once, rather than once the
@@ -446,7 +460,9 @@ export function BoardCanvas({
   // page's, is the page's error, as a chunk of the page's own is, rather
   // than a browser that cannot draw. A renderer that the page asks for
   // anew, as by its address, starts in place of the one before, on the
-  // canvas as it is.
+  // canvas as it is, and the start of the one before, where it is still
+  // under way, tries no renderer after the one that it is starting, which
+  // ends once it has started.
   useEffect(() => {
     const surface = surfaceRef.current;
     const host = hostRef.current;
@@ -455,6 +471,9 @@ export function BoardCanvas({
     }
     let ended = false;
     let started: Engine | undefined;
+    // What tells the start that it is no longer wanted, so that it tries no
+    // renderer, and adds no canvas, beside the one that starts in its place.
+    const abort = new AbortController();
     setEngine("starting");
     const fontFamily = getComputedStyle(host).fontFamily || "sans-serif";
     import("./engine").then(
@@ -463,6 +482,7 @@ export function BoardCanvas({
           preference: options.renderer,
           forced: options.renderer !== undefined,
           fontFamily,
+          signal: abort.signal,
         }).then(
           (e) => {
             if (ended) {
@@ -487,6 +507,7 @@ export function BoardCanvas({
     );
     return () => {
       ended = true;
+      abort.abort();
       controller.setEngine(undefined);
       started?.destroy();
     };
@@ -565,12 +586,12 @@ export function BoardCanvas({
 
   // The names that cards show, of the project's speakers and of the
   // variables that their texts show, which the board's first frame does not
-  // wait for, and which are read anew where the document held them already,
-  // as the parts that a page shows are (loadPart). A read of them that
-  // fails, which leaves the cards without them, is said in the toolbar,
-  // with Try again, rather than leave the user to wonder why while they
-  // stay on the board, as the document reads a part that it does not hold
-  // only as it is asked for it.
+  // wait for, and which are read anew where the document had read them
+  // already, as the parts that a page shows are (loadPart). A read of them
+  // that fails, which leaves the cards without them, is said in the
+  // toolbar, with Try again, rather than leave the user to wonder why while
+  // they stay on the board, as the document reads a part that it does not
+  // hold only as it is asked for it.
   useEffect(() => {
     if (namesRead === 0) {
       return;

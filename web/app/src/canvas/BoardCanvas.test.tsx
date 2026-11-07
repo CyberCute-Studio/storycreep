@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
-import type { Engine } from "./engine";
+import type { Engine, EngineOptions } from "./engine";
 
 const engines = vi.hoisted(() => ({
   fail: false,
@@ -19,12 +19,18 @@ const engines = vi.hoisted(() => ({
   destroyed: 0,
   /** What the engine's start waits for, as the fetch of its chunk. */
   hold: undefined as Promise<void> | undefined,
+  /** What tells each start that the page no longer wants it, in the order that they began. */
+  signals: [] as (AbortSignal | undefined)[],
 }));
 
 // PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
 // tests draw with an engine that draws nothing.
 vi.mock("./engine", () => ({
-  createEngine: async (): Promise<Engine> => {
+  createEngine: async (
+    _surface: HTMLElement,
+    options: EngineOptions,
+  ): Promise<Engine> => {
+    engines.signals.push(options.signal);
     await engines.hold;
     if (engines.fail) {
       throw new Error("no renderer");
@@ -54,6 +60,7 @@ beforeEach(() => {
   engines.created = 0;
   engines.destroyed = 0;
   engines.hold = undefined;
+  engines.signals = [];
 });
 
 const harbour: Board = {
@@ -320,6 +327,36 @@ describe("a board's canvas", () => {
       await screen.findByText("This board has no nodes yet."),
     ).toBeDefined();
     expect(screen.queryByText("Starting the canvas…")).toBeNull();
+  });
+
+  it("tells the start of a renderer that the page no longer wants, as once its address asks for another, which starts in its place, so that it adds no canvas beside that one's", async () => {
+    let start = () => {};
+    engines.hold = new Promise((resolve) => {
+      start = resolve;
+    });
+    boardPage([]);
+    const { router } = renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    expect(await screen.findByText("Starting the canvas…")).toBeDefined();
+    await waitFor(() => expect(engines.signals.length).toBeGreaterThan(0));
+    const before = engines.signals.length;
+    await act(() =>
+      router.navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId: testProject.id, boardId: "bd_a" },
+        search: { renderer: "canvas" },
+      }),
+    );
+    await waitFor(() => expect(engines.signals.length).toBe(before + 1));
+    expect(engines.signals.slice(0, -1).every((s) => s?.aborted)).toBe(true);
+    expect(engines.signals.at(-1)?.aborted).toBe(false);
+    start();
+    expect(
+      await screen.findByText("This board has no nodes yet."),
+    ).toBeDefined();
+    // The starts that were no longer wanted end their renderers.
+    await waitFor(() => expect(engines.destroyed).toBe(engines.created - 1));
   });
 
   it("says that the browser cannot draw the board", async () => {

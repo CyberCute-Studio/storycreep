@@ -523,6 +523,8 @@ export class ProjectDocument {
   private buffer: Operation[] | undefined = [];
   /** The parts that the document holds, read or being read, each with its read. */
   private readonly loads = new Map<Part, Promise<void>>();
+  /** The reads of loads that have finished, which hasRead tells of. */
+  private readonly finished = new WeakSet<Promise<void>>();
   /**
    * The reads from the server under way, each with the entities that
    * operations changed meanwhile, so that a list does not take out what an
@@ -954,6 +956,13 @@ export class ProjectDocument {
       } finally {
         this.watchers.delete(watcher);
         this.partReads--;
+        // A read that failed takes its part out of loads, but where the
+        // project, read anew meanwhile, holds the part as that read found
+        // it, so that a finished read that loads still keeps is of a part
+        // that the document has read.
+        if (load !== undefined) {
+          this.finished.add(load);
+        }
       }
     })();
     this.loads.set(part, load);
@@ -1066,6 +1075,16 @@ export class ProjectDocument {
   /** Reports whether the document holds part, read or being read. */
   holds(part: Part): boolean {
     return this.loads.has(part);
+  }
+
+  /**
+   * Reports whether the document holds part as a read of it found it,
+   * rather than reads it still, as a page that asks for it during its first
+   * read would else read it anew after that read (loadPart).
+   */
+  hasRead(part: Part): boolean {
+    const load = this.loads.get(part);
+    return load !== undefined && this.finished.has(load);
   }
 
   /**

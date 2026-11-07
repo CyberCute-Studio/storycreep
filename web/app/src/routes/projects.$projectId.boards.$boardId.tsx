@@ -126,8 +126,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
       throw notFound();
     }
     // The board's nodes and connections, which the canvas shows, start to
-    // load as the page does, and are read anew where the document held them
-    // already, as the parts that the project's other pages show are
+    // load as the page does, and are read anew where the document had read
+    // them already, as the parts that the project's other pages show are
     // (loadPart). The canvas says so while they load, and what this read
     // failed with, which the loader hands to it, rather than start a read
     // of its own as it mounts, which, after this one failed before it, as

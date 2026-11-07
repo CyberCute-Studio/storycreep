@@ -102,12 +102,45 @@ export function readTheme(element: HTMLElement, forced = false): Theme {
   }
 }
 
+/** Reports whether a and b are of the same colours, as the theme read again where nothing changed it. */
+export function sameTheme(a: Theme, b: Theme): boolean {
+  return (
+    a.canvas === b.canvas &&
+    a.surface === b.surface &&
+    a.border === b.border &&
+    a.fg === b.fg &&
+    a.muted === b.muted &&
+    a.accent === b.accent &&
+    a.dark === b.dark
+  );
+}
+
 function luminance(color: number): number {
   const r = (color >> 16) & 0xff;
   const g = (color >> 8) & 0xff;
   const b = color & 0xff;
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
+
+/** Returns the contrast of colours a and b, from 1 to 21, as WCAG 2 measures it of their relative luminance. */
+export function contrast(a: number, b: number): number {
+  const relative = (color: number) => {
+    const linear = (c: number) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    return (
+      0.2126 * linear((color >> 16) & 0xff) +
+      0.7152 * linear((color >> 8) & 0xff) +
+      0.0722 * linear(color & 0xff)
+    );
+  };
+  const [hi, lo] = [relative(a), relative(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** The contrast that NFR-A11Y-06 asks of a boundary of the UI, as a node's colour on its card and on the board. */
+const boundaryContrast = 3;
 
 /**
  * The palette of a node's colour, which marks its card's edge, in the light
@@ -125,15 +158,40 @@ const palette: Record<Exclude<Node["color"], "none">, [number, number]> = {
   gray: [0x5f6672, 0xa8afbc],
 };
 
+/** The colours that mark nodes in each theme that nodeColor was asked of, each made once. */
+const marks = new WeakMap<Theme, Map<Node["color"], number>>();
+
 /**
  * Returns the colour that marks a node of color, in theme: none's is the
  * theme's edge, as is that of a colour that the palette does not have, as
  * one that a newer server's palette has, of a page loaded before it, rather
- * than a frame that throws, and a board drawn as nothing.
+ * than a frame that throws, and a board drawn as nothing, and that of one
+ * whose contrast with the card or the board is under 3:1 (NFR-A11Y-06). The
+ * palette has that against the theme's tokens, in the light theme and the
+ * dark, but, in forced colours, the card and the board are the system's
+ * Canvas, which a contrast theme of the user's own may make a grey that
+ * neither the light nor the dark colours stand out of, where the node is
+ * marked by the theme's edge instead, the system's CanvasText.
  */
 export function nodeColor(color: Node["color"], theme: Theme): number {
   if (color === "none") {
     return theme.border;
   }
-  return palette[color]?.[theme.dark ? 1 : 0] ?? theme.border;
+  let colors = marks.get(theme);
+  if (colors === undefined) {
+    colors = new Map();
+    marks.set(theme, colors);
+  }
+  let mark = colors.get(color);
+  if (mark === undefined) {
+    const pick = palette[color]?.[theme.dark ? 1 : 0];
+    mark =
+      pick !== undefined &&
+      contrast(pick, theme.surface) >= boundaryContrast &&
+      contrast(pick, theme.canvas) >= boundaryContrast
+        ? pick
+        : theme.border;
+    colors.set(color, mark);
+  }
+  return mark;
 }

@@ -146,6 +146,23 @@ describe("the canvas's controller", () => {
     expect(frames.length).toBe(drawn + 1);
   });
 
+  it("draws again for a theme of other colours, but not for the same colours read again, as once the window gets the focus back in forced colours", () => {
+    const { c, time, frames } = setUp();
+    c.sync(docOf(gridNodes(4, 2)), false);
+    c.setReady();
+    time.tick();
+    const drawn = frames.length;
+    c.setTheme({ ...theme });
+    time.tick();
+    expect(frames.length).toBe(drawn);
+    expect(frames.at(-1)?.theme).toBe(theme);
+    const night = { ...theme, canvas: 0, surface: 0, dark: true };
+    c.setTheme(night);
+    time.tick();
+    expect(frames.length).toBe(drawn + 1);
+    expect(frames.at(-1)?.theme).toBe(night);
+  });
+
   // Verifies: NFR-A11Y-07
   it("animates a zoom that the toolbar asks for, unless the system asks for reduced motion", () => {
     const animated = setUp();
