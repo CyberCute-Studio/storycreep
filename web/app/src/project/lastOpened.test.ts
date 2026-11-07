@@ -18,13 +18,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Returns the value of the last-board cookie, or undefined if the browser has none. */
-function cookie(): string | undefined {
+/** Returns the value of the last-board cookie of the name name, or undefined if the browser has none. */
+function cookie(name = "sc_last_board"): string | undefined {
   return document.cookie
     .split("; ")
-    .find((pair) => pair.startsWith("sc_last_board="))
-    ?.slice("sc_last_board=".length);
+    .find((pair) => pair.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
 }
+
+/** The JSDOM of the tests, which Vitest's environment gives them. */
+const dom = (
+  globalThis as unknown as {
+    jsdom: { reconfigure(options: { url: string }): void };
+  }
+).jsdom;
 
 /** Returns what a canvas of 800 by 600 shows at x, 20, and zoom, with the nodes of selection selected. */
 function shown(x: number, zoom = 1, selection: string[] = []): CanvasView {
@@ -72,6 +79,45 @@ describe("the last-opened state", () => {
       boardId: "bd_b",
     });
     expect(cookie()).toBe("usr_a:prj_a:bd_b");
+  });
+
+  it("writes the cookie anew each time that a board's page shows the board, so that it lasts from then, but not as the canvas's view changes", () => {
+    rememberBoard("usr_a", "prj_a", "bd_a");
+    const writes = vi.spyOn(Document.prototype, "cookie", "set");
+    // Safari keeps a cookie that a script writes for 7 days at most.
+    rememberBoard("usr_a", "prj_a", "bd_a");
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(writes.mock.calls[0][0]).toContain(`Max-Age=${400 * 24 * 60 * 60}`);
+    rememberView("usr_a", "prj_a", "bd_a", shown(10));
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(cookie()).toBe("usr_a:prj_a:bd_a");
+  });
+
+  it("names the cookie __Host- on an https page, as the session's, so that one that another host of the domain planted hides nothing of it", () => {
+    const was = location.href;
+    dom.reconfigure({ url: "https://localhost:3000/" });
+    try {
+      // As another host of the domain would plant it for the whole domain.
+      // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API, and the app writes its cookie so.
+      document.cookie = "sc_last_board=usr_a:prj_x:bd_x; Path=/";
+      rememberBoard("usr_a", "prj_a", "bd_a");
+      expect(cookie("__Host-sc_last_board")).toBe("usr_a:prj_a:bd_a");
+      rememberBoard("usr_b", "prj_b", "bd_b");
+      expect(cookie("__Host-sc_last_board")).toBe(
+        "usr_b:prj_b:bd_b.usr_a:prj_a:bd_a",
+      );
+      forgetLastOpened("usr_a", "bd_x");
+      expect(cookie("__Host-sc_last_board")).toBe(
+        "usr_b:prj_b:bd_b.usr_a:prj_a:bd_a",
+      );
+      forgetLastOpened("usr_a", "bd_a");
+      forgetLastOpened("usr_b", "bd_b");
+      // Removed, as only a Secure cookie of the path / may be.
+      expect(cookie("__Host-sc_last_board")).toBeUndefined();
+      expect(cookie()).toBe("usr_a:prj_x:bd_x");
+    } finally {
+      dom.reconfigure({ url: was });
+    }
   });
 
   it("keeps in the cookie the boards of the five accounts that last used the browser", () => {
@@ -210,6 +256,26 @@ describe("the last-opened state", () => {
         selection: ["nd_1"],
       },
     });
+  });
+
+  it("forgets the board that its page deleted, and keeps nothing more of it as the page is left", () => {
+    vi.useFakeTimers();
+    rememberBoard("usr_b", "prj_b", "bd_b");
+    const { result, unmount } = renderHook(() =>
+      useLastOpened("usr_a", "prj_a", "bd_a"),
+    );
+    expect(lastOpened("usr_a")?.boardId).toBe("bd_a");
+    act(() => result.current.onView(shown(10)));
+    act(() => result.current.forget());
+    expect(lastOpened("usr_a")).toBeUndefined();
+    act(() => result.current.onView(shown(11)));
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => {
+      window.dispatchEvent(new Event("pagehide"));
+    });
+    unmount();
+    expect(lastOpened("usr_a")).toBeUndefined();
+    expect(cookie()).toBe("usr_b:prj_b:bd_b");
   });
 
   it("reads and keeps nothing without an account, as while the canvas's benchmark runs", () => {

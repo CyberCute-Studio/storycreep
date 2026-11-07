@@ -38,18 +38,26 @@ import (
 // read. The answer of a board that has gone also takes the account's entry
 // out of the cookie, as the app's start page forgets the board, so that the
 // next request does not read it again. The cookie holds no secret, so a
-// script may write it, as the app does, and it is not __Host- prefixed, as
-// the session's is on an https URL: a cookie that another host of the domain
+// script may write it, as the app does, and on an https page it is __Host-
+// prefixed, as the session's is on an https URL, so that another host of the
+// domain cannot plant one for the whole domain, which, as an older cookie of
+// the same name and path, the browser would send first, and which would hide
+// the app's own; on a plain-HTTP page, where no prefix holds, one that it
 // planted could send the account to a board that it may read, and nowhere
 // else.
 
-// lastBoardCookie is the name of the cookie in which the web app keeps the
-// board that the browser last showed each of the accounts that last used it.
-// Its value is at most maxLastBoards entries, the most recent first,
-// separated by '.', each the IDs of an account, a project, and a board of
-// it, as the server writes them, separated by ':', as
-// usr_….:prj_…:brd_… (web/app/src/project/lastOpened.ts writes it so).
-const lastBoardCookie = "sc_last_board"
+// lastBoardCookie and secureLastBoardCookie are the names of the cookie in
+// which the web app keeps the board that the browser last showed each of the
+// accounts that last used it: on a plain-HTTP page, and on an https page,
+// whose cookie is __Host- prefixed, as the session's is (lastBoardsOf). Its
+// value is at most maxLastBoards entries, the most recent first, separated by
+// '.', each the IDs of an account, a project, and a board of it, as the
+// server writes them, separated by ':', as usr_….:prj_…:brd_…
+// (web/app/src/project/lastOpened.ts writes it so).
+const (
+	lastBoardCookie       = "sc_last_board"
+	secureLastBoardCookie = "__Host-" + lastBoardCookie
+)
 
 // maxLastBoards is how many accounts the cookie keeps a board of, the most
 // recent, so that a browser that many accounts use, as a shared machine,
@@ -69,14 +77,25 @@ type lastBoard struct {
 	user, project, board ids.UUID
 }
 
-// lastBoardsOf returns the entries of the last-board cookie of r, of its
-// first maxLastBoards, in order, but for those that are not three IDs of an
-// account, a project, and a board, as one that a script wrote, which name
-// nothing, while the entries after them are read all the same.
-func lastBoardsOf(r *http.Request) []lastBoard {
-	ck, err := r.Cookie(lastBoardCookie)
+// lastBoardsOf returns the name of the last-board cookie of r, and its
+// entries, of its first maxLastBoards, in order, but for those that are not
+// three IDs of an account, a project, and a board, as one that a script
+// wrote, which name nothing, while the entries after them are read all the
+// same. The cookie is the __Host- prefixed one, which the app writes on an
+// https page, and, where r has none, the one that is not, which it writes on
+// a plain-HTTP page, unless secure, as on an https URL, where the app writes
+// none that is not prefixed, so that one is another host's. So a server
+// whose URL is plain HTTP, behind a proxy that the browser reaches with
+// https, reads the cookie that the page wrote all the same.
+func lastBoardsOf(r *http.Request, secure bool) (string, []lastBoard) {
+	name := secureLastBoardCookie
+	ck, err := r.Cookie(secureLastBoardCookie)
+	if err != nil && !secure {
+		name = lastBoardCookie
+		ck, err = r.Cookie(lastBoardCookie)
+	}
 	if err != nil {
-		return nil
+		return name, nil
 	}
 	var out []lastBoard
 	entries := strings.SplitN(ck.Value, ".", maxLastBoards+1)
@@ -92,14 +111,15 @@ func lastBoardsOf(r *http.Request) []lastBoard {
 			out = append(out, lastBoard{text: entry, user: user, project: p, board: b})
 		}
 	}
-	return out
+	return name, out
 }
 
 // lastBoardOf returns the project and the board that the last-board cookie of
 // r names for the account userID, and false if it names none: those of the
-// first of its entries that is the account's (lastBoardsOf).
-func lastBoardOf(r *http.Request, userID ids.UUID) (projectID, boardID ids.UUID, ok bool) {
-	for _, e := range lastBoardsOf(r) {
+// first of its entries that is the account's (lastBoardsOf, of secure).
+func lastBoardOf(r *http.Request, userID ids.UUID, secure bool) (projectID, boardID ids.UUID, ok bool) {
+	_, entries := lastBoardsOf(r, secure)
+	for _, e := range entries {
 		if e.user == userID {
 			return e.project, e.board, true
 		}
@@ -114,19 +134,23 @@ const lastBoardAge = 400 * 24 * time.Hour
 // forgetLastBoard returns the Set-Cookie header that keeps the last-board
 // cookie of r without the entries of the account userID, as the web app's
 // forgetLastOpened writes it once it finds that the account's board has
-// gone: the entries of the other accounts (lastBoardsOf), as they are, for
-// the path /, SameSite=Lax, for lastBoardAge, Secure if secure, as on an
-// https URL, and readable by the app's scripts, which write it too; or the
-// header that removes the cookie, once it keeps none.
+// gone: the entries of the other accounts (lastBoardsOf, of secure), as they
+// are, in the cookie of the name that it read them from, for the path /,
+// SameSite=Lax, for lastBoardAge, Secure if secure, as on an https URL, or
+// if the cookie is __Host- prefixed, which only a Secure cookie may be, and
+// readable by the app's scripts, which write it too; or the header that
+// removes the cookie, once it keeps none.
 func forgetLastBoard(r *http.Request, userID ids.UUID, secure bool) string {
+	name, entries := lastBoardsOf(r, secure)
 	var kept []string
-	for _, e := range lastBoardsOf(r) {
+	for _, e := range entries {
 		if e.user != userID {
 			kept = append(kept, e.text)
 		}
 	}
-	ck := &http.Cookie{Name: lastBoardCookie, Value: strings.Join(kept, "."), Path: "/", Secure: secure,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(lastBoardAge / time.Second)}
+	ck := &http.Cookie{Name: name, Value: strings.Join(kept, "."), Path: "/",
+		Secure: secure || name == secureLastBoardCookie, SameSite: http.SameSiteLaxMode,
+		MaxAge: int(lastBoardAge / time.Second)}
 	if len(kept) == 0 {
 		ck.MaxAge = -1
 	}
@@ -189,7 +213,7 @@ func (s *server) landing(cookie sessionCookie) lander {
 			}
 			return projectList, true
 		}
-		projectID, boardID, ok := lastBoardOf(r, session.UserID)
+		projectID, boardID, ok := lastBoardOf(r, session.UserID, cookie.secure)
 		if !ok {
 			return projectList, true
 		}

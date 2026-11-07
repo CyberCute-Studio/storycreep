@@ -31,10 +31,24 @@ func lastBoardCookieOf(h http.Header) *http.Cookie {
 	return nil
 }
 
+// lastBoardNames are the names of the last-board cookie that a server reads,
+// with whether its URL is https: the one that the page writes on a
+// plain-HTTP page, which a server of a plain-HTTP URL reads, and the __Host-
+// prefixed one that it writes on an https page, which a server of either
+// reads, as one of a plain-HTTP URL behind a proxy that the browser reaches
+// with https.
+var lastBoardNames = []struct {
+	name   string
+	secure bool
+}{{lastBoardCookie, false}, {secureLastBoardCookie, false}, {secureLastBoardCookie, true}}
+
 // TestLastBoardCookie checks how the landing reads the last-board cookie:
 // the first entry of the account's, of the first five, whose three IDs are
 // an account's, a project's, and a board's, in either case, past entries of
-// other accounts and entries that are not three such IDs.
+// other accounts and entries that are not three such IDs; and of the
+// cookie's names, the __Host- prefixed one, which no other host of the
+// domain can plant, before the one that is not, which a server of an https
+// URL does not read.
 func TestLastBoardCookie(t *testing.T) {
 	user, other := ids.New(), ids.New()
 	p1, b1, p2, b2 := ids.New(), ids.New(), ids.New(), ids.New()
@@ -65,23 +79,48 @@ func TestLastBoardCookie(t *testing.T) {
 		{"sixth", strings.Repeat(of+".", 5) + e1, [2]ids.UUID{}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tt.value != "" {
-				r.AddCookie(&http.Cookie{Name: lastBoardCookie, Value: tt.value})
-			}
-			p, b, ok := lastBoardOf(r, user)
-			if ok != tt.ok || p != tt.want[0] || b != tt.want[1] {
-				t.Errorf("lastBoardOf = %v, %v, %v; want %v, %v, %v", p, b, ok, tt.want[0], tt.want[1], tt.ok)
+			for _, c := range lastBoardNames {
+				r := httptest.NewRequest(http.MethodGet, "/", nil)
+				if tt.value != "" {
+					r.AddCookie(&http.Cookie{Name: c.name, Value: tt.value})
+				}
+				p, b, ok := lastBoardOf(r, user, c.secure)
+				if ok != tt.ok || p != tt.want[0] || b != tt.want[1] {
+					t.Errorf("%s, secure %v: lastBoardOf = %v, %v, %v; want %v, %v, %v", c.name, c.secure, p, b, ok,
+						tt.want[0], tt.want[1], tt.ok)
+				}
 			}
 		})
 	}
+
+	// A cookie that is not prefixed, as another host of the domain may plant
+	// for the whole domain, and which the browser sends before the page's own
+	// where it is the older, hides nothing of the prefixed one, and a server
+	// of an https URL reads it not even alone.
+	t.Run("of another host", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.AddCookie(&http.Cookie{Name: lastBoardCookie, Value: e2})
+		r.AddCookie(&http.Cookie{Name: secureLastBoardCookie, Value: e1})
+		for _, secure := range []bool{false, true} {
+			if p, b, ok := lastBoardOf(r, user, secure); !ok || p != p1 || b != b1 {
+				t.Errorf("secure %v: lastBoardOf = %v, %v, %v; want the prefixed cookie's %v, %v", secure, p, b, ok,
+					p1, b1)
+			}
+		}
+		r = httptest.NewRequest(http.MethodGet, "/", nil)
+		r.AddCookie(&http.Cookie{Name: lastBoardCookie, Value: e1})
+		if p, b, ok := lastBoardOf(r, user, true); ok {
+			t.Errorf("secure: lastBoardOf of a cookie that is not prefixed = %v, %v; want none", p, b)
+		}
+	})
 }
 
 // TestForgetLastBoard checks the cookie that the landing answers a board
 // that has gone with: the entries of the other accounts, as they were, but
-// for those that are not three IDs, for the path /, SameSite=Lax, readable
-// by the app's scripts, lasting 400 days, and Secure exactly on an https
-// URL; or none, once it keeps no entry.
+// for those that are not three IDs, in the cookie of the name that it read
+// them from, for the path /, SameSite=Lax, readable by the app's scripts,
+// lasting 400 days, and Secure exactly on an https URL or for the __Host-
+// prefixed name; or none, once it keeps no entry.
 func TestForgetLastBoard(t *testing.T) {
 	user, other := ids.New(), ids.New()
 	u, o := ids.Encode(ids.User, user), ids.Encode(ids.User, other)
@@ -96,20 +135,27 @@ func TestForgetLastBoard(t *testing.T) {
 		{"another's, before the account's in lowercase", theirs + "." + strings.ToLower(mine), theirs},
 		{"with an entry that is no entry", "x." + mine + "." + theirs, theirs},
 	} {
-		for _, secure := range []bool{false, true} {
+		for _, c := range lastBoardNames {
 			t.Run(tt.name, func(t *testing.T) {
 				r := httptest.NewRequest(http.MethodGet, "/", nil)
 				if tt.value != "" {
-					r.AddCookie(&http.Cookie{Name: lastBoardCookie, Value: tt.value})
+					r.AddCookie(&http.Cookie{Name: c.name, Value: tt.value})
 				}
-				ck, err := http.ParseSetCookie(forgetLastBoard(r, user, secure))
+				ck, err := http.ParseSetCookie(forgetLastBoard(r, user, c.secure))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if ck.Name != lastBoardCookie || ck.Value != tt.want || ck.Path != "/" ||
+				// Without a cookie, the name is that which the page of the
+				// server's URL writes.
+				name := c.name
+				if tt.value == "" && !c.secure {
+					name = lastBoardCookie
+				}
+				secure := c.secure || name == secureLastBoardCookie
+				if ck.Name != name || ck.Value != tt.want || ck.Path != "/" ||
 					ck.SameSite != http.SameSiteLaxMode || ck.HttpOnly || ck.Secure != secure {
-					t.Errorf("forgetLastBoard = %+v; want %q, for the path /, SameSite=Lax, Secure %v", ck, tt.want,
-						secure)
+					t.Errorf("forgetLastBoard = %+v; want %s=%q, for the path /, SameSite=Lax, Secure %v", ck, name,
+						tt.want, secure)
 				}
 				if want := 400 * 24 * 60 * 60; tt.want == "" && ck.MaxAge >= 0 || tt.want != "" && ck.MaxAge != want {
 					t.Errorf("forgetLastBoard: Max-Age %d; want %d, or a removal", ck.MaxAge, want)
@@ -220,6 +266,13 @@ func TestLanding(t *testing.T) {
 					// Spelled in lowercase, the board's page names it as the
 					// server writes it.
 					lands(t, path, cookies(&owner, strings.ToLower(entry)), board)
+					// The __Host- prefixed cookie, which the page writes on an
+					// https page, as behind a proxy that the browser reaches
+					// with https, before one that is not, as another host of
+					// the domain may plant, which the browser sends first.
+					planted := cookies(&owner, lastBoardEntry(ownerID, p.ID, trashed))
+					planted.Set("Cookie", planted.Get("Cookie")+"; "+secureLastBoardCookie+"="+entry)
+					lands(t, path, planted, board)
 					lands(t, path, cookies(&owner, ""), projectList)
 					lands(t, path, cookies(&owner, "not-a-board"), projectList)
 					lands(t, path, cookies(&owner, lastBoardEntry(ownerID, p.ID, trashed)), projectList)

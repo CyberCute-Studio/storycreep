@@ -1,5 +1,5 @@
 import { type Board, NetworkError } from "@storycreep/shared/api";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PRODUCT_NAME } from "./product";
@@ -30,7 +30,8 @@ const harbour: Board = {
 
 /**
  * Answers the start page and the pages that it goes to, with the test
- * project's boards, and getProject with project, which may throw.
+ * project's boards, and getProject with project, which may throw, and a
+ * board's deletion, which no jumper leads to.
  */
 function answer(boards: Board[], project: () => unknown = () => testProject) {
   return fakeApi((operation) => {
@@ -39,6 +40,15 @@ function answer(boards: Board[], project: () => unknown = () => testProject) {
         return project();
       case "listBoards":
         return { items: boards, next_cursor: null };
+      case "applyCommands":
+        return {
+          status: "applied",
+          seq: testProject.seq + 1,
+          revisions: [],
+          not_reconnected: [],
+          undo: [],
+        };
+      case "listBoardReferrers":
       case "listFolders":
       case "listBoardNodes":
       case "listBoardConnections":
@@ -112,6 +122,26 @@ describe("the start page", () => {
       expect(log.entries(), what).toEqual([]);
       unmount();
     }
+  });
+
+  it("opens the project list once the board's own page has deleted the board, which the page forgets then", async () => {
+    const user = userEvent.setup();
+    answer([harbour]);
+    renderApp(`/projects/${testProject.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Harbour" });
+    await waitFor(() =>
+      expect(lastOpened(testSession.user_id)?.boardId).toBe(harbour.id),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete the board" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Delete the board" }),
+    );
+    await screen.findByRole("heading", { level: 1, name: testProject.name });
+    expect(lastOpened(testSession.user_id)).toBeUndefined();
+    expect(document.cookie).not.toContain(harbour.id);
   });
 
   it("opens the project list, and keeps the board, while the project cannot be read", async () => {

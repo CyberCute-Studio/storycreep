@@ -45,6 +45,16 @@ export function projectQuery(projectId: string) {
 }
 
 /**
+ * What a page reads a project through, as its loader does, and the app's
+ * start page (lastBoard, in lastOpened.ts): the page's query client, and its
+ * documents of projects.
+ */
+export interface ProjectReads {
+  queryClient: QueryClient;
+  documents: Documents;
+}
+
+/**
  * Reads what a page of the project of projectId shows before it shows, as
  * its loader, as the page of the tree of its boards does
  * (projects.$projectId.index.tsx): the project first, so that a project
@@ -53,7 +63,7 @@ export function projectQuery(projectId: string) {
  * page shows, at once, each as loadPart reads it.
  */
 export async function loadParts(
-  context: { queryClient: QueryClient; documents: Documents },
+  context: ProjectReads,
   projectId: string,
   parts: readonly Part[],
 ): Promise<void> {
@@ -78,7 +88,7 @@ export async function loadParts(
  * with, rather than say so after a read that failed.
  */
 export async function readBoard(
-  context: { queryClient: QueryClient; documents: Documents },
+  context: ProjectReads,
   projectId: string,
   boardId: string,
   read: <T>(read: Promise<T>) => Promise<T> = (r) => r,

@@ -231,7 +231,8 @@ function BoardContent({
     editsProject(project.role) && project.archived_at === undefined;
   // The device opens this board next, and its canvas where the user left
   // it, with its selection (PRD FR-PROJ-04), but for the benchmark's runs,
-  // which start where they choose, and leave nothing for the next.
+  // which start where they choose, and leave nothing for the next, and once
+  // the page has deleted it.
   const userId = useSuspenseQuery(sessionQuery).data?.user_id;
   const last = useLastOpened(
     search.bench === undefined ? userId : undefined,
@@ -298,6 +299,7 @@ function BoardContent({
             projectId={projectId}
             board={board}
             onDeleting={onDeleting}
+            onDeleted={last.forget}
           />
         )}
       </section>
@@ -504,10 +506,13 @@ function DeleteBoard({
   projectId,
   board,
   onDeleting,
+  onDeleted,
 }: {
   projectId: string;
   board: Board;
   onDeleting: (deleting: boolean) => void;
+  /** Tells that the board is deleted, before the page goes. */
+  onDeleted: () => void;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -546,9 +551,11 @@ function DeleteBoard({
           }}
           // The page goes to the project's; a page of the board, which is
           // in the trash now, that the user goes back to finds it gone from
-          // the document's tree, and shows the page of no page.
+          // the document's tree, and shows the page of no page. Neither the
+          // start page nor the server opens it next (onDeleted).
           onDeleted={() => {
             deleted.current = true;
+            onDeleted();
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },

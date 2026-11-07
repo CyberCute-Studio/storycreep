@@ -66,7 +66,7 @@ test.describe("a board's canvas", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("opens where it was left on a board that the page showed before", async ({
+  test("opens where it was left on the board that the page showed last", async ({
     page,
   }) => {
     const board = await openBoard(page);
