@@ -24,8 +24,8 @@ import {
   Sprite,
   Texture,
 } from "pixi.js";
-import type { NodeLabels } from "./labels";
-import { type Curve, outputOffset, portPoint } from "./layout";
+import { type NodeLabels, sameLabels } from "./labels";
+import { outputOffset, portPoint } from "./layout";
 import type { ConnectionItem, NodeItem, Scene } from "./scene";
 import {
   bodyLine,
@@ -43,11 +43,13 @@ import {
 import { nodeColor, type Theme } from "./theme";
 import {
   contains,
+  crowdedAt,
   detailZoom,
   grow,
   intersects,
   type Rect,
   type Size,
+  union,
   type Viewport,
   visibleRect,
 } from "./viewport";
@@ -114,16 +116,15 @@ export interface EngineOptions {
   fontFamily: string;
 }
 
-/**
- * The Canvas 2D renderer's reduced limits (ADR-013): it draws each sprite
- * on its own, so it shows cards with text only while at most this many
- * nodes are in the canvas, and blocks beyond, and a card's text in fewer
- * lines.
- */
-export const canvasDetailLimit = 300;
-
 /** How far around the canvas the renderer builds objects, in canvases: half of one on each side. */
 const margin = 0.5;
+
+/**
+ * The tiles of the grid over the margin, in each direction, that the Canvas
+ * 2D renderer's lines are of (cull): eight, so that a tile is a quarter of
+ * the canvas, which a view of the margin overlaps 16 to 25 of the 64 of.
+ */
+const lineGrid = 8;
 
 /** How far the zoom may go from the one that the margin was built at before it is built anew, so that lines and text keep their width on the screen. */
 const zoomSlack = 1.25;
@@ -246,6 +247,14 @@ interface CardView {
   /** What the card shows, so that a card of the same node, at the same versions, is not drawn anew. */
   item?: NodeItem;
   key?: string;
+  /** The labels that it shows, so that a change of the names that cards show writes again only the cards that it changes. */
+  labels?: NodeLabels;
+}
+
+/** A tile of the connections' lines: its Graphics, and the rectangle of the board that its lines take, or none for a tile without any. */
+interface LineTile {
+  g: Graphics;
+  bounds: Rect | undefined;
 }
 
 class PixiEngine implements Engine {
@@ -253,7 +262,16 @@ class PixiEngine implements Engine {
   private readonly stage = new Container();
   /** The board, at the zoom, positioned from the origin of the margin. */
   private readonly world = new Container();
-  private readonly lines = new Graphics();
+  /**
+   * The connections' lines: on a GPU's renderer, one Graphics of every
+   * connection of the margin, which it batches into a draw call or a few;
+   * on the Canvas 2D renderer, which strokes each connection on its own,
+   * a Graphics for each tile of a grid over the margin (lineGrid), of the
+   * connections whose curves' centres are in it, so that it strokes those
+   * of the tiles whose lines reach into the canvas alone (cull).
+   */
+  private readonly lines = new Container();
+  private readonly lineTiles: LineTile[] = [];
   private readonly blocks = new Container();
   private readonly cards = new Container();
   /** The textures that the cards are drawn of, white, which a tint colours. */
@@ -286,6 +304,8 @@ class PixiEngine implements Engine {
     | undefined;
   /** The fonts that this renderer installed, which it releases as it ends. */
   private readonly fonts = new Set<string>();
+  /** Whether the Canvas 2D renderer shows blocks for the nodes in view, which it does until fewer are than bring its cards back (crowdedAt). */
+  private crowded = false;
 
   constructor(
     private readonly renderer: Renderer,
@@ -358,11 +378,11 @@ class PixiEngine implements Engine {
     if (inView === undefined && this.kind === "canvas") {
       inView = f.scene.nodesIn(visible).length;
     }
+    if (this.kind === "canvas") {
+      this.crowded = crowdedAt(v.zoom, inView ?? 0, this.crowded);
+    }
     const lod: FrameStats["lod"] =
-      v.zoom < detailZoom ||
-      (this.kind === "canvas" && (inView ?? 0) > canvasDetailLimit)
-        ? "blocks"
-        : "detail";
+      v.zoom < detailZoom || this.crowded ? "blocks" : "detail";
     const moved =
       b === undefined ||
       b.lod !== lod ||
@@ -404,19 +424,33 @@ class PixiEngine implements Engine {
   }
 
   /**
-   * Draws, of the nodes of the margin, those in r alone, as the Canvas 2D
-   * renderer draws each object that it is given on its own, each glyph of a
-   * card's text too, whether the canvas shows it or not, since PixiJS culls
-   * nothing by itself: so the margin, which keeps the canvas from building
-   * anything as it pans, costs it nothing to draw, and it draws as many
-   * cards as there are nodes in view, which its limit counts
-   * (canvasDetailLimit), rather than the four times as many that the margin
-   * holds. A GPU's renderer draws the margin whole, in a few batches.
+   * Draws, of the nodes of the margin, those in r alone, and of its lines,
+   * those of the tiles whose lines reach into r, as the Canvas 2D renderer
+   * draws each object that it is given on its own, each glyph of a card's
+   * text and each connection's curve too, whether the canvas shows it or
+   * not, since PixiJS culls nothing by itself: so the margin, which keeps
+   * the canvas from building anything as it pans, costs it little to draw,
+   * and it draws as many cards as there are nodes in view, which its limit
+   * counts (canvasDetailLimit), rather than the four times as many that the
+   * margin holds. A GPU's renderer draws the margin whole, in a few batches.
    */
   private cull(r: Rect): void {
     const built = this.built;
     if (built === undefined) {
       return;
+    }
+    // A card's ring and its ports reach a few units beyond its node, and a
+    // line half its width beyond its curve, which is less than they do at
+    // any zoom from 10%.
+    const around = {
+      x: r.x - cardReach,
+      y: r.y - cardReach,
+      width: r.width + 2 * cardReach,
+      height: r.height + 2 * cardReach,
+    };
+    for (const tile of this.lineTiles) {
+      tile.g.renderable =
+        tile.bounds !== undefined && intersects(tile.bounds, around);
     }
     if (built.lod === "blocks") {
       built.shown.forEach((item, i) => {
@@ -424,13 +458,6 @@ class PixiEngine implements Engine {
       });
       return;
     }
-    // A card's ring and its ports reach a few units beyond its node.
-    const around = {
-      x: r.x - cardReach,
-      y: r.y - cardReach,
-      width: r.width + 2 * cardReach,
-      height: r.height + 2 * cardReach,
-    };
     for (const item of built.shown) {
       const view = this.cardViews.get(item.node.id);
       if (view !== undefined) {
@@ -460,9 +487,13 @@ class PixiEngine implements Engine {
     const fresh =
       was === undefined ||
       was.tier !== tier ||
-      was.labelsVersion !== f.labelsVersion ||
       was.theme !== theme ||
       was.lod !== lod;
+    // A change of the names that cards show, as of the title of a node that
+    // a jumper goes to, or of a component, reads each card's labels again,
+    // and writes again only the cards whose labels it changed, as the few
+    // jumpers to the node, rather than every card of the margin.
+    const relabel = was !== undefined && was.labelsVersion !== f.labelsVersion;
     let texts = 0;
     if (lod === "blocks") {
       this.releaseCards(new Set());
@@ -503,21 +534,26 @@ class PixiEngine implements Engine {
         }
         const selected = f.selection.has(item.node.id);
         const key = `${selected}`;
-        if (fresh || view.item !== item || view.key !== key) {
-          this.drawCard(view, item, f, fonts, selected, lines);
-          view.item = item;
-          view.key = key;
+        const stale = fresh || view.item !== item || view.key !== key;
+        if (stale || relabel) {
+          const labels = f.labels(item);
+          if (stale || !sameLabels(labels, view.labels)) {
+            this.drawCard(view, item, labels, f, fonts, selected, lines);
+            view.item = item;
+            view.key = key;
+            view.labels = labels;
+          }
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;
       }
       this.orderCards(shown.nodes);
     }
-    // The lines are one stroke of every connection of the margin, drawn
-    // anew only once a connection, the margin, the zoom that their width
-    // follows, the level of detail, or the theme changed.
+    // The lines are one stroke of every connection of the margin, or of a
+    // tile's, drawn anew only once a connection, the margin, the zoom that
+    // their width follows, the level of detail, or the theme changed.
     if (!same || was.zoom !== zoom || was.lod !== lod || was.theme !== theme) {
-      this.drawLines(shown.connections, origin, zoom, lod, theme);
+      this.drawLines(shown.connections, region, origin, zoom, lod, theme);
     }
     this.built = {
       region,
@@ -581,6 +617,7 @@ class PixiEngine implements Engine {
         this.cardViews.delete(id);
         view.root.visible = false;
         view.item = undefined;
+        view.labels = undefined;
         this.freeCards.push(view);
       }
     }
@@ -624,6 +661,7 @@ class PixiEngine implements Engine {
   private drawCard(
     view: CardView,
     item: NodeItem,
+    labels: NodeLabels,
     f: Frame,
     fonts: Fonts,
     selected: boolean,
@@ -632,7 +670,6 @@ class PixiEngine implements Engine {
     const { theme } = f;
     const { width: w, height: h } = item.rect;
     const node = item.node;
-    const labels = f.labels(item);
     view.root.visible = true;
     // The textures' corners are drawn at 16 of 64 pixels; a card's are
     // cornerRadius of the board's units.
@@ -762,44 +799,80 @@ class PixiEngine implements Engine {
     }
   }
 
+  /**
+   * Draws the lines of connections, of the margin that is region, from its
+   * origin: on a GPU's renderer, into one Graphics; on the Canvas 2D
+   * renderer, each into the tile of the grid over region that the centre of
+   * its curve is in, with the rectangle that the tile's lines take, by
+   * which cull draws the tile or not.
+   */
   private drawLines(
-    connections: readonly { curve: Curve }[],
+    connections: readonly ConnectionItem[],
+    region: Rect,
     origin: { x: number; y: number },
     zoom: number,
     lod: FrameStats["lod"],
     theme: Theme,
   ): void {
-    const g = this.lines;
-    g.clear();
-    if (connections.length === 0) {
-      return;
+    const grid = this.kind === "canvas" ? lineGrid : 1;
+    while (this.lineTiles.length < grid * grid) {
+      const g = new Graphics();
+      this.lines.addChild(g);
+      this.lineTiles.push({ g, bounds: undefined });
+    }
+    const tiles = this.lineTiles.map((): ConnectionItem[] => []);
+    // The tile's column or row of a centre at p, of the region from start
+    // that is length long.
+    const cell = (p: number, start: number, length: number) =>
+      Math.min(
+        grid - 1,
+        Math.max(0, Math.floor(((p - start) / Math.max(1, length)) * grid)),
+      );
+    for (const item of connections) {
+      const b = item.bounds;
+      const i =
+        grid === 1
+          ? 0
+          : cell(b.y + b.height / 2, region.y, region.height) * grid +
+            cell(b.x + b.width / 2, region.x, region.width);
+      tiles[i].push(item);
     }
     const width = 1.5 / zoom;
-    for (const { curve: c } of connections) {
-      g.moveTo(c.p0.x - origin.x, c.p0.y - origin.y);
-      if (lod === "blocks") {
-        g.lineTo(c.p3.x - origin.x, c.p3.y - origin.y);
-      } else {
-        g.bezierCurveTo(
-          c.c1.x - origin.x,
-          c.c1.y - origin.y,
-          c.c2.x - origin.x,
-          c.c2.y - origin.y,
-          c.p3.x - origin.x,
-          c.p3.y - origin.y,
-        );
+    this.lineTiles.forEach((tile, i) => {
+      const g = tile.g;
+      g.clear();
+      const items = tiles[i];
+      tile.bounds = union(items.map((item) => item.bounds));
+      g.visible = items.length > 0;
+      if (items.length === 0) {
+        return;
       }
-    }
-    g.stroke({ width, color: theme.border, alpha: 0.9 });
-    if (lod === "detail" && this.kind !== "canvas") {
-      // An arrowhead where each connection enters its node.
-      for (const { curve: c } of connections) {
-        const x = c.p3.x - origin.x;
-        const y = c.p3.y - origin.y;
-        g.poly([x, y, x - 9, y - 5, x - 9, y + 5]);
+      for (const { curve: c } of items) {
+        g.moveTo(c.p0.x - origin.x, c.p0.y - origin.y);
+        if (lod === "blocks") {
+          g.lineTo(c.p3.x - origin.x, c.p3.y - origin.y);
+        } else {
+          g.bezierCurveTo(
+            c.c1.x - origin.x,
+            c.c1.y - origin.y,
+            c.c2.x - origin.x,
+            c.c2.y - origin.y,
+            c.p3.x - origin.x,
+            c.p3.y - origin.y,
+          );
+        }
       }
-      g.fill({ color: theme.border });
-    }
+      g.stroke({ width, color: theme.border, alpha: 0.9 });
+      if (lod === "detail" && this.kind !== "canvas") {
+        // An arrowhead where each connection enters its node.
+        for (const { curve: c } of items) {
+          const x = c.p3.x - origin.x;
+          const y = c.p3.y - origin.y;
+          g.poly([x, y, x - 9, y - 5, x - 9, y + 5]);
+        }
+        g.fill({ color: theme.border });
+      }
+    });
   }
 
   /** Returns the fonts of tier, installing them once. */

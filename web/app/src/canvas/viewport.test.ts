@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   between,
+  canvasDetailLimit,
+  canvasDetailReturn,
   clampZoom,
+  crowdedAt,
   fitTo,
   maxZoom,
   minZoom,
@@ -39,6 +42,23 @@ describe("the viewport", () => {
       expect(after.y).toBeCloseTo(before.y, 9);
     }
     expect(zoomAt(v, at, 9).zoom).toBe(4);
+  });
+
+  it("keeps the Canvas 2D renderer's blocks until the nodes in view are well under its limit", () => {
+    expect(canvasDetailReturn).toBeLessThan(canvasDetailLimit);
+    let crowded = false;
+    const shown: boolean[] = [];
+    // Panning across about the limit switches once, not with each node.
+    for (const inView of [299, 301, 299, 300, 260]) {
+      crowded = crowdedAt(0.5, inView, crowded);
+      shown.push(crowded);
+    }
+    expect(shown).toEqual([false, true, true, true, true]);
+    expect(crowdedAt(0.5, canvasDetailReturn, crowded)).toBe(false);
+    // Below 40% the zoom's blocks are the zoom's, and a zoom in to it
+    // counts by the limit alone.
+    expect(crowdedAt(0.3, 1000, true)).toBe(false);
+    expect(crowdedAt(0.45, 280, false)).toBe(false);
   });
 
   it("moves the board with a drag", () => {

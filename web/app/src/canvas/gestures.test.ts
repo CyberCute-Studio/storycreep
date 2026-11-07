@@ -314,6 +314,15 @@ describe("the canvas's gestures", () => {
     expect(state.v.zoom).toBeCloseTo(Math.exp(0.1) * Math.exp(-0.25));
   });
 
+  it("pans a wheel's page by the canvas's width across and its height down", () => {
+    const { state, gestures } = host();
+    const page = { x: 0, y: 0, deltaMode: 2, zoom: false, shift: false };
+    gestures.wheel({ ...page, dx: 1, dy: 0 });
+    expect(state.v).toEqual({ x: 800, y: 0, zoom: 1 });
+    gestures.wheel({ ...page, dx: 0, dy: 1 });
+    expect(state.v).toEqual({ x: 800, y: 600, zoom: 1 });
+  });
+
   it("zooms with Safari's trackpad pinch", () => {
     const { state, gestures } = host();
     gestures.scale({ x: 0, y: 0 }, 1, 1.5);

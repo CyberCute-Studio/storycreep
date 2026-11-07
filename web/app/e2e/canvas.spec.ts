@@ -280,6 +280,23 @@ test.describe("a board's canvas", () => {
     await page.mouse.move(box.x + 100, box.y + 100, { steps: 5 });
     await page.mouse.up({ button: "right" });
     expect(await viewOf(canvas)).toEqual(v3);
+    // Nor on the minimap, where a click of the primary button centres the
+    // canvas.
+    const minimap = canvas.locator("canvas").last();
+    const mbox = await minimap.boundingBox();
+    if (mbox === null) {
+      throw new Error("the minimap is not shown");
+    }
+    const corner = {
+      x: mbox.x + mbox.width * 0.9,
+      y: mbox.y + mbox.height * 0.9,
+    };
+    await page.mouse.click(corner.x, corner.y, { button: "right" });
+    expect(await settled(canvas)).toEqual(v3);
+    await page.mouse.click(corner.x, corner.y);
+    await expect
+      .poll(async () => (await viewOf(canvas)).x)
+      .toBeGreaterThan(v3.x);
   });
 
   // Verifies: FR-EDIT-01/AC4

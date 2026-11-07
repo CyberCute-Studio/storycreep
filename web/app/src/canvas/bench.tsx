@@ -170,6 +170,7 @@ export default function Bench({
       stop();
       window.clearInterval(waiting);
       const mark = performance.getEntriesByName(renderedMark)[0];
+      const inView = statsOf(visible);
       setResult({
         scenario,
         seconds: options.seconds,
@@ -182,7 +183,7 @@ export default function Bench({
             : 1000 / (intervals.reduce((a, b) => a + b, 0) / intervals.length),
         frame: statsOf(intervals),
         work: statsOf(work),
-        visible: { mean: statsOf(visible).mean, max: statsOf(visible).max },
+        visible: { mean: inView.mean, max: inView.max },
         held: { max: held },
         textures: { start: textureStart, end: handle.textures() },
         heap:

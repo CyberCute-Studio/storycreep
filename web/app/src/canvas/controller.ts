@@ -271,8 +271,9 @@ export class CanvasController implements GestureHost {
     const relabel = namesChanged || this.scene.targetsVersion !== targets;
     if (relabel) {
       // A card names components, variables, and, a jumper's, the node that
-      // it goes to, which may have changed without it: every card is
-      // written anew. A card of a node that changed itself is written anew
+      // it goes to, which may have changed without it: the renderer reads
+      // every card's labels again, and writes again those that they
+      // changed. A card of a node that changed itself is written anew
       // alone.
       this.labelsVersion++;
     }
@@ -454,10 +455,19 @@ export class CanvasController implements GestureHost {
     return true;
   }
 
-  /** Centres the canvas on p of the board, at once, as the minimap does. */
+  /**
+   * Centres the canvas on p of the board, at once, as the minimap does, at
+   * the zoom that an animation in progress goes to, which this ends, rather
+   * than at the one that it was passing through, which no step of the zoom
+   * gives.
+   */
   centerOn(p: Point): void {
     this.setViewport(
-      anchorAt(p, { x: this.sz.width / 2, y: this.sz.height / 2 }, this.v.zoom),
+      anchorAt(
+        p,
+        { x: this.sz.width / 2, y: this.sz.height / 2 },
+        this.target().zoom,
+      ),
     );
   }
 
@@ -541,7 +551,16 @@ export class CanvasController implements GestureHost {
     }
   }
 
-  /** Draws a frame at once, in place of the one asked for. */
+  /**
+   * Draws a frame at once, in place of the one asked for. It is drawn from
+   * within the page's own work, as React's commit that sets the canvas's
+   * height, or the observer's callback of its size, rather than in a frame
+   * of the browser's: a renderer that throws, as one whose GPU's device is
+   * lost, throws in the loop's frame that it asks for instead, which tries
+   * again, and where the browser reports what still throws, as of any
+   * frame, rather than into React's commit, which would take the board's
+   * page down with it.
+   */
   private drawNow(): void {
     if (this.stopped) {
       return;
@@ -550,7 +569,11 @@ export class CanvasController implements GestureHost {
       this.clock.cancel(this.pending);
       this.pending = 0;
     }
-    this.frame(this.clock.now());
+    try {
+      this.frame(this.clock.now());
+    } catch {
+      this.invalidate();
+    }
   }
 
   private readonly frame = (time: number): void => {

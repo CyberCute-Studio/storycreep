@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
 import { keyAction } from "./keyboard";
-import { type LabelContext, labelsOf, namesDiffer, plainText } from "./labels";
+import {
+  type LabelContext,
+  labelsOf,
+  namesDiffer,
+  plainText,
+  sameLabels,
+} from "./labels";
 import { clip, textTier, wrapLines } from "./text";
 
 const context: LabelContext = {
@@ -125,6 +131,32 @@ describe("a card's labels", () => {
     );
     expect(text.length).toBe(240);
     expect(text.endsWith("…")).toBe(true);
+  });
+
+  it("cuts a long text between whole characters, not within an emoji", () => {
+    // The emoji's two code units are the 239th and the 240th.
+    const text = plainText(
+      {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: `${"a".repeat(238)}🌊${"b".repeat(50)}` },
+            ],
+          },
+        ],
+      },
+      context,
+    );
+    expect(text).toBe(`${"a".repeat(238)}…`);
+  });
+
+  it("tells whether two cards' labels show the same", () => {
+    const labels = { title: "Dock", kind: "Jumper", body: "To: The dock" };
+    expect(sameLabels(labels, { ...labels })).toBe(true);
+    expect(sameLabels(labels, { ...labels, body: "To: Harbour" })).toBe(false);
+    expect(sameLabels(labels, undefined)).toBe(false);
   });
 
   it("tells that a name that cards show changed, but not for another change of what has it", () => {

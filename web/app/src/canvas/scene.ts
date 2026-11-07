@@ -24,6 +24,8 @@ export interface NodeItem {
 export interface ConnectionItem {
   connection: Connection;
   curve: Curve;
+  /** The rectangle of the board that its curve takes, as the spatial index holds it. */
+  bounds: Rect;
 }
 
 /** What a rectangle of the board shows. */
@@ -215,7 +217,8 @@ export class Scene {
     }
     this.waiting.delete(c.id);
     const curve = connectionCurve(c, from, to);
-    this.connections.set(c.id, curveBounds(curve), { connection: c, curve });
+    const bounds = curveBounds(curve);
+    this.connections.set(c.id, bounds, { connection: c, curve, bounds });
     this.changed();
   }
 

@@ -23,6 +23,7 @@ import {
   toScreen,
   toWorld,
   type Viewport,
+  zoomAt,
 } from "./viewport";
 
 /** What a drag of one pointer does: pan the board, or draw a rubber band. */
@@ -342,16 +343,16 @@ export class Gestures {
   /** Takes a turn of the wheel, or a trackpad's scroll or pinch, which the canvas always handles. */
   wheel(w: WheelInput): void {
     const size = this.host.size();
-    const unit =
-      w.deltaMode === 1 ? lineHeight : w.deltaMode === 2 ? size.height : 1;
-    let dx = w.dx * unit;
-    let dy = w.dy * unit;
+    // A page is the canvas's width across and its height down.
+    const unit = (page: number) =>
+      w.deltaMode === 1 ? lineHeight : w.deltaMode === 2 ? page : 1;
+    let dx = w.dx * unit(size.width);
+    let dy = w.dy * unit(size.height);
     const v = this.host.viewport();
     if (w.zoom) {
       const step = Math.max(-wheelZoomStep, Math.min(wheelZoomStep, dy));
       const zoom = v.zoom * Math.exp(-step * wheelZoomRate);
-      const anchor = toWorld(v, w);
-      this.host.setViewport(anchorAt(anchor, w, zoom));
+      this.host.setViewport(zoomAt(v, { x: w.x, y: w.y }, zoom));
       return;
     }
     if (w.shift && dx === 0) {
@@ -378,7 +379,7 @@ export class Gestures {
       }
     }
     const v = this.host.viewport();
-    this.host.setViewport(anchorAt(toWorld(v, at), at, v.zoom * (to / from)));
+    this.host.setViewport(zoomAt(v, at, v.zoom * (to / from)));
   }
 }
 

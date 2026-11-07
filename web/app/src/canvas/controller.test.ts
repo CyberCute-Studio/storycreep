@@ -224,7 +224,7 @@ describe("the canvas's controller", () => {
     expect(time.pending()).toBe(1);
   });
 
-  it("writes every card anew once a name that cards show changes, but not for a node that moves", () => {
+  it("reads every card's labels again once a name that cards show changes, but not for a node that moves", () => {
     const { c, time, frames } = setUp();
     const jumper = testNode("nd_j", 0, 0, {
       type: "jumper",
@@ -340,6 +340,50 @@ describe("the canvas's controller", () => {
     expect(held.zoom).toBeGreaterThan(1);
     time.tick(animationTime);
     expect(c.viewport()).toEqual(held);
+  });
+
+  it("centres the canvas, as the minimap does, at the zoom that an animation in progress goes to", () => {
+    const { c, time } = setUp();
+    c.setViewport({ x: 0, y: 0, zoom: 0.5 });
+    c.zoomStep(1);
+    time.tick();
+    expect(c.viewport().zoom).toBeLessThan(0.67);
+    c.centerOn({ x: 2000, y: 1000 });
+    expect(c.viewport().zoom).toBe(0.67);
+    expect(c.viewport().x + 500 / 0.67).toBeCloseTo(2000);
+    expect(c.viewport().y + 300 / 0.67).toBeCloseTo(1000);
+    time.tick(animationTime);
+    expect(c.viewport().zoom).toBe(0.67);
+  });
+
+  it("draws a resize that the renderer throws on in the next frame, rather than throw into the page", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    let lost = true;
+    const drawn: { width: number; height: number }[] = [];
+    c.setEngine({
+      kind: "webgl",
+      resize: () => {},
+      render: (f) => {
+        if (lost) {
+          lost = false;
+          throw new Error("the GPU's device is lost");
+        }
+        drawn.push(f.size);
+        return {
+          lod: "detail",
+          nodes: 1,
+          visible: 1,
+          texts: 0,
+          connections: 0,
+        };
+      },
+      textures: () => undefined,
+      destroy: () => {},
+    });
+    expect(() => c.setSize({ width: 800, height: 600 }, 1)).not.toThrow();
+    time.tick();
+    expect(drawn).toEqual([{ width: 800, height: 600 }]);
   });
 
   it("tells the zoom as it changes by a percent", () => {

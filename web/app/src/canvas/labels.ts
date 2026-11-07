@@ -118,6 +118,16 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
   }
 }
 
+/** Reports whether a, a card's labels, shows the same as b, those that it was drawn with, or none, of a card not drawn yet. */
+export function sameLabels(a: NodeLabels, b: NodeLabels | undefined): boolean {
+  return (
+    b !== undefined &&
+    a.title === b.title &&
+    a.kind === b.kind &&
+    a.body === b.body
+  );
+}
+
 /**
  * Reports whether the name that cards show of an entity, as name reads it,
  * as a component's name or a variable's key, differs between the maps
@@ -183,9 +193,18 @@ export function plainText(
   };
   blocks(doc.content);
   const text = lines.join("\n").trim();
-  return text.length > excerptLength
-    ? `${text.slice(0, excerptLength - 1)}…`
-    : text;
+  if (text.length <= excerptLength) {
+    return text;
+  }
+  // Whole characters, as the card's lines cut it (text.ts): a cut between
+  // the two code units of one, as of an emoji, would leave half of it,
+  // which a font draws as a broken glyph.
+  let end = excerptLength - 1;
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end--;
+  }
+  return `${text.slice(0, end)}…`;
 }
 
 function inline(

@@ -45,6 +45,38 @@ export const maxZoom = 4;
 export const detailZoom = 0.4;
 
 /**
+ * The Canvas 2D renderer's reduced limits (ADR-013): it draws each sprite
+ * on its own, so it shows cards with text only while at most this many
+ * nodes are in the canvas, and blocks beyond, and a card's text in fewer
+ * lines.
+ */
+export const canvasDetailLimit = 300;
+
+/**
+ * How few nodes in the canvas bring the Canvas 2D renderer's cards back,
+ * once it showed blocks for more than canvasDetailLimit: a view that holds
+ * about the limit, as one that pans across a board of about as many nodes
+ * to a canvas, would else switch between cards and blocks, and build every
+ * object of its margin anew, as each node came into it or left it.
+ */
+export const canvasDetailReturn = 240;
+
+/**
+ * Reports whether the Canvas 2D renderer shows blocks, for being crowded,
+ * at zoom, with inView nodes in the canvas, as it did before (was): from
+ * more than canvasDetailLimit, until canvasDetailReturn or fewer are again.
+ * Below detailZoom, where the zoom shows blocks of itself, it is not, so
+ * that a zoom in past detailZoom shows cards for as many nodes as the
+ * limit, rather than for as few as bring them back.
+ */
+export function crowdedAt(zoom: number, inView: number, was: boolean): boolean {
+  return (
+    zoom >= detailZoom &&
+    inView > (was ? canvasDetailReturn : canvasDetailLimit)
+  );
+}
+
+/**
  * How far a point of the board may be from its origin, as a node's position
  * may (FR-EDIT-02), with the room that a node and a margin take beyond it.
  */
@@ -53,9 +85,15 @@ const extent = 1_000_200_000;
 /**
  * What the canvas shows of a board without nodes: its origin, at 100%, 48
  * CSS pixels from the canvas's corner, as fit to content leaves 48 around
- * what it shows.
+ * what it shows. It is frozen, as the canvas shows it as it is, and hands
+ * it to the benchmark as its viewport: one that a caller changed would be
+ * every later empty board's, and its minimap's.
  */
-export const emptyView: Viewport = { x: -48, y: -48, zoom: 1 };
+export const emptyView: Readonly<Viewport> = Object.freeze({
+  x: -48,
+  y: -48,
+  zoom: 1,
+});
 
 /** The zooms that the zoom buttons and keys step through. */
 const stops = [
@@ -94,9 +132,7 @@ function bounded(v: Viewport): Viewport {
  * the board that the screen's point at shows stays where it is.
  */
 export function zoomAt(v: Viewport, at: Point, zoom: number): Viewport {
-  const z = clampZoom(zoom);
-  const anchor = toWorld(v, at);
-  return bounded({ x: anchor.x - at.x / z, y: anchor.y - at.y / z, zoom: z });
+  return anchorAt(toWorld(v, at), at, zoom);
 }
 
 /**

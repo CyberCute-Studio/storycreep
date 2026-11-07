@@ -17,9 +17,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
+import { createStore, type StoreApi } from "zustand/vanilla";
 import type { Doc } from "../document/doc";
 import { boardPart } from "../document/doc";
 import { useProjectDocument } from "../document/react";
@@ -48,32 +49,8 @@ export interface CanvasOptions {
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
 
-/** The zoom that the toolbar shows, as the canvas tells it. */
-interface ZoomShown {
-  get(): number;
-  set(zoom: number): void;
-  subscribe(changed: () => void): () => void;
-}
-
-function zoomShown(): ZoomShown {
-  let zoom = 1;
-  const listeners = new Set<() => void>();
-  return {
-    get: () => zoom,
-    set: (next) => {
-      zoom = next;
-      for (const changed of listeners) {
-        changed();
-      }
-    },
-    subscribe: (changed) => {
-      listeners.add(changed);
-      return () => {
-        listeners.delete(changed);
-      };
-    },
-  };
-}
+/** The zoom that the toolbar shows, as the canvas tells it, in a store of its own. */
+type ZoomShown = StoreApi<number>;
 
 /**
  * The toolbar's button of the zoom, which shows it and shows 100% again: it
@@ -88,7 +65,7 @@ function ZoomReset({
   onClick: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const value = useSyncExternalStore(zoom.subscribe, zoom.get);
+  const value = useStore(zoom);
   const percent = formatNumber(i18n.language, value, {
     style: "percent",
     maximumFractionDigits: 0,
@@ -154,7 +131,7 @@ export function BoardCanvas({
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const [mode, setMode] = useState<Mode>("pan");
   const [selected, setSelected] = useState(0);
-  const [zoom] = useState(zoomShown);
+  const [zoom] = useState<ZoomShown>(() => createStore<number>(() => 1));
   const [content, setContent] = useState<"loading" | "ready" | "failed">(
     "loading",
   );
@@ -171,7 +148,7 @@ export function BoardCanvas({
     () =>
       new CanvasController(boardId, {
         selection: (ids) => setSelected(ids.size),
-        zoom: zoom.set,
+        zoom: (z) => zoom.setState(z, true),
         rendered: () => {
           try {
             performance.clearMarks(renderedMark);
@@ -524,7 +501,11 @@ export function BoardCanvas({
   // every drag of the select mode after.
   const blur = () => controller.gestures.setSpace(false);
   const minimapPointer = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (e.type === "pointermove" && e.buttons === 0) {
+    // The primary button's alone, as a finger's touch or a pen's tip, as on
+    // the canvas: a right click, the middle button, or a pen's barrel
+    // button or its eraser, does nothing to the board here either, nor a
+    // move without the primary button down.
+    if (e.type === "pointerdown" ? e.button !== 0 : (e.buttons & 1) === 0) {
       return;
     }
     e.stopPropagation();

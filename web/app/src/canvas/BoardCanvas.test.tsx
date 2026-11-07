@@ -16,7 +16,6 @@ const engines = vi.hoisted(() => ({
 // PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
 // tests draw with an engine that draws nothing.
 vi.mock("./engine", () => ({
-  canvasDetailLimit: 300,
   createEngine: async (): Promise<Engine> => {
     if (engines.fail) {
       throw new Error("no renderer");
