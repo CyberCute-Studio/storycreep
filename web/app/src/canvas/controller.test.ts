@@ -340,6 +340,7 @@ describe("the canvas's controller", () => {
       y: 100,
       kind: "mouse" as const,
       button: 2,
+      buttons: 2,
       shift: false,
       additive: false,
     };
@@ -348,7 +349,7 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBe(2);
     c.zoomTo(1);
     time.tick();
-    expect(c.pointer("down", { ...right, button: 0 })).toBe(true);
+    expect(c.pointer("down", { ...right, button: 0, buttons: 1 })).toBe(true);
     const held = c.viewport();
     expect(held.zoom).toBeGreaterThan(1);
     time.tick(animationTime);

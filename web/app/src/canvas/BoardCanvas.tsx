@@ -111,6 +111,7 @@ function pointerInput(e: PointerEvent, rect: DOMRect): PointerInput {
           ? "pen"
           : "mouse",
     button: e.button,
+    buttons: e.buttons,
     shift: e.shiftKey,
     additive: e.ctrlKey || e.metaKey,
   };
@@ -238,6 +239,28 @@ export function BoardCanvas({
       density?.addEventListener("change", densityChanged);
     };
     watchDensity();
+    // The pointers whose capture the host took as they went down, which it
+    // gives back once the canvas no longer follows them, as once a press
+    // whose release the canvas did not hear of ended, or another pointer's
+    // press, or the window's blur, ended it: the browser, which did not
+    // hear of the release either, might else send the pointer's next press,
+    // as of a button of the toolbar, to the host rather than to the button.
+    const captured = new Set<number>();
+    const letGo = () => {
+      for (const id of captured) {
+        if (controller.gestures.tracks(id)) {
+          continue;
+        }
+        captured.delete(id);
+        try {
+          if (host.hasPointerCapture?.(id)) {
+            host.releasePointerCapture(id);
+          }
+        } catch {
+          // A pointer that the browser no longer has keeps no capture.
+        }
+      }
+    };
     const pointer =
       (type: "down" | "move" | "up" | "cancel") => (e: PointerEvent) => {
         if (
@@ -252,20 +275,17 @@ export function BoardCanvas({
         if (type !== "down" && !controller.gestures.tracks(e.pointerId)) {
           return;
         }
-        const input = pointerInput(e, host.getBoundingClientRect());
-        // A mouse that the canvas follows, but that moves with no button
-        // down, went up where the canvas did not hear of it, as once a
-        // menu of the system's took the release, rather than the page:
-        // its press ends there, as cancelled, rather than pan the board,
-        // or draw a rubber band, as the mouse hovers.
-        const released =
-          type === "move" && input.kind === "mouse" && e.buttons === 0;
-        const followed = controller.pointer(released ? "cancel" : type, input);
+        const followed = controller.pointer(
+          type,
+          pointerInput(e, host.getBoundingClientRect()),
+        );
         if (type === "down" && followed) {
           host.focus({ preventScroll: true });
           host.setPointerCapture?.(e.pointerId);
+          captured.add(e.pointerId);
           e.preventDefault();
         }
+        letGo();
       };
     const down = pointer("down");
     const move = pointer("move");
@@ -334,6 +354,7 @@ export function BoardCanvas({
     };
     const blur = () => {
       controller.gestures.cancelAll();
+      letGo();
       controller.gestures.setSpace(false);
     };
     host.addEventListener("touchstart", own, { passive: false });

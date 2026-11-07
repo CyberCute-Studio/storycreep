@@ -56,9 +56,22 @@ function host(mode: Mode = "pan") {
 }
 
 function touch(id: number, x: number, y: number): PointerInput {
-  return { id, x, y, kind: "touch", button: 0, shift: false, additive: false };
+  return {
+    id,
+    x,
+    y,
+    kind: "touch",
+    button: 0,
+    buttons: 1,
+    shift: false,
+    additive: false,
+  };
 }
 
+/** The bit of the browser's `buttons` of each button that `button` names. */
+const held: Record<number, number> = { 0: 1, 1: 4, 2: 2, 5: 32 };
+
+/** A mouse's event, or a pen's, of its button held, unless extra says otherwise. */
 function mouse(
   x: number,
   y: number,
@@ -72,6 +85,7 @@ function mouse(
     button: 0,
     shift: false,
     additive: false,
+    buttons: held[extra.button ?? 0],
     ...extra,
   };
 }
@@ -280,6 +294,69 @@ describe("the canvas's gestures", () => {
     gestures.up(mouse(200, 150));
     expect(state.selects).toEqual([{ ids: ["nd_a"], how: "replace" }]);
     expect(gestures.tracks(1)).toBe(false);
+  });
+
+  it("ends a press, as cancelled, once its mouse or its pen moves without the button that pressed it", () => {
+    const { state, gestures } = host("select");
+    // A rubber band, whose mouse's release a menu of the system's took.
+    gestures.down(mouse(10, 10));
+    gestures.move(mouse(60, 60));
+    gestures.move(mouse(80, 80, { buttons: 0 }));
+    expect(gestures.tracks(1)).toBe(false);
+    expect(state.bands.at(-1)).toBeUndefined();
+    // A pen's, which hovers after its lost release, over the node.
+    const pen = mouse(10, 10, { id: 2, kind: "pen" });
+    gestures.down(pen);
+    gestures.move({ ...pen, x: 60, y: 60 });
+    gestures.move({ ...pen, x: 200, y: 150, buttons: 0 });
+    expect(gestures.tracks(2)).toBe(false);
+    // A chord: the right button went down after the primary, which went up
+    // as it stays down, and the right one draws no rubber band, nor goes up
+    // to a click that selects the node under it.
+    gestures.down(mouse(200, 150));
+    gestures.move(mouse(200, 150, { buttons: 3 }));
+    gestures.move(mouse(180, 140, { buttons: 2 }));
+    gestures.move(mouse(10, 10, { buttons: 2 }));
+    gestures.up(mouse(10, 10, { button: 2, buttons: 0 }));
+    // A middle button's pan, whose button went up as the primary stays down.
+    gestures.down(mouse(500, 500, { button: 1 }));
+    gestures.move(mouse(500, 500, { button: 1, buttons: 5 }));
+    gestures.move(mouse(540, 500, { button: 1, buttons: 1 }));
+    expect(gestures.tracks(1)).toBe(false);
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(state.banded).toEqual([]);
+    expect(state.selects).toEqual([]);
+    // A finger is down as long as it moves, whatever its buttons say.
+    gestures.down(touch(3, 500, 500));
+    gestures.move({ ...touch(3, 540, 500), buttons: 0 });
+    expect(gestures.tracks(3)).toBe(true);
+    expect(state.bands.at(-1)).toBeDefined();
+  });
+
+  it("pinches with two fingers alone, and lets a press of another kind of pointer take the canvas from the one before", () => {
+    const { state, gestures } = host();
+    // A mouse whose release the canvas did not hear of, and that stays
+    // still, and a finger that touches the screen: the finger pans.
+    gestures.down(mouse(100, 100));
+    expect(gestures.down(touch(2, 500, 300))).toBe(true);
+    expect(gestures.tracks(1)).toBe(false);
+    gestures.move(touch(2, 560, 300));
+    expect(state.v).toEqual({ x: -60, y: 0, zoom: 1 });
+    // A pen's press takes the canvas from the finger in turn.
+    const pen = mouse(300, 300, { id: 3, kind: "pen" });
+    expect(gestures.down(pen)).toBe(true);
+    expect(gestures.tracks(2)).toBe(false);
+    gestures.move(touch(2, 700, 300));
+    gestures.move({ ...pen, x: 300, y: 400 });
+    expect(state.v).toEqual({ x: -60, y: -100, zoom: 1 });
+    gestures.up({ ...pen, x: 300, y: 400 });
+    // A mouse's press while two fingers pinch takes it from them both.
+    gestures.down(touch(4, 200, 300));
+    gestures.down(touch(5, 400, 300));
+    expect(gestures.down(mouse(300, 300))).toBe(true);
+    expect(gestures.tracks(4) || gestures.tracks(5)).toBe(false);
+    gestures.move(touch(5, 600, 300));
+    expect(state.v.zoom).toBe(1);
   });
 
   it("goes on panning with the finger that stays once the other lifts", () => {

@@ -376,4 +376,17 @@ export class Scene {
     });
     return ids;
   }
+
+  /**
+   * Returns how many nodes r of the board overlaps, as nodesIn would list,
+   * without a list of them, as the Canvas 2D renderer counts those in view
+   * in each frame that builds its margin anew.
+   */
+  countIn(r: Rect): number {
+    let n = 0;
+    this.nodes.query(r, () => {
+      n++;
+    });
+    return n;
+  }
 }

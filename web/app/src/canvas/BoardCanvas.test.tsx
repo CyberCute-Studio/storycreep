@@ -147,7 +147,7 @@ describe("a board's canvas", () => {
     expect(band?.hidden).toBe(true);
   });
 
-  it("ends a press once its mouse moves with no button down, as after a menu of the system's took its release, and opens no menu of the browser's over the canvas", async () => {
+  it("ends a press once its mouse moves with no button down, as after a menu of the system's took its release, gives back its pointer's capture, and opens no menu of the browser's over the canvas", async () => {
     const user = userEvent.setup();
     boardPage([testNode("nd_1", 0, 0)]);
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
@@ -157,6 +157,13 @@ describe("a board's canvas", () => {
       name: "Nodes of Harbour",
     });
     await user.click(screen.getByRole("button", { name: "Select" }));
+    // jsdom captures no pointer: the canvas's captures, as a browser's.
+    const captures = new Set<number>();
+    Object.assign(canvas, {
+      setPointerCapture: (id: number) => captures.add(id),
+      hasPointerCapture: (id: number) => captures.has(id),
+      releasePointerCapture: (id: number) => captures.delete(id),
+    });
     const mouse = { pointerId: 1, pointerType: "mouse" };
     fireEvent.pointerDown(canvas, {
       ...mouse,
@@ -173,6 +180,7 @@ describe("a board's canvas", () => {
     });
     const band = canvas.querySelector<HTMLElement>(".border-accent");
     expect(band?.hidden).toBe(false);
+    expect(captures.has(1)).toBe(true);
     // The button went up under a menu of the system's, as a Ctrl+click's
     // on a Mac does, and the mouse moves on without it.
     fireEvent.pointerMove(canvas, {
@@ -182,6 +190,7 @@ describe("a board's canvas", () => {
       clientY: 90,
     });
     expect(band?.hidden).toBe(true);
+    expect(captures.has(1)).toBe(false);
     // The browser's menu, which would take that release, does not open.
     expect(fireEvent.contextMenu(canvas)).toBe(false);
   });

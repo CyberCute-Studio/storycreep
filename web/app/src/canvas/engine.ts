@@ -450,7 +450,7 @@ class PixiEngine implements Engine {
         ? countIn(b.shown, visible)
         : undefined;
     if (inView === undefined && this.kind === "canvas") {
-      inView = f.scene.nodesIn(visible).length;
+      inView = f.scene.countIn(visible);
     }
     if (this.kind === "canvas") {
       this.crowded = crowdedAt(v.zoom, inView ?? 0, this.crowded);

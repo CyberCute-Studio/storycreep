@@ -200,6 +200,9 @@ describe("the scene of a board", () => {
     expect(scene.nodesIn({ x: 300, y: 60, width: 100, height: 10 })).toEqual([
       "nd_2",
     ]);
+    expect(scene.countIn({ x: 300, y: 60, width: 100, height: 10 })).toBe(1);
+    expect(scene.countIn({ x: -10, y: -10, width: 500, height: 200 })).toBe(2);
+    expect(scene.countIn({ x: 5000, y: 5000, width: 10, height: 10 })).toBe(0);
   });
 
   it("finds the node that holds a tap rather than a later one within its slop, and else the nearest", () => {

@@ -5,13 +5,17 @@
 // however the board moves under it meanwhile, where a drag with the mouse's
 // middle button, or with Space held, still pans; two fingers pinch, zooming
 // about the point between them, which stays under them, and pan as they move
-// together; a third finger is ignored. A tap, or a click, selects the node
-// under it, or adds it to the selection, or takes it out, with Shift, Ctrl,
-// or Cmd, and a tap on the board's empty canvas clears the selection; a click
-// of the middle button, which pans, selects nothing. The wheel pans, and
-// Shift turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it,
-// it zooms about the pointer. Nothing needs hover or a right click, and a
-// right click, or a pen's barrel button or its eraser, does nothing.
+// together; a third finger is ignored, and a press of a mouse or a pen
+// takes the canvas from any other pointer, as a finger's does from a mouse
+// or a pen. A tap, or a click, selects the node under it, or adds it to the
+// selection, or takes it out, with Shift, Ctrl, or Cmd, and a tap on the
+// board's empty canvas clears the selection; a click of the middle button,
+// which pans, selects nothing. The wheel pans, and Shift turns it sideways;
+// with Ctrl or Cmd, as a trackpad's pinch sends it, it zooms about the
+// pointer. Nothing needs hover or a right click, and a right click, or a
+// pen's barrel button or its eraser, does nothing; a press ends, as
+// cancelled, once its mouse or its pen moves without the button that
+// pressed it.
 
 import { dragThreshold } from "../ui/drag";
 import {
@@ -42,6 +46,13 @@ export interface PointerInput {
    * button, or 5, a pen's eraser.
    */
   button: number;
+  /**
+   * The buttons held as the event came, as the browser's `buttons` counts
+   * them: 1, the primary, as a finger's touch or a pen's tip, 2, a mouse's
+   * right or a pen's barrel button, 4, a mouse's middle, and 32, a pen's
+   * eraser, added together.
+   */
+  buttons: number;
   shift: boolean;
   /** Whether Ctrl or Cmd is held, which adds to the selection, as Shift does. */
   additive: boolean;
@@ -149,11 +160,17 @@ export class Gestures {
    * it: the primary button of each, a finger's touch or a pen's tip, and a
    * mouse's middle button, but no other button, as a mouse's right one, or a
    * pen's barrel button, which the system takes for a right click, or its
-   * eraser, nor a third pointer (NFR-TOUCH-07). A pointer that goes down
+   * eraser, nor a third finger (NFR-TOUCH-07). A pointer that goes down
    * while the canvas still follows it went up where the canvas did not
    * hear of it, as a mouse's button that a menu of the system's, opened
    * over the page, took the release of: its gesture ends, as cancelled,
-   * rather than refuse every press of it after.
+   * rather than refuse every press of it after. Only fingers share the
+   * canvas, two of them, to pinch: a press of a mouse or a pen while
+   * another pointer is down, or of a finger while a mouse or a pen is,
+   * takes the canvas from it, whose gesture ends, as cancelled, rather than
+   * pinch with it about a point that neither is on, as a mouse that is
+   * still, whose release the canvas did not hear of, would with a finger
+   * that touches the screen of a laptop.
    */
   down(p: PointerInput): boolean {
     if (this.pointers.has(p.id)) {
@@ -161,6 +178,11 @@ export class Gestures {
     }
     if (p.button !== 0 && !(p.kind === "mouse" && p.button === 1)) {
       return false;
+    }
+    for (const other of [...this.pointers.values()]) {
+      if (other.kind !== "touch" || p.kind !== "touch") {
+        this.end(other, true);
+      }
     }
     if (this.pointers.size >= 2) {
       return false;
@@ -185,8 +207,31 @@ export class Gestures {
     return true;
   }
 
-  /** Takes a pointer that moved. */
+  /**
+   * Takes a pointer that moved. A mouse or a pen that the canvas follows,
+   * but that moves without the button that pressed it, went up where the
+   * canvas did not hear of it, as once a menu of the system's took the
+   * release, rather than the page, or as a pen that hovers after it, or
+   * went on with another button alone, as a chord's right one, which the
+   * canvas does not follow: its press ends there, as cancelled, rather than
+   * pan the board, or draw a rubber band, under no button, or under one
+   * that does nothing to the board. A finger is down as long as it moves.
+   */
   move(p: PointerInput): void {
+    const had = this.pointers.get(p.id);
+    if (had === undefined) {
+      return;
+    }
+    const pressed = had.button === 1 ? 4 : 1;
+    if (had.kind !== "touch" && (p.buttons & pressed) === 0) {
+      this.end(p, true);
+      return;
+    }
+    this.follow(p);
+  }
+
+  /** Moves the pointer of p, which the canvas follows, to where p is. */
+  private follow(p: PointerInput): void {
     const had = this.pointers.get(p.id);
     if (had === undefined) {
       return;
@@ -204,7 +249,7 @@ export class Gestures {
         }
         if (g.drag === "pan") {
           this.gesture = { kind: "pan", id: p.id, last: g.start };
-          this.move(p);
+          this.follow(p);
         } else {
           this.gesture = {
             kind: "band",
@@ -252,7 +297,7 @@ export class Gestures {
    * band, or a pinch ends there.
    */
   up(p: PointerInput): void {
-    this.move(p);
+    this.follow(p);
     this.end(p, false);
   }
 
