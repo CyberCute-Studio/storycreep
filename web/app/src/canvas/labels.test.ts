@@ -12,7 +12,7 @@ import {
 } from "./labels";
 import { nodeRect } from "./layout";
 import { clip, graphemes, textTier, wrapLines } from "./text";
-import { nodeColor, type Theme } from "./theme";
+import { nodeColor, parseColor, readTheme, type Theme } from "./theme";
 
 const context: LabelContext = {
   t: (key, args) =>
@@ -388,6 +388,40 @@ describe("a node's colour", () => {
     expect(nodeColor("none", light)).toBe(light.border);
     // As a newer server's palette may send, to a page loaded before it.
     expect(nodeColor("crimson" as Node["color"], light)).toBe(light.border);
+  });
+});
+
+describe("the canvas's theme", () => {
+  it("draws in the system's colours where the system forces its own, as under a contrast theme, rather than tokens that would each read as the text's colour", () => {
+    // Each system colour as the page resolves it.
+    const system = (name: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = name;
+      document.body.append(probe);
+      const color = parseColor(getComputedStyle(probe).color);
+      probe.remove();
+      return color;
+    };
+    const host = document.createElement("div");
+    document.body.append(host);
+    try {
+      const forced = readTheme(host, true);
+      expect(forced).toEqual({
+        canvas: system("Canvas"),
+        surface: system("Canvas"),
+        border: system("CanvasText"),
+        fg: system("CanvasText"),
+        muted: system("CanvasText"),
+        accent: system("Highlight"),
+        dark: false,
+      });
+      expect(forced.canvas).not.toBe(forced.fg);
+      // Without forced colours, the tokens, which jsdom's page has none of.
+      expect(readTheme(host).fg).toBe(0x15171c);
+      expect(host.childElementCount).toBe(0);
+    } finally {
+      host.remove();
+    }
   });
 });
 

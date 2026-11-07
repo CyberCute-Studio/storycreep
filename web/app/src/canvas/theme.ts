@@ -1,6 +1,7 @@
 // The colours that the canvas draws with: the theme's tokens (NFR-A11Y-06),
-// as the page resolves them in the system's light or dark mode, and the
-// palette of nodes' colours (PRD FR-EDIT-06), which is the boards' (FR-PROJ-02).
+// as the page resolves them in the system's light or dark mode, or, in
+// forced colours, the system's own, and the palette of nodes' colours (PRD
+// FR-EDIT-06), which is the boards' (FR-PROJ-02).
 
 import type { Node } from "@storycreep/shared/api";
 
@@ -32,6 +33,23 @@ const tokens = {
   accent: "--color-accent",
 } as const;
 
+/**
+ * The system's colours that the browser draws a page in, in forced colours,
+ * as under Windows's contrast themes, for each of the tokens, as it draws
+ * the page's own elements: the board and the cards on Canvas, their edges
+ * and text in CanvasText, and the selection in Highlight. The browser
+ * forces the colour of the probe that reads a token as well, so that each
+ * token would read as the text's colour, and the board be drawn in one.
+ */
+const systemColors: Record<keyof typeof tokens, string> = {
+  canvas: "Canvas",
+  surface: "Canvas",
+  border: "CanvasText",
+  fg: "CanvasText",
+  muted: "CanvasText",
+  accent: "Highlight",
+};
+
 /** The light theme's colours, for a page that has none of the tokens, as the tests' jsdom. */
 const fallback: Theme = {
   canvas: 0xffffff,
@@ -55,24 +73,28 @@ export function parseColor(value: string): number | undefined {
   return (r << 16) | (g << 8) | b;
 }
 
-/** Returns the theme as the page resolves its tokens at element, in the system's mode. */
-export function readTheme(element: HTMLElement): Theme {
+/**
+ * Returns the theme as the page resolves its tokens at element, in the
+ * system's mode, or, where forced, as the system's forced colours are on,
+ * the system's colours that the browser draws the page in instead.
+ */
+export function readTheme(element: HTMLElement, forced = false): Theme {
   const probe = document.createElement("span");
   probe.style.display = "none";
   element.append(probe);
   try {
-    const read = (token: string, otherwise: number) => {
-      probe.style.color = `var(${token})`;
-      return parseColor(getComputedStyle(probe).color) ?? otherwise;
+    const read = (key: keyof typeof tokens) => {
+      probe.style.color = forced ? systemColors[key] : `var(${tokens[key]})`;
+      return parseColor(getComputedStyle(probe).color) ?? fallback[key];
     };
-    const canvas = read(tokens.canvas, fallback.canvas);
+    const canvas = read("canvas");
     return {
       canvas,
-      surface: read(tokens.surface, fallback.surface),
-      border: read(tokens.border, fallback.border),
-      fg: read(tokens.fg, fallback.fg),
-      muted: read(tokens.muted, fallback.muted),
-      accent: read(tokens.accent, fallback.accent),
+      surface: read("surface"),
+      border: read("border"),
+      fg: read("fg"),
+      muted: read("muted"),
+      accent: read("accent"),
       dark: luminance(canvas) < 0.5,
     };
   } finally {

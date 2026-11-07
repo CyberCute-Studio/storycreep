@@ -185,10 +185,11 @@ export async function createEngine(
   // process was gone, which would leave every board after it, until the
   // page is loaded again, without either. The canvas tells whether the
   // browser has one, and whether its GPU runs it, itself, each time that
-  // it starts, and has PixiJS tell only once it found one, without the
-  // caveat, as PixiJS's own default does, so that what PixiJS keeps is
-  // that the page has it: a renderer that the browser no longer has, after
-  // it, fails to start, and gives way to the next.
+  // it starts, as PixiJS tells it, of WebGPU by a device of its adapter,
+  // and has PixiJS tell only once it found one, without the caveat, as
+  // PixiJS's own default does, so that what PixiJS keeps is that the page
+  // has it: a renderer that the browser no longer has, after it, fails to
+  // start, and gives way to the next.
   for (const kind of order) {
     if (kind === "webgl") {
       if (!hasWebGL(caveat(kind))) {
@@ -275,7 +276,9 @@ type AdapterOf = GPUAdapter & { isFallbackAdapter?: boolean };
  * that its GPU runs, rather than a fallback adapter, which the browser may
  * run in software, with the performance caveat that a WebGL of the kind
  * has, so that a device without a GPU gets the Canvas 2D renderer
- * (ADR-013) by either, without keeping the answer.
+ * (ADR-013) by either, and whether the adapter gives a device, as PixiJS
+ * asks of it as it tells whether the page has WebGPU, without keeping the
+ * answer.
  */
 async function hasWebGPU(caveat: boolean): Promise<boolean> {
   // A browser without WebGPU, or a page that is not of a secure context,
@@ -286,12 +289,20 @@ async function hasWebGPU(caveat: boolean): Promise<boolean> {
   }
   try {
     const adapter: AdapterOf | null = await gpu.requestAdapter();
-    return (
-      adapter !== null &&
-      (!caveat ||
-        (adapter.info?.isFallbackAdapter !== true &&
-          adapter.isFallbackAdapter !== true))
-    );
+    if (
+      adapter === null ||
+      (caveat &&
+        (adapter.info?.isFallbackAdapter === true ||
+          adapter.isFallbackAdapter === true))
+    ) {
+      return false;
+    }
+    // PixiJS keeps that the page has no WebGPU once an adapter that it
+    // asked for gave no device, which the canvas finds first, so that it
+    // has PixiJS tell only of an adapter that gave the canvas its own,
+    // which it ends at once.
+    (await adapter.requestDevice()).destroy();
+    return true;
   } catch {
     return false;
   }

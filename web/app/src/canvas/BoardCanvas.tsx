@@ -58,6 +58,7 @@ export interface CanvasOptions {
 
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
+const forcedColorsQuery = "(forced-colors: active)";
 
 /** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show. */
 const nameParts: readonly Part[] = ["components", "variables"];
@@ -185,6 +186,10 @@ export function BoardCanvas({
   // Whether the system's theme is dark, which the page's colours, and so
   // the canvas's, follow, as it changes.
   const dark = useMediaQuery(darkQuery, false);
+  // Whether the system forces its own colours on the page, as Windows's
+  // contrast themes do, which the browser draws the page's elements in, but
+  // not the canvas's pixels, which the canvas draws in them itself.
+  const forcedColors = useMediaQuery(forcedColorsQuery, false);
   const [controller] = useState(
     () =>
       new CanvasController(boardId, {
@@ -206,7 +211,11 @@ export function BoardCanvas({
   // what is above it changes its height, as the toolbar that wraps once it
   // says how many nodes are selected, or an alert at the page's top: the
   // page, taller than the window once the canvas takes the rest of it,
-  // changes its height with it.
+  // changes its height with it. The window's height is its root's, the
+  // height of the window with a phone's browser's bars shown, which does not
+  // change as they collapse and come back while the page scrolls, as its
+  // innerHeight does, which would grow the canvas and shrink it again, and
+  // move the board's settings under it, as the user scrolls to them.
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) {
@@ -214,7 +223,8 @@ export function BoardCanvas({
     }
     const measure = () => {
       const top = host.getBoundingClientRect().top + window.scrollY;
-      setHeight(Math.max(320, window.innerHeight - top - 16));
+      const viewport = document.documentElement.clientHeight;
+      setHeight(Math.max(320, viewport - top - 16));
     };
     measure();
     window.addEventListener("resize", measure);
@@ -404,15 +414,15 @@ export function BoardCanvas({
     };
   }, [controller]);
 
-  // The theme, of the page's colours, which the canvas reads again as the
-  // system's theme changes them.
+  // The theme, of the page's colours, or of the system's forced colours,
+  // which the canvas reads again as the system's theme changes them.
   // biome-ignore lint/correctness/useExhaustiveDependencies: dark reads the page's colours again, which it changes.
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host !== null) {
-      controller.setTheme(readTheme(host));
+      controller.setTheme(readTheme(host, forcedColors));
     }
-  }, [controller, dark]);
+  }, [controller, dark, forcedColors]);
 
   // The canvas's size once its height is set, at once, rather than once the
   // observer tells of it, after the next frame: that frame places the canvas
