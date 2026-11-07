@@ -4,7 +4,10 @@
 // that the canvas shows takes the time of what it shows, not of the whole
 // board. The scene follows the document: each change of it updates only the
 // nodes and connections that changed, which the document's copy-on-write
-// entities tell, as an entity that did not change is the same object.
+// entities tell, as an entity that did not change is the same object. It
+// finds them by reading each of the document's nodes and connections, of
+// every board, as the document copies their whole maps for each change in
+// any case, and builds, indexes, and counts as changed only those.
 
 import type { Connection, Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
@@ -48,6 +51,13 @@ function sameCurve(a: Curve, b: Curve): boolean {
   );
 }
 
+/** Reports whether rectangles a and b are the same rectangle. */
+function sameRect(a: Rect, b: Rect): boolean {
+  return (
+    a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+  );
+}
+
 /** The nodes and connections of one board, as the project's document holds them. */
 export class Scene {
   readonly nodes = new GridIndex<NodeItem>();
@@ -78,6 +88,16 @@ export class Scene {
    * comes, or is renamed, without any node of this one changing.
    */
   targetsVersion = 0;
+  /**
+   * Counts the changes of the scene's shapes alone, which its minimap draws,
+   * and its content's bounds hold: a node that comes, goes, moves, changes
+   * its size, or its colour, and a connection that comes, goes, or whose
+   * curve takes another rectangle of the board, rather than every change
+   * of a node, as of its title, or its text, as a collaborator types it,
+   * which leaves each of them as it was, so that the minimap draws its
+   * nodes anew, and the bounds are found anew, only then.
+   */
+  shapesVersion = 0;
 
   constructor(readonly boardId: string) {}
 
@@ -117,7 +137,11 @@ export class Scene {
           this.targets.delete(node.id);
         }
         moved.add(node.id);
-        this.changed();
+        this.changed(
+          had === undefined ||
+            !sameRect(had.rect, item.rect) ||
+            had.node.color !== node.color,
+        );
       }
       const gone: string[] = [];
       this.nodes.forEach((id) => {
@@ -246,7 +270,7 @@ export class Scene {
     }
     const bounds = curveBounds(curve);
     this.connections.set(c.id, bounds, { connection: c, curve, bounds });
-    this.connectionsChanged();
+    this.connectionsChanged(was === undefined || !sameRect(was.bounds, bounds));
   }
 
   /** Takes the connection of id out of the scene. */
@@ -277,14 +301,18 @@ export class Scene {
     }
   }
 
-  private changed(): void {
+  /** Counts a change of the scene, and, where shape tells, of its shapes (shapesVersion). */
+  private changed(shape = true): void {
     this.version++;
-    this.boundsStale = true;
+    if (shape) {
+      this.shapesVersion++;
+      this.boundsStale = true;
+    }
   }
 
-  private connectionsChanged(): void {
+  private connectionsChanged(shape = true): void {
     this.connectionsVersion++;
-    this.changed();
+    this.changed(shape);
   }
 
   /**

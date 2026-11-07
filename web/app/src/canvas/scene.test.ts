@@ -75,6 +75,64 @@ describe("the scene of a board", () => {
     expect(scene.connectionsVersion).toBe(connections + 1);
   });
 
+  it("counts a change of its shapes, which its minimap draws, only for a node or a connection that changes where it is, its size, or its colour", () => {
+    const scene = new Scene("bd_a");
+    const a = testNode("nd_1", 0, 0);
+    const b = testNode("nd_2", 400, 0);
+    const c = testConnection("cn_1", "nd_1", "nd_2");
+    const doc = docOf([a, b], [c]);
+    scene.sync(doc);
+    const shapes = scene.shapesVersion;
+    const bounds = scene.contentBounds();
+    // A node's title, its text, and a connection's label, which the
+    // minimap does not draw, leave its shapes, and the bounds, as they were.
+    const renamed = new Map(doc.nodes).set(b.id, {
+      ...b,
+      title: "The dock",
+      text: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Rain." }] },
+        ],
+      },
+    });
+    const labelled = new Map(doc.connections).set(c.id, {
+      ...c,
+      label: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Later" }] },
+        ],
+      },
+    });
+    expect(scene.sync({ ...doc, nodes: renamed, connections: labelled })).toBe(
+      true,
+    );
+    expect(scene.shapesVersion).toBe(shapes);
+    expect(scene.contentBounds()).toBe(bounds);
+    // Its colour, a move, a new node, and one that goes, change them.
+    const coloured = new Map(renamed).set(b.id, {
+      ...(renamed.get(b.id) as typeof b),
+      color: "red",
+    });
+    scene.sync({ ...doc, nodes: coloured, connections: labelled });
+    expect(scene.shapesVersion).toBe(shapes + 1);
+    const moved = new Map(coloured).set(a.id, {
+      ...a,
+      position: { x: -200, y: 0 },
+    });
+    scene.sync({ ...doc, nodes: moved, connections: labelled });
+    expect(scene.shapesVersion).toBeGreaterThan(shapes + 1);
+    expect(scene.contentBounds()?.x).toBe(-200);
+    const after = scene.shapesVersion;
+    const added = new Map(moved).set("nd_3", testNode("nd_3", 0, 900));
+    scene.sync({ ...doc, nodes: added, connections: labelled });
+    expect(scene.shapesVersion).toBeGreaterThan(after);
+    const more = scene.shapesVersion;
+    scene.sync({ ...doc, nodes: moved, connections: labelled });
+    expect(scene.shapesVersion).toBeGreaterThan(more);
+  });
+
   it("draws a connection once both of its nodes are there", () => {
     const scene = new Scene("bd_a");
     const a = testNode("nd_1", 0, 0);

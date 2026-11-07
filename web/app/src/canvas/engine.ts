@@ -159,6 +159,14 @@ const cornerRadius = 10;
 const cardReach = 8;
 
 /**
+ * The free cards that a renderer keeps however few are in use (trimCards):
+ * as many as a margin of a sparse board, at a zoom of 1, takes up and
+ * frees as a pan goes from its nodes to the empty board beside them and
+ * back, so that it builds none anew for that.
+ */
+const freeCardFloor = 256;
+
+/**
  * The bytes of the glyphs' atlases that a renderer's fonts may take before
  * it draws them anew, of the text of its margin alone. A page of an atlas
  * is 512 pixels square at its font's resolution, of 1, 4, or 16 MB at the
@@ -519,12 +527,29 @@ class PixiEngine implements Engine {
   textures(): number | undefined {
     // The textures that the GPU holds: the cards' four, the glyphs'
     // atlases, and the canvas's own. The Canvas 2D renderer keeps none.
+    // PixiJS keeps the slot of each texture that it gave the GPU, and
+    // empties it, rather than take it out, once the texture is destroyed,
+    // as an atlas's page of a font drawn anew, or its GPU's copy is
+    // collected, as of one unused for a while: only the slots that still
+    // hold a texture count, so that a texture that is gone is not one that
+    // the GPU holds, which would grow the count, as a leak would, with each
+    // font drawn anew.
     const system = (
       this.renderer as unknown as {
         texture?: { managedTextures?: readonly unknown[] };
       }
     ).texture;
-    return system?.managedTextures?.length;
+    const slots = system?.managedTextures;
+    if (slots === undefined) {
+      return undefined;
+    }
+    let held = 0;
+    for (const t of slots) {
+      if (t !== null && t !== undefined) {
+        held++;
+      }
+    }
+    return held;
   }
 
   render(f: Frame): FrameStats {
@@ -748,6 +773,7 @@ class PixiEngine implements Engine {
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         texts += view.body.visible ? 3 : 2;
       }
+      this.trimCards();
       this.orderCards(shown.nodes);
       if (anew) {
         this.glyphBudget = Math.max(glyphFloor, 2 * this.glyphBytes());
@@ -822,6 +848,29 @@ class PixiEngine implements Engine {
     }
     this.cards.removeChildren();
     this.cards.addChild(...roots, ...this.freeCards.map((view) => view.root));
+  }
+
+  /**
+   * Destroys the free cards beyond as many as are in use, or freeCardFloor,
+   * once the margin has taken those that it needs: so that the cards that
+   * the renderer keeps follow what its margin shows in detail, at most
+   * twice as many, rather than the most that it ever did, until the board
+   * is left, as of the thousands of nodes of a margin of a large screen at
+   * a zoom just above detailZoom, after a zoom in that shows a few hundred,
+   * each card with its sprites and its text's geometry, which every
+   * reorder of the cards (orderCards) would else put back among them. A
+   * pan, which frees about as many cards as it takes, keeps those that it
+   * frees; the blocks, which free every card, keep them for the cards of
+   * the zoom in after them.
+   */
+  private trimCards(): void {
+    const keep = Math.max(freeCardFloor, this.cardViews.size);
+    if (this.freeCards.length <= keep) {
+      return;
+    }
+    for (const view of this.freeCards.splice(keep)) {
+      view.root.destroy({ children: true });
+    }
   }
 
   /** Frees the cards of the nodes that keep does not hold, for nodes that come into the margin. */

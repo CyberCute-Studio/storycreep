@@ -1,7 +1,10 @@
 // The canvas's minimap (PRD FR-EDIT-01): the board's nodes, small, with the
 // rectangle that the canvas shows, on a Canvas 2D canvas of its own. It
-// draws the nodes once for each change of the board or of the theme, into a
-// canvas that it keeps, and copies it for each frame, with the rectangle.
+// draws the nodes once for each change of the board's shapes (Scene's
+// shapesVersion), as a node that moves, or of the theme, into a canvas that
+// it keeps, and copies it for each frame, with the rectangle, rather than
+// draw every node anew for a change that it does not show, as of a node's
+// title as a collaborator types it.
 
 import type { Scene } from "./scene";
 import { nodeColor, type Theme } from "./theme";
@@ -53,7 +56,7 @@ export class Minimap {
   private readonly base = document.createElement("canvas");
   private drawn:
     | {
-        version: number;
+        shapes: number;
         theme: Theme;
         width: number;
         height: number;
@@ -95,14 +98,20 @@ export class Minimap {
     this.mapping = m;
     if (
       d === undefined ||
-      d.version !== scene.version ||
+      d.shapes !== scene.shapesVersion ||
       d.theme !== theme ||
       d.width !== width ||
       d.height !== height ||
       d.ratio !== ratio
     ) {
       this.drawBase(scene, theme, m, width, height, ratio);
-      this.drawn = { version: scene.version, theme, width, height, ratio };
+      this.drawn = {
+        shapes: scene.shapesVersion,
+        theme,
+        width,
+        height,
+        ratio,
+      };
     }
     if (this.canvas.width !== Math.round(width * ratio)) {
       this.canvas.width = Math.round(width * ratio);

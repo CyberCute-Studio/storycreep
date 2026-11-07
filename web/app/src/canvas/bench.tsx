@@ -60,12 +60,19 @@ export interface BenchResult {
   renderer: string | undefined;
   /** The board's nodes. */
   boardNodes: number;
-  /** The frames recorded, after the warm-up. */
+  /**
+   * The frames recorded, after the warm-up: the browser's, and those that
+   * the page drew of its own work between them, as once the canvas's size
+   * changed, whose work, which the user waits for as much, work and visible
+   * count too, but whose times, which are not of a frame's start, fps and
+   * frame do not, so that it may be more than fps times the run's seconds.
+   */
   frames: number;
+  /** The browser's frames a second, of their intervals (frame). */
   fps: number;
-  /** The intervals between frames, in milliseconds. */
+  /** The intervals between the browser's frames, in milliseconds. */
   frame: Stats;
-  /** The page's work in a frame, building and drawing it, in milliseconds. */
+  /** The page's work in a frame, building and drawing it, in milliseconds, of every frame recorded (frames). */
   work: Stats;
   /** The nodes in the canvas, and in the renderer's margin. */
   visible: { mean: number; max: number };
