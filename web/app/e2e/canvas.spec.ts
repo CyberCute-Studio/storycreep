@@ -293,6 +293,20 @@ test.describe("a board's canvas", () => {
     };
     await page.mouse.click(corner.x, corner.y, { button: "right" });
     expect(await settled(canvas)).toEqual(v3);
+    // Nor does a press that went down elsewhere, as on the board's name
+    // above the canvas, and that crosses the minimap.
+    const title = await page
+      .getByRole("heading", { level: 1, name: board.name })
+      .boundingBox();
+    if (title === null) {
+      throw new Error("the board's name is not shown");
+    }
+    await page.mouse.move(title.x + 10, title.y + title.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(corner.x, corner.y, { steps: 10 });
+    await page.mouse.move(mbox.x + 10, mbox.y + 10, { steps: 10 });
+    await page.mouse.up();
+    expect(await settled(canvas)).toEqual(v3);
     await page.mouse.click(corner.x, corner.y);
     await expect
       .poll(async () => (await viewOf(canvas)).x)

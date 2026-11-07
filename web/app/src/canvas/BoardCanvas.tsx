@@ -32,7 +32,7 @@ import {
   CanvasController,
   renderedMark,
 } from "./controller";
-import { createEngine, type Engine, type RendererKind } from "./engine";
+import type { Engine, RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
 import {
   type LabelContext,
@@ -140,6 +140,8 @@ export function BoardCanvas({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const bandRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
+  /** The pointer whose press went down on the minimap, which its drag follows. */
+  const minimapPress = useRef<number>(undefined);
   const [mode, setMode] = useState<Mode>("pan");
   const [selected, setSelected] = useState(0);
   const [zoom] = useState<ZoomShown>(() => createStore<number>(() => 1));
@@ -150,6 +152,9 @@ export function BoardCanvas({
   const [engine, setEngine] = useState<"starting" | "running" | "unsupported">(
     "starting",
   );
+  // What the fetch of the renderer's chunk failed with, which the page
+  // throws to its route's error (RouteError), as it does a chunk of its own.
+  const [engineFailure, setEngineFailure] = useState<{ error: unknown }>();
   const [empty, setEmpty] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const [height, setHeight] = useState<number>();
@@ -243,8 +248,12 @@ export function BoardCanvas({
     // A pointer that the canvas follows is the host's, whose capture it
     // takes as the pointer goes down, and which the controller gives back
     // as soon as the gestures no longer follow it (GestureHost's release).
+    // Of a pointer that it holds, the host hears that it left only once the
+    // browser has lost it, as a pen that leaves the range where the screen
+    // sees it hover (Gestures' leave).
     const pointer =
-      (type: "down" | "move" | "up" | "cancel") => (e: PointerEvent) => {
+      (type: "down" | "move" | "leave" | "up" | "cancel") =>
+      (e: PointerEvent) => {
         if (
           type === "down" &&
           e.target !== host &&
@@ -269,6 +278,7 @@ export function BoardCanvas({
       };
     const down = pointer("down");
     const move = pointer("move");
+    const leave = pointer("leave");
     const up = pointer("up");
     const cancel = pointer("cancel");
     // The host's own capture, once it lost it, rather than that of an
@@ -341,6 +351,7 @@ export function BoardCanvas({
     host.addEventListener("contextmenu", own);
     host.addEventListener("pointerdown", down);
     host.addEventListener("pointermove", move);
+    host.addEventListener("pointerleave", leave);
     host.addEventListener("pointerup", up);
     host.addEventListener("pointercancel", cancel);
     host.addEventListener("lostpointercapture", lost);
@@ -360,6 +371,7 @@ export function BoardCanvas({
       host.removeEventListener("contextmenu", own);
       host.removeEventListener("pointerdown", down);
       host.removeEventListener("pointermove", move);
+      host.removeEventListener("pointerleave", leave);
       host.removeEventListener("pointerup", up);
       host.removeEventListener("pointercancel", cancel);
       host.removeEventListener("lostpointercapture", lost);
@@ -384,7 +396,14 @@ export function BoardCanvas({
   }, [controller, height]);
 
   // The renderer, on a canvas element of its own in the surface, as a
-  // renderer that ends may leave its canvas's context lost.
+  // renderer that ends may leave its canvas's context lost. PixiJS, with
+  // the renderer's module, is fetched only as the canvas starts it, in a
+  // chunk of its own, so that the board's page, its toolbar, and the read
+  // of its content, which the renderer draws once it has started, do not
+  // wait for the browser to fetch and parse it first. A chunk that cannot
+  // be fetched, as once the server has a version of the app other than the
+  // page's, is the page's error, as a chunk of the page's own is, rather
+  // than a browser that cannot draw.
   useEffect(() => {
     const surface = surfaceRef.current;
     const host = hostRef.current;
@@ -394,23 +413,32 @@ export function BoardCanvas({
     let ended = false;
     let started: Engine | undefined;
     setEngine("starting");
-    createEngine(surface, {
-      preference: options.renderer,
-      forced: options.renderer !== undefined,
-      fontFamily: getComputedStyle(host).fontFamily || "sans-serif",
-    }).then(
-      (e) => {
-        if (ended) {
-          e.destroy();
-          return;
-        }
-        started = e;
-        controller.setEngine(e);
-        setEngine("running");
-      },
-      () => {
+    const fontFamily = getComputedStyle(host).fontFamily || "sans-serif";
+    import("./engine").then(
+      ({ createEngine }) =>
+        createEngine(surface, {
+          preference: options.renderer,
+          forced: options.renderer !== undefined,
+          fontFamily,
+        }).then(
+          (e) => {
+            if (ended) {
+              e.destroy();
+              return;
+            }
+            started = e;
+            controller.setEngine(e);
+            setEngine("running");
+          },
+          () => {
+            if (!ended) {
+              setEngine("unsupported");
+            }
+          },
+        ),
+      (error: unknown) => {
         if (!ended) {
-          setEngine("unsupported");
+          setEngineFailure({ error });
         }
       },
     );
@@ -515,22 +543,40 @@ export function BoardCanvas({
   // so the canvas lets go of it as the focus leaves, rather than pan on
   // every drag of the select mode after.
   const blur = () => controller.gestures.setSpace(false);
+  const minimapRelease = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (minimapPress.current === e.pointerId) {
+      minimapPress.current = undefined;
+    }
+  };
   const minimapPointer = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     // The primary button's alone, as a finger's touch or a pen's tip, as on
     // the canvas: a right click, the middle button, or a pen's barrel
     // button or its eraser, does nothing to the board here either, nor a
-    // move without the primary button down.
-    if (e.type === "pointerdown" ? e.button !== 0 : (e.buttons & 1) === 0) {
+    // move without the primary button down, which ends the minimap's press
+    // whose release it did not hear of, nor one of a press that went down
+    // elsewhere, as a mouse's on the page's text beside the canvas, that
+    // crosses the minimap, which follows only its own.
+    if (e.type === "pointerdown") {
+      if (e.button !== 0) {
+        return;
+      }
+      minimapPress.current = e.pointerId;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } else if ((e.buttons & 1) === 0) {
+      minimapRelease(e);
+      return;
+    } else if (minimapPress.current !== e.pointerId) {
       return;
     }
     e.stopPropagation();
     e.preventDefault();
-    if (e.type === "pointerdown") {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-    }
     const r = e.currentTarget.getBoundingClientRect();
     controller.centerOnMinimap({ x: e.clientX - r.left, y: e.clientY - r.top });
   };
+
+  if (engineFailure !== undefined) {
+    throw engineFailure.error;
+  }
 
   const overlay =
     engine === "unsupported"
@@ -669,6 +715,9 @@ export function BoardCanvas({
               ref={minimapRef}
               onPointerDown={minimapPointer}
               onPointerMove={minimapPointer}
+              onPointerUp={minimapRelease}
+              onPointerCancel={minimapRelease}
+              onLostPointerCapture={minimapRelease}
               className="block size-full cursor-pointer"
             />
           </div>

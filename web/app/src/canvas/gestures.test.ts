@@ -461,4 +461,75 @@ describe("the canvas's gestures", () => {
     gestures.scale({ x: 500, y: 300 }, 2, 3);
     expect(state.v.zoom).toBeCloseTo(3);
   });
+
+  it("zooms with no gesture of Safari's of fingers that it ignores under a pen, as a palm's", () => {
+    const { state, gestures } = host("select");
+    const pen = mouse(100, 100, { id: 1, kind: "pen" });
+    gestures.down(pen);
+    gestures.move({ ...pen, x: 300, y: 300 });
+    expect(gestures.down(touch(2, 500, 300))).toBe(false);
+    expect(gestures.down(touch(3, 700, 300))).toBe(false);
+    gestures.scale({ x: 600, y: 300 }, 1, 2);
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(state.bands.at(-1)).toEqual({
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 200,
+    });
+  });
+
+  it("ends a pen's press whose release it did not hear of once the pen leaves the range where it hovers, so that a finger takes the canvas again", () => {
+    const { state, gestures } = host();
+    const pen = mouse(100, 100, { id: 1, kind: "pen" });
+    gestures.down(pen);
+    gestures.move({ ...pen, x: 140, y: 100 });
+    // Lifted straight out of the range, with no move after its release.
+    gestures.leave({ ...pen, x: 140, y: 100, buttons: 0 });
+    expect(gestures.tracks(1)).toBe(false);
+    expect(state.released).toEqual([1]);
+    expect(gestures.down(touch(2, 500, 300))).toBe(true);
+    gestures.move(touch(2, 560, 300));
+    expect(state.v).toEqual({ x: -100, y: 0, zoom: 1 });
+    // A pointer that leaves with its button down, as a mouse whose capture
+    // the browser did not take, goes on.
+    gestures.down(mouse(100, 100, { id: 3 }));
+    gestures.leave(mouse(150, 100, { id: 3 }));
+    expect(gestures.tracks(3)).toBe(true);
+    expect(state.v).toEqual({ x: -150, y: 0, zoom: 1 });
+  });
+
+  it("goes on with a gesture from where the board is once the canvas moved it by itself, as with its fit", () => {
+    const { state, gestures } = host("select");
+    // A pinch: its next move zooms from the new viewport, by the fingers'
+    // ratio since, about the board's point that is between them now.
+    gestures.down(touch(1, 300, 300));
+    gestures.down(touch(2, 500, 300));
+    gestures.move(touch(2, 600, 300));
+    let from = state.v;
+    state.v = { x: 1000, y: 2000, zoom: 0.5 };
+    gestures.replaced(from);
+    const between = toWorld(state.v, { x: 450, y: 300 });
+    gestures.move(touch(2, 900, 300));
+    expect(state.v.zoom).toBeCloseTo(0.5 * (600 / 300));
+    const held = toScreen(state.v, between);
+    expect(held.x).toBeCloseTo(600);
+    expect(held.y).toBeCloseTo(300);
+    gestures.up(touch(1, 300, 300));
+    gestures.up(touch(2, 900, 300));
+    // A rubber band keeps its corner where it is on the canvas.
+    gestures.down(mouse(100, 100));
+    gestures.move(mouse(200, 200));
+    from = state.v;
+    state.v = { x: -50, y: -50, zoom: 2 };
+    gestures.replaced(from);
+    expect(state.bands.at(-1)).toEqual({
+      x: 100,
+      y: 100,
+      width: 100,
+      height: 100,
+    });
+    gestures.up(mouse(200, 200));
+    expect(state.banded.at(-1)).toEqual({ x: 0, y: 0, width: 50, height: 50 });
+  });
 });

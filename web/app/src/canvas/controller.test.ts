@@ -309,6 +309,33 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBeCloseTo(504 / (9 * 200 + 128));
   });
 
+  it("keeps its fit once the content has been read, though a pinch that began while it was read goes on", () => {
+    const { c, time } = setUp();
+    c.sync(docOf(gridNodes(100, 10)), false);
+    const finger = (id: number, x: number) => ({
+      id,
+      x,
+      y: 300,
+      kind: "touch" as const,
+      button: 0,
+      buttons: 1,
+      shift: false,
+      additive: false,
+    });
+    c.pointer("down", finger(1, 400));
+    c.pointer("down", finger(2, 600));
+    c.pointer("move", finger(2, 700));
+    time.tick();
+    c.setReady();
+    time.tick();
+    const fitted = c.viewport();
+    expect(fitted.zoom).toBeCloseTo(504 / (9 * 200 + 128));
+    // The fingers' next move zooms from the fit, by the ratio of their
+    // distance since, rather than back to where they held the board.
+    c.pointer("move", finger(2, 730));
+    expect(c.viewport().zoom).toBeCloseTo(fitted.zoom * (330 / 300));
+  });
+
   it("goes on with an animation, and with the fit to come, as a wheel's event moves nothing", () => {
     const { c, time } = setUp();
     c.sync(docOf(gridNodes(100, 10)), false);

@@ -259,7 +259,7 @@ export function excerpt(value: string): string {
  * them, as a text's excerpt is cut (excerpt), so that it never ends within
  * one, as an emoji, which a font would draw as a broken glyph.
  */
-export function wholeStart(value: string, max: number): number {
+function wholeStart(value: string, max: number): number {
   if (value.length <= max) {
     return value.length;
   }

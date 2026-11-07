@@ -46,6 +46,21 @@ export interface BoardSearch {
 /** The longest run that the benchmark makes, in seconds: an hour. */
 const maxBenchSeconds = 3600;
 
+/**
+ * Returns the number that a value of the search spells, as `2`, which the
+ * router reads as the number, or `2.5` in a string, or NaN for any other,
+ * as an empty value, or `null`, which Number would count as 0, rather than
+ * as no value.
+ */
+function searchNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  return typeof value === "string" && value.trim() !== ""
+    ? Number(value)
+    : Number.NaN;
+}
+
 export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   // The board's ID as the server writes it, however the address spells it
   // (canonicalId), as the project's.
@@ -70,11 +85,11 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     ) {
       out.bench = search.bench;
     }
-    const seconds = Number(search.seconds);
+    const seconds = searchNumber(search.seconds);
     if (Number.isFinite(seconds) && seconds > 0) {
       out.seconds = Math.min(maxBenchSeconds, seconds);
     }
-    const warm = Number(search.warm);
+    const warm = searchNumber(search.warm);
     if (search.warm === "pass") {
       out.warm = "pass";
     } else if (Number.isFinite(warm) && warm >= 0) {
@@ -171,7 +186,7 @@ function areaOf(area: string | undefined): Rect | undefined {
   if (area === undefined) {
     return undefined;
   }
-  const parts = area.split(",").map(Number);
+  const parts = area.split(",").map(searchNumber);
   if (parts.length !== 4 || !parts.every(Number.isFinite)) {
     return undefined;
   }

@@ -130,13 +130,18 @@ export class CanvasController implements GestureHost {
   /** Whether the system asks for reduced motion, which makes every move instant. */
   reducedMotion = false;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
-  private sz: Size = { width: 0, height: 0 };
   /**
-   * The canvas's last size that had an area, whose centre the size after
-   * one of none, as of a host that the page does not display for a while,
-   * keeps, rather than the top-left corner that a size of none has for one.
+   * The canvas's size, in CSS pixels, that its viewport is of, and that
+   * every move is about the centre of, as the toolbar's, the keys', or the
+   * minimap's: or, while it has none, as of a host that the page does not
+   * display, the last that had an area, whose centre the size after keeps
+   * (setSize), so that a move meanwhile is about the centre that the canvas
+   * shows again, rather than about the top-left corner of none. It is of
+   * none until the canvas has had an area.
    */
-  private shownSize: Size | undefined;
+  private sz: Size = { width: 0, height: 0 };
+  /** Whether the canvas has an area now, which it draws in, and is fitted to the content in. */
+  private displayed = false;
   private resolution = 1;
   private engine: Engine | undefined;
   /** Stops the call of the engine's onRestore. */
@@ -226,36 +231,38 @@ export class CanvasController implements GestureHost {
    * from and to, so that it goes on from where the canvas is now, rather
    * than from and to views of the size before, as a fit that the window's
    * turn interrupts would. A size of none, as of a host that the page does
-   * not display, moves nothing: the size after it keeps the centre of the
-   * last size that had an area, which a move meanwhile is about (shown).
+   * not display, moves nothing, and stops the canvas drawing: the canvas,
+   * and the renderer's canvas, keep the last size that had an area (sz),
+   * whose centre the size after keeps.
    */
   setSize(size: Size, resolution: number): void {
+    const displayed = size.width > 0 && size.height > 0;
     if (
-      size.width === this.sz.width &&
-      size.height === this.sz.height &&
+      displayed === this.displayed &&
+      (!displayed ||
+        (size.width === this.sz.width && size.height === this.sz.height)) &&
       resolution === this.resolution
     ) {
       return;
     }
-    const was = this.shownSize;
-    const shown = size.width > 0 && size.height > 0;
-    if (shown) {
-      this.shownSize = size;
-    }
-    if (this.placed && shown && was !== undefined) {
-      const kept = (v: Viewport) =>
-        anchorAt(
-          centerOf(v, was),
-          { x: size.width / 2, y: size.height / 2 },
-          v.zoom,
-        );
-      this.v = kept(this.v);
-      const a = this.animation;
-      if (a !== undefined) {
-        this.animation = { ...a, from: kept(a.from), to: kept(a.to) };
+    if (displayed) {
+      const was = this.sz;
+      if (this.placed && was.width > 0 && was.height > 0) {
+        const kept = (v: Viewport) =>
+          anchorAt(
+            centerOf(v, was),
+            { x: size.width / 2, y: size.height / 2 },
+            v.zoom,
+          );
+        this.v = kept(this.v);
+        const a = this.animation;
+        if (a !== undefined) {
+          this.animation = { ...a, from: kept(a.from), to: kept(a.to) };
+        }
       }
+      this.sz = size;
     }
-    this.sz = size;
+    this.displayed = displayed;
     this.resolution = resolution;
     const engine = this.engine;
     if (engine === undefined) {
@@ -265,7 +272,7 @@ export class CanvasController implements GestureHost {
     // Resizing the renderer clears its canvas, which the browser would show
     // so, as a frame of nothing, before the next frame drew it: the canvas
     // draws at once, as the browser tells of its new size before it paints.
-    engine.resize(size, resolution);
+    engine.resize(this.sz, resolution);
     this.drawNow();
   }
 
@@ -320,23 +327,9 @@ export class CanvasController implements GestureHost {
     return this.sz;
   }
 
-  /**
-   * The size that a move of the toolbar's, the keys', or the minimap's is
-   * about: the canvas's, or, while it has none, as of a host that the page
-   * does not display, the last that had an area, whose centre the size
-   * after keeps (setSize), so that the move is about the centre that the
-   * canvas shows again, rather than about the top-left corner of none.
-   */
-  private shown(): Size {
-    return this.sz.width > 0 && this.sz.height > 0
-      ? this.sz
-      : (this.shownSize ?? this.sz);
-  }
-
-  /** The centre of the canvas, of its size as a move is about it (shown). */
+  /** The centre of the canvas, which a move of the toolbar's, the keys', or the minimap's is about (sz). */
   private centre(): Point {
-    const size = this.shown();
-    return { x: size.width / 2, y: size.height / 2 };
+    return { x: this.sz.width / 2, y: this.sz.height / 2 };
   }
 
   /**
@@ -440,7 +433,7 @@ export class CanvasController implements GestureHost {
    * been read.
    */
   animateTo(v: Viewport): void {
-    if (this.reducedMotion || this.sz.width === 0) {
+    if (this.reducedMotion || !this.displayed) {
       this.setViewport(v);
       return;
     }
@@ -476,7 +469,7 @@ export class CanvasController implements GestureHost {
     if (bounds === undefined) {
       return emptyView;
     }
-    return fitTo(bounds, this.shown(), 48, fitZoom);
+    return fitTo(bounds, this.sz, 48, fitZoom);
   }
 
   /** Shows the selected nodes whole, and reports whether there were any. */
@@ -485,7 +478,7 @@ export class CanvasController implements GestureHost {
     if (bounds === undefined) {
       return false;
     }
-    this.animateTo(fitTo(bounds, this.shown(), 48, fitZoom));
+    this.animateTo(fitTo(bounds, this.sz, 48, fitZoom));
     return true;
   }
 
@@ -516,9 +509,8 @@ export class CanvasController implements GestureHost {
     switch (action.kind) {
       case "pan": {
         const v = this.target();
-        const size = this.shown();
         this.animateTo(
-          panBy(v, action.dx * size.width, action.dy * size.height),
+          panBy(v, action.dx * this.sz.width, action.dy * this.sz.height),
         );
         return true;
       }
@@ -552,7 +544,7 @@ export class CanvasController implements GestureHost {
    * third finger, leaves it to go on.
    */
   pointer(
-    type: "down" | "move" | "up" | "cancel",
+    type: "down" | "move" | "leave" | "up" | "cancel",
     input: PointerInput,
   ): boolean {
     switch (type) {
@@ -565,6 +557,9 @@ export class CanvasController implements GestureHost {
       }
       case "move":
         this.gestures.move(input);
+        return true;
+      case "leave":
+        this.gestures.leave(input);
         return true;
       case "up":
         this.gestures.up(input);
@@ -612,13 +607,16 @@ export class CanvasController implements GestureHost {
   private readonly frame = (time: number): void => {
     this.pending = 0;
     const size = this.sz;
-    if (this.ready && !this.placed && size.width > 0 && size.height > 0) {
+    if (this.ready && !this.placed && this.displayed) {
       // The fit takes the place of whatever moved the canvas while the
       // content was read, as a zoom of the toolbar's, which would else go
-      // on after it.
+      // on after it, and a gesture under way, as a pinch, goes on from it,
+      // rather than take the board back with its next move.
+      const from = this.v;
       this.v = this.fitted();
       this.animation = undefined;
       this.placed = true;
+      this.gestures.replaced(from);
     }
     const a = this.animation;
     if (a !== undefined) {
@@ -636,12 +634,7 @@ export class CanvasController implements GestureHost {
     this.showZoom();
     const engine = this.engine;
     const theme = this.theme;
-    if (
-      engine === undefined ||
-      theme === undefined ||
-      size.width === 0 ||
-      size.height === 0
-    ) {
+    if (engine === undefined || theme === undefined || !this.displayed) {
       return;
     }
     const start = this.clock.now();

@@ -6,18 +6,22 @@
 // middle button, or with Space held, still pans; two fingers pinch, zooming
 // about the point between them, which stays under them, and pan as they move
 // together; a third finger is ignored, as is a finger while a pen is down,
-// as a palm that rests on the screen as the pen draws, and a press of a
-// mouse or a pen takes the canvas from any other pointer, as a finger's
-// does from a mouse. A tap, or a click, selects the node under it, or adds
-// it to the selection, or takes it out, with Shift, Ctrl, or Cmd, and a tap
-// on the board's empty canvas clears the selection; a click of the middle
-// button, which pans, selects nothing. The wheel pans, and Shift turns it
-// sideways; with Ctrl or Cmd, as a trackpad's pinch sends it, it zooms
-// about the pointer. Nothing needs hover or a right click, and a right
-// click, or a pen's barrel button or its eraser, does nothing; a press
-// ends, as cancelled, once its mouse or its pen moves without the button
-// that pressed it. The canvas gives back the capture of a pointer as soon
-// as it no longer follows it, however its gesture ended (GestureHost's
+// as a palm that rests on the screen as the pen draws, and Safari's pinch
+// of such fingers, and a press of a mouse or a pen takes the canvas from
+// any other pointer, as a finger's does from a mouse. A tap, or a click,
+// selects the node under it, or adds it to the selection, or takes it out,
+// with Shift, Ctrl, or Cmd, and a tap on the board's empty canvas clears
+// the selection; a click of the middle button, which pans, selects nothing.
+// The wheel pans, and Shift turns it sideways; with Ctrl or Cmd, as a
+// trackpad's pinch sends it, it zooms about the pointer. Nothing needs
+// hover or a right click, and a right click, or a pen's barrel button or
+// its eraser, does nothing; a press ends, as cancelled, once its mouse or
+// its pen moves, or leaves the canvas, without the button that pressed it,
+// as a pen does that leaves the range where the screen sees it hover. A
+// gesture under way when the canvas moves the board by itself, as with its
+// fit to the board's content once it has been read, goes on from where the
+// board is then. The canvas gives back the capture of a pointer as soon as
+// it no longer follows it, however its gesture ended (GestureHost's
 // release).
 
 import { dragThreshold } from "../ui/drag";
@@ -183,7 +187,9 @@ export class Gestures {
    * a pen is down is ignored, as a palm that rests on it as the pen draws,
    * where the system rejects none, which would else end the pen's rubber
    * band, or its pan; a pen whose release the canvas did not hear of ends
-   * as it hovers after it (move), or goes down again.
+   * as it hovers after it (move), as it leaves the range where the screen
+   * sees it hover (leave), which it passes through as it is lifted, or as
+   * it goes down again.
    */
   down(p: PointerInput): boolean {
     if (this.pointers.has(p.id)) {
@@ -247,6 +253,20 @@ export class Gestures {
       return;
     }
     this.follow(p);
+  }
+
+  /**
+   * Takes a pointer that left the canvas. The canvas holds the capture of
+   * each pointer that it follows, which the browser says has left it only
+   * once the browser has lost the pointer, as a pen that leaves the range
+   * where the screen sees it hover: a move to where it left, so that a pen
+   * whose release the canvas did not hear of, and that leaves the range
+   * without a move after it, as one lifted straight out of it, ends there,
+   * as one that hovers does (move), rather than keep every finger from the
+   * canvas after it, as a palm's (down).
+   */
+  leave(p: PointerInput): void {
+    this.move(p);
   }
 
   /** Moves the pointer of p, which the canvas follows, to where p is. */
@@ -398,6 +418,38 @@ export class Gestures {
     }
   }
 
+  /**
+   * Tells that the canvas moved the board by itself, from the viewport
+   * from, as with its fit to the board's content once it has been read,
+   * which a gesture under way did not ask for: the gesture goes on from
+   * where the board is now, rather than take it back to the point that it
+   * held under the viewport before, as a pinch that began while the board
+   * was read would undo the fit with its next move. A pinch starts again
+   * from where its fingers are, and a press and a rubber band, from where
+   * their start is on the canvas. A pan moves the board by what its pointer
+   * moves, from wherever it is.
+   */
+  replaced(from: Viewport): void {
+    const g = this.gesture;
+    const v = this.host.viewport();
+    const kept = (p: Point) => toWorld(v, toScreen(from, p));
+    switch (g.kind) {
+      case "pinch":
+        this.startPinch();
+        return;
+      case "press":
+        this.gesture = { ...g, at: kept(g.at) };
+        return;
+      case "band":
+        this.gesture = { ...g, anchor: kept(g.anchor) };
+        this.refresh();
+        return;
+      case "pan":
+      case "idle":
+        return;
+    }
+  }
+
   private startPinch(): void {
     if (this.gesture.kind === "band") {
       this.host.band(undefined);
@@ -451,14 +503,17 @@ export class Gestures {
    * gesture's scale, from 1 at its start, rather than as a wheel. Safari on
    * an iPad sends a touch screen's pinch as a gesture too, as well as the
    * fingers' pointers, which pinch already: a gesture while a finger is on
-   * the canvas is theirs, and is left to them.
+   * the canvas is theirs, and is left to them, and one while a pen is down
+   * is of fingers that the canvas ignores, as a palm's (down), which zoom
+   * the board under the pen's rubber band, or its pan, no more than they
+   * end it.
    */
   scale(at: Point, from: number, to: number): void {
     if (from <= 0 || to <= 0) {
       return;
     }
     for (const p of this.pointers.values()) {
-      if (p.kind === "touch") {
+      if (p.kind === "touch" || p.kind === "pen") {
         return;
       }
     }

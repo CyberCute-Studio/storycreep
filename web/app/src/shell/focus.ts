@@ -142,12 +142,24 @@ export function followInPage(event: InPageClick, id: string): void {
     return;
   }
   event.preventDefault();
-  const target = event.currentTarget.ownerDocument.getElementById(id);
+  showInPage(event.currentTarget.ownerDocument, id);
+}
+
+/** Brings the element of ID id of doc to the top of the window, and gives it the focus (followInPage). */
+function showInPage(doc: Document, id: string): void {
+  const target = doc.getElementById(id);
   target?.scrollIntoView?.({ block: "start" });
   target?.focus({ preventScroll: true });
 }
 
-/** Follows the skip link: gives the page's content the focus (followInPage). */
+/**
+ * Follows the skip link: gives the page's content the focus, as
+ * followInPage does, whatever key the click is with, since the skip link
+ * leads to the content of the page that it is on, and is no link to open
+ * elsewhere: a new tab's copy of a link's page, at #main, would have lost
+ * the token that the page's fragment holds.
+ */
 export function skipToContent(event: InPageClick): void {
-  followInPage(event, CONTENT_ID);
+  event.preventDefault();
+  showInPage(event.currentTarget.ownerDocument, CONTENT_ID);
 }
