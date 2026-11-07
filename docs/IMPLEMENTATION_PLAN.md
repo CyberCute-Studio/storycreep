@@ -651,7 +651,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone I — Canvas
 
 ### 59. PixiJS renderer, navigation, culling, and LOD
-**Status:** todo · **Depends on:** 45, 56
+**Status:** done ([#72](https://github.com/CyberCute-Studio/storycreep/pull/72)) · **Depends on:** 45, 56
 **PRD:** FR-EDIT-01, FR-EDIT-11, ADR-013, NFR-PERF-01/02/04/05/18, NFR-TOUCH-03/07/08, NFR-A11Y-07
 - PixiJS v8 board rendering, in package `web/app/src/canvas` (`BoardCanvas`, over `CanvasController` and the renderer of `engine.ts`), on the board's page, above the board's settings: its nodes and connections as the project's document holds them, kept current as it changes (`scene.ts`). Pan and zoom by mouse, wheel, trackpad, touch, and keyboard (`gestures.ts`, `keyboard.ts`). Zoom range 10–400%, fit to content, zoom to selection, minimap (`minimap.ts`), and the selection that zoom to selection needs: a tap or a click, with Shift, Ctrl, or Cmd to add or take out, and the select mode's rubber band (N66).
 - Culling, batching, and level of detail (simplified blocks below 40%): a spatial index of the board (`spatial.ts`), and display objects for the canvas and a margin around it, reused as the view moves, of shared textures and bitmap fonts. A Canvas 2D fallback with reduced limits: PixiJS's own Canvas renderer, which draws cards with text only while at most 300 nodes are in view (N66).
