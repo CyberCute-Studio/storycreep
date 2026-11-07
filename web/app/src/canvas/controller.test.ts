@@ -185,6 +185,31 @@ describe("the canvas's controller", () => {
     expect(c.viewport()).toEqual({ x: -25, y: -25, zoom: 2 });
   });
 
+  it("asks for no frame to restore a view, and keeps a selection that the user made before it was placed", () => {
+    for (const selection of [["nd_1"], []]) {
+      const { c, time, frames } = setUp();
+      time.tick();
+      c.restore({
+        viewport: { x: 100, y: 50, zoom: 2 },
+        size: { width: 1000, height: 600 },
+        selection,
+      });
+      // The page restores the view as it renders.
+      expect(time.pending()).toBe(0);
+      // The document had the board's nodes, which the canvas shows while
+      // it reads them anew, and the user selects one meanwhile.
+      c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+      c.select(["nd_2"], "replace");
+      time.tick();
+      c.setReady();
+      time.tick();
+      expect(c.viewport(), `${selection}`).toEqual({ x: 100, y: 50, zoom: 2 });
+      expect([...(frames.at(-1)?.selection ?? [])], `${selection}`).toEqual([
+        "nd_2",
+      ]);
+    }
+  });
+
   it("tells the page what it shows from the frame that placed it on, once a frame, as its view, its size, or its selection changes", () => {
     const { c, time, events } = setUp();
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);

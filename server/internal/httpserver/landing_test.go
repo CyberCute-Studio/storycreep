@@ -20,6 +20,17 @@ func lastBoardEntry(user, project, board string) string {
 	return user + ":" + project + ":" + board
 }
 
+// lastBoardCookieOf returns the last-board cookie that the headers h of an
+// answer set, or nil if they set none.
+func lastBoardCookieOf(h http.Header) *http.Cookie {
+	for _, line := range h.Values("Set-Cookie") {
+		if ck, err := http.ParseSetCookie(line); err == nil && ck.Name == lastBoardCookie {
+			return ck
+		}
+	}
+	return nil
+}
+
 // TestLastBoardCookie checks how the landing reads the last-board cookie:
 // the first entry of the account's, of the first five, whose three IDs are
 // an account's, a project's, and a board's, in either case, past entries of
@@ -66,13 +77,56 @@ func TestLastBoardCookie(t *testing.T) {
 	}
 }
 
+// TestForgetLastBoard checks the cookie that the landing answers a board
+// that has gone with: the entries of the other accounts, as they were, but
+// for those that are not three IDs, for the path /, SameSite=Lax, readable
+// by the app's scripts, lasting 400 days, and Secure exactly on an https
+// URL; or none, once it keeps no entry.
+func TestForgetLastBoard(t *testing.T) {
+	user, other := ids.New(), ids.New()
+	u, o := ids.Encode(ids.User, user), ids.Encode(ids.User, other)
+	mine := lastBoardEntry(u, ids.Encode(ids.Project, ids.New()), ids.Encode(ids.Board, ids.New()))
+	theirs := lastBoardEntry(o, ids.Encode(ids.Project, ids.New()), ids.Encode(ids.Board, ids.New()))
+	for _, tt := range []struct {
+		name, value, want string
+	}{
+		{"none", "", ""},
+		{"the account's alone", mine, ""},
+		{"the account's, before another's", mine + "." + theirs, theirs},
+		{"another's, before the account's in lowercase", theirs + "." + strings.ToLower(mine), theirs},
+		{"with an entry that is no entry", "x." + mine + "." + theirs, theirs},
+	} {
+		for _, secure := range []bool{false, true} {
+			t.Run(tt.name, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodGet, "/", nil)
+				if tt.value != "" {
+					r.AddCookie(&http.Cookie{Name: lastBoardCookie, Value: tt.value})
+				}
+				ck, err := http.ParseSetCookie(forgetLastBoard(r, user, secure))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ck.Name != lastBoardCookie || ck.Value != tt.want || ck.Path != "/" ||
+					ck.SameSite != http.SameSiteLaxMode || ck.HttpOnly || ck.Secure != secure {
+					t.Errorf("forgetLastBoard = %+v; want %q, for the path /, SameSite=Lax, Secure %v", ck, tt.want,
+						secure)
+				}
+				if want := 400 * 24 * 60 * 60; tt.want == "" && ck.MaxAge >= 0 || tt.want != "" && ck.MaxAge != want {
+					t.Errorf("forgetLastBoard: Max-Age %d; want %d, or a removal", ck.MaxAge, want)
+				}
+			})
+		}
+	}
+}
+
 // TestLanding checks where a request to / or /login goes (PRD FR-PUB-05),
 // with the public site on and off: with a session, to the board that the
 // last-board cookie names for the session's account, with a 302 that holds
 // nothing of the public site's home page (AC1, AC4), while the account may
 // read the board, or else to the project list (AC2), as for a board in the
-// trash, another account's entry, a board that the account may not read, or
-// a cookie that names none; and without one, or with one of a session that
+// trash, whose answer takes the account's entry out of the cookie, another
+// account's entry, a board that the account may not read, or a cookie that
+// names none; and without one, or with one of a session that
 // has ended, whose cookie the answer clears, or while the server starts, as
 // before: / with the page of the public site's setting, and /login with the
 // sign-in screen (AC3). A request over the read limit goes to the project
@@ -175,6 +229,27 @@ func TestLanding(t *testing.T) {
 					// An entry that names a board of a project that the
 					// account may not read sends it to its project list.
 					lands(t, path, cookies(&other, lastBoardEntry(other.body.UserID, p.ID, b)), projectList)
+
+					// The answer of a board that has gone takes the account's
+					// entry out of the cookie, and keeps another's; that of a
+					// board that the account may read leaves the cookie be.
+					theirs := lastBoardEntry(other.body.UserID, p.ID, b)
+					for value, want := range map[string]string{
+						lastBoardEntry(ownerID, p.ID, trashed):                "",
+						lastBoardEntry(ownerID, p.ID, trashed) + "." + theirs: theirs,
+					} {
+						res := do(s.main, http.MethodGet, path, cookies(&owner, value))
+						if ck := lastBoardCookieOf(res.header); ck == nil || ck.Value != want ||
+							(want == "") != (ck.MaxAge < 0) {
+							t.Errorf("GET %s of a board that has gone: the last-board cookie is %+v, want %q", path,
+								ck, want)
+						}
+					}
+					if ck := lastBoardCookieOf(do(s.main, http.MethodGet, path, cookies(&owner, entry)).header); ck !=
+						nil {
+						t.Errorf("GET %s of a board that the account may read: it sets the last-board cookie %+v", path,
+							ck)
+					}
 
 					for _, method := range []string{http.MethodGet, http.MethodHead} {
 						anonymous(t, method, path, cookies(nil, entry))

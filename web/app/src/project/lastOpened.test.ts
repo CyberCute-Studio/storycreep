@@ -132,6 +132,13 @@ describe("the last-opened state", () => {
     );
     expect(lastOpened("usr_a")?.view?.selection).toEqual(["nd_1"]);
 
+    // Nor does it keep what is no ID, which could end the cookie's value.
+    localStorage.clear();
+    rememberBoard("usr_a", "prj_a; Domain=example.com", "bd_a");
+    rememberView("usr_a", "prj_a", "bd:a", shown(1));
+    expect(lastOpened("usr_a")).toBeUndefined();
+    expect(cookie()).toBeUndefined();
+
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new DOMException("denied", "SecurityError");
     });

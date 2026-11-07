@@ -192,14 +192,18 @@ test.describe("the last-opened state", () => {
     }
 
     // The board goes to the trash elsewhere: the device opens the project
-    // list from / and from the app's start page, which forgets the board.
+    // list from /, which takes the board out of the cookie, and from the
+    // app's start page, which forgets it.
     await apply(page.request, session, projectId, [
       { type: "board.delete", payload: { id: board.boardId } },
     ]);
+    const lastBoardCookie = async () =>
+      (await page.context().cookies()).find((c) => c.name === "sc_last_board");
     for (const from of ["/", "/app/", "/"]) {
       await page.goto(from);
       await expect(page).toHaveURL(/\/app\/workspaces\/[^/]+$/);
       await atStart(page, account.name);
+      expect(await lastBoardCookie(), from).toBeUndefined();
     }
     expect(
       await page.evaluate(
@@ -207,21 +211,22 @@ test.describe("the last-opened state", () => {
         `storycreep.last.${session.userID}`,
       ),
     ).toBeNull();
-    expect(
-      (await page.context().cookies()).find((c) => c.name === "sc_last_board"),
-    ).toBeUndefined();
 
     // What the device keeps that is none of the app's opens the project list
-    // too.
+    // too. The cookie is for the path /, as the app writes it, so that / and
+    // the app's start page are sent it: a cookie of a page's URL is for the
+    // URL's directory alone.
     await page.evaluate(
       (key) => localStorage.setItem(key, "{not json"),
       `storycreep.last.${session.userID}`,
     );
-    await page
-      .context()
-      .addCookies([
-        { name: "sc_last_board", value: "garbage", url: page.url() },
-      ]);
+    await page.context().addCookies([
+      {
+        name: "sc_last_board",
+        value: "garbage",
+        url: new URL("/", page.url()).href,
+      },
+    ]);
     for (const from of ["/", "/app/"]) {
       await page.goto(from);
       await expect(page).toHaveURL(/\/app\/workspaces\/[^/]+$/);

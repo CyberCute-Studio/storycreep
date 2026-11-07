@@ -65,6 +65,37 @@ export async function loadParts(
 }
 
 /**
+ * Reads what the page of the board boardId of the project of projectId reads
+ * before it shows (projects.$projectId.boards.$boardId.tsx), as the app's
+ * start page does before it opens the board (lastBoard, in lastOpened.ts),
+ * and resolves to the project's document, or to undefined if it has no such
+ * board: the project first, as for the tree of its boards, which its
+ * document reads, and which holds the board, but for one in the trash, each
+ * through read, as a loader's found. A document that the real-time channel
+ * does not keep current, while it is not live, may not have the board yet,
+ * as one that another session made since, so it reads the project anew
+ * before it says that there is none, and rejects with what that read failed
+ * with, rather than say so after a read that failed.
+ */
+export async function readBoard(
+  context: { queryClient: QueryClient; documents: Documents },
+  projectId: string,
+  boardId: string,
+  read: <T>(read: Promise<T>) => Promise<T> = (r) => r,
+): Promise<ProjectDocument | undefined> {
+  const project = await read(
+    context.queryClient.ensureQueryData(projectQuery(projectId)),
+  );
+  const doc = context.documents.get(project.id);
+  await read(doc.load("tree"));
+  const has = () => doc.store.getState().view.boards.has(boardId);
+  if (!has()) {
+    await doc.refresh();
+  }
+  return has() ? doc : undefined;
+}
+
+/**
  * Reads part of doc, as a page that shows it does, resolving once the
  * document holds it: a part that the document had read already, which the
  * real-time channel does not keep current while it is not live, resolves

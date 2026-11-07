@@ -399,13 +399,16 @@ export class CanvasController implements GestureHost {
    * canvas now, at the zoom then, so that a canvas of the same size shows
    * the same part of the board, and one of another, as a tablet turned
    * since, the part about the same centre, as a resize keeps it; and the
-   * nodes that it selected that the board still has, selected again. It
-   * does nothing once the canvas has been placed.
+   * nodes that it selected that the board still has, selected again, unless
+   * the user has selected others since. It does nothing once the canvas has
+   * been placed. It asks for no frame, so that a page may call it as it
+   * renders, as the frame that places the canvas comes once the content has
+   * been read (setReady) and the canvas has a size (setSize), which each ask
+   * for one.
    */
   restore(view: SavedView): void {
     if (!this.placed) {
       this.saved = view;
-      this.invalidate();
     }
   }
 
@@ -689,7 +692,10 @@ export class CanvasController implements GestureHost {
       // before this frame's callback. A gesture under way, as the pinch,
       // goes on from it, rather than take the board back with its next
       // move. A restored view is the first that the board's content is
-      // drawn at, with its selection, rather than a fit that it moves from.
+      // drawn at, with its selection, rather than a fit that it moves from,
+      // but for a selection that the user made before it, as of a board
+      // whose nodes the document had, which the canvas showed while it read
+      // them anew, which stays.
       const from = this.v;
       const saved = this.saved;
       this.saved = undefined;
@@ -704,7 +710,7 @@ export class CanvasController implements GestureHost {
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);
-      if (saved !== undefined) {
+      if (saved !== undefined && this.selected.size === 0) {
         this.select(
           saved.selection.filter(
             (id) => this.scene.nodes.get(id) !== undefined,

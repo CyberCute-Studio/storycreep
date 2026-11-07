@@ -23,6 +23,7 @@ import {
   editsProject,
   loadPart,
   projectQuery,
+  readBoard,
 } from "../project/queries";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
@@ -107,24 +108,20 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     }
     return out;
   },
-  // The project comes first, as for the tree of its boards, which its
-  // document reads, and which holds the board, but for one in the trash. A
-  // document that the real-time channel does not keep current, while it is
-  // not live, may not have the board yet, as one that another session made
-  // since, so it reads the project anew before it says that there is none,
-  // and shows what that read failed with, rather than say so after a read
-  // that failed.
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
+  // The project, and the tree of its boards, which holds the board, but for
+  // one in the trash, as readBoard reads them, which the app's start page
+  // reads too before it opens the board: the page of no page where the
+  // server has none of either for the user, or the tree no such board, and
+  // otherwise what a read failed with, rather than say that there is no
+  // board after a read that failed.
+  loader: async ({ context, params }) => {
+    const doc = await readBoard(
+      context,
+      params.projectId,
+      params.boardId,
+      found,
     );
-    const doc = documents.get(project.id);
-    await found(doc.load("tree"));
-    const has = () => doc.store.getState().view.boards.has(params.boardId);
-    if (!has()) {
-      await doc.refresh();
-    }
-    if (!has()) {
+    if (doc === undefined) {
       throw notFound();
     }
     // The board's nodes and connections, which the canvas shows, start to

@@ -1,6 +1,8 @@
 import { type Board, NetworkError } from "@storycreep/shared/api";
 import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PRODUCT_NAME } from "./product";
 import { lastOpened, rememberBoard } from "./project/lastOpened";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
@@ -62,6 +64,18 @@ describe("the start page", () => {
     expect(router.state.location.pathname).toBe(
       `/projects/${testProject.id}/boards/${harbour.id}`,
     );
+  });
+
+  it("leaves the header's product name to the project list, from the board that it would open", async () => {
+    answer([harbour]);
+    const { router } = renderApp(
+      `/projects/${testProject.id}/boards/${harbour.id}`,
+      { session: testSession },
+    );
+    await screen.findByRole("heading", { level: 1, name: "Harbour" });
+    await userEvent.click(screen.getByRole("link", { name: PRODUCT_NAME }));
+    await screen.findByRole("heading", { level: 1, name: "Projects" });
+    expect(router.state.location.pathname).toBe("/workspaces/ws_studio");
   });
 
   it("opens the project list on a device that showed the account no board, as another account's board is none of its", async () => {

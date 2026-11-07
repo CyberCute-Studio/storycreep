@@ -16,7 +16,7 @@ import { notFoundBy } from "../api";
 import type { CanvasView, SavedView } from "../canvas/controller";
 import { maxZoom, minZoom } from "../canvas/viewport";
 import type { Documents } from "../document/documents";
-import { projectQuery } from "./queries";
+import { readBoard } from "./queries";
 
 /** What the device last showed an account: a board of a project, and what the canvas showed of it, once it had. */
 export interface LastOpened {
@@ -34,9 +34,10 @@ function storageKey(userId: string): string {
  * The name of the cookie that keeps, for the server, the board that the
  * browser last showed each of the accounts that last used it
  * (lastBoardCookie, in server/internal/httpserver/landing.go, which reads
- * it): at most cookieEntries entries, the most recent first, separated by
- * '.', each the IDs of the account, the project, and the board, separated
- * by ':'.
+ * it, and takes the account's entry out of it, as forgetLastOpened does,
+ * once it finds that the board has gone): at most cookieEntries entries,
+ * the most recent first, separated by '.', each the IDs of the account, the
+ * project, and the board, separated by ':'.
  */
 const cookieName = "sc_last_board";
 
@@ -117,8 +118,16 @@ export function lastOpened(userId: string): LastOpened | undefined {
     : { projectId, boardId, view: saved };
 }
 
-/** Keeps last as what the device last showed the account userId, and its board in the cookie. */
+/**
+ * Keeps last as what the device last showed the account userId, and its
+ * board in the cookie, or nothing of IDs that are not, which lastOpened would
+ * not read, and which could hold the cookie's separators, or the ';' that
+ * ends its value.
+ */
 function keep(userId: string, last: LastOpened): void {
+  if (!isId(userId) || !isId(last.projectId) || !isId(last.boardId)) {
+    return;
+  }
   try {
     localStorage.setItem(storageKey(userId), JSON.stringify(last));
   } catch {
@@ -261,15 +270,14 @@ interface StartContext {
  * that is gone, as to the trash, or of a project that the account may no
  * longer read, which it forgets too, so that stale state never keeps the
  * app from starting (FR-PROJ-04 AC2). It reads what the board's page reads
- * first, the project and the tree of its boards, which that page then finds
- * read, and reads the project anew where the tree does not have the board,
- * as the page does, since it may be of a document that the real-time
- * channel did not keep current. A read that fails otherwise, as without the
+ * first, as that page does (readBoard): the project and the tree of its
+ * boards, which that page then finds read, and the project anew where the
+ * tree does not have the board. A read that fails otherwise, as without the
  * network, leaves what the device keeps as it is, and opens the project
  * list, which says what fails.
  */
 export async function lastBoard(
-  { queryClient, documents }: StartContext,
+  context: StartContext,
   userId: string,
 ): Promise<{ projectId: string; boardId: string } | undefined> {
   const last = lastOpened(userId);
@@ -278,14 +286,7 @@ export async function lastBoard(
   }
   const { projectId, boardId } = last;
   try {
-    await queryClient.ensureQueryData(projectQuery(projectId));
-    const doc = documents.get(projectId);
-    await doc.load("tree");
-    const has = () => doc.store.getState().view.boards.has(boardId);
-    if (!has()) {
-      await doc.refresh();
-    }
-    if (has()) {
+    if ((await readBoard(context, projectId, boardId)) !== undefined) {
       return { projectId, boardId };
     }
   } catch (error) {

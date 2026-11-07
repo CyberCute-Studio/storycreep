@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { lastOpened, rememberView } from "../project/lastOpened";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
@@ -65,6 +65,12 @@ beforeEach(() => {
   engines.destroyed = 0;
   engines.hold = undefined;
   engines.signals = [];
+});
+
+// A test that measures the canvas's host (getBoundingClientRect) leaves the
+// tests after it to jsdom's, which lays nothing out.
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const harbour: Board = {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/account"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
@@ -34,10 +35,13 @@ import (
 // or that the account may no longer read, as of a workspace that it left,
 // sends it to the project list instead, and so does a cookie that a script or
 // another account wrote, which can name no board that the account may not
-// read. The cookie holds no secret, so a script may write it, as the app does,
-// and it is not __Host- prefixed, as the session's is on an https URL: a
-// cookie that another host of the domain planted could send the account to
-// a board that it may read, and nowhere else.
+// read. The answer of a board that has gone also takes the account's entry
+// out of the cookie, as the app's start page forgets the board, so that the
+// next request does not read it again. The cookie holds no secret, so a
+// script may write it, as the app does, and it is not __Host- prefixed, as
+// the session's is on an https URL: a cookie that another host of the domain
+// planted could send the account to a board that it may read, and nowhere
+// else.
 
 // lastBoardCookie is the name of the cookie in which the web app keeps the
 // board that the browser last showed each of the accounts that last used it.
@@ -58,33 +62,75 @@ const maxLastBoards = 5
 // to create one (plan note N62).
 const projectList = appPrefix + "projects"
 
-// lastBoardOf returns the project and the board that the last-board cookie of
-// r names for the account userID, and false if it names none: the first
-// entry of the account's, of the first maxLastBoards. An entry that is not
-// three IDs of an account, a project, and a board, as one that a script
-// wrote, names nothing, and the entries after it are read all the same.
-func lastBoardOf(r *http.Request, userID ids.UUID) (projectID, boardID ids.UUID, ok bool) {
+// lastBoard is an entry of the last-board cookie: its text, and the IDs of
+// the account, the project, and the board that it holds.
+type lastBoard struct {
+	text                 string
+	user, project, board ids.UUID
+}
+
+// lastBoardsOf returns the entries of the last-board cookie of r, of its
+// first maxLastBoards, in order, but for those that are not three IDs of an
+// account, a project, and a board, as one that a script wrote, which name
+// nothing, while the entries after them are read all the same.
+func lastBoardsOf(r *http.Request) []lastBoard {
 	ck, err := r.Cookie(lastBoardCookie)
 	if err != nil {
-		return ids.UUID{}, ids.UUID{}, false
+		return nil
 	}
+	var out []lastBoard
 	entries := strings.SplitN(ck.Value, ".", maxLastBoards+1)
 	for _, entry := range entries[:min(len(entries), maxLastBoards)] {
 		parts := strings.Split(entry, ":")
 		if len(parts) != 3 {
 			continue
 		}
-		user, err := ids.Decode(ids.User, parts[0])
-		if err != nil || user != userID {
-			continue
-		}
+		user, uerr := ids.Decode(ids.User, parts[0])
 		p, perr := ids.Decode(ids.Project, parts[1])
 		b, berr := ids.Decode(ids.Board, parts[2])
-		if perr == nil && berr == nil {
-			return p, b, true
+		if uerr == nil && perr == nil && berr == nil {
+			out = append(out, lastBoard{text: entry, user: user, project: p, board: b})
+		}
+	}
+	return out
+}
+
+// lastBoardOf returns the project and the board that the last-board cookie of
+// r names for the account userID, and false if it names none: those of the
+// first of its entries that is the account's (lastBoardsOf).
+func lastBoardOf(r *http.Request, userID ids.UUID) (projectID, boardID ids.UUID, ok bool) {
+	for _, e := range lastBoardsOf(r) {
+		if e.user == userID {
+			return e.project, e.board, true
 		}
 	}
 	return ids.UUID{}, ids.UUID{}, false
+}
+
+// lastBoardAge is how long the last-board cookie lasts, as the web app
+// writes it: 400 days, the most that browsers keep one.
+const lastBoardAge = 400 * 24 * time.Hour
+
+// forgetLastBoard returns the Set-Cookie header that keeps the last-board
+// cookie of r without the entries of the account userID, as the web app's
+// forgetLastOpened writes it once it finds that the account's board has
+// gone: the entries of the other accounts (lastBoardsOf), as they are, for
+// the path /, SameSite=Lax, for lastBoardAge, Secure if secure, as on an
+// https URL, and readable by the app's scripts, which write it too; or the
+// header that removes the cookie, once it keeps none.
+func forgetLastBoard(r *http.Request, userID ids.UUID, secure bool) string {
+	var kept []string
+	for _, e := range lastBoardsOf(r) {
+		if e.user != userID {
+			kept = append(kept, e.text)
+		}
+	}
+	ck := &http.Cookie{Name: lastBoardCookie, Value: strings.Join(kept, "."), Path: "/", Secure: secure,
+		SameSite: http.SameSiteLaxMode, MaxAge: int(lastBoardAge / time.Second)}
+	if len(kept) == 0 {
+		ck.MaxAge = -1
+	}
+	return ck.String()
 }
 
 // boardPage returns the path of the tool's page of the board boardID of the
@@ -96,7 +142,8 @@ func boardPage(projectID, boardID ids.UUID) string {
 // lander returns where an authenticated request to / or /login goes, and
 // false for a request without a session, which the page answers as it does
 // any other. It may add headers to w, as one that clears the cookie of a
-// session that has ended.
+// session that has ended, or one that takes a board that has gone out of
+// the last-board cookie.
 type lander func(w http.ResponseWriter, r *http.Request) (target string, ok bool)
 
 // landing returns the server's lander, for the session cookie cookie. It
@@ -109,7 +156,9 @@ type lander func(w http.ResponseWriter, r *http.Request) (target string, ok bool
 // rate limits, for the client's IP address and the account, as the API's
 // reads do, before the landing reads the board: one over the limit, which
 // the landing does not read the board for, goes to the project list, whose
-// requests the API refuses then too.
+// requests the API refuses then too. One whose board has gone, or that the
+// account may no longer read, goes to the project list, and takes the
+// account's entry out of the last-board cookie (forgetLastBoard).
 func (s *server) landing(cookie sessionCookie) lander {
 	return func(w http.ResponseWriter, r *http.Request) (string, bool) {
 		value, ok := cookie.read(r)
@@ -147,6 +196,9 @@ func (s *server) landing(cookie sessionCookie) lander {
 		_, err = s.boards.Get(ctx, commands.Actor{UserID: session.UserID, Client: client}, projectID, boardID)
 		switch {
 		case errors.Is(err, board.ErrNotFound), errors.Is(err, project.ErrNotFound):
+			// The cookie forgets the board, as the app's start page does,
+			// so that the next request does not read it again.
+			w.Header().Add("Set-Cookie", forgetLastBoard(r, session.UserID, cookie.secure))
 			return projectList, true
 		case err != nil:
 			s.log.WarnContext(ctx, "the last board of a request to "+r.URL.Path+" could not be read, so it "+
