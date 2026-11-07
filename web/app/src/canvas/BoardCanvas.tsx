@@ -4,8 +4,8 @@
 // (NFR-TOUCH-03), zooms, fits the content, zooms to the selection, and leads
 // to the board's settings under the canvas, and a minimap. The canvas
 // suppresses the browser's own gestures over it, as pull-to-refresh and
-// overscroll (NFR-TOUCH-08), and the toolbar's controls are of the size of a
-// finger (NFR-TOUCH-01).
+// overscroll (NFR-TOUCH-08), and its menu, and the toolbar's controls are of
+// the size of a finger (NFR-TOUCH-01).
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
@@ -252,10 +252,15 @@ export function BoardCanvas({
         if (type !== "down" && !controller.gestures.tracks(e.pointerId)) {
           return;
         }
-        const followed = controller.pointer(
-          type,
-          pointerInput(e, host.getBoundingClientRect()),
-        );
+        const input = pointerInput(e, host.getBoundingClientRect());
+        // A mouse that the canvas follows, but that moves with no button
+        // down, went up where the canvas did not hear of it, as once a
+        // menu of the system's took the release, rather than the page:
+        // its press ends there, as cancelled, rather than pan the board,
+        // or draw a rubber band, as the mouse hovers.
+        const released =
+          type === "move" && input.kind === "mouse" && e.buttons === 0;
+        const followed = controller.pointer(released ? "cancel" : type, input);
         if (type === "down" && followed) {
           host.focus({ preventScroll: true });
           host.setPointerCapture?.(e.pointerId);
@@ -317,8 +322,12 @@ export function BoardCanvas({
     // fling of its own, which a tap right after, as of the toolbar's
     // button, would only stop, rather than press, and from zooming the page
     // with a double tap (NFR-TOUCH-08). A button over the canvas, as the
-    // one that reads its content again, keeps its taps.
-    const touch = (e: TouchEvent) => {
+    // one that reads its content again, keeps its taps. The browser's menu
+    // does not open over the canvas either, as a right click does nothing
+    // to the board: a Ctrl+click on a Mac, which the canvas takes as a
+    // click that adds a node to the selection, or takes it out, would else
+    // open it, and the menu would take the click's release.
+    const own = (e: Event) => {
       if (!(e.target instanceof Element && e.target.closest("button"))) {
         e.preventDefault();
       }
@@ -327,8 +336,9 @@ export function BoardCanvas({
       controller.gestures.cancelAll();
       controller.gestures.setSpace(false);
     };
-    host.addEventListener("touchstart", touch, { passive: false });
-    host.addEventListener("touchmove", touch, { passive: false });
+    host.addEventListener("touchstart", own, { passive: false });
+    host.addEventListener("touchmove", own, { passive: false });
+    host.addEventListener("contextmenu", own);
     host.addEventListener("pointerdown", down);
     host.addEventListener("pointermove", move);
     host.addEventListener("pointerup", up);
@@ -345,8 +355,9 @@ export function BoardCanvas({
       dark?.removeEventListener("change", theme);
       observer?.disconnect();
       density?.removeEventListener("change", densityChanged);
-      host.removeEventListener("touchstart", touch);
-      host.removeEventListener("touchmove", touch);
+      host.removeEventListener("touchstart", own);
+      host.removeEventListener("touchmove", own);
+      host.removeEventListener("contextmenu", own);
       host.removeEventListener("pointerdown", down);
       host.removeEventListener("pointermove", move);
       host.removeEventListener("pointerup", up);

@@ -149,13 +149,20 @@ export class Gestures {
    * it: the primary button of each, a finger's touch or a pen's tip, and a
    * mouse's middle button, but no other button, as a mouse's right one, or a
    * pen's barrel button, which the system takes for a right click, or its
-   * eraser, nor a third pointer (NFR-TOUCH-07).
+   * eraser, nor a third pointer (NFR-TOUCH-07). A pointer that goes down
+   * while the canvas still follows it went up where the canvas did not
+   * hear of it, as a mouse's button that a menu of the system's, opened
+   * over the page, took the release of: its gesture ends, as cancelled,
+   * rather than refuse every press of it after.
    */
   down(p: PointerInput): boolean {
+    if (this.pointers.has(p.id)) {
+      this.end(p, true);
+    }
     if (p.button !== 0 && !(p.kind === "mouse" && p.button === 1)) {
       return false;
     }
-    if (this.pointers.size >= 2 || this.pointers.has(p.id)) {
+    if (this.pointers.size >= 2) {
       return false;
     }
     this.pointers.set(p.id, p);

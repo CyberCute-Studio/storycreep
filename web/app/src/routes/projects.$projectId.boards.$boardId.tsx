@@ -52,6 +52,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
+  // The page takes the window's width, for its canvas.
+  staticData: { wide: true },
   validateSearch: (search: Record<string, unknown>): BoardSearch => {
     const out: BoardSearch = {};
     if (

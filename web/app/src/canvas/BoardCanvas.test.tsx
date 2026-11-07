@@ -147,6 +147,45 @@ describe("a board's canvas", () => {
     expect(band?.hidden).toBe(true);
   });
 
+  it("ends a press once its mouse moves with no button down, as after a menu of the system's took its release, and opens no menu of the browser's over the canvas", async () => {
+    const user = userEvent.setup();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    const mouse = { pointerId: 1, pointerType: "mouse" };
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      button: 0,
+      buttons: 1,
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 80,
+      clientY: 60,
+    });
+    const band = canvas.querySelector<HTMLElement>(".border-accent");
+    expect(band?.hidden).toBe(false);
+    // The button went up under a menu of the system's, as a Ctrl+click's
+    // on a Mac does, and the mouse moves on without it.
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 120,
+      clientY: 90,
+    });
+    expect(band?.hidden).toBe(true);
+    // The browser's menu, which would take that release, does not open.
+    expect(fireEvent.contextMenu(canvas)).toBe(false);
+  });
+
   it("says that a board has no nodes yet", async () => {
     boardPage([]);
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
@@ -194,7 +233,7 @@ describe("a board's canvas", () => {
     ).toBeDefined();
   });
 
-  it("keeps the board's settings under the canvas", async () => {
+  it("keeps the board's settings under the canvas, which takes the window's width rather than the project's column", async () => {
     boardPage([]);
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
       session: testSession,
@@ -206,6 +245,14 @@ describe("a board's canvas", () => {
       "value",
       "Harbour",
     );
+    // The board's page says that it is wide (staticData), which the
+    // project's layout reads.
+    const nav = screen.getByRole("navigation", {
+      name: `Project ${testProject.name}`,
+    });
+    const layout = nav.closest(".mx-auto");
+    expect(layout).not.toBeNull();
+    expect(layout?.className).not.toContain("max-w-3xl");
   });
 
   it("leads from the toolbar to the board's settings, and gives their heading the focus", async () => {

@@ -267,6 +267,21 @@ describe("the canvas's gestures", () => {
     expect(state.selects).toEqual([]);
   });
 
+  it("ends a press whose release it did not hear of once its pointer goes down again, rather than refuse the press", () => {
+    const { state, gestures } = host("select");
+    // A Ctrl+click on a Mac, whose release a menu of the system's took,
+    // after a drag of a rubber band.
+    expect(gestures.down(mouse(10, 10, { additive: true }))).toBe(true);
+    gestures.move(mouse(60, 60));
+    expect(state.bands.at(-1)).toBeDefined();
+    // The next click, on the node, is followed, and selects it.
+    expect(gestures.down(mouse(200, 150))).toBe(true);
+    expect(state.bands.at(-1)).toBeUndefined();
+    gestures.up(mouse(200, 150));
+    expect(state.selects).toEqual([{ ids: ["nd_a"], how: "replace" }]);
+    expect(gestures.tracks(1)).toBe(false);
+  });
+
   it("goes on panning with the finger that stays once the other lifts", () => {
     const { state, gestures } = host();
     gestures.down(touch(1, 200, 300));
