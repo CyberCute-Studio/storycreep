@@ -670,7 +670,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PROJ-04 AC1–AC2 and FR-PUB-05 AC1–AC4 pass.
 
 ### 61. Node editing on the canvas
-**Status:** todo · **Depends on:** 58, 59
+**Status:** done ([#74](https://github.com/CyberCute-Studio/storycreep/pull/74)) · **Depends on:** 58, 59
 **PRD:** FR-EDIT-02 (UI), FR-EDIT-06 (UI), FR-EDIT-08 (UI), FR-TEXT-01 (AC3), FR-EDIT-09 (AC3), FR-COMP-04 (UI, jump-to links), NFR-TOUCH-04/05, NFR-PERF-06
 - Create, move with 8 px snap, resize, delete, duplicate, on the selection of item 59 (single, additive, rubber band, N66): the toolbar's Add of an element, a branch, or a jumper, Duplicate, Delete, and Snap to grid, a drag of the selection, which shows it at once without a command and sends one `node.move` as it lands (`controller.ts`, `gestures.ts`), a 44 px resize handle, whose press the canvas's gestures follow as a drag of their own (`ResizeHandle.tsx`), and Delete and Enter on the canvas, each a batch of `canvas/commands.ts` and `actions.ts`, of the snap, the alignment, and the distribution of `canvas/edit.ts`. Multi-select align, distribute, colour, tag, and delete (N68).
 - Node inspector: title, kind, speaker picker, cover upload, tags, `is_ending`, and a node's place and size, which need no drag, in a panel beside the canvas or a sheet below 900 px (`canvas/Inspector.tsx`). Tag filter dims non-matching nodes, by the server's own comparison of tags (`@storycreep/shared/fold`, N68).
