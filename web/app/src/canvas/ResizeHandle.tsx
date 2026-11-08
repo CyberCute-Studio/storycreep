@@ -67,6 +67,19 @@ export function ResizeHandle({
     }
     e.preventDefault();
     e.stopPropagation();
+    // A second pointer, as a second finger, or a mouse's click while a
+    // finger resizes, ends the resize of the first, cancelled, as it ends a
+    // move of the canvas's, and is followed by nothing, rather than take the
+    // handle from the first, whose resize would else never end. The same
+    // pointer, pressed again, whose release the handle did not hear of, is
+    // followed anew.
+    const was = press.current;
+    if (was !== undefined) {
+      end(false);
+      if (was.pointer !== e.pointerId) {
+        return;
+      }
+    }
     e.currentTarget.setPointerCapture?.(e.pointerId);
     press.current = {
       pointer: e.pointerId,
@@ -104,7 +117,14 @@ export function ResizeHandle({
     controller.resizeTo({ x: dx, y: dy });
   };
   const up = (e: PointerEvent<HTMLDivElement>) => {
-    if (press.current?.pointer === e.pointerId) {
+    const p = press.current;
+    if (p?.pointer === e.pointerId) {
+      // The release's point, which a lift of a finger or a pen may give
+      // after moves that the browser coalesced into it, is where the resize
+      // ends, as a move of the canvas's ends under its pointer.
+      if (p.resizing) {
+        controller.resizeTo({ x: e.clientX - p.x, y: e.clientY - p.y });
+      }
       end(true);
     }
   };

@@ -109,8 +109,6 @@ export interface GestureHost {
   release(id: number): void;
   /** Reports whether the node of id is selected. */
   isSelected(id: string): boolean;
-  /** Reports whether the board has the node of id, as it has not once another session deleted it. */
-  has(id: string): boolean;
   /** Reports whether a drag may move nodes, as on a board that the user may change. */
   movable(): boolean;
   /**
@@ -353,18 +351,19 @@ export class Gestures {
         }
         if (g.drag === "move" || g.drag === "pick") {
           const node = g.node as string;
-          // A node that went, as once another session deleted it, is not
-          // selected, and a drag that cannot move it, as one whose node
-          // went, or while its handle resizes it, selects nothing, moves
-          // nothing, pans nothing, and taps nothing as it ends: the host
-          // selects the node that it picks only once it starts the move.
+          // A drag that cannot move its node, as one whose node went, as
+          // once another session deleted it, or while its handle resizes
+          // it, selects nothing, moves nothing, pans nothing, and taps
+          // nothing as it ends: the host, which refuses the move of a node
+          // that went, selects the node that it picks only once it starts
+          // the move.
           const pick =
             g.drag === "pick"
               ? g.input.shift || g.input.additive
                 ? "add"
                 : "replace"
               : undefined;
-          if (!this.host.has(node) || !this.host.moveStart(node, pick)) {
+          if (!this.host.moveStart(node, pick)) {
             this.gesture = { kind: "held", id: p.id };
             return;
           }

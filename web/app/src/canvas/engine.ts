@@ -164,10 +164,48 @@ const cornerRadius = 10;
 const dimAlpha = 0.3;
 
 /**
+ * Of each field of a node, whether a node moved has it as it was (movedOnly):
+ * every field that its card shows, or that tells of a change of it, as its
+ * revision, but its position, and none that no card shows. The compiler
+ * holds each field of the API's node to be named here, so that a field that
+ * the API adds, which a card might show, is not left out unseen.
+ */
+const keptByMove = {
+  board_id: false,
+  color: true,
+  cover_asset_id: true,
+  created_at: false,
+  deleted_at: false,
+  id: true,
+  is_ending: true,
+  kind: true,
+  on_enter: false,
+  on_exit: false,
+  outputs: true,
+  position: false,
+  project_id: false,
+  rev: true,
+  size: true,
+  speaker_component_id: true,
+  tags: true,
+  target: true,
+  text: true,
+  title: true,
+  type: true,
+  updated_at: false,
+} satisfies Record<keyof Node, boolean>;
+
+/** The fields that a node moved has as it was (keptByMove). */
+const movedFields = (Object.keys(keptByMove) as (keyof Node)[]).filter(
+  (field) => keptByMove[field],
+);
+
+/**
  * Reports whether node b is node a moved, as a drag of the selection moves
- * it (controller.ts), with every field of a but its position: a card of a
- * that b is drawn again where b is, rather than anew, so that a drag of
- * hundreds of nodes does not write their text again in each of its frames.
+ * it (controller.ts), with every field of a that its card shows but its
+ * position (keptByMove): a card of a that b is drawn again where b is,
+ * rather than anew, so that a drag of hundreds of nodes does not write their
+ * text again in each of its frames.
  */
 function movedOnly(a: NodeItem, b: NodeItem): boolean {
   const x = a.node;
@@ -175,20 +213,7 @@ function movedOnly(a: NodeItem, b: NodeItem): boolean {
   return (
     a.rect.width === b.rect.width &&
     a.rect.height === b.rect.height &&
-    x.id === y.id &&
-    x.rev === y.rev &&
-    x.type === y.type &&
-    x.kind === y.kind &&
-    x.title === y.title &&
-    x.text === y.text &&
-    x.color === y.color &&
-    x.tags === y.tags &&
-    x.is_ending === y.is_ending &&
-    x.outputs === y.outputs &&
-    x.size === y.size &&
-    x.speaker_component_id === y.speaker_component_id &&
-    x.target === y.target &&
-    x.cover_asset_id === y.cover_asset_id
+    movedFields.every((field) => x[field] === y[field])
   );
 }
 

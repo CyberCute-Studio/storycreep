@@ -639,6 +639,7 @@ export class CanvasController implements GestureHost {
     this.edits?.open(id);
   }
 
+  /** Reports whether the scene has the node of id, as it has not once another session deleted it. */
   has(id: string): boolean {
     return this.scene.nodes.get(id) !== undefined;
   }
@@ -730,6 +731,12 @@ export class CanvasController implements GestureHost {
       }
     }
     this.syncScene();
+    // A frame of the move hid the resize handle, which a frame shows again,
+    // though the move left the scene as it was, as one that came back where
+    // it started, or never left it.
+    if (m !== undefined) {
+      this.invalidate();
+    }
   }
 
   /** Reports whether the node of id is being moved, which its resize handle hides for. */
@@ -740,14 +747,16 @@ export class CanvasController implements GestureHost {
   /**
    * Starts resizing the node of id by its handle, from its size as the
    * scene has it, and reports whether it did: not where the board may not
-   * be changed, nor once the node has gone.
+   * be changed, nor once the node has gone, nor while a move, or another
+   * resize, is under way, whose preview its own would take the place of.
    */
   resizeStart(id: string): boolean {
     const item = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       item === undefined ||
-      this.moving !== undefined
+      this.moving !== undefined ||
+      this.resizing !== undefined
     ) {
       return false;
     }
@@ -836,13 +845,16 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Calls place in each frame that the canvas draws, with where its nodes
-   * are on it, so that what the page places over a node, as its resize
-   * handle or its text's editor, follows it as the canvas pans, zooms, or
-   * moves it, in the same frame, until the returned function is called.
+   * Calls place at once, and in each frame that the canvas draws, with where
+   * its nodes are on it, so that what the page places over a node, as its
+   * resize handle or its text's editor, is over it from the first, rather
+   * than shown once where it was not yet placed, and follows it as the
+   * canvas pans, zooms, or moves it, in the same frame, until the returned
+   * function is called.
    */
   follow(place: (rectOf: ScreenRectOf) => void): () => void {
     this.followers.add(place);
+    place(this.screenRect);
     this.invalidate();
     return () => {
       this.followers.delete(place);

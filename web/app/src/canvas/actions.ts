@@ -25,11 +25,10 @@ import {
   aligned,
   distributed,
   freePlace,
-  hasTag,
+  hasTagOf,
   offset,
   placedOf,
-  withoutTag,
-  withTag,
+  withoutTagOf,
 } from "./edit";
 import { newNodeSize } from "./layout";
 import { centerOf, type Point, type Size } from "./viewport";
@@ -196,25 +195,25 @@ export function useCanvasActions(
       },
       /** Adds tag to the nodes of ids, each that does not have it, whatever its case (FR-EDIT-06). */
       addTag(ids: readonly string[], tag: string): Promise<boolean> {
+        // The tag folded once, rather than for each node.
+        const has = hasTagOf(tag);
         return send(
           updateBatches(
             view(),
             nodesOf(ids).map((n) => n.id),
-            (node) =>
-              hasTag(node, tag) ? undefined : { tags: withTag(node.tags, tag) },
+            (node) => (has(node) ? undefined : { tags: [...node.tags, tag] }),
           ),
         );
       },
       /** Takes tag from the nodes of ids, each that has it, whatever its case. */
       removeTag(ids: readonly string[], tag: string): Promise<boolean> {
+        const has = hasTagOf(tag);
+        const without = withoutTagOf(tag);
         return send(
           updateBatches(
             view(),
             nodesOf(ids).map((n) => n.id),
-            (node) =>
-              hasTag(node, tag)
-                ? { tags: withoutTag(node.tags, tag) }
-                : undefined,
+            (node) => (has(node) ? { tags: without(node.tags) } : undefined),
           ),
         );
       },

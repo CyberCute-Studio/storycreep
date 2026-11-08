@@ -1,23 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { hundredths } from "../document/appliers/node";
 import { testNode } from "../test/canvas";
 import {
   aligned,
   distributed,
   freePlace,
-  hasTag,
   hasTagOf,
   minSize,
   movedBy,
+  onBoard,
   type Placed,
   positionLimit,
   resizedBy,
-  round2,
   snapped,
   tagCounts,
   tagKey,
   tagsOf,
-  withoutTag,
-  withTag,
+  withoutTagOf,
 } from "./edit";
 
 /** Returns a node at x, y of width and height, as align and distribute take it. */
@@ -34,16 +33,16 @@ function at(
 describe("the canvas's edits", () => {
   // Verifies: FR-EDIT-02/AC4
   it("rounds a position to 2 decimal places, half away from zero, as the server keeps it", () => {
-    expect(round2(0.125)).toBe(0.13);
-    expect(round2(-0.125)).toBe(-0.13);
-    expect(round2(12.344)).toBe(12.34);
-    expect(round2(-0.001)).toBe(0);
-    expect(Object.is(round2(-0.001), -0)).toBe(false);
+    expect(hundredths(0.125)).toBe(0.13);
+    expect(hundredths(-0.125)).toBe(-0.13);
+    expect(hundredths(12.344)).toBe(12.34);
+    expect(hundredths(-0.001)).toBe(0);
+    expect(Object.is(hundredths(-0.001), -0)).toBe(false);
     // Of the decimal written, as the server reads it, rather than of the
     // double, which is a little less than 1.005, and than 1.015.
-    expect(round2(1.005)).toBe(1.01);
-    expect(round2(1.015)).toBe(1.02);
-    expect(round2(-1.005)).toBe(-1.01);
+    expect(hundredths(1.005)).toBe(1.01);
+    expect(hundredths(1.015)).toBe(1.02);
+    expect(hundredths(-1.005)).toBe(-1.01);
   });
 
   it("snaps to the grid of 8 units, or keeps the place as it is, rounded, where it does not snap", () => {
@@ -83,6 +82,25 @@ describe("the canvas's edits", () => {
     const start = new Map([["nd_a", { x: positionLimit - 8, y: 0 }]]);
     const moved = movedBy(start, { x: 0, y: 0 }, { x: 800, y: 0 }, true);
     expect(moved.get("nd_a")).toEqual({ x: positionLimit, y: 0 });
+  });
+
+  it("moves each node to its place as the server keeps it, as the reading of its decimal rounds it, of places and deltas in hundredths", () => {
+    // Places of hundredths, as the server keeps them, of every size, and
+    // deltas of hundredths, as a drag without the grid makes them.
+    let seed = 7;
+    const next = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    const hundredth = (most: number) =>
+      hundredths((next() * 2 - 1) * most * (next() < 0.5 ? 1e-6 : 1));
+    for (let i = 0; i < 2000; i++) {
+      const p = { x: hundredth(positionLimit), y: hundredth(1000) };
+      const start = new Map([["nd_a", p]]);
+      const delta = { x: hundredth(10_000), y: hundredth(10) };
+      const moved = movedBy(start, p, delta, false).get("nd_a") ?? p;
+      expect(moved).toEqual(onBoard({ x: p.x + delta.x, y: p.y + delta.y }));
+    }
   });
 
   it("resizes by the corner's move, on the grid, but no smaller than a line of the title needs", () => {
@@ -175,12 +193,10 @@ describe("the canvas's edits", () => {
       testNode("nd_4", 0, 0, { tags: ["Mira"] }),
     ];
     expect(tagsOf(nodes)).toEqual(["quest", "STRASSE", "Mira"]);
-    expect(hasTag(nodes[0], "QUEST")).toBe(true);
-    expect(hasTag(nodes[0], "strasse")).toBe(true);
-    expect(hasTag(nodes[3], "quest")).toBe(false);
-    expect(withTag(["Quest"], "quest")).toEqual(["Quest"]);
-    expect(withTag(["Quest"], "Mira")).toEqual(["Quest", "Mira"]);
-    expect(withoutTag(["Quest", "Mira"], "QUEST")).toEqual(["Mira"]);
+    expect(hasTagOf("QUEST")(nodes[0])).toBe(true);
+    expect(hasTagOf("strasse")(nodes[0])).toBe(true);
+    expect(hasTagOf("quest")(nodes[3])).toBe(false);
+    expect(withoutTagOf("QUEST")(["Quest", "Mira", "quest"])).toEqual(["Mira"]);
     // The tag filter's test, made once for its tag, finds the same.
     const has = hasTagOf("STRASSE");
     expect(nodes.map(has)).toEqual([true, false, true, false]);

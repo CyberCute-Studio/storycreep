@@ -22,7 +22,7 @@ import {
   type FrameRecord,
   renderedMark,
 } from "./controller";
-import { gridSize } from "./edit";
+import { gridSize, onBoard } from "./edit";
 import {
   anchorAt,
   intersects,
@@ -237,7 +237,7 @@ export default function Bench({
   handle: CanvasHandle;
   options: BenchOptions;
   /** Moves nodes, as the canvas does once a drag of them lands, which the edit run measures; none where the board may not be changed. */
-  edit?: (places: ReadonlyMap<string, Point>) => Promise<unknown>;
+  edit?: (places: ReadonlyMap<string, Point>) => Promise<{ applied: boolean }>;
 }) {
   const { t, i18n } = useTranslation();
   const [phase, setPhase] = useState<"waiting" | "warm" | "running" | "done">(
@@ -408,10 +408,23 @@ export default function Bench({
           if (target === undefined) {
             return;
           }
-          const to = { x: target.position.x + editStep, y: target.position.y };
+          // Where the node goes, as the server keeps it, which is where the
+          // document shows it, and the frame that shows it is waited for.
+          const to = onBoard({
+            x: target.position.x + editStep,
+            y: target.position.y,
+          });
           editStep = -editStep;
-          pendingEdit = { id: target.id, to, sent: performance.now() };
-          void edit(new Map([[target.id, to]]));
+          const sent = { id: target.id, to, sent: performance.now() };
+          pendingEdit = sent;
+          // A batch that the server refuses, which the document shows back
+          // where it was, is not waited for, so that the run edits on, and
+          // its time is not counted.
+          void edit(new Map([[target.id, to]])).then(({ applied }) => {
+            if (!applied && pendingEdit === sent) {
+              pendingEdit = undefined;
+            }
+          });
         }, editInterval);
         return;
       }

@@ -21,6 +21,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, useEntityForm } from "../content/form";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import { equal } from "../document/reconcile";
 import { payloadField } from "../project/dialogs";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
@@ -114,9 +116,9 @@ export interface TextEditorProps {
 
 const textField = payloadField("text");
 
-/** Reports whether a and b are the same text, as the server compares them. */
+/** Reports whether a and b are the same text, as the server compares them, whatever the order of their objects' fields. */
 function sameText(a: RichTextDoc | undefined, b: RichTextDoc | undefined) {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
+  return equal(a, b);
 }
 
 /** The editor of the text of node, over its card on the canvas. */
@@ -175,8 +177,10 @@ export function TextEditor({
   );
 
   // Where the box is: over the node, in each frame that the canvas draws,
-  // within the part of the canvas that the window shows.
-  useEffect(() => {
+  // within the part of the canvas that the window shows, and as it opens,
+  // before the browser paints it, rather than once where it was not placed
+  // yet, at the canvas's corner.
+  useLayoutEffect(() => {
     let band = visibleBand();
     // What tells where the node is on the canvas, as the canvas's frames
     // give it, which a scroll places the box by again, alone, rather than

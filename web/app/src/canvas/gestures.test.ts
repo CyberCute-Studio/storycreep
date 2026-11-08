@@ -77,7 +77,6 @@ function host(mode: Mode = "pan", movable = false) {
       state.selected = [...next];
     },
     isSelected: (id) => state.selected.includes(id),
-    has: (id) => state.present && id === "nd_a",
     movable: () => state.movable,
     // As the controller does, a move that starts selects the node that it
     // picks first, and one that does not selects nothing.
@@ -663,7 +662,7 @@ describe("the canvas's gestures of a board that may be changed", () => {
     gone.gestures.move(mouse(250, 180));
     gone.gestures.up(mouse(250, 180));
     expect(gone.state.selects).toEqual([]);
-    expect(gone.state.moves).toEqual([]);
+    expect(gone.state.moves).toEqual([{ start: "nd_a" }]);
     expect(gone.state.v).toEqual({ x: 0, y: 0, zoom: 1 });
     expect(gone.state.bands).toEqual([]);
     // A selected node whose move the host refuses, in the pan mode.

@@ -373,6 +373,42 @@ describe("the canvas's edits", () => {
     expect(batches(calls)[1][0].type).toBe("node.delete");
   });
 
+  it("adds a tag from the inspector in one command, unless the node has it in another case, and keeps the tag in its field once the server refuses it", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)], (index) =>
+      index === 1
+        ? Promise.reject(refused(422, { code: "validation_failed" }))
+        : undefined,
+    );
+    await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const field = within(inspector).getByLabelText("Add a tag");
+    await user.type(field, "Quest");
+    await user.click(within(inspector).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      {
+        type: "node.update",
+        payload: { id: "nd_1", tags: ["Quest"] },
+        expected_rev: { nd_1: 1 },
+      },
+    ]);
+    await waitFor(() => expect(field).toHaveProperty("value", ""));
+    // The same tag in another case is the tag that the node has: nothing is
+    // sent.
+    await user.type(field, "quest");
+    await user.click(within(inspector).getByRole("button", { name: "Add" }));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(batches(calls)).toHaveLength(1);
+    await user.type(field, "Mira");
+    await user.click(within(inspector).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(
+      await screen.findByText(/^The change could not be saved/),
+    ).toBeDefined();
+    await waitFor(() => expect(field).toHaveProperty("value", "Mira"));
+  });
+
   // Verifies: FR-EDIT-06/AC1
   it("dims the nodes without the tag that the filter names, whatever its case, and sends nothing", async () => {
     const user = userEvent.setup();
@@ -620,6 +656,85 @@ describe("the canvas's edits", () => {
     });
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
     expect(batches(calls)).toEqual([]);
+  });
+
+  it("ends a resize, cancelled, as a second pointer presses the handle, so that the node moves again by a drag after, and sizes a resize as its release lands", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
+    expect(handle).not.toBeNull();
+    const finger = {
+      pointerId: 5,
+      pointerType: "touch",
+      button: 0,
+      buttons: 1,
+    };
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...finger,
+      clientX: 0,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      ...finger,
+      clientX: 40,
+      clientY: 0,
+    });
+    // A mouse's click on the handle while the finger resizes.
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      clientX: 40,
+      clientY: 0,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      ...mouse,
+      buttons: 0,
+      clientX: 40,
+      clientY: 0,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      ...finger,
+      buttons: 0,
+      clientX: 80,
+      clientY: 0,
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(batches(calls)).toEqual([]);
+    // The node moves by a drag, which a resize under way would refuse.
+    const from = screenOf(canvas, { x: 120, y: 64 });
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: from.clientX + 100 * zoom, clientY: from.clientY };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...from });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].type).toBe("node.move");
+    // A resize whose release lands beyond its last move sizes the node to
+    // where it landed.
+    await waitFor(() => expect(handle?.hidden).toBe(false));
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...finger,
+      clientX: 0,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      ...finger,
+      clientX: 40,
+      clientY: 0,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      ...finger,
+      buttons: 0,
+      clientX: 80 * zoom,
+      clientY: 0,
+    });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1]).toMatchObject([
+      {
+        type: "node.update",
+        payload: { id: "nd_1", size: { width: 320, height: 128 } },
+      },
+    ]);
   });
 });
 

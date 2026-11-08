@@ -10,7 +10,14 @@
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
@@ -23,6 +30,7 @@ import {
   useEntityForm,
 } from "../content/form";
 import { parseValue } from "../content/values";
+import { hundredths } from "../document/appliers/node";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
@@ -41,7 +49,6 @@ import {
   type Alignment,
   onBoard,
   positionLimit,
-  round2,
   sizeLimit,
   tagCounts,
   tagKey,
@@ -300,7 +307,10 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
     typed.y = String(place.y);
     const size = typed.automatic
       ? undefined
-      : { width: round2(width as number), height: round2(height as number) };
+      : {
+          width: hundredths(width as number),
+          height: hundredths(height as number),
+        };
     if (size !== undefined) {
       typed.width = String(size.width);
       typed.height = String(size.height);
@@ -651,6 +661,13 @@ function Tags({
     staleTime: 30_000,
   });
   const ids = nodes.map((n) => n.id);
+  // The selection that the field is for now, which a tag refused for
+  // another, before the user selected this one, is not put back in.
+  const forIds = useMemo(() => nodes.map((n) => n.id).join(" "), [nodes]);
+  const shownFor = useRef(forIds);
+  useEffect(() => {
+    shownFor.current = forIds;
+  }, [forIds]);
   // The tags, and how many of the nodes have each, found once for each
   // change of the nodes, rather than for each key typed in the tag field.
   const tags = useMemo(() => tagsOf(nodes), [nodes]);
@@ -665,7 +682,15 @@ function Tags({
     }
     setProblem(undefined);
     setTyped("");
-    void actions.addTag(ids, tag);
+    // A tag that the server refused, as for a node that has the most tags
+    // that it may have, which the toolbar says, is in the field again, to be
+    // changed rather than typed anew, unless the user typed another since,
+    // or selected other nodes.
+    void actions.addTag(ids, tag).then((applied) => {
+      if (!applied && shownFor.current === forIds) {
+        setTyped((now) => (now === "" ? tag : now));
+      }
+    });
   };
   return (
     <section aria-labelledby={headingId} className="space-y-2">

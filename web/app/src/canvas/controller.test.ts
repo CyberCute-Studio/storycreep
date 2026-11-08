@@ -832,6 +832,54 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.gestures.up(at(from + 40));
   });
 
+  it("draws a frame as a move ends, though it left the scene as it was, so that what a frame of the move hid, as the resize handle, shows again", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    // What the resize handle does in each frame: hides while a move is
+    // under way.
+    const hides: boolean[] = [];
+    c.follow(() => hides.push(c.moves()));
+    time.tick();
+    expect(hides.at(-1)).toBe(false);
+    // A drag a step of the grid away and back, which a frame between shows.
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 16, y: 0 });
+    time.tick();
+    c.moveTo({ x: 0, y: 0 });
+    time.tick();
+    expect(hides.at(-1)).toBe(true);
+    c.moveEnd(true);
+    time.tick();
+    expect(hides.at(-1)).toBe(false);
+    expect(asked.moves).toEqual([]);
+    // A move that never left its place, of a frame drawn while it was
+    // under way, as of the wheel's pan.
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.setViewport({ ...c.viewport(), x: c.viewport().x + 10 });
+    time.tick();
+    expect(hides.at(-1)).toBe(true);
+    c.moveEnd(true);
+    time.tick();
+    expect(hides.at(-1)).toBe(false);
+  });
+
+  it("starts no resize while another is under way, as of a second pointer on the handle", () => {
+    const { c, time } = setUp();
+    editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    expect(c.resizeStart("nd_1")).toBe(true);
+    expect(c.resizeStart("nd_1")).toBe(false);
+    c.resizeEnd(false);
+    expect(c.resizeStart("nd_1")).toBe(true);
+    c.resizeEnd(false);
+  });
+
   it("starts no move while a node's handle resizes it, as under another finger, whose preview the move's would take the place of", () => {
     const { c, time } = setUp();
     const asked = editsOf(c);

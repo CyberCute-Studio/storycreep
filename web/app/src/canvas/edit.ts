@@ -24,34 +24,26 @@ export const positionLimit = 1_000_000_000;
 export const sizeLimit = 100_000;
 
 /**
- * The smallest size that a resize leaves a node, in units of the board: room
- * for a line of its title under its edge, as the server would keep a node of
- * 1 by 1 that no finger could find again.
+ * The smallest size that a resize by the handle leaves a node, in units of
+ * the board: room for a line of its title under its edge, as the server
+ * would keep a node of 1 by 1 that no finger could find again. The
+ * inspector's width and height, typed rather than dragged, take any size
+ * that the server keeps.
  */
 export const minSize: Readonly<Size> = Object.freeze({ width: 64, height: 40 });
 
 /** How far a duplicate goes from its node, and a new node from one at the same place, in units of the board: four steps of the grid. */
 export const offset = 4 * gridSize;
 
-/**
- * Returns n rounded to 2 decimal places, half away from zero, as the server
- * keeps a node's position and size (FR-EDIT-02 AC4): of the decimal that n
- * is written as, as 1.005 to 1.01, as the document rounds what a batch
- * sends (hundredths), rather than of the double, which is a little less.
- */
-export function round2(n: number): number {
-  return hundredths(n);
-}
-
 /** Returns n on the board's grid where snap is on, and rounded as the server keeps it either way. */
 export function snapped(n: number, snap: boolean): number {
-  return round2(snap ? Math.round(n / gridSize) * gridSize : n);
+  return hundredths(snap ? Math.round(n / gridSize) * gridSize : n);
 }
 
 /** Returns p within the board's limits, rounded as the server keeps it. */
 export function onBoard(p: Point): Point {
   const clamp = (n: number) =>
-    round2(Math.max(-positionLimit, Math.min(positionLimit, n)));
+    hundredths(Math.max(-positionLimit, Math.min(positionLimit, n)));
   return { x: clamp(p.x), y: clamp(p.y) };
 }
 
@@ -77,12 +69,27 @@ export function movedBy(
   const dy = to.y - anchor.y;
   const out = new Map<string, Point>();
   for (const [id, p] of start) {
-    const next = onBoard({ x: p.x + dx, y: p.y + dy });
+    const next = { x: shifted(p.x, dx), y: shifted(p.y, dy) };
     if (next.x !== p.x || next.y !== p.y) {
       out.set(id, next);
     }
   }
   return out;
+}
+
+/**
+ * Returns n moved by d, within the board's limits, rounded as the server
+ * keeps it, of n and d that are each in hundredths already, as a node's
+ * place and a drag's snapped delta are: their sum is a number of
+ * hundredths but for an error of the double far less than half of one,
+ * which rounding its hundredths as a number takes away, as onBoard's
+ * reading of its decimal would, without writing the decimal of each node
+ * of a drag of thousands, in each of its moves.
+ */
+function shifted(n: number, d: number): number {
+  const sum = Math.max(-positionLimit, Math.min(positionLimit, n + d));
+  const h = Math.round(sum * 100);
+  return h === 0 ? 0 : h / 100;
 }
 
 /**
@@ -248,11 +255,6 @@ export function hasTagOf(tag: string): (node: Pick<Node, "tags">) => boolean {
   return (node) => tagKeys(node.tags).includes(key);
 }
 
-/** Reports whether node has tag, whatever its case. */
-export function hasTag(node: Pick<Node, "tags">, tag: string): boolean {
-  return hasTagOf(tag)(node);
-}
-
 /**
  * Returns how many of nodes have each tag, by its key (tagKey), whatever
  * its case, of each node's tags folded once (tagKeys), rather than each
@@ -310,14 +312,17 @@ export function tagsOf(nodes: Iterable<Pick<Node, "tags">>): string[] {
     .map(([, entry]) => best(entry.spellings));
 }
 
-/** Returns tags with tag added, unless it has it already, whatever its case. */
-export function withTag(tags: readonly string[], tag: string): string[] {
+/**
+ * Returns what returns tags without tag, whatever its case, which folds tag
+ * once, and each list of tags once (tagKeys), as a removal of it from each
+ * of thousands of nodes asks.
+ */
+export function withoutTagOf(
+  tag: string,
+): (tags: readonly string[]) => string[] {
   const key = tagKey(tag);
-  return tags.some((t) => tagKey(t) === key) ? [...tags] : [...tags, tag];
-}
-
-/** Returns tags without tag, whatever its case. */
-export function withoutTag(tags: readonly string[], tag: string): string[] {
-  const key = tagKey(tag);
-  return tags.filter((t) => tagKey(t) !== key);
+  return (tags) => {
+    const keys = tagKeys(tags);
+    return tags.filter((_, i) => keys[i] !== key);
+  };
 }
