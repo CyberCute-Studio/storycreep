@@ -546,7 +546,7 @@ export class CanvasController implements GestureHost {
       // changes where nodes are alone.
       this.keptTo = this.docSeen.nodes;
       const kept = [...this.selected].filter(
-        (id) => this.scene.nodes.get(id) !== undefined || this.coming.has(id),
+        (id) => this.has(id) || this.coming.has(id),
       );
       if (kept.length !== this.selected.size) {
         this.setSelection(new Set(kept));
@@ -771,14 +771,19 @@ export class CanvasController implements GestureHost {
    * Starts resizing the node of id by its handle, from its size as the
    * scene has it, and reports whether it did: not where the board may not
    * be changed, nor once the node has gone, nor while another drag is under
-   * way, whose nodes its own would take the place of.
+   * way, whose nodes its own would take the place of, nor once the node is
+   * no longer the one selected, which alone has a handle, though the page
+   * has yet to take the handle away, which ends its press (Gestures'
+   * handleGone).
    */
   resizeStart(id: string): boolean {
     const item = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       item === undefined ||
-      this.drag !== undefined
+      this.drag !== undefined ||
+      this.selected.size !== 1 ||
+      !this.selected.has(id)
     ) {
       return false;
     }
@@ -913,7 +918,7 @@ export class CanvasController implements GestureHost {
       this.invalidate();
       return;
     }
-    if (this.scene.nodes.get(id) !== undefined) {
+    if (this.has(id)) {
       this.select([id], "replace");
       this.zoomToSelection();
       found?.();
@@ -1235,9 +1240,7 @@ export class CanvasController implements GestureHost {
         focusing.found?.();
       } else if (saved !== undefined && this.selected.size === 0) {
         this.select(
-          saved.selection.filter(
-            (id) => this.scene.nodes.get(id) !== undefined,
-          ),
+          saved.selection.filter((id) => this.has(id)),
           "replace",
         );
       }

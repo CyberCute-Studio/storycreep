@@ -13,9 +13,8 @@
 // it ends a move. The inspector's width and height do the same without a
 // drag (WCAG 2.5.7), so the handle is hidden from assistive technology.
 
-import { type PointerEvent, useEffect, useRef } from "react";
-import type { CanvasController } from "./controller";
-import type { Rect } from "./viewport";
+import { type PointerEvent, useEffect, useLayoutEffect, useRef } from "react";
+import type { CanvasController, ScreenRectOf } from "./controller";
 
 /** The handle's side, in CSS pixels (FR-EDIT-09). */
 const side = 44;
@@ -35,7 +34,7 @@ export function ResizeHandle({
 
   useEffect(
     () =>
-      controller.follow((rectOf: (id: string) => Rect | undefined) => {
+      controller.follow((rectOf: ScreenRectOf) => {
         const el = handle.current;
         if (el === null) {
           return;
@@ -54,8 +53,13 @@ export function ResizeHandle({
 
   // A handle that goes, as once the selection changes, or the editor of
   // the node's text opens over it, ends its press, or its resize, as
-  // cancelled (Gestures' handleGone).
-  useEffect(() => () => controller.gestures.handleGone(id), [controller, id]);
+  // cancelled (Gestures' handleGone), as the page takes it away, rather
+  // than once the browser has painted the page without it, before which a
+  // move of its pointer would start a resize of a node without a handle.
+  useLayoutEffect(
+    () => () => controller.gestures.handleGone(id),
+    [controller, id],
+  );
 
   return (
     <div

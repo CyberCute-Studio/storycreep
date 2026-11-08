@@ -154,14 +154,23 @@ export class Scene {
     } else if (shown !== this.shownSeen) {
       // The nodes that shown has, or had, which go back to the document's:
       // a drag changes where they are, and their size, but nothing that a
-      // jumper's card names of them.
-      for (const id of new Set([...this.shownSeen.keys(), ...shown.keys()])) {
+      // jumper's card names of them. Each once, without a list of them all,
+      // in each frame of a drag of thousands.
+      const read = (id: string) => {
         const node = shown.get(id) ?? doc.nodes.get(id);
         if (
           (node === undefined || !this.take(node, moved)) &&
           this.nodes.get(id) !== undefined
         ) {
           this.drop(id, moved);
+        }
+      };
+      for (const id of shown.keys()) {
+        read(id);
+      }
+      for (const id of this.shownSeen.keys()) {
+        if (!shown.has(id)) {
+          read(id);
         }
       }
     }

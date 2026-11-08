@@ -867,12 +867,16 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(hides.at(-1)).toBe(false);
   });
 
-  it("starts no resize while another drag is under way, a move's or a resize's, whose nodes its own would take the place of", () => {
+  it("starts no resize while another drag is under way, a move's or a resize's, whose nodes its own would take the place of, nor of a node that is not the one selected, whose handle the page has yet to take away", () => {
     const { c, time } = setUp();
     editsOf(c);
-    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
     c.setReady();
     time.tick();
+    expect(c.resizeStart("nd_1")).toBe(false);
+    c.select(["nd_1", "nd_2"], "replace");
+    expect(c.resizeStart("nd_1")).toBe(false);
+    c.select(["nd_1"], "replace");
     expect(c.resizeStart("nd_1")).toBe(true);
     expect(c.resizeStart("nd_1")).toBe(false);
     c.resizeEnd(false);
@@ -1184,7 +1188,9 @@ describe("the canvas's controller of a board that may be changed", () => {
     // Escape with no drag under way clears the selection.
     expect(c.key(escapeKey)).toBe(true);
     expect([...c.selection()]).toEqual([]);
-    // A resize by the node's handle, once the board may not be changed.
+    // A resize by the handle of the node, selected again, once the board may
+    // not be changed.
+    c.select(["nd_1"], "replace");
     const corner = { x: (240 - v.x) * v.zoom, y: (128 - v.y) * v.zoom };
     c.down(at(corner.x, corner.y), "nd_1");
     c.gestures.move(at(corner.x + 80, corner.y));

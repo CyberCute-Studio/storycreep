@@ -1,6 +1,7 @@
 // The commands of the canvas's edits of a board's nodes (PRD FR-EDIT-02,
 // FR-EDIT-06): each edit is one batch, or, of more nodes than a batch of the
-// API holds commands for, a batch for each thousand of them, each command
+// API holds commands for, a batch for each thousand of them, which the page
+// sends as one change, undone as one step (actions.ts), each command
 // expecting the revision that the page shows of each node that it changes or
 // copies (FR-API-03), as every change of the project's content does, or, of
 // a drag, the one that it showed as the drag started, which the drag moved or
@@ -16,12 +17,12 @@ import type {
 } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
 import type { Doc } from "../document/doc";
-import type { Command } from "../document/store";
+import { type Command, maxBatchCommands } from "../document/store";
 import { onBoard } from "./edit";
 import type { Point } from "./viewport";
 
 /** The most commands that a batch sent through the API holds (FR-API-03). */
-export const maxCommands = 1000;
+export const maxCommands = maxBatchCommands;
 
 /** The most nodes that one node.move, node.delete_many, or node.restore_many names. */
 export const maxNodes = 10_000;

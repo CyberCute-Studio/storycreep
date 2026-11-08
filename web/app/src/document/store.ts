@@ -384,6 +384,9 @@ interface Sent {
 /** How many of a batch's refusals for a revision that changed elsewhere, but not what it changes, it is sent again after. */
 const conflictRetries = 3;
 
+/** The most commands that a batch sent through the API holds (FR-API-03). */
+export const maxBatchCommands = 1000;
+
 /** How many entities the document reads from the server at once. */
 const readsAtOnce = 6;
 
@@ -598,14 +601,15 @@ export class ProjectDocument {
    * step of the history under way too (send), which the document is busy
    * with until they have.
    */
-  private readonly sends = new Set<Promise<CommandResultBody>>();
+  private readonly sends = new Set<Promise<unknown>>();
   /**
    * The page's batches that send has sent, or queued, and that have yet to
    * settle, each with what its answer adds to the history, which an undo or
    * a redo asked for meanwhile waits for before it is sent, so that it sends
-   * the step that is the latest once they have joined it (stepped).
+   * the step that is the latest once they have joined it (stepped), and the
+   * batches that sendJoined sends as one change, all of them, as one.
    */
-  private readonly batches = new Set<Promise<CommandResultBody>>();
+  private readonly batches = new Set<Promise<unknown>>();
   /**
    * The revision that each of the page's batches that applied moved an
    * entity to, by the entity's ID and the revision that the batch expected
@@ -2204,7 +2208,36 @@ export class ProjectDocument {
    * undo joins the history.
    */
   send(commands: readonly Command[]): Promise<CommandResultBody> {
-    const sending = this.sendAfterSteps(commands);
+    return this.settling(
+      this.afterSteps(commands, (time) => this.sendBatch(commands, time)),
+    );
+  }
+
+  /**
+   * Applies batches as one change of the user's, as an edit of more
+   * entities than a batch holds commands for (FR-API-03): each as send
+   * applies one, in turn, each once the one before has applied, resolving
+   * with their answers, or rejecting with the refusal of the first that is
+   * refused, which sends no more of them, while those before it stay
+   * applied, as the server applies no batches together. Their undos join
+   * the history as one step, which undoes them all, the last first, rather
+   * than as a step for each, of which an undo would take back the last
+   * alone; an undo or a redo asked for meanwhile waits for them all.
+   */
+  sendJoined(
+    batches: readonly (readonly Command[])[],
+  ): Promise<CommandResultBody[]> {
+    const parts = batches.filter((batch) => batch.length > 0);
+    if (parts.length === 0) {
+      return Promise.resolve([]);
+    }
+    return this.settling(
+      this.afterSteps(parts[0], (time) => this.sendParts(parts, time)),
+    );
+  }
+
+  /** Returns sending, which the document is busy with until it has settled (sends). */
+  private settling<T>(sending: Promise<T>): Promise<T> {
     this.sends.add(sending);
     const settled = () => {
       this.sends.delete(sending);
@@ -2214,22 +2247,24 @@ export class ProjectDocument {
   }
 
   /**
-   * Sends a batch as sendBatch does, once no step of the history is under
-   * way: one made while an undo or a redo waits to be sent, as a form saved
-   * while the undo waits for the channel's operations, was asked for after
-   * it, and is sent after it, rather than before it, which would leave the
-   * undo the latest change, the one that the user did not ask to undo, or
-   * end what the redo would redo, or else be written over by it (stepped).
-   * It is sent in the order that it was made in among the steps asked for
-   * meanwhile, as they are among themselves (step), and the page shows it
-   * at once all the same, on top of what is queued (waiting), as a board
-   * dropped in the tree where it was dropped, rather than where it was
-   * until the step has settled.
+   * Sends the batch of commands, by start, once no step of the history is
+   * under way: one made while an undo or a redo waits to be sent, as a form
+   * saved while the undo waits for the channel's operations, was asked for
+   * after it, and is sent after it, rather than before it, which would leave
+   * the undo the latest change, the one that the user did not ask to undo,
+   * or end what the redo would redo, or else be written over by it
+   * (stepped). It is sent in the order that it was made in among the steps
+   * asked for meanwhile, as they are among themselves (step), and the page
+   * shows it at once all the same, on top of what is queued (waiting), as a
+   * board dropped in the tree where it was dropped, rather than where it was
+   * until the step has settled. start is given the time that the batch was
+   * made at, where it waited.
    */
-  private sendAfterSteps(
+  private afterSteps<T>(
     commands: readonly Command[],
+    start: (time?: string) => Promise<T>,
     waiting?: Waiting,
-  ): Promise<CommandResultBody> {
+  ): Promise<T> {
     const underWay = this.stepUnderWay;
     if (underWay !== undefined) {
       let held = waiting;
@@ -2238,7 +2273,7 @@ export class ProjectDocument {
         this.waiting.push(held);
         this.show();
       }
-      const after = () => this.sendAfterSteps(commands, held);
+      const after = () => this.afterSteps(commands, start, held);
       return underWay.done.then(after, after);
     }
     if (waiting !== undefined) {
@@ -2246,7 +2281,7 @@ export class ProjectDocument {
       // the time that it was made at, which the page showed it with.
       this.waiting = this.waiting.filter((w) => w !== waiting);
     }
-    const batch = this.sendBatch(commands, waiting?.time);
+    const batch = start(waiting?.time);
     this.batches.add(batch);
     const settled = () => {
       this.batches.delete(batch);
@@ -2261,19 +2296,69 @@ export class ProjectDocument {
     time?: string,
   ): Promise<CommandResultBody> {
     const sent = await this.enqueue(commands, conflictRetries, false, time);
-    const answer = sent.answer;
-    if (answer.status === "applied") {
-      this.history.done(
-        answer.undo == null || answer.undo.length === 0
-          ? undefined
-          : { commands: answer.undo, seqs: [answer.seq] },
+    this.recorded(sent);
+    return sent.answer;
+  }
+
+  /**
+   * Sends batches as sendJoined does, the first made at time, or now, each
+   * after the one before has applied, the undo of each that applied joined
+   * to the step of those before it, while that is the latest step, as it
+   * is but where a batch of the page's made while the one before was under
+   * way applied between them, or the history was forgotten meanwhile, as of
+   * a database restored from an older backup, after which those after it
+   * join its own.
+   */
+  private async sendParts(
+    batches: readonly (readonly Command[])[],
+    time?: string,
+  ): Promise<CommandResultBody[]> {
+    const answers: CommandResultBody[] = [];
+    // The seq of a batch of the step that the parts join, once one has one.
+    let joined: number | undefined;
+    for (const [i, commands] of batches.entries()) {
+      const sent = await this.enqueue(
+        commands,
+        conflictRetries,
+        false,
+        i === 0 ? time : undefined,
       );
-      if (sent.captured !== undefined && answer.undo?.length) {
-        this.history.capture(answer.seq, sent.captured);
-      }
-      this.show();
+      answers.push(sent.answer);
+      joined = this.recorded(sent, joined);
     }
-    return answer;
+    return answers;
+  }
+
+  /**
+   * Adds the undo of the batch of sent to the history once it has applied,
+   * as a step of its own, or, where joined is given, to the latest step,
+   * which undoes the batch of that seq, while it is the latest (History's
+   * join), and returns the seq of a batch that the step that undoes it now
+   * undoes, or joined, where it added none.
+   */
+  private recorded(sent: Sent, joined?: number): number | undefined {
+    const answer = sent.answer;
+    if (answer.status !== "applied") {
+      return joined;
+    }
+    if (answer.undo == null || answer.undo.length === 0) {
+      this.history.done(undefined);
+      this.show();
+      return joined;
+    }
+    const step = { commands: answer.undo, seqs: [answer.seq] };
+    if (
+      joined === undefined ||
+      !this.history.join(joined, step, latestRevisions([sent]))
+    ) {
+      this.history.done(step);
+      joined = answer.seq;
+    }
+    if (sent.captured !== undefined) {
+      this.history.capture(answer.seq, sent.captured);
+    }
+    this.show();
+    return joined;
   }
 
   /**
@@ -2342,7 +2427,7 @@ export class ProjectDocument {
   private async stepped(
     which: "undo" | "redo",
     newest: () => Step | undefined,
-    earlier: readonly Promise<CommandResultBody>[],
+    earlier: readonly Promise<unknown>[],
   ): Promise<boolean> {
     this.store.setState({ stepping: true });
     try {
@@ -2496,15 +2581,16 @@ export class ProjectDocument {
   }
 
   /**
-   * Sends the commands of a step, as one batch, or, once the server refuses
-   * it as an undo too large for one request, in two halves, each split
-   * again as it needs, in order, each once the one before has applied, with
-   * what it expects of an entity that those before it brought back moved to
-   * the revision that the last of them that changed it left (FR-EDIT-08). A
-   * part is not sent once the document has found the server's seq gone back
-   * since the step was sent (restores), as the answer to a part before it
-   * may tell (pump), behind the batches that the step undoes, whose
-   * revisions its commands expect (WentBackError).
+   * Sends the commands of a step, as one batch, or, of more commands than a
+   * batch holds, as a step of batches sent as one change (sendJoined), or
+   * once the server refuses it as an undo too large for one request, in two
+   * halves, each split again as it needs, in order, each once the one before
+   * has applied, with what it expects of an entity that those before it
+   * brought back moved to the revision that the last of them that changed it
+   * left (FR-EDIT-08). A part is not sent once the document has found the
+   * server's seq gone back since the step was sent (restores), as the answer
+   * to a part before it may tell (pump), behind the batches that the step
+   * undoes, whose revisions its commands expect (WentBackError).
    */
   private async sendInParts(
     commands: readonly UndoCommandBody[],
@@ -2513,11 +2599,13 @@ export class ProjectDocument {
     if (this.restores !== restores) {
       throw new WentBackError();
     }
-    try {
-      return [await this.enqueue(commands as unknown as Command[], 0, true)];
-    } catch (error) {
-      if (!undoTooLarge(error) || commands.length < 2) {
-        throw error;
+    if (commands.length <= maxBatchCommands) {
+      try {
+        return [await this.enqueue(commands as unknown as Command[], 0, true)];
+      } catch (error) {
+        if (!undoTooLarge(error) || commands.length < 2) {
+          throw error;
+        }
       }
     }
     const half = Math.ceil(commands.length / 2);

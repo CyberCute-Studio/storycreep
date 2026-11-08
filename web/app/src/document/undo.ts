@@ -320,6 +320,37 @@ export class History {
   }
 
   /**
+   * Joins step, the undo of a batch that applied, to the latest step to
+   * undo, as of batches sent as one change of the user's, so that one undo
+   * undoes them all, the last first, and reports whether it did: only while
+   * that step undoes the batch of seq, and no other has joined after it.
+   * What the latest step expects of an entity that the batch changed too is
+   * what the batch left of it, revisions, as the undo of one batch of them
+   * all would expect (joinedUndo).
+   */
+  join(
+    seq: number,
+    step: Step,
+    revisions: ReadonlyMap<string, number>,
+  ): boolean {
+    const last = this.undoSteps.at(-1);
+    if (last === undefined || !last.seqs.includes(seq)) {
+      return false;
+    }
+    this.undoSteps[this.undoSteps.length - 1] = {
+      commands: [
+        ...step.commands,
+        ...last.commands.map((command) => withRevisions(command, revisions)),
+      ],
+      seqs: [...last.seqs, ...step.seqs],
+    };
+    this.changes++;
+    this.forget();
+    this.save();
+    return true;
+  }
+
+  /**
    * Takes the next step to undo out of the history, once it has applied, and
    * records the step that redoes it, if any; a step sent in parts of which
    * some applied is left in its place as rest, what did not.

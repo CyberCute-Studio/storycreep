@@ -1867,6 +1867,124 @@ describe("undo and redo (FR-EDIT-08)", () => {
     ]);
   });
 
+  it("undoes batches sent as one change as one step, the last batch's undo first", async () => {
+    const server = serve({
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        applied(
+          3,
+          [{ id: "bd_b", rev: 4 }],
+          [renameBack("bd_b", "Lighthouse", 4)],
+        ),
+        applied(
+          4,
+          [
+            { id: "bd_b", rev: 5 },
+            { id: "bd_a", rev: 5 },
+          ],
+          [renameBack("bd_a", "Dusk", 5), renameBack("bd_b", "Night", 5)],
+        ),
+      ),
+    });
+    const { doc } = await open();
+    const before = doc.store.getState().historyVersion;
+    const answers = await doc.sendJoined([
+      [rename("bd_a", "Dusk", 3)],
+      [rename("bd_b", "Night", 3)],
+    ]);
+    expect(answers.map((a) => a.seq)).toEqual([2, 3]);
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
+    expect(doc.store.getState().historyVersion).toBeGreaterThan(before);
+    expect(doc.undoesNext(2)).toBe(true);
+    expect(doc.undoesNext(3)).toBe(true);
+    await doc.undo();
+    expect(server.batches[2]).toEqual([
+      {
+        ...renameBack("bd_b", "Lighthouse", 4),
+        command_id: expect.any(String),
+      },
+      { ...renameBack("bd_a", "Harbour", 4), command_id: expect.any(String) },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour", rev: 5 });
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Lighthouse", rev: 5 });
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 1 });
+  });
+
+  it("sends no more of batches sent as one change once one is refused, and undoes those that applied before it as one step", async () => {
+    const server = serve({
+      ...tree([
+        board("bd_a", "Harbour"),
+        board("bd_b", "Lighthouse"),
+        board("bd_c", "Cove"),
+      ]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        refused(422, { code: "validation_failed" }),
+        applied(3, [{ id: "bd_a", rev: 5 }], []),
+      ),
+    });
+    const { doc } = await open();
+    await expect(
+      doc.sendJoined([
+        [rename("bd_a", "Dusk", 3)],
+        [rename("bd_b", "Night", 3)],
+        [rename("bd_c", "Bay", 3)],
+      ]),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(server.batches).toHaveLength(2);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Dusk" });
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Lighthouse" });
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, sending: 0 });
+    await doc.undo();
+    expect(server.batches[2]).toEqual([
+      { ...renameBack("bd_a", "Harbour", 4), command_id: expect.any(String) },
+    ]);
+  });
+
+  it("sends the undo of batches sent as one change, of more commands than a batch holds, in parts, each expecting what those before it left", async () => {
+    const many = (name: string, rev: number) =>
+      Array.from({ length: 600 }, () => renameBack("bd_a", name, rev));
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(2, [{ id: "bd_a", rev: 4 }], many("Harbour", 4)),
+        applied(3, [{ id: "bd_a", rev: 5 }], many("Dusk", 5)),
+        applied(4, [{ id: "bd_a", rev: 6 }], []),
+        applied(5, [{ id: "bd_a", rev: 7 }], []),
+      ),
+    });
+    const { doc } = await open();
+    await doc.sendJoined([
+      [rename("bd_a", "Dusk", 3)],
+      [rename("bd_a", "Night", 4)],
+    ]);
+    await doc.undo();
+    expect(server.batches.map((batch) => batch.length)).toEqual([
+      1, 1, 600, 600,
+    ]);
+    // The second batch's undo first, as it left the board, and then the
+    // first's, which expected what the second left, moved to what the
+    // first part of the undo left.
+    expect(server.batches[2][0]).toMatchObject({
+      payload: { id: "bd_a", name: "Dusk" },
+      expected_rev: { bd_a: 5 },
+    });
+    expect(server.batches[3][0]).toMatchObject({
+      payload: { id: "bd_a", name: "Harbour" },
+      expected_rev: { bd_a: 6 },
+    });
+    expect(doc.store.getState().undoable).toBe(0);
+  });
+
   it("moves what the other steps expect from what a batch expected, whose operation came before the answer to it sent again, as once no answer came to it at first", async () => {
     const server = serve({
       ...tree([board("bd_a", "Harbour")]),

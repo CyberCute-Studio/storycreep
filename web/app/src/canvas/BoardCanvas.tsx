@@ -15,6 +15,7 @@
 // user's changes (FR-EDIT-08), and a bulk move offers its undo for a while
 // after (NFR-TOUCH-05).
 
+import type { Node as BoardNode } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
   lazy,
@@ -25,6 +26,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -56,7 +58,7 @@ import {
   renderedMark,
   type SavedView,
 } from "./controller";
-import { hasTagOf, tagsOf } from "./edit";
+import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
@@ -168,9 +170,10 @@ function UndoMove({
   onDone,
 }: {
   projectId: string;
-  moved: { count: number; version: number };
+  moved: { key: number; count: number; version: number };
   history: HistoryOf;
-  onDone: () => void;
+  /** Stops offering the undo of the move of key, and of no move after it. */
+  onDone: (key: number) => void;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -178,14 +181,15 @@ function UndoMove({
   // The history's version, rather than how many steps it has, which a step
   // that joins a history that holds as many as it keeps leaves as they were.
   const stale = history.version !== moved.version;
+  const { key } = moved;
   useEffect(() => {
     if (stale) {
-      onDone();
+      onDone(key);
       return;
     }
-    const timer = setTimeout(onDone, undoMoveTime);
+    const timer = setTimeout(() => onDone(key), undoMoveTime);
     return () => clearTimeout(timer);
-  }, [stale, onDone]);
+  }, [stale, onDone, key]);
   if (stale) {
     return null;
   }
@@ -206,7 +210,7 @@ function UndoMove({
           if (now.historyVersion === moved.version) {
             history.step.mutate("undo");
           }
-          onDone();
+          onDone(key);
         }}
       >
         {t("canvas.undo_move")}
@@ -367,6 +371,8 @@ function BoardCanvasOf({
     count: number;
     version: number;
   }>();
+  // How many bulk moves the canvas offered the undo of, which keys each.
+  const moves = useRef(0);
   const [zoom] = useState<ZoomShown>(() => createStore<number>(() => 1));
   const [content, setContent] = useState<"loading" | "ready" | "failed">(
     "loading",
@@ -430,6 +436,16 @@ function BoardCanvasOf({
   // (tagsOfScene, which the board's content sets as it changes).
   const [tags, setTags] = useState<string[]>([]);
   const [sceneTags] = useState(() => tagsOfScene(controller.scene));
+  // The tag that the filter dims by, in the spelling that the list has of
+  // it, whatever its case, as once most of its nodes spell it otherwise,
+  // rather than offered twice, once as the filter has it.
+  const filterShown = useMemo(() => {
+    if (tagFilter === "") {
+      return "";
+    }
+    const key = tagKey(tagFilter);
+    return tags.find((tag) => tagKey(tag) === key) ?? tagFilter;
+  }, [tags, tagFilter]);
   const editingNode = useDocumentState(doc, (state) =>
     editing === undefined ? undefined : state.view.nodes.get(editing),
   );
@@ -455,24 +471,47 @@ function BoardCanvasOf({
     }
     setEditing(id);
   }, []);
-  // An element whose editor is open that goes, as once another session
-  // deleted it, closes it, and the focus that the editor had, which falls to
-  // the page's body as the editor goes, goes back to the canvas, as the
-  // editor's own close gives it, rather than leave the canvas's keys to
-  // the user's Tab.
+  // The element whose editor is open as the document had it last, which the
+  // editor keeps once the document no longer has it, as once it was deleted,
+  // which takes it out of the document, until the node is back, as once an
+  // undo restored it, or the editor closes.
+  const edited = useRef<BoardNode>(undefined);
+  if (editingNode !== undefined) {
+    edited.current = editingNode;
+  }
+  const editedNode =
+    editingNode ??
+    (editing !== undefined && edited.current?.id === editing
+      ? edited.current
+      : undefined);
+  // An element whose editor is open that is no longer on the board, as once
+  // it was deleted, here or by another session, closes the editor, unless
+  // it holds text that is not saved, which it keeps, saying why it cannot be
+  // saved (TextEditor's gone), as it does once the board can no longer be
+  // changed. One that the canvas never had closes it at once, and the focus
+  // that the editor had, which falls to the page's body as the editor goes,
+  // goes back to the canvas, as the editor's own close gives it, rather than
+  // leave the canvas's keys to the user's Tab.
   const editingGone =
-    editing !== undefined &&
-    (editingNode === undefined ||
-      editingNode.deleted_at !== undefined ||
-      editingNode.board_id !== boardId);
+    editingNode === undefined ||
+    editingNode.deleted_at !== undefined ||
+    editingNode.board_id !== boardId;
+  const editingLost = editing !== undefined && editedNode === undefined;
   useEffect(() => {
-    if (editingGone) {
+    if (editingLost) {
       setEditing(undefined);
       if (document.activeElement === document.body) {
         hostRef.current?.focus({ preventScroll: true });
       }
     }
-  }, [editingGone]);
+  }, [editingLost]);
+  // The inspector of a board that can no longer be changed goes, rather than
+  // come back, and take the focus, once the board can be changed again.
+  useEffect(() => {
+    if (!editable) {
+      setInspecting(false);
+    }
+  }, [editable]);
   // The editor closes, or gives way to the editor of next, whose own text
   // takes the focus as it opens. The canvas takes the focus that the editor
   // had, or that fell to the page's body, as the Save button's while it was
@@ -518,7 +557,9 @@ function BoardCanvasOf({
                 doc.undoesNext(answer.seq)
               ) {
                 setMoved({
-                  key: Date.now(),
+                  // Another key than any move's before, though of the same
+                  // millisecond, so that its offer starts anew.
+                  key: ++moves.current,
                   count,
                   version: doc.store.getState().historyVersion,
                 });
@@ -1025,7 +1066,12 @@ function BoardCanvasOf({
     controller.setMode(mode);
   }, [controller, mode]);
 
-  const clearMoved = useCallback(() => setMoved(undefined), []);
+  // The offer of the move of key alone, rather than that of a move after
+  // it, which the page may have set before the offer before it ended.
+  const clearMoved = useCallback(
+    (key: number) => setMoved((m) => (m?.key === key ? undefined : m)),
+    [],
+  );
   const hostElement = useCallback(() => hostRef.current, []);
   // A press of a node's resize handle, which is outside the canvas's
   // element, is the canvas's own, at the handle's point of the canvas, by
@@ -1249,13 +1295,13 @@ function BoardCanvasOf({
         <label className="flex items-center gap-2">
           <span>{t("canvas.tag_filter")}</span>
           <select
-            value={tagFilter}
+            value={filterShown}
             onChange={(e) => setTagFilter(e.currentTarget.value)}
             className="min-h-11 max-w-48 rounded-md border border-border bg-canvas px-3 text-fg"
           >
             <option value="">{t("canvas.tag_filter_none")}</option>
-            {tagFilter !== "" && !tags.includes(tagFilter) && (
-              <option value={tagFilter}>{tagFilter}</option>
+            {filterShown !== "" && !tags.includes(filterShown) && (
+              <option value={filterShown}>{filterShown}</option>
             )}
             {tags.map((tag) => (
               <option key={tag} value={tag}>
@@ -1381,29 +1427,31 @@ function BoardCanvasOf({
           >
             {editable &&
               selected === 1 &&
-              editing === undefined &&
-              [...selection].map((id) => (
-                <ResizeHandle
-                  key={id}
-                  id={id}
-                  controller={controller}
-                  onPress={pressHandle}
-                />
-              ))}
-            {editable &&
-              editing !== undefined &&
-              editingNode !== undefined &&
-              !editingGone && (
-                <TextEditor
-                  key={editing}
-                  ref={editor}
-                  projectId={projectId}
-                  node={editingNode}
-                  controller={controller}
-                  host={hostElement}
-                  onClose={closeEditor}
-                />
-              )}
+              // The node whose text's editor is open over it has no handle,
+              // which the editor would cover.
+              [...selection]
+                .filter((id) => id !== editing)
+                .map((id) => (
+                  <ResizeHandle
+                    key={id}
+                    id={id}
+                    controller={controller}
+                    onPress={pressHandle}
+                  />
+                ))}
+            {editing !== undefined && editedNode !== undefined && (
+              <TextEditor
+                key={editing}
+                ref={editor}
+                projectId={projectId}
+                node={editedNode}
+                controller={controller}
+                host={hostElement}
+                gone={editingGone}
+                readOnly={!editable}
+                onClose={closeEditor}
+              />
+            )}
           </div>
         </div>
         {inspecting && editable && (

@@ -1,17 +1,20 @@
 // What a board's canvas changes of the board (PRD FR-EDIT-02, FR-EDIT-06),
 // as its toolbar, its inspector, its keys, and its drags ask: each a batch
-// of commands, sent through the project's document, which shows it at once
-// (optimistic, NFR-PERF-06), and the server's refusal of which the canvas's
-// toolbar says (error), while the document shows the board again as it
-// was: the latest refusal of any of them, though another was sent after it,
-// until the next is sent.
+// of commands, or, of more nodes than a batch holds commands for, batches
+// sent as one change, whose undo is one step (ProjectDocument's sendJoined),
+// sent through the project's document, which shows it at once (optimistic,
+// NFR-PERF-06), and the server's refusal of which the canvas's toolbar says
+// (error), while the document shows the board again as it was: the latest
+// refusal of any of them, though another was sent after it, until the next
+// is sent.
 
 import type { CommandResultBody, Node } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
+import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useProjectDocument } from "../document/react";
 import type { PaletteColor } from "../project/colors";
-import { type Command, useCommands } from "../project/queries";
+import type { Command } from "../project/queries";
 import {
   createCommand,
   deleteBatch,
@@ -48,7 +51,12 @@ export function useCanvasActions(
   controller: CanvasController,
 ) {
   const doc = useProjectDocument(projectId);
-  const { mutateAsync } = useCommands(projectId);
+  // A mutation, as useCommands' is, so that a refusal reaches what the app
+  // does of every mutation's (createQueryClient), of the batches of one
+  // change.
+  const { mutateAsync } = useMutation({
+    mutationFn: (batches: Command[][]) => doc.sendJoined(batches),
+  });
   // The latest refusal of a batch, with the error that it was refused with:
   // the mutation's own error is of its latest batch alone, as its observer
   // no longer follows one sent before that is still under way, as a drag's
@@ -67,27 +75,26 @@ export function useCanvasActions(
           : [node];
       });
     /**
-     * Sends batches in turn, each once the one before has applied, and
-     * resolves with their answers, or with undefined once one was refused,
-     * which the toolbar says, and which sends no more of them.
+     * Sends batches as one change, in turn, each once the one before has
+     * applied, whose undo is one step, and resolves with their answers, or
+     * with undefined once one was refused, which the toolbar says, and which
+     * sends no more of them, while those before it stay applied, which the
+     * one step undoes.
      */
     const sendAll = async (
       batches: Command[][],
     ): Promise<CommandResultBody[] | undefined> => {
       const sent = batches.filter((batch) => batch.length > 0);
-      if (sent.length > 0) {
-        setRefusal(undefined);
+      if (sent.length === 0) {
+        return [];
       }
-      const answers: CommandResultBody[] = [];
-      for (const batch of sent) {
-        try {
-          answers.push(await mutateAsync(batch));
-        } catch (error) {
-          setRefusal({ error });
-          return undefined;
-        }
+      setRefusal(undefined);
+      try {
+        return await mutateAsync(sent);
+      } catch (error) {
+        setRefusal({ error });
+        return undefined;
       }
-      return answers;
     };
     /** Sends batches as sendAll does, and resolves with whether all of them applied. */
     const send = async (batches: Command[][]): Promise<boolean> =>
@@ -233,6 +240,9 @@ export function useCanvasActions(
     };
   }, [doc, boardId, controller, mutateAsync]);
   // The latest refusal of any batch of theirs, which the toolbar says, or
-  // null for none.
-  return { ...ops, error: refusal === undefined ? null : refusal.error };
+  // null for none: the same object until either changes.
+  return useMemo(
+    () => ({ ...ops, error: refusal === undefined ? null : refusal.error }),
+    [ops, refusal],
+  );
 }

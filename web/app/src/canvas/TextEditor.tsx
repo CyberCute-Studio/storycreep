@@ -11,10 +11,16 @@
 // too little of the canvas in view, the page scrolls the canvas up to the
 // top of what the window shows. It saves the text, in one command, as the
 // user asks, and the canvas then has the focus again, unless the user took
-// it elsewhere meanwhile; while it holds text that is not saved, it stays
-// open in place of another node's editor that the user asks for, and says
-// to save or cancel it first, and while it saves its text, it gives way to
-// that editor once the save applies.
+// it elsewhere meanwhile; while the save is under way, the text is not
+// changed, nor the editor cancelled, so that what it closes with once the
+// save applies is what was saved. While it holds text that is not saved,
+// it stays open in place of another node's editor that the user asks for,
+// and says to save or cancel it first, and while it saves its text, it
+// gives way to that editor once the save applies. Once its node is no
+// longer on the board, as once it was deleted, or the board can no longer
+// be changed, it closes, unless it holds text that is not saved, which it
+// keeps, saying why it cannot be saved, until the user cancels it, or the
+// node is back, as once its deletion is undone.
 
 import type { Node as BoardNode } from "@storycreep/shared/api";
 import {
@@ -38,7 +44,7 @@ import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
-import type { CanvasController } from "./controller";
+import type { CanvasController, ScreenRectOf } from "./controller";
 import { titleOf } from "./labels";
 import type { Rect } from "./viewport";
 
@@ -113,6 +119,10 @@ export interface TextEditorProps {
   controller: CanvasController;
   /** The canvas's element, whose part that the window shows the box stays in. */
   host: () => HTMLElement | null;
+  /** Whether the node is no longer on the board, as once it was deleted, or moved to another board, which its text can no longer be saved to. */
+  gone: boolean;
+  /** Whether the board can no longer be changed, as once the user's role or the project's archive changed. */
+  readOnly: boolean;
   /** Closes the editor, once it saved or was cancelled, or gives way to the editor of the node of next, once its save applied (giveWay). */
   onClose: (next?: string) => void;
   ref?: Ref<TextEditorHandle>;
@@ -126,6 +136,8 @@ export function TextEditor({
   node,
   controller,
   host,
+  gone,
+  readOnly,
   onClose,
   ref,
 }: TextEditorProps) {
@@ -138,11 +150,13 @@ export function TextEditor({
   // anew starts again from.
   const text = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<string>();
-  // Whether the user asked for another node's text while this one held
-  // text that is not saved, which the editor says (giveWay); and the node
-  // whose text the user asked for while the save was under way, which the
-  // editor gives way to once the save applies.
-  const [kept, setKept] = useState(false);
+  // How often the user asked for another node's text while this one held
+  // text that is not saved, which the editor says, and gives its text the
+  // focus for, once it has rendered, as once a sheet of the inspector that
+  // asked for it, which holds the editor inert, has closed (giveWay); and
+  // the node whose text the user asked for while the save was under way,
+  // which the editor gives way to once the save applies.
+  const [kept, setKept] = useState(0);
   const [after, setAfter] = useState<string>();
   // What the editor holds now: what the user typed in the form shown, or
   // else what that form shows, which, once a save was refused for a change
@@ -154,14 +168,37 @@ export function TextEditor({
   const current = () => typed()?.doc ?? shown.text;
   const changed = () =>
     typed()?.error !== undefined || !equal(current(), against.text);
-  const focusText = () =>
-    box.current
-      ?.querySelector<HTMLElement>('[contenteditable="true"]')
-      ?.focus({ preventScroll: true });
-  const keep = () => {
-    setKept(true);
-    focusText();
-  };
+  const focusText = useCallback(
+    () =>
+      box.current
+        ?.querySelector<HTMLElement>('[contenteditable="true"]')
+        ?.focus({ preventScroll: true }),
+    [],
+  );
+  const keep = () => setKept((n) => n + 1);
+  useEffect(() => {
+    if (kept > 0) {
+      focusText();
+    }
+  }, [kept, focusText]);
+  // Why the text can no longer be saved, if it cannot.
+  const unsavable = readOnly
+    ? t("canvas.text_read_only")
+    : gone
+      ? t("canvas.text_gone")
+      : undefined;
+  const pending = commands.isPending;
+  // An editor that can no longer save, with nothing to save, closes, as at
+  // once of a node that another session deleted; one that holds text that
+  // is not saved stays, saying why it cannot be saved, so that the text is
+  // not lost unseen, as once the user deleted the node by mistake, which an
+  // undo brings back, after which it saves again.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changed reads what the editor holds as the node goes, or the save that was under way settles.
+  useEffect(() => {
+    if (unsavable !== undefined && !pending && !changed()) {
+      onClose();
+    }
+  }, [unsavable, pending, onClose]);
   useImperativeHandle(ref, () => ({
     giveWay: (id) => {
       if (commands.isPending) {
@@ -199,8 +236,8 @@ export function TextEditor({
     // What tells where the node is on the canvas, as the canvas's frames
     // give it, which a scroll places the box by again, alone, rather than
     // ask the canvas for a frame that draws the board as it was.
-    let nodeRect: ((id: string) => Rect | undefined) | undefined;
-    const place = (rectOf: (id: string) => Rect | undefined) => {
+    let nodeRect: ScreenRectOf | undefined;
+    const place = (rectOf: ScreenRectOf) => {
       nodeRect = rectOf;
       const el = box.current;
       const h = host();
@@ -307,6 +344,9 @@ export function TextEditor({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (pending || unsavable !== undefined) {
+      return;
+    }
     if (typed()?.error !== undefined) {
       form.refused();
       setInvalid(t("inspector.error.text"));
@@ -393,7 +433,14 @@ export function TextEditor({
       <Alert
         message={form.overlaps.length > 0 ? undefined : refusal?.message}
       />
-      <Alert message={kept ? t("canvas.text_kept") : undefined} />
+      <Alert message={unsavable} />
+      <Alert
+        message={
+          kept > 0 && unsavable === undefined
+            ? t("canvas.text_kept")
+            : undefined
+        }
+      />
       <ConflictNotice
         form={form}
         fieldName={() => t("inspector.text")}
@@ -404,16 +451,27 @@ export function TextEditor({
         defaultValue={shown.text}
         error={invalid ?? refusal?.fields.text}
         names={names}
+        // What the user types while the save is under way would be lost as
+        // the editor closes once it applies.
+        editable={!pending}
         onChange={(value) => {
           text.current = { key: held.key, value };
           held.props.onChange();
         }}
       />
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="primary" disabled={commands.isPending}>
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={pending || unsavable !== undefined}
+        >
           {t("canvas.text_save")}
         </Button>
-        <Button onClick={() => onClose()}>{t("canvas.text_cancel")}</Button>
+        {/* A save under way is not cancelled, as a dialog's is not: the
+        editor would close, and what became of the save be said nowhere. */}
+        <Button disabled={pending} onClick={() => onClose()}>
+          {t("canvas.text_cancel")}
+        </Button>
       </div>
     </form>
   );

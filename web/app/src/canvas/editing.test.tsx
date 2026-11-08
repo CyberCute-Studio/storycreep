@@ -50,7 +50,18 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+/** Makes the window narrower than a docked panel, as matchMedia tells the page, where the inspector is a sheet. */
+function narrowWindow() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
 
 const harbour: Board = {
   id: "bd_a",
@@ -576,6 +587,244 @@ describe("the canvas's edits", () => {
     await waitFor(() => expect(document.activeElement).toBe(canvas));
   });
 
+  it("keeps the text of an editor whose element the user deletes, saying why it cannot be saved, and saves it once an undo brings the element back", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)], (index, applied) =>
+      // The deletion's undo restores the node.
+      index === 0
+        ? Promise.resolve({
+            ...applied(),
+            undo: [
+              {
+                type: "node.restore",
+                payload: { id: "nd_1" },
+                expected_rev: {},
+              },
+            ],
+          })
+        : undefined,
+    );
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("0"));
+    expect(
+      await within(editor).findByText(
+        /^The element is no longer on this board/,
+      ),
+    ).toBeDefined();
+    const save = within(editor).getByRole("button", { name: "Save the text" });
+    expect(save).toHaveProperty("disabled", true);
+    expect(textbox.textContent).toBe("Elara waits.");
+    await user.click(within(edit).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1][0].type).toBe("node.restore");
+    await waitFor(() => expect(save).toHaveProperty("disabled", false));
+    expect(
+      within(editor).queryByText(/^The element is no longer on this board/),
+    ).toBeNull();
+    await user.click(save);
+    await waitFor(() => expect(batches(calls)).toHaveLength(3));
+    expect(batches(calls)[2][0]).toMatchObject({
+      type: "node.update",
+      payload: {
+        id: "nd_1",
+        text: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Elara waits." }],
+            },
+          ],
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the text of an editor once the board can no longer be changed, saying why it cannot be saved, until the user cancels it", async () => {
+    const realtime = fakeRealtime();
+    const calls = boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "project.archive", payload: {} }],
+        [{ id: testProject.id, rev: 2 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("group", { name: "Edit the board" }),
+      ).toBeNull(),
+    );
+    expect(
+      await within(editor).findByText(/^The board can no longer be changed/),
+    ).toBeDefined();
+    expect(
+      within(editor).getByRole("button", { name: "Save the text" }),
+    ).toHaveProperty("disabled", true);
+    expect(textbox.textContent).toBe("Elara waits.");
+    await userEvent.click(
+      within(editor).getByRole("button", { name: "Cancel" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(canvas));
+    expect(batches(calls)).toEqual([]);
+  });
+
+  it("keeps the text of an editor from changes, and from its Cancel, while its save is under way, so that what it closes with is what it saved", async () => {
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const calls = boardPage([testNode("nd_1", 0, 0)], (index, applied) =>
+      index === 0 ? answered.then(applied) : undefined,
+    );
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    await userEvent.click(
+      within(editor).getByRole("button", { name: "Save the text" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() =>
+      expect(textbox.getAttribute("contenteditable")).toBe("false"),
+    );
+    expect(
+      within(editor).getByRole("button", { name: "Cancel" }),
+    ).toHaveProperty("disabled", true);
+    answer();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("shows the resize handle of a node selected while another's text is open, but none over the node whose text is open", async () => {
+    boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    const handles = () => document.querySelectorAll("[data-canvas]").length;
+    await waitFor(() => expect(handles()).toBe(1));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    await screen.findByRole("form", { name: "The text of nd_1" });
+    await waitFor(() => expect(handles()).toBe(0));
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...second });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...second });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    await waitFor(() => expect(handles()).toBe(1));
+    expect(
+      screen.getByRole("form", { name: "The text of nd_1" }),
+    ).toBeDefined();
+  });
+
+  it("offers the tag that the filter dims by once, in the spelling that most of its nodes come to use", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    boardPage([
+      testNode("nd_1", 0, 0, { tags: ["Quest"] }),
+      testNode("nd_2", 400, 0),
+      testNode("nd_3", 800, 0),
+    ]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    const filter = screen.getByLabelText("Dim nodes without the tag");
+    await user.selectOptions(filter, "Quest");
+    await waitFor(() => expect(canvas.dataset.dimmed).toBe("2"));
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          { type: "node.update", payload: { id: "nd_2", tags: ["quest"] } },
+          { type: "node.update", payload: { id: "nd_3", tags: ["quest"] } },
+        ],
+        [
+          { id: "nd_2", rev: 2 },
+          { id: "nd_3", rev: 2 },
+        ],
+      ),
+    );
+    await waitFor(() => expect(canvas.dataset.dimmed).toBe("0"));
+    expect(
+      within(filter)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["No tag: dim none", "quest"]);
+    expect(filter).toHaveProperty("value", "quest");
+  });
+
   it("keeps an editor whose text is not saved open in place of another node's that the user asks for, and says to save or cancel it first", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
     const canvas = await openBoard("?node=nd_1");
@@ -611,6 +860,57 @@ describe("the canvas's edits", () => {
     await waitFor(() => expect(document.activeElement).toBe(textbox));
     expect(textbox.textContent).toBe("Elara waits.");
     expect(batches(calls)).toEqual([]);
+  });
+
+  it("gives the text that it keeps the focus as the inspector's sheet that asked for another node's text closes", async () => {
+    narrowWindow();
+    // An element that is inert takes no focus, as in a browser, which jsdom
+    // gives it all the same.
+    const focus = HTMLElement.prototype.focus;
+    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (
+      this: HTMLElement,
+      options?: FocusOptions,
+    ) {
+      if (this.closest("[inert]") === null) {
+        focus.call(this, options);
+      }
+    });
+    const user = userEvent.setup();
+    boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...second });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...second });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    const sheet = await screen.findByRole("dialog", { name: "nd_2" });
+    await user.click(
+      within(sheet).getByRole("button", { name: "Edit the text" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "nd_2" })).toBeNull(),
+    );
+    expect(
+      await within(editor).findByText(/^This text is not saved yet/),
+    ).toBeDefined();
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
   });
 
   it("opens the editor of another node's text that the user asks for while a save is under way once the save applies, and leaves the focus where the user took it meanwhile", async () => {
