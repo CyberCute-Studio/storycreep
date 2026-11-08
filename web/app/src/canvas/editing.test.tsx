@@ -1163,6 +1163,73 @@ describe("the canvas's edits", () => {
     expect(batches(calls)).toHaveLength(1);
   });
 
+  it("offers no colour, tag, or duplicate of more nodes than one batch changes, and says why, while it moves and deletes them all", async () => {
+    const user = userEvent.setup();
+    // 1,001 nodes, close together, which the select mode's rubber band
+    // selects all of from the empty corner beside them.
+    const nodes = Array.from({ length: 1001 }, (_, i) =>
+      testNode(`nd_${i}`, (i % 40) * 10, Math.floor(i / 40) * 10),
+    );
+    const calls = boardPage(nodes);
+    const canvas = await openBoard();
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1001"));
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    expect(
+      within(edit).getByRole("button", { name: "Duplicate" }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.getByText(
+        "1,001 nodes selected Duplicate, a colour, and a tag change at most 1,000 nodes at once.",
+      ),
+    ).toBeDefined();
+    expect(within(edit).getByRole("button", { name: "Delete" })).toHaveProperty(
+      "disabled",
+      false,
+    );
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    const inspector = await screen.findByRole("region", {
+      name: "1,001 nodes selected",
+    });
+    expect(
+      within(inspector).getByText(
+        "A colour, a tag, and Duplicate change at most 1,000 nodes at once: select fewer to use them.",
+      ),
+    ).toBeDefined();
+    expect(within(inspector).getByLabelText("Colour")).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(
+      within(inspector).getByLabelText("Add a tag to each"),
+    ).toHaveProperty("disabled", true);
+    expect(
+      within(inspector).getByRole("button", { name: "Duplicate" }),
+    ).toHaveProperty("disabled", true);
+    // Align, a move of them all, is one command still.
+    await user.click(within(inspector).getByRole("button", { name: "Tops" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0].map((c) => c.type)).toEqual(["node.move"]);
+  });
+
   it("opens the canvas as without the link, and no inspector, of a node that the board does not have", async () => {
     boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard("?node=nd_gone");

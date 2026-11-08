@@ -1,8 +1,8 @@
 // What a board's canvas changes of the board (PRD FR-EDIT-02, FR-EDIT-06),
 // as its toolbar, its inspector, its keys, and its drags ask: each a batch
-// of commands, or, of more nodes than a batch holds commands for, batches
-// sent as one change, whose undo is one step (ProjectDocument's sendJoined),
-// sent through the project's document, which shows it at once (optimistic,
+// of commands, whose undo is one step, of a colour, a tag, or a duplicate of
+// at most maxEdited nodes, which the canvas's controls hold a selection to
+// (plan note N68), sent through the project's document, which shows it at once (optimistic,
 // NFR-PERF-06), and the server's refusal of which the canvas's toolbar says
 // (error), while the document shows the board again as it was: the latest
 // refusal of any of them, though another was sent after it, until the next
@@ -18,9 +18,10 @@ import type { Command } from "../project/queries";
 import {
   createCommand,
   deleteBatch,
-  duplicateBatches,
+  duplicateBatch,
+  maxEdited,
   moveBatch,
-  updateBatches,
+  updateBatch,
 } from "./commands";
 import type { CanvasController } from "./controller";
 import {
@@ -52,10 +53,9 @@ export function useCanvasActions(
 ) {
   const doc = useProjectDocument(projectId);
   // A mutation, as useCommands' is, so that a refusal reaches what the app
-  // does of every mutation's (createQueryClient), of the batches of one
-  // change.
+  // does of every mutation's (createQueryClient).
   const { mutateAsync } = useMutation({
-    mutationFn: (batches: Command[][]) => doc.sendJoined(batches),
+    mutationFn: (batch: Command[]) => doc.send(batch),
   });
   // The latest refusal of a batch, with the error that it was refused with:
   // the mutation's own error is of its latest batch alone, as its observer
@@ -75,30 +75,37 @@ export function useCanvasActions(
           : [node];
       });
     /**
-     * Sends batches as one change, in turn, each once the one before has
-     * applied, whose undo is one step, and resolves with their answers, or
-     * with undefined once one was refused, which the toolbar says, and which
-     * sends no more of them, while those before it stay applied, which the
-     * one step undoes.
+     * Sends batch, and resolves with its answer, or with null for a batch
+     * of no command, which it does not send, or with undefined once it was
+     * refused, which the toolbar says.
      */
-    const sendAll = async (
-      batches: Command[][],
-    ): Promise<CommandResultBody[] | undefined> => {
-      const sent = batches.filter((batch) => batch.length > 0);
-      if (sent.length === 0) {
-        return [];
+    const sendOne = async (
+      batch: Command[],
+    ): Promise<CommandResultBody | null | undefined> => {
+      if (batch.length === 0) {
+        return null;
       }
       setRefusal(undefined);
       try {
-        return await mutateAsync(sent);
+        return await mutateAsync(batch);
       } catch (error) {
         setRefusal({ error });
         return undefined;
       }
     };
-    /** Sends batches as sendAll does, and resolves with whether all of them applied. */
-    const send = async (batches: Command[][]): Promise<boolean> =>
-      (await sendAll(batches)) !== undefined;
+    /** Sends batch as sendOne does, and resolves with whether it applied. */
+    const send = async (batch: Command[]): Promise<boolean> =>
+      (await sendOne(batch)) !== undefined;
+    /**
+     * The nodes of ids that the board has, as nodesOf returns them, or
+     * undefined for more than a colour, a tag, or a duplicate changes at
+     * once (maxEdited), which the canvas's controls do not offer, so that
+     * nothing is sent of them.
+     */
+    const editedOf = (ids: Iterable<string>): string[] | undefined => {
+      const nodes = nodesOf(ids).map((n) => n.id);
+      return nodes.length > maxEdited ? undefined : nodes;
+    };
     /**
      * Moves the nodes of places there, in one batch, expecting the
      * revisions that expected has of them, and else those that the page
@@ -112,8 +119,11 @@ export function useCanvasActions(
       if (places.size === 0) {
         return { applied: true };
       }
-      const answers = await sendAll([moveBatch(view(), places, expected)]);
-      return { applied: answers !== undefined, answer: answers?.[0] };
+      const answer = await sendOne(moveBatch(view(), places, expected));
+      return {
+        applied: answer !== undefined,
+        answer: answer ?? undefined,
+      };
     };
     return {
       /**
@@ -134,7 +144,7 @@ export function useCanvasActions(
           controller.snap,
         );
         const id = newId("node");
-        const sent = send([[createCommand(boardId, type, at, id)]]);
+        const sent = send([createCommand(boardId, type, at, id)]);
         controller.selectComing([id], sent);
         return sent;
       },
@@ -148,7 +158,7 @@ export function useCanvasActions(
       /** Gives the node of id size, expecting rev, its revision as its handle's drag started, where it is given. */
       resize(id: string, size: Size, rev?: number): Promise<boolean> {
         return send(
-          updateBatches(
+          updateBatch(
             view(),
             [id],
             () => ({ size: { width: size.width, height: size.height } }),
@@ -158,27 +168,29 @@ export function useCanvasActions(
       },
       /** Deletes the nodes of ids to the trash, as one command (FR-EDIT-02). */
       remove(ids: readonly string[]): Promise<boolean> {
-        return send([
+        return send(
           deleteBatch(
             view(),
             nodesOf(ids).map((n) => n.id),
           ),
-        ]);
+        );
       },
       /**
-       * Duplicates the nodes of ids onto the board, beside them, and selects
-       * the copies, every one of them, which the document shows at once, as
-       * it queues every batch of them at once (sendJoined), and which the
-       * selection keeps until those batches have settled, though the scene
-       * has them not yet (selectComing).
+       * Duplicates the nodes of ids onto the board, beside them, at most
+       * maxEdited of them, and selects the copies, which the selection
+       * keeps until their batch has settled, though the scene has them not
+       * yet (selectComing).
        */
       duplicate(ids: readonly string[]): Promise<boolean> {
-        const { batches, copies } = duplicateBatches(
-          view(),
-          nodesOf(ids).map((n) => n.id),
-          { x: offset, y: offset },
-        );
-        const sent = send(batches);
+        const nodes = editedOf(ids);
+        if (nodes === undefined) {
+          return Promise.resolve(false);
+        }
+        const { batch, copies } = duplicateBatch(view(), nodes, {
+          x: offset,
+          y: offset,
+        });
+        const sent = send(batch);
         if (copies.length > 0) {
           controller.selectComing(copies, sent);
         }
@@ -195,13 +207,15 @@ export function useCanvasActions(
       ): Promise<boolean> {
         return (await place(distributed(placedOf(nodesOf(ids)), axis))).applied;
       },
-      /** Gives the nodes of ids color, each that has another. */
+      /** Gives the nodes of ids color, each that has another, of at most maxEdited of them. */
       color(ids: readonly string[], color: PaletteColor): Promise<boolean> {
+        const nodes = editedOf(ids);
+        if (nodes === undefined) {
+          return Promise.resolve(false);
+        }
         return send(
-          updateBatches(
-            view(),
-            nodesOf(ids).map((n) => n.id),
-            (node) => (node.color === color ? undefined : { color }),
+          updateBatch(view(), nodes, (node) =>
+            node.color === color ? undefined : { color },
           ),
         );
       },
@@ -212,28 +226,31 @@ export function useCanvasActions(
        * other node (FR-EDIT-06).
        */
       addTag(ids: readonly string[], tag: string): Promise<boolean> {
+        const nodes = editedOf(ids);
+        if (nodes === undefined) {
+          return Promise.resolve(false);
+        }
         // The tag folded once, rather than for each node.
         const has = hasTagOf(tag);
         return send(
-          updateBatches(
-            view(),
-            nodesOf(ids).map((n) => n.id),
-            (node) =>
-              has(node) || node.tags.length >= maxTags
-                ? undefined
-                : { tags: [...node.tags, tag] },
+          updateBatch(view(), nodes, (node) =>
+            has(node) || node.tags.length >= maxTags
+              ? undefined
+              : { tags: [...node.tags, tag] },
           ),
         );
       },
       /** Takes tag from the nodes of ids, each that has it, whatever its case. */
       removeTag(ids: readonly string[], tag: string): Promise<boolean> {
+        const nodes = editedOf(ids);
+        if (nodes === undefined) {
+          return Promise.resolve(false);
+        }
         const has = hasTagOf(tag);
         const without = withoutTagOf(tag);
         return send(
-          updateBatches(
-            view(),
-            nodesOf(ids).map((n) => n.id),
-            (node) => (has(node) ? { tags: without(node.tags) } : undefined),
+          updateBatch(view(), nodes, (node) =>
+            has(node) ? { tags: without(node.tags) } : undefined,
           ),
         );
       },

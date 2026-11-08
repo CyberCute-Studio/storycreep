@@ -51,6 +51,7 @@ import { useMediaQuery } from "../ui/media";
 import { Alert } from "../ui/Page";
 import { besidePanel, useDocked } from "../ui/Panel";
 import { type CanvasActions, useCanvasActions } from "./actions";
+import { maxEdited } from "./commands";
 import {
   type BenchOptions,
   CanvasController,
@@ -1274,7 +1275,7 @@ function BoardCanvasOf({
               </MenuItem>
             </Menu>
             <Button
-              disabled={selected === 0}
+              disabled={selected === 0 || selected > maxEdited}
               onClick={() => void actions.duplicate([...selection])}
             >
               {t("canvas.duplicate")}
@@ -1323,6 +1324,10 @@ function BoardCanvasOf({
         </label>
         <p className="text-sm text-fg-muted" aria-live="polite">
           {selected > 0 && t("canvas.selected", { count: selected })}
+          {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
+          {editable &&
+            selected > maxEdited &&
+            ` ${t("canvas.too_many", { most: maxEdited })}`}
         </p>
         {namesFailed && (
           <p role="alert" className="flex flex-wrap items-center gap-2 text-sm">

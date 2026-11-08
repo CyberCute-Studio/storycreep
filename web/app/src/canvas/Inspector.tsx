@@ -46,6 +46,7 @@ import {
 import { Alert } from "../ui/Page";
 import { Panel } from "../ui/Panel";
 import type { CanvasActions } from "./actions";
+import { maxEdited } from "./commands";
 import {
   type Alignment,
   hasControlIn,
@@ -99,6 +100,7 @@ export function Inspector({
     ),
   );
   const single = nodes.length === 1 ? nodes[0] : undefined;
+  const tooMany = nodes.length > maxEdited;
   const title =
     single !== undefined
       ? titleOf(single, t)
@@ -139,12 +141,25 @@ export function Inspector({
             </Fragment>
           )}
           {nodes.length > 1 && <Arrange nodes={nodes} actions={actions} />}
-          <ColorChoice nodes={nodes} actions={actions} />
-          <Tags projectId={projectId} nodes={nodes} actions={actions} />
+          {/* A colour, a tag, and a duplicate are a command for each node,
+              of as many as a batch holds, and are offered of no more. */}
+          {tooMany && (
+            <p className="text-fg-muted">
+              {t("inspector.too_many", { most: maxEdited })}
+            </p>
+          )}
+          <ColorChoice nodes={nodes} actions={actions} disabled={tooMany} />
+          <Tags
+            projectId={projectId}
+            nodes={nodes}
+            actions={actions}
+            disabled={tooMany}
+          />
           <section className="space-y-2">
             <h3 className="text-lg font-semibold">{t("inspector.actions")}</h3>
             <div className="flex flex-wrap gap-2">
               <Button
+                disabled={tooMany}
                 onClick={() => void actions.duplicate(nodes.map((n) => n.id))}
               >
                 {t("canvas.duplicate")}
@@ -595,9 +610,12 @@ function Arrange({
 function ColorChoice({
   nodes,
   actions,
+  disabled,
 }: {
   nodes: readonly Node[];
   actions: CanvasActions;
+  /** Whether a colour may not be given, as of more nodes than one batch colours (maxEdited). */
+  disabled: boolean;
 }) {
   const { t } = useTranslation();
   const colors = new Set(nodes.map((n) => n.color));
@@ -606,6 +624,7 @@ function ColorChoice({
   return (
     <SelectField
       label={t("inspector.color")}
+      disabled={disabled}
       value={value}
       onChange={(e) => {
         const color = e.currentTarget.value;
@@ -641,10 +660,13 @@ function Tags({
   projectId,
   nodes,
   actions,
+  disabled,
 }: {
   projectId: string;
   nodes: readonly Node[];
   actions: CanvasActions;
+  /** Whether tags may not be added or taken away, as of more nodes than one batch changes (maxEdited). */
+  disabled: boolean;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -759,6 +781,7 @@ function Tags({
             <li key={tagKey(tag)}>
               <Button
                 aria-label={t("inspector.remove_tag", { tag })}
+                disabled={disabled}
                 onClick={() =>
                   void actions.removeTag(ids, tag).then(tagsChanged)
                 }
@@ -793,6 +816,7 @@ function Tags({
             onChange={(e) => setTyped(e.currentTarget.value)}
             maxLength={50}
             autoComplete="off"
+            disabled={disabled}
             error={problem}
           />
           <datalist id={listId}>
@@ -801,7 +825,9 @@ function Tags({
             ))}
           </datalist>
         </div>
-        <Button type="submit">{t("inspector.add")}</Button>
+        <Button type="submit" disabled={disabled}>
+          {t("inspector.add")}
+        </Button>
       </form>
     </section>
   );

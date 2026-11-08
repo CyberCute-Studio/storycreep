@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { maxBatchCommands } from "../document/store";
 import { docOf, gridNodes, testNode } from "../test/canvas";
 import {
   deleteBatch,
-  duplicateBatches,
+  duplicateBatch,
+  maxEdited,
   maxNodes,
   moveBatch,
-  updateBatches,
+  updateBatch,
 } from "./commands";
 
 describe("the commands of the canvas's edits", () => {
@@ -47,7 +47,7 @@ describe("the commands of the canvas's edits", () => {
       new Map([["nd_a", 4]]),
     );
     expect(move.expected_rev).toEqual({ nd_a: 4, nd_b: 9 });
-    const [[update]] = updateBatches(
+    const [update] = updateBatch(
       view,
       ["nd_b"],
       () => ({ size: { width: 320, height: 200 } }),
@@ -84,18 +84,18 @@ describe("the commands of the canvas's edits", () => {
     ]);
   });
 
-  it("duplicates each node beside it, of new IDs, a thousand to a batch", () => {
-    const nodes = gridNodes(maxBatchCommands + 1, 100);
+  it("duplicates each node beside it, of new IDs, in one batch of as many as a batch holds", () => {
+    const nodes = gridNodes(maxEdited, 100);
     let n = 0;
-    const { batches, copies } = duplicateBatches(
+    const { batch, copies } = duplicateBatch(
       docOf(nodes),
       nodes.map((node) => node.id),
       { x: 32, y: 32 },
       () => `nd_copy_${n++}`,
     );
-    expect(batches.map((b) => b.length)).toEqual([maxBatchCommands, 1]);
-    expect(copies).toHaveLength(maxBatchCommands + 1);
-    expect(batches[0][1]).toEqual({
+    expect(batch).toHaveLength(maxEdited);
+    expect(copies).toHaveLength(maxEdited);
+    expect(batch[1]).toEqual({
       type: "node.duplicate",
       payload: {
         id: "nd_copy_1",
@@ -112,17 +112,15 @@ describe("the commands of the canvas's edits", () => {
       testNode("nd_b", 0, 0, { rev: 3 }),
     ]);
     expect(
-      updateBatches(view, ["nd_a", "nd_b", "nd_gone"], (node) =>
+      updateBatch(view, ["nd_a", "nd_b", "nd_gone"], (node) =>
         node.color === "red" ? undefined : { color: "red" },
       ),
     ).toEqual([
-      [
-        {
-          type: "node.update",
-          payload: { id: "nd_b", color: "red" },
-          expected_rev: { nd_b: 3 },
-        },
-      ],
+      {
+        type: "node.update",
+        payload: { id: "nd_b", color: "red" },
+        expected_rev: { nd_b: 3 },
+      },
     ]);
   });
 });
