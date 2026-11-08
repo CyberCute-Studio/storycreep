@@ -415,6 +415,24 @@ describe("the canvas's controller", () => {
     expect(c.viewport().y + 500 / 2).toBeCloseTo(250);
   });
 
+  it("keeps the board where it was on the page as the canvas's top moves down it, and its centre for the rest of the change", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    c.setViewport({ x: 100, y: 100, zoom: 2 });
+    // A message 60 px high comes above the canvas, which takes the rest of
+    // the window: the board's point at the canvas's old 60 px is at its top.
+    c.setSize({ width: 1000, height: 540 }, 1, 60);
+    expect(c.viewport()).toMatchObject({ x: 100, y: 100 + 60 / 2, zoom: 2 });
+    // It goes, and the board is back where it was.
+    c.setSize({ width: 1000, height: 600 }, 1, -60);
+    expect(c.viewport()).toMatchObject({ x: 100, y: 100, zoom: 2 });
+    // The window grows 100 px as the message comes: the board stays under
+    // the top's move, and keeps its centre for the 160 px more below.
+    c.setSize({ width: 1000, height: 640 }, 1, 60);
+    // The centre, at 100 + 300 / 2, goes to (640 - 60) / 2 of the canvas.
+    expect(c.viewport().y).toBeCloseTo(250 - 290 / 2);
+  });
+
   it("keeps the board's centre where it is through a size of none, as of a host that the page does not display, and a move's meanwhile", () => {
     const { c, time } = setUp();
     placed(c, time);
@@ -997,25 +1015,60 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(asked.moves).toEqual([new Map([["nd_1", { x: 32, y: 0 }]])]);
   });
 
-  it("keeps selected the nodes that the page's batches create until they come, though the scene changes before, and drops those that never came once they settle", async () => {
+  it("keeps selected the nodes that the page's batch creates until it shows them, though the scene changes before", async () => {
     const { c, time } = setUp();
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
     c.setReady();
     time.tick();
     let settle = () => {};
-    const done = new Promise<void>((resolve) => {
-      settle = resolve;
+    const done = new Promise<boolean>((resolve) => {
+      settle = () => resolve(true);
     });
     c.selectComing(["nd_2", "nd_3"], done);
     expect(c.selection().size).toBe(2);
-    // The first batch shows its copy, and the scene changes, before the
-    // second shows its own.
-    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    // Another session's change changes the scene before the batch, which
+    // its mutation hands to the document a moment after, shows the copies.
+    c.sync(docOf([testNode("nd_1", 8, 0)]), false);
     expect([...c.selection()]).toEqual(["nd_2", "nd_3"]);
-    // The second batch was refused.
+    c.sync(
+      docOf([
+        testNode("nd_1", 8, 0),
+        testNode("nd_2", 400, 0),
+        testNode("nd_3", 800, 0),
+      ]),
+      false,
+    );
     settle();
     await done;
+    expect([...c.selection()]).toEqual(["nd_2", "nd_3"]);
+  });
+
+  it("selects again what was selected before the nodes of a batch that was refused, rather than none, unless the user changed the selection meanwhile", async () => {
+    const { c, time } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_4", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1", "nd_4"], "replace");
+    let refuse = () => {};
+    const done = new Promise<boolean>((resolve) => {
+      refuse = () => resolve(false);
+    });
+    c.selectComing(["nd_2"], done);
     expect([...c.selection()]).toEqual(["nd_2"]);
+    refuse();
+    await done;
+    expect([...c.selection()].sort()).toEqual(["nd_1", "nd_4"]);
+    // The user adds a node to the copy that is coming, which the selection
+    // keeps once the copy's batch is refused.
+    let refuseAgain = () => {};
+    const again = new Promise<boolean>((resolve) => {
+      refuseAgain = () => resolve(false);
+    });
+    c.selectComing(["nd_3"], again);
+    c.select(["nd_4"], "add");
+    refuseAgain();
+    await again;
+    expect([...c.selection()]).toEqual(["nd_4"]);
   });
 
   it("starts no move of a node that is not selected, nor on a board that may not be changed", () => {

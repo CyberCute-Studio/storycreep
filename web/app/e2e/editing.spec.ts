@@ -65,8 +65,14 @@ async function dragOn(
   to: { x: number; y: number },
 ) {
   if (test.info().project.use.hasTouch) {
+    // A session of the browser's protocol for each drag, which ends with it,
+    // rather than one more left open on the page for each drag of a test.
     const cdp = await page.context().newCDPSession(page);
-    await touchGesture(cdp, [{ from, to }], 12);
+    try {
+      await touchGesture(cdp, [{ from, to }], 12);
+    } finally {
+      await cdp.detach();
+    }
     return;
   }
   await page.mouse.move(from.x, from.y);

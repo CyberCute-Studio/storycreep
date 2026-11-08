@@ -10,6 +10,7 @@
 import {
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   useId,
   useLayoutEffect,
   useRef,
@@ -146,6 +147,12 @@ export interface PanelProps {
    * once the item has gone, when the page's content gets it.
    */
   returnFocus: () => HTMLElement | null;
+  /**
+   * The panel's heading, which the page may give the focus again while the
+   * panel is open, as once the user asks again for what it shows, as a
+   * panel that opens gives it the focus.
+   */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
   children: ReactNode;
 }
 
@@ -162,6 +169,7 @@ export function Panel({
   subtitle,
   onClose,
   returnFocus,
+  headingRef,
   children,
 }: PanelProps) {
   const { t } = useTranslation();
@@ -264,7 +272,12 @@ export function Panel({
           <div className="min-w-0 flex-1">
             <h2
               id={titleId}
-              ref={heading}
+              ref={(element) => {
+                heading.current = element;
+                if (headingRef !== undefined) {
+                  headingRef.current = element;
+                }
+              }}
               tabIndex={-1}
               className="text-xl font-semibold break-words"
             >

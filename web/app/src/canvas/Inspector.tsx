@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type FormEvent,
   Fragment,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -50,6 +51,7 @@ import { maxEdited } from "./commands";
 import {
   type Alignment,
   hasControlIn,
+  hasPrintedIn,
   hasTagOf,
   maxTags,
   onBoard,
@@ -72,6 +74,8 @@ export interface InspectorProps {
   onEditText: (id: string) => void;
   onClose: () => void;
   returnFocus: () => HTMLElement | null;
+  /** The inspector's heading, which the canvas gives the focus as the user asks again for the inspector that is open (Panel's headingRef). */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
 }
 
 /** The inspector of what is selected on the canvas. */
@@ -82,6 +86,7 @@ export function Inspector({
   onEditText,
   onClose,
   returnFocus,
+  headingRef,
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -113,6 +118,7 @@ export function Inspector({
       subtitle={(single && typeOf(single, t)) || undefined}
       onClose={onClose}
       returnFocus={returnFocus}
+      headingRef={headingRef}
     >
       {nodes.length === 0 ? (
         <p className="text-fg-muted">{t("inspector.empty")}</p>
@@ -220,10 +226,11 @@ function valuesOf(node: Node): NodeValues {
  * Returns the number that text spells, as a decimal, with a point and an
  * exponent if any, as a float's value is read (parseValue), or undefined
  * for none, as of a hexadecimal, binary, or octal spelling, which Number
- * would read.
+ * would read. Its minus may be U+2212 MINUS SIGN, as the field's message of
+ * the bounds writes it, and as a copy of that message pastes it.
  */
 function numberOf(text: string): number | undefined {
-  const n = parseValue("float", text);
+  const n = parseValue("float", text.replaceAll("\u2212", "-"));
   return typeof n === "number" ? n : undefined;
 }
 
@@ -729,7 +736,9 @@ function Tags({
   const add = (event: FormEvent) => {
     event.preventDefault();
     const tag = typed.trim();
-    if (tag === "" || [...tag].length > 50) {
+    // One that shows no character, as of a zero width space alone, is
+    // empty, as the server tells it, and would refuse the tag of every node.
+    if (!hasPrintedIn(tag) || [...tag].length > 50) {
       setProblem(t("inspector.error.tag"));
       return;
     }

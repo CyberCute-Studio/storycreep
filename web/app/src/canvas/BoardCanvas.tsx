@@ -250,14 +250,34 @@ function ZoomReset({
 }
 
 /**
- * Returns the size of the canvas's element, in CSS pixels, which the
- * renderer's canvas, the rubber band, and the points of the pointers are
- * laid out in: its whole box, as its edge is a ring drawn outside it rather
- * than a border within it.
+ * Gives controller the size of host, the canvas's element, in CSS pixels,
+ * which the renderer's canvas, the rubber band, and the points of the
+ * pointers are laid out in: its whole box, as its edge is a ring drawn
+ * outside it rather than a border within it; and how far down the page its
+ * top moved since sized.current, where its top was as it was last given a
+ * size that had an area, which it keeps there (setSize's moved). A host
+ * without a size, as one that the page does not display, has no top that
+ * the next size moved from.
  */
-function sizeOf(host: HTMLElement): { width: number; height: number } {
+function sizeCanvas(
+  controller: CanvasController,
+  host: HTMLElement,
+  sized: { current: number | undefined },
+): void {
   const r = host.getBoundingClientRect();
-  return { width: r.width, height: r.height };
+  let moved = 0;
+  if (r.width > 0 && r.height > 0) {
+    const top = r.top + window.scrollY;
+    moved = sized.current === undefined ? 0 : top - sized.current;
+    sized.current = top;
+  } else {
+    sized.current = undefined;
+  }
+  controller.setSize(
+    { width: r.width, height: r.height },
+    window.devicePixelRatio || 1,
+    moved,
+  );
 }
 
 /** Returns the input of a pointer's event, at its point of the element at rect. */
@@ -362,6 +382,9 @@ function BoardCanvasOf({
   const [tagFilter, setTagFilter] = useState("");
   const [inspecting, setInspecting] = useState(false);
   const inspectorButton = useRef<HTMLButtonElement>(null);
+  // The open inspector's heading, which Enter on a branch or a jumper gives
+  // the focus, as it opens the inspector.
+  const inspectorHeading = useRef<HTMLHeadingElement>(null);
   const docked = useDocked();
   // The element whose text the canvas's editor shows over it, if any.
   const [editing, setEditing] = useState<string>();
@@ -398,6 +421,10 @@ function BoardCanvasOf({
   const [empty, setEmpty] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const [height, setHeight] = useState<number>();
+  // Where the canvas's top was on the page as it was last given its size,
+  // which the size after keeps the board under, as far as the top moved
+  // with it (sizeCanvas).
+  const sizedTop = useRef<number>(undefined);
   // Whether the system asks for reduced motion (NFR-A11Y-07), as it changes.
   const reducedMotion = useMediaQuery(reducedMotionQuery, false);
   // Whether the system's theme is dark, which the page's colours, and so
@@ -580,6 +607,9 @@ function BoardCanvasOf({
               openText(id);
             } else {
               setInspecting(true);
+              // An inspector that is open already, docked beside the canvas,
+              // takes the focus, as one that opens does.
+              inspectorHeading.current?.focus();
             }
           },
         }
@@ -643,9 +673,17 @@ function BoardCanvasOf({
       return;
     }
     const measure = () => {
-      const top = host.getBoundingClientRect().top + window.scrollY;
+      const r = host.getBoundingClientRect();
+      const top = r.top + window.scrollY;
       const viewport = document.documentElement.clientHeight;
-      setHeight(Math.max(320, viewport - top - 16));
+      const next = Math.max(320, viewport - top - 16);
+      // A top that moved with no change of the canvas's height, as at its
+      // least, moved the board with the canvas, which the size after does
+      // not move it back from (sizeCanvas).
+      if (sizedTop.current !== undefined && Math.abs(next - r.height) < 0.5) {
+        sizedTop.current = top;
+      }
+      setHeight(next);
     };
     measure();
     window.addEventListener("resize", measure);
@@ -668,9 +706,7 @@ function BoardCanvasOf({
       return;
     }
     controller.attach({ host, band });
-    const resize = () => {
-      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
-    };
+    const resize = () => sizeCanvas(controller, host, sizedTop);
     resize();
     const observer =
       typeof ResizeObserver === "function"
@@ -899,7 +935,7 @@ function BoardCanvasOf({
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host !== null && height !== undefined) {
-      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
+      sizeCanvas(controller, host, sizedTop);
     }
   }, [controller, height]);
 
@@ -1485,6 +1521,7 @@ function BoardCanvasOf({
             }}
             onClose={() => setInspecting(false)}
             returnFocus={() => inspectorButton.current}
+            headingRef={inspectorHeading}
           />
         )}
       </div>

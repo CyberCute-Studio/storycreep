@@ -3,9 +3,11 @@ import { hundredths } from "../document/appliers/node";
 import { testNode } from "../test/canvas";
 import {
   aligned,
+  byCodePoints,
   distributed,
   freePlace,
   hasControlIn,
+  hasPrintedIn,
   hasTagOf,
   minSize,
   movedBy,
@@ -244,5 +246,36 @@ describe("the canvas's edits", () => {
       expect(hasControlIn(`Quest${String.fromCharCode(c)}line`)).toBe(false);
     }
     expect(hasControlIn(`Quest${String.fromCodePoint(0x1f9ed)}`)).toBe(false);
+  });
+
+  it("finds no character that a tag shows in one that the server refuses as empty: of spaces, format characters, and characters that show nothing alone", () => {
+    for (const c of [
+      0x20, 0xa0, 0x200b, 0x200d, 0xfe0f, 0x3164, 0x2800, 0xfeff, 0x1d159,
+    ]) {
+      expect(hasPrintedIn(String.fromCodePoint(c, c))).toBe(false);
+    }
+    expect(hasPrintedIn("")).toBe(false);
+    // A letter, a mark, a digit, a punctuation mark, a symbol, and an
+    // emoji, which is a pair of surrogates, each show.
+    for (const c of [0x61, 0x301, 0x37, 0x21, 0x2b, 0x1f9ed]) {
+      expect(hasPrintedIn(String.fromCodePoint(0x200b, c))).toBe(true);
+    }
+  });
+
+  it("lists tags of as many nodes in the order of their code points, as the server does, rather than of their code units", () => {
+    // U+FF41 FULLWIDTH LATIN SMALL LETTER A is before U+1F600, an emoji of
+    // two surrogates, whose first code unit is before it.
+    const fullwidth = String.fromCodePoint(0xff41);
+    const emoji = String.fromCodePoint(0x1f600);
+    expect(byCodePoints(fullwidth, emoji)).toBeLessThan(0);
+    expect(byCodePoints(emoji, fullwidth)).toBeGreaterThan(0);
+    expect(byCodePoints("a", "ab")).toBeLessThan(0);
+    expect(byCodePoints("b", "a")).toBeGreaterThan(0);
+    expect(
+      tagsOf([
+        testNode("nd_1", 0, 0, { tags: [emoji] }),
+        testNode("nd_2", 0, 0, { tags: [fullwidth] }),
+      ]),
+    ).toEqual([fullwidth, emoji]);
   });
 });

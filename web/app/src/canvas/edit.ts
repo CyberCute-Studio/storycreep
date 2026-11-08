@@ -259,6 +259,25 @@ export function hasControlIn(tag: string): boolean {
 }
 
 /**
+ * A character that a name shows, as the server tells it (input.Printed): a
+ * letter, a mark, a number, a punctuation mark, or a symbol, rather than a
+ * space, a format character, as U+200B ZERO WIDTH SPACE, or another that
+ * shows nothing, as a variation selector, U+3164 HANGUL FILLER, or U+2800
+ * BRAILLE PATTERN BLANK, and the server's blanks of the planes beyond.
+ */
+const printedChar =
+  /(?![\p{White_Space}\p{Default_Ignorable_Code_Point}\u2800\u{13441}\u{13442}\u{16FE4}\u{1D159}])[\p{L}\p{M}\p{N}\p{P}\p{S}]/u;
+
+/**
+ * Reports whether tag shows a character (printedChar), without which the
+ * server refuses it as empty, as a tag of a zero width space alone, for
+ * which it would refuse the tag of every node that it is added to.
+ */
+export function hasPrintedIn(tag: string): boolean {
+  return printedChar.test(tag);
+}
+
+/**
  * The keys of each list of tags that tagKeys has read, as a node keeps its
  * list, the same object, until its tags change, so that each tag of it is
  * folded once, rather than in each frame that the tag filter dims it in.
@@ -303,10 +322,33 @@ export function tagCounts(
 }
 
 /**
+ * Compares a and b by their code points, as the server compares strings, by
+ * their bytes of UTF-8, rather than by their UTF-16 code units, as < does,
+ * which puts a character beyond U+FFFF, of a pair of surrogates, before one
+ * from U+E000 to U+FFFF, as an emoji before a fullwidth letter.
+ */
+export function byCodePoints(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x !== y) {
+      return codePointRank(x) - codePointRank(y);
+    }
+  }
+  return a.length - b.length;
+}
+
+/** Returns a code unit's place in the order of code points: a surrogate's after U+FFFF, and those from U+E000 before it. */
+function codePointRank(c: number): number {
+  return c < 0xd800 ? c : c < 0xe000 ? c + 0x2000 : c - 0x800;
+}
+
+/**
  * Returns the tags of nodes, each once, whatever its case, in the spelling
  * that the most of them write, or, of spellings that as many write, the
- * first in the order of their code units, as the server suggests them, the
- * most used first, then in the order of their keys.
+ * first in the order of their code points, as the server suggests them, the
+ * most used first, then in the order of their keys (byCodePoints).
  */
 export function tagsOf(nodes: Iterable<Pick<Node, "tags">>): string[] {
   const byKey = new Map<
@@ -330,7 +372,7 @@ export function tagsOf(nodes: Iterable<Pick<Node, "tags">>): string[] {
     let out = "";
     let most = -1;
     for (const [tag, uses] of spellings) {
-      if (uses > most || (uses === most && tag < out)) {
+      if (uses > most || (uses === most && byCodePoints(tag, out) < 0)) {
         out = tag;
         most = uses;
       }
@@ -338,7 +380,7 @@ export function tagsOf(nodes: Iterable<Pick<Node, "tags">>): string[] {
     return out;
   };
   return [...byKey]
-    .sort(([a, x], [b, y]) => y.uses - x.uses || (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, x], [b, y]) => y.uses - x.uses || byCodePoints(a, b))
     .map(([, entry]) => best(entry.spellings));
 }
 

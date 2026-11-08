@@ -443,9 +443,16 @@ export class CanvasController implements GestureHost {
    * turn interrupts would. A size of none, as of a host that the page does
    * not display, moves nothing, and stops the canvas drawing: the canvas,
    * and the renderer's canvas, keep the last size that had an area (sz),
-   * whose centre the size after keeps.
+   * whose centre the size after keeps. Of a size that came with a move of
+   * the canvas's top on the page, moved CSS pixels down, as once a message
+   * above it came or went, and the canvas took the rest of the window below
+   * it, the part of the change that the top's move made leaves the board
+   * where it was on the page, and the rest keeps its centre, as a change of
+   * the window's does: a message that comes above the canvas covers what
+   * the canvas showed of the board under it, rather than move the board,
+   * under a drag's pointer too, by half its height, as the centre would.
    */
-  setSize(size: Size, resolution: number): void {
+  setSize(size: Size, resolution: number, moved = 0): void {
     const displayed = size.width > 0 && size.height > 0;
     if (
       displayed === this.displayed &&
@@ -461,7 +468,7 @@ export class CanvasController implements GestureHost {
         const kept = (v: Viewport) =>
           anchorAt(
             centerOf(v, was),
-            { x: size.width / 2, y: size.height / 2 },
+            { x: size.width / 2, y: (size.height - moved) / 2 },
             v.zoom,
           );
         this.v = kept(this.v);
@@ -972,15 +979,19 @@ export class CanvasController implements GestureHost {
 
   /**
    * Selects the nodes of ids, in place of the selection, as the page's
-   * batches that create them show them, which may be after the scene next
-   * changes, as with the copies of a duplicate of thousands, whose batches
-   * the document shows in turn: the selection keeps them, though the scene
-   * has them not yet, until done settles, rather than drop those that a
-   * batch after the first creates as the first shows its own (syncScene),
-   * and then drops those that the scene has not, as of a batch refused.
+   * batch that creates them shows them, which may be after the scene next
+   * changes, as the batch's mutation hands it to the document a moment
+   * after it is asked for: the selection keeps them, though the scene has
+   * them not yet, until done settles, rather than drop them as the scene
+   * changes before the batch shows them (syncScene), and then drops those
+   * that the scene has not, as of a batch refused, after which a selection
+   * of none but them is the one before them again, of the nodes that the
+   * scene has, rather than none, while one that the user changed meanwhile
+   * keeps what they selected.
    */
   selectComing(ids: readonly string[], done: Promise<unknown>): void {
     const coming = new Set(ids);
+    const before = this.selected;
     this.coming = coming;
     this.select([...ids], "replace");
     const settled = () => {
@@ -990,7 +1001,13 @@ export class CanvasController implements GestureHost {
       const kept = [...this.selected].filter(
         (id) => !coming.has(id) || this.has(id) || this.coming.has(id),
       );
-      if (kept.length !== this.selected.size) {
+      if (kept.length === 0 && this.selected.size > 0) {
+        this.setSelection(
+          new Set(
+            [...before].filter((id) => this.has(id) || this.coming.has(id)),
+          ),
+        );
+      } else if (kept.length !== this.selected.size) {
         this.setSelection(new Set(kept));
       }
     };

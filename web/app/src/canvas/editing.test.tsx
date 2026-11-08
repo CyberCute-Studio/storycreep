@@ -14,6 +14,7 @@ import "../test/editor";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
 import type { Engine } from "./engine";
+import { handlePlace } from "./ResizeHandle";
 import { boxPlace } from "./TextEditor";
 
 // PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
@@ -387,6 +388,23 @@ describe("the canvas's edits", () => {
         expected_rev: { nd_2: 1 },
       },
     ]);
+  });
+
+  it("gives the inspector that is open already the focus as Enter opens a branch, as it gives one that opens", async () => {
+    boardPage([
+      testNode("nd_1", 0, 0, { type: "branch", kind: undefined }),
+      testNode("nd_2", 400, 0),
+    ]);
+    const canvas = await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const heading = within(inspector).getByRole("heading", {
+      name: "nd_1",
+      level: 2,
+    });
+    canvas.focus();
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it("deletes the selection to the trash with the toolbar's Delete, and with the Delete key", async () => {
@@ -1310,6 +1328,20 @@ describe("the canvas's edits", () => {
       ),
     ).toBeDefined();
     expect(batches(calls)).toHaveLength(2);
+    // The minus sign that the message writes, as a copy of it pastes it, is
+    // a minus.
+    await user.clear(again);
+    await user.type(again, `${String.fromCharCode(0x2212)}48`);
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the node" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(3));
+    expect(batches(calls)[2]).toMatchObject([
+      {
+        type: "node.move",
+        payload: { nodes: [{ id: "nd_1", position: { x: -48, y: 0 } }] },
+      },
+    ]);
   });
 
   it("saves the place across that the user typed with the place down that a drag gave the node meanwhile, rather than the one that the inspector held", async () => {
@@ -1496,6 +1528,25 @@ describe("the canvas's edits", () => {
         payload: { id: "nd_1", size: { width: 320, height: 128 } },
       },
     ]);
+  });
+});
+
+describe("the place of the resize handle", () => {
+  it("is centred on the node's corner, and covers a quarter of a node that the zoom draws small at most, with its mark on the corner", () => {
+    // A card of 240 by 128 at 100%: the handle's 44 px, centred.
+    expect(handlePlace({ x: 100, y: 50, width: 240, height: 128 })).toEqual({
+      x: 340 - 22,
+      y: 178 - 22,
+      mark: { x: 14, y: 14 },
+    });
+    // The same card at 10%, 24 by 12.8: the handle is beyond the corner but
+    // for a quarter of the node's width and height, and its mark on it.
+    const small = { x: 100, y: 50, width: 24, height: 12.8 };
+    const p = handlePlace(small);
+    expect(p.x).toBeCloseTo(124 - 6);
+    expect(p.y).toBeCloseTo(62.8 - 3.2);
+    expect(p.x + p.mark.x + 8).toBeCloseTo(124);
+    expect(p.y + p.mark.y + 8).toBeCloseTo(62.8);
   });
 });
 
