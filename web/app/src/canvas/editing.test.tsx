@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import "../test/editor";
-import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
 import type { Engine } from "./engine";
 import { boxPlace } from "./TextEditor";
@@ -85,10 +85,19 @@ function touched(command: Sent[number]): string[] {
  * Answers the board's page, of a board of nodes, and applies each batch
  * that the page sends, which leaves each node that it changes or makes at
  * its next revision, and whose undo is the batch itself, as the history
- * keeps it.
+ * keeps it, but for the batches that answerOf answers otherwise, by their
+ * index among those that the page sent, as with a refusal it throws, or
+ * an answer that it changes.
  */
-function boardPage(nodes: Node[]) {
+function boardPage(
+  nodes: Node[],
+  answerOf?: (
+    index: number,
+    applied: () => Record<string, unknown>,
+  ) => Promise<unknown> | undefined,
+) {
   let seq = testProject.seq;
+  let sent = 0;
   const revs = new Map(nodes.map((n) => [n.id, n.rev]));
   return fakeApi((operation, input) => {
     switch (operation) {
@@ -109,22 +118,25 @@ function boardPage(nodes: Node[]) {
         return { items: [] };
       case "applyCommands": {
         const { commands } = (input as { body: { commands: Sent } }).body;
-        seq++;
-        const ids = new Set(commands.flatMap(touched));
-        for (const id of ids) {
-          revs.set(id, (revs.get(id) ?? 0) + 1);
-        }
-        return {
-          status: "applied",
-          seq,
-          revisions: [...ids].map((id) => ({ id, rev: revs.get(id) })),
-          not_reconnected: [],
-          undo: commands.map(({ type, payload }) => ({
-            type,
-            payload,
-            expected_rev: {},
-          })),
+        const applied = () => {
+          seq++;
+          const ids = new Set(commands.flatMap(touched));
+          for (const id of ids) {
+            revs.set(id, (revs.get(id) ?? 0) + 1);
+          }
+          return {
+            status: "applied",
+            seq,
+            revisions: [...ids].map((id) => ({ id, rev: revs.get(id) })),
+            not_reconnected: [],
+            undo: commands.map(({ type, payload }) => ({
+              type,
+              payload,
+              expected_rev: {},
+            })),
+          };
         };
+        return answerOf?.(sent++, applied) ?? applied();
       }
     }
     const answer = startPage(operation);
@@ -236,6 +248,83 @@ describe("the canvas's edits", () => {
     await waitFor(() =>
       expect(screen.queryByText("Moved 2 nodes.")).toBeNull(),
     );
+  });
+
+  it("offers no undo of a bulk move whose batch added none to the history, whose undo would be of the change before it", async () => {
+    const calls = boardPage(
+      [testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)],
+      // The toolbar's Delete of a node, and the Add of another, are undone
+      // by their own; the move of both after them, the third batch, by none,
+      // as of a batch that changed nothing.
+      (index, applied) =>
+        index === 2 ? Promise.resolve({ ...applied(), undo: [] }) : undefined,
+    );
+    const user = userEvent.setup();
+    const canvas = await openBoard("?node=nd_2");
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("1"));
+    // A node of its own, added, and then both moved together.
+    await user.click(within(edit).getByRole("button", { name: "Add" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Element" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("2"));
+    expect(canvas.dataset.selected).toBe("1");
+    const first = screenOf(canvas, { x: 200, y: 64 });
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      shiftKey: true,
+      ...first,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      shiftKey: true,
+      ...first,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("2"));
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: first.clientX + 100 * zoom, clientY: first.clientY };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...first });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    await waitFor(() => expect(batches(calls)).toHaveLength(3));
+    expect(batches(calls)[2][0].type).toBe("node.move");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.queryByText("Moved 2 nodes.")).toBeNull();
+  });
+
+  it("says the refusal of a batch though another was sent after it, as of a move while the user adds a node", async () => {
+    let refuse = () => {};
+    const refusal = new Promise<void>((resolve) => {
+      refuse = resolve;
+    });
+    const calls = boardPage([testNode("nd_1", 0, 0)], (index) =>
+      index === 0
+        ? refusal.then(() => {
+            throw refused(422, { code: "validation_failed" });
+          })
+        : undefined,
+    );
+    const user = userEvent.setup();
+    const canvas = await openBoard("?node=nd_1");
+    const from = screenOf(canvas, { x: 120, y: 64 });
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: from.clientX + 100 * zoom, clientY: from.clientY };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...from });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Add" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Element" }));
+    refuse();
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(
+      await screen.findByText(/^The change could not be saved/),
+    ).toBeDefined();
   });
 
   it("opens the node that a link names, selected, with its inspector, whose form saves what changed in one command", async () => {
@@ -478,6 +567,59 @@ describe("the canvas's edits", () => {
         expected_rev: { nd_1: 2 },
       },
     ]);
+    // A number spelled otherwise than as a decimal, as in hexadecimal, is
+    // none, as the server reads none.
+    await waitFor(() =>
+      expect(within(inspector).getByLabelText("Across (x)")).toHaveProperty(
+        "value",
+        "10.13",
+      ),
+    );
+    const again = within(inspector).getByLabelText("Across (x)");
+    await user.clear(again);
+    await user.type(again, "0x10");
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the node" }),
+    );
+    expect(
+      await within(inspector).findByText(
+        "Write a number from −1,000,000,000 to 1,000,000,000.",
+      ),
+    ).toBeDefined();
+    expect(batches(calls)).toHaveLength(2);
+  });
+
+  it("pans by the wheel over the resize handle as over the canvas, and sizes nothing by a resize whose release the handle did not hear of", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
+    expect(handle).not.toBeNull();
+    const x = canvas.dataset.x;
+    // The wheel's event is the canvas's, which the page does not scroll by.
+    expect(fireEvent.wheel(handle as HTMLElement, { deltaX: 100 })).toBe(false);
+    await waitFor(() => expect(canvas.dataset.x).not.toBe(x));
+    // A mouse that moves without its button, whose release went elsewhere,
+    // as to a menu of the system's, ends the resize, cancelled.
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      clientX: 0,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      clientX: 40,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      ...mouse,
+      buttons: 0,
+      clientX: 80,
+      clientY: 0,
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(batches(calls)).toEqual([]);
   });
 });
 

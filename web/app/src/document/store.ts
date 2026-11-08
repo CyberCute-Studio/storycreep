@@ -2291,6 +2291,17 @@ export class ProjectDocument {
   }
 
   /**
+   * Reports whether the step that undo would send is the one of the batch
+   * of seq, as once the batch's answer added it to the history and nothing
+   * joined it after: not of a batch whose answer added none, as one of
+   * already_applied, or with an empty undo, whose undo would else be that
+   * of the step before it.
+   */
+  undoesNext(seq: number): boolean {
+    return this.history.nextUndo()?.seqs.includes(seq) ?? false;
+  }
+
+  /**
    * Sends the latest step of the history to undo or to redo. One asked for
    * while another of the same is under way, as by a second click before the
    * first has disabled the button, is that one, and settles as it does, so

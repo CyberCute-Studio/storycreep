@@ -2,7 +2,10 @@
 // FR-EDIT-06): each edit is one batch, or, of more nodes than a batch of the
 // API holds commands for, a batch for each thousand of them, each command
 // expecting the revision that the page shows of each node that it changes or
-// copies (FR-API-03), as every change of the project's content does. A move
+// copies (FR-API-03), as every change of the project's content does, or, of
+// a drag, the one that it showed as the drag started, which the drag moved or
+// sized the node from, so that a change of the same made elsewhere meanwhile
+// is refused rather than written over (the document's conflicts). A move
 // of the selection, and a deletion of it, are one command however many
 // nodes they name, up to the 10,000 that one names (AC2).
 
@@ -47,24 +50,39 @@ function revsOf(
   return out;
 }
 
-/** Returns the batch that moves the nodes of places there: one node.move for each 10,000 of them. */
+/**
+ * Returns the batch that moves the nodes of places there: one node.move for
+ * each 10,000 of them, each expecting the revision of each node that
+ * expected has, as a drag has it of the nodes as it started, which it moved
+ * them from, and else the one that view shows.
+ */
 export function moveBatch(
   view: Pick<Doc, "nodes">,
   places: ReadonlyMap<string, Point>,
+  expected?: ReadonlyMap<string, number>,
 ): Command[] {
-  return chunks([...places], maxNodes).map((run) => ({
-    type: "node.move" as const,
-    payload: {
-      nodes: run.map(([id, position]) => ({
-        id,
-        position: { x: position.x, y: position.y },
-      })),
-    },
-    expected_rev: revsOf(
+  return chunks([...places], maxNodes).map((run) => {
+    const revs = revsOf(
       view,
       run.map(([id]) => id),
-    ),
-  }));
+    );
+    for (const [id] of run) {
+      const rev = expected?.get(id);
+      if (rev !== undefined && id in revs) {
+        revs[id] = rev;
+      }
+    }
+    return {
+      type: "node.move" as const,
+      payload: {
+        nodes: run.map(([id, position]) => ({
+          id,
+          position: { x: position.x, y: position.y },
+        })),
+      },
+      expected_rev: revs,
+    };
+  });
 }
 
 /** Returns the command that creates a node of type on the board of boardId at position, of the ID id. */
@@ -141,11 +159,14 @@ export function duplicateBatches(
  * Returns the batches that change each node of ids as change says, a
  * node.update of each that it changes, a thousand to a batch: change
  * returns the fields to change, or undefined to leave the node as it is.
+ * Each expects the revision of its node that expected has, as a resize has
+ * it of the node as its drag started, and else the one that view shows.
  */
 export function updateBatches(
   view: Pick<Doc, "nodes">,
   ids: Iterable<string>,
   change: (node: Node) => Omit<NodeUpdatePayload, "id"> | undefined,
+  expected?: ReadonlyMap<string, number>,
 ): Command[][] {
   const commands: Command[] = [];
   for (const id of ids) {
@@ -157,7 +178,7 @@ export function updateBatches(
     commands.push({
       type: "node.update",
       payload: { id, ...fields },
-      expected_rev: { [id]: node.rev },
+      expected_rev: { [id]: expected?.get(id) ?? node.rev },
     });
   }
   return chunks(commands, maxCommands);

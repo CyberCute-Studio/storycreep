@@ -10,6 +10,7 @@
 
 import type { Node } from "@storycreep/shared/api";
 import { foldCase } from "@storycreep/shared/fold";
+import { hundredths } from "../document/appliers/node";
 import { nodeRect } from "./layout";
 import type { Point, Rect, Size } from "./viewport";
 
@@ -32,10 +33,14 @@ export const minSize: Readonly<Size> = Object.freeze({ width: 64, height: 40 });
 /** How far a duplicate goes from its node, and a new node from one at the same place, in units of the board: four steps of the grid. */
 export const offset = 4 * gridSize;
 
-/** Returns n rounded to 2 decimal places, half away from zero, as the server keeps a node's position and size (FR-EDIT-02 AC4). */
+/**
+ * Returns n rounded to 2 decimal places, half away from zero, as the server
+ * keeps a node's position and size (FR-EDIT-02 AC4): of the decimal that n
+ * is written as, as 1.005 to 1.01, as the document rounds what a batch
+ * sends (hundredths), rather than of the double, which is a little less.
+ */
 export function round2(n: number): number {
-  const r = Math.round(Math.abs(n) * 100) / 100;
-  return r === 0 ? 0 : Math.sign(n) * r;
+  return hundredths(n);
 }
 
 /** Returns n on the board's grid where snap is on, and rounded as the server keeps it either way. */
@@ -246,6 +251,23 @@ export function hasTagOf(tag: string): (node: Pick<Node, "tags">) => boolean {
 /** Reports whether node has tag, whatever its case. */
 export function hasTag(node: Pick<Node, "tags">, tag: string): boolean {
   return hasTagOf(tag)(node);
+}
+
+/**
+ * Returns how many of nodes have each tag, by its key (tagKey), whatever
+ * its case, of each node's tags folded once (tagKeys), rather than each
+ * node's tags folded again for each tag counted.
+ */
+export function tagCounts(
+  nodes: Iterable<Pick<Node, "tags">>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    for (const key of new Set(tagKeys(node.tags))) {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 /**

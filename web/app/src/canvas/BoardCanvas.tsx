@@ -330,6 +330,8 @@ function BoardCanvasOf({
   const hostRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const bandRef = useRef<HTMLDivElement>(null);
+  // The layer of what the canvas places over its nodes, outside its element.
+  const overRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
   /** The pointer whose press went down on the minimap, which its drag follows. */
   const minimapPress = useRef<number>(undefined);
@@ -462,14 +464,21 @@ function BoardCanvasOf({
   useEffect(() => {
     controller.edits = editable
       ? {
-          move: (places) => {
+          move: (places, expected) => {
             const current = edits.current;
             if (current === undefined) {
               return;
             }
             const count = places.size;
-            void current.actions.move(places).then((applied) => {
-              if (applied && count >= 2) {
+            void current.actions.move(places, expected).then(({ answer }) => {
+              // The undo of the move alone, once it is the step that undo
+              // would send: not of a batch that added none, as one answered
+              // with already_applied, whose undo would be the step before.
+              if (
+                count >= 2 &&
+                answer?.status === "applied" &&
+                doc.undoesNext(answer.seq)
+              ) {
                 setMoved({
                   key: Date.now(),
                   count,
@@ -478,7 +487,8 @@ function BoardCanvasOf({
               }
             });
           },
-          resize: (id, size) => void edits.current?.actions.resize(id, size),
+          resize: (id, size, rev) =>
+            void edits.current?.actions.resize(id, size, rev),
           remove: (ids) => void edits.current?.actions.remove(ids),
           open: (id) => {
             const node = doc.store.getState().view.nodes.get(id);
@@ -693,6 +703,35 @@ function BoardCanvasOf({
       controller.gestures.cancelAll();
       controller.gestures.setSpace(false);
     };
+    // What the canvas places over its nodes, outside its element, as the
+    // resize handle, takes the wheel, the pinch, and the browser's menu as
+    // the canvas does, rather than let them through to the page, which
+    // would scroll it, zoom it, or open its menu over the canvas; but for
+    // the editor of a text, whose wheel scrolls it, and whose menu is its
+    // text's.
+    const over = overRef.current;
+    const onNode = (e: Event) =>
+      !(e.target instanceof Element && e.target.closest("form") !== null);
+    const overWheel = (e: WheelEvent) => {
+      if (onNode(e)) {
+        wheel(e);
+      }
+    };
+    const overGesture = (e: Event) => {
+      if (onNode(e)) {
+        gesture(e);
+      }
+    };
+    const overMenu = (e: Event) => {
+      if (onNode(e)) {
+        own(e);
+      }
+    };
+    over?.addEventListener("wheel", overWheel, { passive: false });
+    over?.addEventListener("contextmenu", overMenu);
+    for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+      over?.addEventListener(type, overGesture);
+    }
     host.addEventListener("touchstart", own, { passive: false });
     host.addEventListener("touchmove", own, { passive: false });
     host.addEventListener("contextmenu", own);
@@ -724,7 +763,10 @@ function BoardCanvasOf({
       host.removeEventListener("wheel", wheel);
       for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
         host.removeEventListener(type, gesture);
+        over?.removeEventListener(type, overGesture);
       }
+      over?.removeEventListener("wheel", overWheel);
+      over?.removeEventListener("contextmenu", overMenu);
       window.removeEventListener("blur", blur);
     };
   }, [controller]);
@@ -1168,10 +1210,10 @@ function BoardCanvasOf({
           <HistoryStatus history={history} />
           <Alert
             message={
-              actions.commands.error === null
+              actions.error === null
                 ? undefined
                 : t("canvas.edit_failed", {
-                    reason: refusalOf(actions.commands.error, t)?.message ?? "",
+                    reason: refusalOf(actions.error, t)?.message ?? "",
                   })
             }
           />
@@ -1258,8 +1300,12 @@ function BoardCanvasOf({
           {/* What the canvas places over its nodes, outside its element, which
           takes every touch and key of its own: the resize handle of the
           node selected, and the editor of an element's text. The layer lets
-          a pointer through to the canvas but on them. */}
-          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-md">
+          a pointer through to the canvas but on them, and the canvas takes
+          the wheel and the pinch over the handle too. */}
+          <div
+            ref={overRef}
+            className="pointer-events-none absolute inset-0 overflow-hidden rounded-md"
+          >
             {editable &&
               selected === 1 &&
               editing === undefined &&

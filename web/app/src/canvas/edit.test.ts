@@ -13,6 +13,8 @@ import {
   resizedBy,
   round2,
   snapped,
+  tagCounts,
+  tagKey,
   tagsOf,
   withoutTag,
   withTag,
@@ -37,6 +39,11 @@ describe("the canvas's edits", () => {
     expect(round2(12.344)).toBe(12.34);
     expect(round2(-0.001)).toBe(0);
     expect(Object.is(round2(-0.001), -0)).toBe(false);
+    // Of the decimal written, as the server reads it, rather than of the
+    // double, which is a little less than 1.005, and than 1.015.
+    expect(round2(1.005)).toBe(1.01);
+    expect(round2(1.015)).toBe(1.02);
+    expect(round2(-1.005)).toBe(-1.01);
   });
 
   it("snaps to the grid of 8 units, or keeps the place as it is, rounded, where it does not snap", () => {
@@ -180,5 +187,14 @@ describe("the canvas's edits", () => {
     // A node whose tags changed is read anew, not as its tags were.
     expect(has({ tags: ["Straße", "Mira"] })).toBe(true);
     expect(has({ ...nodes[0], tags: ["Quest"] })).toBe(false);
+    // How many nodes have each, whatever its case, a node once for a tag
+    // that it has in two spellings.
+    expect(tagCounts([...nodes, { tags: ["Mira", "MIRA"] }])).toEqual(
+      new Map([
+        [tagKey("quest"), 3],
+        [tagKey("strasse"), 2],
+        [tagKey("mira"), 2],
+      ]),
+    );
   });
 });

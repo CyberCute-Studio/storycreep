@@ -18,6 +18,7 @@ import type { Node as BoardNode, RichTextDoc } from "@storycreep/shared/api";
 import {
   type FormEvent,
   type Ref,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -177,7 +178,12 @@ export function TextEditor({
   // within the part of the canvas that the window shows.
   useEffect(() => {
     let band = visibleBand();
+    // What tells where the node is on the canvas, as the canvas's frames
+    // give it, which a scroll places the box by again, alone, rather than
+    // ask the canvas for a frame that draws the board as it was.
+    let nodeRect: ((id: string) => Rect | undefined) | undefined;
     const place = (rectOf: (id: string) => Rect | undefined) => {
+      nodeRect = rectOf;
       const el = box.current;
       const h = host();
       const rect = rectOf(node.id);
@@ -213,7 +219,11 @@ export function TextEditor({
     };
     const scrolled = () => {
       band = visibleBand();
-      controller.invalidate();
+      if (nodeRect === undefined) {
+        controller.invalidate();
+      } else {
+        place(nodeRect);
+      }
     };
     const check = () => {
       band = visibleBand();
@@ -310,12 +320,24 @@ export function TextEditor({
     }
   }, [saved, onClose]);
 
+  // The form's element, for the box and for what the form holds, by a ref
+  // of the same function from one render to the next: React calls a new
+  // one with the element on each, as the form's ref of the form shown
+  // anew, which gives the focus back to the control that had it, and so
+  // would take it from what that control opened in a portal, as the rich
+  // text's link dialog, whenever the editor rendered again.
+  const heldRef = held.props.ref;
+  const formRef = useCallback(
+    (el: HTMLFormElement | null) => {
+      box.current = el;
+      heldRef(el);
+    },
+    [heldRef],
+  );
+
   return (
     <form
-      ref={(el) => {
-        box.current = el;
-        held.props.ref(el);
-      }}
+      ref={formRef}
       key={held.key}
       onFocus={held.props.onFocus}
       onBlur={held.props.onBlur}

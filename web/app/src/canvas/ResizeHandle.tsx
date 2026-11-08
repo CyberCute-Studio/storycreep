@@ -81,9 +81,12 @@ export function ResizeHandle({
       return;
     }
     // A mouse or a pen that moves without its button went up where the
-    // handle did not hear of it: its resize ends where it is.
+    // handle did not hear of it, as once a menu of the system's took the
+    // release: its resize ends, cancelled, as a move of the canvas's does
+    // whose release it did not hear of, rather than size the node to where
+    // the pointer is now.
     if (e.pointerType !== "touch" && (e.buttons & 1) === 0) {
-      end(true);
+      end(false);
       return;
     }
     const dx = e.clientX - p.x;
@@ -112,16 +115,21 @@ export function ResizeHandle({
   };
 
   // A handle that goes, as once the selection changes, ends its resize, as
-  // cancelled.
-  useEffect(
-    () => () => {
+  // cancelled, and so does the window's blur, as to another window, which
+  // ends a move of the canvas's alike.
+  useEffect(() => {
+    const blur = () => {
       if (press.current?.resizing) {
         controller.resizeEnd(false);
       }
       press.current = undefined;
-    },
-    [controller],
-  );
+    };
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("blur", blur);
+      blur();
+    };
+  }, [controller]);
 
   return (
     <div

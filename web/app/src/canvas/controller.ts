@@ -131,10 +131,17 @@ export interface CanvasEvents {
  * the empty board, and the keys that change it do nothing.
  */
 export interface CanvasEdits {
-  /** Moves the nodes of places there, as a drag of the selection left them, in one batch (FR-EDIT-02 AC2). */
-  move(places: ReadonlyMap<string, Point>): void;
-  /** Gives the node of id size, as its handle's drag left it. */
-  resize(id: string, size: Size): void;
+  /**
+   * Moves the nodes of places there, as a drag of the selection left them,
+   * in one batch (FR-EDIT-02 AC2), expecting the revisions of expected, of
+   * the nodes as the drag started, which it moved them from.
+   */
+  move(
+    places: ReadonlyMap<string, Point>,
+    expected: ReadonlyMap<string, number>,
+  ): void;
+  /** Gives the node of id size, as its handle's drag left it, expecting rev, its revision as the drag started. */
+  resize(id: string, size: Size, rev: number): void;
   /** Deletes the nodes of ids to the trash, as Delete asks. */
   remove(ids: readonly string[]): void;
   /** Opens the node of id, as for its text, as Enter or a double tap asks. */
@@ -288,22 +295,33 @@ export class CanvasController implements GestureHost {
    * (selectComing).
    */
   private coming: ReadonlySet<string> = new Set();
-  /** The move of the selection under way: where its nodes were as it started, of the node that it holds at anchor, and where they are now. */
+  /**
+   * The move of the selection under way: where its nodes were as it
+   * started, and their revisions then, which its batch expects, of the node
+   * that it holds at anchor, and where they are now.
+   */
   private moving:
     | {
         anchor: Point;
         start: ReadonlyMap<string, Point>;
+        revs: ReadonlyMap<string, number>;
         places: ReadonlyMap<string, Point>;
       }
     | undefined;
-  /** The resize under way: of the node of id, from its size as it started, to its size now. */
-  private resizing: { id: string; from: Size; size?: Size } | undefined;
+  /** The resize under way: of the node of id, at revision rev, from its size as it started, to its size now. */
+  private resizing:
+    | { id: string; rev: number; from: Size; size?: Size }
+    | undefined;
   /** Which nodes the canvas dims, as the tag filter asks (FR-EDIT-06 AC1), and how often that changed. */
   private dims: ((node: Node) => boolean) | undefined;
   private dimVersion = 0;
-  /** How many of the board's nodes are dimmed, of the scene's version and the dims' that it was counted at. */
+  /**
+   * How many of the board's nodes are dimmed, of the document's nodes and
+   * the dims' version that it was counted at, rather than of the scene's,
+   * which each move of a drag changes, and none of their tags.
+   */
   private dimmedCount:
-    | { scene: number; dims: number; count: number }
+    | { nodes: ReadonlyMap<string, Node>; dims: number; count: number }
     | undefined;
   /** What the canvas places over its nodes in each frame, as the resize handle and the text's editor (follow). */
   private readonly followers = new Set<(rectOf: ScreenRectOf) => void>();
@@ -626,30 +644,44 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Starts moving the selection, which holds the node of id, from where the
-   * scene has its nodes, and reports whether it did: not where the board may
-   * not be changed, nor once the node has gone, nor while a node's handle
-   * resizes it, as under another finger, whose preview a move's would else
-   * take the place of.
+   * Starts moving the selection, which holds the node of id, or, where pick
+   * says how, the selection that the node is first selected into, from
+   * where the scene has its nodes, and reports whether it did: not where the
+   * board may not be changed, nor once the node has gone, nor while a
+   * node's handle resizes it, as under another finger, whose preview a
+   * move's would else take the place of, nor of a node that is not
+   * selected without pick. A move that does not start selects nothing.
    */
-  moveStart(id: string): boolean {
+  moveStart(id: string, pick?: SelectHow): boolean {
     const held = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       held === undefined ||
-      !this.selected.has(id) ||
       this.resizing !== undefined
     ) {
       return false;
     }
+    if (pick !== undefined) {
+      this.select([id], pick);
+    }
+    if (!this.selected.has(id)) {
+      return false;
+    }
     const start = new Map<string, Point>();
+    const revs = new Map<string, number>();
     for (const selected of this.selected) {
       const item = this.scene.nodes.get(selected);
       if (item !== undefined) {
         start.set(selected, item.node.position);
+        revs.set(selected, item.node.rev);
       }
     }
-    this.moving = { anchor: held.node.position, start, places: new Map() };
+    this.moving = {
+      anchor: held.node.position,
+      start,
+      revs,
+      places: new Map(),
+    };
     return true;
   }
 
@@ -675,9 +707,10 @@ export class CanvasController implements GestureHost {
 
   /**
    * Ends the move of the selection: where it left the nodes, which the page
-   * sends as one batch, which the document shows at once, before the next
-   * frame, so that the nodes stay where the drag left them; or, cancelled,
-   * where they were, as of a move that a second finger ended.
+   * sends as one batch, expecting the revisions that the nodes had as it
+   * started, which the document shows at once, before the next frame, so
+   * that the nodes stay where the drag left them; or, cancelled, where they
+   * were, as of a move that a second finger ended.
    */
   moveEnd(commit: boolean): void {
     const m = this.moving;
@@ -693,7 +726,7 @@ export class CanvasController implements GestureHost {
         }),
       );
       if (places.size > 0) {
-        this.edits?.move(places);
+        this.edits?.move(places, m.revs);
       }
     }
     this.syncScene();
@@ -720,6 +753,7 @@ export class CanvasController implements GestureHost {
     }
     this.resizing = {
       id,
+      rev: item.node.rev,
       from: { width: item.rect.width, height: item.rect.height },
     };
     return true;
@@ -745,7 +779,7 @@ export class CanvasController implements GestureHost {
     this.syncScene();
   }
 
-  /** Ends the resize: the size that it left the node, which the page sends, or, cancelled, the size before. */
+  /** Ends the resize: the size that it left the node, which the page sends, expecting the node's revision as it started, or, cancelled, the size before. */
   resizeEnd(commit: boolean): void {
     const r = this.resizing;
     this.resizing = undefined;
@@ -758,7 +792,7 @@ export class CanvasController implements GestureHost {
       this.docSeen.nodes.get(r.id)?.deleted_at === undefined &&
       this.docSeen.nodes.has(r.id)
     ) {
-      this.edits?.resize(r.id, r.size);
+      this.edits?.resize(r.id, r.size, r.rev);
     }
     this.syncScene();
   }
@@ -776,18 +810,19 @@ export class CanvasController implements GestureHost {
     this.invalidate();
   }
 
-  /** How many of the board's nodes are dimmed, counted once for each change of the board or of the dims. */
+  /**
+   * How many of the board's nodes are dimmed, counted once for each change
+   * of the document's nodes or of the dims, rather than in each frame of a
+   * drag, whose preview changes where nodes are, and none of their tags.
+   */
   private dimmed(): number {
     const dim = this.dims;
     if (dim === undefined) {
       return 0;
     }
     const c = this.dimmedCount;
-    if (
-      c !== undefined &&
-      c.scene === this.scene.version &&
-      c.dims === this.dimVersion
-    ) {
+    const nodes = this.docSeen.nodes;
+    if (c !== undefined && c.nodes === nodes && c.dims === this.dimVersion) {
       return c.count;
     }
     let count = 0;
@@ -796,11 +831,7 @@ export class CanvasController implements GestureHost {
         count++;
       }
     });
-    this.dimmedCount = {
-      scene: this.scene.version,
-      dims: this.dimVersion,
-      count,
-    };
+    this.dimmedCount = { nodes, dims: this.dimVersion, count };
     return count;
   }
 

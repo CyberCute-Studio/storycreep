@@ -724,13 +724,23 @@ describe("the canvas's controller", () => {
 function editsOf(c: CanvasController) {
   const asked = {
     moves: [] as Map<string, { x: number; y: number }>[],
+    /** The revisions that each move expects, of the nodes as its drag started. */
+    expected: [] as Map<string, number>[],
     sizes: [] as { id: string; size: { width: number; height: number } }[],
+    /** The revision that each resize expects, of its node as its drag started. */
+    sizeRevs: [] as number[],
     removed: [] as string[][],
     opened: [] as string[],
   };
   c.edits = {
-    move: (places) => asked.moves.push(new Map(places)),
-    resize: (id, size) => asked.sizes.push({ id, size }),
+    move: (places, expected) => {
+      asked.moves.push(new Map(places));
+      asked.expected.push(new Map(expected));
+    },
+    resize: (id, size, rev) => {
+      asked.sizes.push({ id, size });
+      asked.sizeRevs.push(rev);
+    },
     remove: (ids) => asked.removed.push([...ids]),
     open: (id) => asked.opened.push(id),
   };
@@ -839,6 +849,58 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(asked.moves).toEqual([]);
   });
 
+  it("selects nothing by a drag that picks a node while another's handle resizes it, which would take the handle away", () => {
+    const { c, time } = setUp();
+    editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    expect(c.resizeStart("nd_1")).toBe(true);
+    expect(c.moveStart("nd_2", "replace")).toBe(false);
+    expect([...c.selection()]).toEqual(["nd_1"]);
+    c.resizeEnd(false);
+    // Once the resize has ended, the pick selects the node and moves it.
+    expect(c.moveStart("nd_2", "replace")).toBe(true);
+    expect([...c.selection()]).toEqual(["nd_2"]);
+    c.moveEnd(false);
+  });
+
+  it("asks for a move, and a resize, expecting the revisions that the nodes had as the drag started, though the document changed them meanwhile", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1", "nd_2"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 16, y: 0 });
+    // Another session changes the second node while the drag holds it.
+    c.sync(
+      docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 80, { rev: 2 })]),
+      false,
+    );
+    c.moveEnd(true);
+    expect(asked.expected).toEqual([
+      new Map([
+        ["nd_1", 1],
+        ["nd_2", 1],
+      ]),
+    ]);
+    c.select(["nd_1"], "replace");
+    expect(c.resizeStart("nd_1")).toBe(true);
+    c.resizeTo({ x: 80, y: 0 });
+    c.sync(
+      docOf([
+        testNode("nd_1", 0, 0, { rev: 3 }),
+        testNode("nd_2", 400, 80, { rev: 2 }),
+      ]),
+      false,
+    );
+    c.resizeEnd(true);
+    expect(asked.sizeRevs).toEqual([1]);
+  });
+
   it("keeps selected the nodes that the page's batches create until they come, though the scene changes before, and drops those that never came once they settle", async () => {
     const { c, time } = setUp();
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
@@ -912,17 +974,41 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.setReady();
     time.tick();
     expect(host.dataset.dimmed).toBe("0");
-    const dims = (node: { tags: string[] }) => !node.tags.includes("Quest");
+    let asks = 0;
+    const dims = (node: { tags: string[] }) => {
+      asks++;
+      return !node.tags.includes("Quest");
+    };
     c.setDimmed(dims);
     time.tick();
     expect(host.dataset.dimmed).toBe("2");
     const f = frames.at(-1);
     expect(f?.dimmed).toBe(dims);
     expect(host.dataset.nodes).toBe("3");
+    // A drag, whose preview changes where nodes are and none of their
+    // tags, does not count them again in each of its frames.
+    const counted = asks;
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 16, y: 0 });
+    time.tick();
+    c.moveTo({ x: 32, y: 0 });
+    time.tick();
+    c.moveEnd(false);
+    time.tick();
+    expect(asks).toBe(counted);
+    expect(host.dataset.dimmed).toBe("2");
     c.setDimmed(undefined);
     time.tick();
     expect(host.dataset.dimmed).toBe("0");
-    expect(asked).toEqual({ moves: [], sizes: [], removed: [], opened: [] });
+    expect(asked).toEqual({
+      moves: [],
+      expected: [],
+      sizes: [],
+      sizeRevs: [],
+      removed: [],
+      opened: [],
+    });
   });
 
   it("opens on a node that a link names, selected and shown whole, in place of the view that it would restore", () => {

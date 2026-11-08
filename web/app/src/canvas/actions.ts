@@ -2,12 +2,13 @@
 // as its toolbar, its inspector, its keys, and its drags ask: each a batch
 // of commands, sent through the project's document, which shows it at once
 // (optimistic, NFR-PERF-06), and the server's refusal of which the canvas's
-// toolbar says (useCommands' error), while the document shows the board
-// again as it was.
+// toolbar says (error), while the document shows the board again as it
+// was: the latest refusal of any of them, though another was sent after it,
+// until the next is sent.
 
-import type { Node } from "@storycreep/shared/api";
+import type { CommandResultBody, Node } from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useProjectDocument } from "../document/react";
 import type { PaletteColor } from "../project/colors";
 import { type Command, useCommands } from "../project/queries";
@@ -39,7 +40,7 @@ export type CanvasActions = ReturnType<typeof useCanvasActions>;
 /**
  * Returns what the canvas of the board boardId, of the project projectId,
  * driven by controller, changes of it, each as a batch of the page's,
- * through commands, a mutation whose error the toolbar says.
+ * through commands, and the refusal that the toolbar says.
  */
 export function useCanvasActions(
   projectId: string,
@@ -47,8 +48,12 @@ export function useCanvasActions(
   controller: CanvasController,
 ) {
   const doc = useProjectDocument(projectId);
-  const commands = useCommands(projectId);
-  const { mutateAsync } = commands;
+  const { mutateAsync } = useCommands(projectId);
+  // The latest refusal of a batch, with the error that it was refused with:
+  // the mutation's own error is of its latest batch alone, as its observer
+  // no longer follows one sent before that is still under way, as a drag's
+  // move while the user duplicates, whose refusal it would not say.
+  const [refusal, setRefusal] = useState<{ error: unknown }>();
   const ops = useMemo(() => {
     const view = () => doc.store.getState().view;
     /** The nodes of ids that the board has, as the page shows them. */
@@ -63,26 +68,46 @@ export function useCanvasActions(
       });
     /**
      * Sends batches in turn, each once the one before has applied, and
-     * resolves with whether all of them did; a refusal, which the toolbar
-     * says, sends no more of them.
+     * resolves with their answers, or with undefined once one was refused,
+     * which the toolbar says, and which sends no more of them.
      */
-    const send = async (batches: Command[][]): Promise<boolean> => {
-      for (const batch of batches) {
-        if (batch.length === 0) {
-          continue;
-        }
+    const sendAll = async (
+      batches: Command[][],
+    ): Promise<CommandResultBody[] | undefined> => {
+      const sent = batches.filter((batch) => batch.length > 0);
+      if (sent.length > 0) {
+        setRefusal(undefined);
+      }
+      const answers: CommandResultBody[] = [];
+      for (const batch of sent) {
         try {
-          await mutateAsync(batch);
-        } catch {
-          return false;
+          answers.push(await mutateAsync(batch));
+        } catch (error) {
+          setRefusal({ error });
+          return undefined;
         }
       }
-      return true;
+      return answers;
     };
-    const place = (places: ReadonlyMap<string, Point>) =>
-      places.size === 0
-        ? Promise.resolve(true)
-        : send([moveBatch(view(), places)]);
+    /** Sends batches as sendAll does, and resolves with whether all of them applied. */
+    const send = async (batches: Command[][]): Promise<boolean> =>
+      (await sendAll(batches)) !== undefined;
+    /**
+     * Moves the nodes of places there, in one batch, expecting the
+     * revisions that expected has of them, and else those that the page
+     * shows, and resolves with whether it applied, and its answer, of none
+     * where it moved nothing.
+     */
+    const place = async (
+      places: ReadonlyMap<string, Point>,
+      expected?: ReadonlyMap<string, number>,
+    ): Promise<{ applied: boolean; answer?: CommandResultBody }> => {
+      if (places.size === 0) {
+        return { applied: true };
+      }
+      const answers = await sendAll([moveBatch(view(), places, expected)]);
+      return { applied: answers !== undefined, answer: answers?.[0] };
+    };
     return {
       /**
        * Creates a node of type at the centre of the canvas, on the grid
@@ -106,14 +131,22 @@ export function useCanvasActions(
         controller.selectComing([id], sent);
         return sent;
       },
-      /** Moves the nodes of places there, as a drag left them, in one batch (FR-EDIT-02 AC2). */
+      /**
+       * Moves the nodes of places there, as a drag left them, in one batch
+       * (FR-EDIT-02 AC2), expecting the revisions that they had as it
+       * started, and resolves with whether it applied, and its answer,
+       * which tells whether its undo joined the history.
+       */
       move: place,
-      /** Gives the node of id size. */
-      resize(id: string, size: Size): Promise<boolean> {
+      /** Gives the node of id size, expecting rev, its revision as its handle's drag started, where it is given. */
+      resize(id: string, size: Size, rev?: number): Promise<boolean> {
         return send(
-          updateBatches(view(), [id], () => ({
-            size: { width: size.width, height: size.height },
-          })),
+          updateBatches(
+            view(),
+            [id],
+            () => ({ size: { width: size.width, height: size.height } }),
+            rev === undefined ? undefined : new Map([[id, rev]]),
+          ),
         );
       },
       /** Deletes the nodes of ids to the trash, as one command (FR-EDIT-02). */
@@ -141,15 +174,15 @@ export function useCanvasActions(
         return sent;
       },
       /** Aligns the nodes of ids as how says, in one batch. */
-      align(ids: readonly string[], how: Alignment): Promise<boolean> {
-        return place(aligned(placedOf(nodesOf(ids)), how));
+      async align(ids: readonly string[], how: Alignment): Promise<boolean> {
+        return (await place(aligned(placedOf(nodesOf(ids)), how))).applied;
       },
       /** Distributes the nodes of ids across or down, in one batch. */
-      distribute(
+      async distribute(
         ids: readonly string[],
         axis: "across" | "down",
       ): Promise<boolean> {
-        return place(distributed(placedOf(nodesOf(ids)), axis));
+        return (await place(distributed(placedOf(nodesOf(ids)), axis))).applied;
       },
       /** Gives the nodes of ids color, each that has another. */
       color(ids: readonly string[], color: PaletteColor): Promise<boolean> {
@@ -189,6 +222,7 @@ export function useCanvasActions(
       nodesOf,
     };
   }, [doc, boardId, controller, mutateAsync]);
-  // The mutation of every batch of theirs, whose error the toolbar says.
-  return { ...ops, commands };
+  // The latest refusal of any batch of theirs, which the toolbar says, or
+  // null for none.
+  return { ...ops, error: refusal === undefined ? null : refusal.error };
 }

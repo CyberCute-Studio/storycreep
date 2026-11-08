@@ -79,9 +79,17 @@ function host(mode: Mode = "pan", movable = false) {
     isSelected: (id) => state.selected.includes(id),
     has: (id) => state.present && id === "nd_a",
     movable: () => state.movable,
-    moveStart: (id) => {
+    // As the controller does, a move that starts selects the node that it
+    // picks first, and one that does not selects nothing.
+    moveStart: (id, pick) => {
       state.moves.push({ start: id });
-      return state.present && !state.refuses;
+      if (!state.present || state.refuses) {
+        return false;
+      }
+      if (pick !== undefined) {
+        h.select([id], pick);
+      }
+      return true;
     },
     moveTo: (delta) => {
       state.moves.push({ to: delta });
@@ -669,6 +677,20 @@ describe("the canvas's gestures of a board that may be changed", () => {
     expect(refused.state.v).toEqual({ x: 0, y: 0, zoom: 1 });
     expect(refused.state.selects).toEqual([]);
     expect(refused.state.released).toEqual([1]);
+    // A node that is not selected, in the select mode, whose move the host
+    // refuses, as under one finger while another resizes the selected node
+    // by its handle: it is not selected either, which would take the
+    // handle, and its resize, away.
+    const picked = host("select", true);
+    picked.state.selected = ["nd_b"];
+    picked.state.refuses = true;
+    picked.gestures.down(touch(1, 150, 150));
+    picked.gestures.move(touch(1, 200, 150));
+    picked.gestures.up(touch(1, 200, 150));
+    expect(picked.state.moves).toEqual([{ start: "nd_a" }]);
+    expect(picked.state.selects).toEqual([]);
+    expect(picked.state.selected).toEqual(["nd_b"]);
+    expect(picked.state.bands).toEqual([]);
   });
 
   it("ends a move, where it started, as a second finger pinches, or the press is cancelled", () => {

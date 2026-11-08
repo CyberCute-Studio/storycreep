@@ -33,6 +33,29 @@ describe("the commands of the canvas's edits", () => {
     expect(Object.keys(move.expected_rev ?? {})).toHaveLength(100);
   });
 
+  it("moves and sizes nodes expecting the revisions that a drag had of them as it started, where it had them", () => {
+    const view = docOf([
+      testNode("nd_a", 0, 0, { rev: 5 }),
+      testNode("nd_b", 0, 0, { rev: 9 }),
+    ]);
+    const [move] = moveBatch(
+      view,
+      new Map([
+        ["nd_a", { x: 8, y: 0 }],
+        ["nd_b", { x: 8, y: 0 }],
+      ]),
+      new Map([["nd_a", 4]]),
+    );
+    expect(move.expected_rev).toEqual({ nd_a: 4, nd_b: 9 });
+    const [[update]] = updateBatches(
+      view,
+      ["nd_b"],
+      () => ({ size: { width: 320, height: 200 } }),
+      new Map([["nd_b", 8]]),
+    );
+    expect(update.expected_rev).toEqual({ nd_b: 8 });
+  });
+
   it("moves more nodes than one command names with a command for each 10,000", () => {
     const nodes = gridNodes(maxNodes + 1, 100);
     const places = new Map(nodes.map((n) => [n.id, { x: 0, y: 0 }]));

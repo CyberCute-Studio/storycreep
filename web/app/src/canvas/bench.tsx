@@ -237,7 +237,7 @@ export default function Bench({
   handle: CanvasHandle;
   options: BenchOptions;
   /** Moves nodes, as the canvas does once a drag of them lands, which the edit run measures; none where the board may not be changed. */
-  edit?: (places: ReadonlyMap<string, Point>) => Promise<boolean>;
+  edit?: (places: ReadonlyMap<string, Point>) => Promise<unknown>;
 }) {
   const { t, i18n } = useTranslation();
   const [phase, setPhase] = useState<"waiting" | "warm" | "running" | "done">(

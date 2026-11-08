@@ -115,9 +115,11 @@ export interface GestureHost {
   movable(): boolean;
   /**
    * Starts moving the selection, which holds the node of id, by its drag,
-   * and reports whether it did, as it does not once the node has gone.
+   * or, where pick says how, the selection that the node is first selected
+   * into, and reports whether it did, as it does not once the node has
+   * gone, nor while a node's handle resizes it, which selects nothing.
    */
-  moveStart(id: string): boolean;
+  moveStart(id: string, pick?: SelectHow): boolean;
   /** Moves the selection by delta of the board from where its move started. */
   moveTo(delta: Point): void;
   /** Ends the move of the selection, where it is, or, cancelled, where it started. */
@@ -353,14 +355,16 @@ export class Gestures {
           const node = g.node as string;
           // A node that went, as once another session deleted it, is not
           // selected, and a drag that cannot move it, as one whose node
-          // went, or while its handle resizes it, moves nothing, pans
-          // nothing, and taps nothing as it ends.
-          const there = this.host.has(node);
-          if (there && g.drag === "pick") {
-            const additive = g.input.shift || g.input.additive;
-            this.host.select([node], additive ? "add" : "replace");
-          }
-          if (!there || !this.host.moveStart(node)) {
+          // went, or while its handle resizes it, selects nothing, moves
+          // nothing, pans nothing, and taps nothing as it ends: the host
+          // selects the node that it picks only once it starts the move.
+          const pick =
+            g.drag === "pick"
+              ? g.input.shift || g.input.additive
+                ? "add"
+                : "replace"
+              : undefined;
+          if (!this.host.has(node) || !this.host.moveStart(node, pick)) {
             this.gesture = { kind: "held", id: p.id };
             return;
           }

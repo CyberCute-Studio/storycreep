@@ -9,27 +9,20 @@
 // and tags them. Of either, it duplicates and deletes what is selected.
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  type ChangeEvent,
-  type FormEvent,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-} from "react";
+import { useQuery } from "@tanstack/react-query";
+import { type FormEvent, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
-import { api, sessionQuery } from "../api";
+import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { csrfHeaders } from "../auth/session";
-import { imageTypes, thumbnailOf } from "../content/assets";
+import { AssetImage } from "../content/AssetImage";
 import {
   ConflictNotice,
   changedOf,
   SaveStatus,
   useEntityForm,
 } from "../content/form";
+import { parseValue } from "../content/values";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
@@ -50,6 +43,7 @@ import {
   positionLimit,
   round2,
   sizeLimit,
+  tagCounts,
   tagKey,
   tagsOf,
 } from "./edit";
@@ -210,14 +204,15 @@ function valuesOf(node: Node): NodeValues {
   };
 }
 
-/** Returns the number that text spells, or undefined for none. */
+/**
+ * Returns the number that text spells, as a decimal, with a point and an
+ * exponent if any, as a float's value is read (parseValue), or undefined
+ * for none, as of a hexadecimal, binary, or octal spelling, which Number
+ * would read.
+ */
 function numberOf(text: string): number | undefined {
-  const trimmed = text.trim();
-  if (trimmed === "") {
-    return undefined;
-  }
-  const n = Number(trimmed);
-  return Number.isFinite(n) ? n : undefined;
+  const n = parseValue("float", text);
+  return typeof n === "number" ? n : undefined;
 }
 
 /**
@@ -656,11 +651,11 @@ function Tags({
     staleTime: 30_000,
   });
   const ids = nodes.map((n) => n.id);
-  const tags = tagsOf(nodes);
-  const count = (tag: string) => {
-    const key = tagKey(tag);
-    return nodes.filter((n) => n.tags.some((x) => tagKey(x) === key)).length;
-  };
+  // The tags, and how many of the nodes have each, found once for each
+  // change of the nodes, rather than for each key typed in the tag field.
+  const tags = useMemo(() => tagsOf(nodes), [nodes]);
+  const counts = useMemo(() => tagCounts(nodes), [nodes]);
+  const count = (tag: string) => counts.get(tagKey(tag)) ?? 0;
   const add = (event: FormEvent) => {
     event.preventDefault();
     const tag = typed.trim();
@@ -734,93 +729,31 @@ function Tags({
 /**
  * An element's cover image: its thumbnail, and its upload and removal, each
  * a change of its own, expecting the revision that the inspector showed as
- * the user asked for it, as a component's image is (FR-EDIT-06 AC3).
+ * the user asked for it, as a component's image is (FR-EDIT-06 AC3,
+ * AssetImage).
  */
 function Cover({ projectId, node }: { projectId: string; node: Node }) {
   const { t } = useTranslation();
-  const inputId = useId();
-  const session = useQuery(sessionQuery).data;
-  const doc = useProjectDocument(projectId);
-  // An upload and the command that sets the cover to what it uploaded are
-  // one request of the page's, which goes on to set the cover once the
-  // inspector shows another node, rather than leave the asset uploaded and
-  // the element without it.
-  const cover = useMutation({
-    mutationFn: async ({ file, rev }: { file?: File; rev: number }) => {
-      const asset =
-        file === undefined
-          ? undefined
-          : (
-              await api.call("uploadAsset", {
-                path: { project_id: projectId },
-                headers: csrfHeaders(session),
-                body: file,
-              })
-            ).body;
-      return doc.send([
-        {
-          type: "node.update",
-          payload: { id: node.id, cover_asset_id: asset?.id ?? "" },
-          expected_rev: { [node.id]: rev },
-        },
-      ]);
-    },
-  });
-  const chosen = (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    if (file === undefined) {
-      return;
-    }
-    cover.mutate(
-      { file, rev: node.rev },
-      {
-        onSettled: () => {
-          input.value = "";
-        },
-      },
-    );
-  };
-  const refusal = refusalOf(cover.error, t);
   const title = node.title === "" ? t("canvas.node.untitled") : node.title;
   return (
-    <section className="space-y-2">
-      <h3 className="text-lg font-semibold">{t("inspector.cover")}</h3>
-      {node.cover_asset_id === undefined ? (
-        <p className="text-fg-muted">{t("inspector.no_cover")}</p>
-      ) : (
-        <img
-          src={thumbnailOf(projectId, node.cover_asset_id)}
-          alt={t("inspector.cover_alt", { node: title })}
-          className="max-h-32 max-w-full rounded-md border border-border"
-        />
-      )}
-      <Alert message={refusal?.message} />
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex flex-col gap-1">
-          <label htmlFor={inputId} className="font-medium">
-            {node.cover_asset_id === undefined
-              ? t("inspector.upload_cover")
-              : t("inspector.replace_cover")}
-          </label>
-          <input
-            id={inputId}
-            type="file"
-            accept={imageTypes}
-            disabled={cover.isPending}
-            onChange={chosen}
-            className="min-h-11"
-          />
-        </div>
-        {node.cover_asset_id !== undefined && (
-          <Button
-            disabled={cover.isPending}
-            onClick={() => cover.mutate({ rev: node.rev })}
-          >
-            {t("inspector.remove_cover")}
-          </Button>
-        )}
-      </div>
-    </section>
+    <AssetImage
+      projectId={projectId}
+      assetId={node.cover_asset_id}
+      rev={node.rev}
+      editable
+      command={(assetId, rev) => ({
+        type: "node.update",
+        payload: { id: node.id, cover_asset_id: assetId ?? "" },
+        expected_rev: { [node.id]: rev },
+      })}
+      labels={{
+        heading: t("inspector.cover"),
+        none: t("inspector.no_cover"),
+        alt: t("inspector.cover_alt", { node: title }),
+        upload: t("inspector.upload_cover"),
+        replace: t("inspector.replace_cover"),
+        remove: t("inspector.remove_cover"),
+      }}
+    />
   );
 }
