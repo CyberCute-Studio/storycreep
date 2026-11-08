@@ -65,11 +65,5 @@ declare module "@tanstack/react-router" {
      * the layout reads of the pages under it.
      */
     wide?: boolean;
-    /**
-     * Whether the page shows the undo and the redo of the project's content
-     * itself, as a board's page does in its canvas's toolbar, rather than
-     * the project's layout above it.
-     */
-    ownsHistory?: boolean;
   }
 }

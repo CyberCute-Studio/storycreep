@@ -103,7 +103,7 @@ export function useCanvasActions(
         );
         const id = newId("node");
         const sent = send([[createCommand(boardId, type, at, id)]]);
-        controller.select([id], "replace");
+        controller.selectComing([id], sent);
         return sent;
       },
       /** Moves the nodes of places there, as a drag left them, in one batch (FR-EDIT-02 AC2). */
@@ -123,7 +123,11 @@ export function useCanvasActions(
           ? Promise.resolve(true)
           : send([deleteBatch(view(), nodes)]);
       },
-      /** Duplicates the nodes of ids onto the board, beside them, and selects the copies. */
+      /**
+       * Duplicates the nodes of ids onto the board, beside them, and selects
+       * the copies, every one of them, though the batches after the first
+       * show theirs later (selectComing).
+       */
       duplicate(ids: readonly string[]): Promise<boolean> {
         const { batches, copies } = duplicateBatches(
           view(),
@@ -132,7 +136,7 @@ export function useCanvasActions(
         );
         const sent = send(batches);
         if (copies.length > 0) {
-          controller.select(copies, "replace");
+          controller.selectComing(copies, sent);
         }
         return sent;
       },

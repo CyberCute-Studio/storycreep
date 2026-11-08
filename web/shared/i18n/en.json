@@ -232,6 +232,7 @@
   "canvas.tag_filter_none": "No tag: dim none",
   "canvas.text_cancel": "Cancel",
   "canvas.text_editor": "The text of {node}",
+  "canvas.text_kept": "This text is not saved yet: save it, or cancel it, before you open another.",
   "canvas.text_of": "Text of {node}",
   "canvas.text_save": "Save the text",
   "canvas.undo_move": "Undo the move",

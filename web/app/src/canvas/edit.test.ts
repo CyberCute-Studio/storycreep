@@ -5,6 +5,7 @@ import {
   distributed,
   freePlace,
   hasTag,
+  hasTagOf,
   minSize,
   movedBy,
   type Placed,
@@ -173,5 +174,11 @@ describe("the canvas's edits", () => {
     expect(withTag(["Quest"], "quest")).toEqual(["Quest"]);
     expect(withTag(["Quest"], "Mira")).toEqual(["Quest", "Mira"]);
     expect(withoutTag(["Quest", "Mira"], "QUEST")).toEqual(["Mira"]);
+    // The tag filter's test, made once for its tag, finds the same.
+    const has = hasTagOf("STRASSE");
+    expect(nodes.map(has)).toEqual([true, false, true, false]);
+    // A node whose tags changed is read anew, not as its tags were.
+    expect(has({ tags: ["Straße", "Mira"] })).toBe(true);
+    expect(has({ ...nodes[0], tags: ["Quest"] })).toBe(false);
   });
 });

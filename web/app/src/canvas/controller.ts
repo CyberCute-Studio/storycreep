@@ -173,6 +173,23 @@ export interface Clock {
   now(): number;
 }
 
+/** Reports whether a and b put the same nodes at the same places. */
+function samePlaces(
+  a: ReadonlyMap<string, Point>,
+  b: ReadonlyMap<string, Point>,
+): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const [id, p] of a) {
+    const q = b.get(id);
+    if (q === undefined || q.x !== p.x || q.y !== p.y) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const browserClock: Clock = {
   request: (frame) => requestAnimationFrame(frame),
   cancel: (handle) => cancelAnimationFrame(handle),
@@ -257,6 +274,20 @@ export class CanvasController implements GestureHost {
         size?: { id: string; size: Size };
       }
     | undefined;
+  /** The nodes that the scene shows of the preview, of the document's nodes and the preview that they were made of (shownNodes). */
+  private shown:
+    | {
+        nodes: ReadonlyMap<string, Node>;
+        preview: NonNullable<CanvasController["preview"]>;
+        shown: ReadonlyMap<string, Node>;
+      }
+    | undefined;
+  /**
+   * The nodes that the page's batches create, which the selection keeps
+   * though the scene has them not yet, until those batches have settled
+   * (selectComing).
+   */
+  private coming: ReadonlySet<string> = new Set();
   /** The move of the selection under way: where its nodes were as it started, of the node that it holds at anchor, and where they are now. */
   private moving:
     | {
@@ -430,37 +461,45 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Returns what the scene shows of the document: the document, or, while a
-   * drag moves nodes or resizes one, its nodes with those that the drag has
-   * where the drag has them, as nodes of their own, which the scene builds
-   * anew in each move, as it does any node that changed.
+   * Returns the nodes that the scene shows in place of the document's: none,
+   * or, while a drag moves nodes or resizes one, those that the drag has,
+   * where it has them, as nodes of their own, made anew for each move, and
+   * for each change of the document meanwhile, which the scene builds anew,
+   * as it does any node that changed, without reading the rest of the
+   * document's nodes for a move (Scene.sync).
    */
-  private shownDoc(): Pick<Doc, "nodes" | "connections"> {
-    const doc = this.docSeen;
+  private shownNodes(): ReadonlyMap<string, Node> | undefined {
     const p = this.preview;
     if (p === undefined) {
-      return doc;
+      this.shown = undefined;
+      return undefined;
     }
-    const nodes = new Map(doc.nodes);
+    const nodes = this.docSeen.nodes;
+    const s = this.shown;
+    if (s !== undefined && s.nodes === nodes && s.preview === p) {
+      return s.shown;
+    }
+    const shown = new Map<string, Node>();
     for (const [id, position] of p.positions ?? []) {
       const node = nodes.get(id);
       if (node !== undefined) {
-        nodes.set(id, { ...node, position });
+        shown.set(id, { ...node, position });
       }
     }
     if (p.size !== undefined) {
       const node = nodes.get(p.size.id);
       if (node !== undefined) {
-        nodes.set(p.size.id, { ...node, size: p.size.size });
+        shown.set(p.size.id, { ...node, size: p.size.size });
       }
     }
-    return { nodes, connections: doc.connections };
+    this.shown = { nodes, preview: p, shown };
+    return shown;
   }
 
-  /** Takes what the scene shows of the document into it (shownDoc). */
+  /** Takes what the scene shows of the document into it (shownNodes). */
   private syncScene(namesChanged = false): void {
     const targets = this.scene.targetsVersion;
-    const changed = this.scene.sync(this.shownDoc());
+    const changed = this.scene.sync(this.docSeen, this.shownNodes());
     const relabel = namesChanged || this.scene.targetsVersion !== targets;
     if (relabel) {
       // A card names components, variables, and, a jumper's, the node that
@@ -471,8 +510,11 @@ export class CanvasController implements GestureHost {
       this.labelsVersion++;
     }
     if (changed) {
+      // A selected node that the scene does not have, as one that another
+      // session deleted, leaves the selection, but for one that the page's
+      // batches create, which is coming (selectComing).
       const kept = [...this.selected].filter(
-        (id) => this.scene.nodes.get(id) !== undefined,
+        (id) => this.scene.nodes.get(id) !== undefined || this.coming.has(id),
       );
       if (kept.length !== this.selected.size) {
         this.setSelection(new Set(kept));
@@ -579,17 +621,24 @@ export class CanvasController implements GestureHost {
     this.edits?.open(id);
   }
 
+  has(id: string): boolean {
+    return this.scene.nodes.get(id) !== undefined;
+  }
+
   /**
    * Starts moving the selection, which holds the node of id, from where the
    * scene has its nodes, and reports whether it did: not where the board may
-   * not be changed, nor once the node has gone.
+   * not be changed, nor once the node has gone, nor while a node's handle
+   * resizes it, as under another finger, whose preview a move's would else
+   * take the place of.
    */
   moveStart(id: string): boolean {
     const held = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       held === undefined ||
-      !this.selected.has(id)
+      !this.selected.has(id) ||
+      this.resizing !== undefined
     ) {
       return false;
     }
@@ -604,12 +653,21 @@ export class CanvasController implements GestureHost {
     return true;
   }
 
+  /**
+   * Moves the selection by delta of the board from where its move started:
+   * a move that leaves each node where it is, as in each frame that the
+   * gestures move the selection under a pointer that is still, or one that
+   * the grid keeps in place, changes nothing, and asks for no frame.
+   */
   moveTo(delta: Point): void {
     const m = this.moving;
     if (m === undefined) {
       return;
     }
     const places = movedBy(m.start, m.anchor, delta, this.snap);
+    if (samePlaces(places, m.places)) {
+      return;
+    }
     this.moving = { ...m, places };
     this.preview = { positions: places };
     this.syncScene();
@@ -679,6 +737,9 @@ export class CanvasController implements GestureHost {
       { x: delta.x / zoom, y: delta.y / zoom },
       this.snap,
     );
+    if (size.width === r.size?.width && size.height === r.size.height) {
+      return;
+    }
     this.resizing = { ...r, size };
     this.preview = { size: { id: r.id, size } };
     this.syncScene();
@@ -791,16 +852,6 @@ export class CanvasController implements GestureHost {
     }
   }
 
-  /**
-   * Pans the board by dx and dy CSS pixels of the canvas, at once, as the
-   * text's editor does to keep itself in view above the on-screen keyboard.
-   */
-  panBy(dx: number, dy: number): void {
-    if (dx !== 0 || dy !== 0) {
-      this.setViewport(panBy(this.target(), dx, dy));
-    }
-  }
-
   nodeAt(p: Point, slop: number): string | undefined {
     return this.scene.nodeAt(p, slop);
   }
@@ -824,6 +875,33 @@ export class CanvasController implements GestureHost {
     ) {
       this.setSelection(next);
     }
+  }
+
+  /**
+   * Selects the nodes of ids, in place of the selection, as the page's
+   * batches that create them show them, which may be after the scene next
+   * changes, as with the copies of a duplicate of thousands, whose batches
+   * the document shows in turn: the selection keeps them, though the scene
+   * has them not yet, until done settles, rather than drop those that a
+   * batch after the first creates as the first shows its own (syncScene),
+   * and then drops those that the scene has not, as of a batch refused.
+   */
+  selectComing(ids: readonly string[], done: Promise<unknown>): void {
+    const coming = new Set(ids);
+    this.coming = coming;
+    this.select([...ids], "replace");
+    const settled = () => {
+      if (this.coming === coming) {
+        this.coming = new Set();
+      }
+      const kept = [...this.selected].filter(
+        (id) => !coming.has(id) || this.has(id) || this.coming.has(id),
+      );
+      if (kept.length !== this.selected.size) {
+        this.setSelection(new Set(kept));
+      }
+    };
+    done.then(settled, settled);
   }
 
   private setSelection(ids: ReadonlySet<string>): void {

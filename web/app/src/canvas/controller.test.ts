@@ -784,6 +784,82 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
   });
 
+  it("draws no frame while a drag of the selection is held still, and builds anew only the nodes that it moves", () => {
+    const { c, time, frames } = setUp();
+    editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    time.tick();
+    const other = c.scene.nodes.get("nd_2");
+    const v = c.viewport();
+    // The pointer at x of the canvas, level with the first node's middle.
+    const at = (x: number) => ({
+      id: 1,
+      x,
+      y: (64 - v.y) * v.zoom,
+      kind: "mouse" as const,
+      button: 0,
+      buttons: 1,
+      shift: false,
+      additive: false,
+    });
+    const from = (120 - v.x) * v.zoom;
+    expect(c.down(at(from))).toBe(true);
+    c.gestures.move(at(from + 40));
+    time.tick();
+    expect(c.scene.nodes.get("nd_1")?.node.position.x).toBeGreaterThan(0);
+    const drawn = frames.length;
+    // The pointer is still: no frame, and none asked for.
+    for (let i = 0; i < 5; i++) {
+      time.tick();
+    }
+    expect(frames.length).toBe(drawn);
+    expect(time.pending()).toBe(0);
+    // The node that the drag does not move is the scene's as it was.
+    expect(c.scene.nodes.get("nd_2")).toBe(other);
+    c.gestures.up(at(from + 40));
+  });
+
+  it("starts no move while a node's handle resizes it, as under another finger, whose preview the move's would take the place of", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    expect(c.resizeStart("nd_1")).toBe(true);
+    c.resizeTo({ x: 80, y: 0 });
+    expect(c.moveStart("nd_1")).toBe(false);
+    c.moveTo({ x: 100, y: 100 });
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
+    c.resizeEnd(true);
+    expect(asked.sizes).toHaveLength(1);
+    expect(asked.moves).toEqual([]);
+  });
+
+  it("keeps selected the nodes that the page's batches create until they come, though the scene changes before, and drops those that never came once they settle", async () => {
+    const { c, time } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    let settle = () => {};
+    const done = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    c.selectComing(["nd_2", "nd_3"], done);
+    expect(c.selection().size).toBe(2);
+    // The first batch shows its copy, and the scene changes, before the
+    // second shows its own.
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    expect([...c.selection()]).toEqual(["nd_2", "nd_3"]);
+    // The second batch was refused.
+    settle();
+    await done;
+    expect([...c.selection()]).toEqual(["nd_2"]);
+  });
+
   it("starts no move of a node that is not selected, nor on a board that may not be changed", () => {
     const { c, time } = setUp();
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);

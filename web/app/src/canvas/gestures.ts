@@ -109,6 +109,8 @@ export interface GestureHost {
   release(id: number): void;
   /** Reports whether the node of id is selected. */
   isSelected(id: string): boolean;
+  /** Reports whether the board has the node of id, as it has not once another session deleted it. */
+  has(id: string): boolean;
   /** Reports whether a drag may move nodes, as on a board that the user may change. */
   movable(): boolean;
   /**
@@ -172,6 +174,8 @@ type Gesture =
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
+  /** A drag that does nothing until its pointer goes up, as one that would have moved a node that went meanwhile. */
+  | { kind: "held"; id: number }
   /** A move of the selection, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
   | { kind: "move"; id: number; anchor: Point }
   /** A rubber band, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
@@ -347,14 +351,17 @@ export class Gestures {
         }
         if (g.drag === "move" || g.drag === "pick") {
           const node = g.node as string;
-          if (g.drag === "pick") {
+          // A node that went, as once another session deleted it, is not
+          // selected, and a drag that cannot move it, as one whose node
+          // went, or while its handle resizes it, moves nothing, pans
+          // nothing, and taps nothing as it ends.
+          const there = this.host.has(node);
+          if (there && g.drag === "pick") {
             const additive = g.input.shift || g.input.additive;
             this.host.select([node], additive ? "add" : "replace");
           }
-          if (!this.host.moveStart(node)) {
-            // The node went, as once another session deleted it: the drag
-            // moves nothing, and its release taps nothing.
-            this.gesture = { kind: "pan", id: p.id, last: { x: p.x, y: p.y } };
+          if (!there || !this.host.moveStart(node)) {
+            this.gesture = { kind: "held", id: p.id };
             return;
           }
           this.gesture = { kind: "move", id: p.id, anchor: g.at };
@@ -388,6 +395,8 @@ export class Gestures {
         if (g.id === p.id) {
           this.refresh();
         }
+        return;
+      case "held":
         return;
       case "pinch": {
         const [a, b] = g.ids.map((id) => this.pointers.get(id));
@@ -446,6 +455,7 @@ export class Gestures {
         }
         return;
       case "pan":
+      case "held":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
         }
@@ -536,6 +546,7 @@ export class Gestures {
         this.refresh();
         return;
       case "pan":
+      case "held":
       case "idle":
         return;
     }

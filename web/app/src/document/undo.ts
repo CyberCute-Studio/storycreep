@@ -163,6 +163,8 @@ export function joinedUndo(
 export class History {
   private undoSteps: Step[] = [];
   private redoSteps: Step[] = [];
+  /** How often the steps changed (version). */
+  private changes = 0;
   private captured = new Map<number, Captured>();
   /**
    * The seqs of the batches that the steps undo or redo, which the history
@@ -267,6 +269,15 @@ export class History {
   }
 
   /**
+   * Counts the changes of the history's steps, as one joins, leaves, or is
+   * dropped, which how many there are does not tell once the history holds
+   * as many as it keeps (depth), where one that joins takes the oldest out.
+   */
+  get version(): number {
+    return this.changes;
+  }
+
+  /**
    * The latest seq of the batches that the steps undo or redo, or 0 for
    * none: one that the server had, as it answered the batch, which it has
    * still, but for a database restored from an older backup.
@@ -296,7 +307,10 @@ export class History {
    * could be redone, which may undo what it changed.
    */
   done(step: Step | undefined): void {
-    this.redoSteps = [];
+    if (this.redoSteps.length > 0) {
+      this.redoSteps = [];
+      this.changes++;
+    }
     if (step !== undefined) {
       this.push(this.undoSteps, step);
     } else {
@@ -354,6 +368,9 @@ export class History {
    * gone, or the session is another account's.
    */
   clear(): void {
+    if (this.undoSteps.length > 0 || this.redoSteps.length > 0) {
+      this.changes++;
+    }
     this.undoSteps = [];
     this.redoSteps = [];
     this.captured.clear();
@@ -480,6 +497,7 @@ export class History {
 
   private push(steps: Step[], step: Step): void {
     steps.push(step);
+    this.changes++;
     if (steps.length > depth) {
       steps.splice(0, steps.length - depth);
     }
@@ -495,6 +513,7 @@ export class History {
     const i = steps.findLastIndex((s) => s.seqs[0] === step.seqs[0]);
     if (i >= 0) {
       steps.splice(i, 1, ...(rest === undefined ? [] : [rest]));
+      this.changes++;
     }
     this.forget();
   }

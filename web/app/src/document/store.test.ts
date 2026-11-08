@@ -20,7 +20,7 @@ import { boardPart } from "./doc";
 import { Documents, keptUnshown } from "./documents";
 import type { Subscriber } from "./realtime";
 import { type Command, ConflictError, ProjectDocument } from "./store";
-import { historyKey } from "./undo";
+import { depth, historyKey } from "./undo";
 
 // The document of a project as a page holds it, over a fake of the API's
 // client, which plays the server, and of the real-time channel, which brings
@@ -2298,6 +2298,20 @@ describe("the undo history over a reload", () => {
       ],
     ]);
     expect(shown(doc, "bd_a")?.name).toBe("Name 58");
+  });
+
+  it("counts each change of its steps, which how many there are does not tell once it holds as many as it keeps", async () => {
+    const server = renamingServer();
+    const { doc } = await open();
+    for (let i = 1; i <= depth; i++) {
+      await doc.send([rename("bd_a", `Name ${i}`, server.state.rev)]);
+    }
+    const full = doc.store.getState();
+    expect(full).toMatchObject({ undoable: depth, redoable: 0 });
+    await doc.send([rename("bd_a", "One more", server.state.rev)]);
+    const after = doc.store.getState();
+    expect(after).toMatchObject({ undoable: depth, redoable: 0 });
+    expect(after.historyVersion).toBeGreaterThan(full.historyVersion);
   });
 
   it("keeps the latest steps that fit in a full storage, leaving out the oldest, rather than fail", async () => {

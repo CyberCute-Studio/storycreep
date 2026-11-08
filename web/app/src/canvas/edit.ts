@@ -216,10 +216,36 @@ export function tagKey(tag: string): string {
   return foldCase(tag);
 }
 
+/**
+ * The keys of each list of tags that tagKeys has read, as a node keeps its
+ * list, the same object, until its tags change, so that each tag of it is
+ * folded once, rather than in each frame that the tag filter dims it in.
+ */
+const keysOfTags = new WeakMap<readonly string[], readonly string[]>();
+
+/** Returns the keys of tags (tagKey). */
+function tagKeys(tags: readonly string[]): readonly string[] {
+  let keys = keysOfTags.get(tags);
+  if (keys === undefined) {
+    keys = tags.map(tagKey);
+    keysOfTags.set(tags, keys);
+  }
+  return keys;
+}
+
+/**
+ * Returns what reports whether a node has tag, whatever its case, which
+ * folds tag once, and each node's tags once (tagKeys), as the tag filter
+ * asks of each node that the canvas draws, in each frame.
+ */
+export function hasTagOf(tag: string): (node: Pick<Node, "tags">) => boolean {
+  const key = tagKey(tag);
+  return (node) => tagKeys(node.tags).includes(key);
+}
+
 /** Reports whether node has tag, whatever its case. */
 export function hasTag(node: Pick<Node, "tags">, tag: string): boolean {
-  const key = tagKey(tag);
-  return node.tags.some((t) => tagKey(t) === key);
+  return hasTagOf(tag)(node);
 }
 
 /**
@@ -234,8 +260,9 @@ export function tagsOf(nodes: Iterable<Pick<Node, "tags">>): string[] {
     { spellings: Map<string, number>; uses: number }
   >();
   for (const node of nodes) {
-    for (const tag of node.tags) {
-      const key = tagKey(tag);
+    const keys = tagKeys(node.tags);
+    for (const [i, tag] of node.tags.entries()) {
+      const key = keys[i];
       let entry = byKey.get(key);
       if (entry === undefined) {
         entry = { spellings: new Map(), uses: 0 };

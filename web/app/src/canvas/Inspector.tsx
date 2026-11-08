@@ -46,7 +46,9 @@ import { Panel } from "../ui/Panel";
 import type { CanvasActions } from "./actions";
 import {
   type Alignment,
+  onBoard,
   positionLimit,
+  round2,
   sizeLimit,
   tagKey,
   tagsOf,
@@ -234,7 +236,13 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
   >({});
   const refusal = refusalOf(commands.error, t, nodeField);
   useFocusRefusal(held.form, commands.error);
-  const [automatic, setAutomatic] = useState(shown.size === undefined);
+  // Whether the node is sized by its content, as its checkbox says, which
+  // the width and height are disabled for: of the form shown, as of its key,
+  // and of the node that it shows, as the form shown anew shows it, as once
+  // a drag of its handle gave it a size.
+  const [sizing, setSizing] = useState<{ key: string; automatic: boolean }>();
+  const automatic =
+    sizing?.key === held.key ? sizing.automatic : shown.size === undefined;
   const components = useDocumentState(doc, (state) => state.view.components);
   const speakers = useMemo(
     () =>
@@ -288,6 +296,20 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
       form.refused();
       return;
     }
+    // The place and the size as the server keeps them, to 2 decimal places
+    // (FR-EDIT-02 AC4), which the document shows at once, and which are
+    // compared with the node's as such, so that 10.0 of a node at 10, or
+    // 10.001, changes nothing.
+    const place = onBoard({ x: x as number, y: y as number });
+    typed.x = String(place.x);
+    typed.y = String(place.y);
+    const size = typed.automatic
+      ? undefined
+      : { width: round2(width as number), height: round2(height as number) };
+    if (size !== undefined) {
+      typed.width = String(size.width);
+      typed.height = String(size.height);
+    }
     const was = valuesOf(against);
     const changed = changedOf(typed, was);
     const expected_rev = { [against.id]: against.rev };
@@ -309,9 +331,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
       (!typed.automatic &&
         (changed.width !== undefined || changed.height !== undefined))
     ) {
-      update.size = typed.automatic
-        ? {}
-        : { width: width as number, height: height as number };
+      update.size = size ?? {};
     }
     const changes: Command[] = [];
     if (Object.keys(update).length > 0) {
@@ -324,11 +344,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
     if (changed.x !== undefined || changed.y !== undefined) {
       changes.push({
         type: "node.move",
-        payload: {
-          nodes: [
-            { id: shown.id, position: { x: x as number, y: y as number } },
-          ],
-        },
+        payload: { nodes: [{ id: shown.id, position: place }] },
         expected_rev,
       });
     }
@@ -356,7 +372,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
           }),
       ...(changed.x === undefined && changed.y === undefined
         ? {}
-        : { position: { x: x as number, y: y as number } }),
+        : { position: place }),
     };
     form.save(changes, kept);
   };
@@ -470,7 +486,9 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
             label={t("inspector.automatic_size")}
             name="automatic"
             defaultChecked={values.automatic}
-            onChange={(e) => setAutomatic(e.currentTarget.checked)}
+            onChange={(e) =>
+              setSizing({ key: held.key, automatic: e.currentTarget.checked })
+            }
           />
           <div className="grid grid-cols-2 gap-2">
             <TextField

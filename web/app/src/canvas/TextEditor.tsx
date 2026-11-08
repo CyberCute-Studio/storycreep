@@ -10,10 +10,20 @@
 // keep the caret in view as the user types; and where the keyboard leaves
 // too little of the canvas in view, the page scrolls the canvas up to the
 // top of what the window shows. It saves the text, in one command, as the
-// user asks, and the canvas then has the focus again.
+// user asks, and the canvas then has the focus again; while it holds text
+// that is not saved, it stays open in place of another node's editor that
+// the user asks for, and says to save or cancel it first.
 
-import type { Node as BoardNode } from "@storycreep/shared/api";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { Node as BoardNode, RichTextDoc } from "@storycreep/shared/api";
+import {
+  type FormEvent,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, useEntityForm } from "../content/form";
@@ -77,6 +87,18 @@ export function boxPlace(
   return { x, y, width, maxHeight };
 }
 
+/** What the page asks of the editor of an element's text that is open. */
+export interface TextEditorHandle {
+  /** Reports whether the editor holds text that is not saved, which closing it would lose. */
+  changed(): boolean;
+  /**
+   * Keeps the editor open with its text, in place of the editor of another
+   * node's that the user asked for, saying to save or cancel it first, and
+   * gives it the focus.
+   */
+  keep(): void;
+}
+
 /** What the editor of an element's text is given. */
 export interface TextEditorProps {
   projectId: string;
@@ -86,9 +108,15 @@ export interface TextEditorProps {
   host: () => HTMLElement | null;
   /** Closes the editor, once it saved or was cancelled. */
   onClose: () => void;
+  ref?: Ref<TextEditorHandle>;
 }
 
 const textField = payloadField("text");
+
+/** Reports whether a and b are the same text, as the server compares them. */
+function sameText(a: RichTextDoc | undefined, b: RichTextDoc | undefined) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
 
 /** The editor of the text of node, over its card on the canvas. */
 export function TextEditor({
@@ -97,6 +125,7 @@ export function TextEditor({
   controller,
   host,
   onClose,
+  ref,
 }: TextEditorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -107,6 +136,28 @@ export function TextEditor({
   // anew starts again from.
   const text = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<string>();
+  // Whether the user asked for another node's text while this one held
+  // text that is not saved, which the editor says (keep).
+  const [kept, setKept] = useState(false);
+  // What the editor holds now: what the user typed in the form shown, or
+  // else what that form shows, which, once a save was refused for a change
+  // made elsewhere, is what they typed over the text as it is now.
+  const typed = () =>
+    text.current?.key === held.key ? text.current.value : undefined;
+  const current = () => typed()?.doc ?? shown.text;
+  const changed = () =>
+    typed()?.error !== undefined || !sameText(current(), against.text);
+  const focusText = () =>
+    box.current
+      ?.querySelector<HTMLElement>('[contenteditable="true"]')
+      ?.focus({ preventScroll: true });
+  useImperativeHandle(ref, () => ({
+    changed,
+    keep: () => {
+      setKept(true);
+      focusText();
+    },
+  }));
   const refusal = refusalOf(commands.error, t, textField);
   const title = shown.title === "" ? t("canvas.node.untitled") : shown.title;
   // The names that the text's mentions and value references show, as the
@@ -204,29 +255,38 @@ export function TextEditor({
     };
   }, [controller, host, node.id]);
 
+  // The box grows as the user types line after line, which no frame of the
+  // canvas's tells of: the canvas places it again as its height changes,
+  // so that it stays within the part of the canvas that the window shows,
+  // above the on-screen keyboard, rather than grow under it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the form shown anew, of another key, is another element.
+  useEffect(() => {
+    const el = box.current;
+    if (el === null || typeof ResizeObserver !== "function") {
+      return;
+    }
+    const grown = new ResizeObserver(() => controller.invalidate());
+    grown.observe(el);
+    return () => grown.disconnect();
+  }, [controller, held.key]);
+
   // The editor has the focus as it opens, as a field that the user asked
   // to type in.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the focus is given as the editor opens alone.
   useEffect(() => {
-    box.current
-      ?.querySelector<HTMLElement>('[contenteditable="true"]')
-      ?.focus({ preventScroll: true });
+    focusText();
   }, []);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const typed =
-      text.current?.key === held.key ? text.current.value : undefined;
-    if (typed?.error !== undefined) {
+    if (typed()?.error !== undefined) {
       form.refused();
       setInvalid(t("inspector.error.text"));
       return;
     }
     setInvalid(undefined);
-    const value = typed?.doc;
-    if (
-      value === undefined ||
-      JSON.stringify(value) === JSON.stringify(against.text)
-    ) {
+    const value = current();
+    if (value === undefined || sameText(value, against.text)) {
       onClose();
       return;
     }
@@ -263,12 +323,14 @@ export function TextEditor({
       onSubmit={submit}
       onKeyDown={(e) => {
         // Escape closes an editor whose text is as it was, as the inspector's
-        // Cancel does; one whose text changed keeps it, to be saved.
+        // Cancel does; one whose text changed keeps it, to be saved, as one
+        // whose save was refused for a change made elsewhere, which shows
+        // what the user typed over the text as it is now.
         if (
           e.key === "Escape" &&
           !e.nativeEvent.isComposing &&
           !e.defaultPrevented &&
-          text.current?.key !== held.key
+          !changed()
         ) {
           e.preventDefault();
           onClose();
@@ -281,6 +343,7 @@ export function TextEditor({
       <Alert
         message={form.overlaps.length > 0 ? undefined : refusal?.message}
       />
+      <Alert message={kept ? t("canvas.text_kept") : undefined} />
       <ConflictNotice
         form={form}
         fieldName={() => t("inspector.text")}

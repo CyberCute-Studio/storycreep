@@ -12,6 +12,7 @@ import { renderApp, testSession } from "../test/app";
 import { testNode } from "../test/canvas";
 import "../test/editor";
 import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeRealtime } from "../test/realtime";
 import type { Engine } from "./engine";
 import { boxPlace } from "./TextEditor";
 
@@ -356,6 +357,127 @@ describe("the canvas's edits", () => {
         screen.queryByRole("form", { name: "The text of nd_1" }),
       ).toBeNull(),
     );
+  });
+
+  it("shows the undo and the redo in the canvas's toolbar alone, and above the board's page once it shows no canvas, as once another session deleted the board", async () => {
+    const realtime = fakeRealtime();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    expect(screen.getAllByRole("button", { name: "Undo" })).toEqual([
+      within(edit).getByRole("button", { name: "Undo" }),
+    ]);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.delete", payload: { id: "bd_a" } }],
+        [{ id: "bd_a", rev: 4 }],
+      ),
+    );
+    expect(await screen.findByText("Page not found")).toBeDefined();
+    expect(screen.queryByRole("application")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Redo" })).toHaveLength(1);
+  });
+
+  it("keeps an editor whose text is not saved open in place of another node's that the user asks for, and says to save or cancel it first", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    // The second node, selected with a click, and opened with Enter.
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...second });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...second });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    expect(
+      await within(editor).findByText(
+        "This text is not saved yet: save it, or cancel it, before you open another.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByRole("form", { name: "The text of nd_2" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    expect(textbox.textContent).toBe("Elara waits.");
+    expect(batches(calls)).toEqual([]);
+  });
+
+  it("enables the inspector's width and height once a drag of the handle gives the node a size, and saves a place as the server keeps it", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    expect(within(inspector).getByLabelText("Width")).toHaveProperty(
+      "disabled",
+      true,
+    );
+    const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
+    expect(handle).not.toBeNull();
+    const from = { clientX: 0, clientY: 0 };
+    const to = { clientX: 40, clientY: 0 };
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      ...from,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      ...to,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      ...mouse,
+      buttons: 0,
+      ...to,
+    });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].type).toBe("node.update");
+    await waitFor(() =>
+      expect(within(inspector).getByLabelText("Width")).toHaveProperty(
+        "disabled",
+        false,
+      ),
+    );
+    expect(
+      within(inspector).getByLabelText("Size it by its content"),
+    ).toHaveProperty("checked", false);
+    // A place of more decimals than the server keeps is sent as it keeps it.
+    const x = within(inspector).getByLabelText("Across (x)");
+    await user.clear(x);
+    await user.type(x, "10.125");
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the node" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1]).toEqual([
+      {
+        type: "node.move",
+        payload: { nodes: [{ id: "nd_1", position: { x: 10.13, y: 0 } }] },
+        expected_rev: { nd_1: 2 },
+      },
+    ]);
   });
 });
 

@@ -108,6 +108,12 @@ export interface DocumentState {
   /** How many steps can be undone and redone. */
   undoable: number;
   redoable: number;
+  /**
+   * Counts the changes of the history's steps (History.version), which tell
+   * that the step that undo would send is another, as the counts do not once
+   * the history holds as many steps as it keeps.
+   */
+  historyVersion: number;
   /** Whether an undo or a redo is under way. */
   stepping: boolean;
 }
@@ -709,6 +715,7 @@ export class ProjectDocument {
       sending: 0,
       undoable: this.history.undoable,
       redoable: this.history.redoable,
+      historyVersion: this.history.version,
       stepping: false,
     }));
     this.starting = this.begin();
@@ -1548,6 +1555,7 @@ export class ProjectDocument {
         this.waiting.length,
       undoable: this.history.undoable,
       redoable: this.history.redoable,
+      historyVersion: this.history.version,
     });
   }
 

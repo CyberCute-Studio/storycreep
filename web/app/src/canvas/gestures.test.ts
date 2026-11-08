@@ -19,6 +19,10 @@ function host(mode: Mode = "pan", movable = false) {
     mode,
     movable,
     now: 0,
+    /** Whether the board has its node, as it has not once another session deleted it. */
+    present: true,
+    /** Whether the host refuses to start a move, as while the node's handle resizes it. */
+    refuses: false,
     selected: [] as string[],
     /** What the moves of the selection did: where each started, moved, and how it ended. */
     moves: [] as (
@@ -73,10 +77,11 @@ function host(mode: Mode = "pan", movable = false) {
       state.selected = [...next];
     },
     isSelected: (id) => state.selected.includes(id),
+    has: (id) => state.present && id === "nd_a",
     movable: () => state.movable,
     moveStart: (id) => {
       state.moves.push({ start: id });
-      return true;
+      return state.present && !state.refuses;
     },
     moveTo: (delta) => {
       state.moves.push({ to: delta });
@@ -638,6 +643,32 @@ describe("the canvas's gestures of a board that may be changed", () => {
     open.gestures.move(mouse(200, 150));
     expect(open.state.moves).toEqual([]);
     expect(open.state.v.x).toBe(-50);
+  });
+
+  it("moves, pans, selects, and taps nothing by a drag of a node that went before it was one, or that the host refuses to move, as while its handle resizes it", () => {
+    // A node that another session deleted under the press, in the select
+    // mode, which would select it first.
+    const gone = host("select", true);
+    gone.gestures.down(mouse(150, 150));
+    gone.state.present = false;
+    gone.gestures.move(mouse(200, 150));
+    gone.gestures.move(mouse(250, 180));
+    gone.gestures.up(mouse(250, 180));
+    expect(gone.state.selects).toEqual([]);
+    expect(gone.state.moves).toEqual([]);
+    expect(gone.state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(gone.state.bands).toEqual([]);
+    // A selected node whose move the host refuses, in the pan mode.
+    const refused = host("pan", true);
+    refused.state.selected = ["nd_a"];
+    refused.state.refuses = true;
+    refused.gestures.down(touch(1, 150, 150));
+    refused.gestures.move(touch(1, 200, 150));
+    refused.gestures.up(touch(1, 200, 150));
+    expect(refused.state.moves).toEqual([{ start: "nd_a" }]);
+    expect(refused.state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(refused.state.selects).toEqual([]);
+    expect(refused.state.released).toEqual([1]);
   });
 
   it("ends a move, where it started, as a second finger pinches, or the press is cancelled", () => {

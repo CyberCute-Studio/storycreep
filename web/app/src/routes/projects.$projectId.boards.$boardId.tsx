@@ -78,9 +78,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
-  // The page takes the window's width, for its canvas, whose toolbar shows
-  // the undo and the redo.
-  staticData: { wide: true, ownsHistory: true },
+  // The page takes the window's width, for its canvas.
+  staticData: { wide: true },
   validateSearch: (search: Record<string, unknown>): BoardSearch => {
     const out: BoardSearch = {};
     // A node's ID as the server writes it, however the link spells it, as

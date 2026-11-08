@@ -15,7 +15,6 @@
 // user's changes (FR-EDIT-08), and a bulk move offers its undo for a while
 // after (NFR-TOUCH-05).
 
-import type { Node as BoardNode } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
   lazy,
@@ -31,7 +30,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { refusalOf } from "../auth/refusal";
 import { boardPart, type Part } from "../document/doc";
@@ -41,6 +39,7 @@ import {
   type HistoryOf,
   HistoryStatus,
   useHistory,
+  useOwnHistory,
 } from "../project/History";
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
@@ -57,7 +56,7 @@ import {
   renderedMark,
   type SavedView,
 } from "./controller";
-import { hasTag, tagsOf } from "./edit";
+import { hasTagOf, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
@@ -70,7 +69,8 @@ import {
 } from "./labels";
 import { Minimap } from "./minimap";
 import { ResizeHandle } from "./ResizeHandle";
-import { TextEditor } from "./TextEditor";
+import type { Scene } from "./scene";
+import { TextEditor, type TextEditorHandle } from "./TextEditor";
 import { readTheme } from "./theme";
 
 const Bench = lazy(() => import("./bench"));
@@ -116,32 +116,41 @@ function keepSnap(on: boolean): void {
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
 
-/** The tags of a board's nodes, of each version of the document's nodes, which the tag filter offers. */
-const boardTags = new WeakMap<
-  ReadonlyMap<string, BoardNode>,
-  Map<string, string[]>
->();
-
-/** Returns the tags of the nodes of the board boardId among nodes, each once, whatever its case, the most used first (tagsOf). */
-function tagsOfBoard(
-  nodes: ReadonlyMap<string, BoardNode>,
-  boardId: string,
-): string[] {
-  let byBoard = boardTags.get(nodes);
-  if (byBoard === undefined) {
-    byBoard = new Map();
-    boardTags.set(nodes, byBoard);
-  }
-  let tags = byBoard.get(boardId);
-  if (tags === undefined) {
-    tags = tagsOf(
-      [...nodes.values()].filter(
-        (n) => n.board_id === boardId && n.deleted_at === undefined,
-      ),
-    );
-    byBoard.set(boardId, tags);
-  }
-  return tags;
+/**
+ * Returns what returns the tags of the nodes of scene, each once, whatever
+ * its case, the most used first (tagsOf), which the tag filter offers: the
+ * same list, found from the board's nodes alone, until one of them comes,
+ * goes, or changes its tags, rather than one found anew from every node of
+ * the project for each change of the document, as of a move or of another
+ * session's keystroke, under which the page would render anew.
+ */
+function tagsOfScene(scene: Scene): () => string[] {
+  let version: number | undefined;
+  let lists: string[][] = [];
+  let tags: string[] = [];
+  return () => {
+    if (scene.version === version) {
+      return tags;
+    }
+    version = scene.version;
+    const now: string[][] = [];
+    scene.nodes.forEach((_, item) => {
+      if (item.node.tags.length > 0) {
+        now.push(item.node.tags);
+      }
+    });
+    if (now.length !== lists.length || now.some((l, i) => l !== lists[i])) {
+      lists = now;
+      const found = tagsOf(now.map((list) => ({ tags: list })));
+      if (
+        found.length !== tags.length ||
+        found.some((tag, i) => tag !== tags[i])
+      ) {
+        tags = found;
+      }
+    }
+    return tags;
+  };
 }
 
 /**
@@ -155,13 +164,14 @@ function UndoMove({
   history,
   onDone,
 }: {
-  moved: { count: number; undoable: number; redoable: number };
+  moved: { count: number; version: number };
   history: HistoryOf;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
-  const stale =
-    history.undoable !== moved.undoable || history.redoable !== moved.redoable;
+  // The history's version, rather than how many steps it has, which a step
+  // that joins a history that holds as many as it keeps leaves as they were.
+  const stale = history.version !== moved.version;
   useEffect(() => {
     if (stale) {
       onDone();
@@ -340,8 +350,7 @@ function BoardCanvasOf({
   const [moved, setMoved] = useState<{
     key: number;
     count: number;
-    undoable: number;
-    redoable: number;
+    version: number;
   }>();
   const [zoom] = useState<ZoomShown>(() => createStore<number>(() => 1));
   const [content, setContent] = useState<"loading" | "ready" | "failed">(
@@ -397,16 +406,35 @@ function BoardCanvasOf({
   });
   const actions = useCanvasActions(projectId, boardId, controller);
   const history = useHistory(projectId);
+  // The undo and the redo are the toolbar's, rather than the project's
+  // layout's above the page, while it shows them.
+  useOwnHistory(editable);
   // The tags of the board's nodes, which the tag filter offers, as the
   // document has them, with the one that it dims by, though no node has it
-  // any longer, as once another session took it away, until it is cleared.
-  const tags = useDocumentState(
-    doc,
-    useShallow((state) => tagsOfBoard(state.view.nodes, boardId)),
-  );
+  // any longer, as once another session took it away, until it is cleared
+  // (tagsOfScene, which the board's content sets as it changes).
+  const [tags, setTags] = useState<string[]>([]);
+  const [sceneTags] = useState(() => tagsOfScene(controller.scene));
   const editingNode = useDocumentState(doc, (state) =>
     editing === undefined ? undefined : state.view.nodes.get(editing),
   );
+  // The editor of the text that is open, which holds what the user typed.
+  const editor = useRef<TextEditorHandle>(null);
+  const editingNow = useRef(editing);
+  useLayoutEffect(() => {
+    editingNow.current = editing;
+  });
+  // Opens the editor of the text of the element of id, in place of the one
+  // open, unless that one holds text that is not saved, which it keeps,
+  // with the focus, saying to save or cancel it first, rather than lose it.
+  const openText = useCallback((id: string) => {
+    const open = editingNow.current;
+    if (open !== undefined && open !== id && editor.current?.changed()) {
+      editor.current.keep();
+      return;
+    }
+    setEditing(id);
+  }, []);
   // An element whose editor is open that goes, as once another session
   // deleted it, closes it.
   const editingGone =
@@ -442,12 +470,10 @@ function BoardCanvasOf({
             const count = places.size;
             void current.actions.move(places).then((applied) => {
               if (applied && count >= 2) {
-                const state = doc.store.getState();
                 setMoved({
                   key: Date.now(),
                   count,
-                  undoable: state.undoable,
-                  redoable: state.redoable,
+                  version: doc.store.getState().historyVersion,
                 });
               }
             });
@@ -457,7 +483,7 @@ function BoardCanvasOf({
           open: (id) => {
             const node = doc.store.getState().view.nodes.get(id);
             if (node?.type === "element") {
-              setEditing(id);
+              openText(id);
             } else {
               setInspecting(true);
             }
@@ -467,16 +493,20 @@ function BoardCanvasOf({
     return () => {
       controller.edits = undefined;
     };
-  }, [controller, doc, editable]);
+  }, [controller, doc, editable, openText]);
   useEffect(() => {
     controller.snap = snap;
   }, [controller, snap]);
   // The tag filter dims the nodes without its tag, whatever its case, and
-  // changes nothing of the board (FR-EDIT-06 AC1).
+  // changes nothing of the board (FR-EDIT-06 AC1): its tag folded once, and
+  // each node's tags once, rather than in each frame (hasTagOf).
   useEffect(() => {
-    controller.setDimmed(
-      tagFilter === "" ? undefined : (node) => !hasTag(node, tagFilter),
-    );
+    if (tagFilter === "") {
+      controller.setDimmed(undefined);
+      return;
+    }
+    const has = hasTagOf(tagFilter);
+    controller.setDimmed((node) => !has(node));
   }, [controller, tagFilter]);
   // A link to a node opens the canvas on it, and, where the inspector docks
   // beside the canvas, the inspector of it too, as the link is followed,
@@ -825,6 +855,7 @@ function BoardCanvasOf({
       names = view;
       controller.sync(view, changed);
       setEmpty(controller.scene.nodes.size === 0);
+      setTags(sceneTags());
     };
     // The keys that labels names, each a literal there, are the catalog's,
     // as extraction reads them. What labels read of the document is made
@@ -841,7 +872,7 @@ function BoardCanvasOf({
     controller.relabel();
     sync();
     return doc.store.subscribe(sync);
-  }, [controller, doc, t]);
+  }, [controller, doc, t, sceneTags]);
 
   // The board's nodes and connections, read once, first by the read that
   // the page's loader started (read), whose failure the canvas says, rather
@@ -1241,6 +1272,7 @@ function BoardCanvasOf({
               !editingGone && (
                 <TextEditor
                   key={editing}
+                  ref={editor}
                   projectId={projectId}
                   node={editingNode}
                   controller={controller}
@@ -1258,7 +1290,7 @@ function BoardCanvasOf({
             // A sheet over the canvas closes to show the editor of the text,
             // which it would else hold inert under it.
             onEditText={(id) => {
-              setEditing(id);
+              openText(id);
               if (!docked) {
                 setInspecting(false);
               }
