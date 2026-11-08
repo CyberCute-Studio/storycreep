@@ -746,6 +746,75 @@ describe("the canvas's gestures of a board that may be changed", () => {
     gestures.up(mouse(150, 150, { shift: true }));
     expect(state.opened).toEqual(["nd_a"]);
   });
+
+  it("opens a node by two taps in a row alone, not by a tap after a drag, a pinch, or a press of the handle that came after the first", () => {
+    const { state, gestures } = host("pan", true);
+    const tap = (at: number) => {
+      state.now = at;
+      gestures.down(touch(1, 150, 150));
+      gestures.up(touch(1, 150, 150));
+    };
+    // A tap, a drag of the node, which moves it, and a tap soon after.
+    tap(0);
+    state.now = 100;
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 200, 150));
+    gestures.up(touch(1, 200, 150));
+    tap(300);
+    expect(state.opened).toEqual([]);
+    // A tap, a pinch, and a tap.
+    tap(1000);
+    gestures.down(touch(1, 150, 150));
+    gestures.down(touch(2, 400, 400));
+    gestures.up(touch(2, 400, 400));
+    gestures.up(touch(1, 150, 150));
+    tap(1300);
+    expect(state.opened).toEqual([]);
+    // A tap, a tap of the node's handle, and a tap.
+    tap(2000);
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.up(touch(1, 340, 220));
+    tap(2300);
+    expect(state.opened).toEqual([]);
+    // Two taps in a row.
+    tap(2400);
+    expect(state.opened).toEqual(["nd_a"]);
+  });
+
+  it("ends a rubber band, a move, or a resize under way, cancelled, as Escape asks, and holds its pointer until it goes up", () => {
+    const { state, gestures } = host("select", true);
+    expect(gestures.cancelDrag()).toBe(false);
+    // A rubber band selects nothing.
+    gestures.down(touch(1, 500, 500));
+    gestures.move(touch(1, 50, 50));
+    expect(gestures.cancelDrag()).toBe(true);
+    expect(state.bands.at(-1)).toBeUndefined();
+    gestures.move(touch(1, 40, 40));
+    gestures.up(touch(1, 40, 40));
+    expect(state.banded).toEqual([]);
+    expect(state.selects).toEqual([]);
+    // A move goes back where it started.
+    state.selected = ["nd_a"];
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 200, 150));
+    expect(gestures.cancelDrag()).toBe(true);
+    expect(state.moves.at(-1)).toEqual({ end: false });
+    gestures.move(touch(1, 300, 150));
+    gestures.up(touch(1, 300, 150));
+    expect(state.moves.at(-1)).toEqual({ end: false });
+    // A resize sizes nothing.
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.move(touch(1, 360, 220));
+    expect(gestures.cancelDrag()).toBe(true);
+    expect(state.resizes.at(-1)).toEqual({ end: false });
+    gestures.up(touch(1, 400, 220));
+    expect(state.resizes.at(-1)).toEqual({ end: false });
+    expect(state.released).toContain(1);
+    // A pan, which changes nothing of the board, has nothing to cancel.
+    gestures.down(mouse(500, 500, { button: 1 }));
+    gestures.move(mouse(520, 500, { button: 1 }));
+    expect(gestures.cancelDrag()).toBe(false);
+  });
 });
 
 describe("the canvas's gestures of a drag beside a node", () => {
@@ -878,6 +947,23 @@ describe("the canvas's gestures of a node's resize handle", () => {
     gestures.up(mouse(380, 220, { button: 1, buttons: 0 }));
     expect(state.resizes).toEqual([]);
     expect(state.v.x).toBe(-40);
+    // So does a drag with Space held, whose click taps nothing: twice in a
+    // row on the node, as the inner part of the handle is, it opens
+    // nothing, and beside it, as the outer part is, it clears nothing.
+    gestures.setSpace(true);
+    state.selected = ["nd_a"];
+    for (const [at, x] of [
+      [0, 335],
+      [100, 335],
+      [200, 345],
+    ]) {
+      state.now = at;
+      gestures.down(mouse(x, 215), "nd_a");
+      gestures.up(mouse(x, 215));
+    }
+    expect(state.selects).toEqual([]);
+    expect(state.opened).toEqual([]);
+    expect(state.selected).toEqual(["nd_a"]);
   });
 
   it("ignores a finger on the handle while a pen is down, as a palm's, and holds a drag whose resize the host refuses", () => {

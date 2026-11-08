@@ -613,6 +613,183 @@ describe("the canvas's edits", () => {
     expect(batches(calls)).toEqual([]);
   });
 
+  it("opens the editor of another node's text that the user asks for while a save is under way once the save applies, and leaves the focus where the user took it meanwhile", async () => {
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const calls = boardPage(
+      [testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)],
+      (index, applied) =>
+        index === 0 || index === 1 ? answered.then(applied) : undefined,
+    );
+    const canvas = await openBoard("?node=nd_1");
+    const type = async (name: string, text: string) => {
+      const editor = await screen.findByRole("form", { name });
+      const textbox = within(editor).getByRole("textbox");
+      await waitFor(() => expect(document.activeElement).toBe(textbox));
+      act(() => {
+        (
+          textbox as unknown as {
+            editor: { commands: { insertContent: (text: string) => void } };
+          }
+        ).editor.commands.insertContent(text);
+      });
+      await userEvent.click(
+        within(editor).getByRole("button", { name: "Save the text" }),
+      );
+    };
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    await type("The text of nd_1", "Elara waits.");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // The second node, selected with a click, and opened with Enter, while
+    // the first one's save is under way: no word of text not saved.
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...second });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...second });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(screen.queryByText(/^This text is not saved yet/)).toBeNull();
+    answer();
+    await type("The text of nd_2", "Mira listens.");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    // The user takes the focus to the inspector's title while the second
+    // save is under way, which it stays in as the save applies.
+    const inspector = await screen.findByRole("region", { name: "nd_2" });
+    // The inspector shows the node's form alone, rather than the form of
+    // the node selected before beside it.
+    const title = within(inspector).getByRole("textbox", { name: "Title" });
+    title.focus();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_2" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement).toBe(title);
+  });
+
+  it("offers no undo of a bulk move while a batch of the page's is under way, whose undo it would send in place of the move's", async () => {
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const calls = boardPage(
+      [testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)],
+      (index, applied) => (index === 1 ? answered.then(applied) : undefined),
+    );
+    const user = userEvent.setup();
+    const canvas = await openBoard("?node=nd_1");
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      shiftKey: true,
+      ...second,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      shiftKey: true,
+      ...second,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("2"));
+    const from = screenOf(canvas, { x: 120, y: 64 });
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: from.clientX + 100 * zoom, clientY: from.clientY };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...from });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    const bar = await screen.findByText("Moved 2 nodes.");
+    const undo = within(bar).getByRole("button", { name: "Undo the move" });
+    expect(undo).toHaveProperty("disabled", false);
+    // A node added while the offer stands, whose batch is under way.
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Add" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Element" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    await waitFor(() => expect(undo).toHaveProperty("disabled", true));
+    fireEvent.click(undo);
+    answer();
+    await waitFor(() =>
+      expect(screen.queryByText("Moved 2 nodes.")).toBeNull(),
+    );
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(batches(calls)).toHaveLength(2);
+  });
+
+  it("adds a tag to each selected node but those that have 32, which it says, and keeps the tag in its field where none could take it", async () => {
+    const user = userEvent.setup();
+    const full = Array.from({ length: 32 }, (_, i) => `t${i}`);
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { tags: full }),
+      testNode("nd_2", 400, 0),
+    ]);
+    const canvas = await openBoard("?node=nd_1");
+    await screen.findByRole("region", { name: "nd_1" });
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      shiftKey: true,
+      ...second,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      shiftKey: true,
+      ...second,
+    });
+    const both = await screen.findByRole("region", {
+      name: "2 nodes selected",
+    });
+    await user.type(within(both).getByLabelText("Add a tag to each"), "Quest");
+    await user.click(within(both).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      {
+        type: "node.update",
+        payload: { id: "nd_2", tags: ["Quest"] },
+        expected_rev: { nd_2: 1 },
+      },
+    ]);
+    expect(
+      within(both).getByText(
+        "A node has 32 tags, the most that a node may have, and gets no more.",
+      ),
+    ).toBeDefined();
+    // The full node alone takes none: nothing is sent, and the tag stays.
+    const first = screenOf(canvas, { x: 120, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...first });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...first });
+    const one = await screen.findByRole("region", { name: "nd_1" });
+    const field = within(one).getByLabelText("Add a tag");
+    await user.type(field, "Mira");
+    await user.click(within(one).getByRole("button", { name: "Add" }));
+    expect(
+      await within(one).findByText(
+        "A node has 32 tags, the most that a node may have, and gets no more.",
+      ),
+    ).toBeDefined();
+    expect(field).toHaveProperty("value", "Mira");
+    expect(batches(calls)).toHaveLength(1);
+  });
+
+  it("opens the canvas as without the link, and no inspector, of a node that the board does not have", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_gone");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(canvas.dataset.selected).toBe("0");
+    expect(screen.queryByRole("region", { name: "Inspector" })).toBeNull();
+  });
+
   it("enables the inspector's width and height once a drag of the handle gives the node a size, and saves a place as the server keeps it", async () => {
     const user = userEvent.setup();
     const calls = boardPage([testNode("nd_1", 0, 0)]);

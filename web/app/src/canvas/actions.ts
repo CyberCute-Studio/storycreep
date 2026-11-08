@@ -26,6 +26,7 @@ import {
   distributed,
   freePlace,
   hasTagOf,
+  maxTags,
   offset,
   placedOf,
   withoutTagOf,
@@ -150,10 +151,12 @@ export function useCanvasActions(
       },
       /** Deletes the nodes of ids to the trash, as one command (FR-EDIT-02). */
       remove(ids: readonly string[]): Promise<boolean> {
-        const nodes = nodesOf(ids).map((n) => n.id);
-        return nodes.length === 0
-          ? Promise.resolve(true)
-          : send([deleteBatch(view(), nodes)]);
+        return send([
+          deleteBatch(
+            view(),
+            nodesOf(ids).map((n) => n.id),
+          ),
+        ]);
       },
       /**
        * Duplicates the nodes of ids onto the board, beside them, and selects
@@ -193,7 +196,12 @@ export function useCanvasActions(
           ),
         );
       },
-      /** Adds tag to the nodes of ids, each that does not have it, whatever its case (FR-EDIT-06). */
+      /**
+       * Adds tag to the nodes of ids, each that does not have it, whatever
+       * its case, but for one that has the most tags that a node has, which
+       * the server would refuse the batch for, and with it the tag of every
+       * other node (FR-EDIT-06).
+       */
       addTag(ids: readonly string[], tag: string): Promise<boolean> {
         // The tag folded once, rather than for each node.
         const has = hasTagOf(tag);
@@ -201,7 +209,10 @@ export function useCanvasActions(
           updateBatches(
             view(),
             nodesOf(ids).map((n) => n.id),
-            (node) => (has(node) ? undefined : { tags: [...node.tags, tag] }),
+            (node) =>
+              has(node) || node.tags.length >= maxTags
+                ? undefined
+                : { tags: [...node.tags, tag] },
           ),
         );
       },

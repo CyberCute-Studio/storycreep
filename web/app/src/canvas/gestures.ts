@@ -16,13 +16,15 @@
 // either mode, on a board that may be changed, and one that starts on a node
 // that is not selected selects it and moves it in the select mode, but pans
 // in the pan mode, so that a finger that pans a crowded board moves no node
-// (plan note N68); a second tap or click on the same node, soon after the
-// first, opens it, as for its text. A press on the resize handle of the
-// node selected, which the page places over the canvas, outside its
-// element, is the canvas's as one on it is, by the same rules of pointers:
-// its drag resizes the node, in either mode, from the board's point where
-// it started, as a move does, but for one of the middle button or with
-// Space held, which pans, and it taps nothing. The wheel pans, and Shift
+// (plan note N68); a second tap or click on the same node, right after the
+// first and soon after it, opens it, as for its text. A press on the resize
+// handle of the node selected, which the page places over the canvas,
+// outside its element, is the canvas's as one on it is, by the same rules
+// of pointers: its drag resizes the node, in either mode, from the board's
+// point where it started, as a move does, but for one of the middle button
+// or with Space held, which pans, and it taps nothing. A rubber band, a
+// move, or a resize under way ends, cancelled, as Escape asks, or as the
+// board may no longer be changed (cancelDrag). The wheel pans, and Shift
 // turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it, it
 // zooms about the pointer. Nothing needs hover or a right click, and a
 // right click, or a pen's barrel button or its eraser, does nothing; a
@@ -182,6 +184,10 @@ type Gesture =
       drag: "pan" | "band" | "move" | "pick" | "resize";
       /** The node that it went down on, which a move holds, or whose handle it went down on. */
       node?: string;
+      /** Whether it went down on a resize handle, whose press taps nothing, whatever its drag does. */
+      handle: boolean;
+      /** The tap right before it, which a tap of it on the same node soon after opens the node of (tap). */
+      lastTap: { node: string; time: number } | undefined;
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
@@ -207,7 +213,7 @@ export class Gestures {
   private readonly pointers = new Map<number, PointerInput>();
   private gesture: Gesture = { kind: "idle" };
   private space = false;
-  /** The node of the last tap, and when it was, which a second tap on it soon after opens. */
+  /** The node of the last tap, and when it was, which a second tap on it soon after opens, until the next press takes it (down). */
   private lastTap: { node: string; time: number } | undefined;
 
   constructor(private readonly host: GestureHost) {}
@@ -268,6 +274,12 @@ export class Gestures {
       return false;
     }
     this.pointers.set(p.id, p);
+    // A double tap is two taps in a row: the press after a tap takes it,
+    // so that whatever the press is but a tap, a drag, a pinch, a press of
+    // the handle or of the middle button, or one cancelled, leaves none for
+    // the tap after it.
+    const lastTap = this.lastTap;
+    this.lastTap = undefined;
     if (this.pointers.size === 2) {
       this.startPinch();
       return true;
@@ -309,6 +321,8 @@ export class Gestures {
       at,
       drag,
       node: drag === "pan" || drag === "band" ? undefined : node,
+      handle: handle !== undefined,
+      lastTap,
       input: p,
     };
     return true;
@@ -480,10 +494,11 @@ export class Gestures {
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
           // A click of the middle button is a pan that did not move, and a
-          // tap of a resize handle a resize that did not.
+          // tap of a resize handle, as one with Space held, which pans, a
+          // drag of it that did not.
           const middle = g.input.kind === "mouse" && g.input.button === 1;
-          if (!cancelled && !middle && g.drag !== "resize") {
-            this.tap(input, g.input);
+          if (!cancelled && !middle && !g.handle) {
+            this.tap(input, g.input, g.lastTap);
           }
         }
         return;
@@ -572,11 +587,33 @@ export class Gestures {
   handleGone(id: string): void {
     const g = this.gesture;
     if (g.kind === "resize" && g.node === id) {
-      this.gesture = { kind: "held", id: g.id };
-      this.host.resizeEnd(false);
+      this.cancelDrag();
     } else if (g.kind === "press" && g.drag === "resize" && g.node === id) {
       this.gesture = { kind: "held", id: g.id };
     }
+  }
+
+  /**
+   * Ends the rubber band, the move, or the resize under way, as cancelled,
+   * as Escape asks, or as the board may no longer be changed: the band
+   * selects nothing, the nodes go back where they were, and the pointer
+   * does nothing more until it goes up, as a drag that cannot move its
+   * node. Reports whether there was one.
+   */
+  cancelDrag(): boolean {
+    const g = this.gesture;
+    if (g.kind !== "band" && g.kind !== "move" && g.kind !== "resize") {
+      return false;
+    }
+    this.gesture = { kind: "held", id: g.id };
+    if (g.kind === "band") {
+      this.host.band(undefined);
+    } else if (g.kind === "move") {
+      this.host.moveEnd(false);
+    } else {
+      this.host.resizeEnd(false);
+    }
+    return true;
   }
 
   /**
@@ -638,16 +675,19 @@ export class Gestures {
   /**
    * Selects the node at the tap, or adds it, or takes it out, with Shift,
    * Ctrl, or Cmd, or clears the selection on the empty board; a second tap
-   * on the same node soon after the first, without them, opens it, as for
-   * its text, which nothing needs: the inspector and Enter open it too
-   * (NFR-TOUCH-02).
+   * on the same node soon after the first, last, the tap right before it,
+   * without them, opens it, as for its text, which nothing needs: the
+   * inspector and Enter open it too (NFR-TOUCH-02).
    */
-  private tap(at: PointerInput, pressed: PointerInput): void {
+  private tap(
+    at: PointerInput,
+    pressed: PointerInput,
+    last: { node: string; time: number } | undefined,
+  ): void {
     const v = this.host.viewport();
     const id = this.host.nodeAt(toWorld(v, at), tapSlop[at.kind] / v.zoom);
     const additive = pressed.shift || pressed.additive;
     const now = this.host.now();
-    const last = this.lastTap;
     this.lastTap =
       id === undefined || additive ? undefined : { node: id, time: now };
     if (id !== undefined) {

@@ -157,18 +157,24 @@ function tagsOfScene(scene: Scene): () => string[] {
  * The undo of the bulk move that the canvas made last, which it offers for
  * a while after it joined the history (NFR-TOUCH-05), until another step
  * joins or leaves it, as once the user changed or undid anything else,
- * whose undo it would else be.
+ * whose undo it would else be; and which it does not send while a batch of
+ * the page's is under way, which the undo would wait for to join the
+ * history, and then undo in place of the move (ProjectDocument's undo).
  */
 function UndoMove({
+  projectId,
   moved,
   history,
   onDone,
 }: {
+  projectId: string;
   moved: { count: number; version: number };
   history: HistoryOf;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
+  const doc = useProjectDocument(projectId);
+  const sending = useDocumentState(doc, (state) => state.sending > 0);
   // The history's version, rather than how many steps it has, which a step
   // that joins a history that holds as many as it keeps leaves as they were.
   const stale = history.version !== moved.version;
@@ -190,9 +196,16 @@ function UndoMove({
     >
       {t("canvas.moved", { count: moved.count })}
       <Button
-        disabled={history.stepping}
+        disabled={history.stepping || sending}
         onClick={() => {
-          history.step.mutate("undo");
+          // As the document is now, rather than as the page last rendered it.
+          const now = doc.store.getState();
+          if (now.sending > 0) {
+            return;
+          }
+          if (now.historyVersion === moved.version) {
+            history.step.mutate("undo");
+          }
           onDone();
         }}
       >
@@ -428,11 +441,16 @@ function BoardCanvasOf({
   });
   // Opens the editor of the text of the element of id, in place of the one
   // open, unless that one holds text that is not saved, which it keeps,
-  // with the focus, saying to save or cancel it first, rather than lose it.
+  // with the focus, saying to save or cancel it first, rather than lose it,
+  // or text that it is saving, which gives way once its save applies
+  // (TextEditorHandle's giveWay, and closeEditor).
   const openText = useCallback((id: string) => {
     const open = editingNow.current;
-    if (open !== undefined && open !== id && editor.current?.changed()) {
-      editor.current.keep();
+    if (
+      open !== undefined &&
+      open !== id &&
+      editor.current?.giveWay(id) === false
+    ) {
       return;
     }
     setEditing(id);
@@ -455,9 +473,23 @@ function BoardCanvasOf({
       }
     }
   }, [editingGone]);
-  const closeEditor = useCallback(() => {
-    setEditing(undefined);
-    hostRef.current?.focus({ preventScroll: true });
+  // The editor closes, or gives way to the editor of next, whose own text
+  // takes the focus as it opens. The canvas takes the focus that the editor
+  // had, or that fell to the page's body, as the Save button's while it was
+  // disabled: not the focus that the user took elsewhere meanwhile, as to
+  // the inspector's title while the save was under way, whose keys, as
+  // Backspace, would else go to the canvas, and delete the selection.
+  const closeEditor = useCallback((next?: string) => {
+    setEditing(next);
+    const active = document.activeElement;
+    if (
+      next === undefined &&
+      (active === null ||
+        active === document.body ||
+        overRef.current?.contains(active) === true)
+    ) {
+      hostRef.current?.focus({ preventScroll: true });
+    }
   }, []);
   // What the canvas changes of the board, as its drags and keys ask, on a
   // board that the user may change.
@@ -526,16 +558,19 @@ function BoardCanvasOf({
   }, [controller, tagFilter]);
   // A link to a node opens the canvas on it, and, where the inspector docks
   // beside the canvas, on a board that the user may change, the inspector
-  // of it too, as the link is followed, rather than as the window turns, or
-  // as the user's role or the project's archive changes, long after, which
-  // would take the user's selection and view away.
+  // of it too, once the canvas has found it, as the link is followed,
+  // rather than as the window turns, or as the user's role or the
+  // project's archive changes, long after, which would take the user's
+  // selection and view away; a node that the board does not have opens
+  // neither, as without the link.
   // biome-ignore lint/correctness/useExhaustiveDependencies: editable and docked are read as the link is followed.
   useEffect(() => {
     if (focus !== undefined) {
-      controller.focus(focus);
-      if (editable && docked) {
-        setInspecting(true);
-      }
+      controller.focus(focus, () => {
+        if (editable && docked) {
+          setInspecting(true);
+        }
+      });
     }
   }, [controller, focus]);
 
@@ -711,27 +746,27 @@ function BoardCanvasOf({
       controller.gestures.cancelAll();
       controller.gestures.setSpace(false);
     };
-    // What the canvas places over its nodes, outside its element, as the
-    // resize handle, takes the wheel, the pinch, and the browser's menu as
-    // the canvas does, rather than let them through to the page, which
-    // would scroll it, zoom it, or open its menu over the canvas; but for
-    // the editor of a text, whose wheel scrolls it, and whose menu is its
-    // text's.
+    // What the canvas places over its nodes, outside its element, that says
+    // it is the canvas's own (data-canvas), as the resize handle, takes the
+    // wheel, the pinch, and the browser's menu as the canvas does, rather
+    // than let them through to the page, which would scroll it, zoom it, or
+    // open its menu over the canvas; the rest keeps its own, as the editor
+    // of a text, whose wheel scrolls it, and whose menu is its text's.
     const over = overRef.current;
-    const onNode = (e: Event) =>
-      !(e.target instanceof Element && e.target.closest("form") !== null);
+    const ofCanvas = (e: Event) =>
+      e.target instanceof Element && e.target.closest("[data-canvas]") !== null;
     const overWheel = (e: WheelEvent) => {
-      if (onNode(e)) {
+      if (ofCanvas(e)) {
         wheel(e);
       }
     };
     const overGesture = (e: Event) => {
-      if (onNode(e)) {
+      if (ofCanvas(e)) {
         gesture(e);
       }
     };
     const overMenu = (e: Event) => {
-      if (onNode(e)) {
+      if (ofCanvas(e)) {
         own(e);
       }
     };
@@ -1258,6 +1293,7 @@ function BoardCanvasOf({
             // long, rather than for what was left of the one before's.
             <UndoMove
               key={moved.key}
+              projectId={projectId}
               moved={moved}
               history={history}
               onDone={clearMoved}

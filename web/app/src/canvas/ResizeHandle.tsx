@@ -62,6 +62,9 @@ export function ResizeHandle({
       ref={handle}
       aria-hidden="true"
       hidden
+      // The wheel, the pinch, and the browser's menu over the handle are the
+      // canvas's, as over the canvas (BoardCanvas's layer over it).
+      data-canvas=""
       onPointerDown={(e) => onPress(e, id)}
       className="pointer-events-auto absolute top-0 left-0 flex size-11 cursor-nwse-resize touch-none items-center justify-center"
     >

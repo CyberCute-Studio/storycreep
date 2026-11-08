@@ -135,12 +135,14 @@ export function aligned(
     return out;
   }
   const across = how === "left" || how === "center" || how === "right";
-  const start = Math.min(...nodes.map((n) => (across ? n.rect.x : n.rect.y)));
-  const end = Math.max(
-    ...nodes.map((n) =>
-      across ? n.rect.x + n.rect.width : n.rect.y + n.rect.height,
-    ),
-  );
+  // The bounds by a loop, rather than by Math.min of the nodes spread as
+  // arguments, which a browser refuses past as many as it takes.
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+  for (const { rect } of nodes) {
+    start = Math.min(start, across ? rect.x : rect.y);
+    end = Math.max(end, across ? rect.x + rect.width : rect.y + rect.height);
+  }
   for (const { id, rect } of nodes) {
     const length = across ? rect.width : rect.height;
     const at =
@@ -222,6 +224,9 @@ export function freePlace(
 export function placedOf(nodes: Iterable<Node>): Placed[] {
   return [...nodes].map((node) => ({ id: node.id, rect: nodeRect(node) }));
 }
+
+/** The most tags that a node has (FR-EDIT-06), as the server keeps them. */
+export const maxTags = 32;
 
 /** Returns the key by which two tags are one tag, as the server compares them: without regard to case (FR-EDIT-06). */
 export function tagKey(tag: string): string {

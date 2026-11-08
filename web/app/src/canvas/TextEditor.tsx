@@ -10,9 +10,11 @@
 // keep the caret in view as the user types; and where the keyboard leaves
 // too little of the canvas in view, the page scrolls the canvas up to the
 // top of what the window shows. It saves the text, in one command, as the
-// user asks, and the canvas then has the focus again; while it holds text
-// that is not saved, it stays open in place of another node's editor that
-// the user asks for, and says to save or cancel it first.
+// user asks, and the canvas then has the focus again, unless the user took
+// it elsewhere meanwhile; while it holds text that is not saved, it stays
+// open in place of another node's editor that the user asks for, and says
+// to save or cancel it first, and while it saves its text, it gives way to
+// that editor once the save applies.
 
 import type { Node as BoardNode } from "@storycreep/shared/api";
 import {
@@ -93,14 +95,15 @@ export function boxPlace(
 
 /** What the page asks of the editor of an element's text that is open. */
 export interface TextEditorHandle {
-  /** Reports whether the editor holds text that is not saved, which closing it would lose. */
-  changed(): boolean;
   /**
-   * Keeps the editor open with its text, in place of the editor of another
-   * node's that the user asked for, saying to save or cancel it first, and
-   * gives it the focus.
+   * Asks the editor to give way to the editor of the text of the node of
+   * id, which the user asked for, and reports whether it may close now, as
+   * one whose text is as it was may. One whose save is under way gives way
+   * once the save applies (onClose with id), or, once it is refused, keeps
+   * its text, as one that holds text that is not saved does at once: open,
+   * saying to save or cancel it first, with the focus, rather than lose it.
    */
-  keep(): void;
+  giveWay(id: string): boolean;
 }
 
 /** What the editor of an element's text is given. */
@@ -110,8 +113,8 @@ export interface TextEditorProps {
   controller: CanvasController;
   /** The canvas's element, whose part that the window shows the box stays in. */
   host: () => HTMLElement | null;
-  /** Closes the editor, once it saved or was cancelled. */
-  onClose: () => void;
+  /** Closes the editor, once it saved or was cancelled, or gives way to the editor of the node of next, once its save applied (giveWay). */
+  onClose: (next?: string) => void;
   ref?: Ref<TextEditorHandle>;
 }
 
@@ -136,8 +139,11 @@ export function TextEditor({
   const text = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<string>();
   // Whether the user asked for another node's text while this one held
-  // text that is not saved, which the editor says (keep).
+  // text that is not saved, which the editor says (giveWay); and the node
+  // whose text the user asked for while the save was under way, which the
+  // editor gives way to once the save applies.
   const [kept, setKept] = useState(false);
+  const [after, setAfter] = useState<string>();
   // What the editor holds now: what the user typed in the form shown, or
   // else what that form shows, which, once a save was refused for a change
   // made elsewhere, is what they typed over the text as it is now; and
@@ -152,11 +158,21 @@ export function TextEditor({
     box.current
       ?.querySelector<HTMLElement>('[contenteditable="true"]')
       ?.focus({ preventScroll: true });
+  const keep = () => {
+    setKept(true);
+    focusText();
+  };
   useImperativeHandle(ref, () => ({
-    changed,
-    keep: () => {
-      setKept(true);
-      focusText();
+    giveWay: (id) => {
+      if (commands.isPending) {
+        setAfter(id);
+        return false;
+      }
+      if (!changed()) {
+        return true;
+      }
+      keep();
+      return false;
     },
   }));
   const refusal = refusalOf(commands.error, t, textField);
@@ -314,13 +330,23 @@ export function TextEditor({
     );
   };
 
-  // Once the save has applied, the editor closes.
+  // Once the save has applied, the editor closes, or gives way to the
+  // editor that the user asked for meanwhile; once it is refused, it keeps
+  // what the user typed, and says so of the editor asked for.
   const saved = commands.isSuccess;
+  const refused = commands.isError;
   useEffect(() => {
     if (saved) {
-      onClose();
+      onClose(after);
     }
-  }, [saved, onClose]);
+  }, [saved, onClose, after]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keep is of the render that the refusal came in.
+  useEffect(() => {
+    if (refused && after !== undefined) {
+      setAfter(undefined);
+      keep();
+    }
+  }, [refused, after]);
 
   // The form's element, for the box and for what the form holds, by a ref
   // of the same function from one render to the next: React calls a new
@@ -387,7 +413,7 @@ export function TextEditor({
         <Button type="submit" variant="primary" disabled={commands.isPending}>
           {t("canvas.text_save")}
         </Button>
-        <Button onClick={onClose}>{t("canvas.text_cancel")}</Button>
+        <Button onClick={() => onClose()}>{t("canvas.text_cancel")}</Button>
       </div>
     </form>
   );

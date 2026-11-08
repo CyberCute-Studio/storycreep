@@ -1115,14 +1115,101 @@ describe("the canvas's controller of a board that may be changed", () => {
       size: { width: 1000, height: 600 },
       selection: [],
     });
-    c.focus("nd_2");
+    let found = 0;
+    c.focus("nd_2", () => found++);
     c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]), false);
     c.setReady();
     time.tick();
     expect([...c.selection()]).toEqual(["nd_2"]);
     expect(events.selections.at(-1)).toBe(1);
+    expect(found).toBe(1);
     // At 100%, the node's centre at the canvas's.
     expect(c.viewport()).toEqual({ x: 4000 + 120 - 500, y: 64 - 300, zoom: 1 });
+    // Of a canvas placed already, at once.
+    c.focus("nd_1", () => found++);
+    expect([...c.selection()]).toEqual(["nd_1"]);
+    expect(found).toBe(2);
+  });
+
+  it("opens as without a link to a node that the board does not have, which it tells nothing of", () => {
+    const { c, time } = setUp();
+    let found = 0;
+    c.focus("nd_gone", () => found++);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    expect([...c.selection()]).toEqual([]);
+    c.focus("nd_gone", () => found++);
+    time.tick();
+    expect(found).toBe(0);
+  });
+
+  it("ends a move or a resize under way, cancelled, with Escape, which leaves the selection, and once the board may no longer be changed", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    const v = c.viewport();
+    const at = (x: number, y = (64 - v.y) * v.zoom) => ({
+      id: 1,
+      x,
+      y,
+      kind: "mouse" as const,
+      button: 0,
+      buttons: 1,
+      shift: false,
+      additive: false,
+    });
+    const escapeKey = {
+      key: "Escape",
+      code: "Escape",
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+    };
+    const from = (120 - v.x) * v.zoom;
+    c.down(at(from));
+    c.gestures.move(at(from + 80));
+    expect(c.moves()).toBe(true);
+    expect(c.key(escapeKey)).toBe(true);
+    expect(c.moves()).toBe(false);
+    expect([...c.selection()]).toEqual(["nd_1"]);
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
+    c.gestures.move(at(from + 160));
+    c.gestures.up(at(from + 160));
+    expect(asked.moves).toEqual([]);
+    // Escape with no drag under way clears the selection.
+    expect(c.key(escapeKey)).toBe(true);
+    expect([...c.selection()]).toEqual([]);
+    // A resize by the node's handle, once the board may not be changed.
+    const corner = { x: (240 - v.x) * v.zoom, y: (128 - v.y) * v.zoom };
+    c.down(at(corner.x, corner.y), "nd_1");
+    c.gestures.move(at(corner.x + 80, corner.y));
+    expect(c.scene.nodes.get("nd_1")?.rect.width).toBeGreaterThan(240);
+    c.edits = undefined;
+    expect(c.scene.nodes.get("nd_1")?.rect.width).toBe(240);
+    c.gestures.up(at(corner.x + 80, corner.y));
+    expect(asked.sizes).toEqual([]);
+  });
+
+  it("hides the resize handle in the frame after a move starts, though the grid keeps the node where it is", () => {
+    const { c, time } = setUp();
+    editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    const hides: boolean[] = [];
+    c.follow(() => hides.push(c.moves()));
+    time.tick();
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: -3, y: 0 });
+    time.tick();
+    expect(hides.at(-1)).toBe(true);
+    c.moveEnd(false);
   });
 
   it("deletes the selection with Delete, and opens the one selected with Enter, on a board that may be changed", () => {

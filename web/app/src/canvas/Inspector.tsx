@@ -9,9 +9,10 @@
 // and tags them. Of either, it duplicates and deletes what is selected.
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type FormEvent,
+  Fragment,
   useEffect,
   useId,
   useMemo,
@@ -47,6 +48,8 @@ import { Panel } from "../ui/Panel";
 import type { CanvasActions } from "./actions";
 import {
   type Alignment,
+  hasTagOf,
+  maxTags,
   onBoard,
   positionLimit,
   sizeLimit,
@@ -113,8 +116,12 @@ export function Inspector({
       ) : (
         <div className="space-y-6">
           {single !== undefined && (
-            <>
-              <NodeForm key={single.id} projectId={projectId} node={single} />
+            // The parts of one node, made anew for another, under one key,
+            // rather than a key of the node's for each, which two siblings
+            // would share, and which would leave the form of the node
+            // selected before beside the next one's.
+            <Fragment key={single.id}>
+              <NodeForm projectId={projectId} node={single} />
               {single.type === "element" && (
                 <section className="space-y-2">
                   <h3 className="text-lg font-semibold">
@@ -126,9 +133,9 @@ export function Inspector({
                 </section>
               )}
               {single.type === "element" && (
-                <Cover key={single.id} projectId={projectId} node={single} />
+                <Cover projectId={projectId} node={single} />
               )}
-            </>
+            </Fragment>
           )}
           {nodes.length > 1 && <Arrange nodes={nodes} actions={actions} />}
           <ColorChoice nodes={nodes} actions={actions} />
@@ -618,6 +625,7 @@ function Tags({
   actions: CanvasActions;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const listId = useId();
   const headingId = useId();
   const [typed, setTyped] = useState("");
@@ -655,6 +663,16 @@ function Tags({
   const tags = useMemo(() => tagsOf(nodes), [nodes]);
   const counts = useMemo(() => tagCounts(nodes), [nodes]);
   const count = (tag: string) => counts.get(tagKey(tag)) ?? 0;
+  // The suggestions read anew once the project's tags changed, as by a tag
+  // added or taken away here, rather than once they are 30 s old.
+  const tagsChanged = (applied: boolean) => {
+    if (applied) {
+      void queryClient.invalidateQueries({
+        queryKey: ["projects", projectId, "tags"],
+      });
+    }
+    return applied;
+  };
   const add = (event: FormEvent) => {
     event.preventDefault();
     const tag = typed.trim();
@@ -662,17 +680,33 @@ function Tags({
       setProblem(t("inspector.error.tag"));
       return;
     }
-    setProblem(undefined);
+    // A node that has the most tags that a node has gets no more, which the
+    // field says, while the others that lack the tag get it (addTag); where
+    // none of them could, the tag stays in the field.
+    const has = hasTagOf(tag);
+    const lacking = nodes.filter((n) => !has(n));
+    const full = lacking.filter((n) => n.tags.length >= maxTags).length;
+    setProblem(
+      full === 0
+        ? undefined
+        : t("inspector.error.tags_full", { count: full, most: maxTags }),
+    );
+    if (full > 0 && full === lacking.length) {
+      return;
+    }
     setTyped("");
-    // A tag that the server refused, as for a node that has the most tags
-    // that it may have, which the toolbar says, is in the field again, to be
+    // A tag that the server refused, as for a change made elsewhere
+    // meanwhile, which the toolbar says, is in the field again, to be
     // changed rather than typed anew, unless the user typed another since,
     // or selected other nodes.
-    void actions.addTag(ids, tag).then((applied) => {
-      if (!applied && shownFor.current === forIds) {
-        setTyped((now) => (now === "" ? tag : now));
-      }
-    });
+    void actions
+      .addTag(ids, tag)
+      .then(tagsChanged)
+      .then((applied) => {
+        if (!applied && shownFor.current === forIds) {
+          setTyped((now) => (now === "" ? tag : now));
+        }
+      });
   };
   return (
     <section aria-labelledby={headingId} className="space-y-2">
@@ -687,7 +721,9 @@ function Tags({
             <li key={tagKey(tag)}>
               <Button
                 aria-label={t("inspector.remove_tag", { tag })}
-                onClick={() => void actions.removeTag(ids, tag)}
+                onClick={() =>
+                  void actions.removeTag(ids, tag).then(tagsChanged)
+                }
               >
                 {nodes.length > 1
                   ? t("inspector.tag_count", {

@@ -2,7 +2,8 @@
 // the arrows pan, by a tenth of the canvas, or half of it with Shift; + and
 // - zoom in and out by a step, and 0 shows 100%, about the canvas's centre;
 // Shift+1 fits the board's content and Shift+2 zooms to the selection;
-// Escape clears the selection; and, on a board that may be changed, Delete
+// Escape ends a drag under way, cancelled, or else clears the selection
+// (CanvasController's key); and, on a board that may be changed, Delete
 // and Backspace delete the selected nodes and Enter opens the text of the
 // one selected (plan note N68). None is held with Ctrl, Cmd, or Alt, whose
 // combinations are the browser's, as Ctrl and + zoom the page (FR-EDIT-10

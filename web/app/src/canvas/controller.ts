@@ -218,8 +218,23 @@ export class CanvasController implements GestureHost {
   });
   /** Whether the system asks for reduced motion, which makes every move instant. */
   reducedMotion = false;
+  private editsOf: CanvasEdits | undefined;
   /** What the page changes of the board as the canvas asks, or undefined where it may not be changed. */
-  edits: CanvasEdits | undefined;
+  get edits(): CanvasEdits | undefined {
+    return this.editsOf;
+  }
+  /**
+   * Takes what the page changes of the board, or none once the board may no
+   * longer be changed, as once the user's role or the project's archive
+   * changes, which ends a move or a resize under way, cancelled, rather than
+   * go on moving the nodes of a board that it can no longer change.
+   */
+  set edits(edits: CanvasEdits | undefined) {
+    this.editsOf = edits;
+    if (edits === undefined && this.drag !== undefined) {
+      this.gestures.cancelDrag();
+    }
+  }
   /** Whether a move or a resize snaps to the board's grid (FR-EDIT-02). */
   snap = true;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
@@ -319,8 +334,8 @@ export class CanvasController implements GestureHost {
     | undefined;
   /** What the canvas places over its nodes in each frame, as the resize handle and the text's editor (follow). */
   private readonly followers = new Set<(rectOf: ScreenRectOf) => void>();
-  /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks (focus). */
-  private focusId: string | undefined;
+  /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
+  private focusing: { id: string; found?: () => void } | undefined;
   private labelsVersion = 0;
   private theme: Theme | undefined;
   private modeValue: Mode = "pan";
@@ -694,6 +709,9 @@ export class CanvasController implements GestureHost {
       revs,
       places: new Map(),
     };
+    // A frame hides the resize handle while the move is under way, though
+    // its first moves leave the nodes where they are, as on the grid.
+    this.invalidate();
     return true;
   }
 
@@ -885,18 +903,20 @@ export class CanvasController implements GestureHost {
    * Selects the node of id and shows it whole, as a link to it asks: once
    * the board's content has been read, in place of the fit or of the view
    * that the canvas restores, or at once, animated, on a canvas placed
-   * already. It reports nothing of a node that the board does not have,
-   * which the canvas then opens as it would without it.
+   * already; and then calls found, as the page opens the node's inspector
+   * then. It calls nothing for a node that the board does not have, which
+   * the canvas then opens as it would without it.
    */
-  focus(id: string): void {
+  focus(id: string, found?: () => void): void {
     if (!this.placed) {
-      this.focusId = id;
+      this.focusing = { id, found };
       this.invalidate();
       return;
     }
     if (this.scene.nodes.get(id) !== undefined) {
       this.select([id], "replace");
       this.zoomToSelection();
+      found?.();
     }
   }
 
@@ -1094,8 +1114,14 @@ export class CanvasController implements GestureHost {
         this.zoomToSelection();
         return true;
       case "deselect": {
-        // Escape is the canvas's while there is a selection to clear, and
-        // else the page's, as of what around the canvas closes with it.
+        // Escape ends a drag under way, cancelled, as a move that it would
+        // else leave to land the nodes that it took out of the selection,
+        // and leaves the selection as it is; else it is the canvas's while
+        // there is a selection to clear, and else the page's, as of what
+        // around the canvas closes with it.
+        if (this.gestures.cancelDrag()) {
+          return true;
+        }
         const had = this.selected.size > 0;
         this.select([], "replace");
         return had;
@@ -1187,10 +1213,10 @@ export class CanvasController implements GestureHost {
       this.saved = undefined;
       // A link to a node opens the canvas on it, selected, in place of
       // either, where the board has it (focus).
+      const focusing = this.focusing;
+      this.focusing = undefined;
       const focus =
-        this.focusId === undefined
-          ? undefined
-          : this.scene.nodes.rect(this.focusId);
+        focusing === undefined ? undefined : this.scene.nodes.rect(focusing.id);
       this.v =
         focus !== undefined
           ? fitTo(focus, this.sz, 48, fitZoom)
@@ -1204,10 +1230,9 @@ export class CanvasController implements GestureHost {
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);
-      const focused = this.focusId;
-      this.focusId = undefined;
-      if (focus !== undefined && focused !== undefined) {
-        this.select([focused], "replace");
+      if (focus !== undefined && focusing !== undefined) {
+        this.select([focusing.id], "replace");
+        focusing.found?.();
       } else if (saved !== undefined && this.selected.size === 0) {
         this.select(
           saved.selection.filter(
