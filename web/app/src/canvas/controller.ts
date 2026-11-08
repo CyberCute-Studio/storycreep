@@ -450,7 +450,10 @@ export class CanvasController implements GestureHost {
    * where it was on the page, and the rest keeps its centre, as a change of
    * the window's does: a message that comes above the canvas covers what
    * the canvas showed of the board under it, rather than move the board,
-   * under a drag's pointer too, by half its height, as the centre would.
+   * under a drag's pointer too, by half its height, as the centre would;
+   * and the pointers that a gesture under way follows stay where they are
+   * on the page with it (Gestures' moved), so that a pan goes on from where
+   * the board is, rather than move it by as much as the top moved.
    */
   setSize(size: Size, resolution: number, moved = 0): void {
     const displayed = size.width > 0 && size.height > 0;
@@ -475,6 +478,11 @@ export class CanvasController implements GestureHost {
         const a = this.animation;
         if (a !== undefined) {
           this.animation = { ...a, from: kept(a.from), to: kept(a.to) };
+        }
+        // The pointers that the gestures follow stay where they are on the
+        // page with the board, at points of the canvas that moved under them.
+        if (moved !== 0) {
+          this.gestures.moved({ x: 0, y: moved });
         }
       }
       this.sz = size;
@@ -984,24 +992,28 @@ export class CanvasController implements GestureHost {
    * after it is asked for: the selection keeps them, though the scene has
    * them not yet, until done settles, rather than drop them as the scene
    * changes before the batch shows them (syncScene), and then drops those
-   * that the scene has not, as of a batch refused, after which a selection
-   * of none but them is the one before them again, of the nodes that the
-   * scene has, rather than none, while one that the user changed meanwhile
-   * keeps what they selected.
+   * that the scene has not, as of a batch refused, or of one that applied
+   * but whose nodes went meanwhile, as once the user deleted them before
+   * its answer came. Once done resolves with false, of a batch refused, a
+   * selection of none but them is the one before them again, of the nodes
+   * that the scene has, rather than none, while one that the user changed
+   * meanwhile keeps what they selected; once it applied, it is never the
+   * one before, which the user did not select again, and whose nodes a
+   * Delete after it would else delete.
    */
-  selectComing(ids: readonly string[], done: Promise<unknown>): void {
+  selectComing(ids: readonly string[], done: Promise<boolean>): void {
     const coming = new Set(ids);
     const before = this.selected;
     this.coming = coming;
     this.select([...ids], "replace");
-    const settled = () => {
+    const settled = (applied: boolean) => {
       if (this.coming === coming) {
         this.coming = new Set();
       }
       const kept = [...this.selected].filter(
         (id) => !coming.has(id) || this.has(id) || this.coming.has(id),
       );
-      if (kept.length === 0 && this.selected.size > 0) {
+      if (!applied && kept.length === 0 && this.selected.size > 0) {
         this.setSelection(
           new Set(
             [...before].filter((id) => this.has(id) || this.coming.has(id)),
@@ -1011,7 +1023,10 @@ export class CanvasController implements GestureHost {
         this.setSelection(new Set(kept));
       }
     };
-    done.then(settled, settled);
+    done.then(
+      (applied) => settled(applied),
+      () => settled(false),
+    );
   }
 
   private setSelection(ids: ReadonlySet<string>): void {

@@ -291,6 +291,65 @@ describe("the canvas's edits", () => {
     );
   });
 
+  // Verifies: NFR-TOUCH-05
+  it("offers the undo of a bulk move for 10 s from the move, rather than for 10 s anew once the board can be changed again after it could not", async () => {
+    const realtime = fakeRealtime();
+    boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    const second = screenOf(canvas, { x: 520, y: 64 });
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      shiftKey: true,
+      ...second,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      shiftKey: true,
+      ...second,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("2"));
+    const from = screenOf(canvas, { x: 120, y: 64 });
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: from.clientX + 100 * zoom, clientY: from.clientY };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...from });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    await screen.findByText("Moved 2 nodes.");
+    // The project is archived, and its archive lifted 11 s later.
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "project.archive", payload: {} }],
+        [{ id: testProject.id, rev: 2 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("group", { name: "Edit the board" }),
+      ).toBeNull(),
+    );
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 11_000);
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "project.unarchive", payload: {} }],
+        [{ id: testProject.id, rev: 3 }],
+      ),
+    );
+    await screen.findByRole("group", { name: "Edit the board" });
+    expect(screen.queryByText("Moved 2 nodes.")).toBeNull();
+  });
+
   it("offers no undo of a bulk move whose batch added none to the history, whose undo would be of the change before it", async () => {
     const calls = boardPage(
       [testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)],

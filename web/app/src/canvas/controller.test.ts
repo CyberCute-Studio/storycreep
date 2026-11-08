@@ -433,6 +433,34 @@ describe("the canvas's controller", () => {
     expect(c.viewport().y).toBeCloseTo(250 - 290 / 2);
   });
 
+  it("pans on by what the pointer moves as the canvas's top moves down the page under a pan, rather than by as much as the top moved too", () => {
+    const { c, time } = setUp();
+    placed(c, time);
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    const middle = {
+      id: 1,
+      x: 500,
+      y: 300,
+      kind: "mouse" as const,
+      button: 1,
+      buttons: 4,
+      shift: false,
+      additive: false,
+    };
+    c.down(middle);
+    c.gestures.move({ ...middle, y: 320 });
+    // The board's point 300 is under the pointer, at 320 of the canvas.
+    expect(c.viewport().y).toBe(-20);
+    // A message 60 px high comes above the canvas: the pointer, still on
+    // the page, is at 260 of the canvas, over the same point of the board.
+    c.setSize({ width: 1000, height: 540 }, 1, 60);
+    expect(c.viewport().y).toBe(40);
+    // It moves 10 px down the page, to 270 of the canvas, and the point
+    // goes with it.
+    c.gestures.move({ ...middle, y: 270 });
+    expect(c.viewport().y + 270).toBe(300);
+  });
+
   it("keeps the board's centre where it is through a size of none, as of a host that the page does not display, and a move's meanwhile", () => {
     const { c, time } = setUp();
     placed(c, time);
@@ -1069,6 +1097,32 @@ describe("the canvas's controller of a board that may be changed", () => {
     refuseAgain();
     await again;
     expect([...c.selection()]).toEqual(["nd_4"]);
+  });
+
+  it("selects none of what was selected before the nodes of a batch that applied, though they went before it settled, as once the user deleted them", async () => {
+    const { c, time } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_4", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1", "nd_4"], "replace");
+    let apply = () => {};
+    const done = new Promise<boolean>((resolve) => {
+      apply = () => resolve(true);
+    });
+    c.selectComing(["nd_2"], done);
+    // The copy shows, and the user deletes it before the batch's answer.
+    c.sync(
+      docOf([
+        testNode("nd_1", 0, 0),
+        testNode("nd_2", 32, 32),
+        testNode("nd_4", 400, 0),
+      ]),
+      false,
+    );
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_4", 400, 0)]), false);
+    apply();
+    await done;
+    expect([...c.selection()]).toEqual([]);
   });
 
   it("starts no move of a node that is not selected, nor on a board that may not be changed", () => {

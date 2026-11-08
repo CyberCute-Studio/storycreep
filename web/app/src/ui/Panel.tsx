@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useCallback,
   useId,
   useLayoutEffect,
   useRef,
@@ -177,6 +178,17 @@ export function Panel({
   const sheet = !useDocked();
   const frame = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  // The heading's own ref and the page's, set once as it mounts, rather
+  // than taken away and set again as the panel renders anew.
+  const setHeading = useCallback(
+    (element: HTMLHeadingElement | null) => {
+      heading.current = element;
+      if (headingRef !== undefined) {
+        headingRef.current = element;
+      }
+    },
+    [headingRef],
+  );
   const back = useRef(returnFocus);
   back.current = returnFocus;
   useLayoutEffect(() => {
@@ -272,12 +284,7 @@ export function Panel({
           <div className="min-w-0 flex-1">
             <h2
               id={titleId}
-              ref={(element) => {
-                heading.current = element;
-                if (headingRef !== undefined) {
-                  headingRef.current = element;
-                }
-              }}
+              ref={setHeading}
               tabIndex={-1}
               className="text-xl font-semibold break-words"
             >

@@ -97,14 +97,18 @@ export function useCanvasActions(
     const send = async (batch: Command[]): Promise<boolean> =>
       (await sendOne(batch)) !== undefined;
     /**
-     * The nodes of ids that the board has, as nodesOf returns them, or
-     * undefined for more than a colour, a tag, or a duplicate changes at
-     * once (maxEdited), which the canvas's controls do not offer, so that
-     * nothing is sent of them.
+     * Edits the nodes of ids that the board has, as nodesOf returns them,
+     * by edit, and resolves with whether it applied, but for more than a
+     * colour, a tag, or a duplicate changes at once (maxEdited), which the
+     * canvas's controls do not offer, of which it sends nothing, and
+     * resolves with false.
      */
-    const editedOf = (ids: Iterable<string>): string[] | undefined => {
+    const editing = (
+      ids: Iterable<string>,
+      edit: (nodes: string[]) => Promise<boolean>,
+    ): Promise<boolean> => {
       const nodes = nodesOf(ids).map((n) => n.id);
-      return nodes.length > maxEdited ? undefined : nodes;
+      return nodes.length > maxEdited ? Promise.resolve(false) : edit(nodes);
     };
     /**
      * Moves the nodes of places there, in one batch, expecting the
@@ -182,19 +186,17 @@ export function useCanvasActions(
        * yet (selectComing).
        */
       duplicate(ids: readonly string[]): Promise<boolean> {
-        const nodes = editedOf(ids);
-        if (nodes === undefined) {
-          return Promise.resolve(false);
-        }
-        const { batch, copies } = duplicateBatch(view(), nodes, {
-          x: offset,
-          y: offset,
+        return editing(ids, (nodes) => {
+          const { batch, copies } = duplicateBatch(view(), nodes, {
+            x: offset,
+            y: offset,
+          });
+          const sent = send(batch);
+          if (copies.length > 0) {
+            controller.selectComing(copies, sent);
+          }
+          return sent;
         });
-        const sent = send(batch);
-        if (copies.length > 0) {
-          controller.selectComing(copies, sent);
-        }
-        return sent;
       },
       /** Aligns the nodes of ids as how says, in one batch. */
       async align(ids: readonly string[], how: Alignment): Promise<boolean> {
@@ -209,13 +211,11 @@ export function useCanvasActions(
       },
       /** Gives the nodes of ids color, each that has another, of at most maxEdited of them. */
       color(ids: readonly string[], color: PaletteColor): Promise<boolean> {
-        const nodes = editedOf(ids);
-        if (nodes === undefined) {
-          return Promise.resolve(false);
-        }
-        return send(
-          updateBatch(view(), nodes, (node) =>
-            node.color === color ? undefined : { color },
+        return editing(ids, (nodes) =>
+          send(
+            updateBatch(view(), nodes, (node) =>
+              node.color === color ? undefined : { color },
+            ),
           ),
         );
       },
@@ -226,31 +226,27 @@ export function useCanvasActions(
        * other node (FR-EDIT-06).
        */
       addTag(ids: readonly string[], tag: string): Promise<boolean> {
-        const nodes = editedOf(ids);
-        if (nodes === undefined) {
-          return Promise.resolve(false);
-        }
         // The tag folded once, rather than for each node.
         const has = hasTagOf(tag);
-        return send(
-          updateBatch(view(), nodes, (node) =>
-            has(node) || node.tags.length >= maxTags
-              ? undefined
-              : { tags: [...node.tags, tag] },
+        return editing(ids, (nodes) =>
+          send(
+            updateBatch(view(), nodes, (node) =>
+              has(node) || node.tags.length >= maxTags
+                ? undefined
+                : { tags: [...node.tags, tag] },
+            ),
           ),
         );
       },
       /** Takes tag from the nodes of ids, each that has it, whatever its case. */
       removeTag(ids: readonly string[], tag: string): Promise<boolean> {
-        const nodes = editedOf(ids);
-        if (nodes === undefined) {
-          return Promise.resolve(false);
-        }
         const has = hasTagOf(tag);
         const without = withoutTagOf(tag);
-        return send(
-          updateBatch(view(), nodes, (node) =>
-            has(node) ? { tags: without(node.tags) } : undefined,
+        return editing(ids, (nodes) =>
+          send(
+            updateBatch(view(), nodes, (node) =>
+              has(node) ? { tags: without(node.tags) } : undefined,
+            ),
           ),
         );
       },

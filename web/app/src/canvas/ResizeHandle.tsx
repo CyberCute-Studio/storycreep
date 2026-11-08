@@ -5,10 +5,11 @@
 // canvas pans and zooms, and which covers a quarter of the node's width and
 // of its height at most, beyond the corner of a node that the zoom draws
 // small, so that a press on the rest of the node moves it, or taps it, as
-// it would without a handle, rather than resize it (handlePlace). A press
-// of it is the canvas's, which follows its pointer as it does every
-// pointer, by the canvas's gestures, rather than by a drag of the handle's
-// own: its drag, of a finger, a pen's tip, or a mouse's primary button,
+// it would without a handle, rather than resize it (handlePlace), as a
+// press of the part of it beyond the node, on another node there, as at a
+// low zoom, is that node's (Gestures' down). A press of it is the
+// canvas's, which follows its pointer as it does every pointer, by the
+// canvas's gestures, rather than by a drag of the handle's own: its drag, of a finger, a pen's tip, or a mouse's primary button,
 // from 8 px of its press, or a mouse's 4 (NFR-TOUCH-05), resizes the node,
 // on the board's grid where the canvas snaps, with its corner under the
 // pointer however the board moves under it, and its release sends the

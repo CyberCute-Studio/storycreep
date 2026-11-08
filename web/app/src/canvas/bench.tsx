@@ -11,7 +11,8 @@
 // back, twice a second, as a drag of it does once it lands, and measures
 // each edit, from the batch that the canvas sends to the end of the frame
 // that draws the node where the batch put it, as the document shows the
-// batch before the server answers it (NFR-PERF-06).
+// batch before the server answers it (NFR-PERF-06), and puts the node back
+// where it was as it ends, so that the fixture is left as it was.
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import { useEffect, useState } from "react";
@@ -267,6 +268,19 @@ export default function Bench({
     let editStep = gridSize;
     // The node that the edits move, once one is picked, while it is in view.
     let editTarget: string | undefined;
+    // The node that the last edit moved a step away from where it was, and
+    // where that was, which the run moves it back to as it picks another,
+    // or as it ends, so that the fixture, which the runs after it measure,
+    // and the instance of the reference tablet keeps, has its nodes where
+    // they were: unmeasured, and waited for before the run says it is done.
+    let displaced: { id: string; from: Point } | undefined;
+    const putBack = (): Promise<unknown> => {
+      const d = displaced;
+      displaced = undefined;
+      return d === undefined || edit === undefined
+        ? Promise.resolve()
+        : edit(new Map([[d.id, d.from]]));
+    };
     const finish = () => {
       ended = true;
       stop();
@@ -274,7 +288,7 @@ export default function Bench({
       window.clearInterval(editTimer);
       const mark = performance.getEntriesByName(renderedMark)[0];
       const inView = statsOf(visible);
-      setResult({
+      const measured: BenchResult = {
         scenario,
         seconds: options.seconds,
         renderer: handle.kind(),
@@ -301,8 +315,12 @@ export default function Bench({
         ...(scenario === "edit"
           ? { edit: { ...statsOf(edits), count: edits.length } }
           : {}),
-      });
-      setPhase("done");
+      };
+      const done = () => {
+        setResult(measured);
+        setPhase("done");
+      };
+      void putBack().then(done, done);
     };
     const areaOf = () =>
       options.area ??
@@ -423,6 +441,7 @@ export default function Bench({
             });
             editTarget = target?.id;
             editStep = gridSize;
+            void putBack();
           }
           if (target === undefined) {
             return;
@@ -433,6 +452,8 @@ export default function Bench({
             x: target.position.x + editStep,
             y: target.position.y,
           });
+          displaced =
+            editStep > 0 ? { id: target.id, from: target.position } : undefined;
           editStep = -editStep;
           const sent = { id: target.id, to, sent: performance.now() };
           pendingEdit = sent;

@@ -158,11 +158,13 @@ function tagsOfScene(scene: Scene): () => string[] {
 
 /**
  * The undo of the bulk move that the canvas made last, which it offers for
- * a while after it joined the history (NFR-TOUCH-05), until another step
- * joins or leaves it, as once the user changed or undid anything else,
- * whose undo it would else be; and which it does not send while a batch of
- * the page's is under way, which the undo would wait for to join the
- * history, and then undo in place of the move (ProjectDocument's undo).
+ * a while from when it joined the history (NFR-TOUCH-05), though the board
+ * could not be changed for some of it, as while the project was archived,
+ * rather than for as long anew once it can be again, and until another
+ * step joins or leaves it, as once the user changed or undid anything
+ * else, whose undo it would else be; and which it does not send while a
+ * batch of the page's is under way, which the undo would wait for to join
+ * the history, and then undo in place of the move (ProjectDocument's undo).
  */
 function UndoMove({
   projectId,
@@ -171,7 +173,7 @@ function UndoMove({
   onDone,
 }: {
   projectId: string;
-  moved: { key: number; count: number; version: number };
+  moved: { key: number; count: number; version: number; until: number };
   history: HistoryOf;
   /** Stops offering the undo of the move of key, and of no move after it. */
   onDone: (key: number) => void;
@@ -182,15 +184,18 @@ function UndoMove({
   // The history's version, rather than how many steps it has, which a step
   // that joins a history that holds as many as it keeps leaves as they were.
   const stale = history.version !== moved.version;
-  const { key } = moved;
-  useEffect(() => {
-    if (stale) {
+  const { key, until } = moved;
+  // Before the browser paints the offer, so that one whose time is up, as
+  // it comes back once the board can be changed again, is not shown.
+  useLayoutEffect(() => {
+    const left = until - Date.now();
+    if (stale || left <= 0) {
       onDone(key);
       return;
     }
-    const timer = setTimeout(() => onDone(key), undoMoveTime);
+    const timer = setTimeout(() => onDone(key), left);
     return () => clearTimeout(timer);
-  }, [stale, onDone, key]);
+  }, [stale, onDone, key, until]);
   if (stale) {
     return null;
   }
@@ -394,6 +399,8 @@ function BoardCanvasOf({
     key: number;
     count: number;
     version: number;
+    /** When the offer ends, by Date.now(). */
+    until: number;
   }>();
   // How many bulk moves the canvas offered the undo of, which keys each.
   const moves = useRef(0);
@@ -594,6 +601,7 @@ function BoardCanvasOf({
                   key: ++moves.current,
                   count,
                   version: doc.store.getState().historyVersion,
+                  until: Date.now() + undoMoveTime,
                 });
               }
             });
