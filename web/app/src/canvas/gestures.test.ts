@@ -571,3 +571,111 @@ describe("the canvas's gestures", () => {
     expect(state.banded.at(-1)).toEqual({ x: 0, y: 0, width: 50, height: 50 });
   });
 });
+
+describe("the canvas's gestures of a board that may be changed", () => {
+  // Verifies: NFR-TOUCH-05
+  it("moves the selection by a finger's drag that starts on a selected node, once it has moved 8 px, and taps rather than moves before", () => {
+    const { state, gestures } = host("pan", true);
+    state.selected = ["nd_a"];
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 155, 154));
+    expect(state.moves).toEqual([]);
+    gestures.up(touch(1, 155, 154));
+    // Under the threshold, it was a tap, which selects the node.
+    expect(state.moves).toEqual([]);
+    expect(state.selects.at(-1)).toEqual({ ids: ["nd_a"], how: "replace" });
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 160, 150));
+    gestures.move(touch(1, 190, 170));
+    gestures.up(touch(1, 190, 170));
+    expect(state.moves).toEqual([
+      { start: "nd_a" },
+      { to: { x: 10, y: 0 } },
+      { to: { x: 40, y: 20 } },
+      { to: { x: 40, y: 20 } },
+      { end: true },
+    ]);
+    // The board did not pan.
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+  });
+
+  it("pans by a drag that starts on a node that is not selected in the pan mode, and selects and moves it in the select mode", () => {
+    const pan = host("pan", true);
+    pan.gestures.down(touch(1, 150, 150));
+    pan.gestures.move(touch(1, 200, 150));
+    pan.gestures.up(touch(1, 200, 150));
+    expect(pan.state.moves).toEqual([]);
+    expect(pan.state.v.x).toBe(-50);
+    const select = host("select", true);
+    select.gestures.down(mouse(150, 150, { shift: true }));
+    select.gestures.move(mouse(170, 150, { shift: true }));
+    select.gestures.up(mouse(170, 150, { shift: true }));
+    expect(select.state.selects).toEqual([{ ids: ["nd_a"], how: "add" }]);
+    expect(select.state.moves.at(0)).toEqual({ start: "nd_a" });
+    expect(select.state.moves.at(-1)).toEqual({ end: true });
+    // A drag that starts on the empty board draws a rubber band still.
+    select.gestures.down(mouse(500, 500));
+    select.gestures.move(mouse(520, 520));
+    expect(select.state.bands.at(-1)).toEqual({
+      x: 500,
+      y: 500,
+      width: 20,
+      height: 20,
+    });
+  });
+
+  it("moves nothing on a board that may not be changed, nor with the middle button or Space, which pan", () => {
+    const locked = host("select", false);
+    locked.state.selected = ["nd_a"];
+    locked.gestures.down(mouse(150, 150));
+    locked.gestures.move(mouse(200, 200));
+    expect(locked.state.moves).toEqual([]);
+    expect(locked.state.bands.at(-1)).toBeDefined();
+    const open = host("select", true);
+    open.state.selected = ["nd_a"];
+    open.gestures.setSpace(true);
+    open.gestures.down(mouse(150, 150));
+    open.gestures.move(mouse(200, 150));
+    expect(open.state.moves).toEqual([]);
+    expect(open.state.v.x).toBe(-50);
+  });
+
+  it("ends a move, where it started, as a second finger pinches, or the press is cancelled", () => {
+    const { state, gestures } = host("pan", true);
+    state.selected = ["nd_a"];
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 200, 150));
+    gestures.down(touch(2, 400, 400));
+    expect(state.moves.at(-1)).toEqual({ end: false });
+    gestures.up(touch(1, 200, 150));
+    gestures.up(touch(2, 400, 400));
+    state.moves = [];
+    gestures.down(touch(1, 150, 150));
+    gestures.move(touch(1, 200, 150));
+    gestures.cancel({ id: 1 });
+    expect(state.moves.at(-1)).toEqual({ end: false });
+  });
+
+  it("opens a node by a second tap on it soon after the first, but not by a tap that adds to the selection, nor one that comes late", () => {
+    const { state, gestures } = host("pan", true);
+    gestures.down(touch(1, 150, 150));
+    gestures.up(touch(1, 150, 150));
+    state.now = 300;
+    gestures.down(touch(1, 152, 151));
+    gestures.up(touch(1, 152, 151));
+    expect(state.opened).toEqual(["nd_a"]);
+    // A third tap starts anew.
+    state.now = 400;
+    gestures.down(touch(1, 150, 150));
+    gestures.up(touch(1, 150, 150));
+    expect(state.opened).toEqual(["nd_a"]);
+    state.now = 1000;
+    gestures.down(touch(1, 150, 150));
+    gestures.up(touch(1, 150, 150));
+    expect(state.opened).toEqual(["nd_a"]);
+    state.now = 1100;
+    gestures.down(mouse(150, 150, { shift: true }));
+    gestures.up(mouse(150, 150, { shift: true }));
+    expect(state.opened).toEqual(["nd_a"]);
+  });
+});

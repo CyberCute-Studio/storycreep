@@ -719,3 +719,174 @@ describe("the canvas's controller", () => {
     expect(events.zooms).toEqual([1, 0.5]);
   });
 });
+
+/** Gives c edits that record what it asks the page to change. */
+function editsOf(c: CanvasController) {
+  const asked = {
+    moves: [] as Map<string, { x: number; y: number }>[],
+    sizes: [] as { id: string; size: { width: number; height: number } }[],
+    removed: [] as string[][],
+    opened: [] as string[],
+  };
+  c.edits = {
+    move: (places) => asked.moves.push(new Map(places)),
+    resize: (id, size) => asked.sizes.push({ id, size }),
+    remove: (ids) => asked.removed.push([...ids]),
+    open: (id) => asked.opened.push(id),
+  };
+  return asked;
+}
+
+describe("the canvas's controller of a board that may be changed", () => {
+  // Verifies: FR-EDIT-02/AC2
+  it("shows a move of the selection at once, without a command, and asks for one batch of where it left the nodes, on the grid", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    const doc = docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    c.sync(doc, false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1", "nd_2"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 13, y: 3 });
+    // The scene has the nodes where the drag has them, on the grid.
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 16, y: 0 });
+    expect(c.scene.nodes.get("nd_2")?.node.position).toEqual({ x: 416, y: 0 });
+    expect(asked.moves).toEqual([]);
+    c.moveEnd(true);
+    expect(asked.moves).toEqual([
+      new Map([
+        ["nd_1", { x: 16, y: 0 }],
+        ["nd_2", { x: 416, y: 0 }],
+      ]),
+    ]);
+    // Until the document has the move, the scene shows it as the document
+    // has it.
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
+  });
+
+  it("moves freely where it does not snap, and back where it started once cancelled", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.snap = false;
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    c.moveStart("nd_1");
+    c.moveTo({ x: 13.333, y: 3 });
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({
+      x: 13.33,
+      y: 3,
+    });
+    c.moveEnd(false);
+    expect(asked.moves).toEqual([]);
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
+  });
+
+  it("starts no move of a node that is not selected, nor on a board that may not be changed", () => {
+    const { c, time } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(false);
+    editsOf(c);
+    c.select([], "replace");
+    expect(c.moveStart("nd_1")).toBe(false);
+  });
+
+  it("resizes a node by its handle's move, in pixels of the canvas at its zoom, and asks for its size once the handle is let go", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.setViewport({ x: 0, y: 0, zoom: 2 });
+    expect(c.resizeStart("nd_1")).toBe(true);
+    // 60 pixels at 200% are 30 units, which snap to 32.
+    c.resizeTo({ x: 60, y: 0 });
+    expect(c.scene.nodes.rect("nd_1")).toEqual({
+      x: 0,
+      y: 0,
+      width: 272,
+      height: 128,
+    });
+    c.resizeEnd(true);
+    expect(asked.sizes).toEqual([
+      { id: "nd_1", size: { width: 272, height: 128 } },
+    ]);
+    // A resize that ends where it started asks for nothing.
+    c.resizeStart("nd_1");
+    c.resizeTo({ x: 1, y: 1 });
+    c.resizeEnd(true);
+    expect(asked.sizes).toHaveLength(1);
+  });
+
+  // Verifies: FR-EDIT-06/AC1
+  it("dims the nodes that the tag filter does not match, in the frame and in what it tells, and changes nothing of the board", () => {
+    const { c, time, host, frames } = setUp();
+    const asked = editsOf(c);
+    const doc = docOf([
+      testNode("nd_1", 0, 0, { tags: ["Quest"] }),
+      testNode("nd_2", 400, 0),
+      testNode("nd_3", 800, 0),
+    ]);
+    c.sync(doc, false);
+    c.setReady();
+    time.tick();
+    expect(host.dataset.dimmed).toBe("0");
+    const dims = (node: { tags: string[] }) => !node.tags.includes("Quest");
+    c.setDimmed(dims);
+    time.tick();
+    expect(host.dataset.dimmed).toBe("2");
+    const f = frames.at(-1);
+    expect(f?.dimmed).toBe(dims);
+    expect(host.dataset.nodes).toBe("3");
+    c.setDimmed(undefined);
+    time.tick();
+    expect(host.dataset.dimmed).toBe("0");
+    expect(asked).toEqual({ moves: [], sizes: [], removed: [], opened: [] });
+  });
+
+  it("opens on a node that a link names, selected and shown whole, in place of the view that it would restore", () => {
+    const { c, time, events } = setUp();
+    c.restore({
+      viewport: { x: 100, y: 50, zoom: 2 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    c.focus("nd_2");
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]), false);
+    c.setReady();
+    time.tick();
+    expect([...c.selection()]).toEqual(["nd_2"]);
+    expect(events.selections.at(-1)).toBe(1);
+    // At 100%, the node's centre at the canvas's.
+    expect(c.viewport()).toEqual({ x: 4000 + 120 - 500, y: 64 - 300, zoom: 1 });
+  });
+
+  it("deletes the selection with Delete, and opens the one selected with Enter, on a board that may be changed", () => {
+    const { c, time } = setUp();
+    const key = (k: string) => ({
+      key: k,
+      code: k,
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+    });
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1"], "replace");
+    expect(c.key(key("Delete"))).toBe(false);
+    const asked = editsOf(c);
+    expect(c.key(key("Enter"))).toBe(true);
+    expect(asked.opened).toEqual(["nd_1"]);
+    c.select(["nd_2"], "add");
+    expect(c.key(key("Enter"))).toBe(false);
+    expect(c.key(key("Backspace"))).toBe(true);
+    expect(asked.removed).toEqual([["nd_1", "nd_2"]]);
+  });
+});
