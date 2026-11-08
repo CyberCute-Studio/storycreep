@@ -54,7 +54,9 @@ export function onBoard(p: Point): Point {
  * place moved by delta, on the grid where snap is on, and the others move by
  * as much as it did, so that they keep their places relative to it, as one
  * batch moves them all (AC2). Only the nodes that move are in it, so that a
- * drag that comes back where it started moves none.
+ * drag that comes back where it started moves none, as an axis that the drag
+ * left as it was does not snap, of a node off the grid, as one that the
+ * inspector placed.
  */
 export function movedBy(
   start: ReadonlyMap<string, Point>,
@@ -63,8 +65,8 @@ export function movedBy(
   snap: boolean,
 ): Map<string, Point> {
   const to = {
-    x: snapped(anchor.x + delta.x, snap),
-    y: snapped(anchor.y + delta.y, snap),
+    x: delta.x === 0 ? anchor.x : snapped(anchor.x + delta.x, snap),
+    y: delta.y === 0 ? anchor.y : snapped(anchor.y + delta.y, snap),
   };
   const dx = to.x - anchor.x;
   const dy = to.y - anchor.y;
@@ -96,14 +98,19 @@ function shifted(n: number, d: number): number {
 /**
  * Returns the size that a resize of a node of size from gives it once its
  * corner moved by delta, in units of the board: on the grid where snap is
- * on, and no smaller than minSize, nor larger than the server takes.
+ * on, and no smaller than minSize, nor larger than the server takes, but for
+ * a side that the drag left as it was, which keeps its size, as one off the
+ * grid that the inspector gave it, so that a drag that comes back where it
+ * started sizes nothing.
  */
 export function resizedBy(from: Size, delta: Point, snap: boolean): Size {
-  const side = (n: number, least: number) =>
-    Math.max(least, Math.min(sizeLimit, snapped(n, snap)));
+  const side = (was: number, d: number, least: number) =>
+    d === 0
+      ? was
+      : Math.max(least, Math.min(sizeLimit, snapped(was + d, snap)));
   return {
-    width: side(from.width + delta.x, minSize.width),
-    height: side(from.height + delta.y, minSize.height),
+    width: side(from.width, delta.x, minSize.width),
+    height: side(from.height, delta.y, minSize.height),
   };
 }
 

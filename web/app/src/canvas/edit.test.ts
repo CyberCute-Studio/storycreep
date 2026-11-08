@@ -77,6 +77,12 @@ describe("the canvas's edits", () => {
     // A drag that comes back where it started moves none.
     expect(movedBy(start, { x: 3, y: 5 }, { x: 1, y: -1 }, false).size).toBe(2);
     expect(movedBy(start, { x: 8, y: 8 }, { x: 1, y: -2 }, true).size).toBe(0);
+    // Nor one of a node off the grid, as one that the inspector placed: an
+    // axis that the drag left as it was does not snap.
+    expect(movedBy(start, { x: 3, y: 5 }, { x: 0, y: 0 }, true).size).toBe(0);
+    expect(
+      movedBy(start, { x: 3, y: 5 }, { x: 30, y: 0 }, true).get("nd_a"),
+    ).toEqual({ x: 32, y: 5 });
   });
 
   it("keeps a move within the board's limits", () => {
@@ -114,6 +120,14 @@ describe("the canvas's edits", () => {
     expect(
       resizedBy({ width: 240, height: 128 }, { x: 0.556, y: 0 }, false),
     ).toEqual({ width: 240.56, height: 128 });
+    // A side that the drag left as it was keeps its size, off the grid, as
+    // the inspector gives one, so that a drag that comes back sizes nothing.
+    expect(
+      resizedBy({ width: 250, height: 130 }, { x: 0, y: 0 }, true),
+    ).toEqual({ width: 250, height: 130 });
+    expect(
+      resizedBy({ width: 250, height: 130 }, { x: 20, y: 0 }, true),
+    ).toEqual({ width: 272, height: 130 });
   });
 
   it("aligns the nodes' edges, centres, and middles, moving only those that are not there", () => {

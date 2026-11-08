@@ -671,13 +671,22 @@ function Tags({
         )
       ).body.items,
     staleTime: 30_000,
+    // A prefix with a character that the server refuses in a tag, as a tab
+    // pasted in, which no tag starts with, and which it would refuse the
+    // request for, is not asked for: the field says so as the tag is added.
+    enabled: !hasControlIn(prefix),
   });
   const ids = nodes.map((n) => n.id);
   // The selection that the field is for now, which a tag refused for
-  // another, before the user selected this one, is not put back in.
+  // another, before the user selected this one, is not put back in, and
+  // what the field said of the tag added to another, as of its nodes that
+  // have the most tags, it says no longer.
   const forIds = useMemo(() => nodes.map((n) => n.id).join(" "), [nodes]);
   const shownFor = useRef(forIds);
   useEffect(() => {
+    if (shownFor.current !== forIds) {
+      setProblem(undefined);
+    }
     shownFor.current = forIds;
   }, [forIds]);
   // The tags, and how many of the nodes have each, found once for each

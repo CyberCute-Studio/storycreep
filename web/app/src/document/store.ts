@@ -185,9 +185,8 @@ function refusedForGood(error: unknown): boolean {
 
 /**
  * A batch of the page's own made while a step of the history is under way,
- * which waits to be queued until the step has settled (afterSteps), or a
- * batch of a change sent as one that waits for the one before it to apply
- * (sendParts), which the page shows meanwhile, on top of the batches queued.
+ * which waits to be queued until the step has settled (afterSteps), and
+ * which the page shows meanwhile, on top of the batches queued.
  */
 interface Waiting {
   commands: readonly Command[];
@@ -264,6 +263,12 @@ interface Entry {
    * (FR-EDIT-08 AC4).
    */
   step: boolean;
+  /**
+   * The change sent as one that the batch is a part of (sendJoined), queued
+   * with the others, which the pump sends no more of once one of them does
+   * not apply, or none.
+   */
+  change?: object;
   sent: boolean;
   answer?: CommandResultBody;
   /** What the document held of the entities that the batch changed, before its operation applied. */
@@ -481,6 +486,23 @@ function moved(
     return command;
   }
   return { ...command, expected_rev: { ...expected, [id]: after } };
+}
+
+/** Returns command with what it expects of each entity of moves moved, as moved moves one, from its move's from to its to. */
+function movedAll(
+  command: CommandBody,
+  moves: ReadonlyMap<string, { from: number; to: number }>,
+): CommandBody {
+  const expected = command.expected_rev as Record<string, number> | undefined;
+  let out: Record<string, number> | undefined;
+  for (const [id, rev] of Object.entries(expected ?? {})) {
+    const move = moves.get(id);
+    if (move !== undefined && rev === move.from) {
+      out ??= { ...expected };
+      out[id] = move.to;
+    }
+  }
+  return out === undefined ? command : { ...command, expected_rev: out };
 }
 
 /**
@@ -2222,10 +2244,8 @@ export class ProjectDocument {
    */
   send(commands: readonly Command[]): Promise<CommandResultBody> {
     return this.settling(
-      this.afterSteps([commands], (held) =>
-        this.sendBatch(commands, held?.[0]),
-      ),
-    );
+      this.afterSteps([commands], (held) => this.sendParts([commands], held)),
+    ).then((answers) => answers[0]);
   }
 
   /**
@@ -2234,14 +2254,17 @@ export class ProjectDocument {
    * applies one, in turn, each once the one before has applied, resolving
    * with their answers, or rejecting with the refusal of the first that is
    * refused, which sends no more of them, while those before it stay
-   * applied, as the server applies no batches together. The page shows them
-   * all at once, as made at one time, each on top of what is queued until
-   * it is queued in its turn, as those that wait for a step are (waiting),
-   * rather than each once the one before has been answered, and no longer
-   * those after one that is refused. Their undos join the history as one
-   * step, which undoes them all, the last first, rather than as a step for
-   * each, of which an undo would take back the last alone; an undo or a
-   * redo asked for meanwhile waits for them all.
+   * applied, as the server applies no batches together. They are queued at
+   * once, one after another, so that a batch that the page makes after them,
+   * on what it shows of them, as a drag of the copies that they make, is
+   * sent after them all, rather than between two of them, which would leave
+   * it under the rest, as shown, and written over by them, as sent, or
+   * refused for what they have yet to make; the page shows them all at once,
+   * as made at one time, and no longer those after one that is refused.
+   * Their undos join the history as one step, which undoes them all, the
+   * last first, rather than as a step for each, of which an undo would take
+   * back the last alone; an undo or a redo asked for meanwhile waits for
+   * them all.
    */
   sendJoined(
     batches: readonly (readonly Command[])[],
@@ -2321,64 +2344,44 @@ export class ProjectDocument {
     return held.time;
   }
 
-  /** Sends a batch as send does, which held showed while it waited, if anything did, adding its undo to the history once it has applied. */
-  private async sendBatch(
-    commands: readonly Command[],
-    held?: Waiting,
-  ): Promise<CommandResultBody> {
-    const sent = await this.enqueue(
-      commands,
-      conflictRetries,
-      false,
-      this.queued(held),
-    );
-    this.recorded(sent);
-    return sent.answer;
-  }
-
   /**
-   * Sends batches as sendJoined does, each after the one before has applied,
-   * which held showed while they waited for a step, if anything did, and
-   * which are otherwise made now: those after the first are shown on top of
-   * what is queued (waiting) until each is queued, and those left once one
-   * is refused are shown no longer. The undo of each that applied joins the
-   * step of those before it, while that is the latest step, as it is but
-   * where a batch of the page's made while the one before was under way
-   * applied between them, or the history was forgotten meanwhile, as of a
-   * database restored from an older backup, after which those after it join
+   * Sends batches as send and sendJoined do, the batch of a change or those
+   * of a change sent as one, queued at once, one after another, each as made
+   * at the time that held showed it with while they waited for a step, if
+   * anything did, and otherwise now, so that nothing that the page makes
+   * after them comes between them, and the pump sends no more of them once
+   * one does not apply (Entry.change). The undo of each that applied joins
+   * the step of those before it, while that is the latest step and the
+   * server's seq has not gone back since, as of a database restored from an
+   * older backup, which forgets the history, after which those after it join
    * its own.
    */
   private async sendParts(
     batches: readonly (readonly Command[])[],
     held?: readonly Waiting[],
   ): Promise<CommandResultBody[]> {
-    let shown = held;
-    if (shown === undefined) {
-      const time = this.now();
-      shown = batches.map((commands) => ({ commands, time }));
-      // The first is queued at once, which shows it.
-      this.waiting.push(...shown.slice(1));
-    }
+    const time = this.now();
+    const change = batches.length > 1 ? {} : undefined;
+    const sending = batches.map((commands, i) => {
+      const sent = this.enqueue(
+        commands,
+        conflictRetries,
+        false,
+        this.queued(held?.[i]) ?? time,
+        change,
+      );
+      // The change is refused with the refusal of the first of them that is
+      // (below), and those after it, which are never sent, with it too.
+      sent.catch(() => {});
+      return sent;
+    });
     const answers: CommandResultBody[] = [];
     // The batch of the step that the parts join, once one has one.
     let joined: Joined | undefined;
-    try {
-      for (const [i, commands] of batches.entries()) {
-        const sent = await this.enqueue(
-          commands,
-          conflictRetries,
-          false,
-          this.queued(shown[i]),
-        );
-        answers.push(sent.answer);
-        joined = this.recorded(sent, joined);
-      }
-    } finally {
-      const left = new Set<Waiting>(shown);
-      if (this.waiting.some((w) => left.has(w))) {
-        this.waiting = this.waiting.filter((w) => !left.has(w));
-        this.show();
-      }
+    for (const part of sending) {
+      const sent = await part;
+      answers.push(sent.answer);
+      joined = this.recorded(sent, joined);
     }
     return answers;
   }
@@ -2692,12 +2695,13 @@ export class ProjectDocument {
     }
   }
 
-  /** Queues a batch, made at time, or now, which the page shows at once, a step of the history or not (Entry.step), and resolves with its answer. */
+  /** Queues a batch, made at time, or now, which the page shows at once, a step of the history or not (Entry.step), a part of change or not (Entry.change), and resolves with its answer. */
   private enqueue(
     commands: readonly Command[],
     retries: number,
     step: boolean,
     time = this.now(),
+    change?: object,
   ): Promise<Sent> {
     const key = JSON.stringify(commands);
     // A batch the same as one that is queued or under way, as once a change
@@ -2753,6 +2757,7 @@ export class ProjectDocument {
         retries,
         known: again?.known,
         step,
+        change,
         sent: false,
         resolve: (answer, restores) =>
           resolve({
@@ -2897,13 +2902,23 @@ export class ProjectDocument {
           }
         }
       }
-      this.entries = this.entries.filter((e) => e !== entry);
-      this.show();
-      entry.reject(
-        conflictOf(error)
-          ? new ConflictError(error, this.overlaps(entry, error))
-          : error,
+      // The parts of a change sent as one queued after the batch are sent no
+      // more, as the change stops at the first of them that does not apply,
+      // and the page shows them no longer (sendJoined).
+      const rest = new Set(
+        entry.change === undefined
+          ? []
+          : this.entries.filter((e) => e.change === entry.change && !e.sent),
       );
+      this.entries = this.entries.filter((e) => e !== entry && !rest.has(e));
+      this.show();
+      const refusal = conflictOf(error)
+        ? new ConflictError(error, this.overlaps(entry, error))
+        : error;
+      entry.reject(refusal);
+      for (const e of rest) {
+        e.reject(refusal);
+      }
     } finally {
       this.inflight = false;
       void this.pump();
@@ -2943,25 +2958,38 @@ export class ProjectDocument {
    * for the steps of the history, which were not (Entry.step).
    */
   private moveQueued(entry: Entry, answer: CommandResultBody): void {
+    // Each entity's move, found once, and each queued command moved once
+    // for them all, rather than once for each, as the next part of a change
+    // sent as one, a thousand commands, is for the thousand nodes that the
+    // part before it changed (sendJoined).
+    const moves = new Map<string, { from: number; to: number }>();
     for (const r of answer.revisions ?? []) {
       const id = canonical(r.id);
       const from = entry.before.get(id);
-      if (from === undefined) {
+      if (from !== undefined) {
+        moves.set(id, { from, to: r.rev });
+      }
+    }
+    if (moves.size === 0) {
+      return;
+    }
+    for (const queued of this.entries) {
+      if (queued.sent || queued === entry) {
         continue;
       }
-      for (const queued of this.entries) {
-        if (queued.sent || queued === entry) {
-          continue;
+      if (!queued.step) {
+        // A batch none of whose commands moved keeps them, as the page
+        // showed them (Entry.shown).
+        const commands = queued.commands.map((c) => movedAll(c, moves));
+        if (commands.some((c, i) => c !== queued.commands[i])) {
+          queued.commands = commands;
         }
-        if (!queued.step) {
-          queued.commands = queued.commands.map((c) =>
-            moved(c, id, from, r.rev),
-          );
-        }
-        // A batch made on top of this one, after it, expects what this one
-        // is moved to, from which its answer moves it on.
+      }
+      // A batch made on top of this one, after it, expects what this one
+      // is moved to, from which its answer moves it on.
+      for (const [id, { from, to }] of moves) {
         if (queued.before.get(id) === from) {
-          queued.before.set(id, r.rev);
+          queued.before.set(id, to);
         }
       }
     }

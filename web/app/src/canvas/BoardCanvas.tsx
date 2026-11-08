@@ -459,9 +459,15 @@ function BoardCanvasOf({
   // open, unless that one holds text that is not saved, which it keeps,
   // with the focus, saying to save or cancel it first, rather than lose it,
   // or text that it is saving, which gives way once its save applies
-  // (TextEditorHandle's giveWay, and closeEditor).
+  // (TextEditorHandle's giveWay, and closeEditor). The editor of id that is
+  // open already takes the focus back, as from the canvas, where the user
+  // clicked, rather than leave it there.
   const openText = useCallback((id: string) => {
     const open = editingNow.current;
+    if (open === id && editor.current !== null) {
+      editor.current.focus();
+      return;
+    }
     if (
       open !== undefined &&
       open !== id &&
@@ -601,12 +607,19 @@ function BoardCanvasOf({
   // rather than as the window turns, or as the user's role or the
   // project's archive changes, long after, which would take the user's
   // selection and view away; a node that the board does not have opens
-  // neither, as without the link.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: editable and docked are read as the link is followed.
+  // neither, as without the link. Whether the inspector docks, and whether
+  // the board may be changed, are as they are once the canvas has found the
+  // node, as once its content has been read, rather than as the link was
+  // followed, before, as once the project was archived meanwhile, whose
+  // inspector would else come back once the archive is lifted.
+  const opensInspector = useRef(false);
+  useLayoutEffect(() => {
+    opensInspector.current = editable && docked;
+  });
   useEffect(() => {
     if (focus !== undefined) {
       controller.focus(focus, () => {
-        if (editable && docked) {
+        if (opensInspector.current) {
           setInspecting(true);
         }
       });

@@ -110,6 +110,13 @@ export interface TextEditorHandle {
    * saying to save or cancel it first, with the focus, rather than lose it.
    */
   giveWay(id: string): boolean;
+  /**
+   * Gives the editor's text the focus, once it has rendered, as once the
+   * user asked for the text of its node again, with Enter on the canvas, a
+   * second tap, or the inspector's Edit the text, whose sheet, which holds
+   * the editor inert, closes first.
+   */
+  focus(): void;
 }
 
 /** What the editor of an element's text is given. */
@@ -176,11 +183,13 @@ export function TextEditor({
     [],
   );
   const keep = () => setKept((n) => n + 1);
+  // How often the page asked for the focus in the text (focus).
+  const [asked, setAsked] = useState(0);
   useEffect(() => {
-    if (kept > 0) {
+    if (kept > 0 || asked > 0) {
       focusText();
     }
-  }, [kept, focusText]);
+  }, [kept, asked, focusText]);
   // Why the text can no longer be saved, if it cannot.
   const unsavable = readOnly
     ? t("canvas.text_read_only")
@@ -211,6 +220,7 @@ export function TextEditor({
       keep();
       return false;
     },
+    focus: () => setAsked((n) => n + 1),
   }));
   const refusal = refusalOf(commands.error, t, textField);
   const title = titleOf(shown, t);

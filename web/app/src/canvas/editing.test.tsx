@@ -465,6 +465,16 @@ describe("the canvas's edits", () => {
     ).toBeDefined();
     expect(field).toHaveProperty("value", tag);
     expect(batches(calls)).toEqual([]);
+    // Nor does the field ask the server for the tags that start with it,
+    // which it would refuse, once it waited for the next key.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(
+      calls.mock.calls.filter(
+        ([operation, input]) =>
+          operation === "listTags" &&
+          (input as { query: { prefix: string } }).query.prefix !== "",
+      ),
+    ).toEqual([]);
   });
 
   // Verifies: FR-EDIT-06/AC1
@@ -505,6 +515,12 @@ describe("the canvas's edits", () => {
     const textbox = within(editor).getByRole("textbox", {
       name: "Text of nd_1",
     });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    // Enter on the canvas, once the user took the focus there, gives the
+    // text of the editor open the focus back.
+    canvas.focus();
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.keyDown(canvas, { key: "Enter" });
     await waitFor(() => expect(document.activeElement).toBe(textbox));
     act(() => {
       (
@@ -1127,6 +1143,14 @@ describe("the canvas's edits", () => {
     fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...first });
     fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...first });
     const one = await screen.findByRole("region", { name: "nd_1" });
+    // What the field said of the two nodes, it says no longer of one.
+    await waitFor(() =>
+      expect(
+        within(one).queryByText(
+          "A node has 32 tags, the most that a node may have, and gets no more.",
+        ),
+      ).toBeNull(),
+    );
     const field = within(one).getByLabelText("Add a tag");
     await user.type(field, "Mira");
     await user.click(within(one).getByRole("button", { name: "Add" }));

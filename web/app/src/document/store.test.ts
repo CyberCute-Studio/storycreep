@@ -1985,7 +1985,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
     expect(doc.store.getState().undoable).toBe(0);
   });
 
-  it("shows every batch of a change sent as one at once, as of the time that it was made at, each until it is queued in its turn, and none after one that is refused", async () => {
+  it("shows every batch of a change sent as one at once, as of the time that it was made at, and none after one that is refused", async () => {
     const first = Promise.withResolvers<CommandResultBody>();
     const second = Promise.withResolvers<CommandResultBody>();
     const server = serve({
@@ -2030,7 +2030,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
     expect(doc.store.getState()).toMatchObject({ sending: 0, undoable: 1 });
   });
 
-  it("shows every batch of a change sent as one that the page made while an undo waited, and sends them after it", async () => {
+  it("shows every batch of a change sent as one that the page made while an undo waited, and sends them after it, and before a batch made after them", async () => {
     const server = serve({
       ...tree([
         board("bd_a", "Harbour"),
@@ -2050,6 +2050,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
           [renameBack("bd_b", "Lighthouse", 4)],
         ),
         applied(6, [{ id: "bd_c", rev: 4 }], [renameBack("bd_c", "Cove", 4)]),
+        applied(7, [{ id: "bd_b", rev: 5 }], []),
       ),
     });
     const { doc, realtime, deliver } = await open();
@@ -2061,23 +2062,30 @@ describe("undo and redo (FR-EDIT-08)", () => {
       [rename("bd_b", "Night", 3)],
       [rename("bd_c", "Bay", 3)],
     ]);
+    // A batch made after the change, which waits for the undo too, is sent
+    // after every batch of the change, rather than between them.
+    const after = doc.send([redescribe("bd_b", "Lights", 3)]);
     // The undo waits for the operations up to the batch that it undoes, and
     // the page shows both batches at once all the same.
     expect(shown(doc, "bd_b")).toMatchObject({ name: "Night" });
     expect(shown(doc, "bd_c")).toMatchObject({ name: "Bay" });
-    expect(doc.store.getState().sending).toBe(2);
+    expect(doc.store.getState().sending).toBe(3);
     deliver(2, [], []);
     deliver(3, server.batches[0], [{ id: "bd_a", rev: 4 }]);
     await undone;
     await sent;
+    await after;
     expect(server.batches.map((batch) => batch[0].type)).toEqual([
       "board.rename",
       "board.rename",
       "board.rename",
       "board.rename",
+      "board.describe",
     ]);
     expect(server.batches[2][0]).toMatchObject({ payload: { id: "bd_b" } });
     expect(server.batches[3][0]).toMatchObject({ payload: { id: "bd_c" } });
+    // What the change left of the board, which the page showed it on.
+    expect(server.batches[4][0]).toMatchObject({ expected_rev: { bd_b: 4 } });
     expect(doc.store.getState()).toMatchObject({
       sending: 0,
       undoable: 1,
@@ -2085,7 +2093,7 @@ describe("undo and redo (FR-EDIT-08)", () => {
     });
   });
 
-  it("joins no batch of a change sent as one to the step of a batch of the seq of one before it once the server's seq went back, as of a database restored from an older backup, which gives its seqs anew", async () => {
+  it("joins the batches of a change sent as one that applied once the server's seq went back, as of a database restored from an older backup, which gives its seqs anew, as one step without those before, whose step the restore took out", async () => {
     const server = serve({
       ...tree([
         board("bd_a", "Harbour"),
@@ -2099,35 +2107,119 @@ describe("undo and redo (FR-EDIT-08)", () => {
           [renameBack("bd_a", "Harbour", 4)],
         ),
         // The database is restored from a backup at seq 1, after which the
-        // page's rename made while the first batch was under way applies as
-        // seq 2 again.
-        applied(2, [{ id: "bd_c", rev: 4 }], [renameBack("bd_c", "Cove", 4)]),
+        // second batch applies as seq 2 again.
+        applied(
+          2,
+          [{ id: "bd_b", rev: 4 }],
+          [renameBack("bd_b", "Lighthouse", 4)],
+        ),
+        applied(3, [{ id: "bd_c", rev: 4 }], [renameBack("bd_c", "Cove", 4)]),
+      ),
+    });
+    const { doc, realtime } = await open();
+    realtime.hold(testProject.id);
+    await doc.sendJoined([
+      [rename("bd_a", "Dusk", 3)],
+      [rename("bd_b", "Night", 3)],
+      [rename("bd_c", "Bay", 3)],
+    ]);
+    expect(server.batches.map((batch) => batch[0].payload)).toEqual([
+      { id: "bd_a", name: "Dusk" },
+      { id: "bd_b", name: "Night" },
+      { id: "bd_c", name: "Bay" },
+    ]);
+    // The step that undo would send undoes the second and the third batches,
+    // of the seqs that the server gave them after the restore, and not the
+    // first, whose seq the second's took.
+    expect(doc.store.getState().undoable).toBe(1);
+    expect(doc.undoesNext(2)).toBe(true);
+    expect(doc.undoesNext(3)).toBe(true);
+  });
+
+  it("sends a batch that the page made while a change sent as one was under way after every batch of the change, on top of which the page shows it, and which it expects what they left of", async () => {
+    const first = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour"), board("bd_b", "Lighthouse")]),
+      applyCommands: inTurn(
+        first.promise,
         applied(
           3,
           [{ id: "bd_b", rev: 4 }],
           [renameBack("bd_b", "Lighthouse", 4)],
         ),
+        applied(4, [{ id: "bd_b", rev: 5 }], [renameBack("bd_b", "Night", 5)]),
       ),
     });
-    const { doc, realtime } = await open();
-    realtime.hold(testProject.id);
+    const { doc } = await open();
     const joined = doc.sendJoined([
       [rename("bd_a", "Dusk", 3)],
       [rename("bd_b", "Night", 3)],
     ]);
-    const other = doc.send([rename("bd_c", "Bay", 3)]);
-    await Promise.all([joined, other]);
+    // The user renames the board that the second batch renames, on what the
+    // page shows of it, while the first is under way.
+    const later = doc.send([rename("bd_b", "Bay", 3)]);
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Bay" });
+    first.resolve(
+      applied(2, [{ id: "bd_a", rev: 4 }], [renameBack("bd_a", "Harbour", 4)]),
+    );
+    await Promise.all([joined, later]);
+    expect(
+      server.batches.map((batch) => [batch[0].payload, batch[0].expected_rev]),
+    ).toEqual([
+      [{ id: "bd_a", name: "Dusk" }, { bd_a: 3 }],
+      [{ id: "bd_b", name: "Night" }, { bd_b: 3 }],
+      [{ id: "bd_b", name: "Bay" }, { bd_b: 4 }],
+    ]);
+    expect(shown(doc, "bd_b")).toMatchObject({ name: "Bay", rev: 5 });
+    // The change is one step, and the rename after it another.
+    expect(doc.store.getState().undoable).toBe(2);
+    expect(doc.undoesNext(4)).toBe(true);
+  });
+
+  it("sends a change sent as one that the page made while another was under way after every batch of that one, each as one step", async () => {
+    const first = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([
+        board("bd_a", "Harbour"),
+        board("bd_b", "Lighthouse"),
+        board("bd_c", "Cove"),
+      ]),
+      applyCommands: inTurn(
+        first.promise,
+        applied(
+          3,
+          [{ id: "bd_b", rev: 4 }],
+          [renameBack("bd_b", "Lighthouse", 4)],
+        ),
+        applied(4, [{ id: "bd_c", rev: 4 }], [renameBack("bd_c", "Cove", 4)]),
+        applied(5, [{ id: "bd_a", rev: 5 }], [renameBack("bd_a", "Dusk", 5)]),
+      ),
+    });
+    const { doc } = await open();
+    const one = doc.sendJoined([
+      [rename("bd_a", "Dusk", 3)],
+      [rename("bd_b", "Night", 3)],
+    ]);
+    const other = doc.sendJoined([
+      [rename("bd_c", "Bay", 3)],
+      [rename("bd_a", "Dawn", 3)],
+    ]);
+    first.resolve(
+      applied(2, [{ id: "bd_a", rev: 4 }], [renameBack("bd_a", "Harbour", 4)]),
+    );
+    await Promise.all([one, other]);
     expect(server.batches.map((batch) => batch[0].payload)).toEqual([
       { id: "bd_a", name: "Dusk" },
-      { id: "bd_c", name: "Bay" },
       { id: "bd_b", name: "Night" },
+      { id: "bd_c", name: "Bay" },
+      { id: "bd_a", name: "Dawn" },
     ]);
-    // The rename made apart is a step of its own, and so is the batch after
-    // it, of the change sent as one, whose step before the restore is gone:
-    // the step that undo would send undoes it alone.
+    // What the second change expects of the board that the first renamed
+    // is what the first left of it.
+    expect(server.batches[3][0].expected_rev).toEqual({ bd_a: 4 });
     expect(doc.store.getState().undoable).toBe(2);
-    expect(doc.undoesNext(3)).toBe(true);
-    expect(doc.undoesNext(2)).toBe(false);
+    expect(doc.undoesNext(4)).toBe(true);
+    expect(doc.undoesNext(5)).toBe(true);
   });
 
   it("moves what the other steps expect from what a batch expected, whose operation came before the answer to it sent again, as once no answer came to it at first", async () => {
