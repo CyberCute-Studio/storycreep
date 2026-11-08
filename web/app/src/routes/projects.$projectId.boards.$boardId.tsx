@@ -16,6 +16,7 @@ import {
 } from "../content/form";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
+import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { useLastOpened } from "../project/lastOpened";
 import {
@@ -38,14 +39,16 @@ import { Alert } from "../ui/Page";
 import { useDocumentTitle } from "../ui/title";
 
 /**
- * The search of the board's page, which the canvas's benchmark and the
+ * The search of the board's page: the node that a link opens the canvas on
+ * (plan item 61), as a usage list's; and what the canvas's benchmark and the
  * reference tablet's checklist read (docs/canvas-checklist.md): the
  * renderer to use, whatever the browser's would be, and a scripted run of
  * the canvas, of how many seconds, across which rectangle of the board.
  */
 export interface BoardSearch {
+  node?: string;
   renderer?: RendererKind;
-  bench?: "pan" | "panzoom" | "load";
+  bench?: "pan" | "panzoom" | "load" | "edit";
   seconds?: number;
   area?: string;
   warm?: number | "pass";
@@ -75,10 +78,17 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   params: {
     parse: ({ boardId }) => ({ boardId: canonicalId("board", boardId) }),
   },
-  // The page takes the window's width, for its canvas.
-  staticData: { wide: true },
+  // The page takes the window's width, for its canvas, whose toolbar shows
+  // the undo and the redo.
+  staticData: { wide: true, ownsHistory: true },
   validateSearch: (search: Record<string, unknown>): BoardSearch => {
     const out: BoardSearch = {};
+    // A node's ID as the server writes it, however the link spells it, as
+    // the canvas finds the node by it; one that the board does not have
+    // opens the canvas as without it.
+    if (typeof search.node === "string" && search.node !== "") {
+      out.node = canonicalId("node", search.node);
+    }
     if (
       search.renderer === "webgl" ||
       search.renderer === "webgpu" ||
@@ -89,7 +99,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     if (
       search.bench === "pan" ||
       search.bench === "panzoom" ||
-      search.bench === "load"
+      search.bench === "load" ||
+      search.bench === "edit"
     ) {
       out.bench = search.bench;
     }
@@ -146,20 +157,6 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   remountDeps: ({ params }) => params.boardId,
   component: BoardPage,
 });
-
-/** The colours that a board may have (PRD FR-PROJ-02): none, or a name of the palette. */
-const colors = [
-  "none",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "teal",
-  "blue",
-  "purple",
-  "pink",
-  "gray",
-] as const satisfies readonly Board["color"][];
 
 // A board's page (PRD FR-PROJ-02, FR-EDIT-01): the canvas of its nodes and
 // connections, and under it its name, its slug, its description, and its
@@ -269,6 +266,8 @@ function BoardContent({
         options={options}
         initial={last.initial}
         onView={last.onView}
+        editable={editable}
+        focus={search.node}
       />
       <section
         aria-labelledby="board-settings"
@@ -305,35 +304,6 @@ function BoardContent({
       </section>
     </div>
   );
-}
-
-/** Returns the name of a board's colour, in the page's locale. */
-function colorName(
-  t: ReturnType<typeof useTranslation>["t"],
-  color: Board["color"],
-): string {
-  switch (color) {
-    case "none":
-      return t("board.color_none");
-    case "red":
-      return t("board.color_red");
-    case "orange":
-      return t("board.color_orange");
-    case "yellow":
-      return t("board.color_yellow");
-    case "green":
-      return t("board.color_green");
-    case "teal":
-      return t("board.color_teal");
-    case "blue":
-      return t("board.color_blue");
-    case "purple":
-      return t("board.color_purple");
-    case "pink":
-      return t("board.color_pink");
-    case "gray":
-      return t("board.color_gray");
-  }
 }
 
 const boardField = payloadField("name", "slug", "description", "color");
@@ -487,7 +457,7 @@ function BoardForm({ projectId, board }: { projectId: string; board: Board }) {
           defaultValue={shown.color}
           error={refusal?.fields.color}
         >
-          {colors.map((color) => (
+          {paletteColors.map((color) => (
             <option key={color} value={color}>
               {colorName(t, color)}
             </option>

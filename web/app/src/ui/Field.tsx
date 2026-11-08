@@ -16,8 +16,8 @@ import {
 } from "react";
 import { focusIsNowhere } from "../shell/focus";
 
-/** The classes of a control's box: its boundary at 3:1 against the page. */
-const control =
+/** The classes of a control's box: its boundary at 3:1 against the page, which a control outside a field, as a toolbar's, has too. */
+export const control =
   "min-h-11 w-full rounded-md border border-border bg-canvas px-3 text-fg";
 
 /** Returns the IDs of the hint and the error of the field whose control is id, and the list of them that the control's aria-describedby takes. */

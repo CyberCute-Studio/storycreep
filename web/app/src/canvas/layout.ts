@@ -29,6 +29,22 @@ function branchHeight(count: number): number {
   return Math.max(96, headHeight + count * outputRow + 8);
 }
 
+/** Returns the size of a new node of type, without a size of its own, as the canvas lays it out, a branch's without outputs, as a new one has none. */
+export function newNodeSize(type: Node["type"]): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: nodeWidth,
+    height:
+      type === "jumper"
+        ? jumperHeight
+        : type === "branch"
+          ? branchHeight(0)
+          : elementHeight,
+  };
+}
+
 /** Returns the rectangle that node takes on its board. */
 export function nodeRect(node: Node): Rect {
   const { x, y } = node.position;

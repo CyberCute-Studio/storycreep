@@ -7,14 +7,22 @@
 // overscroll (NFR-TOUCH-08), and its menu, and the toolbar's controls are of
 // the size of a finger, and 8 px apart, within a group as between groups,
 // so that a tap a little off one does not press its neighbour
-// (NFR-TOUCH-01).
+// (NFR-TOUCH-01). On a board that the user may change, it creates, moves,
+// resizes, duplicates, and deletes nodes, and its inspector changes what is
+// selected (FR-EDIT-02, FR-EDIT-06, plan note N68): the toolbar adds a node,
+// duplicates and deletes the selection, snaps to the grid or not, dims the
+// nodes without a tag, opens the inspector, and undoes and redoes the
+// user's changes (FR-EDIT-08), and a bulk move offers its undo for a while
+// after (NFR-TOUCH-05).
 
+import type { Node as BoardNode } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
 import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   Suspense,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -23,13 +31,26 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { refusalOf } from "../auth/refusal";
 import { boardPart, type Part } from "../document/doc";
-import { useProjectDocument } from "../document/react";
+import { useDocumentState, useProjectDocument } from "../document/react";
+import {
+  HistoryButtons,
+  type HistoryOf,
+  HistoryStatus,
+  useHistory,
+} from "../project/History";
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
 import { Button, buttonClass, pressedClass } from "../ui/Button";
+import { control } from "../ui/Field";
+import { Menu, MenuItem } from "../ui/Menu";
 import { useMediaQuery } from "../ui/media";
+import { Alert } from "../ui/Page";
+import { besidePanel, useDocked } from "../ui/Panel";
+import { type CanvasActions, useCanvasActions } from "./actions";
 import {
   type BenchOptions,
   CanvasController,
@@ -37,8 +58,10 @@ import {
   renderedMark,
   type SavedView,
 } from "./controller";
+import { hasTag, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Mode, PointerInput } from "./gestures";
+import { Inspector } from "./Inspector";
 import {
   type LabelContext,
   type LabelSources,
@@ -47,6 +70,8 @@ import {
   namesChanged,
 } from "./labels";
 import { Minimap } from "./minimap";
+import { ResizeHandle } from "./ResizeHandle";
+import { TextEditor } from "./TextEditor";
 import { readTheme } from "./theme";
 
 const Bench = lazy(() => import("./bench"));
@@ -67,6 +92,106 @@ const nameParts: readonly Part[] = ["components", "variables"];
 
 /** The zoom that the toolbar shows, as the canvas tells it, in a store of its own. */
 type ZoomShown = StoreApi<number>;
+
+/** Where the device keeps whether the canvas snaps to the grid (FR-EDIT-02), which every board's canvas shares. */
+const snapKey = "storycreep.canvas.snap";
+
+/** Returns whether the device's canvas snaps, as it kept it, or does by default where it kept nothing, as in a private window. */
+function snapKept(): boolean {
+  try {
+    return window.localStorage.getItem(snapKey) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+/** Keeps whether the device's canvas snaps, where the browser's storage lets it. */
+function keepSnap(on: boolean): void {
+  try {
+    window.localStorage.setItem(snapKey, on ? "on" : "off");
+  } catch {
+    // A browser that keeps nothing, as a private window's, snaps anew.
+  }
+}
+
+/** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
+const undoMoveTime = 10_000;
+
+/** The tags of a board's nodes, of each version of the document's nodes, which the tag filter offers. */
+const boardTags = new WeakMap<
+  ReadonlyMap<string, BoardNode>,
+  Map<string, string[]>
+>();
+
+/** Returns the tags of the nodes of the board boardId among nodes, each once, whatever its case, the most used first (tagsOf). */
+function tagsOfBoard(
+  nodes: ReadonlyMap<string, BoardNode>,
+  boardId: string,
+): string[] {
+  let byBoard = boardTags.get(nodes);
+  if (byBoard === undefined) {
+    byBoard = new Map();
+    boardTags.set(nodes, byBoard);
+  }
+  let tags = byBoard.get(boardId);
+  if (tags === undefined) {
+    tags = tagsOf(
+      [...nodes.values()].filter(
+        (n) => n.board_id === boardId && n.deleted_at === undefined,
+      ),
+    );
+    byBoard.set(boardId, tags);
+  }
+  return tags;
+}
+
+/**
+ * The undo of the bulk move that the canvas made last, which it offers for
+ * a while after it joined the history (NFR-TOUCH-05), until another step
+ * joins or leaves it, as once the user changed or undid anything else,
+ * whose undo it would else be.
+ */
+function UndoMove({
+  moved,
+  history,
+  onDone,
+}: {
+  moved: { count: number; undoable: number; redoable: number };
+  history: HistoryOf;
+  onDone: () => void;
+}) {
+  const { t } = useTranslation();
+  const stale =
+    history.undoable !== moved.undoable || history.redoable !== moved.redoable;
+  useEffect(() => {
+    if (stale) {
+      onDone();
+      return;
+    }
+    const timer = setTimeout(onDone, undoMoveTime);
+    return () => clearTimeout(timer);
+  }, [stale, onDone]);
+  if (stale) {
+    return null;
+  }
+  return (
+    <p
+      role="status"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-4 py-2"
+    >
+      {t("canvas.moved", { count: moved.count })}
+      <Button
+        disabled={history.stepping}
+        onClick={() => {
+          history.step.mutate("undo");
+          onDone();
+        }}
+      >
+        {t("canvas.undo_move")}
+      </Button>
+    </p>
+  );
+}
 
 /**
  * The toolbar's button of the zoom, which shows it and shows 100% again: it
@@ -148,6 +273,14 @@ interface BoardCanvasProps {
   initial?: SavedView;
   /** Tells what the canvas shows, from the frame that placed it on, as it changes (CanvasEvents' view). */
   onView?: (view: CanvasView) => void;
+  /** Whether the user may change the board's nodes, as an editor of a project that is not archived. */
+  editable?: boolean;
+  /**
+   * The node that the canvas opens on, selected and shown whole, in place of
+   * the fit or the view that it restores, as a link to the node asks (plan
+   * item 61), or, once it changes, shows at once.
+   */
+  focus?: string;
 }
 
 /**
@@ -174,6 +307,8 @@ function BoardCanvasOf({
   options = {},
   initial,
   onView,
+  editable = false,
+  focus,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -190,7 +325,24 @@ function BoardCanvasOf({
   /** The pointer whose press went down on the minimap, which its drag follows. */
   const minimapPress = useRef<number>(undefined);
   const [mode, setMode] = useState<Mode>("pan");
-  const [selected, setSelected] = useState(0);
+  const [selection, setSelection] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const selected = selection.size;
+  const [snap, setSnap] = useState(snapKept);
+  const [tagFilter, setTagFilter] = useState("");
+  const [inspecting, setInspecting] = useState(false);
+  const inspectorButton = useRef<HTMLButtonElement>(null);
+  const docked = useDocked();
+  // The element whose text the canvas's editor shows over it, if any.
+  const [editing, setEditing] = useState<string>();
+  // The last bulk move, once it joined the history, which the canvas offers
+  // the undo of for a while (NFR-TOUCH-05).
+  const [moved, setMoved] = useState<{
+    count: number;
+    undoable: number;
+    redoable: number;
+  }>();
   const [zoom] = useState<ZoomShown>(() => createStore<number>(() => 1));
   const [content, setContent] = useState<"loading" | "ready" | "failed">(
     "loading",
@@ -226,7 +378,7 @@ function BoardCanvasOf({
   const forcedColors = useMediaQuery(forcedColorsQuery, false);
   const [controller] = useState(() => {
     const c = new CanvasController(boardId, {
-      selection: (ids) => setSelected(ids.size),
+      selection: (ids) => setSelection(ids),
       zoom: (z) => zoom.setState(z, true),
       rendered: () => {
         try {
@@ -243,6 +395,98 @@ function BoardCanvasOf({
     }
     return c;
   });
+  const actions = useCanvasActions(projectId, boardId, controller);
+  const history = useHistory(projectId);
+  // The tags of the board's nodes, which the tag filter offers, as the
+  // document has them, with the one that it dims by, though no node has it
+  // any longer, as once another session took it away, until it is cleared.
+  const tags = useDocumentState(
+    doc,
+    useShallow((state) => tagsOfBoard(state.view.nodes, boardId)),
+  );
+  const editingNode = useDocumentState(doc, (state) =>
+    editing === undefined ? undefined : state.view.nodes.get(editing),
+  );
+  // An element whose editor is open that goes, as once another session
+  // deleted it, closes it.
+  const editingGone =
+    editing !== undefined &&
+    (editingNode === undefined ||
+      editingNode.deleted_at !== undefined ||
+      editingNode.board_id !== boardId);
+  useEffect(() => {
+    if (editingGone) {
+      setEditing(undefined);
+    }
+  }, [editingGone]);
+  const closeEditor = useCallback(() => {
+    setEditing(undefined);
+    hostRef.current?.focus({ preventScroll: true });
+  }, []);
+  // What the canvas changes of the board, as its drags and keys ask, on a
+  // board that the user may change.
+  const edits = useRef<{ actions: CanvasActions; history: HistoryOf }>(
+    undefined,
+  );
+  edits.current = { actions, history };
+  useEffect(() => {
+    controller.edits = editable
+      ? {
+          move: (places) => {
+            const current = edits.current;
+            if (current === undefined) {
+              return;
+            }
+            const count = places.size;
+            void current.actions.move(places).then((applied) => {
+              if (applied && count >= 2) {
+                const state = doc.store.getState();
+                setMoved({
+                  count,
+                  undoable: state.undoable,
+                  redoable: state.redoable,
+                });
+              }
+            });
+          },
+          resize: (id, size) => void edits.current?.actions.resize(id, size),
+          remove: (ids) => void edits.current?.actions.remove(ids),
+          open: (id) => {
+            const node = doc.store.getState().view.nodes.get(id);
+            if (node?.type === "element") {
+              setEditing(id);
+            } else {
+              setInspecting(true);
+            }
+          },
+        }
+      : undefined;
+    return () => {
+      controller.edits = undefined;
+    };
+  }, [controller, doc, editable]);
+  useEffect(() => {
+    controller.snap = snap;
+  }, [controller, snap]);
+  // The tag filter dims the nodes without its tag, whatever its case, and
+  // changes nothing of the board (FR-EDIT-06 AC1).
+  useEffect(() => {
+    controller.setDimmed(
+      tagFilter === "" ? undefined : (node) => !hasTag(node, tagFilter),
+    );
+  }, [controller, tagFilter]);
+  // A link to a node opens the canvas on it, and, where the inspector docks
+  // beside the canvas, the inspector of it too, as the link is followed,
+  // rather than as the window turns.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: docked is read as the link is followed.
+  useEffect(() => {
+    if (focus !== undefined) {
+      controller.focus(focus);
+      if (editable && docked) {
+        setInspecting(true);
+      }
+    }
+  }, [controller, focus, editable]);
 
   // The canvas takes the window's height below where it starts, as a
   // tablet's screen is the board's, as the window's size changes, and as
@@ -662,6 +906,15 @@ function BoardCanvasOf({
     controller.setMode(mode);
   }, [controller, mode]);
 
+  const clearMoved = useCallback(() => setMoved(undefined), []);
+  const hostElement = useCallback(() => hostRef.current, []);
+  const toggleSnap = () => {
+    setSnap((on) => {
+      keepSnap(!on);
+      return !on;
+    });
+  };
+
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
       return;
@@ -802,6 +1055,70 @@ function BoardCanvasOf({
             {t("canvas.settings")}
           </a>
         )}
+        {editable && (
+          <fieldset className="flex min-w-0 flex-wrap gap-2">
+            <legend className="sr-only">{t("canvas.edit")}</legend>
+            <Menu
+              trigger={<Button aria-haspopup="menu">{t("canvas.add")}</Button>}
+            >
+              <MenuItem onSelect={() => void actions.create("element")}>
+                {t("canvas.add_element")}
+              </MenuItem>
+              <MenuItem onSelect={() => void actions.create("branch")}>
+                {t("canvas.add_branch")}
+              </MenuItem>
+              <MenuItem onSelect={() => void actions.create("jumper")}>
+                {t("canvas.add_jumper")}
+              </MenuItem>
+            </Menu>
+            <Button
+              disabled={selected === 0}
+              onClick={() => void actions.duplicate([...selection])}
+            >
+              {t("canvas.duplicate")}
+            </Button>
+            <Button
+              disabled={selected === 0}
+              onClick={() => void actions.remove([...selection])}
+            >
+              {t("canvas.delete")}
+            </Button>
+            <Button
+              ref={inspectorButton}
+              aria-pressed={inspecting}
+              onClick={() => setInspecting((open) => !open)}
+              className={pressedClass}
+            >
+              {t("canvas.inspector")}
+            </Button>
+            <Button
+              aria-pressed={snap}
+              onClick={toggleSnap}
+              className={pressedClass}
+            >
+              {t("canvas.snap")}
+            </Button>
+            <HistoryButtons history={history} />
+          </fieldset>
+        )}
+        <label className="flex items-center gap-2">
+          <span>{t("canvas.tag_filter")}</span>
+          <select
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.currentTarget.value)}
+            className={`${control} w-auto max-w-48`}
+          >
+            <option value="">{t("canvas.tag_filter_none")}</option>
+            {tagFilter !== "" && !tags.includes(tagFilter) && (
+              <option value={tagFilter}>{tagFilter}</option>
+            )}
+            {tags.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        </label>
         <p className="text-sm text-fg-muted" aria-live="polite">
           {selected > 0 && t("canvas.selected", { count: selected })}
         </p>
@@ -814,78 +1131,138 @@ function BoardCanvasOf({
           </p>
         )}
       </fieldset>
-      <div
-        ref={hostRef}
-        role="application"
-        aria-roledescription={t("canvas.roledescription")}
-        aria-label={t("canvas.label", { board: boardName })}
-        aria-describedby={helpId}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas takes the keys that pan and zoom it (NFR-A11Y-04).
-        tabIndex={0}
-        onKeyDown={keyDown}
-        onKeyUp={keyUp}
-        onBlur={blur}
-        style={{ height }}
-        className="relative touch-none overflow-hidden overscroll-none rounded-md bg-canvas ring-1 ring-border select-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus"
-      >
-        <div ref={surfaceRef} className="absolute inset-0" />
-        <div
-          ref={bandRef}
-          hidden
-          aria-hidden="true"
-          className="pointer-events-none absolute top-0 left-0 border-2 border-accent bg-accent/10"
-        />
-        {overlay !== undefined && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
-            {/* The message lets a press on it through to the canvas under
+      {editable && (
+        <>
+          <HistoryStatus history={history} />
+          <Alert
+            message={
+              actions.commands.error === null
+                ? undefined
+                : t("canvas.edit_failed", {
+                    reason: refusalOf(actions.commands.error, t)?.message ?? "",
+                  })
+            }
+          />
+          {moved !== undefined && (
+            <UndoMove moved={moved} history={history} onDone={clearMoved} />
+          )}
+        </>
+      )}
+      <div className={inspecting && editable ? besidePanel : undefined}>
+        <div className="relative min-w-0">
+          <div
+            ref={hostRef}
+            role="application"
+            aria-roledescription={t("canvas.roledescription")}
+            aria-label={t("canvas.label", { board: boardName })}
+            aria-describedby={helpId}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: the canvas takes the keys that pan and zoom it (NFR-A11Y-04).
+            tabIndex={0}
+            onKeyDown={keyDown}
+            onKeyUp={keyUp}
+            onBlur={blur}
+            style={{ height }}
+            className="relative touch-none overflow-hidden overscroll-none rounded-md bg-canvas ring-1 ring-border select-none focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          >
+            <div ref={surfaceRef} className="absolute inset-0" />
+            <div
+              ref={bandRef}
+              hidden
+              aria-hidden="true"
+              className="pointer-events-none absolute top-0 left-0 border-2 border-accent bg-accent/10"
+            />
+            {overlay !== undefined && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+                {/* The message lets a press on it through to the canvas under
                 it, so that a drag that starts on it, as on an empty board,
                 pans as one beside it does, as the wheel over it does; its
                 button alone, which reads the content again, takes its own. */}
-            <p
-              role={overlay.role}
-              className="max-w-md rounded-md border border-border bg-surface px-4 py-3 text-center"
-            >
-              {overlay.text}
-              {content === "failed" && engine !== "unsupported" && (
-                <>
-                  {" "}
-                  <Button
-                    onClick={() => setAttempt((n) => n + 1)}
-                    className="pointer-events-auto"
-                  >
-                    {t("canvas.retry")}
-                  </Button>
-                </>
+                <p
+                  role={overlay.role}
+                  className="max-w-md rounded-md border border-border bg-surface px-4 py-3 text-center"
+                >
+                  {overlay.text}
+                  {content === "failed" && engine !== "unsupported" && (
+                    <>
+                      {" "}
+                      <Button
+                        onClick={() => setAttempt((n) => n + 1)}
+                        className="pointer-events-auto"
+                      >
+                        {t("canvas.retry")}
+                      </Button>
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+            {showMinimap && (
+              // The minimap is a pointer's shortcut: the keys pan and fit the
+              // board as it does (NFR-A11Y-04), so it is hidden from the
+              // accessibility tree, as the canvas's pixels are.
+              <div
+                aria-hidden="true"
+                className="absolute right-3 bottom-3 h-32 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-md"
+              >
+                <canvas
+                  ref={minimapRef}
+                  onPointerDown={minimapPointer}
+                  onPointerMove={minimapPointer}
+                  onPointerUp={minimapRelease}
+                  onPointerCancel={minimapRelease}
+                  onLostPointerCapture={minimapRelease}
+                  className="block size-full cursor-pointer"
+                />
+              </div>
+            )}
+          </div>
+          {/* What the canvas places over its nodes, outside its element, which
+          takes every touch and key of its own: the resize handle of the
+          node selected, and the editor of an element's text. The layer lets
+          a pointer through to the canvas but on them. */}
+          <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-md">
+            {editable &&
+              selected === 1 &&
+              editing === undefined &&
+              [...selection].map((id) => (
+                <ResizeHandle key={id} id={id} controller={controller} />
+              ))}
+            {editable &&
+              editing !== undefined &&
+              editingNode !== undefined &&
+              !editingGone && (
+                <TextEditor
+                  key={editing}
+                  projectId={projectId}
+                  node={editingNode}
+                  controller={controller}
+                  host={hostElement}
+                  onClose={closeEditor}
+                />
               )}
-            </p>
           </div>
-        )}
-        {showMinimap && (
-          // The minimap is a pointer's shortcut: the keys pan and fit the
-          // board as it does (NFR-A11Y-04), so it is hidden from the
-          // accessibility tree, as the canvas's pixels are.
-          <div
-            aria-hidden="true"
-            className="absolute right-3 bottom-3 h-32 w-48 overflow-hidden rounded-md border border-border bg-surface shadow-md"
-          >
-            <canvas
-              ref={minimapRef}
-              onPointerDown={minimapPointer}
-              onPointerMove={minimapPointer}
-              onPointerUp={minimapRelease}
-              onPointerCancel={minimapRelease}
-              onLostPointerCapture={minimapRelease}
-              className="block size-full cursor-pointer"
-            />
-          </div>
+        </div>
+        {inspecting && editable && (
+          <Inspector
+            projectId={projectId}
+            selection={selection}
+            actions={actions}
+            onEditText={(id) => setEditing(id)}
+            onClose={() => setInspecting(false)}
+            returnFocus={() => inspectorButton.current}
+          />
         )}
       </div>
       <p id={helpId} className="text-sm text-fg-muted">
-        {t("canvas.help")}
+        {editable ? t("canvas.help_edit") : t("canvas.help")}
       </p>
       {options.bench !== undefined && (
         <Suspense>
-          <Bench handle={controller.handle} options={options.bench} />
+          <Bench
+            handle={controller.handle}
+            options={options.bench}
+            edit={editable ? actions.move : undefined}
+          />
         </Suspense>
       )}
     </div>

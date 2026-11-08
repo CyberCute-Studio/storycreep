@@ -66,6 +66,11 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const wide = useChildMatches({
     select: (matches) => matches.some((m) => m.staticData.wide === true),
   });
+  // A page that shows the undo and the redo itself, as a board's in its
+  // canvas's toolbar, says so of itself too.
+  const ownsHistory = useChildMatches({
+    select: (matches) => matches.some((m) => m.staticData.ownsHistory === true),
+  });
   return (
     <div className={`mx-auto space-y-6 ${wide ? "" : "max-w-3xl"}`}>
       <div className="space-y-4">
@@ -150,9 +155,9 @@ function ProjectPages({ projectId }: { projectId: string }) {
             )}
           </ul>
         </nav>
-        {editsProject(project.role) && project.archived_at === undefined && (
-          <History projectId={projectId} />
-        )}
+        {editsProject(project.role) &&
+          project.archived_at === undefined &&
+          !ownsHistory && <History projectId={projectId} />}
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">
             {managesProject(project.role)

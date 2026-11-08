@@ -12,7 +12,13 @@
 // selects the node under it, or adds it to the selection, or takes it out,
 // with Shift, Ctrl, or Cmd, and a tap on the board's empty canvas clears
 // the selection; a click of the middle button, which pans, selects nothing.
-// The wheel pans, and Shift turns it sideways; with Ctrl or Cmd, as a
+// A drag that starts on a selected node moves the selection instead, in
+// either mode, on a board that may be changed, and one that starts on a node
+// that is not selected selects it and moves it in the select mode, but pans
+// in the pan mode, so that a finger that pans a crowded board moves no node
+// (plan note N68); a second tap or click on the same node, soon after the
+// first, opens it, as for its text. The wheel pans, and Shift turns it
+// sideways; with Ctrl or Cmd, as a
 // trackpad's pinch sends it, it zooms about the pointer. Nothing needs
 // hover or a right click, and a right click, or a pen's barrel button or
 // its eraser, does nothing; a press ends, as cancelled, once its mouse or
@@ -101,6 +107,23 @@ export interface GestureHost {
    * which the canvas took as it went down.
    */
   release(id: number): void;
+  /** Reports whether the node of id is selected. */
+  isSelected(id: string): boolean;
+  /** Reports whether a drag may move nodes, as on a board that the user may change. */
+  movable(): boolean;
+  /**
+   * Starts moving the selection, which holds the node of id, by its drag,
+   * and reports whether it did, as it does not once the node has gone.
+   */
+  moveStart(id: string): boolean;
+  /** Moves the selection by delta of the board from where its move started. */
+  moveTo(delta: Point): void;
+  /** Ends the move of the selection, where it is, or, cancelled, where it started. */
+  moveEnd(commit: boolean): void;
+  /** Opens the node of id, as its second tap soon after the first does, as for its text. */
+  open(id: string): void;
+  /** The time, in milliseconds, by which a double tap is told from two taps. */
+  now(): number;
 }
 
 /**
@@ -116,6 +139,9 @@ const dragThresholds = {
 
 /** How far from a node, in CSS pixels, a tap still finds it. */
 const tapSlop = { touch: 12, pen: 6, mouse: 1 } as const;
+
+/** How soon after a tap on a node another on it opens it, in milliseconds. */
+export const doubleTapTime = 500;
 
 /** How much a pixel of a zooming wheel's delta zooms: e to its negative, so that zooming in and out by the same delta come back. */
 const wheelZoomRate = 0.01;
@@ -135,10 +161,19 @@ type Gesture =
       start: Point;
       /** The point of the board that the pointer went down on, where a rubber band starts. */
       at: Point;
-      drag: "pan" | "band";
+      /**
+       * What its drag does: pans, draws a rubber band, moves the selection,
+       * which holds the node that it went down on, or selects that node and
+       * then moves it (pick).
+       */
+      drag: "pan" | "band" | "move" | "pick";
+      /** The node that it went down on, which a move holds. */
+      node?: string;
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
+  /** A move of the selection, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
+  | { kind: "move"; id: number; anchor: Point }
   /** A rubber band, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
   | { kind: "band"; id: number; anchor: Point; input: PointerInput }
   | {
@@ -155,6 +190,8 @@ export class Gestures {
   private readonly pointers = new Map<number, PointerInput>();
   private gesture: Gesture = { kind: "idle" };
   private space = false;
+  /** The node of the last tap, and when it was, which a second tap on it soon after opens. */
+  private lastTap: { node: string; time: number } | undefined;
 
   constructor(private readonly host: GestureHost) {}
 
@@ -217,16 +254,35 @@ export class Gestures {
       this.startPinch();
       return true;
     }
+    const v = this.host.viewport();
+    const at = toWorld(v, p);
     const pans =
       this.host.mode() === "pan" ||
       this.space ||
       (p.kind === "mouse" && p.button === 1);
+    // A drag on a node moves it, on a board that may be changed, but for one
+    // that pans whatever is under it, of the middle button or with Space
+    // held: the selection, of a node that is selected, in either mode, and,
+    // in the select mode, a node that is not, which it selects first.
+    const node =
+      p.button === 0 && !this.space && this.host.movable()
+        ? this.host.nodeAt(at, tapSlop[p.kind] / v.zoom)
+        : undefined;
+    const drag =
+      node !== undefined && this.host.isSelected(node)
+        ? "move"
+        : node !== undefined && this.host.mode() === "select"
+          ? "pick"
+          : pans
+            ? "pan"
+            : "band";
     this.gesture = {
       kind: "press",
       id: p.id,
       start: { x: p.x, y: p.y },
-      at: toWorld(this.host.viewport(), p),
-      drag: pans ? "pan" : "band",
+      at,
+      drag,
+      node: drag === "move" || drag === "pick" ? node : undefined,
       input: p,
     };
     return true;
@@ -286,7 +342,21 @@ export class Gestures {
         if (moved < dragThresholds[g.input.kind]) {
           return;
         }
-        if (g.drag === "pan") {
+        if (g.drag === "move" || g.drag === "pick") {
+          const node = g.node as string;
+          if (g.drag === "pick") {
+            const additive = g.input.shift || g.input.additive;
+            this.host.select([node], additive ? "add" : "replace");
+          }
+          if (!this.host.moveStart(node)) {
+            // The node went, as once another session deleted it: the drag
+            // moves nothing, and its release taps nothing.
+            this.gesture = { kind: "pan", id: p.id, last: { x: p.x, y: p.y } };
+            return;
+          }
+          this.gesture = { kind: "move", id: p.id, anchor: g.at };
+          this.refresh();
+        } else if (g.drag === "pan") {
           this.gesture = { kind: "pan", id: p.id, last: g.start };
           this.follow(p);
         } else {
@@ -311,6 +381,7 @@ export class Gestures {
         return;
       }
       case "band":
+      case "move":
         if (g.id === p.id) {
           this.refresh();
         }
@@ -376,6 +447,12 @@ export class Gestures {
           this.gesture = { kind: "idle" };
         }
         return;
+      case "move":
+        if (g.id === p.id) {
+          this.gesture = { kind: "idle" };
+          this.host.moveEnd(!cancelled);
+        }
+        return;
       case "band":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
@@ -407,14 +484,24 @@ export class Gestures {
 
   /**
    * Draws the rubber band again, from the point of the board where it
-   * started to its pointer, as the pointer moves, or the board under it, as
-   * once the wheel, a key, or the canvas's new size moved it.
+   * started to its pointer, or moves the selection under its pointer again,
+   * as the pointer moves, or the board under it, as once the wheel, a key,
+   * or the canvas's new size moved it.
    */
   refresh(): void {
     const g = this.gesture;
-    const p = g.kind === "band" ? this.pointers.get(g.id) : undefined;
-    if (g.kind === "band" && p !== undefined) {
+    const p =
+      g.kind === "band" || g.kind === "move"
+        ? this.pointers.get(g.id)
+        : undefined;
+    if (p === undefined) {
+      return;
+    }
+    if (g.kind === "band") {
       this.host.band(rectOf(toScreen(this.host.viewport(), g.anchor), p));
+    } else if (g.kind === "move") {
+      const at = toWorld(this.host.viewport(), p);
+      this.host.moveTo({ x: at.x - g.anchor.x, y: at.y - g.anchor.y });
     }
   }
 
@@ -441,6 +528,7 @@ export class Gestures {
         this.gesture = { ...g, at: kept(g.at) };
         return;
       case "band":
+      case "move":
         this.gesture = { ...g, anchor: kept(g.anchor) };
         this.refresh();
         return;
@@ -451,8 +539,12 @@ export class Gestures {
   }
 
   private startPinch(): void {
+    // A second finger takes the board from what the first did: a rubber
+    // band, or a move, which goes back where it started.
     if (this.gesture.kind === "band") {
       this.host.band(undefined);
+    } else if (this.gesture.kind === "move") {
+      this.host.moveEnd(false);
     }
     const [a, b] = [...this.pointers.values()];
     const v = this.host.viewport();
@@ -465,12 +557,32 @@ export class Gestures {
     };
   }
 
+  /**
+   * Selects the node at the tap, or adds it, or takes it out, with Shift,
+   * Ctrl, or Cmd, or clears the selection on the empty board; a second tap
+   * on the same node soon after the first, without them, opens it, as for
+   * its text, which nothing needs: the inspector and Enter open it too
+   * (NFR-TOUCH-02).
+   */
   private tap(at: PointerInput, pressed: PointerInput): void {
     const v = this.host.viewport();
     const id = this.host.nodeAt(toWorld(v, at), tapSlop[at.kind] / v.zoom);
     const additive = pressed.shift || pressed.additive;
+    const now = this.host.now();
+    const last = this.lastTap;
+    this.lastTap =
+      id === undefined || additive ? undefined : { node: id, time: now };
     if (id !== undefined) {
       this.host.select([id], additive ? "toggle" : "replace");
+      if (
+        !additive &&
+        last !== undefined &&
+        last.node === id &&
+        now - last.time <= doubleTapTime
+      ) {
+        this.lastTap = undefined;
+        this.host.open(id);
+      }
     } else if (!additive) {
       this.host.select([], "replace");
     }

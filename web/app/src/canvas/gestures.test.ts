@@ -8,12 +8,25 @@ import {
 } from "./gestures";
 import { type Rect, toScreen, toWorld, type Viewport } from "./viewport";
 
-/** A canvas of 800 by 600 pixels, of one node at 100, 100, 240 by 120. */
-function host(mode: Mode = "pan") {
+/**
+ * A canvas of 800 by 600 pixels, of one node at 100, 100, 240 by 120, on a
+ * board that may be changed where movable says, as the gestures' moves of
+ * nodes need, whose selection is what the gestures selected last.
+ */
+function host(mode: Mode = "pan", movable = false) {
   const state = {
     v: { x: 0, y: 0, zoom: 1 } as Viewport,
     mode,
+    movable,
+    now: 0,
     selected: [] as string[],
+    /** What the moves of the selection did: where each started, moved, and how it ended. */
+    moves: [] as (
+      | { start: string }
+      | { to: { x: number; y: number } }
+      | { end: boolean }
+    )[],
+    opened: [] as string[],
     selects: [] as { ids: string[]; how: SelectHow }[],
     bands: [] as (Rect | undefined)[],
     /** The rectangles of the board that a rubber band selected in. */
@@ -49,7 +62,32 @@ function host(mode: Mode = "pan") {
     },
     select: (ids, how) => {
       state.selects.push({ ids, how });
+      const next = new Set(how === "replace" ? [] : state.selected);
+      for (const id of ids) {
+        if (how === "toggle" && next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+      }
+      state.selected = [...next];
     },
+    isSelected: (id) => state.selected.includes(id),
+    movable: () => state.movable,
+    moveStart: (id) => {
+      state.moves.push({ start: id });
+      return true;
+    },
+    moveTo: (delta) => {
+      state.moves.push({ to: delta });
+    },
+    moveEnd: (commit) => {
+      state.moves.push({ end: commit });
+    },
+    open: (id) => {
+      state.opened.push(id);
+    },
+    now: () => state.now,
     band: (r) => {
       state.bands.push(r);
     },

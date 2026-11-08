@@ -11,6 +11,7 @@
 // detail, FR-EDIT-01 AC4), and a connection is a straight line.
 
 import "pixi.js/unsafe-eval";
+import type { Node } from "@storycreep/shared/api";
 import {
   autoDetectRenderer,
   type BitmapFont,
@@ -70,6 +71,10 @@ export interface Frame {
   labels: (node: NodeItem) => NodeLabels;
   /** Counts the changes of what labels returns, as once a speaker's name comes, or the locale changes. */
   labelsVersion: number;
+  /** Which nodes are drawn faint, as the tag filter dims them (FR-EDIT-06 AC1), or undefined for none. */
+  dimmed?: (node: Node) => boolean;
+  /** Counts the changes of dimmed. */
+  dimVersion?: number;
   theme: Theme;
 }
 
@@ -154,6 +159,38 @@ const zoomSlack = 1.25;
 
 /** The corner of a card, in units of the board. */
 const cornerRadius = 10;
+
+/** How opaque a node that the tag filter dims is drawn (FR-EDIT-06 AC1). */
+const dimAlpha = 0.3;
+
+/**
+ * Reports whether node b is node a moved, as a drag of the selection moves
+ * it (controller.ts), with every field of a but its position: a card of a
+ * that b is drawn again where b is, rather than anew, so that a drag of
+ * hundreds of nodes does not write their text again in each of its frames.
+ */
+function movedOnly(a: NodeItem, b: NodeItem): boolean {
+  const x = a.node;
+  const y = b.node;
+  return (
+    a.rect.width === b.rect.width &&
+    a.rect.height === b.rect.height &&
+    x.id === y.id &&
+    x.rev === y.rev &&
+    x.type === y.type &&
+    x.kind === y.kind &&
+    x.title === y.title &&
+    x.text === y.text &&
+    x.color === y.color &&
+    x.tags === y.tags &&
+    x.is_ending === y.is_ending &&
+    x.outputs === y.outputs &&
+    x.size === y.size &&
+    x.speaker_component_id === y.speaker_component_id &&
+    x.target === y.target &&
+    x.cover_asset_id === y.cover_asset_id
+  );
+}
 
 /** How far a card's ring, 4 units outside it, and its ports, dots of 10 on its edges, reach beyond its node, in units of the board. */
 const cardReach = 8;
@@ -459,6 +496,7 @@ class PixiEngine implements Engine {
         connectionsVersion: number;
         selectionVersion: number;
         labelsVersion: number;
+        dimVersion: number;
         theme: Theme;
         stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
@@ -617,6 +655,7 @@ class PixiEngine implements Engine {
       b.sceneVersion !== f.scene.version ||
       b.selectionVersion !== f.selectionVersion ||
       b.labelsVersion !== f.labelsVersion ||
+      b.dimVersion !== (f.dimVersion ?? 0) ||
       b.theme !== f.theme;
     if (stale) {
       // A change of what the margin shows, but not of where it is, as of
@@ -746,6 +785,7 @@ class PixiEngine implements Engine {
         s.tint = f.selection.has(item.node.id)
           ? theme.accent
           : nodeColor(item.node.color, theme);
+        s.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         i++;
       }
       for (; i < this.blockSprites.length; i++) {
@@ -780,6 +820,18 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
+        // A card of a node that only moved, as in each frame of a drag, is
+        // where its node is now, as it was otherwise.
+        if (
+          !fresh &&
+          !anew &&
+          view.item !== undefined &&
+          view.item !== item &&
+          view.selected === selected &&
+          movedOnly(view.item, item)
+        ) {
+          view.item = item;
+        }
         const stale =
           fresh || anew || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
@@ -803,6 +855,7 @@ class PixiEngine implements Engine {
           view.labelsVersion = f.labelsVersion;
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
+        view.root.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         texts += view.body.visible ? 3 : 2;
       }
       this.orderCards(shown.nodes);
@@ -835,6 +888,7 @@ class PixiEngine implements Engine {
       connectionsVersion: scene.connectionsVersion,
       selectionVersion: f.selectionVersion,
       labelsVersion: f.labelsVersion,
+      dimVersion: f.dimVersion ?? 0,
       theme,
       stats: {
         lod,

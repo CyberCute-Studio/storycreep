@@ -9,13 +9,12 @@
 // its values, which the panel reads of it whole as it opens
 // (ProjectDocument.readComponent).
 
-import {
-  type Attribute,
-  type Component,
-  type ComponentType,
-  type ProjectBody,
-  type RichTextDoc,
-  routes,
+import type {
+  Attribute,
+  Component,
+  ComponentType,
+  ProjectBody,
+  RichTextDoc,
 } from "@storycreep/shared/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -31,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import { api, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { csrfHeaders } from "../auth/session";
+import { imageTypes, thumbnailOf } from "../content/assets";
 import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
@@ -519,19 +519,6 @@ function ComponentForm({
     </div>
   );
 }
-
-/**
- * The URL of an asset's thumbnail, which the browser reads with the page's
- * session, of the path that the API's description gives it.
- */
-function thumbnailOf(projectId: string, assetId: string): string {
-  return routes.getAssetThumbnail.path
-    .replace("{project_id}", encodeURIComponent(projectId))
-    .replace("{asset_id}", encodeURIComponent(assetId));
-}
-
-/** The types of image that the server stores (PRD FR-ASSET-02). */
-const imageTypes = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml";
 
 /**
  * The component's image: its thumbnail, and, for an editor, its upload and

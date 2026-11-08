@@ -3,8 +3,9 @@
 // server answers a page at a time, one list for each use, as the reads and
 // the writes of a variable, which a panel opens on demand, and which a
 // refusal of a deletion lists too, the first hundred of them (FR-VAR-04).
-// A site's board is a link to the board's page; the canvas, which opens the
-// node itself, comes later (plan item 61).
+// A site of a node, or of a connection or an output of one, is a link that
+// opens the node on its board's canvas, selected and shown whole (plan item
+// 61), and a component's description one that opens the component's panel.
 
 import type { PageUsage, Usage } from "@storycreep/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -117,9 +118,10 @@ export function useComponentNames(
 }
 
 /**
- * A site that uses a variable or a component: what it is, of its node, and
- * the board that it is on, whose page it links to, or, of a component's
- * description, the component, by its name, whose panel it links to.
+ * A site that uses a variable or a component: what it is, of its node, a
+ * link that opens the node on its board's canvas, and the board that it is
+ * on, or, of a component's description, the component, by its name, whose
+ * panel it links to.
  */
 export function UsageItem({
   projectId,
@@ -154,18 +156,21 @@ export function UsageItem({
       {use !== undefined && (
         <span className="text-fg-muted">{t("usage.use", { use })} · </span>
       )}
-      {site}
-      {usage.board_id !== undefined && (
+      {usage.board_id !== undefined && usage.node_id !== undefined ? (
         <>
-          {" · "}
           <Link
             to="/projects/$projectId/boards/$boardId"
             params={{ projectId, boardId: usage.board_id }}
+            search={{ node: usage.node_id }}
             className={textLink}
           >
-            {usage.board_name ?? t("boards.unknown_board")}
+            {site}
           </Link>
+          {" · "}
+          {usage.board_name ?? t("boards.unknown_board")}
         </>
+      ) : (
+        site
       )}
       {usage.component_id !== undefined && (
         <>

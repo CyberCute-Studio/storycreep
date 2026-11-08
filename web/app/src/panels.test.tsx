@@ -1403,10 +1403,15 @@ describe("the variables", () => {
     );
     const reads = await within(panel).findByRole("list", { name: "Read by" });
     expect(reads.textContent).toBe("The text of The gate · Harbour");
-    expect(within(reads).getByRole("link", { name: "Harbour" })).toHaveProperty(
+    // The site opens its node on the board's canvas (plan item 61).
+    const site = within(reads).getByRole("link", {
+      name: "The text of The gate",
+    });
+    expect(site).toHaveProperty(
       "pathname",
       `/app/projects/${testProject.id}/boards/bd_harbour`,
     );
+    expect(site).toHaveProperty("search", "?node=nd_gate");
     expect(await within(panel).findByText("Nothing changes it.")).toBeDefined();
   });
 

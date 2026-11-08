@@ -7,6 +7,11 @@
 // in it, and shows what it measured, which the harness reads from the
 // element's data-bench-result. ?bench=load moves nothing, and shows when
 // the board's first frame was drawn, from the start of the page's load.
+// ?bench=edit moves a node of the board in view by a step of the grid and
+// back, twice a second, as a drag of it does once it lands, and measures
+// each edit, from the batch that the canvas sends to the end of the frame
+// that draws the node where the batch put it, as the document shows the
+// batch before the server answers it (NFR-PERF-06).
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import { useEffect, useState } from "react";
@@ -17,7 +22,15 @@ import {
   type FrameRecord,
   renderedMark,
 } from "./controller";
-import { anchorAt, type Rect, type Viewport, visibleRect } from "./viewport";
+import { gridSize } from "./edit";
+import {
+  anchorAt,
+  intersects,
+  type Point,
+  type Rect,
+  type Viewport,
+  visibleRect,
+} from "./viewport";
 
 /**
  * How long a run waits before it records, in seconds, unless its options
@@ -27,6 +40,9 @@ export const warmUp = 2;
 
 /** How fast the path moves on the screen, in CSS pixels a second, at whatever zoom. */
 const speed = 900;
+
+/** How often the edit run edits, in milliseconds: twice a second, so that the writes of a run of 20 s are well within the account's limit of them. */
+const editInterval = 500;
 
 /** The zooms that panzoom swings between, and how long one swing takes, in seconds. */
 const zoomRange = [0.25, 1.5] as const;
@@ -83,6 +99,8 @@ export interface BenchResult {
   heap: { start: number; end: number; max: number } | undefined;
   /** When the board's first frame was drawn, in milliseconds from the start of the page's load. */
   rendered: number | undefined;
+  /** Of the edit run, how long each edit took, from its batch to the end of the frame that drew it, in milliseconds (NFR-PERF-06). */
+  edit?: Stats;
 }
 
 /** The mean, the median, the 95th percentile, and the maximum of some values. */
@@ -214,9 +232,12 @@ function heapMiB(): number | undefined {
 export default function Bench({
   handle,
   options,
+  edit,
 }: {
   handle: CanvasHandle;
   options: BenchOptions;
+  /** Moves nodes, as the canvas does once a drag of them lands, which the edit run measures; none where the board may not be changed. */
+  edit?: (places: ReadonlyMap<string, Point>) => Promise<boolean>;
 }) {
   const { t, i18n } = useTranslation();
   const [phase, setPhase] = useState<"waiting" | "warm" | "running" | "done">(
@@ -236,10 +257,19 @@ export default function Bench({
     const heap: number[] = [];
     let lastHeap = 0;
     const { scenario } = options;
+    // The edit run's edits: how long each took, and the one under way, of a
+    // node to the place that the scene shows it at once drawn, from when it
+    // was sent; and the timer that sends them, and the step that the next
+    // moves its node by, back and forth.
+    const edits: number[] = [];
+    let pendingEdit: { id: string; to: Point; sent: number } | undefined;
+    let editTimer: number | undefined;
+    let editStep = gridSize;
     const finish = () => {
       ended = true;
       stop();
       window.clearInterval(waiting);
+      window.clearInterval(editTimer);
       const mark = performance.getEntriesByName(renderedMark)[0];
       const inView = statsOf(visible);
       setResult({
@@ -266,6 +296,7 @@ export default function Bench({
                 max: Math.max(...heap),
               },
         rendered: mark?.startTime,
+        ...(scenario === "edit" ? { edit: statsOf(edits) } : {}),
       });
       setPhase("done");
     };
@@ -276,6 +307,23 @@ export default function Bench({
     let warm = warmUp;
     const onFrame = (f: FrameRecord) => {
       if (ended || started === undefined) {
+        return;
+      }
+      if (scenario === "edit") {
+        // The frame that this listener follows has drawn: the edit under
+        // way is visible once the scene has its node where it went.
+        const at =
+          pendingEdit === undefined
+            ? undefined
+            : handle.scene.nodes.get(pendingEdit.id)?.node.position;
+        if (
+          pendingEdit !== undefined &&
+          at?.x === pendingEdit.to.x &&
+          at.y === pendingEdit.to.y
+        ) {
+          edits.push(performance.now() - pendingEdit.sent);
+          pendingEdit = undefined;
+        }
         return;
       }
       const elapsed = (f.time - started) / 1000;
@@ -328,6 +376,43 @@ export default function Bench({
         return;
       }
       started = performance.now();
+      if (scenario === "edit") {
+        const from = started;
+        const wait = typeof options.warm === "number" ? options.warm : warmUp;
+        setPhase("warm");
+        editTimer = window.setInterval(() => {
+          const elapsed = (performance.now() - from) / 1000;
+          if (elapsed >= wait + options.seconds) {
+            finish();
+            return;
+          }
+          if (
+            elapsed < wait ||
+            pendingEdit !== undefined ||
+            edit === undefined
+          ) {
+            return;
+          }
+          setPhase("running");
+          // A node in view, which the edit moves a step of the grid and the
+          // next one moves back.
+          const view = visibleRect(handle.viewport(), handle.size());
+          let target: { id: string; position: Point } | undefined;
+          handle.scene.nodes.forEach((id, item) => {
+            if (target === undefined && intersects(item.rect, view)) {
+              target = { id, position: item.node.position };
+            }
+          });
+          if (target === undefined) {
+            return;
+          }
+          const to = { x: target.position.x + editStep, y: target.position.y };
+          editStep = -editStep;
+          pendingEdit = { id: target.id, to, sent: performance.now() };
+          void edit(new Map([[target.id, to]]));
+        }, editInterval);
+        return;
+      }
       warm =
         options.warm === "pass"
           ? warmUp + passOf(scenario, areaOf(), handle.size())
@@ -339,8 +424,9 @@ export default function Bench({
       ended = true;
       stop();
       window.clearInterval(waiting);
+      window.clearInterval(editTimer);
     };
-  }, [handle, options]);
+  }, [handle, options, edit]);
 
   const ms = (value: number | undefined) =>
     value === undefined
@@ -418,6 +504,18 @@ export default function Bench({
               end: n(result.textures.end),
             })}
           </dd>
+          {result.edit !== undefined && (
+            <>
+              <dt>{t("bench.edit")}</dt>
+              <dd>
+                {t("bench.stats", {
+                  p50: ms(result.edit.p50),
+                  p95: ms(result.edit.p95),
+                  max: ms(result.edit.max),
+                })}
+              </dd>
+            </>
+          )}
         </dl>
       )}
     </section>

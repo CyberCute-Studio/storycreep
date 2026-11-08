@@ -4,9 +4,16 @@
 // changed, and only then, so that a canvas that nothing moves draws
 // nothing. A zoom or a move that the toolbar or a key asks for is animated,
 // briefly, unless the system asks for reduced motion (NFR-A11Y-07), as the
-// canvas's only animation; a gesture follows the fingers at once.
+// canvas's only animation; a gesture follows the fingers at once. A drag
+// that moves the selection, or resizes a node by its handle, shows it at
+// once, as the scene of the document with the nodes where the drag has them,
+// without a command, and tells the page where it left them as it ends, which
+// sends one batch for it (FR-EDIT-02 AC2, plan note N68), whose nodes the
+// document shows there at once, in the same frame as the drag's end.
 
+import type { Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
+import { movedBy, resizedBy } from "./edit";
 import type { Engine, FrameStats, RendererKind } from "./engine";
 import {
   type GestureHost,
@@ -33,13 +40,14 @@ import {
   type Size,
   sameViewport,
   stepZoom,
+  toScreen,
   type Viewport,
   zoomAt,
 } from "./viewport";
 
 /** A scripted run of the canvas that the benchmark harness measures (bench.tsx). */
 export interface BenchOptions {
-  scenario: "pan" | "panzoom" | "load";
+  scenario: "pan" | "panzoom" | "load" | "edit";
   /** How long the run records, after its warm-up. */
   seconds: number;
   /** The rectangle of the board that the run's path crosses, or the board's content. */
@@ -116,6 +124,26 @@ export interface CanvasEvents {
   view(view: CanvasView): void;
 }
 
+/**
+ * What the canvas asks the page to change of the board, which the page
+ * sends as commands (plan note N68): it has none on a board that the user
+ * may not change, where a drag on a node pans or draws a rubber band, as on
+ * the empty board, and the keys that change it do nothing.
+ */
+export interface CanvasEdits {
+  /** Moves the nodes of places there, as a drag of the selection left them, in one batch (FR-EDIT-02 AC2). */
+  move(places: ReadonlyMap<string, Point>): void;
+  /** Gives the node of id size, as its handle's drag left it. */
+  resize(id: string, size: Size): void;
+  /** Deletes the nodes of ids to the trash, as Delete asks. */
+  remove(ids: readonly string[]): void;
+  /** Opens the node of id, as for its text, as Enter or a double tap asks. */
+  open(id: string): void;
+}
+
+/** Returns where the node of id is on the canvas, in its CSS pixels, or undefined for one that the board does not have. */
+export type ScreenRectOf = (id: string) => Rect | undefined;
+
 /** What the benchmark reads of a canvas, and drives (bench.tsx). */
 export interface CanvasHandle {
   viewport(): Viewport;
@@ -165,6 +193,10 @@ export class CanvasController implements GestureHost {
   });
   /** Whether the system asks for reduced motion, which makes every move instant. */
   reducedMotion = false;
+  /** What the page changes of the board as the canvas asks, or undefined where it may not be changed. */
+  edits: CanvasEdits | undefined;
+  /** Whether a move or a resize snaps to the board's grid (FR-EDIT-02). */
+  snap = true;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
   /**
    * The canvas's size, in CSS pixels, that its viewport is of, and that
@@ -209,6 +241,43 @@ export class CanvasController implements GestureHost {
   private elements: CanvasElements | undefined;
   private selected: ReadonlySet<string> = new Set();
   private selectionVersion = 0;
+  /** What the project's document holds of the board, as the page last gave it (sync). */
+  private docSeen: Pick<Doc, "nodes" | "connections"> = {
+    nodes: new Map(),
+    connections: new Map(),
+  };
+  /**
+   * The nodes where a drag has them, which the scene shows in place of where
+   * the document has them until the drag ends: the selection's positions as
+   * a move has them, or a node's size as its resize has it.
+   */
+  private preview:
+    | {
+        positions?: ReadonlyMap<string, Point>;
+        size?: { id: string; size: Size };
+      }
+    | undefined;
+  /** The move of the selection under way: where its nodes were as it started, of the node that it holds at anchor, and where they are now. */
+  private moving:
+    | {
+        anchor: Point;
+        start: ReadonlyMap<string, Point>;
+        places: ReadonlyMap<string, Point>;
+      }
+    | undefined;
+  /** The resize under way: of the node of id, from its size as it started, to its size now. */
+  private resizing: { id: string; from: Size; size?: Size } | undefined;
+  /** Which nodes the canvas dims, as the tag filter asks (FR-EDIT-06 AC1), and how often that changed. */
+  private dims: ((node: Node) => boolean) | undefined;
+  private dimVersion = 0;
+  /** How many of the board's nodes are dimmed, of the scene's version and the dims' that it was counted at. */
+  private dimmedCount:
+    | { scene: number; dims: number; count: number }
+    | undefined;
+  /** What the canvas places over its nodes in each frame, as the resize handle and the text's editor (follow). */
+  private readonly followers = new Set<(rectOf: ScreenRectOf) => void>();
+  /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks (focus). */
+  private focusId: string | undefined;
   private labelsVersion = 0;
   private theme: Theme | undefined;
   private modeValue: Mode = "pan";
@@ -355,9 +424,43 @@ export class CanvasController implements GestureHost {
    * Takes what the project's document holds of the board, and whether the
    * names of its components or variables, which cards show, changed.
    */
-  sync(doc: Doc, namesChanged: boolean): void {
+  sync(doc: Pick<Doc, "nodes" | "connections">, namesChanged: boolean): void {
+    this.docSeen = doc;
+    this.syncScene(namesChanged);
+  }
+
+  /**
+   * Returns what the scene shows of the document: the document, or, while a
+   * drag moves nodes or resizes one, its nodes with those that the drag has
+   * where the drag has them, as nodes of their own, which the scene builds
+   * anew in each move, as it does any node that changed.
+   */
+  private shownDoc(): Pick<Doc, "nodes" | "connections"> {
+    const doc = this.docSeen;
+    const p = this.preview;
+    if (p === undefined) {
+      return doc;
+    }
+    const nodes = new Map(doc.nodes);
+    for (const [id, position] of p.positions ?? []) {
+      const node = nodes.get(id);
+      if (node !== undefined) {
+        nodes.set(id, { ...node, position });
+      }
+    }
+    if (p.size !== undefined) {
+      const node = nodes.get(p.size.id);
+      if (node !== undefined) {
+        nodes.set(p.size.id, { ...node, size: p.size.size });
+      }
+    }
+    return { nodes, connections: doc.connections };
+  }
+
+  /** Takes what the scene shows of the document into it (shownDoc). */
+  private syncScene(namesChanged = false): void {
     const targets = this.scene.targetsVersion;
-    const changed = this.scene.sync(doc);
+    const changed = this.scene.sync(this.shownDoc());
     const relabel = namesChanged || this.scene.targetsVersion !== targets;
     if (relabel) {
       // A card names components, variables, and, a jumper's, the node that
@@ -453,6 +556,249 @@ export class CanvasController implements GestureHost {
 
   setMode(mode: Mode): void {
     this.modeValue = mode;
+  }
+
+  isSelected(id: string): boolean {
+    return this.selected.has(id);
+  }
+
+  /** The selected nodes. */
+  selection(): ReadonlySet<string> {
+    return this.selected;
+  }
+
+  movable(): boolean {
+    return this.edits !== undefined;
+  }
+
+  now(): number {
+    return this.clock.now();
+  }
+
+  open(id: string): void {
+    this.edits?.open(id);
+  }
+
+  /**
+   * Starts moving the selection, which holds the node of id, from where the
+   * scene has its nodes, and reports whether it did: not where the board may
+   * not be changed, nor once the node has gone.
+   */
+  moveStart(id: string): boolean {
+    const held = this.scene.nodes.get(id);
+    if (
+      this.edits === undefined ||
+      held === undefined ||
+      !this.selected.has(id)
+    ) {
+      return false;
+    }
+    const start = new Map<string, Point>();
+    for (const selected of this.selected) {
+      const item = this.scene.nodes.get(selected);
+      if (item !== undefined) {
+        start.set(selected, item.node.position);
+      }
+    }
+    this.moving = { anchor: held.node.position, start, places: new Map() };
+    return true;
+  }
+
+  moveTo(delta: Point): void {
+    const m = this.moving;
+    if (m === undefined) {
+      return;
+    }
+    const places = movedBy(m.start, m.anchor, delta, this.snap);
+    this.moving = { ...m, places };
+    this.preview = { positions: places };
+    this.syncScene();
+  }
+
+  /**
+   * Ends the move of the selection: where it left the nodes, which the page
+   * sends as one batch, which the document shows at once, before the next
+   * frame, so that the nodes stay where the drag left them; or, cancelled,
+   * where they were, as of a move that a second finger ended.
+   */
+  moveEnd(commit: boolean): void {
+    const m = this.moving;
+    this.moving = undefined;
+    this.preview = undefined;
+    if (m !== undefined && commit) {
+      // A node that went while it moved, as one that another session
+      // deleted, does not move, which the server would refuse whole.
+      const places = new Map(
+        [...m.places].filter(([id]) => {
+          const node = this.docSeen.nodes.get(id);
+          return node !== undefined && node.deleted_at === undefined;
+        }),
+      );
+      if (places.size > 0) {
+        this.edits?.move(places);
+      }
+    }
+    this.syncScene();
+  }
+
+  /** Reports whether the node of id is being moved, which its resize handle hides for. */
+  moves(): boolean {
+    return this.moving !== undefined;
+  }
+
+  /**
+   * Starts resizing the node of id by its handle, from its size as the
+   * scene has it, and reports whether it did: not where the board may not
+   * be changed, nor once the node has gone.
+   */
+  resizeStart(id: string): boolean {
+    const item = this.scene.nodes.get(id);
+    if (
+      this.edits === undefined ||
+      item === undefined ||
+      this.moving !== undefined
+    ) {
+      return false;
+    }
+    this.resizing = {
+      id,
+      from: { width: item.rect.width, height: item.rect.height },
+    };
+    return true;
+  }
+
+  /** Resizes the node that the handle holds by delta, in CSS pixels of the canvas, from its size as its resize started. */
+  resizeTo(delta: Point): void {
+    const r = this.resizing;
+    if (r === undefined) {
+      return;
+    }
+    const zoom = this.v.zoom;
+    const size = resizedBy(
+      r.from,
+      { x: delta.x / zoom, y: delta.y / zoom },
+      this.snap,
+    );
+    this.resizing = { ...r, size };
+    this.preview = { size: { id: r.id, size } };
+    this.syncScene();
+  }
+
+  /** Ends the resize: the size that it left the node, which the page sends, or, cancelled, the size before. */
+  resizeEnd(commit: boolean): void {
+    const r = this.resizing;
+    this.resizing = undefined;
+    this.preview = undefined;
+    if (
+      r !== undefined &&
+      commit &&
+      r.size !== undefined &&
+      (r.size.width !== r.from.width || r.size.height !== r.from.height) &&
+      this.docSeen.nodes.get(r.id)?.deleted_at === undefined &&
+      this.docSeen.nodes.has(r.id)
+    ) {
+      this.edits?.resize(r.id, r.size);
+    }
+    this.syncScene();
+  }
+
+  /**
+   * Dims the nodes that dim tells, or none, as the tag filter asks (FR-EDIT-06
+   * AC1): the canvas draws them faint, and changes nothing of the board.
+   */
+  setDimmed(dim: ((node: Node) => boolean) | undefined): void {
+    if (dim === this.dims) {
+      return;
+    }
+    this.dims = dim;
+    this.dimVersion++;
+    this.invalidate();
+  }
+
+  /** How many of the board's nodes are dimmed, counted once for each change of the board or of the dims. */
+  private dimmed(): number {
+    const dim = this.dims;
+    if (dim === undefined) {
+      return 0;
+    }
+    const c = this.dimmedCount;
+    if (
+      c !== undefined &&
+      c.scene === this.scene.version &&
+      c.dims === this.dimVersion
+    ) {
+      return c.count;
+    }
+    let count = 0;
+    this.scene.nodes.forEach((_, item) => {
+      if (dim(item.node)) {
+        count++;
+      }
+    });
+    this.dimmedCount = {
+      scene: this.scene.version,
+      dims: this.dimVersion,
+      count,
+    };
+    return count;
+  }
+
+  /**
+   * Calls place in each frame that the canvas draws, with where its nodes
+   * are on it, so that what the page places over a node, as its resize
+   * handle or its text's editor, follows it as the canvas pans, zooms, or
+   * moves it, in the same frame, until the returned function is called.
+   */
+  follow(place: (rectOf: ScreenRectOf) => void): () => void {
+    this.followers.add(place);
+    this.invalidate();
+    return () => {
+      this.followers.delete(place);
+    };
+  }
+
+  /** Returns where the node of id is on the canvas, in its CSS pixels. */
+  private screenRect: ScreenRectOf = (id) => {
+    const r = this.scene.nodes.rect(id);
+    if (r === undefined) {
+      return undefined;
+    }
+    const at = toScreen(this.v, r);
+    return {
+      x: at.x,
+      y: at.y,
+      width: r.width * this.v.zoom,
+      height: r.height * this.v.zoom,
+    };
+  };
+
+  /**
+   * Selects the node of id and shows it whole, as a link to it asks: once
+   * the board's content has been read, in place of the fit or of the view
+   * that the canvas restores, or at once, animated, on a canvas placed
+   * already. It reports nothing of a node that the board does not have,
+   * which the canvas then opens as it would without it.
+   */
+  focus(id: string): void {
+    if (!this.placed) {
+      this.focusId = id;
+      this.invalidate();
+      return;
+    }
+    if (this.scene.nodes.get(id) !== undefined) {
+      this.select([id], "replace");
+      this.zoomToSelection();
+    }
+  }
+
+  /**
+   * Pans the board by dx and dy CSS pixels of the canvas, at once, as the
+   * text's editor does to keep itself in view above the on-screen keyboard.
+   */
+  panBy(dx: number, dy: number): void {
+    if (dx !== 0 || dy !== 0) {
+      this.setViewport(panBy(this.target(), dx, dy));
+    }
   }
 
   nodeAt(p: Point, slop: number): string | undefined {
@@ -628,6 +974,18 @@ export class CanvasController implements GestureHost {
         this.select([], "replace");
         return had;
       }
+      case "delete":
+        if (this.edits === undefined || this.selected.size === 0) {
+          return false;
+        }
+        this.edits.remove([...this.selected]);
+        return true;
+      case "open":
+        if (this.edits === undefined || this.selected.size !== 1) {
+          return false;
+        }
+        this.edits.open([...this.selected][0]);
+        return true;
     }
   }
 
@@ -699,18 +1057,30 @@ export class CanvasController implements GestureHost {
       const from = this.v;
       const saved = this.saved;
       this.saved = undefined;
+      // A link to a node opens the canvas on it, selected, in place of
+      // either, where the board has it (focus).
+      const focus =
+        this.focusId === undefined
+          ? undefined
+          : this.scene.nodes.rect(this.focusId);
       this.v =
-        saved === undefined
-          ? this.fitted()
-          : anchorAt(
-              centerOf(saved.viewport, saved.size),
-              this.centre(),
-              saved.viewport.zoom,
-            );
+        focus !== undefined
+          ? fitTo(focus, this.sz, 48, fitZoom)
+          : saved === undefined
+            ? this.fitted()
+            : anchorAt(
+                centerOf(saved.viewport, saved.size),
+                this.centre(),
+                saved.viewport.zoom,
+              );
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);
-      if (saved !== undefined && this.selected.size === 0) {
+      const focused = this.focusId;
+      this.focusId = undefined;
+      if (focus !== undefined && focused !== undefined) {
+        this.select([focused], "replace");
+      } else if (saved !== undefined && this.selected.size === 0) {
         this.select(
           saved.selection.filter(
             (id) => this.scene.nodes.get(id) !== undefined,
@@ -733,6 +1103,9 @@ export class CanvasController implements GestureHost {
     // A rubber band under way stays on the board's point where it started.
     this.gestures.refresh();
     this.showZoom();
+    for (const place of this.followers) {
+      place(this.screenRect);
+    }
     if (this.placed) {
       this.report();
     }
@@ -764,6 +1137,8 @@ export class CanvasController implements GestureHost {
         selectionVersion: this.selectionVersion,
         labels: this.labels,
         labelsVersion: this.labelsVersion,
+        dimmed: this.dims,
+        dimVersion: this.dimVersion,
         theme,
       });
     } catch (error) {
@@ -841,6 +1216,8 @@ export class CanvasController implements GestureHost {
       texts: String(stats.texts),
       connections: String(stats.connections),
       selected: String(this.selected.size),
+      // The nodes of the board that the tag filter dims (FR-EDIT-06 AC1).
+      dimmed: String(this.dimmed()),
       // Whether the frame drew the board's content, once it was read.
       ready: String(this.ready),
     };
@@ -860,5 +1237,6 @@ export class CanvasController implements GestureHost {
       this.pending = 0;
     }
     this.gestures.cancelAll();
+    this.resizeEnd(false);
   }
 }
