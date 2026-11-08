@@ -420,6 +420,7 @@
   "inspector.error.position": "Write a number from −1,000,000,000 to 1,000,000,000.",
   "inspector.error.size": "Write a number from 1 to 100,000.",
   "inspector.error.tag": "Write a tag of 1 to 50 characters.",
+  "inspector.error.tag_control": "A tag cannot hold control characters, bidirectional controls, or line separators.",
   "inspector.error.tags_full": "{count, plural, one {A node has {most} tags, the most that a node may have, and gets no more.} other {# nodes have {most} tags, the most that a node may have, and get no more.}}",
   "inspector.error.text": "The text is too long to save. Shorten it first.",
   "inspector.height": "Height",

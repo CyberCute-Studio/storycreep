@@ -449,6 +449,24 @@ describe("the canvas's edits", () => {
     await waitFor(() => expect(field).toHaveProperty("value", "Mira"));
   });
 
+  it("says at the tag field that a tag with a character that the server refuses, as a bidirectional control, cannot be added, and sends nothing", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const field = within(inspector).getByLabelText("Add a tag");
+    const tag = `Quest${String.fromCharCode(0x202e)}`;
+    fireEvent.change(field, { target: { value: tag } });
+    await user.click(within(inspector).getByRole("button", { name: "Add" }));
+    expect(
+      await within(inspector).findByText(
+        "A tag cannot hold control characters, bidirectional controls, or line separators.",
+      ),
+    ).toBeDefined();
+    expect(field).toHaveProperty("value", tag);
+    expect(batches(calls)).toEqual([]);
+  });
+
   // Verifies: FR-EDIT-06/AC1
   it("dims the nodes without the tag that the filter names, whatever its case, and sends nothing", async () => {
     const user = userEvent.setup();
@@ -521,6 +539,45 @@ describe("the canvas's edits", () => {
       expect(
         screen.queryByRole("form", { name: "The text of nd_1" }),
       ).toBeNull(),
+    );
+  });
+
+  it("adds no paragraph to the text for the repeats of the Enter that opened its editor, held down, and adds one for an Enter pressed in it", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter", code: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    const paragraphs = () => textbox.querySelectorAll("p").length;
+    const before = paragraphs();
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(textbox, { key: "Enter", code: "Enter", repeat: true });
+    }
+    fireEvent.keyUp(textbox, { key: "Enter", code: "Enter" });
+    expect(paragraphs()).toBe(before);
+    // The text is as it was: Escape closes the editor.
+    fireEvent.keyDown(textbox, { key: "Escape", code: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+    // An Enter pressed in the editor, and held, is typed, repeats and all.
+    fireEvent.keyDown(canvas, { key: "Enter", code: "Enter" });
+    const again = await screen.findByRole("textbox", { name: "Text of nd_1" });
+    await waitFor(() => expect(document.activeElement).toBe(again));
+    fireEvent.keyUp(again, { key: "Enter", code: "Enter" });
+    const shown = again.querySelectorAll("p").length;
+    fireEvent.keyDown(again, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(again, { key: "Enter", code: "Enter", repeat: true });
+    await waitFor(() =>
+      expect(again.querySelectorAll("p").length).toBe(shown + 2),
     );
   });
 
@@ -1162,6 +1219,49 @@ describe("the canvas's edits", () => {
       ),
     ).toBeDefined();
     expect(batches(calls)).toHaveLength(2);
+  });
+
+  it("saves the place across that the user typed with the place down that a drag gave the node meanwhile, rather than the one that the inspector held", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const x = within(inspector).getByLabelText("Across (x)");
+    await user.clear(x);
+    await user.type(x, "48");
+    // A drag of the node down, by 100 pixels at the zoom, which the grid
+    // snaps to 104.
+    const from = screenOf(canvas, { x: 120, y: 64 });
+    const zoom = Number(canvas.dataset.zoom);
+    const to = { clientX: from.clientX, clientY: from.clientY + 100 * zoom };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...from });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      {
+        type: "node.move",
+        payload: { nodes: [{ id: "nd_1", position: { x: 0, y: 104 } }] },
+        expected_rev: { nd_1: 1 },
+      },
+    ]);
+    // The inspector holds what the user typed, and the place down that it
+    // showed.
+    expect(within(inspector).getByLabelText("Across (x)")).toHaveProperty(
+      "value",
+      "48",
+    );
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the node" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1]).toEqual([
+      {
+        type: "node.move",
+        payload: { nodes: [{ id: "nd_1", position: { x: 48, y: 104 } }] },
+        expected_rev: { nd_1: 2 },
+      },
+    ]);
   });
 
   it("pans by the wheel over the resize handle as over the canvas, with the corner of a resize under way under its pointer, and sizes nothing by a resize whose release the canvas did not hear of", async () => {

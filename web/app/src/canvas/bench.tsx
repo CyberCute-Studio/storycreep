@@ -265,6 +265,8 @@ export default function Bench({
     let pendingEdit: { id: string; to: Point; sent: number } | undefined;
     let editTimer: number | undefined;
     let editStep = gridSize;
+    // The node that the edits move, once one is picked, while it is in view.
+    let editTarget: string | undefined;
     const finish = () => {
       ended = true;
       stop();
@@ -397,14 +399,31 @@ export default function Bench({
           }
           setPhase("running");
           // A node in view, which the edit moves a step of the grid and the
-          // next one moves back.
+          // next one moves back: the same node, while it is in view, rather
+          // than the first that is, which may be another once the step took
+          // the one before out of view, and would move a step the other way,
+          // each away from where the fixture placed it.
           const view = visibleRect(handle.viewport(), handle.size());
           let target: { id: string; position: Point } | undefined;
-          handle.scene.nodes.forEach((id, item) => {
-            if (target === undefined && intersects(item.rect, view)) {
-              target = { id, position: item.node.position };
-            }
-          });
+          const kept =
+            editTarget === undefined
+              ? undefined
+              : handle.scene.nodes.get(editTarget);
+          if (
+            editTarget !== undefined &&
+            kept !== undefined &&
+            intersects(kept.rect, view)
+          ) {
+            target = { id: editTarget, position: kept.node.position };
+          } else {
+            handle.scene.nodes.forEach((id, item) => {
+              if (target === undefined && intersects(item.rect, view)) {
+                target = { id, position: item.node.position };
+              }
+            });
+            editTarget = target?.id;
+            editStep = gridSize;
+          }
           if (target === undefined) {
             return;
           }

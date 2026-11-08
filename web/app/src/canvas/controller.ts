@@ -305,6 +305,14 @@ export class CanvasController implements GestureHost {
       }
     | { kind: "resize"; id: string; rev: number; from: Size; size?: Size }
     | undefined;
+  /**
+   * The delta of the board that the move under way was last moved by, and
+   * whether the grid snapped it, which the frame's refresh of the gestures
+   * moves it by again in each frame while its pointer and the board are
+   * still: a move by the same is passed over, rather than its places found
+   * anew, and compared, for each node of a drag of thousands (moveTo).
+   */
+  private lastMove: { delta: Point; snap: boolean } | undefined;
   /** The nodes that the scene shows of the drag, of the document's nodes and the drag that they were made of (shownNodes). */
   private shown:
     | {
@@ -709,6 +717,7 @@ export class CanvasController implements GestureHost {
       revs,
       places: new Map(),
     };
+    this.lastMove = undefined;
     // A frame hides the resize handle while the move is under way, though
     // its first moves leave the nodes where they are, as on the grid.
     this.invalidate();
@@ -718,14 +727,25 @@ export class CanvasController implements GestureHost {
   /**
    * Moves the selection by delta of the board from where its move started:
    * a move that leaves each node where it is, as in each frame that the
-   * gestures move the selection under a pointer that is still, or one that
-   * the grid keeps in place, changes nothing, and asks for no frame.
+   * gestures move the selection under a pointer that is still, by the delta
+   * of the move before (lastMove), or one that the grid keeps in place,
+   * changes nothing, and asks for no frame.
    */
   moveTo(delta: Point): void {
     const m = this.drag;
     if (m?.kind !== "move") {
       return;
     }
+    const last = this.lastMove;
+    if (
+      last !== undefined &&
+      last.delta.x === delta.x &&
+      last.delta.y === delta.y &&
+      last.snap === this.snap
+    ) {
+      return;
+    }
+    this.lastMove = { delta, snap: this.snap };
     const places = movedBy(m.start, m.anchor, delta, this.snap);
     if (samePlaces(places, m.places)) {
       return;

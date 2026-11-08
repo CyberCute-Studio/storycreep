@@ -10,6 +10,7 @@
 
 import type { Node } from "@storycreep/shared/api";
 import { foldCase } from "@storycreep/shared/fold";
+import { isControlCode } from "@storycreep/shared/richtext";
 import { hundredths } from "../document/appliers/node";
 import { nodeRect } from "./layout";
 import type { Point, Rect, Size } from "./viewport";
@@ -231,6 +232,23 @@ export const maxTags = 32;
 /** Returns the key by which two tags are one tag, as the server compares them: without regard to case (FR-EDIT-06). */
 export function tagKey(tag: string): string {
   return foldCase(tag);
+}
+
+/**
+ * Reports whether tag holds a character that the server refuses in a tag,
+ * as in every name (input.IsControl): a control character, a tab among
+ * them, a bidirectional control, as U+202E RIGHT-TO-LEFT OVERRIDE, or a
+ * line or paragraph separator, for which it would refuse the tag of every
+ * node that it is added to.
+ */
+export function hasControlIn(tag: string): boolean {
+  for (let i = 0; i < tag.length; i++) {
+    const c = tag.charCodeAt(i);
+    if (c === 0x09 || isControlCode(c)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

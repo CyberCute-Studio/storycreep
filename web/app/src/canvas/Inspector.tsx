@@ -48,6 +48,7 @@ import { Panel } from "../ui/Panel";
 import type { CanvasActions } from "./actions";
 import {
   type Alignment,
+  hasControlIn,
   hasTagOf,
   maxTags,
   onBoard,
@@ -307,6 +308,27 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
     const was = valuesOf(against);
     const changed = changedOf(typed, was);
     const expected_rev = { [against.id]: against.rev };
+    // A place, and a size, are each one field of the server's, of two
+    // numbers: the one that the user did not change is the node's as the
+    // page has it now, rather than as the form holds it, which a drag of the
+    // canvas's may have changed since, as the page's own batch, which the
+    // save would else write over, unasked, as the page's own batches are no
+    // change made elsewhere (the document's ownMoves).
+    const now = doc.store.getState().view.nodes.get(shown.id) ?? against;
+    const position = {
+      x: changed.x === undefined ? now.position.x : place.x,
+      y: changed.y === undefined ? now.position.y : place.y,
+    };
+    const sized =
+      size === undefined ||
+      changed.automatic !== undefined ||
+      now.size === undefined
+        ? size
+        : {
+            width: changed.width === undefined ? now.size.width : size.width,
+            height:
+              changed.height === undefined ? now.size.height : size.height,
+          };
     const update: Omit<NodeUpdatePayload, "id"> = {};
     if (changed.title !== undefined) {
       update.title = typed.title;
@@ -325,7 +347,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
       (!typed.automatic &&
         (changed.width !== undefined || changed.height !== undefined))
     ) {
-      update.size = size ?? {};
+      update.size = sized ?? {};
     }
     const changes: Command[] = [];
     if (Object.keys(update).length > 0) {
@@ -338,7 +360,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
     if (changed.x !== undefined || changed.y !== undefined) {
       changes.push({
         type: "node.move",
-        payload: { nodes: [{ id: shown.id, position: place }] },
+        payload: { nodes: [{ id: shown.id, position }] },
         expected_rev,
       });
     }
@@ -366,7 +388,7 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
           }),
       ...(changed.x === undefined && changed.y === undefined
         ? {}
-        : { position: place }),
+        : { position }),
     };
     form.save(changes, kept);
   };
@@ -678,6 +700,13 @@ function Tags({
     const tag = typed.trim();
     if (tag === "" || [...tag].length > 50) {
       setProblem(t("inspector.error.tag"));
+      return;
+    }
+    // One that the server refuses, as pasted with a bidirectional control,
+    // which would refuse the tag of every node, the field says, as it says
+    // of a tag too long.
+    if (hasControlIn(tag)) {
+      setProblem(t("inspector.error.tag_control"));
       return;
     }
     // A node that has the most tags that a node has gets no more, which the

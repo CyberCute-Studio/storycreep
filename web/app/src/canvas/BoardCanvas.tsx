@@ -532,11 +532,9 @@ function BoardCanvasOf({
   }, []);
   // What the canvas changes of the board, as its drags and keys ask, on a
   // board that the user may change.
-  const edits = useRef<{ actions: CanvasActions; history: HistoryOf }>(
-    undefined,
-  );
+  const edits = useRef<{ actions: CanvasActions }>(undefined);
   useLayoutEffect(() => {
-    edits.current = { actions, history };
+    edits.current = { actions };
   });
   useEffect(() => {
     controller.edits = editable

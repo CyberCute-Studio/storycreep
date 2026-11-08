@@ -5,6 +5,7 @@ import {
   aligned,
   distributed,
   freePlace,
+  hasControlIn,
   hasTagOf,
   minSize,
   movedBy,
@@ -212,5 +213,22 @@ describe("the canvas's edits", () => {
         [tagKey("mira"), 2],
       ]),
     );
+  });
+
+  it("finds in a tag the characters that the server refuses in a name: a control character, a tab among them, a bidirectional control, and a line or paragraph separator", () => {
+    const refused = [
+      0x00, 0x09, 0x0a, 0x1b, 0x7f, 0x85, 0x9f, 0x061c, 0x200e, 0x200f, 0x202a,
+      0x202e, 0x2066, 0x2069, 0x2028, 0x2029,
+    ];
+    for (const c of refused) {
+      expect(hasControlIn(`Quest${String.fromCharCode(c)}line`)).toBe(true);
+    }
+    // A space, a letter beyond ASCII, a zero-width space, the characters
+    // beside the bidirectional controls, and an emoji, which is a pair of
+    // surrogates, are none.
+    for (const c of [0x20, 0xea, 0x200b, 0x2065, 0x202f]) {
+      expect(hasControlIn(`Quest${String.fromCharCode(c)}line`)).toBe(false);
+    }
+    expect(hasControlIn(`Quest${String.fromCodePoint(0x1f9ed)}`)).toBe(false);
   });
 });

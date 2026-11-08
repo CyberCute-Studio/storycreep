@@ -167,8 +167,10 @@ export function useCanvasActions(
       },
       /**
        * Duplicates the nodes of ids onto the board, beside them, and selects
-       * the copies, every one of them, though the batches after the first
-       * show theirs later (selectComing).
+       * the copies, every one of them, which the document shows at once, the
+       * batches after the first on top of what is queued (sendJoined), and
+       * which the selection keeps until those batches have settled, though
+       * the scene has them not yet (selectComing).
        */
       duplicate(ids: readonly string[]): Promise<boolean> {
         const { batches, copies } = duplicateBatches(

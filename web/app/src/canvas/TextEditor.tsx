@@ -402,6 +402,14 @@ export function TextEditor({
     },
     [heldRef],
   );
+  // The keys that went down in the editor, by their places, whose repeats,
+  // as the user holds one, are the user's typing. A key held as the editor
+  // opened, as the Enter on the canvas that opened it, goes on repeating
+  // into what has the focus, the text once the editor has given it the
+  // focus, where its repeats do nothing until it goes up, rather than add a
+  // paragraph for each, which would leave text to save or cancel that the
+  // user never typed.
+  const pressed = useRef(new Set<string>());
 
   return (
     <form
@@ -411,6 +419,17 @@ export function TextEditor({
       onBlur={held.props.onBlur}
       onChange={held.props.onChange}
       onSubmit={submit}
+      onKeyDownCapture={(e) => {
+        if (!e.repeat) {
+          pressed.current.add(e.code);
+        } else if (!pressed.current.has(e.code)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      onKeyUpCapture={(e) => {
+        pressed.current.delete(e.code);
+      }}
       onKeyDown={(e) => {
         // Escape closes an editor whose text is as it was, as the inspector's
         // Cancel does; one whose text changed keeps it, to be saved, as one

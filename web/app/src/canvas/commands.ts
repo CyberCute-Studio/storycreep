@@ -21,9 +21,6 @@ import { type Command, maxBatchCommands } from "../document/store";
 import { onBoard } from "./edit";
 import type { Point } from "./viewport";
 
-/** The most commands that a batch sent through the API holds (FR-API-03). */
-export const maxCommands = maxBatchCommands;
-
 /** The most nodes that one node.move, node.delete_many, or node.restore_many names. */
 export const maxNodes = 10_000;
 
@@ -153,7 +150,7 @@ export function duplicateBatches(
       expected_rev: { [id]: node.rev },
     });
   }
-  return { batches: chunks(commands, maxCommands), copies };
+  return { batches: chunks(commands, maxBatchCommands), copies };
 }
 
 /**
@@ -182,5 +179,5 @@ export function updateBatches(
       expected_rev: { [id]: expected?.get(id) ?? node.rev },
     });
   }
-  return chunks(commands, maxCommands);
+  return chunks(commands, maxBatchCommands);
 }

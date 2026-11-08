@@ -789,6 +789,19 @@ describe("the canvas's controller of a board that may be changed", () => {
       x: 13.33,
       y: 3,
     });
+    // The same move again, as each frame's under a pointer that is still,
+    // leaves the node where it is, and once the grid snaps, puts it there.
+    c.moveTo({ x: 13.333, y: 3 });
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({
+      x: 13.33,
+      y: 3,
+    });
+    c.snap = true;
+    c.moveTo({ x: 13.333, y: 3 });
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({
+      x: 16,
+      y: 0,
+    });
     c.moveEnd(false);
     expect(asked.moves).toEqual([]);
     expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });

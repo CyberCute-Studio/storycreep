@@ -25,7 +25,7 @@ export interface Step {
   /**
    * The seqs of the batches that the step undoes, the first first: one, or
    * several for a step whose batch was sent in parts, as an undo too large
-   * for one request.
+   * for one request, or for the batches of a change sent as one (join).
    */
   seqs: number[];
 }

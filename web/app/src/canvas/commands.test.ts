@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { maxBatchCommands } from "../document/store";
 import { docOf, gridNodes, testNode } from "../test/canvas";
 import {
   deleteBatch,
   duplicateBatches,
-  maxCommands,
   maxNodes,
   moveBatch,
   updateBatches,
@@ -85,7 +85,7 @@ describe("the commands of the canvas's edits", () => {
   });
 
   it("duplicates each node beside it, of new IDs, a thousand to a batch", () => {
-    const nodes = gridNodes(maxCommands + 1, 100);
+    const nodes = gridNodes(maxBatchCommands + 1, 100);
     let n = 0;
     const { batches, copies } = duplicateBatches(
       docOf(nodes),
@@ -93,8 +93,8 @@ describe("the commands of the canvas's edits", () => {
       { x: 32, y: 32 },
       () => `nd_copy_${n++}`,
     );
-    expect(batches.map((b) => b.length)).toEqual([maxCommands, 1]);
-    expect(copies).toHaveLength(maxCommands + 1);
+    expect(batches.map((b) => b.length)).toEqual([maxBatchCommands, 1]);
+    expect(copies).toHaveLength(maxBatchCommands + 1);
     expect(batches[0][1]).toEqual({
       type: "node.duplicate",
       payload: {
