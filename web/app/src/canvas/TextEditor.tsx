@@ -146,16 +146,23 @@ export function TextEditor({
     };
     const stop = controller.follow(place);
     // What the window shows changes as the on-screen keyboard opens or
-    // closes, or the page scrolls: where too little of the canvas is left in
-    // view for the box, the page scrolls the canvas to the top of what it
-    // shows, and the box is placed again; and again in the next frame, once
-    // the canvas has taken the window's new height, which a resize gives it
-    // after the window tells of it.
+    // closes, or the window is resized, or the focus comes into the box:
+    // where too little of the canvas is left in view for the box, the page
+    // scrolls the canvas to the top of what it shows, and the box is placed
+    // again; and again in the next frame, once the canvas has taken the
+    // window's new height, which a resize gives it after the window tells of
+    // it. A scroll, as the user's, or the caret's as they type, places the
+    // box again alone, rather than scroll the page back to the canvas under
+    // the user's finger.
     let again = 0;
     const shownChanged = () => {
       check();
       cancelAnimationFrame(again);
       again = requestAnimationFrame(check);
+    };
+    const scrolled = () => {
+      band = visibleBand();
+      controller.invalidate();
     };
     const check = () => {
       band = visibleBand();
@@ -175,9 +182,9 @@ export function TextEditor({
     };
     const vv = window.visualViewport;
     vv?.addEventListener("resize", shownChanged);
-    vv?.addEventListener("scroll", shownChanged);
+    vv?.addEventListener("scroll", scrolled);
     window.addEventListener("resize", shownChanged);
-    window.addEventListener("scroll", shownChanged);
+    window.addEventListener("scroll", scrolled);
     // The focus coming into the box, as the user taps its text, which
     // opens the keyboard: of the box as it is, which a save shows anew.
     const focusIn = (event: FocusEvent) => {
@@ -190,9 +197,9 @@ export function TextEditor({
       stop();
       cancelAnimationFrame(again);
       vv?.removeEventListener("resize", shownChanged);
-      vv?.removeEventListener("scroll", shownChanged);
+      vv?.removeEventListener("scroll", scrolled);
       window.removeEventListener("resize", shownChanged);
-      window.removeEventListener("scroll", shownChanged);
+      window.removeEventListener("scroll", scrolled);
       document.removeEventListener("focusin", focusIn);
     };
   }, [controller, host, node.id]);

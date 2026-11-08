@@ -912,10 +912,8 @@ function BoardCanvasOf({
   const clearMoved = useCallback(() => setMoved(undefined), []);
   const hostElement = useCallback(() => hostRef.current, []);
   const toggleSnap = () => {
-    setSnap((on) => {
-      keepSnap(!on);
-      return !on;
-    });
+    keepSnap(!snap);
+    setSnap(!snap);
   };
 
   const keyDown = (e: ReactKeyboardEvent) => {
