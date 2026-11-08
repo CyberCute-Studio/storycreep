@@ -263,10 +263,13 @@ export class Gestures {
     // A drag on a node moves it, on a board that may be changed, but for one
     // that pans whatever is under it, of the middle button or with Space
     // held: the selection, of a node that is selected, in either mode, and,
-    // in the select mode, a node that is not, which it selects first.
+    // in the select mode, a node that is not, which it selects first. It is
+    // on the node itself, without the slop that finds a tap's node beside
+    // it, so that a rubber band started just beside a node, as at a low
+    // zoom, where the slop is as wide as a node, draws rather than moves.
     const node =
       p.button === 0 && !this.space && this.host.movable()
-        ? this.host.nodeAt(at, tapSlop[p.kind] / v.zoom)
+        ? this.host.nodeAt(at, 0)
         : undefined;
     const drag =
       node !== undefined && this.host.isSelected(node)

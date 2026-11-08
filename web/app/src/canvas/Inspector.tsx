@@ -37,7 +37,6 @@ import type { Command } from "../project/queries";
 import { Button } from "../ui/Button";
 import {
   CheckboxField,
-  control,
   SelectField,
   TextField,
   useFocusRefusal,
@@ -614,7 +613,6 @@ function Tags({
   actions: CanvasActions;
 }) {
   const { t } = useTranslation();
-  const inputId = useId();
   const listId = useId();
   const headingId = useId();
   const [typed, setTyped] = useState("");
@@ -689,24 +687,19 @@ function Tags({
         className="flex flex-wrap items-end gap-2"
         noValidate
       >
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <label htmlFor={inputId} className="font-medium">
-            {nodes.length > 1
-              ? t("inspector.add_tag_all")
-              : t("inspector.add_tag")}
-          </label>
-          <input
-            id={inputId}
+        <div className="min-w-0 flex-1">
+          <TextField
+            label={
+              nodes.length > 1
+                ? t("inspector.add_tag_all")
+                : t("inspector.add_tag")
+            }
             list={listId}
             value={typed}
             onChange={(e) => setTyped(e.currentTarget.value)}
             maxLength={50}
             autoComplete="off"
-            aria-invalid={problem === undefined ? undefined : true}
-            aria-describedby={
-              problem === undefined ? undefined : `${inputId}-error`
-            }
-            className={control}
+            error={problem}
           />
           <datalist id={listId}>
             {(suggestions.data ?? []).map((s) => (
@@ -716,11 +709,6 @@ function Tags({
         </div>
         <Button type="submit">{t("inspector.add")}</Button>
       </form>
-      {problem !== undefined && (
-        <p id={`${inputId}-error`} className="text-danger">
-          {problem}
-        </p>
-      )}
     </section>
   );
 }

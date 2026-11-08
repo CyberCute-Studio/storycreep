@@ -99,8 +99,8 @@ export interface BenchResult {
   heap: { start: number; end: number; max: number } | undefined;
   /** When the board's first frame was drawn, in milliseconds from the start of the page's load. */
   rendered: number | undefined;
-  /** Of the edit run, how long each edit took, from its batch to the end of the frame that drew it, in milliseconds (NFR-PERF-06). */
-  edit?: Stats;
+  /** Of the edit run, how long each edit took, from its batch to the end of the frame that drew it, in milliseconds (NFR-PERF-06), and how many it made. */
+  edit?: Stats & { count: number };
 }
 
 /** The mean, the median, the 95th percentile, and the maximum of some values. */
@@ -296,7 +296,9 @@ export default function Bench({
                 max: Math.max(...heap),
               },
         rendered: mark?.startTime,
-        ...(scenario === "edit" ? { edit: statsOf(edits) } : {}),
+        ...(scenario === "edit"
+          ? { edit: { ...statsOf(edits), count: edits.length } }
+          : {}),
       });
       setPhase("done");
     };

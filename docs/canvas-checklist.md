@@ -31,6 +31,7 @@ Open each address of `tablet.md` on the tablet, in a new tab, and do not touch t
 | FR-EDIT-11 AC1 | The boards of 200 and of 2,000 nodes, `bench=pan` | The page's work in a frame on the board of 2,000 is within 20% of the board of 200's, at the median and at the 95th percentile; the nodes in the canvas are the same. |
 | FR-EDIT-11 AC2 | The board of 5,000 nodes, `bench=pan&seconds=300&warm=pass`, which warms up for a pass of 500 of its nodes, after which PixiJS's caches of text, which are bounded, are full | Read the JavaScript heap in remote DevTools (`chrome://inspect`, Memory) once the run's status says Recording…, and at its end, each after collecting the garbage: it grows less than 10%. The GPU textures that the run reports are as many at its end as at its start. |
 | NFR-PERF-18 | `medium`, `bench=pan&seconds=300&warm=pass` | As FR-EDIT-11 AC2; and the tab's memory in Chrome's task manager stays under 400 MB. |
+| NFR-PERF-06 | `medium`, `bench=edit&seconds=30`, which moves a node in view a step of the grid and back, twice a second, as a drag of it does once it lands | The time from each edit to the frame that shows it is under 50 ms at the 95th percentile. |
 | NFR-PERF-05 | `large`, `bench=load`, on the reference desktop | The first frame of the board is under 6,000 ms. |
 | NFR-PERF-02 | `medium`, `bench=panzoom`, on the reference desktop | 60 frames a second or more, and the time between frames is under 16 ms at the 95th percentile. |
 
@@ -46,3 +47,5 @@ On the tablet, on any board of `medium`:
 - Below 40% zoom, nodes are blocks of colour without text (FR-EDIT-01 AC4).
 - With Android's Remove animations on, fit to content and zoom to selection jump, rather than move (NFR-A11Y-07).
 - Fit to content, zoom to selection, the zoom's buttons, and the minimap each work with a tap, with nothing that needs a long press, a hover, or a second button (FR-EDIT-01 AC2).
+- A finger's drag that starts on a selected node moves it, and the selection with it, from 8 px of its press, and a tap that moves less selects it rather than moves it (NFR-TOUCH-05); in the pan mode, a drag that starts on a node that is not selected pans. After a move of two nodes or more, the toolbar offers Undo the move for 10 seconds.
+- A second tap on an element opens its text over its card. With the on-screen keyboard open, the editor stays whole above it, and the caret stays in view as you type line after line (FR-EDIT-09 AC3, FR-TEXT-01 AC3), in portrait and in landscape.

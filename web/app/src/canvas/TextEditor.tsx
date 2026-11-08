@@ -12,7 +12,7 @@
 // top of what the window shows. It saves the text, in one command, as the
 // user asks, and the canvas then has the focus again.
 
-import type { Node } from "@storycreep/shared/api";
+import type { Node as BoardNode } from "@storycreep/shared/api";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
@@ -80,7 +80,7 @@ export function boxPlace(
 /** What the editor of an element's text is given. */
 export interface TextEditorProps {
   projectId: string;
-  node: Node;
+  node: BoardNode;
   controller: CanvasController;
   /** The canvas's element, whose part that the window shows the box stays in. */
   host: () => HTMLElement | null;
@@ -148,8 +148,16 @@ export function TextEditor({
     // What the window shows changes as the on-screen keyboard opens or
     // closes, or the page scrolls: where too little of the canvas is left in
     // view for the box, the page scrolls the canvas to the top of what it
-    // shows, and the box is placed again.
+    // shows, and the box is placed again; and again in the next frame, once
+    // the canvas has taken the window's new height, which a resize gives it
+    // after the window tells of it.
+    let again = 0;
     const shownChanged = () => {
+      check();
+      cancelAnimationFrame(again);
+      again = requestAnimationFrame(check);
+    };
+    const check = () => {
       band = visibleBand();
       const h = host();
       const el = box.current;
@@ -170,15 +178,22 @@ export function TextEditor({
     vv?.addEventListener("scroll", shownChanged);
     window.addEventListener("resize", shownChanged);
     window.addEventListener("scroll", shownChanged);
-    const el = box.current;
-    el?.addEventListener("focusin", shownChanged);
+    // The focus coming into the box, as the user taps its text, which
+    // opens the keyboard: of the box as it is, which a save shows anew.
+    const focusIn = (event: FocusEvent) => {
+      if (box.current?.contains(event.target as Node)) {
+        shownChanged();
+      }
+    };
+    document.addEventListener("focusin", focusIn);
     return () => {
       stop();
+      cancelAnimationFrame(again);
       vv?.removeEventListener("resize", shownChanged);
       vv?.removeEventListener("scroll", shownChanged);
       window.removeEventListener("resize", shownChanged);
       window.removeEventListener("scroll", shownChanged);
-      el?.removeEventListener("focusin", shownChanged);
+      document.removeEventListener("focusin", focusIn);
     };
   }, [controller, host, node.id]);
 

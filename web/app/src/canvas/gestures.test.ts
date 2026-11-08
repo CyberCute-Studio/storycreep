@@ -679,3 +679,23 @@ describe("the canvas's gestures of a board that may be changed", () => {
     expect(state.opened).toEqual(["nd_a"]);
   });
 });
+
+describe("the canvas's gestures of a drag beside a node", () => {
+  it("draws a rubber band from just beside a node, within a tap's slop of it, rather than move it", () => {
+    const { state, gestures } = host("select", true);
+    // 6 px left of the node, which a finger's tap there would find.
+    gestures.down(touch(1, 94, 150));
+    gestures.move(touch(1, 200, 200));
+    expect(state.moves).toEqual([]);
+    expect(state.bands.at(-1)).toEqual({
+      x: 94,
+      y: 150,
+      width: 106,
+      height: 50,
+    });
+    gestures.cancel({ id: 1 });
+    gestures.down(touch(1, 94, 150));
+    gestures.up(touch(1, 94, 150));
+    expect(state.selects.at(-1)).toEqual({ ids: ["nd_a"], how: "replace" });
+  });
+});

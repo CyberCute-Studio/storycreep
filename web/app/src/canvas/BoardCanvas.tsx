@@ -45,7 +45,6 @@ import {
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
 import { Button, buttonClass, pressedClass } from "../ui/Button";
-import { control } from "../ui/Field";
 import { Menu, MenuItem } from "../ui/Menu";
 import { useMediaQuery } from "../ui/media";
 import { Alert } from "../ui/Page";
@@ -339,6 +338,7 @@ function BoardCanvasOf({
   // The last bulk move, once it joined the history, which the canvas offers
   // the undo of for a while (NFR-TOUCH-05).
   const [moved, setMoved] = useState<{
+    key: number;
     count: number;
     undoable: number;
     redoable: number;
@@ -428,7 +428,9 @@ function BoardCanvasOf({
   const edits = useRef<{ actions: CanvasActions; history: HistoryOf }>(
     undefined,
   );
-  edits.current = { actions, history };
+  useLayoutEffect(() => {
+    edits.current = { actions, history };
+  });
   useEffect(() => {
     controller.edits = editable
       ? {
@@ -442,6 +444,7 @@ function BoardCanvasOf({
               if (applied && count >= 2) {
                 const state = doc.store.getState();
                 setMoved({
+                  key: Date.now(),
                   count,
                   undoable: state.undoable,
                   redoable: state.redoable,
@@ -1106,7 +1109,7 @@ function BoardCanvasOf({
           <select
             value={tagFilter}
             onChange={(e) => setTagFilter(e.currentTarget.value)}
-            className={`${control} w-auto max-w-48`}
+            className="min-h-11 max-w-48 rounded-md border border-border bg-canvas px-3 text-fg"
           >
             <option value="">{t("canvas.tag_filter_none")}</option>
             {tagFilter !== "" && !tags.includes(tagFilter) && (
@@ -1144,7 +1147,14 @@ function BoardCanvasOf({
             }
           />
           {moved !== undefined && (
-            <UndoMove moved={moved} history={history} onDone={clearMoved} />
+            // A bulk move after the one before offers its own undo for as
+            // long, rather than for what was left of the one before's.
+            <UndoMove
+              key={moved.key}
+              moved={moved}
+              history={history}
+              onDone={clearMoved}
+            />
           )}
         </>
       )}
@@ -1247,7 +1257,14 @@ function BoardCanvasOf({
             projectId={projectId}
             selection={selection}
             actions={actions}
-            onEditText={(id) => setEditing(id)}
+            // A sheet over the canvas closes to show the editor of the text,
+            // which it would else hold inert under it.
+            onEditText={(id) => {
+              setEditing(id);
+              if (!docked) {
+                setInspecting(false);
+              }
+            }}
             onClose={() => setInspecting(false)}
             returnFocus={() => inspectorButton.current}
           />

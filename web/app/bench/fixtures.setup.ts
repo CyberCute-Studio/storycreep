@@ -171,6 +171,7 @@ test("loads the fixtures and the boards that the runs measure", async ({
         `- FR-EDIT-11 AC1, 2,000 nodes: ${url(b2000, "bench=pan&seconds=30")}`,
         `- FR-EDIT-11 AC2, 5,000 nodes: ${url(b5000, "bench=pan&seconds=300&warm=pass")}`,
         `- NFR-PERF-18, medium: ${url(medium, "bench=pan&seconds=300&warm=pass")}`,
+        `- NFR-PERF-06, medium: ${url(medium, "bench=edit&seconds=30")}`,
         `- NFR-PERF-05, large, on the reference desktop: ${url(large, "bench=load")}`,
         "",
       ].join("\n"),
