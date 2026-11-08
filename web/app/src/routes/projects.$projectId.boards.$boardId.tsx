@@ -3,6 +3,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
 import type { RendererKind } from "../canvas/engine";
@@ -16,11 +17,13 @@ import {
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
+import { useLastOpened } from "../project/lastOpened";
 import {
   type Command,
   editsProject,
   loadPart,
   projectQuery,
+  readBoard,
 } from "../project/queries";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
@@ -105,24 +108,20 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     }
     return out;
   },
-  // The project comes first, as for the tree of its boards, which its
-  // document reads, and which holds the board, but for one in the trash. A
-  // document that the real-time channel does not keep current, while it is
-  // not live, may not have the board yet, as one that another session made
-  // since, so it reads the project anew before it says that there is none,
-  // and shows what that read failed with, rather than say so after a read
-  // that failed.
-  loader: async ({ context: { queryClient, documents }, params }) => {
-    const project = await found(
-      queryClient.ensureQueryData(projectQuery(params.projectId)),
+  // The project, and the tree of its boards, which holds the board, but for
+  // one in the trash, as readBoard reads them, which the app's start page
+  // reads too before it opens the board: the page of no page where the
+  // server has none of either for the user, or the tree no such board, and
+  // otherwise what a read failed with, rather than say that there is no
+  // board after a read that failed.
+  loader: async ({ context, params }) => {
+    const doc = await readBoard(
+      context,
+      params.projectId,
+      params.boardId,
+      found,
     );
-    const doc = documents.get(project.id);
-    await found(doc.load("tree"));
-    const has = () => doc.store.getState().view.boards.has(params.boardId);
-    if (!has()) {
-      await doc.refresh();
-    }
-    if (!has()) {
+    if (doc === undefined) {
       throw notFound();
     }
     // The board's nodes and connections, which the canvas shows, start to
@@ -230,6 +229,16 @@ function BoardContent({
   const search = Route.useSearch();
   const editable =
     editsProject(project.role) && project.archived_at === undefined;
+  // The device opens this board next, and its canvas where the user left
+  // it, with its selection (PRD FR-PROJ-04), but for the benchmark's runs,
+  // which start where they choose, and leave nothing for the next, and once
+  // the page has deleted it.
+  const userId = useSuspenseQuery(sessionQuery).data?.user_id;
+  const last = useLastOpened(
+    search.bench === undefined ? userId : undefined,
+    projectId,
+    board.id,
+  );
   useDocumentTitle(
     t("board.page_title", { board: board.name, project: project.name }),
   );
@@ -258,6 +267,8 @@ function BoardContent({
         settingsId="board-settings"
         read={read}
         options={options}
+        initial={last.initial}
+        onView={last.onView}
       />
       <section
         aria-labelledby="board-settings"
@@ -288,6 +299,7 @@ function BoardContent({
             projectId={projectId}
             board={board}
             onDeleting={onDeleting}
+            onDeleted={last.forget}
           />
         )}
       </section>
@@ -494,10 +506,13 @@ function DeleteBoard({
   projectId,
   board,
   onDeleting,
+  onDeleted,
 }: {
   projectId: string;
   board: Board;
   onDeleting: (deleting: boolean) => void;
+  /** Tells that the board is deleted, before the page goes. */
+  onDeleted: () => void;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -536,9 +551,11 @@ function DeleteBoard({
           }}
           // The page goes to the project's; a page of the board, which is
           // in the trash now, that the user goes back to finds it gone from
-          // the document's tree, and shows the page of no page.
+          // the document's tree, and shows the page of no page. Neither the
+          // start page nor the server opens it next (onDeleted).
           onDeleted={() => {
             deleted.current = true;
+            onDeleted();
             void navigate({
               to: "/projects/$projectId",
               params: { projectId },

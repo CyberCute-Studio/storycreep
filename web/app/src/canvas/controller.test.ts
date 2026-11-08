@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { docOf, gridNodes, testNode } from "../test/canvas";
-import { animationTime, CanvasController, type Clock } from "./controller";
+import {
+  animationTime,
+  CanvasController,
+  type CanvasView,
+  type Clock,
+} from "./controller";
 import type { Engine, Frame, FrameStats } from "./engine";
 import type { Theme } from "./theme";
 
@@ -83,6 +88,7 @@ function setUp() {
     selections: [] as number[],
     zooms: [] as number[],
     rendered: 0,
+    views: [] as CanvasView[],
   };
   const c = new CanvasController(
     "bd_a",
@@ -92,6 +98,7 @@ function setUp() {
       rendered: () => {
         events.rendered++;
       },
+      view: (v) => events.views.push(v),
     },
     time.clock,
   );
@@ -130,6 +137,106 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBeCloseTo(504 / (9 * 200 + 128));
     time.tick();
     expect(events.rendered).toBe(1);
+  });
+
+  // Verifies: FR-PROJ-04/AC1
+  it("opens where the device left the board, with the nodes that it selected that the board still has, in the first frame of the board's content", () => {
+    const { c, time, events, frames } = setUp();
+    c.restore({
+      viewport: { x: 100, y: 50, zoom: 2 },
+      size: { width: 1000, height: 600 },
+      selection: ["nd_1", "nd_gone"],
+    });
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    time.tick();
+    const before = frames.length;
+    c.setReady();
+    time.tick();
+    time.tick();
+    expect(events.rendered).toBe(1);
+    // The first frame once the board's content has been read is drawn at
+    // the view, never fitted first.
+    const ready = frames.slice(before);
+    expect(ready.map((f) => f.viewport)).toEqual([
+      { x: 100, y: 50, zoom: 2 },
+      { x: 100, y: 50, zoom: 2 },
+    ]);
+    expect([...ready[0].selection]).toEqual(["nd_1"]);
+    expect(events.selections).toEqual([1]);
+    // A view restored after the canvas was placed moves nothing.
+    c.restore({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    time.tick();
+    expect(c.viewport()).toEqual({ x: 100, y: 50, zoom: 2 });
+  });
+
+  it("opens a view of a canvas of another size about the centre that it had", () => {
+    const { c, time } = setUp();
+    c.restore({
+      viewport: { x: 100, y: 50, zoom: 2 },
+      size: { width: 500, height: 300 },
+      selection: [],
+    });
+    placed(c, time);
+    // Its centre, 225 by 125 of the board, at the centre of 1000 by 600.
+    expect(c.viewport()).toEqual({ x: -25, y: -25, zoom: 2 });
+  });
+
+  it("asks for no frame to restore a view, and keeps a selection that the user made before it was placed", () => {
+    for (const selection of [["nd_1"], []]) {
+      const { c, time, frames } = setUp();
+      time.tick();
+      c.restore({
+        viewport: { x: 100, y: 50, zoom: 2 },
+        size: { width: 1000, height: 600 },
+        selection,
+      });
+      // The page restores the view as it renders.
+      expect(time.pending()).toBe(0);
+      // The document had the board's nodes, which the canvas shows while
+      // it reads them anew, and the user selects one meanwhile.
+      c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+      c.select(["nd_2"], "replace");
+      time.tick();
+      c.setReady();
+      time.tick();
+      expect(c.viewport(), `${selection}`).toEqual({ x: 100, y: 50, zoom: 2 });
+      expect([...(frames.at(-1)?.selection ?? [])], `${selection}`).toEqual([
+        "nd_2",
+      ]);
+    }
+  });
+
+  it("tells the page what it shows from the frame that placed it on, once a frame, as its view, its size, or its selection changes", () => {
+    const { c, time, events } = setUp();
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    time.tick();
+    c.setViewport({ x: 5, y: 5, zoom: 1 });
+    time.tick();
+    expect(events.views).toEqual([]);
+    c.setReady();
+    time.tick();
+    expect(events.views).toHaveLength(1);
+    expect(events.views[0].viewport).toEqual(c.viewport());
+    time.tick();
+    c.setTheme({ ...theme, canvas: 0 });
+    time.tick();
+    expect(events.views).toHaveLength(1);
+    c.setViewport({ x: 10, y: 10, zoom: 1 });
+    c.setViewport({ x: 20, y: 10, zoom: 1 });
+    time.tick();
+    expect(events.views.map((v) => v.viewport.x)).toEqual([
+      events.views[0].viewport.x,
+      20,
+    ]);
+    c.select(["nd_1"], "replace");
+    time.tick();
+    expect([...events.views[2].selection]).toEqual(["nd_1"]);
+    c.setSize({ width: 800, height: 600 }, 1);
+    expect(events.views[3].size).toEqual({ width: 800, height: 600 });
   });
 
   it("draws only once something changed", () => {

@@ -281,7 +281,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerEmail(s.main, s.accounts)
 	registerInstance(s.main, s.accounts, cfg.DefaultLocale)
 	registerDocument(s.main)
-	registerPages(s.main, webassets.App(), webassets.Site(), cfg.Capabilities.PublicSite)
+	registerPages(s.main, webassets.App(), webassets.Site(), cfg.Capabilities.PublicSite, s.landing(cookie))
 
 	switch {
 	case cfg.AdminAddr == "":
