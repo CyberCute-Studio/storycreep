@@ -438,7 +438,10 @@ function BoardCanvasOf({
     setEditing(id);
   }, []);
   // An element whose editor is open that goes, as once another session
-  // deleted it, closes it.
+  // deleted it, closes it, and the focus that the editor had, which falls to
+  // the page's body as the editor goes, goes back to the canvas, as the
+  // editor's own close gives it, rather than leave the canvas's keys to
+  // the user's Tab.
   const editingGone =
     editing !== undefined &&
     (editingNode === undefined ||
@@ -447,6 +450,9 @@ function BoardCanvasOf({
   useEffect(() => {
     if (editingGone) {
       setEditing(undefined);
+      if (document.activeElement === document.body) {
+        hostRef.current?.focus({ preventScroll: true });
+      }
     }
   }, [editingGone]);
   const closeEditor = useCallback(() => {
@@ -519,9 +525,11 @@ function BoardCanvasOf({
     controller.setDimmed((node) => !has(node));
   }, [controller, tagFilter]);
   // A link to a node opens the canvas on it, and, where the inspector docks
-  // beside the canvas, the inspector of it too, as the link is followed,
-  // rather than as the window turns.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: docked is read as the link is followed.
+  // beside the canvas, on a board that the user may change, the inspector
+  // of it too, as the link is followed, rather than as the window turns, or
+  // as the user's role or the project's archive changes, long after, which
+  // would take the user's selection and view away.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: editable and docked are read as the link is followed.
   useEffect(() => {
     if (focus !== undefined) {
       controller.focus(focus);
@@ -529,7 +537,7 @@ function BoardCanvasOf({
         setInspecting(true);
       }
     }
-  }, [controller, focus, editable]);
+  }, [controller, focus]);
 
   // The canvas takes the window's height below where it starts, as a
   // tablet's screen is the board's, as the window's size changes, and as
@@ -984,6 +992,29 @@ function BoardCanvasOf({
 
   const clearMoved = useCallback(() => setMoved(undefined), []);
   const hostElement = useCallback(() => hostRef.current, []);
+  // A press of a node's resize handle, which is outside the canvas's
+  // element, is the canvas's own, at the handle's point of the canvas, by
+  // the same rules as a press on it (Gestures' down), and the canvas's
+  // element captures its pointer, as it does a press's on it, so that its
+  // moves, its release, and its loss come to the canvas, which follows them
+  // as those of every pointer.
+  const pressHandle = useCallback(
+    (e: ReactPointerEvent<HTMLElement>, id: string) => {
+      const host = hostRef.current;
+      if (
+        host !== null &&
+        controller.down(
+          pointerInput(e.nativeEvent, host.getBoundingClientRect()),
+          id,
+        )
+      ) {
+        host.focus({ preventScroll: true });
+        host.setPointerCapture?.(e.pointerId);
+        e.preventDefault();
+      }
+    },
+    [controller],
+  );
   const toggleSnap = () => {
     keepSnap(!snap);
     setSnap(!snap);
@@ -1133,6 +1164,11 @@ function BoardCanvasOf({
           <fieldset className="flex min-w-0 flex-wrap gap-2">
             <legend className="sr-only">{t("canvas.edit")}</legend>
             <Menu
+              // A node is added at the centre of the canvas, beside the
+              // board's nodes there, once the canvas is placed on them, as
+              // once they have been read, rather than at the board's origin,
+              // over a node not read yet.
+              disabled={content !== "ready"}
               trigger={<Button aria-haspopup="menu">{t("canvas.add")}</Button>}
             >
               <MenuItem onSelect={() => void actions.create("element")}>
@@ -1301,7 +1337,8 @@ function BoardCanvasOf({
           takes every touch and key of its own: the resize handle of the
           node selected, and the editor of an element's text. The layer lets
           a pointer through to the canvas but on them, and the canvas takes
-          the wheel and the pinch over the handle too. */}
+          the wheel and the pinch over the handle too, and the handle's
+          press, whose pointer it follows as its own (pressHandle). */}
           <div
             ref={overRef}
             className="pointer-events-none absolute inset-0 overflow-hidden rounded-md"
@@ -1310,7 +1347,12 @@ function BoardCanvasOf({
               selected === 1 &&
               editing === undefined &&
               [...selection].map((id) => (
-                <ResizeHandle key={id} id={id} controller={controller} />
+                <ResizeHandle
+                  key={id}
+                  id={id}
+                  controller={controller}
+                  onPress={pressHandle}
+                />
               ))}
             {editable &&
               editing !== undefined &&

@@ -166,6 +166,48 @@ test.describe("a board's canvas, editing its nodes", () => {
     expect(sent).toEqual([]);
   });
 
+  test("resizes the node selected by a drag of its handle, which the canvas follows, with one command of its size, on the grid", async ({
+    page,
+  }) => {
+    const board = await openBoard(page);
+    const canvas = canvasOf(page, board.name);
+    const sent = sentBatches(page);
+    const at = await pointOf(canvas, middleOf(0, 0));
+    if (test.info().project.use.hasTouch) {
+      await page.touchscreen.tap(at.x, at.y);
+    } else {
+      await page.mouse.click(at.x, at.y);
+    }
+    await expect(canvas).toHaveAttribute("data-selected", "1");
+    // The handle is centred on the node's bottom right corner; a drag of it
+    // by 80 and 40 units, whose moves and release the canvas captures, sizes
+    // the node from 240 by 128 to 320 by 168.
+    const handle = page.locator(".cursor-nwse-resize");
+    await expect(handle).toBeVisible();
+    const box = await handle.boundingBox();
+    expect(box).not.toBeNull();
+    const view = await settled(canvas);
+    const from = {
+      x: (box?.x ?? 0) + (box?.width ?? 0) / 2,
+      y: (box?.y ?? 0) + (box?.height ?? 0) / 2,
+    };
+    await dragOn(page, from, {
+      x: from.x + 80 * view.zoom,
+      y: from.y + 40 * view.zoom,
+    });
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]).toMatchObject([
+      {
+        type: "node.update",
+        payload: {
+          id: board.nodeIds[0],
+          size: { width: 320, height: 168 },
+        },
+      },
+    ]);
+    expect(await settled(canvas)).toEqual(view);
+  });
+
   // Verifies: FR-EDIT-06/AC1
   test("dims the nodes without the tag that the filter names, and changes nothing of the board", async ({
     page,

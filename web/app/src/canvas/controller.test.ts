@@ -867,7 +867,7 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(hides.at(-1)).toBe(false);
   });
 
-  it("starts no resize while another is under way, as of a second pointer on the handle", () => {
+  it("starts no resize while another drag is under way, a move's or a resize's, whose nodes its own would take the place of", () => {
     const { c, time } = setUp();
     editsOf(c);
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
@@ -878,9 +878,17 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.resizeEnd(false);
     expect(c.resizeStart("nd_1")).toBe(true);
     c.resizeEnd(false);
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    expect(c.resizeStart("nd_1")).toBe(false);
+    // The end of a resize that is not under way leaves the move as it is.
+    c.moveTo({ x: 16, y: 0 });
+    c.resizeEnd(false);
+    expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 16, y: 0 });
+    c.moveEnd(false);
   });
 
-  it("starts no move while a node's handle resizes it, as under another finger, whose preview the move's would take the place of", () => {
+  it("starts no move while a node's handle resizes it, whose nodes the move's would take the place of", () => {
     const { c, time } = setUp();
     const asked = editsOf(c);
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
@@ -949,6 +957,29 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(asked.sizeRevs).toEqual([1]);
   });
 
+  it("drops from the selection a node that another session deletes while a drag moves it, and moves the rest", () => {
+    const { c, time } = setUp();
+    const asked = editsOf(c);
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]), false);
+    c.setReady();
+    time.tick();
+    c.select(["nd_1", "nd_2"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 16, y: 0 });
+    c.sync(
+      docOf([
+        testNode("nd_1", 0, 0),
+        testNode("nd_2", 400, 0, { deleted_at: "2026-11-08T10:00:00Z" }),
+      ]),
+      false,
+    );
+    expect([...c.selection()]).toEqual(["nd_1"]);
+    c.moveTo({ x: 32, y: 0 });
+    expect([...c.selection()]).toEqual(["nd_1"]);
+    c.moveEnd(true);
+    expect(asked.moves).toEqual([new Map([["nd_1", { x: 32, y: 0 }]])]);
+  });
+
   it("keeps selected the nodes that the page's batches create until they come, though the scene changes before, and drops those that never came once they settle", async () => {
     const { c, time } = setUp();
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
@@ -982,25 +1013,43 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(c.moveStart("nd_1")).toBe(false);
   });
 
-  it("resizes a node by its handle's move, in pixels of the canvas at its zoom, and asks for its size once the handle is let go", () => {
+  it("resizes a node by a drag of its handle, by the board's units under the pointer, which the corner follows as the board moves, and asks for its size once the handle is let go", () => {
     const { c, time } = setUp();
     const asked = editsOf(c);
     c.sync(docOf([testNode("nd_1", 0, 0)]), false);
     c.setReady();
     time.tick();
+    c.select(["nd_1"], "replace");
     c.setViewport({ x: 0, y: 0, zoom: 2 });
-    expect(c.resizeStart("nd_1")).toBe(true);
+    // A mouse on the handle, at the node's corner, 240 by 128 units.
+    const at = (x: number, buttons = 1) => ({
+      id: 1,
+      x,
+      y: 256,
+      kind: "mouse" as const,
+      button: 0,
+      buttons,
+      shift: false,
+      additive: false,
+    });
+    expect(c.down(at(480), "nd_1")).toBe(true);
     // 60 pixels at 200% are 30 units, which snap to 32.
-    c.resizeTo({ x: 60, y: 0 });
+    c.gestures.move(at(540));
     expect(c.scene.nodes.rect("nd_1")).toEqual({
       x: 0,
       y: 0,
       width: 272,
       height: 128,
     });
-    c.resizeEnd(true);
+    // A key's pan of the board, 40 pixels at 200%, under the pointer, which
+    // is still: the corner stays under it, 20 units on, at 290, which snaps
+    // to 288.
+    c.setViewport({ x: 20, y: 0, zoom: 2 });
+    time.tick();
+    expect(c.scene.nodes.rect("nd_1")?.width).toBe(288);
+    c.gestures.up(at(540, 0));
     expect(asked.sizes).toEqual([
-      { id: "nd_1", size: { width: 272, height: 128 } },
+      { id: "nd_1", size: { width: 288, height: 128 } },
     ]);
     // A resize that ends where it started asks for nothing.
     c.resizeStart("nd_1");

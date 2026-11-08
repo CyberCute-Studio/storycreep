@@ -21,14 +21,18 @@ const item =
 export interface MenuProps {
   /** The trigger, a Button, which the menu opens from. */
   trigger: ReactNode;
+  /** Whether the trigger is disabled, which Radix gives it, and which opens nothing, as by a pointer's press, which a disabled button still hears. */
+  disabled?: boolean;
   children: ReactNode;
 }
 
 /** A menu that trigger opens, of children, its items. */
-export function Menu({ trigger, children }: MenuProps) {
+export function Menu({ trigger, disabled, children }: MenuProps) {
   return (
     <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
+      <DropdownMenu.Trigger asChild disabled={disabled}>
+        {trigger}
+      </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"

@@ -165,10 +165,12 @@ const dimAlpha = 0.3;
 
 /**
  * Of each field of a node, whether a node moved has it as it was (movedOnly):
- * every field that its card shows, or that tells of a change of it, as its
- * revision, but its position, and none that no card shows. The compiler
- * holds each field of the API's node to be named here, so that a field that
- * the API adds, which a card might show, is not left out unseen.
+ * every field that its card shows, but its position, and none that no card
+ * shows, as its revision, which the answer to a move's batch changes, and
+ * which, kept, would write every card that the move moved anew in the frame
+ * of the answer, though each field that a card shows is compared here. The
+ * compiler holds each field of the API's node to be named here, so that a
+ * field that the API adds, which a card might show, is not left out unseen.
  */
 const keptByMove = {
   board_id: false,
@@ -184,7 +186,7 @@ const keptByMove = {
   outputs: true,
   position: false,
   project_id: false,
-  rev: true,
+  rev: false,
   size: true,
   speaker_component_id: true,
   tags: true,

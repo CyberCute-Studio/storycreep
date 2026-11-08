@@ -21,11 +21,17 @@ function host(mode: Mode = "pan", movable = false) {
     now: 0,
     /** Whether the board has its node, as it has not once another session deleted it. */
     present: true,
-    /** Whether the host refuses to start a move, as while the node's handle resizes it. */
+    /** Whether the host refuses to start a move, or a resize, as while another drag is under way. */
     refuses: false,
     selected: [] as string[],
     /** What the moves of the selection did: where each started, moved, and how it ended. */
     moves: [] as (
+      | { start: string }
+      | { to: { x: number; y: number } }
+      | { end: boolean }
+    )[],
+    /** What the resizes by the node's handle did: where each started, how far it resized, and how it ended. */
+    resizes: [] as (
       | { start: string }
       | { to: { x: number; y: number } }
       | { end: boolean }
@@ -95,6 +101,16 @@ function host(mode: Mode = "pan", movable = false) {
     },
     moveEnd: (commit) => {
       state.moves.push({ end: commit });
+    },
+    resizeStart: (id) => {
+      state.resizes.push({ start: id });
+      return state.present && !state.refuses;
+    },
+    resizeTo: (delta) => {
+      state.resizes.push({ to: delta });
+    },
+    resizeEnd: (commit) => {
+      state.resizes.push({ end: commit });
     },
     open: (id) => {
       state.opened.push(id);
@@ -749,5 +765,142 @@ describe("the canvas's gestures of a drag beside a node", () => {
     gestures.down(touch(1, 94, 150));
     gestures.up(touch(1, 94, 150));
     expect(state.selects.at(-1)).toEqual({ ids: ["nd_a"], how: "replace" });
+  });
+});
+
+describe("the canvas's gestures of a node's resize handle", () => {
+  // Verifies: NFR-TOUCH-05
+  it("resizes the node by a drag of its handle, from 8 px of a finger and 4 of a mouse, in either mode, and taps nothing", () => {
+    for (const mode of ["pan", "select"] as const) {
+      const { state, gestures } = host(mode, true);
+      state.selected = ["nd_a"];
+      // A finger's tap on the handle selects, opens, and resizes nothing.
+      gestures.down(touch(1, 340, 220), "nd_a");
+      gestures.move(touch(1, 345, 224));
+      gestures.up(touch(1, 345, 224));
+      expect(state.resizes).toEqual([]);
+      expect(state.selects).toEqual([]);
+      gestures.down(touch(1, 340, 220), "nd_a");
+      gestures.move(touch(1, 350, 220));
+      gestures.up(touch(1, 380, 240));
+      expect(state.resizes).toEqual([
+        { start: "nd_a" },
+        { to: { x: 10, y: 0 } },
+        { to: { x: 40, y: 20 } },
+        { end: true },
+      ]);
+      state.resizes = [];
+      gestures.down(mouse(340, 220), "nd_a");
+      gestures.move(mouse(345, 220));
+      gestures.up(mouse(345, 220));
+      expect(state.resizes.at(0)).toEqual({ start: "nd_a" });
+      expect(state.resizes.at(-1)).toEqual({ end: true });
+      expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+      expect(state.selects).toEqual([]);
+    }
+  });
+
+  it("keeps a resize's corner under its pointer as the board moves under it, by the wheel, or by the canvas's fit", () => {
+    const { state, gestures } = host("pan", true);
+    state.v = { x: 0, y: 0, zoom: 2 };
+    gestures.down(mouse(680, 440), "nd_a");
+    gestures.move(mouse(700, 440));
+    // 20 px at 200% are 10 units of the board.
+    expect(state.resizes.at(-1)).toEqual({ to: { x: 10, y: 0 } });
+    // The wheel pans the board 100 px under the pointer, which is still:
+    // the node's corner follows the pointer, 50 units more.
+    gestures.wheel({
+      x: 700,
+      y: 440,
+      dx: 100,
+      dy: 0,
+      deltaMode: 0,
+      zoom: false,
+      shift: false,
+    });
+    gestures.refresh();
+    expect(state.resizes.at(-1)).toEqual({ to: { x: 60, y: 0 } });
+    // The canvas's own move of the board keeps the resize where it is on
+    // the canvas.
+    const from = state.v;
+    state.v = { x: 500, y: 500, zoom: 1 };
+    gestures.replaced(from);
+    expect(state.resizes.at(-1)).toEqual({ to: { x: 120, y: 0 } });
+    gestures.up(mouse(700, 440));
+    expect(state.resizes.at(-1)).toEqual({ end: true });
+  });
+
+  it("ends a resize, cancelled, as a second finger pinches, as another pointer's press takes the canvas, or as its handle goes, and pans by a drag of the handle of the middle button", () => {
+    const { state, gestures } = host("pan", true);
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.move(touch(1, 360, 220));
+    gestures.down(touch(2, 600, 400));
+    expect(state.resizes.at(-1)).toEqual({ end: false });
+    gestures.up(touch(1, 360, 220));
+    gestures.up(touch(2, 600, 400));
+    // A mouse's press, as on the handle, while a finger resizes.
+    state.resizes = [];
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.move(touch(1, 360, 220));
+    gestures.down(mouse(360, 220), "nd_a");
+    expect(state.resizes).toEqual([
+      { start: "nd_a" },
+      { to: { x: 20, y: 0 } },
+      { end: false },
+    ]);
+    gestures.up(mouse(360, 220));
+    expect(state.resizes.at(-1)).toEqual({ end: false });
+    // The handle goes while the resize is under way: its pointer does
+    // nothing more, nor does it after it goes, as one that went before
+    // its drag.
+    state.resizes = [];
+    gestures.down(mouse(340, 220), "nd_a");
+    gestures.move(mouse(360, 220));
+    gestures.handleGone("nd_a");
+    gestures.move(mouse(400, 260));
+    gestures.up(mouse(400, 260));
+    expect(state.resizes).toEqual([
+      { start: "nd_a" },
+      { to: { x: 20, y: 0 } },
+      { end: false },
+    ]);
+    state.resizes = [];
+    gestures.down(mouse(340, 220), "nd_a");
+    gestures.handleGone("nd_a");
+    gestures.move(mouse(400, 260));
+    gestures.up(mouse(400, 260));
+    expect(state.resizes).toEqual([]);
+    expect(state.selects).toEqual([]);
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    // The middle button pans, on the handle as on the canvas.
+    gestures.down(mouse(340, 220, { button: 1 }), "nd_a");
+    gestures.move(mouse(380, 220, { button: 1 }));
+    gestures.up(mouse(380, 220, { button: 1, buttons: 0 }));
+    expect(state.resizes).toEqual([]);
+    expect(state.v.x).toBe(-40);
+  });
+
+  it("ignores a finger on the handle while a pen is down, as a palm's, and holds a drag whose resize the host refuses", () => {
+    const { state, gestures } = host("select", true);
+    const pen = mouse(500, 500, { kind: "pen" });
+    gestures.down(pen);
+    gestures.move({ ...pen, x: 520, y: 520 });
+    expect(gestures.down(touch(2, 340, 220), "nd_a")).toBe(false);
+    gestures.move(touch(2, 400, 260));
+    expect(state.resizes).toEqual([]);
+    expect(state.bands.at(-1)).toEqual({
+      x: 500,
+      y: 500,
+      width: 20,
+      height: 20,
+    });
+    gestures.up({ ...pen, x: 520, y: 520, buttons: 0 });
+    // A node that went before the drag of its handle resizes nothing.
+    state.present = false;
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.move(touch(1, 400, 260));
+    gestures.up(touch(1, 400, 260));
+    expect(state.resizes).toEqual([{ start: "nd_a" }]);
+    expect(state.released).toContain(1);
   });
 });

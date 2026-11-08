@@ -14,7 +14,7 @@
 // that is not saved, it stays open in place of another node's editor that
 // the user asks for, and says to save or cancel it first.
 
-import type { Node as BoardNode, RichTextDoc } from "@storycreep/shared/api";
+import type { Node as BoardNode } from "@storycreep/shared/api";
 import {
   type FormEvent,
   type Ref,
@@ -37,6 +37,7 @@ import { RichTextEditor } from "../richtext/RichTextEditor";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
 import type { CanvasController } from "./controller";
+import { titleOf } from "./labels";
 import type { Rect } from "./viewport";
 
 /** The narrowest that the editor's box is, in CSS pixels, so that a line of text and its toolbar fit at any zoom. */
@@ -116,11 +117,6 @@ export interface TextEditorProps {
 
 const textField = payloadField("text");
 
-/** Reports whether a and b are the same text, as the server compares them, whatever the order of their objects' fields. */
-function sameText(a: RichTextDoc | undefined, b: RichTextDoc | undefined) {
-  return equal(a, b);
-}
-
 /** The editor of the text of node, over its card on the canvas. */
 export function TextEditor({
   projectId,
@@ -144,12 +140,14 @@ export function TextEditor({
   const [kept, setKept] = useState(false);
   // What the editor holds now: what the user typed in the form shown, or
   // else what that form shows, which, once a save was refused for a change
-  // made elsewhere, is what they typed over the text as it is now.
+  // made elsewhere, is what they typed over the text as it is now; and
+  // whether it changed, as the server compares texts, whatever the order of
+  // their objects' fields (equal).
   const typed = () =>
     text.current?.key === held.key ? text.current.value : undefined;
   const current = () => typed()?.doc ?? shown.text;
   const changed = () =>
-    typed()?.error !== undefined || !sameText(current(), against.text);
+    typed()?.error !== undefined || !equal(current(), against.text);
   const focusText = () =>
     box.current
       ?.querySelector<HTMLElement>('[contenteditable="true"]')
@@ -162,7 +160,7 @@ export function TextEditor({
     },
   }));
   const refusal = refusalOf(commands.error, t, textField);
-  const title = shown.title === "" ? t("canvas.node.untitled") : shown.title;
+  const title = titleOf(shown, t);
   // The names that the text's mentions and value references show, as the
   // cards show them.
   const components = useDocumentState(doc, (s) => s.view.components);
@@ -300,7 +298,7 @@ export function TextEditor({
     }
     setInvalid(undefined);
     const value = current();
-    if (value === undefined || sameText(value, against.text)) {
+    if (value === undefined || equal(value, against.text)) {
       onClose();
       return;
     }

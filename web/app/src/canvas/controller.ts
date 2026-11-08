@@ -5,11 +5,12 @@
 // nothing. A zoom or a move that the toolbar or a key asks for is animated,
 // briefly, unless the system asks for reduced motion (NFR-A11Y-07), as the
 // canvas's only animation; a gesture follows the fingers at once. A drag
-// that moves the selection, or resizes a node by its handle, shows it at
-// once, as the scene of the document with the nodes where the drag has them,
-// without a command, and tells the page where it left them as it ends, which
-// sends one batch for it (FR-EDIT-02 AC2, plan note N68), whose nodes the
-// document shows there at once, in the same frame as the drag's end.
+// that moves the selection, or resizes a node by its handle, one at a time,
+// as the gestures make them, shows it at once, as the scene of the document
+// with the nodes where the drag has them, without a command, and tells the
+// page where it left them as it ends, which sends one batch for it
+// (FR-EDIT-02 AC2, plan note N68), whose nodes the document shows there at
+// once, in the same frame as the drag's end.
 
 import type { Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
@@ -271,47 +272,40 @@ export class CanvasController implements GestureHost {
     connections: new Map(),
   };
   /**
-   * The nodes where a drag has them, which the scene shows in place of where
-   * the document has them until the drag ends: the selection's positions as
-   * a move has them, or a node's size as its resize has it.
+   * The drag under way, which the scene shows in place of where the document
+   * has its nodes until it ends (shownNodes), and of which there is one at
+   * most, a move's or a resize's: of a move of the selection, where its
+   * nodes were as it started, and their revisions then, which its batch
+   * expects, of the node that it holds at anchor, and where they are now; of
+   * a resize by a node's handle, the node of id, at revision rev, its size
+   * as it started, and its size now. Each change of it is another object.
    */
-  private preview:
+  private drag:
     | {
-        positions?: ReadonlyMap<string, Point>;
-        size?: { id: string; size: Size };
+        kind: "move";
+        anchor: Point;
+        start: ReadonlyMap<string, Point>;
+        revs: ReadonlyMap<string, number>;
+        places: ReadonlyMap<string, Point>;
       }
+    | { kind: "resize"; id: string; rev: number; from: Size; size?: Size }
     | undefined;
-  /** The nodes that the scene shows of the preview, of the document's nodes and the preview that they were made of (shownNodes). */
+  /** The nodes that the scene shows of the drag, of the document's nodes and the drag that they were made of (shownNodes). */
   private shown:
     | {
         nodes: ReadonlyMap<string, Node>;
-        preview: NonNullable<CanvasController["preview"]>;
+        drag: NonNullable<CanvasController["drag"]>;
         shown: ReadonlyMap<string, Node>;
       }
     | undefined;
+  /** The document's nodes that the selection was last kept to, as the scene has them (syncScene). */
+  private keptTo: ReadonlyMap<string, Node> | undefined;
   /**
    * The nodes that the page's batches create, which the selection keeps
    * though the scene has them not yet, until those batches have settled
    * (selectComing).
    */
   private coming: ReadonlySet<string> = new Set();
-  /**
-   * The move of the selection under way: where its nodes were as it
-   * started, and their revisions then, which its batch expects, of the node
-   * that it holds at anchor, and where they are now.
-   */
-  private moving:
-    | {
-        anchor: Point;
-        start: ReadonlyMap<string, Point>;
-        revs: ReadonlyMap<string, number>;
-        places: ReadonlyMap<string, Point>;
-      }
-    | undefined;
-  /** The resize under way: of the node of id, at revision rev, from its size as it started, to its size now. */
-  private resizing:
-    | { id: string; rev: number; from: Size; size?: Size }
-    | undefined;
   /** Which nodes the canvas dims, as the tag filter asks (FR-EDIT-06 AC1), and how often that changed. */
   private dims: ((node: Node) => boolean) | undefined;
   private dimVersion = 0;
@@ -487,30 +481,31 @@ export class CanvasController implements GestureHost {
    * document's nodes for a move (Scene.sync).
    */
   private shownNodes(): ReadonlyMap<string, Node> | undefined {
-    const p = this.preview;
-    if (p === undefined) {
+    const d = this.drag;
+    if (d === undefined) {
       this.shown = undefined;
       return undefined;
     }
     const nodes = this.docSeen.nodes;
     const s = this.shown;
-    if (s !== undefined && s.nodes === nodes && s.preview === p) {
+    if (s !== undefined && s.nodes === nodes && s.drag === d) {
       return s.shown;
     }
     const shown = new Map<string, Node>();
-    for (const [id, position] of p.positions ?? []) {
-      const node = nodes.get(id);
+    if (d.kind === "move") {
+      for (const [id, position] of d.places) {
+        const node = nodes.get(id);
+        if (node !== undefined) {
+          shown.set(id, { ...node, position });
+        }
+      }
+    } else if (d.size !== undefined) {
+      const node = nodes.get(d.id);
       if (node !== undefined) {
-        shown.set(id, { ...node, position });
+        shown.set(d.id, { ...node, size: d.size });
       }
     }
-    if (p.size !== undefined) {
-      const node = nodes.get(p.size.id);
-      if (node !== undefined) {
-        shown.set(p.size.id, { ...node, size: p.size.size });
-      }
-    }
-    this.shown = { nodes, preview: p, shown };
+    this.shown = { nodes, drag: d, shown };
     return shown;
   }
 
@@ -527,10 +522,14 @@ export class CanvasController implements GestureHost {
       // alone.
       this.labelsVersion++;
     }
-    if (changed) {
+    if (changed && this.docSeen.nodes !== this.keptTo) {
       // A selected node that the scene does not have, as one that another
       // session deleted, leaves the selection, but for one that the page's
-      // batches create, which is coming (selectComing).
+      // batches create, which is coming (selectComing): once for each
+      // change of the document's nodes, as only it takes a node out of the
+      // scene, rather than in each move of a drag of the selection, which
+      // changes where nodes are alone.
+      this.keptTo = this.docSeen.nodes;
       const kept = [...this.selected].filter(
         (id) => this.scene.nodes.get(id) !== undefined || this.coming.has(id),
       );
@@ -645,20 +644,31 @@ export class CanvasController implements GestureHost {
   }
 
   /**
+   * Reports whether the document has the node of id on the board, rather
+   * than in the trash, as a drag that ends sends it, as it does not of one
+   * that went meanwhile, as one that another session deleted, which the
+   * server would refuse.
+   */
+  private alive(id: string): boolean {
+    const node = this.docSeen.nodes.get(id);
+    return node !== undefined && node.deleted_at === undefined;
+  }
+
+  /**
    * Starts moving the selection, which holds the node of id, or, where pick
    * says how, the selection that the node is first selected into, from
    * where the scene has its nodes, and reports whether it did: not where the
-   * board may not be changed, nor once the node has gone, nor while a
-   * node's handle resizes it, as under another finger, whose preview a
-   * move's would else take the place of, nor of a node that is not
-   * selected without pick. A move that does not start selects nothing.
+   * board may not be changed, nor once the node has gone, nor while another
+   * drag is under way, whose nodes the move's would else take the place of,
+   * nor of a node that is not selected without pick. A move that does not
+   * start selects nothing.
    */
   moveStart(id: string, pick?: SelectHow): boolean {
     const held = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       held === undefined ||
-      this.resizing !== undefined
+      this.drag !== undefined
     ) {
       return false;
     }
@@ -677,7 +687,8 @@ export class CanvasController implements GestureHost {
         revs.set(selected, item.node.rev);
       }
     }
-    this.moving = {
+    this.drag = {
+      kind: "move",
       anchor: held.node.position,
       start,
       revs,
@@ -693,16 +704,15 @@ export class CanvasController implements GestureHost {
    * the grid keeps in place, changes nothing, and asks for no frame.
    */
   moveTo(delta: Point): void {
-    const m = this.moving;
-    if (m === undefined) {
+    const m = this.drag;
+    if (m?.kind !== "move") {
       return;
     }
     const places = movedBy(m.start, m.anchor, delta, this.snap);
     if (samePlaces(places, m.places)) {
       return;
     }
-    this.moving = { ...m, places };
-    this.preview = { positions: places };
+    this.drag = { ...m, places };
     this.syncScene();
   }
 
@@ -714,18 +724,15 @@ export class CanvasController implements GestureHost {
    * were, as of a move that a second finger ended.
    */
   moveEnd(commit: boolean): void {
-    const m = this.moving;
-    this.moving = undefined;
-    this.preview = undefined;
-    if (m !== undefined && commit) {
+    const m = this.drag;
+    if (m?.kind !== "move") {
+      return;
+    }
+    this.drag = undefined;
+    if (commit) {
       // A node that went while it moved, as one that another session
       // deleted, does not move, which the server would refuse whole.
-      const places = new Map(
-        [...m.places].filter(([id]) => {
-          const node = this.docSeen.nodes.get(id);
-          return node !== undefined && node.deleted_at === undefined;
-        }),
-      );
+      const places = new Map([...m.places].filter(([id]) => this.alive(id)));
       if (places.size > 0) {
         this.edits?.move(places, m.revs);
       }
@@ -734,33 +741,31 @@ export class CanvasController implements GestureHost {
     // A frame of the move hid the resize handle, which a frame shows again,
     // though the move left the scene as it was, as one that came back where
     // it started, or never left it.
-    if (m !== undefined) {
-      this.invalidate();
-    }
+    this.invalidate();
   }
 
-  /** Reports whether the node of id is being moved, which its resize handle hides for. */
+  /** Reports whether the selection is being moved, which the resize handle hides for. */
   moves(): boolean {
-    return this.moving !== undefined;
+    return this.drag?.kind === "move";
   }
 
   /**
    * Starts resizing the node of id by its handle, from its size as the
    * scene has it, and reports whether it did: not where the board may not
-   * be changed, nor once the node has gone, nor while a move, or another
-   * resize, is under way, whose preview its own would take the place of.
+   * be changed, nor once the node has gone, nor while another drag is under
+   * way, whose nodes its own would take the place of.
    */
   resizeStart(id: string): boolean {
     const item = this.scene.nodes.get(id);
     if (
       this.edits === undefined ||
       item === undefined ||
-      this.moving !== undefined ||
-      this.resizing !== undefined
+      this.drag !== undefined
     ) {
       return false;
     }
-    this.resizing = {
+    this.drag = {
+      kind: "resize",
       id,
       rev: item.node.rev,
       from: { width: item.rect.width, height: item.rect.height },
@@ -768,38 +773,38 @@ export class CanvasController implements GestureHost {
     return true;
   }
 
-  /** Resizes the node that the handle holds by delta, in CSS pixels of the canvas, from its size as its resize started. */
+  /**
+   * Resizes the node that the handle holds by delta of the board, the move
+   * of the handle's pointer from the board's point where it went down, from
+   * its size as its resize started, so that its corner stays under the
+   * pointer as the board moves under it, as by the wheel, a key, or a pinch
+   * of the trackpad.
+   */
   resizeTo(delta: Point): void {
-    const r = this.resizing;
-    if (r === undefined) {
+    const r = this.drag;
+    if (r?.kind !== "resize") {
       return;
     }
-    const zoom = this.v.zoom;
-    const size = resizedBy(
-      r.from,
-      { x: delta.x / zoom, y: delta.y / zoom },
-      this.snap,
-    );
+    const size = resizedBy(r.from, delta, this.snap);
     if (size.width === r.size?.width && size.height === r.size.height) {
       return;
     }
-    this.resizing = { ...r, size };
-    this.preview = { size: { id: r.id, size } };
+    this.drag = { ...r, size };
     this.syncScene();
   }
 
   /** Ends the resize: the size that it left the node, which the page sends, expecting the node's revision as it started, or, cancelled, the size before. */
   resizeEnd(commit: boolean): void {
-    const r = this.resizing;
-    this.resizing = undefined;
-    this.preview = undefined;
+    const r = this.drag;
+    if (r?.kind !== "resize") {
+      return;
+    }
+    this.drag = undefined;
     if (
-      r !== undefined &&
       commit &&
       r.size !== undefined &&
       (r.size.width !== r.from.width || r.size.height !== r.from.height) &&
-      this.docSeen.nodes.get(r.id)?.deleted_at === undefined &&
-      this.docSeen.nodes.has(r.id)
+      this.alive(r.id)
     ) {
       this.edits?.resize(r.id, r.size, r.rev);
     }
@@ -822,7 +827,7 @@ export class CanvasController implements GestureHost {
   /**
    * How many of the board's nodes are dimmed, counted once for each change
    * of the document's nodes or of the dims, rather than in each frame of a
-   * drag, whose preview changes where nodes are, and none of their tags.
+   * drag, which changes where nodes are, and none of their tags.
    */
   private dimmed(): number {
     const dim = this.dims;
@@ -1116,10 +1121,12 @@ export class CanvasController implements GestureHost {
    * does stops an animation in progress where it is, as a finger that takes
    * the board does, and one that it ignores, as a right click, or a third
    * finger, leaves it to go on. What the pointer does after, as it moves,
-   * leaves, goes up, or is cancelled, goes to the gestures as it comes.
+   * leaves, goes up, or is cancelled, goes to the gestures as it comes. A
+   * pointer that went down on the resize handle of the node of handle is
+   * the canvas's too, and resizes the node by its drag.
    */
-  down(input: PointerInput): boolean {
-    const followed = this.gestures.down(input);
+  down(input: PointerInput, handle?: string): boolean {
+    const followed = this.gestures.down(input, handle);
     if (followed) {
       this.animation = undefined;
     }
@@ -1221,7 +1228,8 @@ export class CanvasController implements GestureHost {
         this.invalidate();
       }
     }
-    // A rubber band under way stays on the board's point where it started.
+    // A rubber band, a move, or a resize under way stays on the board's
+    // point where it started.
     this.gestures.refresh();
     this.showZoom();
     for (const place of this.followers) {
@@ -1350,7 +1358,7 @@ export class CanvasController implements GestureHost {
     this.lastData = data;
   }
 
-  /** Stops the loop, until the canvas's elements are attached again. */
+  /** Stops the loop, until the canvas's elements are attached again, and ends every gesture, and so every drag, as cancelled. */
   stop(): void {
     this.stopped = true;
     if (this.pending !== 0) {
@@ -1358,6 +1366,5 @@ export class CanvasController implements GestureHost {
       this.pending = 0;
     }
     this.gestures.cancelAll();
-    this.resizeEnd(false);
   }
 }

@@ -54,6 +54,7 @@ import {
   tagKey,
   tagsOf,
 } from "./edit";
+import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
 
 /** What the inspector is given. */
@@ -96,16 +97,14 @@ export function Inspector({
   const single = nodes.length === 1 ? nodes[0] : undefined;
   const title =
     single !== undefined
-      ? single.title === ""
-        ? t("canvas.node.untitled")
-        : single.title
+      ? titleOf(single, t)
       : nodes.length === 0
         ? t("inspector.title")
         : t("inspector.selected", { count: nodes.length });
   return (
     <Panel
       title={title}
-      subtitle={single === undefined ? undefined : typeName(t, single)}
+      subtitle={(single && typeOf(single, t)) || undefined}
       onClose={onClose}
       returnFocus={returnFocus}
     >
@@ -154,23 +153,6 @@ export function Inspector({
       )}
     </Panel>
   );
-}
-
-/** Returns the name of a node's type, and an element's kind, as the inspector's subtitle says it. */
-function typeName(
-  t: ReturnType<typeof useTranslation>["t"],
-  node: Node,
-): string {
-  switch (node.type) {
-    case "branch":
-      return t("canvas.node.branch");
-    case "jumper":
-      return t("canvas.node.jumper");
-    default:
-      return node.kind === "narration"
-        ? t("canvas.node.narration")
-        : t("canvas.node.dialogue");
-  }
 }
 
 const nodeField = payloadField(
@@ -759,7 +741,7 @@ function Tags({
  */
 function Cover({ projectId, node }: { projectId: string; node: Node }) {
   const { t } = useTranslation();
-  const title = node.title === "" ? t("canvas.node.untitled") : node.title;
+  const title = titleOf(node, t);
   return (
     <AssetImage
       projectId={projectId}

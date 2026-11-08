@@ -87,7 +87,8 @@ function touched(command: Sent[number]): string[] {
  * its next revision, and whose undo is the batch itself, as the history
  * keeps it, but for the batches that answerOf answers otherwise, by their
  * index among those that the page sent, as with a refusal it throws, or
- * an answer that it changes.
+ * an answer that it changes; and answers the board's nodes once nodesRead
+ * resolves, where it is given, as of a read that takes a while.
  */
 function boardPage(
   nodes: Node[],
@@ -95,6 +96,7 @@ function boardPage(
     index: number,
     applied: () => Record<string, unknown>,
   ) => Promise<unknown> | undefined,
+  nodesRead?: Promise<unknown>,
 ) {
   let seq = testProject.seq;
   let sent = 0;
@@ -113,7 +115,9 @@ function boardPage(
       case "listBoards":
         return { items: [harbour], next_cursor: null };
       case "listBoardNodes":
-        return { items: nodes, next_cursor: null };
+        return nodesRead === undefined
+          ? { items: nodes, next_cursor: null }
+          : nodesRead.then(() => ({ items: nodes, next_cursor: null }));
       case "listTags":
         return { items: [] };
       case "applyCommands": {
@@ -197,6 +201,31 @@ describe("the canvas's edits", () => {
     expect(create.type).toBe("node.create");
     expect(create.payload).toMatchObject({ board_id: "bd_a", type: "element" });
     expect(await screen.findByText("1 node selected")).toBeDefined();
+  });
+
+  it("adds no node until the board's nodes have been read, which the new one would else be placed over", async () => {
+    let read = () => {};
+    const nodesRead = new Promise<void>((resolve) => {
+      read = resolve;
+    });
+    boardPage([testNode("nd_1", 0, 0)], undefined, nodesRead);
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    expect(within(edit).getByRole("button", { name: "Add" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    read();
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    expect(within(edit).getByRole("button", { name: "Add" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   });
 
   // Verifies: FR-EDIT-02/AC2, NFR-TOUCH-05
@@ -512,6 +541,41 @@ describe("the canvas's edits", () => {
     expect(screen.getAllByRole("button", { name: "Redo" })).toHaveLength(1);
   });
 
+  it("gives the canvas the focus back as the editor of a text closes because another session deleted its node", async () => {
+    const realtime = fakeRealtime();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of nd_1",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.delete", payload: { id: "nd_1" } }],
+        [{ id: "nd_1", rev: 2 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(canvas));
+  });
+
   it("keeps an editor whose text is not saved open in place of another node's that the user asks for, and says to save or cancel it first", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
     const canvas = await openBoard("?node=nd_1");
@@ -560,23 +624,21 @@ describe("the canvas's edits", () => {
     );
     const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
     expect(handle).not.toBeNull();
+    const canvas = screen.getByRole("application", {
+      name: "Nodes of Harbour",
+    });
     const from = { clientX: 0, clientY: 0 };
     const to = { clientX: 40, clientY: 0 };
+    // The canvas captures the pointer that went down on the handle, which
+    // jsdom does not: its moves and its release go to the canvas, as the
+    // browser sends them there.
     fireEvent.pointerDown(handle as HTMLElement, {
       ...mouse,
       buttons: 1,
       ...from,
     });
-    fireEvent.pointerMove(handle as HTMLElement, {
-      ...mouse,
-      buttons: 1,
-      ...to,
-    });
-    fireEvent.pointerUp(handle as HTMLElement, {
-      ...mouse,
-      buttons: 0,
-      ...to,
-    });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+    fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0][0].type).toBe("node.update");
     await waitFor(() =>
@@ -625,7 +687,7 @@ describe("the canvas's edits", () => {
     expect(batches(calls)).toHaveLength(2);
   });
 
-  it("pans by the wheel over the resize handle as over the canvas, and sizes nothing by a resize whose release the handle did not hear of", async () => {
+  it("pans by the wheel over the resize handle as over the canvas, with the corner of a resize under way under its pointer, and sizes nothing by a resize whose release the canvas did not hear of", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard("?node=nd_1");
     const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
@@ -642,13 +704,13 @@ describe("the canvas's edits", () => {
       clientX: 0,
       clientY: 0,
     });
-    fireEvent.pointerMove(handle as HTMLElement, {
+    fireEvent.pointerMove(canvas, {
       ...mouse,
       buttons: 1,
       clientX: 40,
       clientY: 0,
     });
-    fireEvent.pointerMove(handle as HTMLElement, {
+    fireEvent.pointerMove(canvas, {
       ...mouse,
       buttons: 0,
       clientX: 80,
@@ -656,9 +718,40 @@ describe("the canvas's edits", () => {
     });
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
     expect(batches(calls)).toEqual([]);
+    // The wheel over the handle while a resize is under way pans the board
+    // under the pointer, which is still, and the node's corner with it: 40
+    // pixels, and the wheel's 100, at the zoom.
+    const zoom = Number(canvas.dataset.zoom);
+    fireEvent.pointerDown(handle as HTMLElement, {
+      ...mouse,
+      buttons: 1,
+      clientX: 0,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 40 * zoom,
+      clientY: 0,
+    });
+    fireEvent.wheel(handle as HTMLElement, { deltaX: 100 * zoom });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 40 * zoom,
+      clientY: 0,
+    });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      {
+        type: "node.update",
+        payload: { id: "nd_1", size: { width: 384, height: 128 } },
+      },
+    ]);
   });
 
-  it("ends a resize, cancelled, as a second pointer presses the handle, so that the node moves again by a drag after, and sizes a resize as its release lands", async () => {
+  it("ends a resize, cancelled, as another pointer presses the handle, which takes the canvas, so that the node moves again by a drag after, and sizes a resize as its release lands", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard("?node=nd_1");
     const handle = document.querySelector<HTMLElement>(".cursor-nwse-resize");
@@ -674,7 +767,7 @@ describe("the canvas's edits", () => {
       clientX: 0,
       clientY: 0,
     });
-    fireEvent.pointerMove(handle as HTMLElement, {
+    fireEvent.pointerMove(canvas, {
       ...finger,
       clientX: 40,
       clientY: 0,
@@ -686,13 +779,13 @@ describe("the canvas's edits", () => {
       clientX: 40,
       clientY: 0,
     });
-    fireEvent.pointerUp(handle as HTMLElement, {
+    fireEvent.pointerUp(canvas, {
       ...mouse,
       buttons: 0,
       clientX: 40,
       clientY: 0,
     });
-    fireEvent.pointerUp(handle as HTMLElement, {
+    fireEvent.pointerUp(canvas, {
       ...finger,
       buttons: 0,
       clientX: 80,
@@ -717,12 +810,12 @@ describe("the canvas's edits", () => {
       clientX: 0,
       clientY: 0,
     });
-    fireEvent.pointerMove(handle as HTMLElement, {
+    fireEvent.pointerMove(canvas, {
       ...finger,
       clientX: 40,
       clientY: 0,
     });
-    fireEvent.pointerUp(handle as HTMLElement, {
+    fireEvent.pointerUp(canvas, {
       ...finger,
       buttons: 0,
       clientX: 80 * zoom,
