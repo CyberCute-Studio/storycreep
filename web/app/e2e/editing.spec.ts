@@ -10,6 +10,7 @@ import {
   type TestBoard,
   test,
   touchGesture,
+  viewOf,
 } from "./boards.ts";
 import { apply, signedIn } from "./content.ts";
 import {
@@ -155,6 +156,28 @@ test.describe("a board's canvas, editing its nodes", () => {
     await expect
       .poll(() => positionOf(page, board.projectId, board.nodeIds[0]))
       .toEqual({ x: 0, y: 0 });
+    // What became of the undo stays over the canvas's top, where a drag that
+    // starts on it is the canvas's, which pans in the pan mode as beside it,
+    // of the selection, as of a node under it, cleared.
+    const undone = page
+      .getByRole("status")
+      .filter({ hasText: en["history.undone"] });
+    await expect(undone).toBeVisible();
+    await canvas.focus();
+    await page.keyboard.press("Escape");
+    await expect(canvas).toHaveAttribute("data-selected", "0");
+    await press(
+      page.getByRole("button", { name: en["canvas.mode_pan"], exact: true }),
+    );
+    const box = await undone.boundingBox();
+    expect(box).not.toBeNull();
+    const before = await settled(canvas);
+    const start = {
+      x: (box?.x ?? 0) + (box?.width ?? 0) / 2,
+      y: (box?.y ?? 0) + (box?.height ?? 0) / 2,
+    };
+    await dragOn(page, start, { x: start.x + 80, y: start.y + 80 });
+    await expect.poll(async () => (await viewOf(canvas)).x).not.toBe(before.x);
   });
 
   test("pans by a finger's drag that starts on a node that is not selected, in the pan mode", async ({

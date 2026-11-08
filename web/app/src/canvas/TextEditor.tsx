@@ -151,6 +151,10 @@ export function TextEditor({
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
   const box = useRef<HTMLFormElement>(null);
+  // Places the box where the canvas's last frame placed it, as the form is
+  // shown anew, of another key, as another element, which has none of the
+  // place written on the one before (formRef), while the editor is open.
+  const placeAgain = useRef<() => void>(undefined);
   const form = useEntityForm(projectId, node, (view, id) => view.nodes.get(id));
   const { commands, held, shown, against } = form;
   // What the editor holds, of the form shown as of key, which the form shown
@@ -239,8 +243,10 @@ export function TextEditor({
 
   // Where the box is: over the node, in each frame that the canvas draws,
   // within the part of the canvas that the window shows, and as it opens,
-  // before the browser paints it, rather than once where it was not placed
-  // yet, at the canvas's corner.
+  // or is shown anew, of another key (placeAgain), before the browser
+  // paints it, rather than once where it was not placed yet, at the
+  // canvas's corner, until a frame that nothing may ask for, as once the
+  // focus left it and it let go of a revision that changed meanwhile.
   useLayoutEffect(() => {
     let band = visibleBand();
     // What tells where the node is on the canvas, as the canvas's frames
@@ -265,6 +271,11 @@ export function TextEditor({
       el.style.transform = `translate(${p.x}px, ${p.y}px)`;
       el.style.width = `${p.width}px`;
       el.style.maxHeight = `${p.maxHeight}px`;
+    };
+    placeAgain.current = () => {
+      if (nodeRect !== undefined) {
+        place(nodeRect);
+      }
     };
     const stop = controller.follow(place);
     // What the window shows changes as the on-screen keyboard opens or
@@ -321,6 +332,7 @@ export function TextEditor({
     document.addEventListener("focusin", focusIn);
     return () => {
       stop();
+      placeAgain.current = undefined;
       cancelAnimationFrame(again);
       vv?.removeEventListener("resize", shownChanged);
       vv?.removeEventListener("scroll", scrolled);
@@ -403,11 +415,17 @@ export function TextEditor({
   // one with the element on each, as the form's ref of the form shown
   // anew, which gives the focus back to the control that had it, and so
   // would take it from what that control opened in a portal, as the rich
-  // text's link dialog, whenever the editor rendered again.
+  // text's link dialog, whenever the editor rendered again. The form shown
+  // anew is placed over the node, as the canvas's last frame showed it,
+  // before the focus comes back into it, which then places it as the focus
+  // coming into the box does.
   const heldRef = held.props.ref;
   const formRef = useCallback(
     (el: HTMLFormElement | null) => {
       box.current = el;
+      if (el !== null) {
+        placeAgain.current?.();
+      }
       heldRef(el);
     },
     [heldRef],

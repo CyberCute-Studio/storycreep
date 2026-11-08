@@ -737,6 +737,44 @@ describe("the canvas's edits", () => {
     await waitFor(() => expect(document.activeElement).toBe(canvas));
   });
 
+  it("places the editor of a text over its node as it is shown anew, of a revision that another session made, rather than at the canvas's corner until the canvas's next frame", async () => {
+    const realtime = fakeRealtime();
+    boardPage([testNode("nd_1", 0, 0)]);
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of nd_1",
+    });
+    await waitFor(() =>
+      expect(editor.contains(document.activeElement)).toBe(true),
+    );
+    // The focus leaves the editor with nothing typed, which then lets go of
+    // the revision that it showed.
+    canvas.focus();
+    await act(() => new Promise((done) => setTimeout(done)));
+    expect(editor.style.transform).not.toBe("");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.update", payload: { id: "nd_1", tags: ["quest"] } }],
+        [{ id: "nd_1", rev: 2 }],
+      ),
+    );
+    // As it is shown anew, before the canvas draws again.
+    const again = screen.getByRole("form", { name: "The text of nd_1" });
+    expect(again).not.toBe(editor);
+    expect(again.style.transform).toBe(editor.style.transform);
+    expect(again.style.width).toBe(editor.style.width);
+  });
+
   it("keeps the text of an editor whose element the user deletes, saying why it cannot be saved, and saves it once an undo brings the element back", async () => {
     const user = userEvent.setup();
     const calls = boardPage([testNode("nd_1", 0, 0)], (index, applied) =>

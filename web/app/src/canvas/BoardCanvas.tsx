@@ -1467,9 +1467,12 @@ function BoardCanvasOf({
             // batch was refused, and the undo of a bulk move: over the
             // canvas's top, rather than above it, where each as it came or
             // went would move the canvas down the page and back, and the
-            // board with it, under a drag's pointer too (plan note N68). Its
-            // boxes take their own presses, and let the canvas have the rest.
-            <div className="pointer-events-none absolute inset-x-2 top-2 flex max-w-xl flex-col items-start gap-2 [&_p]:pointer-events-auto">
+            // board with it, under a drag's pointer too (plan note N68). A
+            // press, the wheel, or a pinch on its boxes is the canvas's, as
+            // on the board beside them, rather than lost on a box that stays
+            // until the next undo, redo, or batch: their buttons alone take
+            // their own.
+            <div className="pointer-events-none absolute inset-x-2 top-2 flex max-w-xl flex-col items-start gap-2 [&_button]:pointer-events-auto">
               <HistoryStatus history={history} alertClassName={messageAlert} />
               <Alert
                 className={messageAlert}
