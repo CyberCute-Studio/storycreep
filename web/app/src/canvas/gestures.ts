@@ -298,13 +298,8 @@ export class Gestures {
     // it, so that a rubber band started just beside a node, as at a low
     // zoom, where the slop is as wide as a node, draws rather than moves.
     // A drag of a node's resize handle resizes it, in either mode, but for
-    // one that pans whatever is under it. A press of the part of the handle
-    // beyond its node, as of a node that the zoom draws small, which the
-    // handle reaches past (ResizeHandle's handlePlace), on another node is
-    // that node's, as without the handle, which selects it, moves it, or
-    // pans, rather than resize the node selected.
-    const onHandle = handle !== undefined && this.handleTakes(handle, at);
-    const resizes = onHandle && p.button === 0 && !this.space;
+    // one that pans whatever is under it.
+    const resizes = handle !== undefined && p.button === 0 && !this.space;
     const node = resizes
       ? handle
       : p.button === 0 && !this.space && this.host.movable()
@@ -326,25 +321,11 @@ export class Gestures {
       at,
       drag,
       node: drag === "pan" || drag === "band" ? undefined : node,
-      handle: onHandle,
+      handle: handle !== undefined,
       lastTap,
       input: p,
     };
     return true;
-  }
-
-  /**
-   * Reports whether a press of the resize handle of the node of id, at the
-   * board's point at, is the handle's: on the node, or beside it where no
-   * other node is, rather than on another node beside it.
-   */
-  private handleTakes(id: string, at: Point): boolean {
-    const under = this.host.nodeAt(at, 0);
-    return (
-      under === undefined ||
-      under === id ||
-      this.host.nodesIn({ x: at.x, y: at.y, width: 0, height: 0 }).includes(id)
-    );
   }
 
   /**
@@ -667,33 +648,6 @@ export class Gestures {
       case "held":
       case "idle":
         return;
-    }
-  }
-
-  /**
-   * Tells that the canvas moved by by on the page, as its top does as a
-   * message above it comes or goes, while the board stayed where it was on
-   * the page (CanvasController's setSize): the pointers that the gestures
-   * follow, which are where they were on the page, are at points of the
-   * canvas as far the other way, as their next moves tell, so that a pan
-   * goes on by what its pointer moves, rather than move the board by as
-   * much as the canvas moved with that move too, and a rubber band, a
-   * move, or a resize stays under its pointer, though it is still.
-   */
-  moved(by: Point): void {
-    const back = <P extends Point>(p: P): P => ({
-      ...p,
-      x: p.x - by.x,
-      y: p.y - by.y,
-    });
-    for (const [id, p] of this.pointers) {
-      this.pointers.set(id, back(p));
-    }
-    const g = this.gesture;
-    if (g.kind === "press") {
-      this.gesture = { ...g, start: back(g.start) };
-    } else if (g.kind === "pan") {
-      this.gesture = { ...g, last: back(g.last) };
     }
   }
 

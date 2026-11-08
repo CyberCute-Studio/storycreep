@@ -176,15 +176,16 @@ test.describe("a board's canvas, editing its nodes", () => {
     page,
   }) => {
     const board = await openBoard(page);
+    // A link to the node opens the canvas on it, selected, at 100%, where
+    // it is drawn large enough for a handle, which a node that the fit to
+    // the board draws small, as on the tablet, has none of.
+    await page.goto(
+      `/app/projects/${board.projectId}/boards/${board.boardId}?node=${board.nodeIds[0]}`,
+    );
     const canvas = canvasOf(page, board.name);
-    const sent = sentBatches(page);
-    const at = await pointOf(canvas, middleOf(0, 0));
-    if (test.info().project.use.hasTouch) {
-      await page.touchscreen.tap(at.x, at.y);
-    } else {
-      await page.mouse.click(at.x, at.y);
-    }
+    await drawn(canvas);
     await expect(canvas).toHaveAttribute("data-selected", "1");
+    const sent = sentBatches(page);
     // The handle is centred on the node's bottom right corner; a drag of it
     // by 80 and 40 units, whose moves and release the canvas captures, sizes
     // the node from 240 by 128 to 320 by 168.

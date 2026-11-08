@@ -121,7 +121,14 @@ export function HistoryButtons({ history }: { history: HistoryOf }) {
 }
 
 /** What became of the last undo or redo, as a status, or why it was refused. */
-export function HistoryStatus({ history }: { history: HistoryOf }) {
+export function HistoryStatus({
+  history,
+  alertClassName,
+}: {
+  history: HistoryOf;
+  /** The classes of why a step was refused, as Alert's, as of one over the canvas, which has a background of its own. */
+  alertClassName?: string;
+}) {
   const { t } = useTranslation();
   const { done, step } = history;
   const reason = refusalOf(step.error, t)?.message ?? "";
@@ -137,6 +144,7 @@ export function HistoryStatus({ history }: { history: HistoryOf }) {
         }
       />
       <Alert
+        className={alertClassName}
         message={
           step.error === null
             ? undefined

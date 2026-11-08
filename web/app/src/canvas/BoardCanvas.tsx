@@ -116,6 +116,10 @@ function keepSnap(on: boolean): void {
   }
 }
 
+/** The classes of a refusal that the canvas says over it, whose box has the page's background, as the cards under it would else show through. */
+const messageAlert =
+  "rounded-md border border-danger bg-canvas px-4 py-3 text-danger shadow-md";
+
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
 
@@ -255,34 +259,14 @@ function ZoomReset({
 }
 
 /**
- * Gives controller the size of host, the canvas's element, in CSS pixels,
- * which the renderer's canvas, the rubber band, and the points of the
- * pointers are laid out in: its whole box, as its edge is a ring drawn
- * outside it rather than a border within it; and how far down the page its
- * top moved since sized.current, where its top was as it was last given a
- * size that had an area, which it keeps there (setSize's moved). A host
- * without a size, as one that the page does not display, has no top that
- * the next size moved from.
+ * Returns the size of the canvas's element, in CSS pixels, which the
+ * renderer's canvas, the rubber band, and the points of the pointers are
+ * laid out in: its whole box, as its edge is a ring drawn outside it rather
+ * than a border within it.
  */
-function sizeCanvas(
-  controller: CanvasController,
-  host: HTMLElement,
-  sized: { current: number | undefined },
-): void {
+function sizeOf(host: HTMLElement): { width: number; height: number } {
   const r = host.getBoundingClientRect();
-  let moved = 0;
-  if (r.width > 0 && r.height > 0) {
-    const top = r.top + window.scrollY;
-    moved = sized.current === undefined ? 0 : top - sized.current;
-    sized.current = top;
-  } else {
-    sized.current = undefined;
-  }
-  controller.setSize(
-    { width: r.width, height: r.height },
-    window.devicePixelRatio || 1,
-    moved,
-  );
+  return { width: r.width, height: r.height };
 }
 
 /** Returns the input of a pointer's event, at its point of the element at rect. */
@@ -428,10 +412,6 @@ function BoardCanvasOf({
   const [empty, setEmpty] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
   const [height, setHeight] = useState<number>();
-  // Where the canvas's top was on the page as it was last given its size,
-  // which the size after keeps the board under, as far as the top moved
-  // with it (sizeCanvas).
-  const sizedTop = useRef<number>(undefined);
   // Whether the system asks for reduced motion (NFR-A11Y-07), as it changes.
   const reducedMotion = useMediaQuery(reducedMotionQuery, false);
   // Whether the system's theme is dark, which the page's colours, and so
@@ -681,17 +661,9 @@ function BoardCanvasOf({
       return;
     }
     const measure = () => {
-      const r = host.getBoundingClientRect();
-      const top = r.top + window.scrollY;
+      const top = host.getBoundingClientRect().top + window.scrollY;
       const viewport = document.documentElement.clientHeight;
-      const next = Math.max(320, viewport - top - 16);
-      // A top that moved with no change of the canvas's height, as at its
-      // least, moved the board with the canvas, which the size after does
-      // not move it back from (sizeCanvas).
-      if (sizedTop.current !== undefined && Math.abs(next - r.height) < 0.5) {
-        sizedTop.current = top;
-      }
-      setHeight(next);
+      setHeight(Math.max(320, viewport - top - 16));
     };
     measure();
     window.addEventListener("resize", measure);
@@ -714,7 +686,9 @@ function BoardCanvasOf({
       return;
     }
     controller.attach({ host, band });
-    const resize = () => sizeCanvas(controller, host, sizedTop);
+    const resize = () => {
+      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
+    };
     resize();
     const observer =
       typeof ResizeObserver === "function"
@@ -943,7 +917,7 @@ function BoardCanvasOf({
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (host !== null && height !== undefined) {
-      sizeCanvas(controller, host, sizedTop);
+      controller.setSize(sizeOf(host), window.devicePixelRatio || 1);
     }
   }, [controller, height]);
 
@@ -1382,31 +1356,6 @@ function BoardCanvasOf({
           </p>
         )}
       </fieldset>
-      {editable && (
-        <>
-          <HistoryStatus history={history} />
-          <Alert
-            message={
-              actions.error === null
-                ? undefined
-                : t("canvas.edit_failed", {
-                    reason: refusalOf(actions.error, t)?.message ?? "",
-                  })
-            }
-          />
-          {moved !== undefined && (
-            // A bulk move after the one before offers its own undo for as
-            // long, rather than for what was left of the one before's.
-            <UndoMove
-              key={moved.key}
-              projectId={projectId}
-              moved={moved}
-              history={history}
-              onDone={clearMoved}
-            />
-          )}
-        </>
-      )}
       <div className={inspecting && editable ? besidePanel : undefined}>
         <div className="relative min-w-0">
           <div
@@ -1513,6 +1462,38 @@ function BoardCanvasOf({
               />
             )}
           </div>
+          {editable && (
+            // What the board's edits say, as what became of an undo, why a
+            // batch was refused, and the undo of a bulk move: over the
+            // canvas's top, rather than above it, where each as it came or
+            // went would move the canvas down the page and back, and the
+            // board with it, under a drag's pointer too (plan note N68). Its
+            // boxes take their own presses, and let the canvas have the rest.
+            <div className="pointer-events-none absolute inset-x-2 top-2 flex max-w-xl flex-col items-start gap-2 [&_p]:pointer-events-auto">
+              <HistoryStatus history={history} alertClassName={messageAlert} />
+              <Alert
+                className={messageAlert}
+                message={
+                  actions.error === null
+                    ? undefined
+                    : t("canvas.edit_failed", {
+                        reason: refusalOf(actions.error, t)?.message ?? "",
+                      })
+                }
+              />
+              {moved !== undefined && (
+                // A bulk move after the one before offers its own undo for
+                // as long, rather than for what was left of the one before's.
+                <UndoMove
+                  key={moved.key}
+                  projectId={projectId}
+                  moved={moved}
+                  history={history}
+                  onDone={clearMoved}
+                />
+              )}
+            </div>
+          )}
         </div>
         {inspecting && editable && (
           <Inspector

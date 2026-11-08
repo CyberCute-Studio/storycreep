@@ -443,19 +443,9 @@ export class CanvasController implements GestureHost {
    * turn interrupts would. A size of none, as of a host that the page does
    * not display, moves nothing, and stops the canvas drawing: the canvas,
    * and the renderer's canvas, keep the last size that had an area (sz),
-   * whose centre the size after keeps. Of a size that came with a move of
-   * the canvas's top on the page, moved CSS pixels down, as once a message
-   * above it came or went, and the canvas took the rest of the window below
-   * it, the part of the change that the top's move made leaves the board
-   * where it was on the page, and the rest keeps its centre, as a change of
-   * the window's does: a message that comes above the canvas covers what
-   * the canvas showed of the board under it, rather than move the board,
-   * under a drag's pointer too, by half its height, as the centre would;
-   * and the pointers that a gesture under way follows stay where they are
-   * on the page with it (Gestures' moved), so that a pan goes on from where
-   * the board is, rather than move it by as much as the top moved.
+   * whose centre the size after keeps.
    */
-  setSize(size: Size, resolution: number, moved = 0): void {
+  setSize(size: Size, resolution: number): void {
     const displayed = size.width > 0 && size.height > 0;
     if (
       displayed === this.displayed &&
@@ -471,18 +461,13 @@ export class CanvasController implements GestureHost {
         const kept = (v: Viewport) =>
           anchorAt(
             centerOf(v, was),
-            { x: size.width / 2, y: (size.height - moved) / 2 },
+            { x: size.width / 2, y: size.height / 2 },
             v.zoom,
           );
         this.v = kept(this.v);
         const a = this.animation;
         if (a !== undefined) {
           this.animation = { ...a, from: kept(a.from), to: kept(a.to) };
-        }
-        // The pointers that the gestures follow stay where they are on the
-        // page with the board, at points of the canvas that moved under them.
-        if (moved !== 0) {
-          this.gestures.moved({ x: 0, y: moved });
         }
       }
       this.sz = size;
@@ -800,6 +785,11 @@ export class CanvasController implements GestureHost {
   /** Reports whether the selection is being moved, which the resize handle hides for. */
   moves(): boolean {
     return this.drag?.kind === "move";
+  }
+
+  /** Reports whether the node of id is being resized, whose handle stays shown, however small the resize draws the node. */
+  resizes(id: string): boolean {
+    return this.drag?.kind === "resize" && this.drag.id === id;
   }
 
   /**

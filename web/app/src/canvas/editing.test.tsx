@@ -14,7 +14,7 @@ import "../test/editor";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import { fakeRealtime } from "../test/realtime";
 import type { Engine } from "./engine";
-import { handlePlace } from "./ResizeHandle";
+import { hasRoomForHandle } from "./ResizeHandle";
 import { boxPlace } from "./TextEditor";
 
 // PixiJS needs WebGL or a 2D canvas, which jsdom has neither of: the page's
@@ -1590,22 +1590,13 @@ describe("the canvas's edits", () => {
   });
 });
 
-describe("the place of the resize handle", () => {
-  it("is centred on the node's corner, and covers a quarter of a node that the zoom draws small at most, with its mark on the corner", () => {
-    // A card of 240 by 128 at 100%: the handle's 44 px, centred.
-    expect(handlePlace({ x: 100, y: 50, width: 240, height: 128 })).toEqual({
-      x: 340 - 22,
-      y: 178 - 22,
-      mark: { x: 14, y: 14 },
-    });
-    // The same card at 10%, 24 by 12.8: the handle is beyond the corner but
-    // for a quarter of the node's width and height, and its mark on it.
-    const small = { x: 100, y: 50, width: 24, height: 12.8 };
-    const p = handlePlace(small);
-    expect(p.x).toBeCloseTo(124 - 6);
-    expect(p.y).toBeCloseTo(62.8 - 3.2);
-    expect(p.x + p.mark.x + 8).toBeCloseTo(124);
-    expect(p.y + p.mark.y + 8).toBeCloseTo(62.8);
+describe("the room of the resize handle", () => {
+  it("is on a node that the canvas draws twice the handle's side wide and high, and on none smaller, as at a low zoom, which it would cover", () => {
+    // A card of 240 by 128 at 100% has room, and the same at 50% none.
+    expect(hasRoomForHandle({ width: 240, height: 128 })).toBe(true);
+    expect(hasRoomForHandle({ width: 88, height: 88 })).toBe(true);
+    expect(hasRoomForHandle({ width: 120, height: 64 })).toBe(false);
+    expect(hasRoomForHandle({ width: 24, height: 12.8 })).toBe(false);
   });
 });
 
