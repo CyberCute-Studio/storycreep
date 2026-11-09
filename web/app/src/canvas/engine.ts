@@ -11,6 +11,7 @@
 // detail, FR-EDIT-01 AC4), and a connection is a straight line.
 
 import "pixi.js/unsafe-eval";
+import type { Node } from "@storycreep/shared/api";
 import {
   autoDetectRenderer,
   type BitmapFont,
@@ -70,6 +71,10 @@ export interface Frame {
   labels: (node: NodeItem) => NodeLabels;
   /** Counts the changes of what labels returns, as once a speaker's name comes, or the locale changes. */
   labelsVersion: number;
+  /** Which nodes are drawn faint, as the tag filter dims them (FR-EDIT-06 AC1), or undefined for none. */
+  dimmed?: (node: Node) => boolean;
+  /** Counts the changes of dimmed. */
+  dimVersion?: number;
   theme: Theme;
 }
 
@@ -154,6 +159,65 @@ const zoomSlack = 1.25;
 
 /** The corner of a card, in units of the board. */
 const cornerRadius = 10;
+
+/** How opaque a node that the tag filter dims is drawn (FR-EDIT-06 AC1). */
+const dimAlpha = 0.3;
+
+/**
+ * Of each field of a node, whether a node moved has it as it was (movedOnly):
+ * every field that its card shows, but its position, and none that no card
+ * shows, as its revision, which the answer to a move's batch changes, and
+ * which, kept, would write every card that the move moved anew in the frame
+ * of the answer, though each field that a card shows is compared here. The
+ * compiler holds each field of the API's node to be named here, so that a
+ * field that the API adds, which a card might show, is not left out unseen.
+ */
+const keptByMove = {
+  board_id: false,
+  color: true,
+  cover_asset_id: true,
+  created_at: false,
+  deleted_at: false,
+  id: true,
+  is_ending: true,
+  kind: true,
+  on_enter: false,
+  on_exit: false,
+  outputs: true,
+  position: false,
+  project_id: false,
+  rev: false,
+  size: true,
+  speaker_component_id: true,
+  tags: true,
+  target: true,
+  text: true,
+  title: true,
+  type: true,
+  updated_at: false,
+} satisfies Record<keyof Node, boolean>;
+
+/** The fields that a node moved has as it was (keptByMove). */
+const movedFields = (Object.keys(keptByMove) as (keyof Node)[]).filter(
+  (field) => keptByMove[field],
+);
+
+/**
+ * Reports whether node b is node a moved, as a drag of the selection moves
+ * it (controller.ts), with every field of a that its card shows but its
+ * position (keptByMove): a card of a that b is drawn again where b is,
+ * rather than anew, so that a drag of hundreds of nodes does not write their
+ * text again in each of its frames.
+ */
+function movedOnly(a: NodeItem, b: NodeItem): boolean {
+  const x = a.node;
+  const y = b.node;
+  return (
+    a.rect.width === b.rect.width &&
+    a.rect.height === b.rect.height &&
+    movedFields.every((field) => x[field] === y[field])
+  );
+}
 
 /** How far a card's ring, 4 units outside it, and its ports, dots of 10 on its edges, reach beyond its node, in units of the board. */
 const cardReach = 8;
@@ -459,6 +523,7 @@ class PixiEngine implements Engine {
         connectionsVersion: number;
         selectionVersion: number;
         labelsVersion: number;
+        dimVersion: number;
         theme: Theme;
         stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
@@ -617,6 +682,7 @@ class PixiEngine implements Engine {
       b.sceneVersion !== f.scene.version ||
       b.selectionVersion !== f.selectionVersion ||
       b.labelsVersion !== f.labelsVersion ||
+      b.dimVersion !== (f.dimVersion ?? 0) ||
       b.theme !== f.theme;
     if (stale) {
       // A change of what the margin shows, but not of where it is, as of
@@ -746,6 +812,7 @@ class PixiEngine implements Engine {
         s.tint = f.selection.has(item.node.id)
           ? theme.accent
           : nodeColor(item.node.color, theme);
+        s.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         i++;
       }
       for (; i < this.blockSprites.length; i++) {
@@ -780,6 +847,18 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
+        // A card of a node that only moved, as in each frame of a drag, is
+        // where its node is now, as it was otherwise.
+        if (
+          !fresh &&
+          !anew &&
+          view.item !== undefined &&
+          view.item !== item &&
+          view.selected === selected &&
+          movedOnly(view.item, item)
+        ) {
+          view.item = item;
+        }
         const stale =
           fresh || anew || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
@@ -803,6 +882,7 @@ class PixiEngine implements Engine {
           view.labelsVersion = f.labelsVersion;
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
+        view.root.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         texts += view.body.visible ? 3 : 2;
       }
       this.orderCards(shown.nodes);
@@ -835,6 +915,7 @@ class PixiEngine implements Engine {
       connectionsVersion: scene.connectionsVersion,
       selectionVersion: f.selectionVersion,
       labelsVersion: f.labelsVersion,
+      dimVersion: f.dimVersion ?? 0,
       theme,
       stats: {
         lod,

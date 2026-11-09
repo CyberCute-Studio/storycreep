@@ -155,7 +155,9 @@ describe("a board's canvas", () => {
 
   it("lets go of Space once the focus leaves the canvas, so that a drag of the select mode draws its rubber band again", async () => {
     const user = userEvent.setup();
-    boardPage([testNode("nd_1", 0, 0)]);
+    // The drag starts on the empty board: one on a node moves it in the
+    // select mode.
+    boardPage([testNode("nd_1", 5000, 5000)]);
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
       session: testSession,
     });
@@ -181,7 +183,8 @@ describe("a board's canvas", () => {
 
   it("ends a press once its mouse moves with no button down, as after a menu of the system's took its release, gives back its pointer's capture, and opens no menu of the browser's over the canvas", async () => {
     const user = userEvent.setup();
-    boardPage([testNode("nd_1", 0, 0)]);
+    // The press goes down on the empty board, as in the test before.
+    boardPage([testNode("nd_1", 5000, 5000)]);
     renderApp(`/projects/${testProject.id}/boards/bd_a`, {
       session: testSession,
     });

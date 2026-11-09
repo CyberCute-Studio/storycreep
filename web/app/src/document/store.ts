@@ -108,6 +108,12 @@ export interface DocumentState {
   /** How many steps can be undone and redone. */
   undoable: number;
   redoable: number;
+  /**
+   * Counts the changes of the history's steps (History.version), which tell
+   * that the step that undo would send is another, as the counts do not once
+   * the history holds as many steps as it keeps.
+   */
+  historyVersion: number;
   /** Whether an undo or a redo is under way. */
   stepping: boolean;
 }
@@ -709,6 +715,7 @@ export class ProjectDocument {
       sending: 0,
       undoable: this.history.undoable,
       redoable: this.history.redoable,
+      historyVersion: this.history.version,
       stepping: false,
     }));
     this.starting = this.begin();
@@ -1548,6 +1555,7 @@ export class ProjectDocument {
         this.waiting.length,
       undoable: this.history.undoable,
       redoable: this.history.redoable,
+      historyVersion: this.history.version,
     });
   }
 
@@ -2280,6 +2288,17 @@ export class ProjectDocument {
   /** Redoes the latest step that was undone, resolving with whether there was one, as undo does. */
   redo(): Promise<boolean> {
     return this.step("redo");
+  }
+
+  /**
+   * Reports whether the step that undo would send is the one of the batch
+   * of seq, as once the batch's answer added it to the history and nothing
+   * joined it after: not of a batch whose answer added none, as one of
+   * already_applied, or with an empty undo, whose undo would else be that
+   * of the step before it.
+   */
+  undoesNext(seq: number): boolean {
+    return this.history.nextUndo()?.seqs.includes(seq) ?? false;
   }
 
   /**

@@ -33,6 +33,9 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     corepack enable pnpm && pnpm install --frozen-lockfile --filter @storycreep/app...
 COPY web/shared/ web/shared/
 COPY web/app/ web/app/
+# The table of case folding that @storycreep/shared/fold reads, as the
+# canvas's tag filter compares tags as the server does.
+COPY schema/unicode/fold.json schema/unicode/
 # Vite writes the bundle to server/internal/webassets/dist/app.
 RUN pnpm --filter @storycreep/app build
 

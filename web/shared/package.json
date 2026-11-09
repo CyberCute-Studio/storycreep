@@ -10,6 +10,7 @@
     "./expr": "./src/expr/index.ts",
     "./expr/compile": "./src/expr/compile.ts",
     "./flow": "./src/flow/index.ts",
+    "./fold": "./src/flow/fold.ts",
     "./i18n": "./src/i18n/index.ts",
     "./ids": "./src/ids.ts",
     "./lint/testing": "./src/lint/testing.ts",

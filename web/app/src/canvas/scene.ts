@@ -51,6 +51,9 @@ function sameCurve(a: Curve, b: Curve): boolean {
   );
 }
 
+/** No nodes, which a scene shows in place of none of the document's (Scene.sync). */
+const noNodes: ReadonlyMap<string, Node> = new Map();
+
 /** The nodes and connections of one board, as the project's document holds them. */
 export class Scene {
   readonly nodes = new GridIndex<NodeItem>();
@@ -59,6 +62,8 @@ export class Scene {
   private readonly linked = new Map<string, Set<string>>();
   private nodesSeen: ReadonlyMap<string, Node> | undefined;
   private connectionsSeen: ReadonlyMap<string, Connection> | undefined;
+  /** The nodes that the scene shows in place of the document's, as sync last took them. */
+  private shownSeen: ReadonlyMap<string, Node> = noNodes;
   private nextOrder = 0;
   private bounds: Rect | undefined;
   private boundsStale = true;
@@ -95,13 +100,21 @@ export class Scene {
   constructor(readonly boardId: string) {}
 
   /**
-   * Takes what doc holds of the board into the scene, and reports whether
-   * the scene changed.
+   * Takes what doc holds of the board into the scene, with the nodes of
+   * shown in place of the document's, as a drag has them where it moves
+   * them, and reports whether the scene changed. A change of shown alone,
+   * as in each move of a drag, reads only the nodes that shown has or had,
+   * rather than every node of the document, which a change of the document
+   * reads.
    */
-  sync(doc: Pick<Doc, "nodes" | "connections">): boolean {
+  sync(
+    doc: Pick<Doc, "nodes" | "connections">,
+    shown: ReadonlyMap<string, Node> = noNodes,
+  ): boolean {
     if (
       doc.nodes === this.nodesSeen &&
-      doc.connections === this.connectionsSeen
+      doc.connections === this.connectionsSeen &&
+      shown === this.shownSeen
     ) {
       return false;
     }
@@ -110,31 +123,9 @@ export class Scene {
     if (doc.nodes !== this.nodesSeen) {
       const seen = new Set<string>();
       for (const node of doc.nodes.values()) {
-        if (node.board_id !== this.boardId || node.deleted_at !== undefined) {
-          continue;
+        if (this.take(shown.get(node.id) ?? node, moved)) {
+          seen.add(node.id);
         }
-        seen.add(node.id);
-        const had = this.nodes.get(node.id);
-        if (had?.node === node) {
-          continue;
-        }
-        const item = {
-          node,
-          rect: nodeRect(node),
-          order: had?.order ?? this.nextOrder++,
-        };
-        this.nodes.set(node.id, item.rect, item);
-        if (node.type === "jumper" && node.target?.node_id !== undefined) {
-          this.targets.set(node.id, node.target.node_id);
-        } else {
-          this.targets.delete(node.id);
-        }
-        moved.add(node.id);
-        this.changed(
-          had === undefined ||
-            !sameRect(had.rect, item.rect) ||
-            had.node.color !== node.color,
-        );
       }
       const gone: string[] = [];
       this.nodes.forEach((id) => {
@@ -143,10 +134,7 @@ export class Scene {
         }
       });
       for (const id of gone) {
-        this.nodes.delete(id);
-        this.targets.delete(id);
-        moved.add(id);
-        this.changed();
+        this.drop(id, moved);
       }
       this.nodesSeen = doc.nodes;
       const titles = new Map<string, string | undefined>();
@@ -163,7 +151,30 @@ export class Scene {
         this.targetsVersion++;
       }
       this.targetTitles = titles;
+    } else if (shown !== this.shownSeen) {
+      // The nodes that shown has, or had, which go back to the document's:
+      // a drag changes where they are, and their size, but nothing that a
+      // jumper's card names of them. Each once, without a list of them all,
+      // in each frame of a drag of thousands.
+      const read = (id: string) => {
+        const node = shown.get(id) ?? doc.nodes.get(id);
+        if (
+          (node === undefined || !this.take(node, moved)) &&
+          this.nodes.get(id) !== undefined
+        ) {
+          this.drop(id, moved);
+        }
+      };
+      for (const id of shown.keys()) {
+        read(id);
+      }
+      for (const id of this.shownSeen.keys()) {
+        if (!shown.has(id)) {
+          read(id);
+        }
+      }
     }
+    this.shownSeen = shown;
     if (doc.connections !== this.connectionsSeen) {
       const seen = new Set<string>();
       for (const c of doc.connections.values()) {
@@ -212,6 +223,47 @@ export class Scene {
       }
     }
     return this.version !== before;
+  }
+
+  /**
+   * Takes node into the scene, and reports whether the scene has it, as it
+   * has a node of its board that is not in the trash: built anew, and among
+   * those that moved, where it is another object than the scene's.
+   */
+  private take(node: Node, moved: Set<string>): boolean {
+    if (node.board_id !== this.boardId || node.deleted_at !== undefined) {
+      return false;
+    }
+    const had = this.nodes.get(node.id);
+    if (had?.node === node) {
+      return true;
+    }
+    const item = {
+      node,
+      rect: nodeRect(node),
+      order: had?.order ?? this.nextOrder++,
+    };
+    this.nodes.set(node.id, item.rect, item);
+    if (node.type === "jumper" && node.target?.node_id !== undefined) {
+      this.targets.set(node.id, node.target.node_id);
+    } else {
+      this.targets.delete(node.id);
+    }
+    moved.add(node.id);
+    this.changed(
+      had === undefined ||
+        !sameRect(had.rect, item.rect) ||
+        had.node.color !== node.color,
+    );
+    return true;
+  }
+
+  /** Takes the node of id out of the scene, among those that moved. */
+  private drop(id: string, moved: Set<string>): void {
+    this.nodes.delete(id);
+    this.targets.delete(id);
+    moved.add(id);
+    this.changed();
   }
 
   /** The connections that wait for one of their nodes, by ID, to be drawn once it comes. */

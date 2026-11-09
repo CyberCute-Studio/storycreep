@@ -99,9 +99,44 @@ export type LabelKey =
   | "canvas.node.output_else"
   | "canvas.node.no_outputs";
 
+/**
+ * Returns the title of node as its card shows it, and so as what else names
+ * it on the canvas, as the inspector and the editor of its text: untitled,
+ * for one without.
+ */
+export function titleOf(
+  node: Pick<Node, "title">,
+  t: LabelContext["t"],
+): string {
+  return node.title === "" ? t("canvas.node.untitled") : node.title;
+}
+
+/**
+ * Returns the name of the type of node, an element's of its kind, as its
+ * card's line of its type names it without a speaker, and the inspector's
+ * subtitle names it: none, of a type that the canvas does not know.
+ */
+export function typeOf(
+  node: Pick<Node, "type" | "kind">,
+  t: LabelContext["t"],
+): string {
+  switch (node.type) {
+    case "element":
+      return node.kind === "narration"
+        ? t("canvas.node.narration")
+        : t("canvas.node.dialogue");
+    case "branch":
+      return t("canvas.node.branch");
+    case "jumper":
+      return t("canvas.node.jumper");
+    default:
+      return "";
+  }
+}
+
 /** Returns what a card shows of node. */
 export function labelsOf(node: Node, c: LabelContext): NodeLabels {
-  const title = node.title === "" ? c.t("canvas.node.untitled") : node.title;
+  const title = titleOf(node, c.t);
   switch (node.type) {
     case "element": {
       const speaker =
@@ -109,11 +144,9 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
           ? undefined
           : c.componentName(node.speaker_component_id);
       const kind =
-        node.kind === "narration"
-          ? c.t("canvas.node.narration")
-          : speaker === undefined
-            ? c.t("canvas.node.dialogue")
-            : c.t("canvas.node.dialogue_by", { speaker });
+        node.kind === "narration" || speaker === undefined
+          ? typeOf(node, c.t)
+          : c.t("canvas.node.dialogue_by", { speaker });
       return {
         title,
         kind: node.is_ending ? c.t("canvas.node.kind_ending", { kind }) : kind,
@@ -124,7 +157,7 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
       const outputs = node.outputs ?? [];
       return {
         title,
-        kind: c.t("canvas.node.branch"),
+        kind: typeOf(node, c.t),
         body:
           outputs.length === 0
             ? c.t("canvas.node.no_outputs")
@@ -146,7 +179,7 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
       const target = node.target?.node_id;
       return {
         title,
-        kind: c.t("canvas.node.jumper"),
+        kind: typeOf(node, c.t),
         body:
           target === undefined
             ? c.t("canvas.node.jumper_none")
@@ -178,7 +211,7 @@ function jumperTarget(
   const name = c.nodeTitle(target);
   if (name !== undefined) {
     return c.t("canvas.node.jumper_to", {
-      target: name === "" ? c.t("canvas.node.untitled") : name,
+      target: titleOf({ title: name }, c.t),
     });
   }
   const boardName = board === undefined ? undefined : c.boardName(board);

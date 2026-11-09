@@ -15,7 +15,9 @@ import { type BenchBoard, benchBoards, resultsDir } from "./state.ts";
 // holds to their targets (docs/canvas-checklist.md); they hold the runner
 // to what it can tell: that drawing is bounded by what the canvas shows
 // (FR-EDIT-11 AC1), that panning does not grow the heap (FR-EDIT-11 AC2,
-// NFR-PERF-18), and the desktop's load time of the large fixture (NFR-PERF-05).
+// NFR-PERF-18), the desktop's load time of the large fixture (NFR-PERF-05),
+// and the desktop's time from a local edit to the frame that shows it
+// (NFR-PERF-06), which the tablet's run reports.
 // Each run's results go to bench-results/, which CI's job publishes.
 
 /** How long a run that pans for memory pans, after its warm-up, in seconds: five minutes on the tablet's checklist. */
@@ -211,6 +213,38 @@ test.describe("the canvas's benchmark", () => {
     // timer and its other work cannot tell apart.
     if (large.work.mean - small.work.mean > 0.25) {
       expect(ratio).toBeLessThanOrEqual(1.2);
+    }
+  });
+
+  // Verifies: NFR-PERF-06
+  test("a local edit of a node to the frame that shows it, before the server answers", async ({
+    page,
+  }, info) => {
+    const boards = benchBoards();
+    await emulate(page, info);
+    // Twice a second, a node in view moves a step of the grid and back.
+    const seconds = Math.max(10, frameSeconds);
+    const r = await result(
+      await start(page, boards.medium, {
+        bench: "edit",
+        seconds: String(seconds),
+      }),
+      seconds,
+    );
+    const edits = r.edit;
+    expect(edits?.count ?? 0, "the run's edits").toBeGreaterThan(10);
+    await report(
+      info,
+      "NFR-PERF-06",
+      "medium",
+      r,
+      `${edits?.count ?? 0} edits, median ${ms(edits?.p50)}, p95 ${ms(edits?.p95)}, most ${ms(edits?.max)} (target < 50 ms)`,
+    );
+    // The desktop holds it; the tablet's processor is the emulator's, four
+    // times slower than the runner's, whose checklist holds it on the
+    // reference tablet (docs/canvas-checklist.md).
+    if (!tablet(info)) {
+      expect(edits?.p95 ?? Number.POSITIVE_INFINITY).toBeLessThan(50);
     }
   });
 

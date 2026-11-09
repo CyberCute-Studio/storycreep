@@ -1,0 +1,281 @@
+import { describe, expect, it } from "vitest";
+import { hundredths } from "../document/appliers/node";
+import { testNode } from "../test/canvas";
+import {
+  aligned,
+  byCodePoints,
+  distributed,
+  freePlace,
+  hasControlIn,
+  hasPrintedIn,
+  hasTagOf,
+  minSize,
+  movedBy,
+  onBoard,
+  type Placed,
+  positionLimit,
+  resizedBy,
+  snapped,
+  tagCounts,
+  tagKey,
+  tagsOf,
+  withoutTagOf,
+} from "./edit";
+
+/** Returns a node at x, y of width and height, as align and distribute take it. */
+function at(
+  id: string,
+  x: number,
+  y: number,
+  width = 240,
+  height = 128,
+): Placed {
+  return { id, rect: { x, y, width, height } };
+}
+
+describe("the canvas's edits", () => {
+  // Verifies: FR-EDIT-02/AC4
+  it("rounds a position to 2 decimal places, half away from zero, as the server keeps it", () => {
+    expect(hundredths(0.125)).toBe(0.13);
+    expect(hundredths(-0.125)).toBe(-0.13);
+    expect(hundredths(12.344)).toBe(12.34);
+    expect(hundredths(-0.001)).toBe(0);
+    expect(Object.is(hundredths(-0.001), -0)).toBe(false);
+    // Of the decimal written, as the server reads it, rather than of the
+    // double, which is a little less than 1.005, and than 1.015.
+    expect(hundredths(1.005)).toBe(1.01);
+    expect(hundredths(1.015)).toBe(1.02);
+    expect(hundredths(-1.005)).toBe(-1.01);
+  });
+
+  it("snaps to the grid of 8 units, or keeps the place as it is, rounded, where it does not snap", () => {
+    expect(snapped(13, true)).toBe(16);
+    expect(snapped(11.9, true)).toBe(8);
+    expect(snapped(-13, true)).toBe(-16);
+    expect(snapped(13.456, false)).toBe(13.46);
+  });
+
+  // Verifies: FR-EDIT-02/AC2
+  it("moves every node of a selection by as much as the one that the drag holds, on the grid, so that they keep their places relative to it", () => {
+    const start = new Map([
+      ["nd_a", { x: 3, y: 5 }],
+      ["nd_b", { x: 403, y: 205 }],
+    ]);
+    // The held node, at 3, 5, goes to 3 + 30, 5 + 29, which snaps to 32, 32.
+    const moved = movedBy(start, { x: 3, y: 5 }, { x: 30, y: 29 }, true);
+    expect(moved).toEqual(
+      new Map([
+        ["nd_a", { x: 32, y: 32 }],
+        ["nd_b", { x: 432, y: 232 }],
+      ]),
+    );
+    // Without the grid, by the delta itself.
+    expect(movedBy(start, { x: 3, y: 5 }, { x: 30.004, y: -1 }, false)).toEqual(
+      new Map([
+        ["nd_a", { x: 33, y: 4 }],
+        ["nd_b", { x: 433, y: 204 }],
+      ]),
+    );
+    // A drag that comes back where it started moves none.
+    expect(movedBy(start, { x: 3, y: 5 }, { x: 1, y: -1 }, false).size).toBe(2);
+    expect(movedBy(start, { x: 8, y: 8 }, { x: 1, y: -2 }, true).size).toBe(0);
+    // Nor one of a node off the grid, as one that the inspector placed: an
+    // axis that the drag left as it was does not snap.
+    expect(movedBy(start, { x: 3, y: 5 }, { x: 0, y: 0 }, true).size).toBe(0);
+    expect(
+      movedBy(start, { x: 3, y: 5 }, { x: 30, y: 0 }, true).get("nd_a"),
+    ).toEqual({ x: 32, y: 5 });
+  });
+
+  it("keeps a move within the board's limits", () => {
+    const start = new Map([["nd_a", { x: positionLimit - 8, y: 0 }]]);
+    const moved = movedBy(start, { x: 0, y: 0 }, { x: 800, y: 0 }, true);
+    expect(moved.get("nd_a")).toEqual({ x: positionLimit, y: 0 });
+  });
+
+  it("moves each node to its place as the server keeps it, as the reading of its decimal rounds it, of places and deltas in hundredths", () => {
+    // Places of hundredths, as the server keeps them, of every size, and
+    // deltas of hundredths, as a drag without the grid makes them.
+    let seed = 7;
+    const next = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    const hundredth = (most: number) =>
+      hundredths((next() * 2 - 1) * most * (next() < 0.5 ? 1e-6 : 1));
+    for (let i = 0; i < 2000; i++) {
+      const p = { x: hundredth(positionLimit), y: hundredth(1000) };
+      const start = new Map([["nd_a", p]]);
+      const delta = { x: hundredth(10_000), y: hundredth(10) };
+      const moved = movedBy(start, p, delta, false).get("nd_a") ?? p;
+      expect(moved).toEqual(onBoard({ x: p.x + delta.x, y: p.y + delta.y }));
+    }
+  });
+
+  it("resizes by the corner's move, on the grid, but no smaller than a line of the title needs", () => {
+    expect(
+      resizedBy({ width: 240, height: 128 }, { x: 29, y: -3 }, true),
+    ).toEqual({ width: 272, height: 128 });
+    expect(
+      resizedBy({ width: 240, height: 128 }, { x: -500, y: -500 }, true),
+    ).toEqual(minSize);
+    expect(
+      resizedBy({ width: 240, height: 128 }, { x: 0.556, y: 0 }, false),
+    ).toEqual({ width: 240.56, height: 128 });
+    // A side that the drag left as it was keeps its size, off the grid, as
+    // the inspector gives one, so that a drag that comes back sizes nothing.
+    expect(
+      resizedBy({ width: 250, height: 130 }, { x: 0, y: 0 }, true),
+    ).toEqual({ width: 250, height: 130 });
+    expect(
+      resizedBy({ width: 250, height: 130 }, { x: 20, y: 0 }, true),
+    ).toEqual({ width: 272, height: 130 });
+  });
+
+  it("aligns the nodes' edges, centres, and middles, moving only those that are not there", () => {
+    const nodes = [
+      at("nd_a", 0, 0),
+      at("nd_b", 400, 100, 100, 50),
+      at("nd_c", 100, 300),
+    ];
+    expect(aligned(nodes, "left")).toEqual(
+      new Map([
+        ["nd_b", { x: 0, y: 100 }],
+        ["nd_c", { x: 0, y: 300 }],
+      ]),
+    );
+    // The right edge of the rightmost, 500.
+    expect(aligned(nodes, "right")).toEqual(
+      new Map([
+        ["nd_a", { x: 260, y: 0 }],
+        ["nd_c", { x: 260, y: 300 }],
+      ]),
+    );
+    // Between 0 and 500, about 250.
+    expect(aligned(nodes, "center").get("nd_b")).toEqual({ x: 200, y: 100 });
+    expect(aligned(nodes, "top").get("nd_c")).toEqual({ x: 100, y: 0 });
+    // From 0 to 428, the bottom of the third.
+    expect(aligned(nodes, "bottom").get("nd_b")).toEqual({ x: 400, y: 378 });
+    expect(aligned(nodes, "middle").get("nd_a")).toEqual({ x: 0, y: 150 });
+    expect(aligned([at("nd_a", 0, 0)], "left").size).toBe(0);
+  });
+
+  it("distributes three nodes or more so that the gaps between them are the same, keeping the first and the last", () => {
+    const nodes = [
+      at("nd_c", 1000, 0, 100),
+      at("nd_a", 0, 0, 100),
+      at("nd_b", 150, 40, 100),
+      at("nd_d", 700, 0, 200),
+    ];
+    // From 0 to 1100, of 500 of nodes: three gaps of 200.
+    expect(distributed(nodes, "across")).toEqual(
+      new Map([
+        ["nd_b", { x: 300, y: 40 }],
+        ["nd_d", { x: 600, y: 0 }],
+      ]),
+    );
+    expect(distributed(nodes.slice(0, 2), "across").size).toBe(0);
+    const down = distributed(
+      [
+        at("nd_a", 0, 0, 10, 100),
+        at("nd_b", 0, 10, 10, 100),
+        at("nd_c", 0, 400, 10, 100),
+      ],
+      "down",
+    );
+    expect(down).toEqual(new Map([["nd_b", { x: 0, y: 200 }]]));
+  });
+
+  it("places a new node at the centre, on the grid, and beside one whose corner is there already", () => {
+    const taken = new Set(["-120,-64", "-88,-32"]);
+    expect(
+      freePlace({ x: 0, y: 0 }, { width: 240, height: 128 }, () => false, true),
+    ).toEqual({ x: -120, y: -64 });
+    expect(
+      freePlace(
+        { x: 0, y: 0 },
+        { width: 240, height: 128 },
+        (p) => taken.has(`${p.x},${p.y}`),
+        true,
+      ),
+    ).toEqual({ x: -56, y: 0 });
+  });
+
+  // Verifies: FR-EDIT-06/AC1
+  it("compares tags without regard to case, as the server does, ß and ss among them, and lists each once, in the spelling that most of its nodes use", () => {
+    const nodes = [
+      testNode("nd_1", 0, 0, { tags: ["Quest", "Straße"] }),
+      testNode("nd_2", 0, 0, { tags: ["quest"] }),
+      testNode("nd_3", 0, 0, { tags: ["quest", "STRASSE"] }),
+      testNode("nd_4", 0, 0, { tags: ["Mira"] }),
+    ];
+    expect(tagsOf(nodes)).toEqual(["quest", "STRASSE", "Mira"]);
+    expect(hasTagOf("QUEST")(nodes[0])).toBe(true);
+    expect(hasTagOf("strasse")(nodes[0])).toBe(true);
+    expect(hasTagOf("quest")(nodes[3])).toBe(false);
+    expect(withoutTagOf("QUEST")(["Quest", "Mira", "quest"])).toEqual(["Mira"]);
+    // The tag filter's test, made once for its tag, finds the same.
+    const has = hasTagOf("STRASSE");
+    expect(nodes.map(has)).toEqual([true, false, true, false]);
+    // A node whose tags changed is read anew, not as its tags were.
+    expect(has({ tags: ["Straße", "Mira"] })).toBe(true);
+    expect(has({ ...nodes[0], tags: ["Quest"] })).toBe(false);
+    // How many nodes have each, whatever its case, a node once for a tag
+    // that it has in two spellings.
+    expect(tagCounts([...nodes, { tags: ["Mira", "MIRA"] }])).toEqual(
+      new Map([
+        [tagKey("quest"), 3],
+        [tagKey("strasse"), 2],
+        [tagKey("mira"), 2],
+      ]),
+    );
+  });
+
+  it("finds in a tag the characters that the server refuses in a name: a control character, a tab among them, a bidirectional control, and a line or paragraph separator", () => {
+    const refused = [
+      0x00, 0x09, 0x0a, 0x1b, 0x7f, 0x85, 0x9f, 0x061c, 0x200e, 0x200f, 0x202a,
+      0x202e, 0x2066, 0x2069, 0x2028, 0x2029,
+    ];
+    for (const c of refused) {
+      expect(hasControlIn(`Quest${String.fromCharCode(c)}line`)).toBe(true);
+    }
+    // A space, a letter beyond ASCII, a zero-width space, the characters
+    // beside the bidirectional controls, and an emoji, which is a pair of
+    // surrogates, are none.
+    for (const c of [0x20, 0xea, 0x200b, 0x2065, 0x202f]) {
+      expect(hasControlIn(`Quest${String.fromCharCode(c)}line`)).toBe(false);
+    }
+    expect(hasControlIn(`Quest${String.fromCodePoint(0x1f9ed)}`)).toBe(false);
+  });
+
+  it("finds no character that a tag shows in one that the server refuses as empty: of spaces, format characters, and characters that show nothing alone", () => {
+    for (const c of [
+      0x20, 0xa0, 0x200b, 0x200d, 0xfe0f, 0x3164, 0x2800, 0xfeff, 0x1d159,
+    ]) {
+      expect(hasPrintedIn(String.fromCodePoint(c, c))).toBe(false);
+    }
+    expect(hasPrintedIn("")).toBe(false);
+    // A letter, a mark, a digit, a punctuation mark, a symbol, and an
+    // emoji, which is a pair of surrogates, each show.
+    for (const c of [0x61, 0x301, 0x37, 0x21, 0x2b, 0x1f9ed]) {
+      expect(hasPrintedIn(String.fromCodePoint(0x200b, c))).toBe(true);
+    }
+  });
+
+  it("lists tags of as many nodes in the order of their code points, as the server does, rather than of their code units", () => {
+    // U+FF41 FULLWIDTH LATIN SMALL LETTER A is before U+1F600, an emoji of
+    // two surrogates, whose first code unit is before it.
+    const fullwidth = String.fromCodePoint(0xff41);
+    const emoji = String.fromCodePoint(0x1f600);
+    expect(byCodePoints(fullwidth, emoji)).toBeLessThan(0);
+    expect(byCodePoints(emoji, fullwidth)).toBeGreaterThan(0);
+    expect(byCodePoints("a", "ab")).toBeLessThan(0);
+    expect(byCodePoints("b", "a")).toBeGreaterThan(0);
+    expect(
+      tagsOf([
+        testNode("nd_1", 0, 0, { tags: [emoji] }),
+        testNode("nd_2", 0, 0, { tags: [fullwidth] }),
+      ]),
+    ).toEqual([fullwidth, emoji]);
+  });
+});

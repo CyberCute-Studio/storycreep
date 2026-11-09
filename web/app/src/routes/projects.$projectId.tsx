@@ -8,7 +8,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useDocumentState, useProjectDocument } from "../document/react";
-import { History } from "../project/History";
+import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
@@ -51,7 +51,16 @@ function ProjectLayout() {
     useProjectDocument(projectId),
     (state) => state.gone,
   );
-  return gone ? <NotFound /> : <ProjectPages projectId={projectId} />;
+  // A part of a page that shows the undo and the redo itself, as a board's
+  // canvas in its toolbar, says so while it is shown (useOwnHistory), and
+  // the layout shows them above the page whenever none does.
+  return gone ? (
+    <NotFound />
+  ) : (
+    <HistoryOwned>
+      <ProjectPages projectId={projectId} />
+    </HistoryOwned>
+  );
 }
 
 function ProjectPages({ projectId }: { projectId: string }) {
@@ -151,7 +160,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
           </ul>
         </nav>
         {editsProject(project.role) && project.archived_at === undefined && (
-          <History projectId={projectId} />
+          <LayoutHistory projectId={projectId} />
         )}
         {project.archived_at !== undefined && (
           <p className="rounded-md border border-border bg-surface px-4 py-3">

@@ -9,28 +9,23 @@
 // its values, which the panel reads of it whole as it opens
 // (ProjectDocument.readComponent).
 
-import {
-  type Attribute,
-  type Component,
-  type ComponentType,
-  type ProjectBody,
-  type RichTextDoc,
-  routes,
+import type {
+  Attribute,
+  Component,
+  ComponentType,
+  ProjectBody,
+  RichTextDoc,
 } from "@storycreep/shared/api";
-import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  type ChangeEvent,
   type FormEvent,
   useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { api, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { csrfHeaders } from "../auth/session";
+import { AssetImage } from "../content/AssetImage";
 import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
@@ -521,117 +516,35 @@ function ComponentForm({
 }
 
 /**
- * The URL of an asset's thumbnail, which the browser reads with the page's
- * session, of the path that the API's description gives it.
- */
-function thumbnailOf(projectId: string, assetId: string): string {
-  return routes.getAssetThumbnail.path
-    .replace("{project_id}", encodeURIComponent(projectId))
-    .replace("{asset_id}", encodeURIComponent(assetId));
-}
-
-/** The types of image that the server stores (PRD FR-ASSET-02). */
-const imageTypes = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml";
-
-/**
  * The component's image: its thumbnail, and, for an editor, its upload and
  * its removal, each a change of its own, expecting the revision that the
- * panel showed as the user asked for it.
+ * panel showed as the user asked for it (AssetImage).
  */
 function ComponentImage({ project, component, editable }: ComponentPanelProps) {
   const { t } = useTranslation();
-  const inputId = useId();
-  const session = useQuery(sessionQuery).data;
-  const doc = useProjectDocument(project.id);
-  // An upload and the command that sets the image to what it uploaded are
-  // one request of the page's, which goes on to set the image once the
-  // panel has gone, as once the user opened another component meanwhile,
-  // rather than leave the asset uploaded and the component without it. The
-  // removal, without a file, is the command alone. Each attempt says what
-  // became of it alone, rather than what became of the one before it.
-  const image = useMutation({
-    mutationFn: async ({ file, rev }: { file?: File; rev: number }) => {
-      const asset =
-        file === undefined
-          ? undefined
-          : (
-              await api.call("uploadAsset", {
-                path: { project_id: project.id },
-                headers: csrfHeaders(session),
-                body: file,
-              })
-            ).body;
-      return doc.send([
-        {
-          type: "component.set_image",
-          payload: {
-            id: component.id,
-            ...(asset === undefined ? {} : { image_asset_id: asset.id }),
-          },
-          expected_rev: { [component.id]: rev },
-        },
-      ]);
-    },
-  });
-  const chosen = (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
-    if (file === undefined) {
-      return;
-    }
-    image.mutate(
-      { file, rev: component.rev },
-      {
-        // The same file chosen again is a change of the input's own.
-        onSettled: () => {
-          input.value = "";
-        },
-      },
-    );
-  };
-  const pending = image.isPending;
-  const refusal = refusalOf(image.error, t);
   return (
-    <section className="space-y-2">
-      <h3 className="text-lg font-semibold">{t("component.image")}</h3>
-      {component.image_asset_id === undefined ? (
-        <p className="text-fg-muted">{t("component.no_image")}</p>
-      ) : (
-        <img
-          src={thumbnailOf(project.id, component.image_asset_id)}
-          alt={t("component.image_alt", { name: component.name })}
-          className="max-h-32 max-w-full rounded-md border border-border"
-        />
-      )}
-      <Alert message={refusal?.message} />
-      {editable && (
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <label htmlFor={inputId} className="font-medium">
-              {component.image_asset_id === undefined
-                ? t("component.upload_image")
-                : t("component.replace_image")}
-            </label>
-            <input
-              id={inputId}
-              type="file"
-              accept={imageTypes}
-              disabled={pending}
-              onChange={chosen}
-              className="min-h-11 max-w-full file:me-2 file:min-h-11 file:cursor-pointer file:rounded-md file:border file:border-border file:bg-surface file:px-4 file:text-fg"
-            />
-          </div>
-          {component.image_asset_id !== undefined && (
-            <Button
-              disabled={pending}
-              onClick={() => image.mutate({ rev: component.rev })}
-            >
-              {t("component.remove_image")}
-            </Button>
-          )}
-        </div>
-      )}
-    </section>
+    <AssetImage
+      projectId={project.id}
+      assetId={component.image_asset_id}
+      rev={component.rev}
+      editable={editable}
+      command={(assetId, rev) => ({
+        type: "component.set_image",
+        payload: {
+          id: component.id,
+          ...(assetId === undefined ? {} : { image_asset_id: assetId }),
+        },
+        expected_rev: { [component.id]: rev },
+      })}
+      labels={{
+        heading: t("component.image"),
+        none: t("component.no_image"),
+        alt: t("component.image_alt", { name: component.name }),
+        upload: t("component.upload_image"),
+        replace: t("component.replace_image"),
+        remove: t("component.remove_image"),
+      }}
+    />
   );
 }
 
