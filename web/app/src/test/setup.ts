@@ -1,5 +1,12 @@
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
+
+// A page's first render waits for its route's component, which the router
+// loads as a chunk of its own (autoCodeSplitting), as the test's first
+// import of it: on a CI runner that runs every test file at once, as
+// Windows on ARM's, that takes more than Testing Library's second of a
+// findBy, though nothing is wrong. A wait that passes is as quick as before.
+configure({ asyncUtilTimeout: 5000 });
 
 // jsdom draws no canvas, and says so on each call of getContext: a canvas
 // has no context here, as in a browser without one, so that a board's
