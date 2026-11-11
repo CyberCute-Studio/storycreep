@@ -948,7 +948,7 @@ describe("the canvas's jumpers", () => {
     expect(
       await within(inspector).findByText(/To The lamp on Lighthouse/),
     ).toBeDefined();
-    // The link under the jumper's card, and the inspector's.
+    // The link above the jumper's card, and the inspector's.
     const links = await screen.findAllByRole("link", { name: "Go to target" });
     expect(links).toHaveLength(2);
     const onCanvas = links.find((link) => !inspector.contains(link));

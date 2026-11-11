@@ -43,6 +43,13 @@ export interface TargetLookup {
   treeRead(): boolean;
   /** Returns what a read of the node of nodeId by itself found, or undefined while none has, which asks for one. */
   read(nodeId: string): TargetRead | undefined;
+  /**
+   * Tells that the document has read the content of a board since, as the
+   * page asked it to, which changes nothing of the document where the board
+   * lacks a target, of which boardRead then tells otherwise: the canvas
+   * writes its jumpers' cards again.
+   */
+  boardWasRead?(): void;
 }
 
 /**

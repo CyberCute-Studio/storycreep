@@ -474,6 +474,10 @@ function BoardCanvasOf({
   // follows it.
   const queryClient = useQueryClient();
   const [, setTargetsRead] = useState(0);
+  const [targetsChanged] = useState(() => () => {
+    controller.relabel();
+    setTargetsRead((n) => n + 1);
+  });
   const [targetReads] = useState(
     () =>
       new TargetReads(
@@ -504,10 +508,7 @@ function BoardCanvasOf({
               retry: false,
             })
             .then((node) => node ?? undefined),
-        () => {
-          controller.relabel();
-          setTargetsRead((n) => n + 1);
-        },
+        targetsChanged,
       ),
   );
   const benching = options.bench !== undefined;
@@ -516,8 +517,9 @@ function BoardCanvasOf({
       boardRead: (id) => doc.hasRead(boardPart(id)),
       treeRead: () => doc.hasRead("tree"),
       read: (id) => (benching ? undefined : targetReads.read(id)),
+      boardWasRead: targetsChanged,
     }),
-    [doc, targetReads, benching],
+    [doc, targetReads, benching, targetsChanged],
   );
   useEffect(() => {
     targetReads.start();
@@ -927,11 +929,16 @@ function BoardCanvasOf({
       controller.gestures.setSpace(false);
     };
     // What the canvas places over its nodes, outside its element, that says
-    // it is the canvas's own (data-canvas), as the resize handle, takes the
-    // wheel, the pinch, and the browser's menu as the canvas does, rather
-    // than let them through to the page, which would scroll it, zoom it, or
-    // open its menu over the canvas; the rest keeps its own, as the editor
-    // of a text, whose wheel scrolls it, and whose menu is its text's.
+    // it is the canvas's own (data-canvas), as the resize handle and the
+    // link handles, takes the wheel, the pinch, and the browser's menu as
+    // the canvas does, rather than let them through to the page, which
+    // would scroll it, zoom it, or open its menu over the canvas, and has
+    // its touches cancelled as the canvas's are, so that the browser takes
+    // a finger's drag of a handle for no fling of its own, which would take
+    // the tap right after it, as of what a dropped connection offers, for
+    // the fling's end rather than a press (NFR-TOUCH-08); the rest keeps
+    // its own, as the editor of a text, whose wheel scrolls it, and whose
+    // menu is its text's.
     const over = overRef.current;
     const ofCanvas = (e: Event) =>
       e.target instanceof Element && e.target.closest("[data-canvas]") !== null;
@@ -950,6 +957,13 @@ function BoardCanvasOf({
         own(e);
       }
     };
+    const overTouch = (e: Event) => {
+      if (ofCanvas(e)) {
+        e.preventDefault();
+      }
+    };
+    over?.addEventListener("touchstart", overTouch, { passive: false });
+    over?.addEventListener("touchmove", overTouch, { passive: false });
     over?.addEventListener("wheel", overWheel, { passive: false });
     over?.addEventListener("contextmenu", overMenu);
     for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
@@ -988,6 +1002,8 @@ function BoardCanvasOf({
         host.removeEventListener(type, gesture);
         over?.removeEventListener(type, overGesture);
       }
+      over?.removeEventListener("touchstart", overTouch);
+      over?.removeEventListener("touchmove", overTouch);
       over?.removeEventListener("wheel", overWheel);
       over?.removeEventListener("contextmenu", overMenu);
       window.removeEventListener("blur", blur);

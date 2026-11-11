@@ -63,7 +63,6 @@ describe("the commands of a board's connections", () => {
     expect(choicesOf(view, "nd_a", "bo_1").map((c) => c.id)).toEqual(["cn_4"]);
   });
 
-  // Verifies: FR-EDIT-03/AC2
   it("places a choice that moves by a key between its new neighbours' alone, and by none where it stays or no key goes between them", () => {
     const siblings = [{ order: "A" }, { order: "V" }, { order: "k" }];
     // Up, before the one that is there: between nothing and A, and between
@@ -98,8 +97,8 @@ describe("the commands of a board's connections", () => {
         to_node_id: "nd_c",
       },
     });
-    // Verifies nothing of the server's: the batch is the two commands, the
-    // node first, which the connection then enters.
+    // The batch is the two commands, the node first, which the connection
+    // then enters.
     expect(
       connectNewBatch(
         "bd_a",
@@ -173,7 +172,6 @@ describe("the commands of a branch's outputs", () => {
     expect(portsOf(testNode("nd_j", 0, 0, { type: "jumper" }))).toEqual([]);
   });
 
-  // Verifies: FR-EDIT-04/AC3
   it("creates an output or the else, reorders one, and deletes one, confirmed where connections leave it", () => {
     expect(createOutputCommand("nd_b", "bo_new", false)).toEqual({
       type: "branch_output.create",

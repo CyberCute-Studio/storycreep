@@ -1588,7 +1588,6 @@ describe("the canvas's controller of a board's connections", () => {
     expect(asked.connected).toEqual([]);
   });
 
-  // Verifies: FR-EDIT-05/AC1
   it("tells how many of the board's jumpers are broken, as the page says of each", () => {
     const { c, time, host } = setUpFlow();
     expect(host.dataset.broken).toBe("0");

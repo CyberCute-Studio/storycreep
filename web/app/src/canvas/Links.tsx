@@ -279,11 +279,15 @@ export function ConnectOffer({
   );
 }
 
+/** The height of the link to a jumper's target, a button's, in CSS pixels. */
+const targetLinkHeight = 44;
+
 /**
  * The link of the jumper of id, selected on the canvas, to its target, the
- * node of nodeId on the board of boardId (FR-EDIT-05): under the jumper's
- * card, where the canvas places it in each frame, of the size of a finger,
- * so that one tap, or one click, opens the target on its board's canvas.
+ * node of nodeId on the board of boardId (FR-EDIT-05): above the jumper's
+ * card, clear of the resize handle at its corner, where the canvas places
+ * it in each frame, of the size of a finger, so that one tap, or one click,
+ * opens the target on its board's canvas.
  */
 export function TargetLink({
   id,
@@ -310,7 +314,7 @@ export function TargetLink({
         const r = rectOf(id);
         el.hidden = r === undefined || controller.moves();
         if (r !== undefined) {
-          el.style.transform = `translate(${r.x}px, ${r.y + r.height + 8}px)`;
+          el.style.transform = `translate(${r.x}px, ${r.y - targetLinkHeight - 8}px)`;
         }
       }),
     [controller, id],

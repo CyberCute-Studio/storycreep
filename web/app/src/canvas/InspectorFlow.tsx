@@ -539,6 +539,9 @@ export function JumperTarget({
     setRead({ board, state: "loading" });
     loadPart(doc, boardPart(board)).then(
       () => {
+        // The board's content, read, tells of the targets on it, as that
+        // one that it lacks is gone, of this jumper and of the others.
+        targets.boardWasRead?.();
         if (!ended) {
           setRead(undefined);
         }
@@ -552,7 +555,7 @@ export function JumperTarget({
     return () => {
       ended = true;
     };
-  }, [doc, board, attempt]);
+  }, [doc, board, attempt, targets]);
   const reading = read?.board === board ? read.state : undefined;
   const options = useMemo(
     () =>
