@@ -5,12 +5,14 @@
 // opening, as plain words.
 
 import type {
+  BranchOutput,
   Node,
   RichTextBlock,
   RichTextDoc,
   RichTextInline,
 } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
+import { type JumperTarget, type TargetLookup, targetOf } from "./targets";
 import { excerpt, excerptLength } from "./text";
 
 /** What a card shows of a node, as text. */
@@ -20,6 +22,8 @@ export interface NodeLabels {
   kind: string;
   /** An element's text, a branch's outputs, one to a line, or a jumper's target. */
   body: string;
+  /** Whether the node is a jumper whose target was deleted, which its card is drawn as broken for (FR-EDIT-05 AC1). */
+  broken?: boolean;
 }
 
 /** What labels read from the page: its messages, and the names of what a node refers to. */
@@ -29,8 +33,8 @@ export interface LabelContext {
   componentName: (id: string) => string | undefined;
   /** Returns the key of the variable of id, if the project's document has it. */
   variableKey: (id: string) => string | undefined;
-  /** Returns the title of the node of id, if the project's document has it. */
-  nodeTitle: (id: string) => string | undefined;
+  /** Returns what the target of node, a jumper, is (targets.ts). */
+  target: (node: Node) => JumperTarget;
   /** Returns the name of the board of id, if the project's document has it. */
   boardName: (id: string) => string | undefined;
 }
@@ -46,17 +50,19 @@ export type LabelSources = Pick<
  * they are read, with the page's messages, t: every name that a card
  * shows, of what its node refers to, each of which namesChanged follows,
  * so that what cards read and what writes them again, once it changes, are
- * the same names, here.
+ * the same names, here; and a jumper's target, as view and targets tell of
+ * it (targetOf), whose change the scene and the target's reads tell of.
  */
 export function labelContext(
   view: LabelSources,
   t: LabelContext["t"],
+  targets?: TargetLookup,
 ): LabelContext {
   return {
     t,
     componentName: (id) => view.components.get(id)?.name,
     variableKey: (id) => view.variables.get(id)?.key,
-    nodeTitle: (id) => view.nodes.get(id)?.title,
+    target: (node) => targetOf(node, view, targets),
     boardName: (id) => view.boards.get(id)?.name,
   };
 }
@@ -92,8 +98,10 @@ export type LabelKey =
   | "canvas.node.jumper"
   | "canvas.node.kind_ending"
   | "canvas.node.jumper_to"
+  | "canvas.node.jumper_to_on"
   | "canvas.node.jumper_to_board"
   | "canvas.node.jumper_none"
+  | "canvas.node.jumper_broken"
   | "canvas.node.output_if"
   | "canvas.node.output_elseif"
   | "canvas.node.output_else"
@@ -161,29 +169,16 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
         body:
           outputs.length === 0
             ? c.t("canvas.node.no_outputs")
-            : outputs
-                .map((o) => {
-                  const condition = oneLine(o.condition?.source ?? "");
-                  if (o.kind === "if") {
-                    return c.t("canvas.node.output_if", { condition });
-                  }
-                  if (o.kind === "elseif") {
-                    return c.t("canvas.node.output_elseif", { condition });
-                  }
-                  return c.t("canvas.node.output_else");
-                })
-                .join("\n"),
+            : outputs.map((o) => outputLabel(o, c.t)).join("\n"),
       };
     }
     case "jumper": {
-      const target = node.target?.node_id;
+      const target = c.target(node);
       return {
         title,
         kind: typeOf(node, c.t),
-        body:
-          target === undefined
-            ? c.t("canvas.node.jumper_none")
-            : jumperTarget(target, node.target?.board_id, c),
+        body: targetLabel(target, c),
+        ...(target.state === "gone" ? { broken: true } : {}),
       };
     }
     default:
@@ -195,29 +190,58 @@ export function labelsOf(node: Node, c: LabelContext): NodeLabels {
 }
 
 /**
- * Returns what a jumper's card says of the node of ID target, on the board
- * of ID board, that it goes to: its title, as its own card shows it,
- * untitled as there; or, while the project's document does not have the
- * node, as of a board that the page has not read, which the canvas reads
- * nothing of, or a node gone to the trash, the name of its board, which
- * the project's tree, read with the board's page, has; or, of a board that
- * the tree does not have either, the node's ID.
+ * Returns what a branch's card says of output on its row, and so what else
+ * names it, as the inspector: its kind, and, of a conditional output, its
+ * condition, on one line.
  */
-function jumperTarget(
-  target: string,
-  board: string | undefined,
-  c: LabelContext,
+export function outputLabel(
+  output: Pick<BranchOutput, "kind" | "condition">,
+  t: LabelContext["t"],
 ): string {
-  const name = c.nodeTitle(target);
-  if (name !== undefined) {
-    return c.t("canvas.node.jumper_to", {
-      target: titleOf({ title: name }, c.t),
-    });
+  const condition = oneLine(output.condition?.source ?? "");
+  if (output.kind === "if") {
+    return t("canvas.node.output_if", { condition });
   }
-  const boardName = board === undefined ? undefined : c.boardName(board);
-  return boardName === undefined
-    ? c.t("canvas.node.jumper_to", { target })
-    : c.t("canvas.node.jumper_to_board", { board: boardName });
+  if (output.kind === "elseif") {
+    return t("canvas.node.output_elseif", { condition });
+  }
+  return t("canvas.node.output_else");
+}
+
+/**
+ * Returns what a jumper's card, and what else names its target, as its
+ * inspector, says of target (PRD FR-EDIT-05): that it has none; the title
+ * of the node that it goes to, as that node's own card shows it, untitled
+ * as there, with the name of its board where that is another than the
+ * jumper's; that its target was deleted; or, of a node that the page has
+ * not read yet, as of a board that it has not opened, the name of its
+ * board, which the project's tree, read with the board's page, has, or, of
+ * a board that the tree does not have either, the node's ID.
+ */
+export function targetLabel(
+  target: JumperTarget,
+  c: Pick<LabelContext, "t" | "boardName">,
+): string {
+  switch (target.state) {
+    case "none":
+      return c.t("canvas.node.jumper_none");
+    case "gone":
+      return c.t("canvas.node.jumper_broken");
+    case "found": {
+      const title = titleOf(target, c.t);
+      const board = target.elsewhere ? c.boardName(target.boardId) : undefined;
+      return board === undefined
+        ? c.t("canvas.node.jumper_to", { target: title })
+        : c.t("canvas.node.jumper_to_on", { target: title, board });
+    }
+    case "unknown": {
+      const board =
+        target.boardId === undefined ? undefined : c.boardName(target.boardId);
+      return board === undefined
+        ? c.t("canvas.node.jumper_to", { target: target.nodeId })
+        : c.t("canvas.node.jumper_to_board", { board });
+    }
+  }
 }
 
 /** Reports whether a, a card's labels, shows the same as b, those that it was drawn with, or none, of a card not drawn yet. */
@@ -226,7 +250,8 @@ export function sameLabels(a: NodeLabels, b: NodeLabels | undefined): boolean {
     b !== undefined &&
     a.title === b.title &&
     a.kind === b.kind &&
-    a.body === b.body
+    a.body === b.body &&
+    (a.broken ?? false) === (b.broken ?? false)
   );
 }
 

@@ -132,6 +132,8 @@ function boardPage(
           : nodesRead.then(() => ({ items: nodes, next_cursor: null }));
       case "listTags":
         return { items: [] };
+      case "listNodeReferrers":
+        return { items: [], next_cursor: null };
       case "applyCommands": {
         const { commands } = (input as { body: { commands: Sent } }).body;
         const applied = () => {
@@ -956,7 +958,9 @@ describe("the canvas's edits", () => {
   it("shows the resize handle of a node selected while another's text is open, but none over the node whose text is open", async () => {
     boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
     const canvas = await openBoard("?node=nd_1");
-    const handles = () => document.querySelectorAll("[data-canvas]").length;
+    // The resize handle, rather than the link handle of the node's port.
+    const handles = () =>
+      document.querySelectorAll("[data-canvas]:not([data-link])").length;
     await waitFor(() => expect(handles()).toBe(1));
     canvas.focus();
     fireEvent.keyDown(canvas, { key: "Enter" });

@@ -11,7 +11,14 @@
 
 import type { Connection, Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
-import { type Curve, connectionCurve, curveBounds, nodeRect } from "./layout";
+import {
+  type Curve,
+  connectionCurve,
+  curveBounds,
+  curveDistance,
+  nodeRect,
+  sameCurve,
+} from "./layout";
 import { GridIndex } from "./spatial";
 import { type Point, type Rect, sameRect, union } from "./viewport";
 
@@ -35,20 +42,6 @@ export interface ConnectionItem {
 export interface Shown {
   nodes: NodeItem[];
   connections: ConnectionItem[];
-}
-
-/** Reports whether curves a and b are the same curve. */
-function sameCurve(a: Curve, b: Curve): boolean {
-  return (
-    a.p0.x === b.p0.x &&
-    a.p0.y === b.p0.y &&
-    a.c1.x === b.c1.x &&
-    a.c1.y === b.c1.y &&
-    a.c2.x === b.c2.x &&
-    a.c2.y === b.c2.y &&
-    a.p3.x === b.p3.x &&
-    a.p3.y === b.p3.y
-  );
 }
 
 /** No nodes, which a scene shows in place of none of the document's (Scene.sync). */
@@ -439,6 +432,28 @@ export class Scene {
       },
     );
     return found?.node.id;
+  }
+
+  /**
+   * Returns the ID of the connection whose line is nearest p of the board,
+   * within slop units of it, as a tap finds one: of its curve, or, where
+   * straight says so, of the line between its ends, as the canvas draws it
+   * below the zoom that shows text.
+   */
+  connectionAt(p: Point, slop: number, straight = false): string | undefined {
+    let found: string | undefined;
+    let nearest = Number.POSITIVE_INFINITY;
+    this.connections.query(
+      { x: p.x - slop, y: p.y - slop, width: 2 * slop, height: 2 * slop },
+      (id, item) => {
+        const distance = curveDistance(item.curve, p, straight);
+        if (distance <= slop && distance < nearest) {
+          found = id;
+          nearest = distance;
+        }
+      },
+    );
+    return found;
   }
 
   /** Returns the IDs of the nodes that r of the board overlaps. */

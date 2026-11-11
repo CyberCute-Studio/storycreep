@@ -10,7 +10,13 @@
 // with the nodes where the drag has them, without a command, and tells the
 // page where it left them as it ends, which sends one batch for it
 // (FR-EDIT-02 AC2, plan note N68), whose nodes the document shows there at
-// once, in the same frame as the drag's end.
+// once, in the same frame as the drag's end. A drag of a link handle, of a
+// port of the node selected, or of an end of the connection selected,
+// shows the connection that it would make as a line to its pointer, or to
+// the node under it that would take it, and tells the page where it
+// landed as it ends (FR-EDIT-03, plan note N69); a tap on a connection's
+// line selects the connection, in place of the nodes selected, as a node
+// selected takes its place.
 
 import type { Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
@@ -19,12 +25,15 @@ import type { Engine, FrameStats, RendererKind } from "./engine";
 import {
   type GestureHost,
   Gestures,
+  type Handle,
+  type Link,
   type Mode,
   type PointerInput,
   type SelectHow,
 } from "./gestures";
 import { type KeyInput, keyAction } from "./keyboard";
 import type { NodeLabels } from "./labels";
+import { type Curve, curveOf, entryPoint, portPoint, portsOf } from "./layout";
 import type { Minimap } from "./minimap";
 import { type NodeItem, Scene } from "./scene";
 import { sameTheme, type Theme } from "./theme";
@@ -113,6 +122,8 @@ export interface SavedView {
 export interface CanvasEvents {
   /** The selection changed. */
   selection(ids: ReadonlySet<string>): void;
+  /** The connection selected changed, to the one of id, or to none. */
+  connection(id: string | undefined): void;
   /** The zoom changed, by a percent or more. */
   zoom(zoom: number): void;
   /** The first frame of the board's content was drawn. */
@@ -125,11 +136,18 @@ export interface CanvasEvents {
   view(view: CanvasView): void;
 }
 
+/** A port that connections leave: port of the node of node, out of an element, or the ID of a branch's output. */
+export interface PortOf {
+  node: string;
+  port: string;
+}
+
 /**
  * What the canvas asks the page to change of the board, which the page
- * sends as commands (plan note N68): it has none on a board that the user
- * may not change, where a drag on a node pans or draws a rubber band, as on
- * the empty board, and the keys that change it do nothing.
+ * sends as commands (plan notes N68 and N69): it has none on a board that
+ * the user may not change, where a drag on a node pans or draws a rubber
+ * band, as on the empty board, a tap selects no connection, and the keys
+ * that change it do nothing.
  */
 export interface CanvasEdits {
   /**
@@ -147,6 +165,29 @@ export interface CanvasEdits {
   remove(ids: readonly string[]): void;
   /** Opens the node of id, as for its text, as Enter or a double tap asks. */
   open(id: string): void;
+  /** Connects from to the node of to, as a drag of a port's handle that landed on it asks. */
+  connect(from: PortOf, to: string): void;
+  /**
+   * Offers to create a node at at of the board and connect from to it, as a
+   * drag of a port's handle that landed on the empty board asks (FR-EDIT-03
+   * AC3): the canvas shows the line to at until the page says what became
+   * of the offer (CanvasController's endOffer).
+   */
+  offer(from: PortOf, at: Point): void;
+  /**
+   * Reconnects the connection of id, so that it leaves from, or enters the
+   * node of to, as a drag of one of its ends' handles left it, expecting
+   * rev, its revision as the drag started.
+   */
+  reconnect(
+    id: string,
+    ends: { from?: PortOf; to?: string },
+    rev: number,
+  ): void;
+  /** Deletes the connection of id to the trash, as Delete asks. */
+  removeConnection(id: string): void;
+  /** Opens the connection of id, in the inspector, as Enter asks. */
+  openConnection(id: string): void;
 }
 
 /** Returns where the node of id is on the canvas, in its CSS pixels, or undefined for one that the board does not have. */
@@ -226,15 +267,23 @@ export class CanvasController implements GestureHost {
   /**
    * Takes what the page changes of the board, or none once the board may no
    * longer be changed, as once the user's role or the project's archive
-   * changes, which ends a move or a resize under way, cancelled, rather than
-   * go on moving the nodes of a board that it can no longer change.
+   * changes, which ends a move, a resize, or a link under way, cancelled,
+   * rather than go on moving the nodes of a board that it can no longer
+   * change, and leaves no connection selected, which only a board that may
+   * be changed selects.
    */
   set edits(edits: CanvasEdits | undefined) {
     this.editsOf = edits;
-    if (edits === undefined && this.drag !== undefined) {
-      this.gestures.cancelDrag();
+    if (edits === undefined) {
+      if (this.drag !== undefined) {
+        this.gestures.cancelDrag();
+      }
+      this.endOffer();
+      this.setConnection(undefined);
     }
   }
+  /** Reports whether the canvas draws the jumper node as broken, as one whose target was deleted (FR-EDIT-05 AC1), which the page tells. */
+  broken: (node: Node) => boolean = () => false;
   /** Whether a move or a resize snaps to the board's grid (FR-EDIT-02). */
   snap = true;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
@@ -280,7 +329,12 @@ export class CanvasController implements GestureHost {
   private minimap: Minimap | undefined;
   private elements: CanvasElements | undefined;
   private selected: ReadonlySet<string> = new Set();
+  /** The connection selected, of which there is one at most, and none while a node is selected. */
+  private connection: string | undefined;
+  /** Counts the changes of the selection, of the nodes or of the connection. */
   private selectionVersion = 0;
+  /** The level of detail that the renderer last drew, by which a tap finds a connection's line as it is drawn. */
+  private lod: FrameStats["lod"] = "detail";
   /** What the project's document holds of the board, as the page last gave it (sync). */
   private docSeen: Pick<Doc, "nodes" | "connections"> = {
     nodes: new Map(),
@@ -293,7 +347,10 @@ export class CanvasController implements GestureHost {
    * nodes were as it started, and their revisions then, which its batch
    * expects, of the node that it holds at anchor, and where they are now; of
    * a resize by a node's handle, the node of id, at revision rev, its size
-   * as it started, and its size now. Each change of it is another object.
+   * as it started, and its size now; of a link, what its handle holds, the
+   * revision of its connection as it started, where its pointer is on the
+   * board, and the port, or the node, under it that would take its end.
+   * Each change of it is another object.
    */
   private drag:
     | {
@@ -304,6 +361,19 @@ export class CanvasController implements GestureHost {
         places: ReadonlyMap<string, Point>;
       }
     | { kind: "resize"; id: string; rev: number; from: Size; size?: Size }
+    | {
+        kind: "link";
+        link: Link;
+        rev: number;
+        at?: Point;
+        over?: { node: string; port?: string };
+      }
+    | undefined;
+  /** The line that the canvas shows of the page's offer to create a node and connect it, from a port to a point of the board, until the offer ends (endOffer). */
+  private offered: { from: PortOf; at: Point } | undefined;
+  /** How many of the board's jumpers are broken, of the document's nodes and the labels' version that it was counted at. */
+  private brokenCount:
+    | { nodes: ReadonlyMap<string, Node>; labels: number; count: number }
     | undefined;
   /**
    * The delta of the board that the move under way was last moved by, and
@@ -321,6 +391,8 @@ export class CanvasController implements GestureHost {
         shown: ReadonlyMap<string, Node>;
       }
     | undefined;
+  /** The document's connections that the connection selected was last kept to (syncScene). */
+  private connectionKeptTo: Doc["connections"] | undefined;
   /** The document's nodes that the selection was last kept to, as the scene has them (syncScene). */
   private keptTo: ReadonlyMap<string, Node> | undefined;
   /**
@@ -522,7 +594,7 @@ export class CanvasController implements GestureHost {
           shown.set(id, { ...node, position });
         }
       }
-    } else if (d.size !== undefined) {
+    } else if (d.kind === "resize" && d.size !== undefined) {
       const node = nodes.get(d.id);
       if (node !== undefined) {
         shown.set(d.id, { ...node, size: d.size });
@@ -558,6 +630,18 @@ export class CanvasController implements GestureHost {
       );
       if (kept.length !== this.selected.size) {
         this.setSelection(new Set(kept));
+      }
+    }
+    if (
+      this.connection !== undefined &&
+      this.docSeen.connections !== this.connectionKeptTo
+    ) {
+      // A connection selected that the board no longer has, as one deleted,
+      // here or by another session, or gone to the trash with its node, is
+      // selected no longer.
+      this.connectionKeptTo = this.docSeen.connections;
+      if (!this.aliveConnection(this.connection)) {
+        this.setConnection(undefined);
       }
     }
     if (changed || relabel) {
@@ -675,6 +759,21 @@ export class CanvasController implements GestureHost {
   private alive(id: string): boolean {
     const node = this.docSeen.nodes.get(id);
     return node !== undefined && node.deleted_at === undefined;
+  }
+
+  /** Returns the connection of id that the document has on the board, rather than in the trash, or undefined. */
+  private connectionOf(id: string) {
+    const c = this.docSeen.connections.get(id);
+    return c !== undefined &&
+      c.deleted_at === undefined &&
+      c.board_id === this.scene.boardId
+      ? c
+      : undefined;
+  }
+
+  /** Reports whether the document has the connection of id on the board, rather than in the trash. */
+  private aliveConnection(id: string): boolean {
+    return this.connectionOf(id) !== undefined;
   }
 
   /**
@@ -860,6 +959,224 @@ export class CanvasController implements GestureHost {
   }
 
   /**
+   * Starts the drag of link, by its handle, and reports whether it did: not
+   * where the board may not be changed, nor while another drag is under
+   * way, nor of a port that its node no longer has, as of an output deleted
+   * meanwhile, or of a node that has gone, nor of a connection that has. It
+   * ends the offer of the link before it.
+   */
+  linkStart(link: Link): boolean {
+    if (this.edits === undefined || this.drag !== undefined) {
+      return false;
+    }
+    let rev = 0;
+    if (link.kind === "new") {
+      const from = this.scene.nodes.get(link.node);
+      if (from === undefined || !portsOf(from.node).includes(link.port)) {
+        return false;
+      }
+    } else {
+      const c = this.connectionOf(link.connection);
+      if (c === undefined) {
+        return false;
+      }
+      rev = c.rev;
+    }
+    this.offered = undefined;
+    this.drag = { kind: "link", link, rev };
+    this.invalidate();
+    return true;
+  }
+
+  /**
+   * Takes the end that the link's drag holds to at of the board: the node
+   * there, the topmost, or the nearest within slop units, takes it, any
+   * node the end that enters one, and an element or a branch the end that
+   * leaves one, by its one port, or by the output of a branch whose row is
+   * nearest, while a jumper, which no connection leaves, and a branch
+   * without outputs, take none.
+   */
+  linkTo(at: Point, slop: number): void {
+    const d = this.drag;
+    if (d?.kind !== "link") {
+      return;
+    }
+    const id = this.scene.nodeAt(at, slop);
+    const item = id === undefined ? undefined : this.scene.nodes.get(id);
+    let over: { node: string; port?: string } | undefined;
+    if (item !== undefined) {
+      if (d.link.kind !== "from") {
+        over = { node: item.node.id };
+      } else {
+        let nearest = Number.POSITIVE_INFINITY;
+        for (const port of portsOf(item.node)) {
+          const distance = Math.abs(
+            portPoint(item.node, item.rect, port).y - at.y,
+          );
+          if (distance < nearest) {
+            nearest = distance;
+            over = { node: item.node.id, port };
+          }
+        }
+      }
+    }
+    if (
+      d.at?.x === at.x &&
+      d.at.y === at.y &&
+      d.over?.node === over?.node &&
+      d.over?.port === over?.port
+    ) {
+      return;
+    }
+    this.drag = { ...d, at, over };
+    this.invalidate();
+  }
+
+  /**
+   * Ends the link's drag: where it landed, which the page sends as a batch,
+   * or, cancelled, as nothing. A connection to come that landed on a node
+   * connects to it, and one that landed on the empty board has the page
+   * offer to create a node there, whose line stays until the offer ends
+   * (FR-EDIT-03 AC3); an end of a connection that landed on a node, or on a
+   * port, other than its own is reconnected to it, expecting the
+   * connection's revision as the drag started, and one that landed
+   * elsewhere stays as it was. What went meanwhile, as a node that another
+   * session deleted, connects nothing.
+   */
+  linkEnd(commit: boolean): void {
+    const d = this.drag;
+    if (d?.kind !== "link") {
+      return;
+    }
+    this.drag = undefined;
+    this.invalidate();
+    const edits = this.edits;
+    if (!commit || edits === undefined || d.at === undefined) {
+      return;
+    }
+    const over =
+      d.over !== undefined && this.alive(d.over.node) ? d.over : undefined;
+    if (d.link.kind === "new") {
+      const from = this.scene.nodes.get(d.link.node);
+      if (
+        from === undefined ||
+        !this.alive(d.link.node) ||
+        !portsOf(from.node).includes(d.link.port)
+      ) {
+        return;
+      }
+      const port = { node: d.link.node, port: d.link.port };
+      if (over !== undefined) {
+        edits.connect(port, over.node);
+      } else if (d.over === undefined) {
+        this.offered = { from: port, at: d.at };
+        edits.offer(port, d.at);
+      }
+      return;
+    }
+    const c = this.connectionOf(d.link.connection);
+    if (c === undefined || over === undefined) {
+      return;
+    }
+    if (d.link.kind === "to") {
+      if (over.node !== c.to_node_id) {
+        edits.reconnect(c.id, { to: over.node }, d.rev);
+      }
+    } else if (
+      over.port !== undefined &&
+      (over.node !== c.from_node_id || over.port !== c.from_port)
+    ) {
+      edits.reconnect(
+        c.id,
+        { from: { node: over.node, port: over.port } },
+        d.rev,
+      );
+    }
+  }
+
+  /** Reports whether a link's drag is under way, which the canvas's element says (data-linking). */
+  links(): boolean {
+    return this.drag?.kind === "link";
+  }
+
+  /** Ends the page's offer to create a node and connect it, whose line the canvas shows no longer, as once the user chose a node's type, or cancelled. */
+  endOffer(): void {
+    if (this.offered !== undefined) {
+      this.offered = undefined;
+      this.invalidate();
+    }
+  }
+
+  /**
+   * Returns the line that the canvas draws of the link under way, or of the
+   * page's offer: from the port that the connection leaves, or would, to
+   * the node that it enters, or would, as a connection's curve is, with the
+   * end that the drag holds at its pointer while nothing under it takes it.
+   */
+  private linkCurve(): Curve | undefined {
+    const d = this.drag;
+    const portOf = (p: PortOf): Point | undefined => {
+      const item = this.scene.nodes.get(p.node);
+      return item === undefined
+        ? undefined
+        : portPoint(item.node, item.rect, p.port);
+    };
+    const entryOf = (id: string): Point | undefined => {
+      const rect = this.scene.nodes.rect(id);
+      return rect === undefined ? undefined : entryPoint(rect);
+    };
+    let from: Point | undefined;
+    let to: Point | undefined;
+    let self = false;
+    if (d?.kind === "link") {
+      if (d.at === undefined) {
+        return undefined;
+      }
+      const over = d.over;
+      if (d.link.kind === "from") {
+        const c = this.connectionOf(d.link.connection);
+        if (c === undefined) {
+          return undefined;
+        }
+        from =
+          over?.port === undefined
+            ? d.at
+            : portOf({ node: over.node, port: over.port });
+        to = entryOf(c.to_node_id);
+        self = over?.node === c.to_node_id;
+      } else {
+        const c =
+          d.link.kind === "to"
+            ? this.connectionOf(d.link.connection)
+            : undefined;
+        const port =
+          d.link.kind === "new"
+            ? { node: d.link.node, port: d.link.port }
+            : c === undefined
+              ? undefined
+              : { node: c.from_node_id, port: c.from_port };
+        if (port === undefined) {
+          return undefined;
+        }
+        from = portOf(port);
+        to = over === undefined ? d.at : entryOf(over.node);
+        self = over?.node === port.node;
+      }
+    } else if (this.offered !== undefined) {
+      from = portOf(this.offered.from);
+      to = this.offered.at;
+    }
+    return from === undefined || to === undefined
+      ? undefined
+      : curveOf(from, to, self);
+  }
+
+  /** Returns where p of the board is on the canvas, in its CSS pixels, as what the page places over a port reads it (follow). */
+  screenPoint(p: Point): Point {
+    return toScreen(this.v, p);
+  }
+
+  /**
    * Dims the nodes that dim tells, or none, as the tag filter asks (FR-EDIT-06
    * AC1): the canvas draws them faint, and changes nothing of the board.
    */
@@ -894,6 +1211,31 @@ export class CanvasController implements GestureHost {
       }
     });
     this.dimmedCount = { nodes, dims: this.dimVersion, count };
+    return count;
+  }
+
+  /**
+   * How many of the board's jumpers the canvas draws as broken (broken),
+   * counted once for each change of the document's nodes or of what cards
+   * show, rather than in each frame.
+   */
+  private brokenJumpers(): number {
+    const c = this.brokenCount;
+    const nodes = this.docSeen.nodes;
+    if (
+      c !== undefined &&
+      c.nodes === nodes &&
+      c.labels === this.labelsVersion
+    ) {
+      return c.count;
+    }
+    let count = 0;
+    this.scene.nodes.forEach((_, item) => {
+      if (item.node.type === "jumper" && this.broken(item.node)) {
+        count++;
+      }
+    });
+    this.brokenCount = { nodes, labels: this.labelsVersion, count };
     return count;
   }
 
@@ -967,12 +1309,62 @@ export class CanvasController implements GestureHost {
         next.add(id);
       }
     }
+    // A selection of nodes takes the place of the connection selected, as
+    // does the selection of none, of a tap on the empty board.
+    if (how === "replace" || next.size > 0) {
+      this.setConnection(undefined);
+    }
     if (
       next.size !== this.selected.size ||
       [...next].some((id) => !this.selected.has(id))
     ) {
       this.setSelection(next);
     }
+  }
+
+  /**
+   * Returns the ID of the connection whose line is within slop units of p
+   * of the board, as the canvas draws it, a curve, or a straight line below
+   * the zoom that shows text, on a board that may be changed, where a tap
+   * selects one.
+   */
+  connectionAt(p: Point, slop: number): string | undefined {
+    return this.edits === undefined
+      ? undefined
+      : this.scene.connectionAt(p, slop, this.lod === "blocks");
+  }
+
+  /**
+   * Selects the connection of id, in place of the nodes selected, on a
+   * board that may be changed and has it, or none.
+   */
+  selectConnection(id: string | undefined): void {
+    if (
+      id !== undefined &&
+      (this.edits === undefined || !this.aliveConnection(id))
+    ) {
+      return;
+    }
+    if (id !== undefined && this.selected.size > 0) {
+      this.setSelection(new Set());
+    }
+    this.setConnection(id);
+  }
+
+  /** The connection selected, or undefined for none. */
+  selectedConnection(): string | undefined {
+    return this.connection;
+  }
+
+  private setConnection(id: string | undefined): void {
+    if (id === this.connection) {
+      return;
+    }
+    this.connection = id;
+    this.connectionKeptTo = this.docSeen.connections;
+    this.selectionVersion++;
+    this.events.connection(id);
+    this.invalidate();
   }
 
   /**
@@ -1169,18 +1561,32 @@ export class CanvasController implements GestureHost {
         if (this.gestures.cancelDrag()) {
           return true;
         }
-        const had = this.selected.size > 0;
+        const had = this.selected.size > 0 || this.connection !== undefined;
         this.select([], "replace");
         return had;
       }
       case "delete":
-        if (this.edits === undefined || this.selected.size === 0) {
+        if (this.edits === undefined) {
+          return false;
+        }
+        if (this.connection !== undefined) {
+          this.edits.removeConnection(this.connection);
+          return true;
+        }
+        if (this.selected.size === 0) {
           return false;
         }
         this.edits.remove([...this.selected]);
         return true;
       case "open":
-        if (this.edits === undefined || this.selected.size !== 1) {
+        if (this.edits === undefined) {
+          return false;
+        }
+        if (this.connection !== undefined) {
+          this.edits.openConnection(this.connection);
+          return true;
+        }
+        if (this.selected.size !== 1) {
           return false;
         }
         this.edits.open([...this.selected][0]);
@@ -1195,10 +1601,11 @@ export class CanvasController implements GestureHost {
    * the board does, and one that it ignores, as a right click, or a third
    * finger, leaves it to go on. What the pointer does after, as it moves,
    * leaves, goes up, or is cancelled, goes to the gestures as it comes. A
-   * pointer that went down on the resize handle of the node of handle is
-   * the canvas's too, and resizes the node by its drag.
+   * pointer that went down on handle, the resize handle of a node, or a
+   * link handle, is the canvas's too, and resizes the node, or links what
+   * the handle holds, by its drag.
    */
-  down(input: PointerInput, handle?: string): boolean {
+  down(input: PointerInput, handle?: Handle): boolean {
     const followed = this.gestures.down(input, handle);
     if (followed) {
       this.animation = undefined;
@@ -1299,7 +1706,7 @@ export class CanvasController implements GestureHost {
       }
     }
     // A rubber band, a move, or a resize under way stays on the board's
-    // point where it started.
+    // point where it started, and a link's end under its pointer.
     this.gestures.refresh();
     this.showZoom();
     for (const place of this.followers) {
@@ -1334,6 +1741,8 @@ export class CanvasController implements GestureHost {
         scene: this.scene,
         selection: this.selected,
         selectionVersion: this.selectionVersion,
+        connection: this.connection,
+        link: this.linkCurve(),
         labels: this.labels,
         labelsVersion: this.labelsVersion,
         dimmed: this.dims,
@@ -1348,6 +1757,7 @@ export class CanvasController implements GestureHost {
       throw error;
     }
     this.threw = false;
+    this.lod = stats.lod;
     const work = this.clock.now() - start;
     this.writeData(engine.kind, stats);
     if (this.ready && !this.renderedOnce) {
@@ -1415,8 +1825,14 @@ export class CanvasController implements GestureHost {
       texts: String(stats.texts),
       connections: String(stats.connections),
       selected: String(this.selected.size),
+      // The connection selected, or none, and whether a link handle's drag
+      // is under way (plan note N69).
+      connection: this.connection ?? "",
+      linking: String(this.links()),
       // The nodes of the board that the tag filter dims (FR-EDIT-06 AC1).
       dimmed: String(this.dimmed()),
+      // The board's jumpers that are drawn as broken (FR-EDIT-05 AC1).
+      broken: String(this.brokenJumpers()),
       // Whether the frame drew the board's content, once it was read.
       ready: String(this.ready),
     };

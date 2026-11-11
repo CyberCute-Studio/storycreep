@@ -12,6 +12,7 @@ import {
   sameLabels,
 } from "./labels";
 import { nodeRect } from "./layout";
+import { targetOf } from "./targets";
 import { clip, graphemes, textTier, wrapLines } from "./text";
 import {
   nodeColor,
@@ -26,8 +27,20 @@ const context: LabelContext = {
     args === undefined ? key : `${key}(${Object.values(args).join(",")})`,
   componentName: (id) => (id === "cmp_ada" ? "Ada" : undefined),
   variableKey: (id) => (id === "var_gold" ? "gold" : undefined),
-  nodeTitle: (id) =>
-    id === "nd_dock" ? "The dock" : id === "nd_blank" ? "" : undefined,
+  target: (node) =>
+    targetOf(
+      node,
+      {
+        nodes: new Map(
+          [
+            testNode("nd_dock", 0, 0, { title: "The dock" }),
+            testNode("nd_blank", 0, 0, { title: "" }),
+          ].map((n) => [n.id, n]),
+        ),
+        boards: new Map(),
+      },
+      undefined,
+    ),
   boardName: (id) =>
     id === "bd_a" ? "Harbour" : id === "bd_b" ? "Lighthouse" : undefined,
 };
@@ -407,6 +420,7 @@ describe("a node's colour", () => {
     fg: 0x15171c,
     muted: 0x4b5260,
     accent: 0x2b50c8,
+    danger: 0xb3261e,
     dark: false,
   };
   const dark: Theme = {
@@ -416,6 +430,7 @@ describe("a node's colour", () => {
     fg: 0xeceef2,
     muted: 0xa8afbc,
     accent: 0x8fa8ff,
+    danger: 0xff8b80,
     dark: true,
   };
   const colors = [
@@ -455,6 +470,7 @@ describe("a node's colour", () => {
       fg: 0xffffff,
       muted: 0xffffff,
       accent: 0xffff00,
+      danger: 0xffffff,
       dark: true,
     };
     for (const color of colors) {
@@ -491,6 +507,7 @@ describe("the canvas's theme", () => {
         fg: system("CanvasText"),
         muted: system("CanvasText"),
         accent: system("Highlight"),
+        danger: system("CanvasText"),
         dark: false,
       });
       expect(forced.canvas).not.toBe(forced.fg);

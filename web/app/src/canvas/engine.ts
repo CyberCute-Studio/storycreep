@@ -27,7 +27,7 @@ import {
   Texture,
 } from "pixi.js";
 import { type NodeLabels, sameLabels } from "./labels";
-import { outputOffset, portPoint } from "./layout";
+import { type Curve, outputOffset, portPoint, sameCurve } from "./layout";
 import type { ConnectionItem, NodeItem, Scene } from "./scene";
 import {
   bodyLine,
@@ -66,8 +66,12 @@ export interface Frame {
   size: Size;
   scene: Scene;
   selection: ReadonlySet<string>;
-  /** Counts the changes of the selection. */
+  /** Counts the changes of the selection, of the nodes or of the connection. */
   selectionVersion: number;
+  /** The connection selected, whose line is drawn in the selection's colour, or undefined for none. */
+  connection?: string;
+  /** The line of a link under way, from a port to its pointer or to the node that would take it, or undefined for none (plan note N69). */
+  link?: Curve;
   labels: (node: NodeItem) => NodeLabels;
   /** Counts the changes of what labels returns, as once a speaker's name comes, or the locale changes. */
   labelsVersion: number;
@@ -500,6 +504,11 @@ class PixiEngine implements Engine {
   private readonly lineTiles: LineTile[] = [];
   private readonly blocks = new Container();
   private readonly cards = new Container();
+  /** The line of the link under way (Frame's link), above the cards, and what it was drawn of. */
+  private readonly linkLine = new Graphics();
+  private linkDrawn:
+    | { curve: Curve; x: number; y: number; zoom: number; theme: Theme }
+    | undefined;
   /** The textures that the cards are drawn of, white, which a tint colours. */
   private readonly art: {
     card: Texture;
@@ -522,6 +531,7 @@ class PixiEngine implements Engine {
         sceneVersion: number;
         connectionsVersion: number;
         selectionVersion: number;
+        connection: string | undefined;
         labelsVersion: number;
         dimVersion: number;
         theme: Theme;
@@ -567,7 +577,8 @@ class PixiEngine implements Engine {
     private readonly canvas: HTMLCanvasElement,
     private readonly fontFamily: string,
   ) {
-    this.world.addChild(this.lines, this.blocks, this.cards);
+    this.world.addChild(this.lines, this.blocks, this.cards, this.linkLine);
+    this.linkLine.visible = false;
     this.stage.addChild(this.world);
     this.art = {
       card: canvasTexture(64, (g) => {
@@ -704,6 +715,7 @@ class PixiEngine implements Engine {
     if (this.kind === "canvas") {
       this.cull(visible);
     }
+    this.drawLink(f.link, built.origin, v.zoom, f.theme);
     this.renderer.background.color = f.theme.canvas;
     this.renderer.render(this.stage);
     return {
@@ -899,11 +911,20 @@ class PixiEngine implements Engine {
       was === undefined ||
       was.region !== region ||
       was.connectionsVersion !== scene.connectionsVersion ||
+      was.connection !== f.connection ||
       was.zoom !== zoom ||
       was.lod !== lod ||
       was.theme !== theme
     ) {
-      this.drawLines(shown.connections, region, origin, zoom, lod, theme);
+      this.drawLines(
+        shown.connections,
+        region,
+        origin,
+        zoom,
+        lod,
+        theme,
+        f.connection,
+      );
     }
     this.built = {
       region,
@@ -914,6 +935,7 @@ class PixiEngine implements Engine {
       sceneVersion: scene.version,
       connectionsVersion: scene.connectionsVersion,
       selectionVersion: f.selectionVersion,
+      connection: f.connection,
       labelsVersion: f.labelsVersion,
       dimVersion: f.dimVersion ?? 0,
       theme,
@@ -1070,7 +1092,11 @@ class PixiEngine implements Engine {
     corners(view.card, 0);
     view.card.tint = theme.surface;
     corners(view.edge, 0);
-    view.edge.tint = nodeColor(node.color, theme);
+    // A broken jumper's edge, and its line that says so, are of the colour
+    // of what is wrong (FR-EDIT-05 AC1).
+    view.edge.tint = labels.broken
+      ? theme.danger
+      : nodeColor(node.color, theme);
     view.stripe.visible = node.color !== "none";
     view.stripe.tint = nodeColor(node.color, theme);
     view.stripe.position.set(cornerRadius, 0);
@@ -1149,7 +1175,7 @@ class PixiEngine implements Engine {
         view.body,
         fonts.regular,
         text,
-        branch ? theme.muted : theme.fg,
+        labels.broken ? theme.danger : branch ? theme.muted : theme.fg,
         12,
         branch ? outputOffset(0, rows, h) - lineHeight / 2 : bodyTop,
       );
@@ -1190,7 +1216,8 @@ class PixiEngine implements Engine {
    * origin: on a GPU's renderer, into one Graphics; on the Canvas 2D
    * renderer, each into the tile of the grid over region that the centre of
    * its curve is in, with the rectangle that the tile's lines take, by
-   * which cull draws the tile or not.
+   * which cull draws the tile or not. The connection of selected is drawn
+   * again over the rest, wider, in the selection's colour.
    */
   private drawLines(
     connections: readonly ConnectionItem[],
@@ -1199,6 +1226,7 @@ class PixiEngine implements Engine {
     zoom: number,
     lod: FrameStats["lod"],
     theme: Theme,
+    selected: string | undefined,
   ): void {
     const grid = this.kind === "canvas" ? lineGrid : 1;
     while (this.lineTiles.length < grid * grid) {
@@ -1233,7 +1261,7 @@ class PixiEngine implements Engine {
       if (items.length === 0) {
         return;
       }
-      for (const { curve: c } of items) {
+      const trace = ({ curve: c }: ConnectionItem) => {
         g.moveTo(c.p0.x - origin.x, c.p0.y - origin.y);
         if (lod === "blocks") {
           g.lineTo(c.p3.x - origin.x, c.p3.y - origin.y);
@@ -1247,18 +1275,82 @@ class PixiEngine implements Engine {
             c.p3.y - origin.y,
           );
         }
+      };
+      // An arrowhead where a connection enters its node.
+      const head = ({ curve: c }: ConnectionItem) => {
+        const x = c.p3.x - origin.x;
+        const y = c.p3.y - origin.y;
+        g.poly([x, y, x - 9, y - 5, x - 9, y + 5]);
+      };
+      const heads = lod === "detail" && this.kind !== "canvas";
+      for (const item of items) {
+        trace(item);
       }
       g.stroke({ width, color: theme.border, alpha: 0.9 });
-      if (lod === "detail" && this.kind !== "canvas") {
-        // An arrowhead where each connection enters its node.
-        for (const { curve: c } of items) {
-          const x = c.p3.x - origin.x;
-          const y = c.p3.y - origin.y;
-          g.poly([x, y, x - 9, y - 5, x - 9, y + 5]);
+      if (heads) {
+        for (const item of items) {
+          head(item);
         }
         g.fill({ color: theme.border });
       }
+      const chosen =
+        selected === undefined
+          ? undefined
+          : items.find((item) => item.connection.id === selected);
+      if (chosen !== undefined) {
+        trace(chosen);
+        g.stroke({ width: 2 * width, color: theme.accent });
+        if (heads) {
+          head(chosen);
+          g.fill({ color: theme.accent });
+        }
+      }
     });
+  }
+
+  /**
+   * Draws the line of the link under way, curve, from origin, the margin's,
+   * at zoom, or none: anew only once it, or what it is drawn from, changed.
+   */
+  private drawLink(
+    curve: Curve | undefined,
+    origin: { x: number; y: number },
+    zoom: number,
+    theme: Theme,
+  ): void {
+    const g = this.linkLine;
+    const was = this.linkDrawn;
+    if (curve === undefined) {
+      if (was !== undefined) {
+        g.clear();
+        g.visible = false;
+        this.linkDrawn = undefined;
+      }
+      return;
+    }
+    if (
+      was !== undefined &&
+      sameCurve(was.curve, curve) &&
+      was.x === origin.x &&
+      was.y === origin.y &&
+      was.zoom === zoom &&
+      was.theme === theme
+    ) {
+      return;
+    }
+    g.clear();
+    g.visible = true;
+    g.moveTo(curve.p0.x - origin.x, curve.p0.y - origin.y);
+    g.bezierCurveTo(
+      curve.c1.x - origin.x,
+      curve.c1.y - origin.y,
+      curve.c2.x - origin.x,
+      curve.c2.y - origin.y,
+      curve.p3.x - origin.x,
+      curve.p3.y - origin.y,
+    );
+    g.stroke({ width: 3 / zoom, color: theme.accent });
+    this.linkDrawn = { curve, x: origin.x, y: origin.y, zoom, theme };
   }
 
   /** Returns the fonts of tier, of this renderer's set (fontSet), installing them once. */

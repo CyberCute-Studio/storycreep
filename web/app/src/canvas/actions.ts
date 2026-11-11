@@ -1,5 +1,7 @@
-// What a board's canvas changes of the board (PRD FR-EDIT-02, FR-EDIT-06),
-// as its toolbar, its inspector, its keys, and its drags ask: each a batch
+// What a board's canvas changes of the board (PRD FR-EDIT-02, FR-EDIT-03,
+// FR-EDIT-04, FR-EDIT-06), as its toolbar, its inspector, its keys, and its
+// drags ask, of its nodes, its connections, and its branches' outputs (plan
+// notes N68 and N69): each a batch
 // of commands, whose undo is one step, of a colour, a tag, or a duplicate of
 // at most maxEdited nodes, which the canvas's controls hold a selection to
 // (plan note N68), sent through the project's document, which shows it at once (optimistic,
@@ -23,7 +25,7 @@ import {
   moveBatch,
   updateBatch,
 } from "./commands";
-import type { CanvasController } from "./controller";
+import type { CanvasController, PortOf } from "./controller";
 import {
   type Alignment,
   aligned,
@@ -32,9 +34,24 @@ import {
   hasTagOf,
   maxTags,
   offset,
+  onBoard,
   placedOf,
+  snapped,
   withoutTagOf,
 } from "./edit";
+import {
+  choicesOf,
+  conditionalsOf,
+  connectCommand,
+  connectNewBatch,
+  createOutputCommand,
+  deleteConnectionCommand,
+  deleteOutputCommand,
+  keyAt,
+  reconnectCommand,
+  reorderConnectionCommand,
+  reorderOutputCommand,
+} from "./flow";
 import { newNodeSize } from "./layout";
 import { centerOf, type Point, type Size } from "./viewport";
 
@@ -249,6 +266,125 @@ export function useCanvasActions(
             ),
           ),
         );
+      },
+      /** Connects from to the node of to, after the port's other connections (FR-EDIT-03). */
+      connect(from: PortOf, to: string): Promise<boolean> {
+        return send([connectCommand(from, to, newId("connection"))]);
+      },
+      /**
+       * Creates a node of type whose entry, the middle of its left edge, is
+       * at at of the board, on the grid where it snaps, connects from to
+       * it, in one batch, and selects it (FR-EDIT-03 AC3).
+       */
+      connectNew(
+        from: PortOf,
+        type: Node["type"],
+        at: Point,
+      ): Promise<boolean> {
+        const size = newNodeSize(type);
+        const id = newId("node");
+        const sent = send(
+          connectNewBatch(
+            boardId,
+            from,
+            type,
+            onBoard({
+              x: snapped(at.x, controller.snap),
+              y: snapped(at.y - size.height / 2, controller.snap),
+            }),
+            { node: id, connection: newId("connection") },
+          ),
+        );
+        controller.selectComing([id], sent);
+        return sent;
+      },
+      /**
+       * Reconnects the connection of id, so that it leaves from, or enters
+       * the node of to, expecting rev, its revision as its end's drag
+       * started, where it is given, and else the one that the page shows.
+       */
+      reconnect(
+        id: string,
+        ends: { from?: PortOf; to?: string },
+        rev?: number,
+      ): Promise<boolean> {
+        const connection = view().connections.get(id);
+        return connection === undefined
+          ? Promise.resolve(false)
+          : send([reconnectCommand(id, ends, rev ?? connection.rev)]);
+      },
+      /** Deletes the connection of id to the trash. */
+      removeConnection(id: string): Promise<boolean> {
+        const connection = view().connections.get(id);
+        return connection === undefined
+          ? Promise.resolve(false)
+          : send([deleteConnectionCommand(connection)]);
+      },
+      /**
+       * Moves the connection of id to the place to among the connections
+       * that leave its port, the choices that the port offers, which
+       * changes its key alone (FR-EDIT-03 AC2), and resolves with whether
+       * it did: not where no key places it there.
+       */
+      moveChoice(id: string, to: number): Promise<boolean> {
+        const connection = view().connections.get(id);
+        if (connection === undefined) {
+          return Promise.resolve(false);
+        }
+        const choices = choicesOf(
+          view(),
+          connection.from_node_id,
+          connection.from_port,
+        );
+        const order = keyAt(
+          choices,
+          choices.findIndex((c) => c.id === id),
+          to,
+        );
+        return order === undefined
+          ? Promise.resolve(false)
+          : send([reorderConnectionCommand(connection, order)]);
+      },
+      /** Gives the branch of nodeId an output, after its conditional outputs: one of them, or, where isElse says so, its else (FR-EDIT-04). */
+      addOutput(nodeId: string, isElse: boolean): Promise<boolean> {
+        return send([
+          createOutputCommand(nodeId, newId("branch_output"), isElse),
+        ]);
+      },
+      /**
+       * Moves the conditional output of outputId, of the branch of nodeId,
+       * to the place to among the branch's conditional outputs, and
+       * resolves with whether it did: not where no key places it there.
+       */
+      moveOutput(
+        nodeId: string,
+        outputId: string,
+        to: number,
+      ): Promise<boolean> {
+        const node = view().nodes.get(nodeId);
+        const outputs = node === undefined ? [] : conditionalsOf(node);
+        const from = outputs.findIndex((o) => o.id === outputId);
+        const order = keyAt(outputs, from, to);
+        return order === undefined
+          ? Promise.resolve(false)
+          : send([reorderOutputCommand(outputs[from], order)]);
+      },
+      /**
+       * Deletes the output of outputId, of the branch of nodeId, to the
+       * trash, with the connections that leave it where confirm says that
+       * the user confirmed that (FR-EDIT-04 AC3).
+       */
+      removeOutput(
+        nodeId: string,
+        outputId: string,
+        confirm: boolean,
+      ): Promise<boolean> {
+        const output = view()
+          .nodes.get(nodeId)
+          ?.outputs?.find((o) => o.id === outputId);
+        return output === undefined
+          ? Promise.resolve(false)
+          : send([deleteOutputCommand(output, confirm)]);
       },
       /** The nodes of ids that the board has, as the page shows them. */
       nodesOf,

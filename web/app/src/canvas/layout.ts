@@ -107,6 +107,23 @@ export function portPoint(node: Node, rect: Rect, port: string): Point {
   };
 }
 
+/**
+ * Returns the ports that connections leave node by, in their order: an
+ * element's one, out, and each of a branch's outputs, by its ID; a jumper
+ * has none, as the flow goes on at its target (PRD §5.8.5), nor a type that
+ * the canvas does not know.
+ */
+export function portsOf(node: Node): string[] {
+  switch (node.type) {
+    case "element":
+      return ["out"];
+    case "branch":
+      return (node.outputs ?? []).map((o) => o.id);
+    default:
+      return [];
+  }
+}
+
 /** Returns where a connection enters a node, in its rectangle rect: the middle of its left edge. */
 export function entryPoint(rect: Rect): Point {
   return { x: rect.x, y: rect.y + rect.height / 2 };
@@ -145,6 +162,20 @@ export function curveOf(from: Point, to: Point, self: boolean): Curve {
     c2: { x: to.x - pull, y: to.y },
     p3: to,
   };
+}
+
+/** Reports whether curves a and b are the same curve. */
+export function sameCurve(a: Curve, b: Curve): boolean {
+  return (
+    a.p0.x === b.p0.x &&
+    a.p0.y === b.p0.y &&
+    a.c1.x === b.c1.x &&
+    a.c1.y === b.c1.y &&
+    a.c2.x === b.c2.x &&
+    a.c2.y === b.c2.y &&
+    a.p3.x === b.p3.x &&
+    a.p3.y === b.p3.y
+  );
 }
 
 /**
@@ -205,6 +236,57 @@ function extent(
     }
   }
   return [min, max];
+}
+
+/** The straight parts that curveDistance reads a curve as, each short of what a tap's slop tells apart. */
+const curveParts = 32;
+
+/**
+ * Returns how far p is from curve, as the canvas draws it: the cubic, read
+ * as a run of straight parts, or, where straight says so, the line between
+ * its ends, as the canvas draws a connection below the zoom that shows
+ * text.
+ */
+export function curveDistance(c: Curve, p: Point, straight = false): number {
+  if (straight) {
+    return segmentDistance(p, c.p0, c.p3);
+  }
+  let nearest = Number.POSITIVE_INFINITY;
+  let from = c.p0;
+  for (let i = 1; i <= curveParts; i++) {
+    const t = i / curveParts;
+    const u = 1 - t;
+    const to = {
+      x:
+        u * u * u * c.p0.x +
+        3 * u * u * t * c.c1.x +
+        3 * u * t * t * c.c2.x +
+        t * t * t * c.p3.x,
+      y:
+        u * u * u * c.p0.y +
+        3 * u * u * t * c.c1.y +
+        3 * u * t * t * c.c2.y +
+        t * t * t * c.p3.y,
+    };
+    nearest = Math.min(nearest, segmentDistance(p, from, to));
+    from = to;
+  }
+  return nearest;
+}
+
+/** Returns how far p is from the straight line from a to b. */
+function segmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = dx * dx + dy * dy;
+  const t =
+    length === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length),
+        );
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 /** Returns the curve of connection, between its nodes' rectangles, as the nodes are. */

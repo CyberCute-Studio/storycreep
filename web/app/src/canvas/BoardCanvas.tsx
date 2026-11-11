@@ -13,10 +13,15 @@
 // duplicates and deletes the selection, snaps to the grid or not, dims the
 // nodes without a tag, opens the inspector, and undoes and redoes the
 // user's changes (FR-EDIT-08), and a bulk move offers its undo for a while
-// after (NFR-TOUCH-05).
+// after (NFR-TOUCH-05). The one selected node has a link handle on each
+// port that connections leave, whose drag connects it, and a tap on a
+// connection's line selects the connection, whose ends' handles reconnect
+// it (FR-EDIT-03, plan note N69); a jumper selected has a link to its
+// target, and one whose target was deleted is drawn as broken (FR-EDIT-05).
 
 import type { Node as BoardNode } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -32,7 +37,9 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { api, notFoundBy } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { boardPart, type Part } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
@@ -56,13 +63,21 @@ import {
   type BenchOptions,
   CanvasController,
   type CanvasView,
+  type PortOf,
   renderedMark,
   type SavedView,
 } from "./controller";
 import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
-import type { Mode, PointerInput } from "./gestures";
+import type { Handle, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
+import {
+  ConnectOffer,
+  endPlace,
+  LinkHandle,
+  portPlace,
+  TargetLink,
+} from "./Links";
 import {
   type LabelContext,
   type LabelSources,
@@ -70,11 +85,14 @@ import {
   labelsOf,
   namesChanged,
 } from "./labels";
+import { portsOf } from "./layout";
 import { Minimap } from "./minimap";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Scene } from "./scene";
 import { TextEditor, type TextEditorHandle } from "./TextEditor";
+import { type TargetLookup, TargetReads, targetOf } from "./targets";
 import { readTheme } from "./theme";
+import type { Point } from "./viewport";
 
 const Bench = lazy(() => import("./bench"));
 
@@ -367,6 +385,11 @@ function BoardCanvasOf({
     () => new Set(),
   );
   const selected = selection.size;
+  // The connection selected, in place of nodes, and what a connection
+  // dropped on the empty board offers: to create a node at at of the board
+  // and connect from to it (FR-EDIT-03 AC3).
+  const [connection, setConnection] = useState<string>();
+  const [offer, setOffer] = useState<{ from: PortOf; at: Point }>();
   const [snap, setSnap] = useState(snapKept);
   const [tagFilter, setTagFilter] = useState("");
   const [inspecting, setInspecting] = useState(false);
@@ -424,6 +447,7 @@ function BoardCanvasOf({
   const [controller] = useState(() => {
     const c = new CanvasController(boardId, {
       selection: (ids) => setSelection(ids),
+      connection: (id) => setConnection(id),
       zoom: (z) => zoom.setState(z, true),
       rendered: () => {
         try {
@@ -441,6 +465,73 @@ function BoardCanvasOf({
     return c;
   });
   const actions = useCanvasActions(projectId, boardId, controller);
+  // The targets of the board's jumpers that the document tells nothing of,
+  // as nodes of boards that the page has not opened, which the canvas reads
+  // by themselves as their jumpers' cards are drawn (targets.ts), and again
+  // once the page is shown again; none in a run of the benchmark, which
+  // measures the canvas alone. Each answer writes the cards again, and
+  // shows the page anew, whose link to the target of the jumper selected
+  // follows it.
+  const queryClient = useQueryClient();
+  const [, setTargetsRead] = useState(0);
+  const [targetReads] = useState(
+    () =>
+      new TargetReads(
+        (id) =>
+          queryClient
+            .fetchQuery({
+              queryKey: ["projects", projectId, "nodes", id, "target"],
+              queryFn: async ({ signal }) => {
+                try {
+                  return (
+                    await api.call(
+                      "getNode",
+                      { path: { project_id: projectId, node_id: id } },
+                      { signal },
+                    )
+                  ).body;
+                } catch (error) {
+                  // A node that the project does not have, or has in its
+                  // trash, is what a broken jumper targets, and no failure.
+                  if (notFoundBy(error)) {
+                    return null;
+                  }
+                  throw error;
+                }
+              },
+              staleTime: 0,
+              gcTime: 0,
+              retry: false,
+            })
+            .then((node) => node ?? undefined),
+        () => {
+          controller.relabel();
+          setTargetsRead((n) => n + 1);
+        },
+      ),
+  );
+  const benching = options.bench !== undefined;
+  const targets = useMemo<TargetLookup>(
+    () => ({
+      boardRead: (id) => doc.hasRead(boardPart(id)),
+      treeRead: () => doc.hasRead("tree"),
+      read: (id) => (benching ? undefined : targetReads.read(id)),
+    }),
+    [doc, targetReads, benching],
+  );
+  useEffect(() => {
+    targetReads.start();
+    const shown = () => {
+      if (document.visibilityState === "visible") {
+        targetReads.forget();
+      }
+    };
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      document.removeEventListener("visibilitychange", shown);
+      targetReads.stop();
+    };
+  }, [targetReads]);
   const history = useHistory(projectId);
   // The undo and the redo are the toolbar's, rather than the project's
   // layout's above the page, while it shows them.
@@ -527,12 +618,20 @@ function BoardCanvasOf({
     }
   }, [editingLost]);
   // The inspector of a board that can no longer be changed goes, rather than
-  // come back, and take the focus, once the board can be changed again.
+  // come back, and take the focus, once the board can be changed again, and
+  // so does what a dropped connection offers.
   useEffect(() => {
     if (!editable) {
       setInspecting(false);
+      setOffer(undefined);
     }
   }, [editable]);
+  // What a dropped connection offers ends as the user chooses a type of
+  // node, or cancels: the canvas draws its line no longer.
+  const endOffer = useCallback(() => {
+    controller.endOffer();
+    setOffer(undefined);
+  }, [controller]);
   // The editor closes, or gives way to the editor of next, whose own text
   // takes the focus as it opens. The canvas takes the focus that the editor
   // had, or that fell to the page's body, as the Save button's while it was
@@ -599,6 +698,16 @@ function BoardCanvasOf({
               // takes the focus, as one that opens does.
               inspectorHeading.current?.focus();
             }
+          },
+          connect: (from, to) => void edits.current?.actions.connect(from, to),
+          offer: (from, at) => setOffer({ from, at }),
+          reconnect: (id, ends, rev) =>
+            void edits.current?.actions.reconnect(id, ends, rev),
+          removeConnection: (id) =>
+            void edits.current?.actions.removeConnection(id),
+          openConnection: () => {
+            setInspecting(true);
+            inspectorHeading.current?.focus();
           },
         }
       : undefined;
@@ -1020,15 +1129,24 @@ function BoardCanvasOf({
     controller.labels = (item) => {
       const view = doc.store.getState().view;
       if (context?.view !== view) {
-        context = { view, c: labelContext(view, t) };
+        context = { view, c: labelContext(view, t, targets) };
       }
       return labelsOf(item.node, context.c);
     };
+    // A jumper that is known to be broken, by what the document tells, or
+    // by a read of its target that was made, rather than by one that this
+    // would ask for, of every jumper of the board at once.
+    const known: TargetLookup = {
+      ...targets,
+      read: (id) => targetReads.peek(id),
+    };
+    controller.broken = (node) =>
+      targetOf(node, doc.store.getState().view, known).state === "gone";
     // The messages of t, which is another as the locale changes.
     controller.relabel();
     sync();
     return doc.store.subscribe(sync);
-  }, [controller, doc, t, sceneTags]);
+  }, [controller, doc, t, sceneTags, targets, targetReads]);
 
   // The board's nodes and connections, read once, first by the read that
   // the page's loader started (read), whose failure the canvas says, rather
@@ -1103,20 +1221,20 @@ function BoardCanvasOf({
     [],
   );
   const hostElement = useCallback(() => hostRef.current, []);
-  // A press of a node's resize handle, which is outside the canvas's
-  // element, is the canvas's own, at the handle's point of the canvas, by
-  // the same rules as a press on it (Gestures' down), and the canvas's
-  // element captures its pointer, as it does a press's on it, so that its
-  // moves, its release, and its loss come to the canvas, which follows them
-  // as those of every pointer.
+  // A press of a node's resize handle, or of a link handle, which is
+  // outside the canvas's element, is the canvas's own, at the handle's point
+  // of the canvas, by the same rules as a press on it (Gestures' down), and
+  // the canvas's element captures its pointer, as it does a press's on it,
+  // so that its moves, its release, and its loss come to the canvas, which
+  // follows them as those of every pointer.
   const pressHandle = useCallback(
-    (e: ReactPointerEvent<HTMLElement>, id: string) => {
+    (e: ReactPointerEvent<HTMLElement>, handle: Handle) => {
       const host = hostRef.current;
       if (
         host !== null &&
         controller.down(
           pointerInput(e.nativeEvent, host.getBoundingClientRect()),
-          id,
+          handle,
         )
       ) {
         host.focus({ preventScroll: true });
@@ -1130,6 +1248,20 @@ function BoardCanvasOf({
     keepSnap(!snap);
     setSnap(!snap);
   };
+  // The one selected node, as the document has it, whose ports have link
+  // handles, and, of a jumper, its target, which its link opens.
+  const only = selected === 1 ? [...selection][0] : undefined;
+  const onlyNode = useDocumentState(doc, (state) =>
+    only === undefined ? undefined : state.view.nodes.get(only),
+  );
+  const onlyTarget = useDocumentState(
+    doc,
+    useShallow((state) =>
+      onlyNode?.type === "jumper"
+        ? targetOf(onlyNode, state.view, targets)
+        : undefined,
+    ),
+  );
 
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
@@ -1299,8 +1431,12 @@ function BoardCanvasOf({
               {t("canvas.duplicate")}
             </Button>
             <Button
-              disabled={selected === 0}
-              onClick={() => void actions.remove([...selection])}
+              disabled={selected === 0 && connection === undefined}
+              onClick={() =>
+                void (connection === undefined
+                  ? actions.remove([...selection])
+                  : actions.removeConnection(connection))
+              }
             >
               {t("canvas.delete")}
             </Button>
@@ -1342,6 +1478,7 @@ function BoardCanvasOf({
         </label>
         <p className="text-sm text-fg-muted" aria-live="polite">
           {selected > 0 && t("canvas.selected", { count: selected })}
+          {connection !== undefined && t("canvas.connection_selected")}
           {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
           {editable &&
             selected > maxEdited &&
@@ -1426,10 +1563,12 @@ function BoardCanvasOf({
           </div>
           {/* What the canvas places over its nodes, outside its element, which
           takes every touch and key of its own: the resize handle of the
-          node selected, and the editor of an element's text. The layer lets
-          a pointer through to the canvas but on them, and the canvas takes
-          the wheel and the pinch over the handle too, and the handle's
-          press, whose pointer it follows as its own (pressHandle). */}
+          node selected, the link handles of its ports, or of the ends of
+          the connection selected, the link of a jumper to its target, and
+          the editor of an element's text. The layer lets a pointer through
+          to the canvas but on them, and the canvas takes the wheel and the
+          pinch over a handle too, and a handle's press, whose pointer it
+          follows as its own (pressHandle). */}
           <div
             ref={overRef}
             className="pointer-events-none absolute inset-0 overflow-hidden rounded-md"
@@ -1448,6 +1587,59 @@ function BoardCanvasOf({
                     onPress={pressHandle}
                   />
                 ))}
+            {editable &&
+              onlyNode !== undefined &&
+              onlyNode.id !== editing &&
+              // A handle on each port that connections leave: an element's
+              // one, and each of a branch's outputs.
+              portsOf(onlyNode).map((port) => (
+                <LinkHandle
+                  key={`${onlyNode.id} ${port}`}
+                  link={{ kind: "new", node: onlyNode.id, port }}
+                  controller={controller}
+                  place={() =>
+                    portPlace(controller, { node: onlyNode.id, port })
+                  }
+                  onPress={pressHandle}
+                />
+              ))}
+            {editable &&
+              connection !== undefined &&
+              (["from", "to"] as const).map((end) => (
+                <LinkHandle
+                  key={`${connection} ${end}`}
+                  link={{ kind: end, connection }}
+                  controller={controller}
+                  place={() => endPlace(controller, connection, end)}
+                  onPress={pressHandle}
+                />
+              ))}
+            {onlyNode !== undefined &&
+              onlyNode.id !== editing &&
+              onlyTarget !== undefined &&
+              (onlyTarget.state === "found" ||
+                onlyTarget.state === "unknown") &&
+              onlyTarget.boardId !== undefined && (
+                <TargetLink
+                  id={onlyNode.id}
+                  controller={controller}
+                  projectId={projectId}
+                  boardId={onlyTarget.boardId}
+                  nodeId={onlyTarget.nodeId}
+                />
+              )}
+            {editable && offer !== undefined && (
+              <ConnectOffer
+                controller={controller}
+                at={offer.at}
+                onChoose={(type) => {
+                  void actions.connectNew(offer.from, type, offer.at);
+                  endOffer();
+                }}
+                onCancel={endOffer}
+                returnFocus={hostElement}
+              />
+            )}
             {editing !== undefined && editedNode !== undefined && (
               <TextEditor
                 key={editing}
@@ -1502,7 +1694,11 @@ function BoardCanvasOf({
           <Inspector
             projectId={projectId}
             selection={selection}
+            connection={connection}
             actions={actions}
+            targets={targets}
+            onSelectConnection={(id) => controller.selectConnection(id)}
+            onSelectNode={(id) => controller.select([id], "replace")}
             // A sheet over the canvas closes to show the editor of the text,
             // which it would else hold inert under it.
             onEditText={(id) => {
