@@ -66,12 +66,13 @@ import {
   tagsOf,
 } from "./edit";
 import {
+  Choices,
   ConnectionInspector,
   JumperTarget,
   Outputs,
-  PortChoices,
   ReferencedBy,
 } from "./InspectorFlow";
+import type { FollowLink } from "./Links";
 import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
 import type { TargetLookup } from "./targets";
@@ -90,6 +91,8 @@ export interface InspectorProps {
   onSelectConnection: (id: string) => void;
   /** Selects the node of id on the canvas, in place of what is selected. */
   onSelectNode: (id: string) => void;
+  /** Tells of a click of a link to a node on a board's canvas, which the canvas opens itself where the address names it already (Links.tsx). */
+  onFollow: FollowLink;
   /** Opens the editor of the text of the element of id over it on the canvas. */
   onEditText: (id: string) => void;
   onClose: () => void;
@@ -107,6 +110,7 @@ export function Inspector({
   targets,
   onSelectConnection,
   onSelectNode,
+  onFollow,
   onEditText,
   onClose,
   returnFocus,
@@ -114,6 +118,19 @@ export function Inspector({
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // The inspector's heading takes the focus as a button of the inspector
+  // has it show another thing in place of what the button was of, as a
+  // choice's Edit, which shows the connection's form, and which goes with
+  // what it was of: the focus would else fall to the page, or, from a sheet
+  // over it, to nothing (WCAG 2.4.3), as it does not where the canvas
+  // opens the inspector of what Enter asks for.
+  const ownHeading = useRef<HTMLHeadingElement>(null);
+  const heading = headingRef ?? ownHeading;
+  const toHeading = () => heading.current?.focus();
+  const editConnection = (id: string) => {
+    onSelectConnection(id);
+    toHeading();
+  };
   const ids = useMemo(() => [...selection], [selection]);
   // The selected nodes as the document has them, which the inspector shows
   // anew only once one of them changes.
@@ -171,7 +188,7 @@ export function Inspector({
       subtitle={subtitle}
       onClose={onClose}
       returnFocus={returnFocus}
-      headingRef={headingRef}
+      headingRef={heading}
     >
       {connection !== undefined ? (
         <ConnectionInspector
@@ -180,7 +197,14 @@ export function Inspector({
           projectId={projectId}
           connection={connection}
           actions={actions}
-          onSelectNode={onSelectNode}
+          onSelectNode={(id) => {
+            onSelectNode(id);
+            toHeading();
+          }}
+          onDelete={() => {
+            void actions.removeConnection(connection.id);
+            toHeading();
+          }}
         />
       ) : nodes.length === 0 ? (
         <p className="text-fg-muted">{t("inspector.empty")}</p>
@@ -207,26 +231,19 @@ export function Inspector({
                 <Cover projectId={projectId} node={single} />
               )}
               {single.type === "element" && (
-                <section className="space-y-2">
-                  <h3 className="text-lg font-semibold">
-                    {t("inspector.choices")}
-                  </h3>
-                  <PortChoices
-                    projectId={projectId}
-                    node={single}
-                    port="out"
-                    heading={t("inspector.element_choices")}
-                    actions={actions}
-                    onSelectConnection={onSelectConnection}
-                  />
-                </section>
+                <Choices
+                  projectId={projectId}
+                  node={single}
+                  actions={actions}
+                  onSelectConnection={editConnection}
+                />
               )}
               {single.type === "branch" && (
                 <Outputs
                   projectId={projectId}
                   node={single}
                   actions={actions}
-                  onSelectConnection={onSelectConnection}
+                  onSelectConnection={editConnection}
                 />
               )}
               {single.type === "jumper" && (
@@ -234,9 +251,14 @@ export function Inspector({
                   projectId={projectId}
                   node={single}
                   targets={targets}
+                  onFollow={onFollow}
                 />
               )}
-              <ReferencedBy projectId={projectId} node={single} />
+              <ReferencedBy
+                projectId={projectId}
+                node={single}
+                onFollow={onFollow}
+              />
             </Fragment>
           )}
           {nodes.length > 1 && <Arrange nodes={nodes} actions={actions} />}

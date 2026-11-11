@@ -220,7 +220,7 @@ describe("the reads of the targets that the document does not tell of", () => {
     expect(asked).toEqual(["nd_0", "nd_1", "nd_2", "nd_3", "nd_4"]);
   });
 
-  it("does not read again what failed until it is forgotten, and reads everything again then, as once the page is shown again", async () => {
+  it("does not read again what failed until the reads are asked for again, as once the page is shown again, and keeps what it found until the new answers come", async () => {
     const { r, asked, answers, told } = reads();
     r.read("nd_1");
     r.read("nd_2");
@@ -232,18 +232,35 @@ describe("the reads of the targets that the document does not tell of", () => {
     expect(r.read("nd_1")).toBeUndefined();
     expect(r.peek("nd_2")).toBe("gone");
     expect(asked).toEqual(["nd_1", "nd_2"]);
-    r.forget();
+    r.readAgain();
     expect(told()).toBe(2);
-    // What it knew, it knows no longer, without asking; asked for, each is
-    // read again.
-    expect(r.peek("nd_2")).toBeUndefined();
+    // What it knew, it knows still, without asking; asked for, each is read
+    // again, once.
+    expect(r.peek("nd_2")).toBe("gone");
     expect(asked).toEqual(["nd_1", "nd_2"]);
-    r.read("nd_1");
-    r.read("nd_2");
+    expect(r.read("nd_1")).toBeUndefined();
+    expect(r.read("nd_2")).toBe("gone");
+    expect(r.read("nd_2")).toBe("gone");
     expect(asked).toEqual(["nd_1", "nd_2", "nd_1", "nd_2"]);
-    // With nothing found, there is nothing to forget, or to tell of.
+    // A read again that fails leaves what the read before it found, and
+    // one that finds another thing tells of it.
+    answers.get("nd_2")?.reject();
+    answers.get("nd_1")?.resolve(testNode("nd_1", 0, 0, { title: "One" }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(told()).toBe(3);
+    expect(r.read("nd_2")).toBe("gone");
+    expect(r.read("nd_1")).toEqual({ title: "One", boardId: "bd_a" });
+    expect(asked).toHaveLength(4);
+    // One that finds the same tells of nothing.
+    r.readAgain();
+    expect(told()).toBe(4);
+    r.read("nd_1");
+    answers.get("nd_1")?.resolve(testNode("nd_1", 0, 0, { title: "One" }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(told()).toBe(4);
+    // With nothing found, there is nothing to read again, or to tell of.
     const empty = reads();
-    empty.r.forget();
+    empty.r.readAgain();
     expect(empty.told()).toBe(0);
   });
 

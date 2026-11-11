@@ -26,6 +26,35 @@ import { createCommand } from "./commands";
 import type { PortOf } from "./controller";
 
 /**
+ * Returns the connections that leave the node of nodeId, by any of its
+ * ports, as view holds them, in the order that it holds them in.
+ */
+export function leavingOf(
+  view: Pick<Doc, "connections">,
+  nodeId: string,
+): Connection[] {
+  const out: Connection[] = [];
+  for (const c of view.connections.values()) {
+    if (c.from_node_id === nodeId && c.deleted_at === undefined) {
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns those of leaving, the connections that leave a node (leavingOf),
+ * that leave it by port, in their order, which is the order of the choices
+ * that the port offers (FR-EDIT-03 AC1).
+ */
+export function choicesOfPort(
+  leaving: readonly Connection[],
+  port: string,
+): Connection[] {
+  return leaving.filter((c) => c.from_port === port).sort(compareChildren);
+}
+
+/**
  * Returns the connections that leave port of the node of nodeId, as view
  * holds them, in their order, which is the order of the choices that the
  * port offers (FR-EDIT-03 AC1).
@@ -35,17 +64,7 @@ export function choicesOf(
   nodeId: string,
   port: string,
 ): Connection[] {
-  const out: Connection[] = [];
-  for (const c of view.connections.values()) {
-    if (
-      c.from_node_id === nodeId &&
-      c.from_port === port &&
-      c.deleted_at === undefined
-    ) {
-      out.push(c);
-    }
-  }
-  return out.sort(compareChildren);
+  return choicesOfPort(leavingOf(view, nodeId), port);
 }
 
 /** A conditional output, whose key places it among its branch's. */

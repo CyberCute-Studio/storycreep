@@ -74,6 +74,7 @@ import { Inspector } from "./Inspector";
 import {
   ConnectOffer,
   endPlace,
+  type FollowLink,
   LinkHandle,
   portPlace,
   TargetLink,
@@ -387,7 +388,8 @@ function BoardCanvasOf({
   const selected = selection.size;
   // The connection selected, in place of nodes, and what a connection
   // dropped on the empty board offers: to create a node at at of the board
-  // and connect from to it (FR-EDIT-03 AC3).
+  // and connect from to it (FR-EDIT-03 AC3), each as the canvas tells it
+  // (CanvasEvents), which holds them.
   const [connection, setConnection] = useState<string>();
   const [offer, setOffer] = useState<{ from: PortOf; at: Point }>();
   const [snap, setSnap] = useState(snapKept);
@@ -448,6 +450,7 @@ function BoardCanvasOf({
     const c = new CanvasController(boardId, {
       selection: (ids) => setSelection(ids),
       connection: (id) => setConnection(id),
+      offer: (o) => setOffer(o),
       zoom: (z) => zoom.setState(z, true),
       rendered: () => {
         try {
@@ -525,7 +528,7 @@ function BoardCanvasOf({
     targetReads.start();
     const shown = () => {
       if (document.visibilityState === "visible") {
-        targetReads.forget();
+        targetReads.readAgain();
       }
     };
     document.addEventListener("visibilitychange", shown);
@@ -620,20 +623,18 @@ function BoardCanvasOf({
     }
   }, [editingLost]);
   // The inspector of a board that can no longer be changed goes, rather than
-  // come back, and take the focus, once the board can be changed again, and
-  // so does what a dropped connection offers.
+  // come back, and take the focus, once the board can be changed again;
+  // what a dropped connection offers ends with the board's edits, as the
+  // canvas tells.
   useEffect(() => {
     if (!editable) {
       setInspecting(false);
-      setOffer(undefined);
     }
   }, [editable]);
   // What a dropped connection offers ends as the user chooses a type of
-  // node, or cancels: the canvas draws its line no longer.
-  const endOffer = useCallback(() => {
-    controller.endOffer();
-    setOffer(undefined);
-  }, [controller]);
+  // node, or cancels: the canvas draws its line no longer, and tells the
+  // page that it offers nothing.
+  const endOffer = useCallback(() => controller.endOffer(), [controller]);
   // The editor closes, or gives way to the editor of next, whose own text
   // takes the focus as it opens. The canvas takes the focus that the editor
   // had, or that fell to the page's body, as the Save button's while it was
@@ -702,7 +703,6 @@ function BoardCanvasOf({
             }
           },
           connect: (from, to) => void edits.current?.actions.connect(from, to),
-          offer: (from, at) => setOffer({ from, at }),
           reconnect: (id, ends, rev) =>
             void edits.current?.actions.reconnect(id, ends, rev),
           removeConnection: (id) =>
@@ -746,15 +746,39 @@ function BoardCanvasOf({
   useLayoutEffect(() => {
     opensInspector.current = editable && docked;
   });
-  useEffect(() => {
-    if (focus !== undefined) {
-      controller.focus(focus, () => {
+  const openNode = useCallback(
+    (id: string) =>
+      controller.focus(id, () => {
         if (opensInspector.current) {
           setInspecting(true);
         }
-      });
+      }),
+    [controller],
+  );
+  useEffect(() => {
+    if (focus !== undefined) {
+      openNode(focus);
     }
-  }, [controller, focus]);
+  }, [openNode, focus]);
+  // A link on the page to a node of this board that the address names
+  // already, as a jumper's to its target on its own board, followed a
+  // second time, or on a board that a link to that target opened, changes
+  // nothing of the address, by which the canvas opens a node: the canvas
+  // opens the node again itself, selected and shown whole, as the click
+  // asks (FR-EDIT-05). A click with a key that asks the browser to open the
+  // link elsewhere is the browser's.
+  const follow = useCallback<FollowLink>(
+    (event, board, node) => {
+      if (
+        board === boardId &&
+        node === focus &&
+        !(event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+      ) {
+        openNode(node);
+      }
+    },
+    [boardId, focus, openNode],
+  );
 
   // The canvas takes the window's height below where it starts, as a
   // tablet's screen is the board's, as the window's size changes, and as
@@ -1642,6 +1666,7 @@ function BoardCanvasOf({
                   projectId={projectId}
                   boardId={onlyTarget.boardId}
                   nodeId={onlyTarget.nodeId}
+                  onFollow={follow}
                 />
               )}
             {editable && offer !== undefined && (
@@ -1715,6 +1740,7 @@ function BoardCanvasOf({
             targets={targets}
             onSelectConnection={(id) => controller.selectConnection(id)}
             onSelectNode={(id) => controller.select([id], "replace")}
+            onFollow={follow}
             // A sheet over the canvas closes to show the editor of the text,
             // which it would else hold inert under it.
             onEditText={(id) => {

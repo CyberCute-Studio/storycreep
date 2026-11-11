@@ -132,7 +132,9 @@ export function LinkHandle({
   useLayoutEffect(() => {
     placeNow.current = place;
   });
-  // What the handle holds, the same object while it holds the same.
+  // What the handle holds, the same object while it holds the same: of a
+  // connection to come, with the handle's side, within which its drag has
+  // not left it, and, let go, connects nothing.
   const kind = link.kind;
   const node = link.kind === "new" ? link.node : undefined;
   const port = link.kind === "new" ? link.port : undefined;
@@ -140,9 +142,9 @@ export function LinkHandle({
   const held = useMemo<Link>(
     () =>
       kind === "new"
-        ? { kind, node: node as string, port: port as string }
+        ? { kind, node: node as string, port: port as string, side }
         : { kind, connection: connection as string },
-    [kind, node, port, connection],
+    [kind, node, port, connection, side],
   );
 
   useEffect(
@@ -279,6 +281,25 @@ export function ConnectOffer({
   );
 }
 
+/**
+ * What a link to the node of nodeId on the board of boardId tells of its
+ * click, event, with the keys that it was made with: the address that the
+ * link leads to opens the node on its board's canvas (?node=), but changes
+ * nothing where it is that address already, as of a jumper's target on its
+ * own board followed a second time, which the canvas then opens again
+ * itself (BoardCanvas's follow).
+ */
+export type FollowLink = (
+  event: {
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  },
+  boardId: string,
+  nodeId: string,
+) => void;
+
 /** The height of the link to a jumper's target, a button's, in CSS pixels. */
 const targetLinkHeight = 44;
 
@@ -287,7 +308,8 @@ const targetLinkHeight = 44;
  * node of nodeId on the board of boardId (FR-EDIT-05): above the jumper's
  * card, clear of the resize handle at its corner, where the canvas places
  * it in each frame, of the size of a finger, so that one tap, or one click,
- * opens the target on its board's canvas.
+ * opens the target on its board's canvas; onFollow is told of each, as the
+ * address does not change for a target that it names already.
  */
 export function TargetLink({
   id,
@@ -295,12 +317,14 @@ export function TargetLink({
   projectId,
   boardId,
   nodeId,
+  onFollow,
 }: {
   id: string;
   controller: CanvasController;
   projectId: string;
   boardId: string;
   nodeId: string;
+  onFollow: FollowLink;
 }) {
   const { t } = useTranslation();
   const box = useRef<HTMLDivElement>(null);
@@ -326,6 +350,7 @@ export function TargetLink({
         params={{ projectId, boardId }}
         search={{ node: nodeId }}
         className={buttonClass()}
+        onClick={(e) => onFollow(e, boardId, nodeId)}
       >
         {t("canvas.go_to_target")}
       </RouterLink>

@@ -31,8 +31,9 @@ import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
+import type { ProjectDocument } from "../document/store";
 import { Confirm, payloadField } from "../project/dialogs";
-import { type Command, loadPart } from "../project/queries";
+import { type Command, loadPart, referrersShown } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { Button } from "../ui/Button";
@@ -40,7 +41,15 @@ import { dragThreshold } from "../ui/drag";
 import { SelectField, useFocusRefusal } from "../ui/Field";
 import { Alert, textLink } from "../ui/Page";
 import type { CanvasActions } from "./actions";
-import { choicesOf, conditionalsOf, keyAt, reconnectCommand } from "./flow";
+import {
+  choicesOf,
+  choicesOfPort,
+  conditionalsOf,
+  keyAt,
+  leavingOf,
+  reconnectCommand,
+} from "./flow";
+import type { FollowLink } from "./Links";
 import {
   type LabelContext,
   outputLabel,
@@ -51,47 +60,87 @@ import {
 } from "./labels";
 import { type TargetLookup, targetOf } from "./targets";
 
-/** How many of the jumpers that target a node its inspector lists at most. */
-const referrersShown = 100;
-
 /** Returns what names node in a list of a board's nodes: its title, as its card shows it, and its type. */
 function nodeOption(node: Node, t: LabelContext["t"]): string {
   return `${titleOf(node, t)} (${typeOf(node, t)})`;
 }
+
+/** A node of a list of a board's nodes, with what names it there. */
+interface NamedNode {
+  node: Node;
+  name: string;
+}
+
+/** The order of names, made once, as a list of a board's nodes compares thousands of them. */
+const byName = new Intl.Collator();
 
 /** Returns the nodes of the board of boardId that nodes holds, by what names them, in the order of their names. */
 function namedNodes(
   nodes: ReadonlyMap<string, Node>,
   boardId: string,
   t: LabelContext["t"],
-): { node: Node; name: string }[] {
-  const out: { node: Node; name: string }[] = [];
+): NamedNode[] {
+  const out: NamedNode[] = [];
   for (const node of nodes.values()) {
     if (node.board_id === boardId && node.deleted_at === undefined) {
       out.push({ node, name: nodeOption(node, t) });
     }
   }
   return out.sort(
-    (a, b) => a.name.localeCompare(b.name) || (a.node.id < b.node.id ? -1 : 1),
+    (a, b) =>
+      byName.compare(a.name, b.name) || (a.node.id < b.node.id ? -1 : 1),
   );
 }
 
 /**
- * Returns the drag that reorders the rows of a list by their handles
- * (FR-EDIT-03): a press of a row's handle, once it has moved 8 px
- * (NFR-TOUCH-05), holds the row, which lands where it is let go, among the
- * rows whose middles are above the pointer, as onMove is told; Escape, and
- * a pointer that the browser takes, leave it where it was. The rows' own
- * buttons move them without a drag, so the handles are hidden from
- * assistive technology.
+ * Returns the nodes of the board of boardId that doc holds, by what names
+ * them, in the order of their names, made once for each state of the
+ * document's nodes, for every list that an inspector shows of them, as one
+ * for each of a branch's outputs.
  */
-function useReorderDrag(onMove: (from: number, to: number) => void) {
-  const list = useRef<HTMLOListElement>(null);
-  const press = useRef<{ id: number; from: number; y: number; held: boolean }>(
-    undefined,
+function useNamedNodes(doc: ProjectDocument, boardId: string): NamedNode[] {
+  const { t } = useTranslation();
+  const nodes = useDocumentState(doc, (state) => state.view.nodes);
+  return useMemo(() => namedNodes(nodes, boardId, t), [nodes, boardId, t]);
+}
+
+/**
+ * Returns the connections that leave the node of nodeId, by any of its
+ * ports, as doc holds them, read of the document's connections once for
+ * all of the node's ports, and the same while none of them changes.
+ */
+function useLeaving(doc: ProjectDocument, nodeId: string): Connection[] {
+  return useDocumentState(
+    doc,
+    useShallow((state) => leavingOf(state.view, nodeId)),
   );
-  const [drag, setDrag] = useState<{ from: number; to: number }>();
-  /** Returns the place that the row of from would land at, with the pointer at y of the window. */
+}
+
+/**
+ * Returns the drag that reorders the rows of a list, each of an ID of ids,
+ * in their order, by their handles (FR-EDIT-03): a press of a row's
+ * handle, once it has moved 8 px (NFR-TOUCH-05), holds the row, which lands
+ * where it is let go, among the rows whose middles are above the pointer,
+ * as onMove is told, of the row's ID; Escape, and a pointer that the
+ * browser takes, leave it where it was. The row held is the one of its ID,
+ * wherever the list has it by then, as once another session's change has
+ * moved it, and a row that the list no longer has is held no longer. The
+ * rows' own buttons move them without a drag, so the handles are hidden
+ * from assistive technology.
+ */
+function useReorderDrag(
+  ids: readonly string[],
+  onMove: (id: string, to: number) => void,
+) {
+  const list = useRef<HTMLOListElement>(null);
+  const press = useRef<{
+    pointer: number;
+    id: string;
+    y: number;
+    held: boolean;
+  }>(undefined);
+  const [drag, setDrag] = useState<{ id: string; to: number }>();
+  /** Returns the place that the row at from would land at, with the pointer at y of the window. */
   const placeAt = (from: number, y: number): number => {
     let to = 0;
     Array.from(list.current?.children ?? []).forEach((row, i) => {
@@ -121,42 +170,59 @@ function useReorderDrag(onMove: (from: number, to: number) => void) {
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
   }, [dragging]);
+  // A row that went while it was pressed, or held, as a choice that another
+  // session deleted, took its handle, and the pointer that the handle had
+  // captured, with it, without a release: its press and its drag end here.
+  const from = drag === undefined ? -1 : ids.indexOf(drag.id);
+  useEffect(() => {
+    const pressed = press.current;
+    if (
+      (drag !== undefined && !ids.includes(drag.id)) ||
+      (pressed !== undefined && !ids.includes(pressed.id))
+    ) {
+      press.current = undefined;
+      setDrag(undefined);
+    }
+  }, [drag, ids]);
   return {
     list,
-    drag,
-    /** The props of the handle of the row at from. */
-    handle: (from: number) => ({
+    /** The places of the row held, where it is now and where it would land, while one is. */
+    drag:
+      drag === undefined || from < 0
+        ? undefined
+        : { from, to: Math.min(drag.to, ids.length - 1) },
+    /** The props of the handle of the row of id. */
+    handle: (id: string) => ({
       onPointerDown: (e: PointerEvent<HTMLElement>) => {
         if (e.button !== 0) {
           return;
         }
-        press.current = { id: e.pointerId, from, y: e.clientY, held: false };
+        press.current = { pointer: e.pointerId, id, y: e.clientY, held: false };
         e.currentTarget.setPointerCapture?.(e.pointerId);
         e.preventDefault();
       },
       onPointerMove: (e: PointerEvent<HTMLElement>) => {
         const p = press.current;
-        if (p === undefined || p.id !== e.pointerId) {
+        if (p === undefined || p.pointer !== e.pointerId || p.id !== id) {
           return;
         }
         if (!p.held && Math.abs(e.clientY - p.y) < dragThreshold) {
           return;
         }
         p.held = true;
-        const to = placeAt(p.from, e.clientY);
-        setDrag((d) =>
-          d?.from === p.from && d.to === to ? d : { from: p.from, to },
-        );
+        const to = placeAt(ids.indexOf(id), e.clientY);
+        setDrag((d) => (d?.id === id && d.to === to ? d : { id, to }));
       },
       onPointerUp: (e: PointerEvent<HTMLElement>) => {
         const p = press.current;
-        if (p === undefined || p.id !== e.pointerId) {
+        if (p === undefined || p.pointer !== e.pointerId || p.id !== id) {
           return;
         }
-        const to = p.held ? placeAt(p.from, e.clientY) : p.from;
+        const at = ids.indexOf(id);
+        const to = p.held ? placeAt(at, e.clientY) : at;
         end();
-        if (to !== p.from) {
-          onMove(p.from, to);
+        if (to !== at) {
+          onMove(id, to);
         }
       },
       onPointerCancel: end,
@@ -175,13 +241,17 @@ const dragHandle =
  * and the node that it enters, a button that selects it, whose inspector
  * changes it, and its place, which a drag of its handle, or its buttons,
  * change; and a list of the board's nodes, one of which Connect connects
- * the port to.
+ * the port to. What it lists is its node's, read once for all of the
+ * node's ports (useLeaving, useNamedNodes), rather than by each port of a
+ * branch of several outputs on a board of thousands of nodes.
  */
-export function PortChoices({
+function PortChoices({
   projectId,
   node,
   port,
   heading,
+  leaving,
+  targets,
   actions,
   onSelectConnection,
 }: {
@@ -190,26 +260,34 @@ export function PortChoices({
   port: string;
   /** What names the choices, as the heading of an element's, or of which output they are. */
   heading: string;
+  /** The connections that leave the node, by any of its ports. */
+  leaving: readonly Connection[];
+  /** The nodes of the node's board, which the port connects to. */
+  targets: readonly NamedNode[];
   actions: CanvasActions;
   onSelectConnection: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
   const headingId = useId();
-  const choices = useDocumentState(
-    doc,
-    useShallow((state) => choicesOf(state.view, node.id, port)),
-  );
+  const choices = useMemo(() => choicesOfPort(leaving, port), [leaving, port]);
+  const ids = useMemo(() => choices.map((c) => c.id), [choices]);
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
   const components = useDocumentState(doc, (state) => state.view.components);
   const variables = useDocumentState(doc, (state) => state.view.variables);
-  const targets = useMemo(
-    () => namedNodes(nodes, node.board_id, t),
-    [nodes, node.board_id, t],
+  const options = useMemo(
+    () =>
+      targets.map(({ node: target, name }) => (
+        <option key={target.id} value={target.id}>
+          {name}
+        </option>
+      )),
+    [targets],
   );
   const [to, setTo] = useState("");
   const reorder = useReorderDrag(
-    (from, place) => void actions.moveChoice(choices[from].id, place),
+    ids,
+    (id, place) => void actions.moveChoice(id, place),
   );
   const names = {
     componentName: (id: string) => components.get(id)?.name,
@@ -257,7 +335,7 @@ export function PortChoices({
                   aria-hidden="true"
                   data-drag=""
                   className={dragHandle}
-                  {...reorder.handle(i)}
+                  {...reorder.handle(choice.id)}
                 >
                   ⠿
                 </span>
@@ -309,17 +387,49 @@ export function PortChoices({
             onChange={(e) => setTo(e.currentTarget.value)}
           >
             <option value="">{t("inspector.choose_node")}</option>
-            {targets.map(({ node: target, name }) => (
-              <option key={target.id} value={target.id}>
-                {name}
-              </option>
-            ))}
+            {options}
           </SelectField>
         </div>
         <Button type="submit" disabled={to === ""}>
           {t("inspector.connect")}
         </Button>
       </form>
+    </section>
+  );
+}
+
+/**
+ * An element's choices, the connections that leave it, in their order,
+ * which its inspector lists, reorders, and adds to (FR-EDIT-03).
+ */
+export function Choices({
+  projectId,
+  node,
+  actions,
+  onSelectConnection,
+}: {
+  projectId: string;
+  node: Node;
+  actions: CanvasActions;
+  onSelectConnection: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const doc = useProjectDocument(projectId);
+  const leaving = useLeaving(doc, node.id);
+  const targets = useNamedNodes(doc, node.board_id);
+  return (
+    <section className="space-y-2">
+      <h3 className="text-lg font-semibold">{t("inspector.choices")}</h3>
+      <PortChoices
+        projectId={projectId}
+        node={node}
+        port="out"
+        heading={t("inspector.element_choices")}
+        leaving={leaving}
+        targets={targets}
+        actions={actions}
+        onSelectConnection={onSelectConnection}
+      />
     </section>
   );
 }
@@ -349,6 +459,8 @@ export function Outputs({
   const outputs = node.outputs ?? [];
   const conditionals = conditionalsOf(node);
   const hasElse = outputs.some((o) => o.kind === "else");
+  const leaving = useLeaving(doc, node.id);
+  const targets = useNamedNodes(doc, node.board_id);
   // The output whose removal asks first, with the connections that leave
   // it, and the button that asked for it.
   const [removing, setRemoving] = useState<{
@@ -439,6 +551,8 @@ export function Outputs({
                   node={node}
                   port={output.id}
                   heading={t("inspector.output_choices")}
+                  leaving={leaving}
+                  targets={targets}
                   actions={actions}
                   onSelectConnection={onSelectConnection}
                 />
@@ -490,17 +604,22 @@ const targetField = payloadField("target", "target.board_id", "target.node_id");
  * A jumper's target (FR-EDIT-05): what it is now, with the link that opens
  * it, or that it was deleted; and a board of the project and a node of it,
  * or none, which Save gives the jumper, as one node.update, expecting the
- * revision that the form shows. The nodes of a board that the page has not
- * read are read as the board is chosen.
+ * revision that the form shows. The nodes of the board that the form
+ * shows, the target's own or one chosen, are read where the page has not
+ * read them, as a board's content is, so that the list names the node
+ * chosen and offers the board's others; those of a board that the project
+ * no longer has, as one in the trash, which no read would find, are not.
  */
 export function JumperTarget({
   projectId,
   node,
   targets,
+  onFollow,
 }: {
   projectId: string;
   node: Node;
   targets: TargetLookup;
+  onFollow: FollowLink;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -517,11 +636,24 @@ export function JumperTarget({
         .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1)),
     [boards],
   );
-  // The board chosen, of the form shown, as of its key, and else the board
-  // of the target that the form shows.
-  const [choice, setChoice] = useState<{ key: string; board: string }>();
-  const board =
-    choice?.key === held.key ? choice.board : (shown.target?.board_id ?? "");
+  // The board and the node chosen, of the form shown, as of its key, and
+  // else those of the target that the form shows: the lists show them as
+  // they are held here, whatever their options become, as once the board's
+  // nodes have been read, or one of them has gone.
+  const [choice, setChoice] = useState<{
+    key: string;
+    board: string;
+    node: string;
+  }>();
+  const chosen = choice?.key === held.key ? choice : undefined;
+  const board = chosen?.board ?? shown.target?.board_id ?? "";
+  /** Returns the node of the target that the form shows, where it is of the board of id, and else none. */
+  const shownNodeOf = (id: string) =>
+    shown.target?.board_id === id ? (shown.target.node_id ?? "") : "";
+  const chosenNode = chosen?.node ?? shownNodeOf(board);
+  // Whether the project has the board, rather than in its trash, or not at
+  // all, of which there is nothing to read.
+  const listed = boardList.some((b) => b.id === board);
   // The read of the chosen board's nodes, where the document has not read
   // them: under way, or failed, which Try again reads again.
   const [read, setRead] = useState<{
@@ -531,7 +663,7 @@ export function JumperTarget({
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's nodes again, as the user asks for it.
   useEffect(() => {
-    if (board === "" || doc.hasRead(boardPart(board))) {
+    if (board === "" || !listed || doc.hasRead(boardPart(board))) {
       setRead(undefined);
       return;
     }
@@ -555,7 +687,7 @@ export function JumperTarget({
     return () => {
       ended = true;
     };
-  }, [doc, board, attempt, targets]);
+  }, [doc, board, listed, attempt, targets]);
   const reading = read?.board === board ? read.state : undefined;
   const options = useMemo(
     () =>
@@ -566,13 +698,18 @@ export function JumperTarget({
   );
   const [problem, setProblem] = useState<string>();
   const current = targetOf(shown, { nodes, boards }, targets);
-  const shownNode =
-    shown.target?.board_id === board ? (shown.target.node_id ?? "") : "";
+  // The target that its link opens, where the project may have it still.
+  const link =
+    (current.state === "found" || current.state === "unknown") &&
+    current.boardId !== undefined
+      ? { boardId: current.boardId, nodeId: current.nodeId }
+      : undefined;
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const boardId = String(data.get("board") ?? "");
-    const nodeId = String(data.get("node") ?? "");
+    // The board and the node as the lists show them, which a list that is
+    // disabled, while its board's nodes are read, would not give a form.
+    const boardId = board;
+    const nodeId = chosenNode;
     if (boardId !== "" && nodeId === "") {
       setProblem(t("inspector.error.target_node"));
       form.refused();
@@ -602,20 +739,20 @@ export function JumperTarget({
           t,
           boardName: (id) => boards.get(id)?.name,
         })}
-        {(current.state === "found" || current.state === "unknown") &&
-          current.boardId !== undefined && (
-            <>
-              {" · "}
-              <RouterLink
-                to="/projects/$projectId/boards/$boardId"
-                params={{ projectId, boardId: current.boardId }}
-                search={{ node: current.nodeId }}
-                className={textLink}
-              >
-                {t("canvas.go_to_target")}
-              </RouterLink>
-            </>
-          )}
+        {link !== undefined && (
+          <>
+            {" · "}
+            <RouterLink
+              to="/projects/$projectId/boards/$boardId"
+              params={{ projectId, boardId: link.boardId }}
+              search={{ node: link.nodeId }}
+              className={textLink}
+              onClick={(e) => onFollow(e, link.boardId, link.nodeId)}
+            >
+              {t("canvas.go_to_target")}
+            </RouterLink>
+          </>
+        )}
       </p>
       <Alert
         message={form.overlaps.length > 0 ? undefined : refusal?.message}
@@ -638,7 +775,11 @@ export function JumperTarget({
           name="board"
           value={board}
           onChange={(e) => {
-            setChoice({ key: held.key, board: e.currentTarget.value });
+            const id = e.currentTarget.value;
+            // The nodes of another board are another list, which starts
+            // with none chosen, and the target's own board's with the
+            // target.
+            setChoice({ key: held.key, board: id, node: shownNodeOf(id) });
             setProblem(undefined);
           }}
           error={refusal?.fields["target.board_id"]}
@@ -657,12 +798,16 @@ export function JumperTarget({
         </SelectField>
         {board !== "" && (
           <SelectField
-            // The nodes of another board are another list, which starts
-            // with none chosen.
-            key={board}
             label={t("inspector.target_node")}
             name="node"
-            defaultValue={shownNode}
+            value={chosenNode}
+            onChange={(e) =>
+              setChoice({
+                key: held.key,
+                board,
+                node: e.currentTarget.value,
+              })
+            }
             disabled={reading === "loading"}
             error={
               problem ??
@@ -671,11 +816,12 @@ export function JumperTarget({
             }
           >
             <option value="">{t("inspector.choose_node")}</option>
-            {/* A node that the list does not have, as one deleted, shows
-                as it is until another is chosen. */}
-            {shownNode !== "" &&
-              !options.some((o) => o.node.id === shownNode) && (
-                <option value={shownNode}>
+            {/* A node that the list does not have, as one deleted, or one
+                of a board whose nodes are read still, shows as it is until
+                another is chosen. */}
+            {chosenNode !== "" &&
+              !options.some((o) => o.node.id === chosenNode) && (
+                <option value={chosenNode}>
                   {reading === "loading"
                     ? t("inspector.target_node_reading")
                     : t("inspector.target_node_gone")}
@@ -705,17 +851,47 @@ export function JumperTarget({
 }
 
 /**
+ * Resolves once doc sends none of the page's batches, at once where it
+ * sends none, or once signal ends the wait: what the page shows of them
+ * before the server has answered, as a node that it creates, the server
+ * does not have yet, and a read of it made meanwhile would find nothing.
+ */
+function whenSent(doc: ProjectDocument, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (doc.store.getState().sending === 0 || signal.aborted) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      stop();
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const stop = doc.store.subscribe((state) => {
+      if (state.sending === 0) {
+        done();
+      }
+    });
+    signal.addEventListener("abort", done);
+  });
+}
+
+/**
  * The jumpers that target node, on any board of the project (FR-EDIT-05
  * AC2), the first of them, each a link that opens it on its board's
  * canvas: read as the inspector shows the node, and again once a jumper
- * that the page holds comes to target it, or no longer does.
+ * that the page holds comes to target it, or no longer does, each time
+ * once the page's batches have been answered, so that the read finds the
+ * node that one of them creates, and the target that one of them sets.
  */
 export function ReferencedBy({
   projectId,
   node,
+  onFollow,
 }: {
   projectId: string;
   node: Node;
+  onFollow: FollowLink;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -741,6 +917,7 @@ export function ReferencedBy({
     // The section shows a refusal of it.
     meta: { showsRefusals: true },
     queryFn: async ({ signal }) => {
+      await whenSent(doc, signal);
       const page = (
         await api.call(
           "listNodeReferrers",
@@ -778,6 +955,7 @@ export function ReferencedBy({
                   params={{ projectId, boardId: jumper.board_id }}
                   search={{ node: jumper.id }}
                   className={textLink}
+                  onClick={(e) => onFollow(e, jumper.board_id, jumper.id)}
                 >
                   {titleOf(jumper, t)}
                 </RouterLink>
@@ -1005,11 +1183,14 @@ export function ConnectionInspector({
   connection,
   actions,
   onSelectNode,
+  onDelete,
 }: {
   projectId: string;
   connection: Connection;
   actions: CanvasActions;
   onSelectNode: (id: string) => void;
+  /** Deletes the connection, whose inspector goes with it. */
+  onDelete: () => void;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -1055,10 +1236,7 @@ export function ConnectionInspector({
           <Button onClick={() => onSelectNode(connection.to_node_id)}>
             {t("inspector.select_to")}
           </Button>
-          <Button
-            variant="danger"
-            onClick={() => void actions.removeConnection(connection.id)}
-          >
+          <Button variant="danger" onClick={onDelete}>
             {t("inspector.delete_connection")}
           </Button>
         </div>

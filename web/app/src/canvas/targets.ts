@@ -10,7 +10,8 @@
 // reads the node by itself (TargetReads), once, as its jumper's card is
 // first drawn, and again once the page is shown again, as what another
 // session did to it meanwhile comes by no operation that the document
-// applies to a board that it does not hold.
+// applies to a board that it does not hold; what it read before is what the
+// target is until the read again answers.
 
 import type { Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
@@ -110,17 +111,29 @@ const readsAtOnce = 4;
 /** How long the reads' answers are gathered before the canvas is told of them, in milliseconds, so that those of a view's jumpers write its cards again once, rather than each in turn. */
 const tellDelay = 50;
 
+/** Reports whether a and b, what two reads of a target found, are the same. */
+function sameRead(
+  a: TargetRead | "failed" | undefined,
+  b: TargetRead | "failed",
+): boolean {
+  return typeof a === "object" && typeof b === "object"
+    ? a.title === b.title && a.boardId === b.boardId
+    : a === b;
+}
+
 /**
  * The reads of the targets that the document does not tell of, each by its
  * node's ID, a few at a time: read returns what a read found, and asks for
  * one where none has been made, and changed is called, a moment after, once
- * answers came. A read that failed, as of a server that could not be
- * reached, is not made again until the reads are forgotten (forget), as
- * once the page is shown again.
+ * answers came that found another thing than the reads before them. A read
+ * that failed, as of a server that could not be reached, is not made again
+ * until the reads are asked for again (readAgain), as once the page is
+ * shown again; what a read found before stays what the target is until its
+ * next read answers, and where that one fails.
  */
 export class TargetReads {
   private readonly results = new Map<string, TargetRead | "failed">();
-  /** The nodes whose read was asked for, under way or answered. */
+  /** The nodes whose read was asked for, under way or answered, since the reads were last asked for again (readAgain). */
   private readonly asked = new Set<string>();
   private queue: string[] = [];
   private active = 0;
@@ -131,18 +144,14 @@ export class TargetReads {
   constructor(
     /** Reads the node of id, and resolves with it, or with undefined for one that the project does not have, or has in its trash. */
     private readonly readNode: (id: string) => Promise<Node | undefined>,
-    /** Tells that what read returns changed. */
+    /** Tells that what read returns changed, or that it is to be asked for again (readAgain). */
     private readonly changed: () => void,
   ) {}
 
-  /** Returns what the read of the node of id found, or undefined while none has, which asks for one. */
+  /** Returns what the last read of the node of id that answered found, or undefined while none has, and asks for a read where none was asked for since the reads were last asked for again. */
   read(id: string): TargetRead | undefined {
-    const result = this.results.get(id);
-    if (result === undefined) {
-      this.ask(id);
-      return undefined;
-    }
-    return result === "failed" ? undefined : result;
+    this.ask(id);
+    return this.peek(id);
   }
 
   /** Returns what a read of the node of id found, as read does, without asking for one. */
@@ -175,9 +184,17 @@ export class TargetReads {
         .then((result) => {
           this.active--;
           if (!this.stopped) {
-            this.results.set(id, result);
+            const before = this.results.get(id);
             if (result !== "failed") {
-              this.tell();
+              this.results.set(id, result);
+              if (!sameRead(before, result)) {
+                this.tell();
+              }
+            } else if (before === undefined) {
+              // A read again that failed leaves what the read before it
+              // found, rather than take a card that says so back to one
+              // that knows nothing of its target.
+              this.results.set(id, result);
             }
           }
           this.pump();
@@ -198,18 +215,20 @@ export class TargetReads {
   }
 
   /**
-   * Forgets what the reads found, so that each target is read again as it
-   * is next asked for, and tells that it changed, if they found anything; a
-   * read under way is as good as one made anew, and stays.
+   * Has each target that was read, or failed to be, read again as it is
+   * next asked for, and tells of it, so that the canvas, which asks as it
+   * writes its cards, asks; what the reads found stays what read returns
+   * until the new answers come, so that a jumper drawn as broken is not
+   * drawn as whole meanwhile, nor one named by its target's title by its
+   * board alone. A read under way is as good as one made anew, and stays.
    */
-  forget(): void {
+  readAgain(): void {
     if (this.results.size === 0) {
       return;
     }
     for (const id of this.results.keys()) {
       this.asked.delete(id);
     }
-    this.results.clear();
     if (!this.stopped) {
       this.changed();
     }

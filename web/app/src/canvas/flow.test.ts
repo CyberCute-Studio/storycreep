@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { docOf, testConnection, testNode } from "../test/canvas";
 import {
   choicesOf,
+  choicesOfPort,
   conditionalsOf,
   connectCommand,
   connectNewBatch,
@@ -10,6 +11,7 @@ import {
   deleteConnectionCommand,
   deleteOutputCommand,
   keyAt,
+  leavingOf,
   reconnectCommand,
   reorderConnectionCommand,
   reorderOutputCommand,
@@ -61,6 +63,15 @@ describe("the commands of a board's connections", () => {
       "cn_1",
     ]);
     expect(choicesOf(view, "nd_a", "bo_1").map((c) => c.id)).toEqual(["cn_4"]);
+    // The connections that leave the node, read once for all of its ports,
+    // as the document holds them, give each port's the same.
+    const leaving = leavingOf(view, "nd_a");
+    expect(leaving.map((c) => c.id)).toEqual(["cn_3", "cn_1", "cn_2", "cn_4"]);
+    expect(choicesOfPort(leaving, "out")).toEqual(
+      choicesOf(view, "nd_a", "out"),
+    );
+    expect(choicesOfPort(leaving, "bo_1").map((c) => c.id)).toEqual(["cn_4"]);
+    expect(leaving.map((c) => c.id)).toEqual(["cn_3", "cn_1", "cn_2", "cn_4"]);
   });
 
   it("places a choice that moves by a key between its new neighbours' alone, and by none where it stays or no key goes between them", () => {

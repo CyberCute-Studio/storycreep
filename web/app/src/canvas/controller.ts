@@ -126,6 +126,15 @@ export interface CanvasEvents {
   connection(id: string | undefined): void;
   /** The zoom changed, by a percent or more. */
   zoom(zoom: number): void;
+  /**
+   * What the canvas offers changed: to create a node at at of the board and
+   * connect from to it, as a drag of a port's handle that landed on the
+   * empty board asks (FR-EDIT-03 AC3), whose line the canvas shows until
+   * the page says what became of the offer (CanvasController's endOffer),
+   * or nothing, once the offer has ended, as the page, the next link, or a
+   * board that may no longer be changed ends it.
+   */
+  offer(offer: { from: PortOf; at: Point } | undefined): void;
   /** The first frame of the board's content was drawn. */
   rendered(): void;
   /**
@@ -167,13 +176,6 @@ export interface CanvasEdits {
   open(id: string): void;
   /** Connects from to the node of to, as a drag of a port's handle that landed on it asks. */
   connect(from: PortOf, to: string): void;
-  /**
-   * Offers to create a node at at of the board and connect from to it, as a
-   * drag of a port's handle that landed on the empty board asks (FR-EDIT-03
-   * AC3): the canvas shows the line to at until the page says what became
-   * of the offer (CanvasController's endOffer).
-   */
-  offer(from: PortOf, at: Point): void;
   /**
    * Reconnects the connection of id, so that it leaves from, or enters the
    * node of to, as a drag of one of its ends' handles left it, expecting
@@ -349,8 +351,10 @@ export class CanvasController implements GestureHost {
    * a resize by a node's handle, the node of id, at revision rev, its size
    * as it started, and its size now; of a link, what its handle holds, the
    * revision of its connection as it started, where its pointer is on the
-   * board, and the port, or the node, under it that would take its end.
-   * Each change of it is another object.
+   * board, the port, or the node, under it that would take its end, and
+   * whether nothing would, where it is (idle), as with its pointer outside
+   * the canvas, or on the handle that it left. Each change of it is another
+   * object.
    */
   private drag:
     | {
@@ -367,9 +371,10 @@ export class CanvasController implements GestureHost {
         rev: number;
         at?: Point;
         over?: { node: string; port?: string };
+        idle?: boolean;
       }
     | undefined;
-  /** The line that the canvas shows of the page's offer to create a node and connect it, from a port to a point of the board, until the offer ends (endOffer). */
+  /** What the canvas offers, to create a node and connect it, whose line it shows from a port to a point of the board, until the offer ends (endOffer): the page shows what it is told of it (CanvasEvents' offer), and holds none of its own. */
   private offered: { from: PortOf; at: Point } | undefined;
   /** How many of the board's jumpers are broken, of the document's nodes and the labels' version that it was counted at. */
   private brokenCount:
@@ -982,7 +987,7 @@ export class CanvasController implements GestureHost {
       }
       rev = c.rev;
     }
-    this.offered = undefined;
+    this.endOffer();
     this.drag = { kind: "link", link, rev };
     this.invalidate();
     return true;
@@ -994,14 +999,25 @@ export class CanvasController implements GestureHost {
    * node the end that enters one, and an element or a branch the end that
    * leaves one, by its one port, or by the output of a branch whose row is
    * nearest, while a jumper, which no connection leaves, and a branch
-   * without outputs, take none.
+   * without outputs, take none. Nothing takes it outside the canvas, as
+   * over the inspector beside it, where what is under the pointer is not
+   * shown, nor, of a connection to come, on the handle that it left
+   * (onOwnHandle), where it is let go for nothing.
    */
   linkTo(at: Point, slop: number): void {
     const d = this.drag;
     if (d?.kind !== "link") {
       return;
     }
-    const id = this.scene.nodeAt(at, slop);
+    const on = toScreen(this.v, at);
+    const size = this.size();
+    const idle =
+      on.x < 0 ||
+      on.y < 0 ||
+      on.x > size.width ||
+      on.y > size.height ||
+      this.onOwnHandle(d.link, at);
+    const id = idle ? undefined : this.scene.nodeAt(at, slop);
     const item = id === undefined ? undefined : this.scene.nodes.get(id);
     let over: { node: string; port?: string } | undefined;
     if (item !== undefined) {
@@ -1024,12 +1040,32 @@ export class CanvasController implements GestureHost {
       d.at?.x === at.x &&
       d.at.y === at.y &&
       d.over?.node === over?.node &&
-      d.over?.port === over?.port
+      d.over?.port === over?.port &&
+      (d.idle ?? false) === idle
     ) {
       return;
     }
-    this.drag = { ...d, at, over };
+    this.drag = { ...d, at, over, idle };
     this.invalidate();
+  }
+
+  /**
+   * Reports whether at of the board is on the handle that link's drag left:
+   * of a connection to come whose handle told its side, within the square
+   * of that side about its port, as the canvas shows it, where the drag has
+   * not left the handle, or has come back to it.
+   */
+  private onOwnHandle(link: Link, at: Point): boolean {
+    if (link.kind !== "new" || link.side === undefined) {
+      return false;
+    }
+    const from = this.scene.nodes.get(link.node);
+    if (from === undefined) {
+      return false;
+    }
+    const port = portPoint(from.node, from.rect, link.port);
+    const reach = link.side / 2 / this.v.zoom;
+    return Math.abs(at.x - port.x) <= reach && Math.abs(at.y - port.y) <= reach;
   }
 
   /**
@@ -1041,7 +1077,9 @@ export class CanvasController implements GestureHost {
    * port, other than its own is reconnected to it, expecting the
    * connection's revision as the drag started, and one that landed
    * elsewhere stays as it was. What went meanwhile, as a node that another
-   * session deleted, connects nothing.
+   * session deleted, connects nothing, and neither does a link let go where
+   * nothing takes it (linkTo): outside the canvas, or, of a connection to
+   * come, on the handle that it left, which offers nothing either.
    */
   linkEnd(commit: boolean): void {
     const d = this.drag;
@@ -1051,7 +1089,7 @@ export class CanvasController implements GestureHost {
     this.drag = undefined;
     this.invalidate();
     const edits = this.edits;
-    if (!commit || edits === undefined || d.at === undefined) {
+    if (!commit || edits === undefined || d.at === undefined || d.idle) {
       return;
     }
     const over =
@@ -1070,7 +1108,7 @@ export class CanvasController implements GestureHost {
         edits.connect(port, over.node);
       } else if (d.over === undefined) {
         this.offered = { from: port, at: d.at };
-        edits.offer(port, d.at);
+        this.events.offer(this.offered);
       }
       return;
     }
@@ -1099,10 +1137,11 @@ export class CanvasController implements GestureHost {
     return this.drag?.kind === "link";
   }
 
-  /** Ends the page's offer to create a node and connect it, whose line the canvas shows no longer, as once the user chose a node's type, or cancelled. */
+  /** Ends the offer to create a node and connect it, whose line the canvas shows no longer, and tells the page, as once the user chose a node's type, or cancelled. */
   endOffer(): void {
     if (this.offered !== undefined) {
       this.offered = undefined;
+      this.events.offer(undefined);
       this.invalidate();
     }
   }

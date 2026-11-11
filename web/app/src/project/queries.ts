@@ -141,7 +141,7 @@ export function editsProject(role: ProjectBody["role"]): boolean {
  */
 const shownAsNotFound = { showsNotFound: true };
 
-/** How many of the jumpers that target a board its deletion lists at most. */
+/** How many of the jumpers that target a board its deletion lists at most, and of those that target a node its inspector (canvas/InspectorFlow.tsx). */
 export const referrersShown = 100;
 
 /**

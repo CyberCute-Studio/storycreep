@@ -114,12 +114,15 @@ type Sent = { type: string; payload: Record<string, unknown> }[];
  * page sends to them, as far as the canvas's edits of connections, of
  * outputs, and of a jumper's target go, and answers with the revisions that
  * they left, so that what the page shows after a batch is what the project
- * holds.
+ * holds. A board, or a node, that the project does not have is not found,
+ * as on the server, and a batch is answered once sent has resolved, where
+ * the test holds the server's answers back.
  */
 function flowProject(initial: {
   nodes: Node[];
   connections?: Connection[];
   boards?: Board[];
+  sent?: Promise<void>;
 }) {
   let seq = testProject.seq;
   const nodes = new Map(initial.nodes.map((n) => [n.id, n]));
@@ -284,6 +287,9 @@ function flowProject(initial: {
       case "listBoards":
         return { items: boards, next_cursor: null };
       case "listBoardNodes":
+        if (!boards.some((b) => b.id === path.board_id)) {
+          throw refused(404, { code: "not_found" });
+        }
         return {
           items: [...nodes.values()].filter(
             (n) => n.board_id === path.board_id,
@@ -312,31 +318,36 @@ function flowProject(initial: {
         return connection;
       }
       case "listNodeReferrers":
+        if (!nodes.has(path.node_id)) {
+          throw refused(404, { code: "not_found" });
+        }
         return {
           items: [...nodes.values()].filter(
             (n) => n.type === "jumper" && n.target?.node_id === path.node_id,
           ),
           next_cursor: null,
         };
-      case "applyCommands": {
-        const { commands } = (input as { body: { commands: Sent } }).body;
-        changed.clear();
-        for (const command of commands) {
-          apply(command);
-        }
-        seq++;
-        return {
-          status: "applied",
-          seq,
-          revisions: [...changed].map(([id, rev]) => ({ id, rev })),
-          not_reconnected: [],
-          undo: commands.map(({ type, payload }) => ({
-            type,
-            payload,
-            expected_rev: {},
-          })),
-        };
-      }
+      case "applyCommands":
+        return (async () => {
+          await initial.sent;
+          const { commands } = (input as { body: { commands: Sent } }).body;
+          changed.clear();
+          for (const command of commands) {
+            apply(command);
+          }
+          seq++;
+          return {
+            status: "applied",
+            seq,
+            revisions: [...changed].map(([id, rev]) => ({ id, rev })),
+            not_reconnected: [],
+            undo: commands.map(({ type, payload }) => ({
+              type,
+              payload,
+              expected_rev: {},
+            })),
+          };
+        })();
     }
     const answer = startPage(operation);
     if (answer === undefined) {
@@ -448,7 +459,21 @@ describe("the canvas's connections", () => {
     const handle = await linkHandle("new", "out");
     // A mouse's handle is smaller than a finger's (FR-EDIT-09).
     expect(handle.style.width).toBe(`${linkHandleSides.fine}px`);
-    dragHandle(canvas, handle, { x: 240, y: 64 }, { x: 600, y: 64 });
+    // A drag let go on the handle that it left, 6 px of the canvas from its
+    // port, connects nothing, to its own node or to a new one, and neither
+    // does one let go outside the canvas, which is 800 wide.
+    const port = screenOf(canvas, { x: 240, y: 64 });
+    for (const to of [
+      { clientX: port.clientX + 6, clientY: port.clientY },
+      { clientX: 900, clientY: port.clientY },
+    ]) {
+      fireEvent.pointerDown(handle, { ...mouse, buttons: 1, ...port });
+      fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, ...to });
+      fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...to });
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+    // The canvas shows the board up to 520 across: the other node's edge.
+    dragHandle(canvas, handle, { x: 240, y: 64 }, { x: 500, y: 64 });
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0]).toEqual([
       {
@@ -552,7 +577,8 @@ describe("the canvas's connections", () => {
       await screen.findByRole("region", { name: "Connection" }),
     ).toBeDefined();
     const end = await linkHandle("to");
-    dragHandle(canvas, end, { x: 480, y: 64 }, { x: 600, y: 364 });
+    // Onto the corner of the third node that the canvas shows.
+    dragHandle(canvas, end, { x: 480, y: 64 }, { x: 500, y: 330 });
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0]).toEqual([
       {
@@ -681,6 +707,55 @@ describe("the inspector of a board's flow", () => {
       },
     ]);
     await waitFor(() => expect(rows()).toHaveLength(3));
+  });
+
+  it("moves the choice whose row's handle a drag holds, wherever the list has it by the drag's end, as once another change moved it", async () => {
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+        testNode("nd_4", 480, 600, { title: "The lamp" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2", { order: "V" }),
+        testConnection("cn_2", "nd_1", "nd_3", { order: "k" }),
+        testConnection("cn_3", "nd_1", "nd_4", { order: "t" }),
+      ],
+    });
+    await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const list = await within(inspector).findByRole("list", {
+      name: "Choices, in the order that the player is offered them",
+    });
+    const rows = () =>
+      [...list.querySelectorAll<HTMLElement>("[data-choice]")].map(
+        (li) => li.dataset.choice,
+      );
+    // The first row, held by a drag of its handle.
+    const handle = list.querySelector(
+      '[data-choice="cn_1"] [data-drag]',
+    ) as HTMLElement;
+    fireEvent.pointerDown(handle, { ...mouse, buttons: 1, clientY: 0 });
+    fireEvent.pointerMove(handle, { ...mouse, buttons: 1, clientY: 30 });
+    // The second choice goes above it meanwhile, so that the row held is
+    // the second.
+    fireEvent.click(
+      within(list).getByRole("button", { name: "Move choice 2 up" }),
+    );
+    await waitFor(() => expect(rows()).toEqual(["cn_2", "cn_1", "cn_3"]));
+    // Let go below every row, the choice held lands last, and no other.
+    fireEvent.pointerUp(handle, { ...mouse, buttons: 0, clientY: 30 });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1]).toEqual([
+      {
+        type: "connection.reorder",
+        payload: { id: "cn_1", order: expect.any(String) },
+        expected_rev: { cn_1: 1 },
+      },
+    ]);
+    expect((batches(calls)[1][0].payload.order as string) > "t").toBe(true);
+    await waitFor(() => expect(rows()).toEqual(["cn_2", "cn_3", "cn_1"]));
   });
 
   // Verifies: FR-EDIT-04/AC3
@@ -822,6 +897,11 @@ describe("the inspector of a board's flow", () => {
     );
     const inspector = await screen.findByRole("region", { name: "Connection" });
     expect(canvas.dataset.connection).toBe("cn_1");
+    // The inspector's heading has the focus that the choice's button had,
+    // which went with the node's form.
+    expect(document.activeElement).toBe(
+      within(inspector).getByRole("heading", { name: "Connection" }),
+    );
     expect(within(inspector).getByText("The quay → The dock")).toBeDefined();
     expect(within(inspector).getByText("Choice 1 of 2")).toBeDefined();
     const label = within(inspector).getByRole("textbox", { name: "Label" });
@@ -878,6 +958,11 @@ describe("the inspector of a board's flow", () => {
       payload: { id: "cn_1" },
     });
     await waitFor(() => expect(canvas.dataset.connection).toBe(""));
+    // The heading has the focus that the button of the connection had.
+    const emptied = await screen.findByRole("region", { name: "Inspector" });
+    expect(document.activeElement).toBe(
+      within(emptied).getByRole("heading", { name: "Inspector" }),
+    );
   });
 });
 
@@ -960,6 +1045,181 @@ describe("the canvas's jumpers", () => {
       name: "Nodes of Lighthouse",
     });
     await waitFor(() => expect(there.dataset.selected).toBe("1"));
+  });
+
+  it("shows the node that a jumper targets on a board that the page had not read, once it has read the board's nodes, and saves nothing of it unchanged", async () => {
+    const user = userEvent.setup();
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_j", 0, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "To the lamp",
+          target: { board_id: "bd_b", node_id: "nd_lamp" },
+        }),
+        testNode("nd_lamp", 0, 0, { board_id: "bd_b", title: "The lamp" }),
+        testNode("nd_stair", 0, 300, { board_id: "bd_b", title: "The stair" }),
+      ],
+    });
+    await openBoard("?node=nd_j");
+    const inspector = await screen.findByRole("region", {
+      name: "To the lamp",
+    });
+    const list = () =>
+      within(inspector).getByLabelText("Node") as HTMLSelectElement;
+    await waitFor(() =>
+      expect(
+        within(list()).queryByRole("option", { name: "The stair (Narration)" }),
+      ).not.toBeNull(),
+    );
+    // The list, whose options the read replaced, shows the target still.
+    expect(list().value).toBe("nd_lamp");
+    expect(list().selectedOptions[0]?.textContent).toBe("The lamp (Narration)");
+    expect(
+      (within(inspector).getByLabelText("Board") as HTMLSelectElement).value,
+    ).toBe("bd_b");
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the target" }),
+    );
+    expect(
+      await within(inspector).findByText(
+        "Nothing has changed, so nothing was saved.",
+      ),
+    ).toBeDefined();
+    expect(batches(calls)).toEqual([]);
+    // Another node of the board, chosen, is the target that Save sends.
+    await user.selectOptions(list(), "nd_stair");
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the target" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].payload).toEqual({
+      id: "nd_j",
+      target: { board_id: "bd_b", node_id: "nd_stair" },
+    });
+  });
+
+  it("reads no nodes of a board that the project no longer has, of a jumper whose target was on it", async () => {
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_j", 0, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "To the wreck",
+          target: { board_id: "bd_gone", node_id: "nd_wreck" },
+        }),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_j");
+    const inspector = await screen.findByRole("region", {
+      name: "To the wreck",
+    });
+    expect(await within(inspector).findByText("Target deleted")).toBeDefined();
+    await waitFor(() => expect(canvas.dataset.broken).toBe("1"));
+    // The lists show what the target was, and nothing failed to be read.
+    expect(
+      (within(inspector).getByLabelText("Board") as HTMLSelectElement)
+        .selectedOptions[0]?.textContent,
+    ).toBe("A board that was deleted");
+    expect(
+      (within(inspector).getByLabelText("Node") as HTMLSelectElement)
+        .selectedOptions[0]?.textContent,
+    ).toBe("A node that was deleted");
+    expect(
+      within(inspector).queryByText("The board's nodes could not be read."),
+    ).toBeNull();
+    expect(
+      calls.mock.calls.filter(
+        ([operation, input]) =>
+          operation === "listBoardNodes" &&
+          (input as { path: { board_id: string } }).path.board_id === "bd_gone",
+      ),
+    ).toEqual([]);
+  });
+
+  it("opens a jumper's target on its own board by its link though the address names the target already, as once the link was followed before", async () => {
+    const user = userEvent.setup();
+    flowProject({
+      nodes: [
+        testNode("nd_dock", 0, 0, { title: "The dock" }),
+        testNode("nd_j", 480, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "Back to the dock",
+          target: { board_id: "bd_a", node_id: "nd_dock" },
+        }),
+      ],
+    });
+    // The address names the target, as once its jumper's link was followed.
+    const canvas = await openBoard("?node=nd_dock");
+    await screen.findByRole("region", { name: "The dock" });
+    const jumper = async () => {
+      clickAt(canvas, { x: 600, y: 64 });
+      return await screen.findByRole("region", { name: "Back to the dock" });
+    };
+    // The link above the jumper's card leads where the address is already,
+    // and the canvas opens the target again.
+    const first = await jumper();
+    const links = await screen.findAllByRole("link", { name: "Go to target" });
+    expect(links).toHaveLength(2);
+    await user.click(
+      links.find((link) => !first.contains(link)) as HTMLElement,
+    );
+    expect(
+      await screen.findByRole("region", { name: "The dock" }),
+    ).toBeDefined();
+    expect(canvas.dataset.selected).toBe("1");
+    // And so does the inspector's.
+    const second = await jumper();
+    await user.click(
+      await within(second).findByRole("link", { name: "Go to target" }),
+    );
+    expect(
+      await screen.findByRole("region", { name: "The dock" }),
+    ).toBeDefined();
+  });
+
+  it("reads the jumpers that target a node that the page creates once the server has answered the batch that creates it", async () => {
+    const user = userEvent.setup();
+    let answer = () => {};
+    const { calls } = flowProject({
+      nodes: [testNode("nd_1", 0, 0, { title: "The quay" })],
+      sent: new Promise<void>((resolve) => {
+        answer = resolve;
+      }),
+    });
+    await openBoard("?node=nd_1");
+    await screen.findByRole("region", { name: "The quay" });
+    const referrers = () =>
+      calls.mock.calls
+        .filter(([operation]) => operation === "listNodeReferrers")
+        .map(
+          ([, input]) => (input as { path: { node_id: string } }).path.node_id,
+        );
+    await waitFor(() => expect(referrers()).toEqual(["nd_1"]));
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Add" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Element" }));
+    // The page shows the node at once, selected, before the server has it.
+    const inspector = await screen.findByRole("region", { name: "Untitled" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const created = String(batches(calls)[0][0].payload.id);
+    expect(
+      within(
+        within(inspector).getByRole("region", { name: "Referenced by" }),
+      ).getByText("Reading…"),
+    ).toBeDefined();
+    expect(referrers()).toEqual(["nd_1"]);
+    answer();
+    expect(
+      await within(inspector).findByText("No jumper goes to this node."),
+    ).toBeDefined();
+    expect(referrers()).toEqual(["nd_1", created]);
+    expect(
+      within(
+        within(inspector).getByRole("region", { name: "Referenced by" }),
+      ).queryByRole("alert"),
+    ).toBeNull();
   });
 
   it("gives a jumper the target chosen in its inspector, a node of a board whose nodes it reads then, or none", async () => {
