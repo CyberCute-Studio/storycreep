@@ -5,7 +5,9 @@
 // their case and diacritics. The arrows move through them, and Enter, a
 // click, or a tap runs one, once the dialog has closed and the focus is
 // back where it was, as if its key had been pressed there. In a project, a
-// last entry searches the project for what was typed.
+// last entry searches the project for what was typed. Whether each can run
+// now follows the page while the palette is open, as an undo under way
+// ends.
 
 import { foldCase } from "@storycreep/shared/fold";
 import { Dialog } from "radix-ui";
@@ -14,9 +16,9 @@ import {
   type RefObject,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { DialogFrame, focusBackTo } from "../ui/Dialog";
@@ -120,20 +122,18 @@ function PaletteBody({
   const [active, setActive] = useState(0);
   const listId = useId();
   const inputId = useId();
-  const entries = useMemo((): Entry[] => {
-    const commands: Entry[] = registry
-      .available()
-      .filter((id) => nameMatches(commandName(t, id), query))
-      .map((id) => ({
-        kind: "command",
-        id,
-        enabled: registry.handler(id)?.enabled !== false,
-      }));
-    const search = registry.handler("project.search");
-    return query.trim() !== "" && search !== undefined
+  // The entries are read anew as the page's handlers change, as once an
+  // undo under way has ended, whose Undo is available again, rather than
+  // as they were as the palette opened, or as a letter was typed last.
+  useSyncExternalStore(registry.subscribe, registry.revision);
+  const commands: Entry[] = registry
+    .available()
+    .filter((id) => nameMatches(commandName(t, id), query))
+    .map((id) => ({ kind: "command", id, enabled: registry.can(id) }));
+  const entries: Entry[] =
+    query.trim() !== "" && registry.handler("project.search") !== undefined
       ? [...commands, { kind: "search", query: query.trim() }]
       : commands;
-  }, [registry, query, t]);
   const shown = Math.min(active, Math.max(0, entries.length - 1));
   const optionId = (i: number) => `${listId}-${i}`;
   useEffect(() => {
@@ -143,6 +143,13 @@ function PaletteBody({
   });
   const choose = (entry: Entry | undefined) => {
     if (entry === undefined || (entry.kind === "command" && !entry.enabled)) {
+      return;
+    }
+    // The palette's own command, chosen in it, shows it as its key would
+    // anywhere else, anew, rather than closing it and opening it again.
+    if (entry.kind === "command" && entry.id === "palette.open") {
+      setQuery("");
+      setActive(0);
       return;
     }
     onChoose(entry);

@@ -171,6 +171,11 @@ describe("the canvas's shortcuts", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(batches(calls)).toHaveLength(1);
+    // The repeats of a key whose command cannot run, as G with no jumper
+    // selected, are the page's, as the key itself is.
+    expect(
+      fireEvent.keyDown(canvas, { key: "g", code: "KeyG", repeat: true }),
+    ).toBe(true);
     // The repeats of an arrow pan on.
     const x = canvas.dataset.x;
     fireEvent.keyDown(canvas, {
@@ -216,6 +221,11 @@ describe("the canvas's shortcuts", () => {
     const canvas = await openBoard("?node=nd_1");
     await screen.findByText(/Selected: /);
     canvas.focus();
+    // A change, which the undo's key would undo.
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await waitFor(() => expect(undo).toHaveProperty("disabled", false));
     // A pan of the board, in the pan mode, from its empty corner.
     fireEvent.pointerDown(canvas, {
       ...mouse,
@@ -232,6 +242,7 @@ describe("the canvas's shortcuts", () => {
     fireEvent.keyDown(canvas, { key: "Delete", code: "Delete" });
     fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
     fireEvent.keyDown(canvas, { key: "d", code: "KeyD" });
+    fireEvent.keyDown(canvas, { key: "z", code: "KeyZ", ctrlKey: true });
     fireEvent.pointerUp(canvas, {
       ...mouse,
       buttons: 0,
@@ -239,9 +250,9 @@ describe("the canvas's shortcuts", () => {
       clientY: 100,
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(batches(calls)).toHaveLength(0);
-    fireEvent.keyDown(canvas, { key: "Delete", code: "Delete" });
-    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)).toHaveLength(1);
+    fireEvent.keyDown(canvas, { key: "z", code: "KeyZ", ctrlKey: true });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
   });
 
   it("open the inspector at its Connect to by C, of the one element selected", async () => {
@@ -266,6 +277,10 @@ describe("the canvas's shortcuts", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
     expect(await screen.findByText("Undone.")).toBeDefined();
 
+    // The help names the keys of the page's platform, as Ctrl+C on Linux.
+    expect(
+      screen.getByText(/Ctrl\+C, Ctrl\+X, and Ctrl\+V copy it/),
+    ).toBeDefined();
     fireEvent.keyDown(canvas, { key: "?", code: "Slash", shiftKey: true });
     const table = await screen.findByRole("dialog", {
       name: "Keyboard shortcuts",

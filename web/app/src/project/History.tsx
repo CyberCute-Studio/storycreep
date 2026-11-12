@@ -22,7 +22,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { type Level, useCommands } from "../commands/registry";
+import { type Level, useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
@@ -107,23 +107,30 @@ export function useHistory(projectId: string) {
  * which the buttons that the part of the page shows send too, so that a
  * key and the palette say what became of them where the buttons do; none
  * where history is undefined, as of a board that the user may not change,
- * whose part shows no buttons.
+ * whose part shows no buttons. Neither can run while still says that the
+ * part is not still, as the canvas in the middle of a drag, whose nodes a
+ * step would change under it, which it reads as either is asked to run.
  */
 export function useHistoryCommands(
   history: HistoryOf | undefined,
   level: Level,
+  still: () => boolean = () => true,
 ): void {
-  useCommands(
+  useCommandHandlers(
     level,
     history === undefined
       ? {}
       : {
           "history.undo": {
-            enabled: history.undoable > 0 && !history.stepping,
+            get enabled() {
+              return history.undoable > 0 && !history.stepping && still();
+            },
             run: () => history.step.mutate("undo"),
           },
           "history.redo": {
-            enabled: history.redoable > 0 && !history.stepping,
+            get enabled() {
+              return history.redoable > 0 && !history.stepping && still();
+            },
             run: () => history.step.mutate("redo"),
           },
         },

@@ -10,7 +10,7 @@ import {
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
-import { useCommands } from "../commands/registry";
+import { useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
@@ -118,7 +118,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
   const go = (to: (typeof pages)[number]) => ({
     run: () => void navigate({ to, params }),
   });
-  useCommands("project", {
+  useCommandHandlers("project", {
     // The search's page, of what the palette's search was of, or, from the
     // search's key, a new one, whose field takes the focus.
     "project.search": {

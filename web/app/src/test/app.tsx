@@ -34,6 +34,7 @@ import type { Realtime } from "../document/realtime";
 import { ErrorConsoleProvider } from "../errors/ErrorConsole";
 import { createErrorLog } from "../errors/log";
 import { createAppI18n } from "../i18n";
+import { parseSearch } from "../router";
 import { routeTree } from "../routeTree.gen";
 
 /** An instance whose setup has completed, which anyone may register on. */
@@ -153,6 +154,8 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     basepath: "/app",
     history: createMemoryHistory({ initialEntries: [`/app${path}`] }),
     context: { queryClient, i18n, checkSession, documents },
+    // The address's values read as the app reads them.
+    parseSearch,
     disableGlobalCatchBoundary: true,
   });
   const follower = followSession(

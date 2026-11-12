@@ -9,7 +9,17 @@ import {
 } from "./controller";
 import type { Engine, Frame, FrameStats } from "./engine";
 import type { MenuTarget } from "./gestures";
+import { canvasKey, type KeyInput } from "./keyboard";
 import type { Theme } from "./theme";
+
+/**
+ * Runs the command of the canvas that the key of e is, on Linux, as the
+ * canvas runs its keys, and reports whether it did something.
+ */
+function pressed(c: CanvasController, e: KeyInput): boolean {
+  const id = canvasKey(e, "linux");
+  return id !== undefined && c.command(id);
+}
 
 const theme: Theme = {
   canvas: 0xffffff,
@@ -350,7 +360,7 @@ describe("the canvas's controller", () => {
     c.reducedMotion = true;
     c.setViewport({ x: 0, y: 0, zoom: 1 });
     const key = (k: string, extra: Partial<KeyboardEvent> = {}) =>
-      c.key({
+      pressed(c, {
         key: k,
         code: "",
         shiftKey: false,
@@ -1296,7 +1306,7 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.down(at(from));
     c.gestures.move(at(from + 80));
     expect(c.moves()).toBe(true);
-    expect(c.key(escapeKey)).toBe(true);
+    expect(pressed(c, escapeKey)).toBe(true);
     expect(c.moves()).toBe(false);
     expect([...c.selection()]).toEqual(["nd_1"]);
     expect(c.scene.nodes.get("nd_1")?.node.position).toEqual({ x: 0, y: 0 });
@@ -1304,7 +1314,7 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.gestures.up(at(from + 160));
     expect(asked.moves).toEqual([]);
     // Escape with no drag under way clears the selection.
-    expect(c.key(escapeKey)).toBe(true);
+    expect(pressed(c, escapeKey)).toBe(true);
     expect([...c.selection()]).toEqual([]);
     // A resize by the handle of the node, selected again, once the board may
     // not be changed.
@@ -1350,13 +1360,13 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.setReady();
     time.tick();
     c.select(["nd_1"], "replace");
-    expect(c.key(key("Delete"))).toBe(false);
+    expect(pressed(c, key("Delete"))).toBe(false);
     const asked = editsOf(c);
-    expect(c.key(key("Enter"))).toBe(true);
+    expect(pressed(c, key("Enter"))).toBe(true);
     expect(asked.opened).toEqual(["nd_1"]);
     c.select(["nd_2"], "add");
-    expect(c.key(key("Enter"))).toBe(false);
-    expect(c.key(key("Backspace"))).toBe(true);
+    expect(pressed(c, key("Enter"))).toBe(false);
+    expect(pressed(c, key("Backspace"))).toBe(true);
     expect(asked.removed).toEqual([["nd_1", "nd_2"]]);
   });
 });
@@ -1432,14 +1442,14 @@ describe("the canvas's controller of a board's connections", () => {
   it("deletes the connection selected with Delete, opens it with Enter, and clears it with Escape", () => {
     const { c, asked } = setUpFlow();
     c.selectConnection("cn_1");
-    expect(c.key({ key: "Enter", code: "Enter" } as never)).toBe(true);
+    expect(pressed(c, { key: "Enter", code: "Enter" } as never)).toBe(true);
     expect(asked.openedConnections).toEqual(["cn_1"]);
-    expect(c.key({ key: "Delete", code: "Delete" } as never)).toBe(true);
+    expect(pressed(c, { key: "Delete", code: "Delete" } as never)).toBe(true);
     expect(asked.removedConnections).toEqual(["cn_1"]);
     expect(asked.removed).toEqual([]);
-    expect(c.key({ key: "Escape", code: "Escape" } as never)).toBe(true);
+    expect(pressed(c, { key: "Escape", code: "Escape" } as never)).toBe(true);
     expect(c.selectedConnection()).toBeUndefined();
-    expect(c.key({ key: "Escape", code: "Escape" } as never)).toBe(false);
+    expect(pressed(c, { key: "Escape", code: "Escape" } as never)).toBe(false);
   });
 
   it("selects a connection no longer once the board no longer has it", () => {

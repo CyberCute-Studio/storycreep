@@ -1,13 +1,15 @@
 // What runs the app's commands (PRD FR-EDIT-10, plan note N72): each part
 // of a page registers what it runs a command with while it is shown
-// (useCommands), as the canvas its zoom, and the palette, the canvas's
+// (useCommandHandlers), as the canvas its zoom, and the palette, the canvas's
 // keys, and the keys of the page run the command by its ID through the
 // registry, so that a command's key and its entry in the palette run the
 // same. The keys of the page act wherever the focus is (keysOfPage): not in
 // a dialog, whose keys are its own, as the palette's, nor in a field that
 // the user types in, for a command whose key is the field's own there, as
 // the undo's, nor once something of the page has taken the key itself, nor,
-// for a command that runs once for a key held down, its repeats.
+// for a command that runs once for a key held down, its repeats. What the
+// palette says of each command follows the page while it is open, as the
+// registry tells it of each change of the handlers (subscribe).
 
 import {
   createContext,
@@ -42,12 +44,17 @@ export interface Handler {
   enabled?: boolean;
 }
 
+/** Reports whether handler can run now: there is one, and it does not say that it cannot. */
+export function canRun(handler: Handler | undefined): boolean {
+  return handler !== undefined && handler.enabled !== false;
+}
+
 /** Runs handler, and reports whether it did something: nothing where there is none, or where it cannot run now. */
 export function runHandler(
   handler: Handler | undefined,
   query?: string,
 ): boolean {
-  if (handler === undefined || handler.enabled === false) {
+  if (handler === undefined || !canRun(handler)) {
     return false;
   }
   return handler.run(query) !== false;
@@ -77,14 +84,43 @@ interface Layer {
 export class CommandRegistry {
   private layers: Layer[] = [];
   private added = 0;
+  private listeners = new Set<() => void>();
+  private changes = 0;
 
   /** Adds the handlers of a part of the page, and returns what takes them away. */
   add(level: Level, handlers: RefObject<Handlers>): () => void {
     const layer = { depth: depth[level], order: this.added++, handlers };
     this.layers.push(layer);
+    this.changed();
     return () => {
       this.layers = this.layers.filter((l) => l !== layer);
+      this.changed();
     };
+  }
+
+  /**
+   * Calls listener whenever the handlers have changed, as once a part of
+   * the page rendered anew with what it can run now, and returns what stops
+   * it: as the palette renders anew, so that what it says of each command
+   * is what the page says of it, rather than what it said as the palette
+   * opened (useSyncExternalStore's subscribe).
+   */
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  /** Returns how many times the handlers have changed (useSyncExternalStore's getSnapshot). */
+  readonly revision = (): number => this.changes;
+
+  /** Tells the listeners that the handlers have changed (subscribe). */
+  changed(): void {
+    this.changes++;
+    for (const listener of [...this.listeners]) {
+      listener();
+    }
   }
 
   /** Returns the handler that runs the command of id, or undefined while no part of the page has one. */
@@ -108,6 +144,11 @@ export class CommandRegistry {
     return commandIds.filter((id) => this.handler(id) !== undefined);
   }
 
+  /** Reports whether the command of id can run now (canRun). */
+  can(id: CommandId): boolean {
+    return canRun(this.handler(id));
+  }
+
   /** Runs the command of id, and reports whether it did something: nothing where it cannot run now. */
   run(id: CommandId, query?: string): boolean {
     return runHandler(this.handler(id), query);
@@ -129,13 +170,18 @@ export function usePlatform(): Platform {
 
 /**
  * Registers handlers, as the part of the page that calls it has them in
- * its latest render, while it is shown, at level.
+ * its latest render, while it is shown, at level, and tells the registry's
+ * listeners of each render, which may have changed what they can run now,
+ * as the palette that is open (CommandRegistry's subscribe). It is named
+ * apart from the project's useCommands, which sends a batch of commands of
+ * the project's content (N62).
  */
-export function useCommands(level: Level, handlers: Handlers): void {
+export function useCommandHandlers(level: Level, handlers: Handlers): void {
   const registry = useContext(Registry);
   const ref = useRef(handlers);
   useLayoutEffect(() => {
     ref.current = handlers;
+    registry?.changed();
   });
   useLayoutEffect(
     () => (registry === undefined ? undefined : registry.add(level, ref)),
@@ -173,8 +219,13 @@ export function keysOfPage(
     if (commandOf(id).outsideText === true && isTextField(target)) {
       return;
     }
+    // The repeats of a key that runs once are the page's where the key ran
+    // its command, and the browser's where it did not, as the key itself
+    // was.
     if (e.repeat && commandOf(id).repeats !== true) {
-      e.preventDefault();
+      if (registry.can(id)) {
+        e.preventDefault();
+      }
       return;
     }
     if (registry.run(id)) {

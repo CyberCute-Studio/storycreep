@@ -528,12 +528,17 @@ describe("the canvas's keys", () => {
       altKey: false,
       shiftKey: true,
     };
-    expect(canvasKey({ ...key, key: "!", code: "Digit1" })).toBe("canvas.fit");
-    expect(canvasKey({ ...key, key: '"', code: "Digit2" })).toBe(
+    expect(canvasKey({ ...key, key: "!", code: "Digit1" }, "linux")).toBe(
+      "canvas.fit",
+    );
+    expect(canvasKey({ ...key, key: '"', code: "Digit2" }, "linux")).toBe(
       "canvas.zoom_selection",
     );
     expect(
-      canvasKey({ ...key, shiftKey: false, key: "Escape", code: "Escape" }),
+      canvasKey(
+        { ...key, shiftKey: false, key: "Escape", code: "Escape" },
+        "linux",
+      ),
     ).toBe("canvas.deselect");
   });
 });

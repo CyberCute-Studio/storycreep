@@ -52,12 +52,13 @@ import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { api, notFoundBy, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { commandOf } from "../commands/catalog";
+import { type CommandId, commandOf } from "../commands/catalog";
 import { bindingText } from "../commands/keys";
 import {
+  canRun,
   type Handlers,
   runHandler,
-  useCommands,
+  useCommandHandlers,
   usePlatform,
   useRegistry,
 } from "../commands/registry";
@@ -651,9 +652,16 @@ function BoardCanvasOf({
   const history = useHistory(projectId);
   // The undo and the redo are the toolbar's, rather than the project's
   // layout's above the page, while it shows them, and so are their
-  // commands (plan note N72).
+  // commands (plan note N72), which, as the canvas's other commands that
+  // change the board, do not act in the middle of a drag, whose nodes a
+  // step would change under it, as of a move whose nodes' revisions the
+  // step changes, which the server would then refuse.
   useOwnHistory(editable);
-  useHistoryCommands(editable ? history : undefined, "page");
+  useHistoryCommands(
+    editable ? history : undefined,
+    "page",
+    () => !controller.gestures.following(),
+  );
   // The tags of the board's nodes, which the tag filter offers, as the
   // document has them, with the one that it dims by, though no node has it
   // any longer, as once another session took it away, until it is cleared
@@ -1736,13 +1744,18 @@ function BoardCanvasOf({
         }
       : {}),
   };
-  useCommands("page", canvasHandlers);
+  useCommandHandlers("page", canvasHandlers);
   const platform = usePlatform();
-  const paletteKey = bindingText(
-    t,
-    commandOf("palette.open").keys[0],
-    platform,
-  );
+  // The keys that the canvas's help names, as the page's platform has them,
+  // as Cmd+C for the copy on macOS, and Ctrl+C elsewhere.
+  const keyOf = (id: CommandId) =>
+    bindingText(t, commandOf(id).keys[0], platform);
+  const helpKeys = {
+    palette: keyOf("palette.open"),
+    copy: keyOf("canvas.copy"),
+    cut: keyOf("canvas.cut"),
+    paste: keyOf("canvas.paste"),
+  };
 
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
@@ -1756,13 +1769,23 @@ function BoardCanvasOf({
     // The command of the canvas's, or of the page's, that the key is, on
     // the page's platform, as ? that shows the shortcuts. A key held down
     // runs it once, but for those that pan and zoom on (CommandSpec's
-    // repeats), as E would else add an element with each repeat.
+    // repeats), as E would else add an element with each repeat: its
+    // repeats are the canvas's where the key's command can run, as the key
+    // itself is then, and the page's where it cannot, as Enter with nothing
+    // selected, but for the clipboard's keys and the menu's, which are the
+    // canvas's whatever they do, as below.
     const id = canvasKey(e, platform);
     if (id === undefined) {
       return;
     }
     if (e.repeat && commandOf(id).repeats !== true) {
-      e.preventDefault();
+      if (
+        clipboardKey(id) !== undefined ||
+        id === "canvas.menu" ||
+        (registry !== undefined ? registry.can(id) : canRun(canvasHandlers[id]))
+      ) {
+        e.preventDefault();
+      }
       return;
     }
     // The clipboard's keys are the canvas's whatever they do, rather than
@@ -2525,8 +2548,8 @@ function BoardCanvasOf({
       <div className="flex flex-wrap items-start gap-2">
         <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
           {editable
-            ? t("canvas.help_edit", { palette: paletteKey })
-            : t("canvas.help", { palette: paletteKey })}
+            ? t("canvas.help_edit", helpKeys)
+            : t("canvas.help", helpKeys)}
         </p>
         <Button
           aria-haspopup="dialog"

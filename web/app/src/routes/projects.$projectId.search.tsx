@@ -5,7 +5,7 @@ import { type FormEvent, Fragment, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { useCommands } from "../commands/registry";
+import { useCommandHandlers } from "../commands/registry";
 import { projectQuery } from "../project/queries";
 import { takeSearchFocus } from "../search/focus";
 import { Button, MoreButton } from "../ui/Button";
@@ -24,12 +24,15 @@ interface SearchSearch {
 }
 
 export const Route = createFileRoute("/projects/$projectId/search")({
-  // What the address spells, as the router reads it: a query of digits
-  // alone is read as a number, which is the query's text all the same.
+  // What the address spells, as the router reads it (router.ts): a query
+  // of true or false, or of a number as String writes it, as 42, is read as
+  // a boolean or a number, whose text is the query's all the same.
   validateSearch: (search: Record<string, unknown>): SearchSearch => {
     const out: SearchSearch = {};
     const q =
-      typeof search.q === "string" || typeof search.q === "number"
+      typeof search.q === "string" ||
+      typeof search.q === "number" ||
+      typeof search.q === "boolean"
         ? String(search.q).trim()
         : "";
     if (q !== "") {
@@ -80,19 +83,25 @@ function SearchPage() {
   const navigate = Route.useNavigate();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
   const field = useRef<HTMLInputElement>(null);
-  // Whether the field of the form shown anew with the query that the
-  // palette's search asked for here takes the focus, which the field that
-  // had it went with.
+  // Whether the field takes the focus once the address has the query that
+  // the palette's search asked for here.
   const focusAsked = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: q shows the form anew, whose field is another then.
+  // The field shows the address's query once it changes otherwise than by
+  // the field, as by Back, or by the palette's search, in place of what was
+  // typed in it and not sent; it is the same field, which keeps the focus
+  // that it has, as once Enter sent it (WCAG 2.4.3).
   useEffect(() => {
+    const input = field.current;
+    if (input !== null && input.value.trim() !== (q ?? "")) {
+      input.value = q ?? "";
+    }
     if (takeSearchFocus() || focusAsked.current) {
       focusAsked.current = false;
-      field.current?.focus();
-      field.current?.select();
+      input?.focus();
+      input?.select();
     }
   }, [q]);
-  useCommands("page", {
+  useCommandHandlers("page", {
     "project.search": {
       run: (query) => {
         if (query !== undefined && query !== q) {
@@ -100,8 +109,14 @@ function SearchPage() {
           void navigate({ search: (prev) => ({ ...prev, q: query }) });
           return;
         }
-        field.current?.focus();
-        field.current?.select();
+        // The search of the query that the page shows already: the field
+        // shows it too, in place of what was typed in it and not sent.
+        const input = field.current;
+        if (input !== null && query !== undefined) {
+          input.value = query;
+        }
+        input?.focus();
+        input?.select();
       },
     },
   });
@@ -122,8 +137,6 @@ function SearchPage() {
     >
       <search>
         <form
-          // Shown anew once the address's query changes, as by Back, with it.
-          key={q ?? ""}
           onSubmit={submit}
           className="flex flex-wrap items-end gap-2"
           noValidate

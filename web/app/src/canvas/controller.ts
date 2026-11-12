@@ -33,7 +33,6 @@ import {
   type PointerInput,
   type SelectHow,
 } from "./gestures";
-import { canvasKey, type KeyInput } from "./keyboard";
 import type { NodeLabels } from "./labels";
 import { type Curve, curveOf, entryPoint, portPoint, portsOf } from "./layout";
 import type { Minimap } from "./minimap";
@@ -1798,12 +1797,6 @@ export class CanvasController implements GestureHost {
     if (world !== undefined) {
       this.centerOn(world);
     }
-  }
-
-  /** Takes a key that went down on the canvas, and reports whether it was the canvas's (command). */
-  key(e: KeyInput): boolean {
-    const id = canvasKey(e);
-    return id !== undefined && this.command(id);
   }
 
   /**

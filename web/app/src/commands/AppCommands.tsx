@@ -11,13 +11,20 @@ import { Button } from "../ui/Button";
 import { commandOf } from "./catalog";
 import { bindingOn } from "./keys";
 import { Palette } from "./Palette";
-import { useCommands, usePlatform, useRegistry } from "./registry";
+import { useCommandHandlers, usePlatform, useRegistry } from "./registry";
 import { Shortcuts } from "./Shortcuts";
 
-/** The element that has the focus, which a dialog that opens gives it back to. */
+/**
+ * The control that has the focus, which a dialog that opens gives it back
+ * to, or null where none has it, as where a click on a button gives it
+ * none, as Safari's and Firefox's on macOS: the document's body, which
+ * takes no focus back, so that the dialog gives the page's content the
+ * focus as it closes (focusBackTo), rather than leaving it on the body.
+ */
 function focused(): HTMLElement | null {
-  return document.activeElement instanceof HTMLElement
-    ? document.activeElement
+  const element = document.activeElement;
+  return element instanceof HTMLElement && element !== document.body
+    ? element
     : null;
 }
 
@@ -29,17 +36,14 @@ export function AppCommands({ signedIn }: { signedIn: boolean }) {
   const [shortcuts, setShortcuts] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
   const tableOpener = useRef<HTMLElement | null>(null);
-  useCommands(
+  useCommandHandlers(
     "app",
     signedIn
       ? {
-          // The palette's key closes it again, as it does in it.
+          // The palette's key closes it again in it (Palette), whose keys
+          // are its own, as a dialog's are.
           "palette.open": {
             run: () => {
-              if (palette) {
-                setPalette(false);
-                return;
-              }
               opener.current = focused();
               setPalette(true);
             },

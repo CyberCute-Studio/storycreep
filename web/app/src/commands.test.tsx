@@ -1,9 +1,27 @@
 import type { Result } from "@storycreep/shared/api";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { createI18n } from "@storycreep/shared/i18n";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useRef, useState } from "react";
+import { I18nextProvider } from "react-i18next";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { commandIds } from "./commands/catalog";
-import { CommandRegistry, keysOfPage } from "./commands/registry";
+import { Palette } from "./commands/Palette";
+import {
+  CommandRegistry,
+  CommandsProvider,
+  keysOfPage,
+  useCommandHandlers,
+  useRegistry,
+} from "./commands/registry";
+import { parseSearch } from "./router";
 import { askSearchFocus } from "./search/focus";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
@@ -166,6 +184,71 @@ describe("the command palette", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("gives the page's content the focus as it closes, where nothing had it as it opened", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    expect(document.activeElement).toBe(document.body);
+    await user.keyboard("{Control>}k{/Control}");
+    await screen.findByRole("dialog", { name: "Commands" });
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
+    );
+    expect(document.activeElement?.id).toBe("main");
+  });
+
+  it("shows itself anew, open, as its own command is chosen in it", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    const field = within(palette).getByRole("combobox") as HTMLInputElement;
+    await user.type(field, "command palette");
+    await user.keyboard("{Enter}");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
+    expect(field.value).toBe("");
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("says whether each command can run as the page says it, while it is open", () => {
+    let enable: (enabled: boolean) => void = () => {};
+    function Trash() {
+      const [enabled, setEnabled] = useState(false);
+      enable = setEnabled;
+      useCommandHandlers("page", { "go.trash": { enabled, run: () => {} } });
+      return null;
+    }
+    function Host() {
+      const registry = useRegistry();
+      const opener = useRef<HTMLElement | null>(null);
+      return registry === undefined ? null : (
+        <Palette
+          registry={registry}
+          open
+          opener={opener}
+          onOpenChange={() => {}}
+        />
+      );
+    }
+    render(
+      <I18nextProvider i18n={createI18n("en")}>
+        <CommandsProvider>
+          <Trash />
+          <Host />
+        </CommandsProvider>
+      </I18nextProvider>,
+    );
+    const option = () =>
+      screen.getByRole("option", { name: /Go to the project's trash/ });
+    expect(option().getAttribute("aria-disabled")).toBe("true");
+    act(() => enable(true));
+    expect(option().getAttribute("aria-disabled")).toBeNull();
+    expect(option().textContent).not.toContain("(unavailable now)");
+  });
+
   it("stays open for the repeats of its key held down, and leaves an input method's Enter to it", async () => {
     const user = userEvent.setup();
     projectPages();
@@ -238,7 +321,7 @@ describe("the keys of the page", () => {
     await user.keyboard("{Control>}/{/Control}");
     expect(document.activeElement).toBe(field);
     // The palette's search of another query, on the search's page, keeps
-    // the focus in the field, shown anew with it.
+    // the focus in the field, which shows it.
     await user.keyboard("{Control>}k{/Control}");
     const palette = await screen.findByRole("dialog", { name: "Commands" });
     await user.type(within(palette).getByRole("combobox"), "keeper");
@@ -259,6 +342,23 @@ describe("the keys of the page", () => {
         }) as HTMLInputElement
       ).value,
     ).toBe("keeper");
+    // The palette's search of the query that the page shows already shows
+    // it in the field too, in place of what was typed there and not sent.
+    const shown = screen.getByRole("searchbox", {
+      name: "Search for",
+    }) as HTMLInputElement;
+    await user.clear(shown);
+    await user.type(shown, "harbour");
+    await user.keyboard("{Control>}k{/Control}");
+    const again = await screen.findByRole("dialog", { name: "Commands" });
+    await user.type(within(again).getByRole("combobox"), "keeper");
+    await user.click(
+      within(again).getByRole("option", {
+        name: "Search the project for “keeper”",
+      }),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(shown));
+    expect(shown.value).toBe("keeper");
   });
 
   it("forget the search's focus once a page other than the search's was shown in its place", async () => {
@@ -325,9 +425,11 @@ describe("the keys of the page", () => {
       expect(press(document.body, "z", false, true)).toBe(true);
       expect(press(document.body, "k", false, true)).toBe(true);
       expect(ran).toEqual(["undo", "palette", "undo"]);
-      // A command that cannot run now leaves the key to the browser.
+      // A command that cannot run now leaves the key to the browser, and
+      // the repeats of its key too.
       remove();
       expect(press(document.body, "z")).toBe(false);
+      expect(press(document.body, "k", false, true)).toBe(false);
     } finally {
       input.remove();
       dialog.remove();
@@ -442,13 +544,13 @@ describe("the project's search", () => {
         "Search the project's nodes, connections, variables, and components.",
       ),
     ).toBeDefined();
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search for" }),
-      "quay{Enter}",
-    );
+    const field = screen.getByRole("searchbox", { name: "Search for" });
+    await user.type(field, "quay{Enter}");
     expect(
       await screen.findByText("1 result, and more to show."),
     ).toBeDefined();
+    // The field that sent the search keeps the focus.
+    expect(document.activeElement).toBe(field);
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Find" }),
       "node",
@@ -463,6 +565,20 @@ describe("the project's search", () => {
       expect.objectContaining({ q: "quay", type: "node", cursor: "next" }),
     ]);
     expect(searches(calls)[0]).not.toHaveProperty("type");
+  });
+
+  it("searches for the query that the address spells, as 1e3, null, or true", async () => {
+    expect({
+      ...parseSearch("?q=1e3&a=null&b=true&c=1.50&d=%22true%22&e=%5Bx"),
+    }).toEqual({ q: "1e3", a: "null", b: true, c: "1.50", d: "true", e: "[x" });
+    const calls = projectPages();
+    renderApp(`/projects/${testProject.id}/search?q=true`, {
+      session: testSession,
+    });
+    expect(
+      await screen.findByText("Nothing in the project matches “true”."),
+    ).toBeDefined();
+    expect(searches(calls)).toEqual([expect.objectContaining({ q: "true" })]);
   });
 
   it("says that nothing matches, and why the server refused a search", async () => {

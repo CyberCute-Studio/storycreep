@@ -14,28 +14,18 @@
 // text (clipboardKey, plan note N71).
 
 import { type CommandId, commandOfKey } from "../commands/catalog";
-import { type KeyInput, type Platform, platformOf } from "../commands/keys";
+import type { KeyInput, Platform } from "../commands/keys";
 
 export type { KeyInput };
 
 /**
- * The platform of the browser, as the page's keys follow it, which the
- * canvas and its tree pass the page's of (usePlatform) in place of: for
- * what reads a key outside them, as the controller's tests.
- */
-const platform: Platform = platformOf();
-
-/**
  * Returns the command of the canvas that the key of e is, on platform on,
- * or undefined for a key that the canvas leaves to the page: one of those
- * above, the menu key, or Shift+F10, which open the context menu, on the
- * canvas and in its accessibility tree (NFR-A11Y-04, plan note N70), or a
- * key of the clipboard (clipboardKey).
+ * the page's (usePlatform), or undefined for a key that the canvas leaves
+ * to the page: one of those above, the menu key, or Shift+F10, which open
+ * the context menu, on the canvas and in its accessibility tree
+ * (NFR-A11Y-04, plan note N70), or a key of the clipboard (clipboardKey).
  */
-export function canvasKey(
-  e: KeyInput,
-  on: Platform = platform,
-): CommandId | undefined {
+export function canvasKey(e: KeyInput, on: Platform): CommandId | undefined {
   return commandOfKey(e, "canvas", on);
 }
 

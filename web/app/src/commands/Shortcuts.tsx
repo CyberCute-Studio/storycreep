@@ -2,8 +2,9 @@
 // ? on the canvas, the palette, and the canvas's Keyboard shortcuts open:
 // every command that has keys, in the groups that FR-EDIT-10 names, by the
 // same IDs as the palette's, each with its keys on the page's platform and
-// where they act, anywhere on the page, outside the fields that the user
-// types in, or on the canvas.
+// where they act, anywhere on the page but in a dialog, outside the fields
+// that the user types in too, or on the canvas, and that the palette's key
+// is the editor's of a link in a text's editor, which takes it first.
 
 import { Dialog } from "radix-ui";
 import { type RefObject, useId } from "react";
@@ -21,7 +22,7 @@ import {
   groups,
 } from "./catalog";
 import { KeyCaps } from "./KeyCaps";
-import { bindingOn } from "./keys";
+import { bindingOn, bindingText } from "./keys";
 import { usePlatform } from "./registry";
 
 /**
@@ -40,6 +41,7 @@ export function Shortcuts({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
+  const platform = usePlatform();
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       {open && (
@@ -52,6 +54,11 @@ export function Shortcuts({
         >
           <ShortcutTable />
           <p className="text-fg-muted">{t("shortcuts.space")}</p>
+          <p className="text-fg-muted">
+            {t("shortcuts.link", {
+              key: bindingText(t, commandOf("palette.open").keys[0], platform),
+            })}
+          </p>
           <div className="flex justify-end">
             <Dialog.Close asChild>
               <Button>{t("shortcuts.close")}</Button>
