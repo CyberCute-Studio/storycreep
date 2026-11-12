@@ -199,7 +199,12 @@ export class TargetReads {
         )
         .then((result) => {
           this.active--;
-          if (!this.stopped) {
+          if (this.stopped) {
+            // An answer that comes while the reads are stopped is told of
+            // by nothing, and kept by nothing: its target is read again as
+            // it is next asked for, once they are started.
+            this.asked.delete(id);
+          } else {
             const before = this.results.get(id);
             if (result !== "failed") {
               this.results.set(id, result);
@@ -258,7 +263,7 @@ export class TargetReads {
   /**
    * Ends the reads, until they are started again: none is made after, and
    * nothing is told of. Those asked for and not made yet may be asked for
-   * again.
+   * again, and so may those under way, once they have answered.
    */
   stop(): void {
     this.stopped = true;

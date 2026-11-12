@@ -499,6 +499,7 @@
   "inspector.target_node": "Node",
   "inspector.target_node_gone": "A node that was deleted",
   "inspector.target_node_reading": "Reading the board's nodes…",
+  "inspector.target_node_unread": "The current target",
   "inspector.target_nodes_failed": "The board's nodes could not be read.",
   "inspector.text": "Text",
   "inspector.title": "Inspector",

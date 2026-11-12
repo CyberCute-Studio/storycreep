@@ -39,7 +39,7 @@ const touchQuery = "(any-pointer: coarse)";
 /** A link handle's side, in CSS pixels, on a device with a touch screen, and on one without. */
 export const linkHandleSides = { touch: 44, fine: 24 } as const;
 
-/** Where a link handle is on the board, and how much room it has there, in units of the board, along its node's edge. */
+/** Where a link handle is on the board, and how much room it has there, in units of the board: along its node's edge, of a port's, and to the connection's other end, of an end's. */
 interface HandlePlace {
   point: Point;
   room: number;
@@ -77,7 +77,11 @@ export function portPlace(
 /**
  * Returns where the handle of an end of the connection of id is on the
  * board of controller: where the connection leaves its node (from), or
- * where it enters its node (to); none once the connection has gone.
+ * where it enters its node (to), with the room that the two ends are
+ * apart, along the board's axis that they are farther apart on, as the
+ * squares of two handles closer than their side, on both, cover each
+ * other, and a press on the one end would take the other; none once the
+ * connection has gone.
  */
 export function endPlace(
   controller: CanvasController,
@@ -89,19 +93,26 @@ export function endPlace(
     return undefined;
   }
   const c = item.connection;
-  if (end === "from") {
-    const from = controller.scene.nodes.get(c.from_node_id);
-    return from === undefined
-      ? undefined
-      : {
-          point: portPoint(from.node, from.rect, c.from_port),
-          room: Number.POSITIVE_INFINITY,
-        };
-  }
+  const from = controller.scene.nodes.get(c.from_node_id);
   const to = controller.scene.nodes.rect(c.to_node_id);
-  return to === undefined
+  const leaves =
+    from === undefined
+      ? undefined
+      : portPoint(from.node, from.rect, c.from_port);
+  const enters = to === undefined ? undefined : entryPoint(to);
+  const point = end === "from" ? leaves : enters;
+  return point === undefined
     ? undefined
-    : { point: entryPoint(to), room: Number.POSITIVE_INFINITY };
+    : {
+        point,
+        room:
+          leaves === undefined || enters === undefined
+            ? Number.POSITIVE_INFINITY
+            : Math.max(
+                Math.abs(leaves.x - enters.x),
+                Math.abs(leaves.y - enters.y),
+              ),
+      };
 }
 
 /**
@@ -109,8 +120,9 @@ export function endPlace(
  * each frame that it draws, so that the handle follows its port as the
  * canvas pans, zooms, or moves its node; it is hidden where it has no place,
  * where the canvas draws its place's room smaller than its side, as the
- * rows of a branch's outputs at a low zoom, whose handles would cover each
- * other, and while the selection moves.
+ * rows of a branch's outputs at a low zoom, or the two ends of a short
+ * connection, whose handles would cover each other, and while the selection
+ * moves.
  */
 export function LinkHandle({
   link,

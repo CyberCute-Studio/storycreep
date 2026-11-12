@@ -331,10 +331,18 @@ test.describe("a board's canvas, its branches and jumpers", () => {
     await expect.poll(async () => (await outputs()).length).toBe(1);
     await press(add);
     await expect.poll(async () => (await outputs()).length).toBe(2);
-    await press(panel.getByRole("button", { name: en["inspector.add_else"] }));
+    const addElse = panel.getByRole("button", {
+      name: en["inspector.add_else"],
+    });
+    await press(addElse);
     await expect
       .poll(async () => (await outputs()).map((o) => o.kind))
       .toEqual(["if", "elseif", "else"]);
+    // The button of the else that the branch now has says that it is
+    // unavailable, and has the focus still, which the browser takes from a
+    // button that is disabled.
+    await expect(addElse).toHaveAttribute("aria-disabled", "true");
+    await expect(addElse).toBeFocused();
     const [first, second] = await outputs();
     expect(await violations(page)).toEqual([]);
     // The second conditional output goes first, and is the branch's if.
@@ -357,6 +365,9 @@ test.describe("a board's canvas, its branches and jumpers", () => {
     await expect
       .poll(async () => (await outputs()).map((o) => o.kind))
       .toEqual(["if", "else"]);
+    // The inspector's heading has the focus that the button had, which went
+    // with its output's row.
+    await expect(panel.getByRole("heading", { name: "Fork" })).toBeFocused();
   });
 
   // Verifies: FR-EDIT-05/AC1

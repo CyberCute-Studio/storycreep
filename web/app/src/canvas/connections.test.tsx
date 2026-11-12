@@ -124,6 +124,8 @@ function flowProject(initial: {
   connections?: Connection[];
   boards?: Board[];
   sent?: Promise<void>;
+  /** The board whose nodes the server fails to list. */
+  unread?: string;
 }) {
   let seq = testProject.seq;
   const nodes = new Map(initial.nodes.map((n) => [n.id, n]));
@@ -291,6 +293,9 @@ function flowProject(initial: {
         if (!boards.some((b) => b.id === path.board_id)) {
           throw refused(404, { code: "not_found" });
         }
+        if (path.board_id === initial.unread) {
+          throw refused(503, { code: "unavailable" });
+        }
         return {
           items: [...nodes.values()].filter(
             (n) => n.board_id === path.board_id,
@@ -401,6 +406,12 @@ function screenOf(canvas: HTMLElement, p: { x: number; y: number }) {
 }
 
 const mouse = { pointerId: 1, pointerType: "mouse", button: 0 };
+
+/** Reports whether button says that it is unavailable, while it may have the focus still, which a disabled one may not. */
+function unavailable(button: HTMLElement): boolean {
+  expect(button).toHaveProperty("disabled", false);
+  return button.getAttribute("aria-disabled") === "true";
+}
 
 /** Returns the link handle of kind, of port where it is given, once the page shows it. */
 async function linkHandle(kind: string, port?: string) {
@@ -669,6 +680,54 @@ describe("the canvas's connections", () => {
     await waitFor(() => expect(canvas.dataset.connections).toBe("0"));
   });
 
+  it("shows no handle on the ends of a connection that the canvas draws closer than a handle's side, which would cover each other", async () => {
+    const user = userEvent.setup();
+    flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0),
+        // Its entry is 20 units from the first node's port, and a mouse's
+        // handle is 24 wide.
+        testNode("nd_2", 260, 0, { title: "The dock" }),
+        testNode("nd_3", 0, 300, { title: "The stair" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2", { order: "V" }),
+        testConnection("cn_2", "nd_1", "nd_3", { order: "k" }),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_1");
+    expect(canvas.dataset.zoom).toBe("1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    await user.click(
+      await within(inspector).findByRole("button", { name: "Edit choice 1" }),
+    );
+    await waitFor(() => expect(canvas.dataset.connection).toBe("cn_1"));
+    const ends = () =>
+      (["from", "to"] as const).map(
+        (end) =>
+          document.querySelector(`[data-link="${end}"]`) as HTMLElement | null,
+      );
+    // Each is placed, on its end, and hidden.
+    await waitFor(() =>
+      expect(ends().map((end) => end?.style.transform ?? "")).not.toContain(""),
+    );
+    expect(ends().map((end) => end?.hidden)).toEqual([true, true]);
+    // The ends of the other connection are far apart, and have theirs.
+    await user.click(
+      within(
+        await screen.findByRole("region", { name: "Connection" }),
+      ).getByRole("button", { name: "Select the node that it leaves" }),
+    );
+    await user.click(
+      await within(
+        await screen.findByRole("region", { name: "nd_1" }),
+      ).findByRole("button", { name: "Edit choice 2" }),
+    );
+    await waitFor(() => expect(canvas.dataset.connection).toBe("cn_2"));
+    await linkHandle("from");
+    await linkHandle("to");
+  });
+
   it("selects no connection, and shows no link handle, on a board that the user may not change", async () => {
     flowProject({
       nodes: [testNode("nd_1", 0, 0), testNode("nd_2", 480, 0)],
@@ -712,14 +771,22 @@ describe("the inspector of a board's flow", () => {
     expect(rows()[1]).toContain("2. No label → The stair");
     // The first cannot go up, nor the last down.
     expect(
-      within(list).getByRole("button", { name: "Move choice 1 up" }),
-    ).toHaveProperty("disabled", true);
+      unavailable(
+        within(list).getByRole("button", { name: "Move choice 1 up" }),
+      ),
+    ).toBe(true);
     expect(
-      within(list).getByRole("button", { name: "Move choice 2 down" }),
-    ).toHaveProperty("disabled", true);
+      unavailable(
+        within(list).getByRole("button", { name: "Move choice 2 down" }),
+      ),
+    ).toBe(true);
     await user.click(
-      within(list).getByRole("button", { name: "Move choice 2 up" }),
+      within(list).getByRole("button", { name: "Move choice 1 up" }),
     );
+    expect(batches(calls)).toHaveLength(0);
+    const up = within(list).getByRole("button", { name: "Move choice 2 up" });
+    expect(unavailable(up)).toBe(false);
+    await user.click(up);
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     const [[reorder]] = batches(calls);
     expect(reorder).toEqual({
@@ -729,6 +796,13 @@ describe("the inspector of a board's flow", () => {
     });
     expect((reorder.payload.order as string) < "V").toBe(true);
     await waitFor(() => expect(rows()[0]).toContain("1. No label → The stair"));
+    // The button, which went up with its row, and can go no further, says
+    // so, and has the focus still, which a disabled button would drop.
+    expect(up).toBe(
+      within(list).getByRole("button", { name: "Move choice 1 up" }),
+    );
+    expect(unavailable(up)).toBe(true);
+    expect(document.activeElement).toBe(up);
     // A drag of the first row's handle below the other row lands it last:
     // jsdom lays every row out at the window's top.
     const handle = list.querySelector("[data-drag]") as HTMLElement;
@@ -759,10 +833,14 @@ describe("the inspector of a board's flow", () => {
       within(inspector).getByLabelText("Connect to"),
       "nd_3",
     );
-    await user.click(
-      within(inspector).getByRole("button", { name: "Connect" }),
-    );
+    const connect = within(inspector).getByRole("button", { name: "Connect" });
+    await user.click(connect);
     await waitFor(() => expect(batches(calls)).toHaveLength(3));
+    // Connect, with none chosen again, says that it is unavailable, with
+    // the focus still, and connects nothing.
+    expect(unavailable(connect)).toBe(true);
+    expect(document.activeElement).toBe(connect);
+    await user.click(connect);
     expect(batches(calls)[2]).toEqual([
       {
         type: "connection.create",
@@ -775,6 +853,42 @@ describe("the inspector of a board's flow", () => {
       },
     ]);
     await waitFor(() => expect(rows()).toHaveLength(3));
+    expect(batches(calls)).toHaveLength(3);
+  });
+
+  it("ends a drag of a choice's row with Escape, which is the drag's alone, though the canvas has the focus, whose selection Escape else clears", async () => {
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2", { order: "V" }),
+        testConnection("cn_2", "nd_1", "nd_3", { order: "k" }),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const list = await within(inspector).findByRole("list", {
+      name: "Choices, in the order that the player is offered them",
+    });
+    // The canvas has the focus, as once a click on it selected the node: a
+    // press of a row's handle takes none.
+    canvas.focus();
+    const handle = list.querySelector("[data-drag]") as HTMLElement;
+    fireEvent.pointerDown(handle, { ...mouse, buttons: 1, clientY: 0 });
+    fireEvent.pointerMove(handle, { ...mouse, buttons: 1, clientY: 30 });
+    expect(list.querySelector(".opacity-60")).not.toBeNull();
+    fireEvent.keyDown(canvas, { key: "Escape" });
+    expect(list.querySelector(".opacity-60")).toBeNull();
+    fireEvent.pointerUp(handle, { ...mouse, buttons: 0, clientY: 30 });
+    // The node is selected still, with its inspector, and nothing moved.
+    expect(screen.getByRole("region", { name: "nd_1" })).toBe(inspector);
+    expect(batches(calls)).toHaveLength(0);
+    // Without a drag, Escape is the canvas's, and clears the selection.
+    fireEvent.keyDown(canvas, { key: "Escape" });
+    expect(screen.queryByRole("region", { name: "nd_1" })).toBeNull();
   });
 
   it("moves the choice whose row's handle a drag holds, wherever the list has it by the drag's end, as once another change moved it", async () => {
@@ -844,7 +958,8 @@ describe("the inspector of a board's flow", () => {
       name: "Add the else",
     });
     // A branch has an else only once it has a conditional output.
-    expect(addElse).toHaveProperty("disabled", true);
+    expect(unavailable(addElse)).toBe(true);
+    await user.click(addElse);
     await user.click(add);
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0]).toEqual([
@@ -855,11 +970,14 @@ describe("the inspector of a board's flow", () => {
     ]);
     await user.click(add);
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
-    await waitFor(() => expect(addElse).toHaveProperty("disabled", false));
+    await waitFor(() => expect(unavailable(addElse)).toBe(false));
     await user.click(addElse);
     await waitFor(() => expect(batches(calls)).toHaveLength(3));
     expect(batches(calls)[2][0].payload).toMatchObject({ else: true });
-    await waitFor(() => expect(addElse).toHaveProperty("disabled", true));
+    // The button of the else that the branch now has says that it is
+    // unavailable, with the focus still.
+    await waitFor(() => expect(unavailable(addElse)).toBe(true));
+    expect(document.activeElement).toBe(addElse);
     const first = String(batches(calls)[0][0].payload.id);
     const second = String(batches(calls)[1][0].payload.id);
     const outputs = () =>
@@ -890,12 +1008,23 @@ describe("the inspector of a board's flow", () => {
       },
     ]);
     await waitFor(() => expect(outputs().slice(0, 2)).toEqual([second, first]));
-    // An output without connections is removed at once.
+    expect(
+      unavailable(
+        within(row(second)).getByRole("button", {
+          name: "Move output 1 (if) up",
+        }),
+      ),
+    ).toBe(true);
+    // An output without connections is removed at once, and the
+    // inspector's heading has the focus that its button, which went with
+    // its row, had.
+    const heading = within(inspector).getByRole("heading", { name: "nd_b" });
     await user.click(
       within(row(first)).getByRole("button", {
         name: "Remove output 2 (else if)",
       }),
     );
+    expect(document.activeElement).toBe(heading);
     await waitFor(() => expect(batches(calls)).toHaveLength(5));
     expect(batches(calls)[4]).toEqual([
       {
@@ -948,6 +1077,8 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await waitFor(() => expect(canvas.dataset.connections).toBe("0"));
     await waitFor(() => expect(outputs()).toEqual([second]));
+    // The heading has the focus that the dialog had, whose opener went.
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it("names the buttons of two outputs of the same condition apart, by their places", async () => {
@@ -1023,9 +1154,9 @@ describe("the inspector of a board's flow", () => {
     ) as HTMLSelectElement;
     await user.selectOptions(connectTo, "nd_5");
     const connect = within(node).getByRole("button", { name: "Connect" });
-    expect(connect).toHaveProperty("disabled", false);
+    expect(unavailable(connect)).toBe(false);
     deleted("nd_5");
-    await waitFor(() => expect(connect).toHaveProperty("disabled", true));
+    await waitFor(() => expect(unavailable(connect)).toBe(true));
     expect(connectTo.value).toBe("");
     // The node chosen for the connection to enter stays what its form
     // shows, as one that was deleted, rather than the first of the list.
@@ -1129,6 +1260,13 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
     expect(batches(calls)[1][0].type).toBe("connection.reorder");
     expect(await within(inspector).findByText("Choice 2 of 2")).toBeDefined();
+    // Move later, of the last choice now, says that it is unavailable, with
+    // the focus still.
+    const later = within(inspector).getByRole("button", { name: "Move later" });
+    expect(unavailable(later)).toBe(true);
+    expect(document.activeElement).toBe(later);
+    await user.click(later);
+    expect(batches(calls)).toHaveLength(2);
     await user.click(
       within(inspector).getByRole("button", { name: "Delete the connection" }),
     );
@@ -1317,6 +1455,37 @@ describe("the canvas's jumpers", () => {
     ).toEqual([]);
   });
 
+  it("names the target of a jumper on a board whose nodes could not be read as its target, rather than as a node that was deleted", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_j", 0, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "To the lamp",
+          target: { board_id: "bd_b", node_id: "nd_lamp" },
+        }),
+        testNode("nd_lamp", 0, 0, { board_id: "bd_b", title: "The lamp" }),
+      ],
+      unread: "bd_b",
+    });
+    await openBoard("?node=nd_j");
+    const inspector = await screen.findByRole("region", {
+      name: "To the lamp",
+    });
+    expect(
+      await within(inspector).findByText(
+        "The board's nodes could not be read.",
+      ),
+    ).toBeDefined();
+    // The node is there, as the canvas's read of it by itself found.
+    expect(
+      await within(inspector).findByText(/To The lamp on Lighthouse/),
+    ).toBeDefined();
+    const list = within(inspector).getByLabelText("Node") as HTMLSelectElement;
+    expect(list.value).toBe("nd_lamp");
+    expect(list.selectedOptions[0]?.textContent).toBe("The current target");
+  });
+
   it("opens a jumper's target on its own board by its link though the address names the target already, as once the link was followed before", async () => {
     const user = userEvent.setup();
     flowProject({
@@ -1440,6 +1609,10 @@ describe("the canvas's jumpers", () => {
       within(inspector).getByLabelText("Node"),
       "nd_lamp",
     );
+    // A node chosen is what the form asked for, which it says no longer.
+    expect(
+      within(inspector).queryByText("Choose the node that the jumper goes to."),
+    ).toBeNull();
     await user.click(save());
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0]).toEqual([

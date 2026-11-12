@@ -294,5 +294,18 @@ describe("the reads of the targets that the document does not tell of", () => {
     r.start();
     r.read("nd_2");
     expect(asked).toEqual(["nd_1", "nd_2"]);
+    // A read under way as the reads stop, whose answer nothing is told of,
+    // is made again once they are started, as its target is asked for.
+    r.stop();
+    answers.get("nd_2")?.resolve(testNode("nd_2", 0, 0, { title: "Two" }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(told()).toBe(0);
+    r.start();
+    expect(r.read("nd_2")).toBeUndefined();
+    expect(asked).toEqual(["nd_1", "nd_2", "nd_2"]);
+    answers.get("nd_2")?.resolve(testNode("nd_2", 0, 0, { title: "Two" }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(told()).toBe(1);
+    expect(r.read("nd_2")).toEqual({ title: "Two", boardId: "bd_a" });
   });
 });

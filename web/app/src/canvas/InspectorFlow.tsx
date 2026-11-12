@@ -35,7 +35,7 @@ import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { Button } from "../ui/Button";
+import { Button, type ButtonProps } from "../ui/Button";
 import { dragThreshold } from "../ui/drag";
 import { SelectField, useFocusRefusal } from "../ui/Field";
 import { Alert, textLink } from "../ui/Page";
@@ -134,29 +134,54 @@ interface NodeName {
  * of the document's nodes, for every list that an inspector shows of them,
  * as one for each of a branch's outputs, and the same list while no node
  * of it is named otherwise, comes, or goes, so that a node that only moves,
- * as each of a drag's does, writes none of those lists again, of thousands
- * of nodes each.
+ * as each of a drag's does, has no name put in order again, of thousands,
+ * and writes none of those lists again, of thousands of nodes each.
  */
 function useNodeNames(
   doc: ProjectDocument,
   boardId: string,
 ): readonly NodeName[] {
   const { t } = useTranslation();
-  const select = useMemo(
-    () =>
-      reading(
-        (state) => state.view.nodes,
-        (nodes): readonly NodeName[] =>
-          namedNodes(nodes, boardId, t).map(({ node, name }) => ({
+  const select = useMemo(() => {
+    // The board's nodes as the document last had them, in its order, and
+    // the list made of them: while each is the node that it was, or one of
+    // the same ID, title, type, and kind, which name it, the list is the
+    // same, and nothing is named, or put in order, again.
+    let seen: Node[] | undefined;
+    let named: readonly NodeName[] = [];
+    return reading(
+      (state) => state.view.nodes,
+      (nodes): readonly NodeName[] => {
+        const now: Node[] = [];
+        for (const node of nodes.values()) {
+          if (node.board_id === boardId && node.deleted_at === undefined) {
+            now.push(node);
+          }
+        }
+        const was = seen;
+        seen = now;
+        if (
+          was === undefined ||
+          was.length !== now.length ||
+          now.some(
+            (node, i) =>
+              node !== was[i] &&
+              (node.id !== was[i].id ||
+                node.title !== was[i].title ||
+                node.type !== was[i].type ||
+                node.kind !== was[i].kind),
+          )
+        ) {
+          named = namedNodes(nodes, boardId, t).map(({ node, name }) => ({
             id: node.id,
             name,
-          })),
-        (a, b) =>
-          a.length === b.length &&
-          a.every((n, i) => n.id === b[i].id && n.name === b[i].name),
-      ),
-    [boardId, t],
-  );
+          }));
+        }
+        return named;
+      },
+      Object.is,
+    );
+  }, [boardId, t]);
   return useDocumentState(doc, select);
 }
 
@@ -180,16 +205,49 @@ function useLeaving(doc: ProjectDocument, nodeId: string): Connection[] {
 }
 
 /**
+ * A button of the inspector that its own press may leave with nothing to
+ * do, as the one that moves a choice up once the choice is the first, Add
+ * the else once the branch has one, or Connect once it has connected, with
+ * none chosen again: where it is unavailable, it says so (aria-disabled),
+ * looks so, and does nothing, rather than be disabled, which would drop
+ * the keyboard's focus that it has, to the page's content, out of the
+ * inspector (WCAG 2.4.3), as the error console's Clear keeps its own
+ * (errors/ErrorConsole.tsx).
+ */
+function LastingButton({
+  unavailable,
+  onClick,
+  className = "",
+  ...props
+}: ButtonProps & { unavailable: boolean }) {
+  return (
+    <Button
+      {...props}
+      aria-disabled={unavailable || undefined}
+      className={`aria-disabled:cursor-not-allowed aria-disabled:opacity-60 ${className}`}
+      onClick={(event) => {
+        if (unavailable) {
+          // A button that submits a form submits none.
+          event.preventDefault();
+        } else {
+          onClick?.(event);
+        }
+      }}
+    />
+  );
+}
+
+/**
  * Returns the drag that reorders the rows of a list, each of an ID of ids,
  * in their order, by their handles (FR-EDIT-03): a press of a row's
  * handle, once it has moved 8 px (NFR-TOUCH-05), holds the row, which lands
  * where it is let go, among the rows whose middles are above the pointer,
- * as onMove is told, of the row's ID; Escape, and a pointer that the
- * browser takes, leave it where it was. The row held is the one of its ID,
- * wherever the list has it by then, as once another session's change has
- * moved it, and a row that the list no longer has is held no longer. The
- * rows' own buttons move them without a drag, so the handles are hidden
- * from assistive technology.
+ * as onMove is told, of the row's ID; Escape, which nothing else of the
+ * page hears then, and a pointer that the browser takes, leave it where it
+ * was. The row held is the one of its ID, wherever the list has it by then,
+ * as once another session's change has moved it, and a row that the list no
+ * longer has is held no longer. The rows' own buttons move them without a
+ * drag, so the handles are hidden from assistive technology.
  */
 function useReorderDrag(
   ids: readonly string[],
@@ -223,9 +281,14 @@ function useReorderDrag(
     if (!dragging) {
       return;
     }
+    // Escape, while a row is held, is the drag's alone: the press of a
+    // row's handle takes no focus, so that the key goes to what has it, as
+    // the canvas, once a click on it selected the node, which would clear
+    // its selection for it, and the inspector with it.
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         press.current = undefined;
         setDrag(undefined);
       }
@@ -424,20 +487,20 @@ function PortChoices({
                 >
                   {t("inspector.edit")}
                 </Button>
-                <Button
+                <LastingButton
                   aria-label={t("inspector.choice_up", { place: i + 1 })}
-                  disabled={keyAt(choices, i, i - 1) === undefined}
+                  unavailable={keyAt(choices, i, i - 1) === undefined}
                   onClick={() => void actions.moveChoice(choice.id, i - 1)}
                 >
                   <span aria-hidden="true">↑</span>
-                </Button>
-                <Button
+                </LastingButton>
+                <LastingButton
                   aria-label={t("inspector.choice_down", { place: i + 1 })}
-                  disabled={keyAt(choices, i, i + 1) === undefined}
+                  unavailable={keyAt(choices, i, i + 1) === undefined}
                   onClick={() => void actions.moveChoice(choice.id, i + 1)}
                 >
                   <span aria-hidden="true">↓</span>
-                </Button>
+                </LastingButton>
               </li>
             );
           })}
@@ -458,9 +521,9 @@ function PortChoices({
             {options}
           </SelectField>
         </div>
-        <Button type="submit" disabled={to === ""}>
+        <LastingButton type="submit" unavailable={to === ""}>
           {t("inspector.connect")}
-        </Button>
+        </LastingButton>
       </form>
     </section>
   );
@@ -511,18 +574,24 @@ export function Choices({
  * output, or the else, which a branch has one of at most, and only while it
  * has a conditional output. Its buttons are named by its place in the list
  * too, as those of two outputs of the same condition, as of the empty one
- * that each has as it is added, would else be named alike.
+ * that each has as it is added, would else be named alike. The button that
+ * removes an output goes with the output's row, so the inspector's heading
+ * takes the focus that it had, or that the dialog that it opened had, rather
+ * than the page's content, out of the inspector (WCAG 2.4.3).
  */
 export function Outputs({
   projectId,
   node,
   actions,
   onSelectConnection,
+  heading,
 }: {
   projectId: string;
   node: Node;
   actions: CanvasActions;
   onSelectConnection: (id: string) => void;
+  /** Returns the inspector's heading, which takes the focus of a button that went with its output. */
+  heading: () => HTMLElement | null;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -547,6 +616,7 @@ export function Outputs({
     ).length;
     if (connections === 0) {
       void actions.removeOutput(node.id, output.id, false);
+      heading()?.focus();
     } else {
       setRemoving({ output, connections, opener, pending: false });
     }
@@ -578,9 +648,9 @@ export function Outputs({
                   </span>
                   {place >= 0 && (
                     <>
-                      <Button
+                      <LastingButton
                         aria-label={t("inspector.output_up", named)}
-                        disabled={
+                        unavailable={
                           keyAt(conditionals, place, place - 1) === undefined
                         }
                         onClick={() =>
@@ -588,10 +658,10 @@ export function Outputs({
                         }
                       >
                         <span aria-hidden="true">↑</span>
-                      </Button>
-                      <Button
+                      </LastingButton>
+                      <LastingButton
                         aria-label={t("inspector.output_down", named)}
-                        disabled={
+                        unavailable={
                           keyAt(conditionals, place, place + 1) === undefined
                         }
                         onClick={() =>
@@ -599,7 +669,7 @@ export function Outputs({
                         }
                       >
                         <span aria-hidden="true">↓</span>
-                      </Button>
+                      </LastingButton>
                     </>
                   )}
                   <Button
@@ -634,12 +704,12 @@ export function Outputs({
         <Button onClick={() => void actions.addOutput(node.id, false)}>
           {t("inspector.add_output")}
         </Button>
-        <Button
-          disabled={hasElse || conditionals.length === 0}
+        <LastingButton
+          unavailable={hasElse || conditionals.length === 0}
           onClick={() => void actions.addOutput(node.id, true)}
         >
           {t("inspector.add_else")}
-        </Button>
+        </LastingButton>
       </div>
       {removing !== undefined && (
         <Confirm
@@ -648,7 +718,12 @@ export function Outputs({
             count: removing.connections,
           })}
           confirm={t("inspector.remove_output")}
-          opener={removing.opener}
+          // The button that asked, while the page has it still, as once
+          // the dialog is cancelled, or the removal refused, and else the
+          // inspector's heading.
+          opener={() =>
+            removing.opener.isConnected ? removing.opener : heading()
+          }
           pending={removing.pending}
           onClose={() => setRemoving(undefined)}
           onConfirm={() => {
@@ -758,6 +833,10 @@ export function JumperTarget({
     };
   }, [doc, board, listed, attempt, targets]);
   const reading = read?.board === board ? read.state : undefined;
+  // Whether the document has yet to read the nodes of the board chosen, so
+  // that a node that the list lacks is not known to be gone: the target
+  // that the form shows, as no other node of the board can be chosen yet.
+  const unread = listed && !doc.hasRead(boardPart(board));
   const options = useMemo(
     () =>
       board === ""
@@ -866,13 +945,14 @@ export function JumperTarget({
             label={t("inspector.target_node")}
             name="node"
             value={chosenNode}
-            onChange={(e) =>
+            onChange={(e) => {
               setChoice({
                 key: held.key,
                 board,
                 node: e.currentTarget.value,
-              })
-            }
+              });
+              setProblem(undefined);
+            }}
             disabled={reading === "loading"}
             error={
               problem ??
@@ -882,14 +962,17 @@ export function JumperTarget({
           >
             <option value="">{t("inspector.choose_node")}</option>
             {/* A node that the list does not have, as one deleted, or one
-                of a board whose nodes are read still, shows as it is until
-                another is chosen. */}
+                of a board whose nodes are read still, or could not be,
+                which is not known to be gone, shows as it is until another
+                is chosen. */}
             {chosenNode !== "" &&
               !options.some((o) => o.node.id === chosenNode) && (
                 <option value={chosenNode}>
-                  {reading === "loading"
-                    ? t("inspector.target_node_reading")
-                    : t("inspector.target_node_gone")}
+                  {!unread
+                    ? t("inspector.target_node_gone")
+                    : reading === "failed"
+                      ? t("inspector.target_node_unread")
+                      : t("inspector.target_node_reading")}
                 </option>
               )}
             {options.map(({ node: option, name }) => (
@@ -988,7 +1071,9 @@ export function ReferencedBy({
   );
   const held = useDocumentState(doc, jumpers);
   const list = useQuery({
-    queryKey: ["projects", projectId, "nodes", node.id, "referrers", held],
+    // A list of referrers, as its key's end says, which the project's
+    // settings do not have read again (readProjectAgain).
+    queryKey: ["projects", projectId, "nodes", node.id, held, "referrers"],
     // The section shows a refusal of it.
     meta: { showsRefusals: true },
     queryFn: async ({ signal }) => {
@@ -1317,18 +1402,18 @@ export function ConnectionInspector({
           })}
         </p>
         <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={keyAt(choices, place, place - 1) === undefined}
+          <LastingButton
+            unavailable={keyAt(choices, place, place - 1) === undefined}
             onClick={() => void actions.moveChoice(connection.id, place - 1)}
           >
             {t("inspector.move_earlier")}
-          </Button>
-          <Button
-            disabled={keyAt(choices, place, place + 1) === undefined}
+          </LastingButton>
+          <LastingButton
+            unavailable={keyAt(choices, place, place + 1) === undefined}
             onClick={() => void actions.moveChoice(connection.id, place + 1)}
           >
             {t("inspector.move_later")}
-          </Button>
+          </LastingButton>
         </div>
       </section>
       <section className="space-y-2">
