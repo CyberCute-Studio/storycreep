@@ -283,9 +283,18 @@ export function namesDiffer<T>(
   return false;
 }
 
-/** Returns source on one line, as a card's row shows a condition. */
-function oneLine(source: string): string {
-  return source.replace(/\s+/g, " ").trim();
+/**
+ * Returns source on one line, as a card's row shows a condition: each run
+ * of its whitespace as one space, and its lines, without those that are
+ * empty, apart by between, a space unless it is told another, as the
+ * canvas's tree tells it for what a name says (tree.ts).
+ */
+export function oneLine(source: string, between = " "): string {
+  return source
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line !== "")
+    .join(between);
 }
 
 /**

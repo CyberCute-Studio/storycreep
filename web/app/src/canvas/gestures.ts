@@ -255,8 +255,6 @@ type Gesture =
       handle: boolean;
       /** The tap right before it, which a tap of it on the same node soon after opens the node of (tap). */
       lastTap: { node: string; time: number } | undefined;
-      /** Which press it is, of those so far, by which the end of the time of its long press finds it (longPress). */
-      serial: number;
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
@@ -286,9 +284,7 @@ export class Gestures {
   private space = false;
   /** The node of the last tap, and when it was, which a second tap on it soon after opens, until the next press takes it (down). */
   private lastTap: { node: string; time: number } | undefined;
-  /** How many presses there were, which numbers each (Gesture's serial). */
-  private presses = 0;
-  /** Ends the count of the time of the long press of the press under way, if it has one. */
+  /** Ends the count of the time of the long press of the press under way, if it has one (endHold). */
   private unhold: (() => void) | undefined;
 
   constructor(private readonly host: GestureHost) {}
@@ -399,7 +395,6 @@ export class Gestures {
               : pans
                 ? "pan"
                 : "band";
-    const serial = ++this.presses;
     this.gesture = {
       kind: "press",
       id: p.id,
@@ -410,33 +405,42 @@ export class Gestures {
       link,
       handle: handle !== undefined,
       lastTap,
-      serial,
       input: p,
     };
     // A finger's press, or a pen's tip's, on the canvas itself, held where
     // it went down, opens the context menu of what is under it (longPress):
     // not a mouse's, whose right button asks for it, nor a press of a
-    // handle, which is a drag's alone.
-    this.unhold?.();
-    this.unhold =
-      handle === undefined && p.kind !== "mouse"
-        ? this.host.after(longPressTime, () => this.longPress(serial))
-        : undefined;
+    // handle, which is a drag's alone. The count before it has ended.
+    this.endHold();
+    if (handle === undefined && p.kind !== "mouse") {
+      this.unhold = this.host.after(longPressTime, () => this.longPress());
+    }
     return true;
   }
 
   /**
-   * Takes the end of the time of the long press of the press of serial:
-   * where that press is still one, neither a drag, which it is from its
-   * threshold on, nor a pinch, nor ended, it opens the context menu of what
-   * is under its pointer, where the pointer is now, and does nothing more
-   * until it goes up, so that it taps nothing, and drags nothing, after
-   * (FR-EDIT-09).
+   * Ends the count of the time of the long press, if one is under way: as
+   * its press ends, becomes a drag, or is joined by a second finger, and
+   * before the count of the press after it starts, so that a count that
+   * comes to its end is of the press under way.
    */
-  private longPress(serial: number): void {
+  private endHold(): void {
+    this.unhold?.();
+    this.unhold = undefined;
+  }
+
+  /**
+   * Takes the end of the time of the long press of the press under way,
+   * which is still one, neither a drag, which it is from its threshold on,
+   * nor a pinch, nor ended, each of which ends the count (endHold): it
+   * opens the context menu of what is under its pointer, where the pointer
+   * is now, and does nothing more until it goes up, so that it taps
+   * nothing, and drags nothing, after (FR-EDIT-09).
+   */
+  private longPress(): void {
     this.unhold = undefined;
     const g = this.gesture;
-    if (g.kind !== "press" || g.serial !== serial) {
+    if (g.kind !== "press") {
       return;
     }
     const p = this.pointers.get(g.id);
@@ -534,6 +538,7 @@ export class Gestures {
         if (moved < dragThresholds[g.input.kind]) {
           return;
         }
+        this.endHold();
         if (g.drag === "resize") {
           // A drag of the handle of a node that went resizes nothing, as one
           // that cannot move its node moves nothing.
@@ -656,8 +661,7 @@ export class Gestures {
       case "press":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
-          this.unhold?.();
-          this.unhold = undefined;
+          this.endHold();
           // A click of the middle button is a pan that did not move, and a
           // tap of a resize handle, as one with Space held, which pans, a
           // drag of it that did not.
@@ -864,9 +868,10 @@ export class Gestures {
   }
 
   private startPinch(): void {
-    // A second finger takes the board from what the first did: a rubber
-    // band, a move or a resize, which goes back where it started, or a
-    // link, which connects nothing.
+    // A second finger takes the board from what the first did: a press,
+    // whose long press it ends, a rubber band, a move or a resize, which
+    // goes back where it started, or a link, which connects nothing.
+    this.endHold();
     if (this.gesture.kind === "band") {
       this.host.band(undefined);
     } else if (this.gesture.kind === "move") {

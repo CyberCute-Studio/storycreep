@@ -250,8 +250,11 @@ test.describe("the canvas's touch model", () => {
     await page.keyboard.press("Shift+F10");
     await expect(menu).toBeVisible();
     expect(await violations(page)).toEqual([]);
-    // And its items are the keyboard's: the first is Edit the text.
-    await page.keyboard.press("ArrowDown");
+    // And its items are the keyboard's: the first, Edit the text, has the
+    // focus as the keys open the menu, and Enter chooses it.
+    await expect(
+      menu.getByRole("menuitem", { name: en["canvas.menu.edit_text"] }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(
       page.getByRole("form", {
@@ -434,7 +437,13 @@ test.describe("the canvas's accessibility tree", () => {
     await page.keyboard.press("Shift+F10");
     const menu = nodeMenu(page);
     await expect(menu).toBeVisible();
+    // The menu opens with the focus on its first item, from which End goes
+    // to its last, a moment after the key, as Radix moves the focus of a
+    // menu's items: Enter waits for it.
     await page.keyboard.press("End");
+    await expect(
+      menu.getByRole("menuitem", { name: en["canvas.delete"] }),
+    ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect.poll(() => sent.length).toBe(1);
     expect(sent[0]).toMatchObject([

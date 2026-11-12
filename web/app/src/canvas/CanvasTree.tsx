@@ -15,8 +15,10 @@
 // does, and none of them does anything of an item whose node, or whose
 // connection, the board no longer has, though the tree, which is made again
 // a moment after the board changes, shows it still. A Backspace right after
-// a letter typed takes the letter back, and deletes nothing. The canvas's
-// other keys, which zoom, and Escape, do here what they do on the canvas.
+// a letter typed takes the letter back, and deletes nothing, and a space
+// right after one goes on from it, as a character of the title, and selects
+// nothing. The canvas's other keys, which zoom, and Escape, do here what
+// they do on the canvas.
 // The tree is not drawn: the canvas shows what the focus is on, moving to
 // it where it is out of view, with the focus ring around its node, or
 // around its connection's line, which the canvas places in each frame.
@@ -58,7 +60,7 @@ interface Item {
 
 /** What the page asks of the canvas's tree. */
 export interface TreeHandle {
-  /** Gives the focus to what the tree's focus was on last, or, where the board no longer has it, to what is in its place, and reports whether it did, as it does not for a board without nodes. */
+  /** Gives the focus back to what the tree's focus was on last, which the canvas does not move to again, or, where the board no longer has it, to what is in its place, which the canvas shows, and reports whether it did, as it does not for a board without nodes. */
   focus(): boolean;
   /** Reports whether the focus is in the tree. */
   focused(): boolean;
@@ -66,6 +68,24 @@ export interface TreeHandle {
 
 /** How long after a letter the next one goes on from it, rather than starts anew, in milliseconds. */
 const typingTime = 500;
+
+/**
+ * The keys that end the letters typed, whatever the time since: those that
+ * move the tree's focus, or act on its item, after which a letter starts
+ * anew, and a Space, or a Backspace, is the tree's key again, of the item
+ * that the focus is on then, rather than a character typed, or one taken
+ * back.
+ */
+const endsTyping: ReadonlySet<string> = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "Enter",
+  "Delete",
+]);
 
 function sameItem(a: Item | undefined, b: Item | undefined): boolean {
   return a?.node === b?.node && a?.connection === b?.connection;
@@ -189,19 +209,12 @@ export const CanvasTree = memo(function CanvasTree({
     () => new Set(),
   );
   // The connections that leave each node that is expanded, and that the
-  // board still has.
+  // board still has, read in one pass of the board's connections.
   // biome-ignore lint/correctness/useExhaustiveDependencies: seen counts the changes of what the canvas holds, which the connections are read from.
-  const choices = useMemo(() => {
-    const view = doc.store.getState().view;
-    const of = new Map<string, TreeChoice[]>();
-    for (const id of expanded) {
-      const list = treeChoices(controller.scene, view, id, t);
-      if (list.length > 0) {
-        of.set(id, list);
-      }
-    }
-    return of;
-  }, [controller, doc, expanded, t, seen]);
+  const choices = useMemo(
+    () => treeChoices(controller.scene, doc.store.getState().view, expanded, t),
+    [controller, doc, expanded, t, seen],
+  );
   // What the tree's focus was last on, and where it was among the nodes,
   // by which what is in its place is found once the board no longer has it.
   const [current, setCurrent] = useState<Item>();
@@ -214,6 +227,10 @@ export const CanvasTree = memo(function CanvasTree({
   // the focus of once the board no longer has it.
   const wantsFocus = useRef(false);
   const deleting = useRef<Item>(undefined);
+  // Whether the focus that comes to an item is given back to the one that
+  // had it last, as by the context menu as it goes (TreeHandle's focus),
+  // which the canvas does not move to again.
+  const givenBack = useRef(false);
   const typed = useRef({ text: "", at: Number.NEGATIVE_INFINITY });
 
   const index = useMemo(() => {
@@ -289,8 +306,20 @@ export const CanvasTree = memo(function CanvasTree({
   useImperativeHandle(ref, () => ({
     focus: () => {
       const el = on === undefined ? null : elementOf(on);
-      el?.focus({ preventScroll: true });
-      return el !== null;
+      if (el === null) {
+        return false;
+      }
+      // The item that had the focus takes it back without the canvas
+      // moving to it, as it does when the focus comes to an item
+      // (focusIn): what gave the focus away may have moved the canvas
+      // since, as the menu's Go to target, or a press on the minimap, which
+      // closes the menu, and the move would else be undone. What is in the
+      // place of an item that the board no longer has is shown, as after
+      // the tree's own Delete.
+      givenBack.current = sameItem(on, current);
+      el.focus({ preventScroll: true });
+      givenBack.current = false;
+      return true;
     },
     focused: () => root.current?.contains(document.activeElement) === true,
   }));
@@ -417,7 +446,9 @@ export const CanvasTree = memo(function CanvasTree({
     const modified = e.ctrlKey || e.metaKey || e.altKey;
     if (menuKey(e)) {
       const r = rectOf(controller, item);
-      if (r !== undefined) {
+      // As on the canvas, not while the canvas follows a pointer, as in the
+      // middle of a drag, which the menu's items would change the nodes of.
+      if (r !== undefined && !controller.gestures.following()) {
         // The menu opens at the item's middle, which the canvas shows
         // first, as it does when the focus comes to the item, where it has
         // moved away from it since, as by a wheel, or by a key that zooms:
@@ -433,7 +464,16 @@ export const CanvasTree = memo(function CanvasTree({
       e.preventDefault();
       return;
     }
-    if (e.key === " " && !e.altKey) {
+    // Whether the key comes within the typing time of a letter typed, or
+    // of a Backspace that took one back, and whether its character goes on
+    // from the letters typed, of which there are some then.
+    const typing = e.timeStamp - typed.current.at < typingTime;
+    const goesOn = e.key.length === 1 && typing && typed.current.text !== "";
+    // Space selects, but one that goes on from letters typed is a character
+    // of the title that they find, as the one between two of its words,
+    // which would else select the node that the letters found so far, in
+    // place of the selection.
+    if (e.key === " " && !e.altKey && !(goesOn && !e.ctrlKey && !e.metaKey)) {
       select(item, e.shiftKey || e.ctrlKey || e.metaKey);
       e.preventDefault();
       return;
@@ -441,12 +481,12 @@ export const CanvasTree = memo(function CanvasTree({
     if (modified) {
       return;
     }
+    if (endsTyping.has(e.key)) {
+      typed.current = { text: "", at: Number.NEGATIVE_INFINITY };
+    }
     const all = items();
     const at = all.findIndex((i) => sameItem(i, item));
     const row = index.get(item.node) ?? 0;
-    // Whether the key comes within the typing time of a letter typed, or
-    // of a Backspace that took one back.
-    const typing = e.timeStamp - typed.current.at < typingTime;
     switch (e.key) {
       case "ArrowDown":
         go(all[Math.min(at + 1, all.length - 1)]);
@@ -482,7 +522,10 @@ export const CanvasTree = memo(function CanvasTree({
         }
         break;
       case "Enter":
-        if (select(item, false)) {
+        // On a board that may be changed, as the canvas's own Enter is,
+        // and as Delete is below: elsewhere the key selects nothing, as it
+        // opens nothing.
+        if (controller.movable() && select(item, false)) {
           controller.key(e);
         }
         break;
@@ -510,9 +553,8 @@ export const CanvasTree = memo(function CanvasTree({
         // The canvas's other keys, which zoom, and Escape, but not those
         // that pan, which are the tree's arrows here; and a letter typed,
         // which finds a node by its title, as does a character that is a
-        // key of the canvas's while it goes on from letters typed.
-        const goesOn =
-          e.key.length === 1 && typing && typed.current.text !== "";
+        // key of the canvas's, or a space, while it goes on from letters
+        // typed.
         const action = goesOn ? undefined : keyAction(e);
         if (action !== undefined && action.kind !== "pan") {
           if (!controller.key(e)) {
@@ -544,7 +586,7 @@ export const CanvasTree = memo(function CanvasTree({
     if (!sameItem(item, current)) {
       setCurrent(item);
     }
-    const r = rectOf(controller, item);
+    const r = givenBack.current ? undefined : rectOf(controller, item);
     if (r !== undefined) {
       controller.reveal(r);
     }
@@ -581,6 +623,12 @@ export const CanvasTree = memo(function CanvasTree({
         onFocus={focusIn}
         onBlur={focusOut}
         onClick={click}
+        // The browser's own menu does not open of an item, as it does not
+        // over the canvas: the menu key asks for it as it goes up, on
+        // Windows, where the focus is by then, which is here still where
+        // the key's going down opened no menu of the canvas's, as of a
+        // connection on a board that may not be changed.
+        onContextMenu={(e) => e.preventDefault()}
         className="sr-only top-0 left-0"
       >
         {rows.map((row) => {

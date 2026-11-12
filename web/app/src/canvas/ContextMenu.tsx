@@ -8,6 +8,11 @@
 // of its items is in the toolbar or the inspector too. It is the app's menu
 // (ui/Menu.tsx), whose items are of a fingertip's size, and is not modal: a
 // press outside it closes it, and is the canvas's, as on the board beside it.
+// One that the keys opened has the focus on its first item, which Enter
+// chooses, as a menu that a key opens from its button has, and one that a
+// pointer opened has it on the menu itself: Radix tells which by the keys
+// and the pointers that it hears of from when the menu's root is there
+// (ContextMenus), which is before any menu is open.
 
 import { DropdownMenu } from "radix-ui";
 import type { ReactNode } from "react";
@@ -17,12 +22,43 @@ import type { CanvasController } from "./controller";
 import { besideBoardAnchor, boardAnchorClass, useBoardAnchor } from "./Links";
 import type { Point } from "./viewport";
 
-/** A menu of children, its items, at at of the board of controller, named label. */
+/**
+ * What holds the canvas's context menu, children, a ContextMenu while one
+ * is open, and nothing else: it is there from the first, before a menu is
+ * asked for, so that it has heard the key, or the pointer, that asks for
+ * one, by which the menu that the keys open has the focus on its first
+ * item.
+ */
+export function ContextMenus({
+  open,
+  onClose,
+  children,
+}: {
+  /** Whether a menu is open, as children then is one. */
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu.Root
+      open={open}
+      modal={false}
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
+    >
+      {children}
+    </DropdownMenu.Root>
+  );
+}
+
+/** A menu of children, its items, at at of the board of controller, named label, in a ContextMenus that is open. */
 export function ContextMenu({
   controller,
   at,
   label,
-  onClose,
   returnFocus,
   children,
 }: {
@@ -31,22 +67,13 @@ export function ContextMenu({
   at: Point;
   /** What names the menu, as what it is of. */
   label: string;
-  onClose: () => void;
   /** Gives the focus that the menu had back, to what had it as the menu opened, once the menu has gone. */
   returnFocus: () => void;
   children: ReactNode;
 }) {
   const anchor = useBoardAnchor<HTMLSpanElement>(controller, at);
   return (
-    <DropdownMenu.Root
-      open
-      modal={false}
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
+    <>
       {/* What the menu opens from is its point of the board, which nothing
       presses: the canvas opens it. */}
       <DropdownMenu.Trigger asChild>
@@ -82,6 +109,6 @@ export function ContextMenu({
           {children}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    </>
   );
 }

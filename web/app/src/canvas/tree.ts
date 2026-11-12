@@ -15,6 +15,7 @@ import { choicesOfPort } from "./flow";
 import {
   type LabelContext,
   type NodeLabels,
+  oneLine,
   outputLabel,
   plainText,
   titleOf,
@@ -54,18 +55,12 @@ export interface TreeChoice {
   label: string;
 }
 
-/** Returns text on one line, its lines apart by a semicolon, as a name is read. */
-function oneLine(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line) => line !== "")
-    .join("; ");
-}
+/** What is between the lines of a text that a name says on one line (oneLine), as a name is read. */
+const betweenLines = "; ";
 
 /** Returns what names a node whose card shows labels: its title, the line of its type, and what its card's body says, on one line. */
 export function nodeLabel(labels: NodeLabels, t: TreeMessages): string {
-  const body = oneLine(labels.body);
+  const body = oneLine(labels.body, betweenLines);
   return body === ""
     ? t("canvas.tree.node", { title: labels.title, kind: labels.kind })
     : t("canvas.tree.node_body", {
@@ -131,29 +126,58 @@ export function treeRows(): (
 }
 
 /**
- * Returns the connections that leave the node of id, of those that scene
- * draws, in the order of the node's ports, an element's one, or a branch's
- * outputs, and of each port's choices (FR-EDIT-03 AC1), each named by the
- * node that it enters, as that node's card titles it, by its label, as
- * plain words, where it has one, and, of a branch's, by the row of the
- * output that it leaves, as the branch's card says it.
+ * Returns the connections that leave each node of ids, of those that scene
+ * draws, by the node's ID, without the nodes that none leaves, or that the
+ * scene has not: in the order of the node's ports, an element's one, or a
+ * branch's outputs, and of each port's choices (FR-EDIT-03 AC1), each named
+ * by the node that it enters, as that node's card titles it, by its label,
+ * as plain words, where it has one, and, of a branch's, by the row of the
+ * output that it leaves, as the branch's card says it. It reads the scene's
+ * connections once for all of ids, rather than once for each.
  */
 export function treeChoices(
   scene: Scene,
   view: Pick<Doc, "components" | "variables">,
-  id: string,
+  ids: ReadonlySet<string>,
   t: TreeMessages,
-): TreeChoice[] {
-  const node = scene.nodes.get(id)?.node;
-  if (node === undefined) {
-    return [];
+): Map<string, TreeChoice[]> {
+  const of = new Map<string, TreeChoice[]>();
+  if (ids.size === 0) {
+    return of;
   }
-  const leaving: Connection[] = [];
+  const leaving = new Map<string, Connection[]>();
   scene.connections.forEach((_, item) => {
-    if (item.connection.from_node_id === id) {
-      leaving.push(item.connection);
+    const from = item.connection.from_node_id;
+    if (ids.has(from)) {
+      const list = leaving.get(from);
+      if (list === undefined) {
+        leaving.set(from, [item.connection]);
+      } else {
+        list.push(item.connection);
+      }
     }
   });
+  for (const [id, connections] of leaving) {
+    const node = scene.nodes.get(id)?.node;
+    const choices =
+      node === undefined
+        ? []
+        : choicesOfNode(scene, view, node, connections, t);
+    if (choices.length > 0) {
+      of.set(id, choices);
+    }
+  }
+  return of;
+}
+
+/** Returns the connections of leaving, which leave node, as the tree lists them under it (treeChoices). */
+function choicesOfNode(
+  scene: Scene,
+  view: Pick<Doc, "components" | "variables">,
+  node: Node,
+  leaving: readonly Connection[],
+  t: TreeMessages,
+): TreeChoice[] {
   const names = {
     componentName: (component: string) => view.components.get(component)?.name,
     variableKey: (variable: string) => view.variables.get(variable)?.key,
@@ -167,7 +191,7 @@ export function treeChoices(
     for (const c of choicesOfPort(leaving, port)) {
       const to = scene.nodes.get(c.to_node_id)?.node;
       const target = to === undefined ? c.to_node_id : titleOf(to, t);
-      const label = oneLine(plainText(c.label, names));
+      const label = oneLine(plainText(c.label, names), betweenLines);
       choices.push({
         id: c.id,
         label:

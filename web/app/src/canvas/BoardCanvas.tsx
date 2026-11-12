@@ -66,7 +66,7 @@ import { Alert } from "../ui/Page";
 import { besidePanel, useDocked } from "../ui/Panel";
 import { type CanvasActions, useCanvasActions } from "./actions";
 import { CanvasTree, type TreeHandle } from "./CanvasTree";
-import { ContextMenu } from "./ContextMenu";
+import { ContextMenu, ContextMenus } from "./ContextMenu";
 import { maxEdited } from "./commands";
 import {
   type BenchOptions,
@@ -424,6 +424,13 @@ function BoardCanvasOf({
   // the focus, as it opens the inspector.
   const inspectorHeading = useRef<HTMLHeadingElement>(null);
   const docked = useDocked();
+  // The inspector, opened, or, where it is open already, as docked beside
+  // the canvas, given the focus, as one that opens takes it: as Enter on a
+  // branch, a jumper, or a connection asks, and the context menu.
+  const inspect = useCallback(() => {
+    setInspecting(true);
+    inspectorHeading.current?.focus();
+  }, []);
   // The element whose text the canvas's editor shows over it, if any.
   const [editing, setEditing] = useState<string>();
   // The last bulk move, once it joined the history, which the canvas offers
@@ -736,10 +743,7 @@ function BoardCanvasOf({
             if (node?.type === "element") {
               openText(id);
             } else {
-              setInspecting(true);
-              // An inspector that is open already, docked beside the canvas,
-              // takes the focus, as one that opens does.
-              inspectorHeading.current?.focus();
+              inspect();
             }
           },
           connect: (from, to) => void edits.current?.actions.connect(from, to),
@@ -747,16 +751,13 @@ function BoardCanvasOf({
             void edits.current?.actions.reconnect(id, ends, rev),
           removeConnection: (id) =>
             void edits.current?.actions.removeConnection(id),
-          openConnection: () => {
-            setInspecting(true);
-            inspectorHeading.current?.focus();
-          },
+          openConnection: inspect,
         }
       : undefined;
     return () => {
       controller.edits = undefined;
     };
-  }, [controller, doc, editable, openText]);
+  }, [controller, doc, editable, openText, inspect]);
   useEffect(() => {
     controller.snap = snap;
   }, [controller, snap]);
@@ -1427,12 +1428,6 @@ function BoardCanvasOf({
     }
   }, [menuStale]);
   const closeMenu = useCallback(() => setMenu(undefined), []);
-  // The inspector, opened, or, where it is open already, given the focus,
-  // as Enter on a branch does.
-  const inspect = () => {
-    setInspecting(true);
-    inspectorHeading.current?.focus();
-  };
   const navigate = useNavigate();
   // Opens the target of the jumper selected, as its link does (TargetLink).
   const goToTarget = () => {
@@ -1899,121 +1894,126 @@ function BoardCanvasOf({
                 returnFocus={hostElement}
               />
             )}
-            {menu !== undefined && !menuStale && (
-              // The context menu, of what is selected, or of the board at
-              // its point (FR-EDIT-09): what the toolbar and the inspector
-              // do too, and, of the board, a node created where the menu
-              // was asked for. A board that may not be changed has those
-              // of its items that change nothing.
-              <ContextMenu
-                key={menu.key}
-                controller={controller}
-                at={menu.target.at}
-                label={
-                  menu.target.kind === "board"
-                    ? t("canvas.menu.board")
-                    : menu.target.kind === "connection"
-                      ? t("canvas.menu.connection")
-                      : t("canvas.menu.nodes", { count: selected })
-                }
-                onClose={closeMenu}
-                returnFocus={() => {
-                  if (!(menu.tree && tree.current?.focus() === true)) {
-                    hostRef.current?.focus({ preventScroll: true });
+            {/* The context menu, of what is selected, or of the board at
+            its point (FR-EDIT-09): what the toolbar and the inspector do
+            too, and, of the board, a node created where the menu was asked
+            for. A board that may not be changed has those of its items
+            that change nothing. What holds it is there before one is open,
+            and hears the key, or the pointer, that asks for one. */}
+            <ContextMenus
+              open={menu !== undefined && !menuStale}
+              onClose={closeMenu}
+            >
+              {menu !== undefined && !menuStale && (
+                <ContextMenu
+                  key={menu.key}
+                  controller={controller}
+                  at={menu.target.at}
+                  label={
+                    menu.target.kind === "board"
+                      ? t("canvas.menu.board")
+                      : menu.target.kind === "connection"
+                        ? t("canvas.menu.connection")
+                        : t("canvas.menu.nodes", { count: selected })
                   }
-                }}
-              >
-                {menu.target.kind === "board" ? (
-                  <>
-                    {editable && content === "ready" && (
-                      <>
-                        <MenuItem
-                          onSelect={() =>
-                            void actions.create("element", menu.target.at)
-                          }
-                        >
-                          {t("canvas.menu.add_element")}
-                        </MenuItem>
-                        <MenuItem
-                          onSelect={() =>
-                            void actions.create("branch", menu.target.at)
-                          }
-                        >
-                          {t("canvas.menu.add_branch")}
-                        </MenuItem>
-                        <MenuItem
-                          onSelect={() =>
-                            void actions.create("jumper", menu.target.at)
-                          }
-                        >
-                          {t("canvas.menu.add_jumper")}
-                        </MenuItem>
-                        <MenuSeparator />
-                      </>
-                    )}
-                    <MenuItem onSelect={() => controller.fit()}>
-                      {t("canvas.fit")}
-                    </MenuItem>
-                  </>
-                ) : menu.target.kind === "connection" ? (
-                  <>
-                    <MenuItem onSelect={inspect}>
-                      {t("canvas.menu.inspect")}
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem
-                      danger
-                      onSelect={() =>
-                        connection !== undefined &&
-                        void actions.removeConnection(connection)
-                      }
-                    >
-                      {t("canvas.delete")}
-                    </MenuItem>
-                  </>
-                ) : (
-                  <>
-                    {editable && onlyNode?.type === "element" && (
-                      <MenuItem onSelect={() => openText(onlyNode.id)}>
-                        {t("canvas.menu.edit_text")}
+                  returnFocus={() => {
+                    if (!(menu.tree && tree.current?.focus() === true)) {
+                      hostRef.current?.focus({ preventScroll: true });
+                    }
+                  }}
+                >
+                  {menu.target.kind === "board" ? (
+                    <>
+                      {editable && content === "ready" && (
+                        <>
+                          <MenuItem
+                            onSelect={() =>
+                              void actions.create("element", menu.target.at)
+                            }
+                          >
+                            {t("canvas.menu.add_element")}
+                          </MenuItem>
+                          <MenuItem
+                            onSelect={() =>
+                              void actions.create("branch", menu.target.at)
+                            }
+                          >
+                            {t("canvas.menu.add_branch")}
+                          </MenuItem>
+                          <MenuItem
+                            onSelect={() =>
+                              void actions.create("jumper", menu.target.at)
+                            }
+                          >
+                            {t("canvas.menu.add_jumper")}
+                          </MenuItem>
+                          <MenuSeparator />
+                        </>
+                      )}
+                      <MenuItem onSelect={() => controller.fit()}>
+                        {t("canvas.fit")}
                       </MenuItem>
-                    )}
-                    {editable && (
+                    </>
+                  ) : menu.target.kind === "connection" ? (
+                    <>
                       <MenuItem onSelect={inspect}>
                         {t("canvas.menu.inspect")}
                       </MenuItem>
-                    )}
-                    {onlyLink !== undefined && (
-                      <MenuItem onSelect={goToTarget}>
-                        {t("canvas.go_to_target")}
+                      <MenuSeparator />
+                      <MenuItem
+                        danger
+                        onSelect={() =>
+                          connection !== undefined &&
+                          void actions.removeConnection(connection)
+                        }
+                      >
+                        {t("canvas.delete")}
                       </MenuItem>
-                    )}
-                    <MenuItem onSelect={() => controller.zoomToSelection()}>
-                      {t("canvas.zoom_selection")}
-                    </MenuItem>
-                    {editable && (
-                      <>
-                        <MenuItem
-                          disabled={selected > maxEdited}
-                          onSelect={() =>
-                            void actions.duplicate([...selection])
-                          }
-                        >
-                          {t("canvas.duplicate")}
+                    </>
+                  ) : (
+                    <>
+                      {editable && onlyNode?.type === "element" && (
+                        <MenuItem onSelect={() => openText(onlyNode.id)}>
+                          {t("canvas.menu.edit_text")}
                         </MenuItem>
-                        <MenuSeparator />
-                        <MenuItem
-                          danger
-                          onSelect={() => void actions.remove([...selection])}
-                        >
-                          {t("canvas.delete")}
+                      )}
+                      {editable && (
+                        <MenuItem onSelect={inspect}>
+                          {t("canvas.menu.inspect")}
                         </MenuItem>
-                      </>
-                    )}
-                  </>
-                )}
-              </ContextMenu>
-            )}
+                      )}
+                      {onlyLink !== undefined && (
+                        <MenuItem onSelect={goToTarget}>
+                          {t("canvas.go_to_target")}
+                        </MenuItem>
+                      )}
+                      <MenuItem onSelect={() => controller.zoomToSelection()}>
+                        {t("canvas.zoom_selection")}
+                      </MenuItem>
+                      {editable && (
+                        <>
+                          <MenuItem
+                            disabled={selected > maxEdited}
+                            onSelect={() =>
+                              void actions.duplicate([...selection])
+                            }
+                          >
+                            {t("canvas.duplicate")}
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem
+                            danger
+                            onSelect={() => void actions.remove([...selection])}
+                          >
+                            {t("canvas.delete")}
+                          </MenuItem>
+                        </>
+                      )}
+                    </>
+                  )}
+                </ContextMenu>
+              )}
+            </ContextMenus>
             {editing !== undefined && editedNode !== undefined && (
               <TextEditor
                 key={editing}

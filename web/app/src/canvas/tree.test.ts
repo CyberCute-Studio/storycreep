@@ -118,14 +118,24 @@ describe("the canvas's accessibility tree", () => {
   // Verifies: NFR-A11Y-03
   it("lists the connections that leave a node in the order of its ports and of their choices, each named by the node that it enters, its label, and the output that it leaves", () => {
     const { doc, scene } = board();
-    expect(treeChoices(scene, doc, "nd_1", t)).toEqual([
+    const choices = treeChoices(
+      scene,
+      doc,
+      new Set(["nd_1", "nd_b", "nd_2", "nd_gone"]),
+      t,
+    );
+    // Neither a node that no connection leaves, nor one that the board has
+    // not, has any.
+    expect([...choices.keys()].sort()).toEqual(["nd_1", "nd_b"]);
+    expect(treeChoices(scene, doc, new Set(), t).size).toBe(0);
+    expect(choices.get("nd_1")).toEqual([
       { id: "cn_1", label: "canvas.tree.connection(canvas.node.untitled)" },
       {
         id: "cn_2",
         label: "canvas.tree.connection_labelled(Has the key|Take the key)",
       },
     ]);
-    expect(treeChoices(scene, doc, "nd_b", t)).toEqual([
+    expect(choices.get("nd_b")).toEqual([
       {
         id: "cn_4",
         label:
@@ -136,8 +146,6 @@ describe("the canvas's accessibility tree", () => {
         label: "canvas.tree.output_connection(canvas.node.output_else|Harbour)",
       },
     ]);
-    expect(treeChoices(scene, doc, "nd_2", t)).toEqual([]);
-    expect(treeChoices(scene, doc, "nd_gone", t)).toEqual([]);
   });
 
   it("finds the next node whose title starts with what is typed, whatever its case, around the list's end, and stays on one that goes on matching", () => {

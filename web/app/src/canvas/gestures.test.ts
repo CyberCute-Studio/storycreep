@@ -1270,9 +1270,11 @@ describe("the canvas's gestures of a long press", () => {
 
   it("opens no menu for a press that became a drag, a pinch, or a tap before its time was up, nor for a mouse's, nor for a press of a handle", () => {
     const { state, gestures } = host("pan", true);
-    // A drag, from its threshold on.
+    // A drag, from its threshold on, which ends the count.
     gestures.down(touch(1, 200, 150));
+    expect(state.timers.at(-1)?.ended).toBe(false);
     gestures.move(touch(1, 200, 170));
+    expect(state.timers.at(-1)?.ended).toBe(true);
     hold(state);
     gestures.up(touch(1, 200, 170));
     expect(state.v.y).toBe(-20);
@@ -1281,19 +1283,23 @@ describe("the canvas's gestures of a long press", () => {
     gestures.up(touch(1, 200, 150));
     expect(state.timers.at(-1)?.ended).toBe(true);
     hold(state);
-    // A pinch.
+    // A pinch, whose second finger ends the count of the first, and counts
+    // none of its own.
     gestures.down(touch(1, 200, 150));
     gestures.down(touch(2, 300, 150));
+    expect(state.timers).toHaveLength(1);
+    expect(state.timers[0].ended).toBe(true);
     hold(state);
     gestures.up(touch(1, 200, 150));
     gestures.up(touch(2, 300, 150));
-    // A press that was cancelled, and the press after it, lifted in time:
-    // the time of the first is not the second's.
+    // A press that was cancelled, whose count ended with it, and the press
+    // after it, lifted in time: the time of the first is not the second's.
     gestures.down(touch(1, 200, 150));
     const first = state.timers.at(-1);
     gestures.cancel({ id: 1 });
+    expect(first?.ended).toBe(true);
     gestures.down(touch(1, 200, 150));
-    first?.then();
+    expect(state.timers.at(-1)).not.toBe(first);
     gestures.up(touch(1, 200, 150));
     hold(state);
     // A mouse's press, held, and a press of the resize handle, or of a

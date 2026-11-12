@@ -6,6 +6,7 @@ import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
 import "../test/editor";
 import { fakeApi, startPage, testProject } from "../test/fake";
+import { animationTime } from "./controller";
 import type { Engine } from "./engine";
 import { longPressTime } from "./gestures";
 
@@ -431,6 +432,9 @@ describe("the canvas's accessibility tree", () => {
     expect(canvas.dataset.connection).toBe("");
     expect(choice.hasAttribute("aria-selected")).toBe(false);
     expect(screen.queryByRole("menu")).toBeNull();
+    // Nor does the browser's own menu open of the item, which the menu key
+    // asks for as it goes up, where the focus is still.
+    expect(fireEvent.contextMenu(choice)).toBe(false);
     // A node is selected there, as on the canvas.
     await user.keyboard("{ArrowLeft} ");
     await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
@@ -457,6 +461,49 @@ describe("the canvas's accessibility tree", () => {
     expect(batches(calls)[0]).toMatchObject([
       { type: "node.delete", payload: { id: "nd_2" } },
     ]);
+  });
+
+  // Verifies: NFR-A11Y-04
+  it("takes a space typed after letters as one of the title that they find, rather than select what the focus is on", async () => {
+    const user = userEvent.setup();
+    boardPage([
+      testNode("nd_1", 0, 0, { title: "Old quay" }),
+      testNode("nd_2", 0, 400, { title: "New harbour" }),
+      testNode("nd_3", 0, 800, { title: "New quay" }),
+    ]);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const [first, second, third] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    // Before any letter, Space selects.
+    await user.keyboard(" ");
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("new");
+    expect(document.activeElement).toBe(second);
+    await user.keyboard(" q");
+    expect(document.activeElement).toBe(third);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    expect(second.getAttribute("aria-selected")).toBe("false");
+    expect(third.getAttribute("aria-selected")).toBe("false");
+    // Once the typing time has passed, Space selects again.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(third.getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(first.getAttribute("aria-selected")).toBe("false");
+    // A key that moves the focus ends the typing: the Space right after it
+    // selects what the focus is on then.
+    await user.keyboard("o");
+    expect(document.activeElement).toBe(first);
+    await user.keyboard("{ArrowDown} ");
+    expect(document.activeElement).toBe(second);
+    await waitFor(() =>
+      expect(second.getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(third.getAttribute("aria-selected")).toBe("false");
   });
 
   it("does nothing by Delete, Enter, or Space of an item whose node the board no longer has, as it would else to what was selected before", async () => {
@@ -690,7 +737,16 @@ describe("the canvas's context menu", () => {
     const tree = await treeOf();
     canvas.focus();
     fireEvent.keyDown(canvas, { key: "F10", shiftKey: true });
-    await screen.findByRole("menu", { name: "Actions on the board here" });
+    const ofBoard = await screen.findByRole("menu", {
+      name: "Actions on the board here",
+    });
+    // The menu that the keys open has the focus on its first item, which
+    // Enter would choose.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(ofBoard).getAllByRole("menuitem")[0],
+      ),
+    );
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(canvas));
@@ -733,8 +789,114 @@ describe("the canvas's context menu", () => {
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual(["Open the inspector", "Delete"]);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(ofConnection).getAllByRole("menuitem")[0],
+      ),
+    );
     await user.keyboard("{Escape}");
     await waitFor(() => expect(document.activeElement).toBe(choice));
+  });
+
+  it("has the focus on the menu itself, and on none of its items, where a pointer opened it", async () => {
+    const { nodes, connections } = quay();
+    boardPage(nodes, connections);
+    const canvas = await openBoard();
+    // A key before it, as one that moved the canvas, and then the press of
+    // the right button, which the menu's root hears as it goes down.
+    fireEvent.keyDown(canvas, { key: "ArrowDown" });
+    fireEvent.pointerDown(canvas, { ...mouse, button: 2, buttons: 2 });
+    fireEvent.contextMenu(canvas, {
+      button: 2,
+      ...screenOf(canvas, { x: 120, y: 64 }),
+    });
+    const menu = await screen.findByRole("menu", {
+      name: "Actions on the selected node",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(menu));
+  });
+
+  it("opens no menu by the keys, on the canvas or in the tree, while the canvas follows a pointer, as in the middle of a drag", async () => {
+    const { nodes, connections } = quay();
+    boardPage(nodes, connections);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const third = within(tree).getByRole("treeitem", {
+      name: "Lighthouse, Narration",
+    });
+    const at = screenOf(canvas, { x: 120, y: 64 });
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...at });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: at.clientX + 40,
+      clientY: at.clientY,
+    });
+    fireEvent.keyDown(canvas, { key: "F10", shiftKey: true });
+    third.focus();
+    fireEvent.keyDown(third, { key: "ContextMenu" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole("menu")).toBeNull();
+    // The key selected nothing in place of what the drag moves.
+    expect(third.getAttribute("aria-selected")).toBe("false");
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: at.clientX + 40,
+      clientY: at.clientY,
+    });
+    // Once the drag has ended, the key opens the menu.
+    fireEvent.keyDown(third, { key: "ContextMenu" });
+    await screen.findByRole("menu", { name: "Actions on the selected node" });
+  });
+
+  it("leaves the canvas where an item of the menu moved it, as Go to target, as the tree's item takes the focus back", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(testProject, "role", "get").mockReturnValue("viewer");
+    boardPage([
+      testNode("nd_j", 0, 0, {
+        type: "jumper",
+        kind: undefined,
+        title: "Back to the dock",
+        target: { board_id: "bd_a", node_id: "nd_dock" },
+      }),
+      testNode("nd_dock", 4000, 3000, { title: "The dock" }),
+    ]);
+    // The address names the target, as once the jumper's link was followed.
+    const canvas = await openBoard("?node=nd_dock");
+    const shows = (p: { x: number; y: number }) => {
+      const at = screenOf(canvas, p);
+      return (
+        at.clientX >= 0 &&
+        at.clientX <= 800 &&
+        at.clientY >= 0 &&
+        at.clientY <= 600
+      );
+    };
+    const tree = await treeOf();
+    const jumper = within(tree).getAllByRole("treeitem")[0];
+    expect(jumper.dataset.node).toBe("nd_j");
+    jumper.focus();
+    await waitFor(() => expect(shows({ x: 60, y: 30 })).toBe(true));
+    expect(shows({ x: 4060, y: 3030 })).toBe(false);
+    fireEvent.keyDown(jumper, { key: "ContextMenu" });
+    const menu = await screen.findByRole("menu", {
+      name: "Actions on the selected node",
+    });
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Go to target" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(jumper));
+    // The canvas goes to the target, and stays on it, though the focus is
+    // back on the jumper's item, which it is not shown again for.
+    await waitFor(() => expect(shows({ x: 4060, y: 3030 })).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 2 * animationTime));
+    expect(shows({ x: 4060, y: 3030 })).toBe(true);
+    expect(shows({ x: 60, y: 30 })).toBe(false);
+    // The next key of the tree that moves its focus shows its item again.
+    await user.keyboard("{End}{Home}");
+    await waitFor(() => expect(shows({ x: 60, y: 30 })).toBe(true));
   });
 
   it("closes by a press on the minimap, which moves the board, as by one on the board", async () => {
@@ -794,13 +956,15 @@ describe("the canvas's context menu", () => {
     expect(fireEvent.contextMenu(board)).toBe(false);
     fireEvent.keyDown(board, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-    // Delete in the tree deletes nothing here, and selects nothing.
+    // Delete in the tree deletes nothing here, and selects nothing, and
+    // neither does Enter, which opens nothing.
     const tree = await treeOf();
     const quayItem = within(tree).getByRole("treeitem", {
       name: "Quay, Narration",
     });
     quayItem.focus();
     fireEvent.keyDown(quayItem, { key: "Delete" });
+    fireEvent.keyDown(quayItem, { key: "Enter" });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(quayItem.getAttribute("aria-selected")).toBe("false");
     expect(canvas.dataset.selected).toBe("1");
