@@ -52,6 +52,40 @@ export function Button({
   );
 }
 
+/**
+ * A button that its own press may leave with nothing to do, as the
+ * inspector's that moves a choice up once the choice is the first, or with
+ * nothing to do for a while, as the canvas's Paste while the paste that it
+ * asked for is under way: where it is unavailable, it says so
+ * (aria-disabled), looks so, and does nothing, rather than be disabled,
+ * which would drop the keyboard's focus that it has, to the page's content
+ * (WCAG 2.4.3), and which a dialog that it opened could not give back to it
+ * as it closes, as the error console's Clear keeps its own
+ * (errors/ErrorConsole.tsx).
+ */
+export function LastingButton({
+  unavailable,
+  onClick,
+  className = "",
+  ...props
+}: ButtonProps & { unavailable: boolean }) {
+  return (
+    <Button
+      {...props}
+      aria-disabled={unavailable || undefined}
+      className={`aria-disabled:cursor-not-allowed aria-disabled:opacity-60 ${className}`}
+      onClick={(event) => {
+        if (unavailable) {
+          // A button that submits a form submits none.
+          event.preventDefault();
+        } else {
+          onClick?.(event);
+        }
+      }}
+    />
+  );
+}
+
 /** What MoreButton reads of a list's query, a page at a time (pagedQuery). */
 interface MoreOf {
   hasNextPage: boolean;

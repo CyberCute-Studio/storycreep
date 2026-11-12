@@ -1,9 +1,11 @@
+import type { SignedInBody } from "@storycreep/shared/api";
 import { renderHook } from "@testing-library/react";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { createQueryClient, sessionQuery } from "../api";
 import { createErrorLog } from "../errors/log";
 import { testSession } from "../test/app";
 import { fakeApi, testProject } from "../test/fake";
+import { holdCopy } from "./clipboard";
 import { Documents, keptUnshown } from "./documents";
 import { useProjectDocument } from "./react";
 
@@ -82,4 +84,36 @@ it("follows the document that the page's documents have now, once they dropped t
   // The one that the page shows is kept.
   await vi.advanceTimersByTimeAsync(keptUnshown + 1);
   expect(documents.get(testProject.id)).toBe(shown);
+});
+
+it("empties the page's clipboard, which holds the account's nodes, once the page is signed in to another account, and once it is signed out", () => {
+  const log = createErrorLog();
+  const queryClient = createQueryClient(log);
+  queryClient.setQueryData(sessionQuery.queryKey, testSession);
+  const documents = new Documents({ queryClient, log });
+  onTestFinished(() => documents.close());
+  const copied = {
+    userId: testSession.user_id,
+    workspaceId: testProject.workspace_id,
+    clipboard: {
+      format: "storycreep.clipboard" as const,
+      version: 1,
+      project_id: testProject.id,
+      board_id: "bd_a",
+      nodes: [],
+      connections: [],
+      variables: [],
+      components: [],
+    },
+  };
+  holdCopy(documents.clipboard, copied);
+  // The session read again, of the same account, keeps it.
+  queryClient.setQueryData(sessionQuery.queryKey, { ...testSession });
+  expect(documents.clipboard.getState()?.clipboard).toBe(copied.clipboard);
+  const other: SignedInBody = { ...testSession, user_id: "usr_other" };
+  queryClient.setQueryData(sessionQuery.queryKey, other);
+  expect(documents.clipboard.getState()).toBeUndefined();
+  holdCopy(documents.clipboard, { ...copied, userId: "usr_other" });
+  queryClient.setQueryData(sessionQuery.queryKey, null);
+  expect(documents.clipboard.getState()).toBeUndefined();
 });

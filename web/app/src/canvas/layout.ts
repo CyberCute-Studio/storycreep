@@ -45,8 +45,12 @@ export function newNodeSize(type: Node["type"]): {
   };
 }
 
-/** Returns the rectangle that node takes on its board. */
-export function nodeRect(node: Node): Rect {
+/** Returns the rectangle that node takes on its board, as a node of the board, or of a clipboard (FR-EDIT-07), is laid out. */
+export function nodeRect(
+  node: Pick<Node, "position" | "size" | "type"> & {
+    outputs?: readonly unknown[] | null;
+  },
+): Rect {
   const { x, y } = node.position;
   if (node.size?.width !== undefined && node.size.height !== undefined) {
     return { x, y, width: node.size.width, height: node.size.height };

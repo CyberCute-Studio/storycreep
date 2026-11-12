@@ -26,11 +26,13 @@ import (
 // credential of the Bearer scheme (authenticator), on a route that takes one
 // (api.TokenScope).
 
-// SessionCSRFInput is the CSRF token of a request that changes something, on
-// a route that takes an API token too: a request made with the session
-// cookie needs it, as the authenticator checks, and one made with a token
-// does not, so the header is optional. Its name is exported so that huma
-// reads it where it is embedded.
+// SessionCSRFInput is the CSRF token of a request that is not a GET, a HEAD,
+// or an OPTIONS, as one that changes something, or a POST that reads what
+// does not fit in a URL, as the clipboard's copy and its report, on a route
+// that takes an API token too: a request made with the session cookie needs
+// it, as the authenticator checks, and one made with a token does not, so
+// the header is optional. Its name is exported so that huma reads it where
+// it is embedded.
 type SessionCSRFInput struct {
 	CSRFToken string `header:"X-CSRF-Token" doc:"The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return: a request made with the session cookie without it is answered with 403 csrf_failed, and a request made with an API token needs none"`
 }
@@ -49,9 +51,23 @@ func tokenAuthDoc(s scope.Scope) string {
 // something and takes an API token that holds the scope s, what it needs of a
 // request.
 func tokenChangeDoc(s scope.Scope) string {
-	return tokenAuthDoc(s) + " It changes something, so a request made with the session cookie also needs the " +
-		"session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a " +
-		"token needs none."
+	return tokenAuthDoc(s) + sessionCSRFDoc("It changes something")
+}
+
+// tokenPostReadDoc says, in the description of an operation that reads, and
+// changes nothing, but is a POST, as what it reads does not fit in a URL, and
+// takes an API token that holds the scope s, what it needs of a request.
+func tokenPostReadDoc(s scope.Scope) string {
+	return tokenAuthDoc(s) + sessionCSRFDoc("It is a POST")
+}
+
+// sessionCSRFDoc says, in the description of an operation that takes an API
+// token, that a request of it made with the session cookie needs the
+// session's CSRF token, for the reason why, and one made with a token does
+// not, as SessionCSRFInput declares, in the same words for each operation.
+func sessionCSRFDoc(why string) string {
+	return " " + why + ", so a request made with the session cookie also needs the session's CSRF token in the " +
+		"X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none."
 }
 
 // tokenNotFoundDoc says, in the description of an operation on a project

@@ -2302,6 +2302,40 @@ export class ProjectDocument {
   }
 
   /**
+   * Resolves once the page shows what the batch answered with seq did of
+   * part, of an operation that has the document read part again, as a paste
+   * has the board that it pastes onto read (the clipboard.paste applier),
+   * whose nodes the page shows only then: once the document is as of seq,
+   * or after confirmWait, as while another session's operation before it is
+   * slow to come, and then once part, where the document is reading it
+   * again, has been read, whatever else it is reading again meanwhile, as
+   * the variables that the batch created too, which the page waits for no
+   * more than for any other change.
+   */
+  async shown(seq: number, part: Part): Promise<void> {
+    await this.whenConfirmed(seq, confirmWait);
+    const reading = this.rereads.get(part);
+    if (reading !== undefined) {
+      await Promise.allSettled([reading.done]);
+    }
+  }
+
+  /**
+   * Resolves once the page's batches that send has sent or queued so far,
+   * and the step of the history under way, have settled, as a request that
+   * reads what the server has, rather than what the page shows, waits for
+   * first, so that it reads what they change too: the clipboard's copy of a
+   * node that the page has just added, moved, or changed (plan note N71),
+   * which the server would otherwise copy as it was, or not at all.
+   */
+  async sent(): Promise<void> {
+    await Promise.allSettled([
+      ...this.sends,
+      ...(this.stepUnderWay === undefined ? [] : [this.stepUnderWay.done]),
+    ]);
+  }
+
+  /**
    * Sends the latest step of the history to undo or to redo. One asked for
    * while another of the same is under way, as by a second click before the
    * first has disabled the button, is that one, and settles as it does, so

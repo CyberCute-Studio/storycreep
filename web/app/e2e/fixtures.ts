@@ -215,7 +215,10 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * field, an item of a menu, what takes the keyboard's focus, and a handle
  * that the canvas places over itself. Not one is what the page does not
  * show, what it shows to assistive technology alone, as the link that
- * skips to the content, what is inert under a sheet or a dialog, a
+ * skips to the content, what is inert under a sheet or a dialog, or what a
+ * modal dialog or menu hides, as Radix's marks every element outside it
+ * (`data-aria-hidden`), whose presses it takes for its own, which close it,
+ * as the paste's dialog hides the canvas's toolbar (plan note N71), a
  * link within a line of text, whose line is its height, and a checkbox or a
  * radio button but with its label, which a tap on presses it. Two controls
  * of which one holds the other, or that the page shows over each other, as
@@ -224,7 +227,11 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * that the canvas places over one node, which are as far apart as the
  * canvas draws their places, and of which a press is of the one that it is
  * on, or, where they cover each other, of the nearer (plan notes N69 and
- * N70).
+ * N70). Nor is a control outside a menu that the menu covers at its middle,
+ * in the window, as the context menu covers the handles of the node that it
+ * opens over, which a tap there does not press, as it presses the menu's
+ * item (plan note N71); one that anything else covers is a control still,
+ * and so is one beyond the window, as below the page's fold.
  */
 export async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -232,12 +239,14 @@ export async function smallTargets(page: Page): Promise<string[]> {
       'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], [tabindex="0"], [data-canvas]';
     // The canvas, which is the page's surface under what is over it.
     const surface = '[role="application"]';
+    // A menu, which covers what it opens over.
+    const menu = '[role="menu"]';
     const found: { el: Element; box: DOMRect; name: string }[] = [];
     for (const el of document.querySelectorAll(controls)) {
       if (
         !(el instanceof HTMLElement) ||
         !el.checkVisibility({ visibilityProperty: true }) ||
-        el.closest("[inert], .sr-only") !== null
+        el.closest("[inert], [data-aria-hidden], .sr-only") !== null
       ) {
         continue;
       }
@@ -254,6 +263,22 @@ export async function smallTargets(page: Page): Promise<string[]> {
       const box = pressed.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) {
         continue;
+      }
+      const middle = {
+        x: box.left + box.width / 2,
+        y: box.top + box.height / 2,
+      };
+      if (
+        middle.x >= 0 &&
+        middle.y >= 0 &&
+        middle.x < innerWidth &&
+        middle.y < innerHeight &&
+        pressed.closest(menu) === null
+      ) {
+        const top = document.elementFromPoint(middle.x, middle.y);
+        if (top !== null && top.closest(menu) !== null) {
+          continue;
+        }
       }
       const name =
         el.getAttribute("aria-label") ||

@@ -719,6 +719,8 @@ describe("the canvas's context menu", () => {
       "Edit the text",
       "Open the inspector",
       "Zoom to selection",
+      "Copy",
+      "Cut",
       "Duplicate",
       "Delete",
     ]);
@@ -1023,7 +1025,7 @@ describe("the canvas's context menu", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
-    ).toEqual(["Zoom to selection"]);
+    ).toEqual(["Zoom to selection", "Copy"]);
     fireEvent.keyDown(menu, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     fireEvent.contextMenu(canvas, {

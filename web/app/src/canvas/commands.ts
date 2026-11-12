@@ -1,9 +1,9 @@
 // The commands of the canvas's edits of a board's nodes (PRD FR-EDIT-02,
 // FR-EDIT-06): each edit is one batch, undone as one step, of a command for
-// each node that a colour, a tag, or a duplicate changes, of at most
+// each node that a colour or a tag changes, of at most
 // maxEdited nodes, as many as a batch of the API holds commands for, each
-// command expecting the revision that the page shows of each node that it changes or
-// copies (FR-API-03), as every change of the project's content does, or, of
+// command expecting the revision that the page shows of each node that it
+// changes (FR-API-03), as every change of the project's content does, or, of
 // a drag, the one that it showed as the drag started, which the drag moved or
 // sized the node from, so that a change of the same made elsewhere meanwhile
 // is refused rather than written over (the document's conflicts). A move
@@ -15,21 +15,20 @@ import type {
   NodePosition,
   NodeUpdatePayload,
 } from "@storycreep/shared/api";
-import { newId } from "@storycreep/shared/ids";
 import type { Doc } from "../document/doc";
 import type { Command } from "../document/store";
-import { onBoard } from "./edit";
 import type { Point } from "./viewport";
 
 /** The most nodes that one node.move, node.delete_many, or node.restore_many names. */
 export const maxNodes = 10_000;
 
 /**
- * The most nodes that the canvas colours, tags, or duplicates at once (plan
- * note N68): a command each, as many as a batch sent through the API holds
- * (FR-API-03), so that the edit is one batch, which undoes as one step, and
- * as many as a clipboard holds (FR-EDIT-07), whose duplicate takes larger
- * selections no more.
+ * The most nodes that the canvas colours, tags, copies, cuts, or duplicates
+ * at once (plan notes N68 and N71): a colour and a tag are a command for
+ * each node, as many as a batch sent through the API holds (FR-API-03), so
+ * that the edit is one batch, which undoes as one step, and a copy, and a
+ * duplicate, which is a copy pasted, hold as many as a clipboard holds
+ * (FR-EDIT-07).
  */
 export const maxEdited = 1000;
 
@@ -124,43 +123,6 @@ export function deleteBatch(
     payload: { ids: run },
     expected_rev: revsOf(view, run),
   }));
-}
-
-/**
- * Returns the batch that duplicates the nodes of ids onto their board,
- * each moved by offset, with the IDs of the copies, in the order of ids:
- * a node.duplicate of each, of at most maxEdited of them, which the canvas
- * holds a selection to.
- */
-export function duplicateBatch(
-  view: Pick<Doc, "nodes">,
-  ids: readonly string[],
-  offset: Point,
-  makeId: () => string = () => newId("node"),
-): { batch: Command[]; copies: string[] } {
-  const copies: string[] = [];
-  const commands: Command[] = [];
-  for (const id of ids) {
-    const node = view.nodes.get(id);
-    if (node === undefined) {
-      continue;
-    }
-    const copy = makeId();
-    copies.push(copy);
-    commands.push({
-      type: "node.duplicate",
-      payload: {
-        id: copy,
-        source_id: id,
-        position: onBoard({
-          x: node.position.x + offset.x,
-          y: node.position.y + offset.y,
-        }),
-      },
-      expected_rev: { [id]: node.rev },
-    });
-  }
-  return { batch: commands, copies };
 }
 
 /**

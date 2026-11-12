@@ -473,6 +473,7 @@ describe("a board's canvas", () => {
           </button>
           <BoardCanvas
             projectId={testProject.id}
+            workspaceId={testProject.workspace_id}
             boardId={board.id}
             boardName={board.name}
           />

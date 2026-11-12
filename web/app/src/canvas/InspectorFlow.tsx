@@ -36,7 +36,7 @@ import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { Button, type ButtonProps } from "../ui/Button";
+import { Button, LastingButton } from "../ui/Button";
 import { dragThreshold } from "../ui/drag";
 import { SelectField, useFocusRefusal } from "../ui/Field";
 import { Alert, textLink } from "../ui/Page";
@@ -216,39 +216,6 @@ function useChosen<T>(key: string): [T | undefined, (chosen: T) => void] {
     choice?.key === key ? choice.chosen : undefined,
     (chosen) => setChoice({ key, chosen }),
   ];
-}
-
-/**
- * A button of the inspector that its own press may leave with nothing to
- * do, as the one that moves a choice up once the choice is the first, Add
- * the else once the branch has one, or Connect once it has connected, with
- * none chosen again: where it is unavailable, it says so (aria-disabled),
- * looks so, and does nothing, rather than be disabled, which would drop
- * the keyboard's focus that it has, to the page's content, out of the
- * inspector (WCAG 2.4.3), as the error console's Clear keeps its own
- * (errors/ErrorConsole.tsx).
- */
-function LastingButton({
-  unavailable,
-  onClick,
-  className = "",
-  ...props
-}: ButtonProps & { unavailable: boolean }) {
-  return (
-    <Button
-      {...props}
-      aria-disabled={unavailable || undefined}
-      className={`aria-disabled:cursor-not-allowed aria-disabled:opacity-60 ${className}`}
-      onClick={(event) => {
-        if (unavailable) {
-          // A button that submits a form submits none.
-          event.preventDefault();
-        } else {
-          onClick?.(event);
-        }
-      }}
-    />
-  );
 }
 
 /**

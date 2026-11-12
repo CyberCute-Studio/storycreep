@@ -25,9 +25,13 @@
 // the toolbar says each change of the selection in a live region
 // (NFR-A11Y-03, NFR-A11Y-04, plan note N70).
 
-import type { Node as BoardNode } from "@storycreep/shared/api";
+import type {
+  Node as BoardNode,
+  Clipboard,
+  ClipboardReport,
+} from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   lazy,
@@ -46,10 +50,14 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { api, notFoundBy } from "../api";
+import { api, notFoundBy, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { boardPart, type Part } from "../document/doc";
-import { useDocumentState, useProjectDocument } from "../document/react";
+import {
+  useDocumentState,
+  useDocuments,
+  useProjectDocument,
+} from "../document/react";
 import {
   HistoryButtons,
   type HistoryOf,
@@ -59,14 +67,16 @@ import {
 } from "../project/History";
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
-import { Button, buttonClass, pressedClass } from "../ui/Button";
+import { Button, buttonClass, LastingButton, pressedClass } from "../ui/Button";
+import type { Opener } from "../ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { useMediaQuery } from "../ui/media";
 import { Alert } from "../ui/Page";
 import { besidePanel, useDocked } from "../ui/Panel";
-import { type CanvasActions, useCanvasActions } from "./actions";
+import { type CanvasActions, type Refused, useCanvasActions } from "./actions";
 import { CanvasTree, type TreeHandle } from "./CanvasTree";
 import { ContextMenu, ContextMenus } from "./ContextMenu";
+import { lacksAny } from "./clipboard";
 import { maxEdited } from "./commands";
 import {
   type BenchOptions,
@@ -80,7 +90,7 @@ import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
-import { menuKey } from "./keyboard";
+import { type ClipboardAsk, clipboardKey, menuKey } from "./keyboard";
 import {
   ConnectOffer,
   endPlace,
@@ -101,12 +111,13 @@ import {
 } from "./labels";
 import { portsOf } from "./layout";
 import { Minimap } from "./minimap";
+import { PasteDialog } from "./PasteDialog";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Scene } from "./scene";
 import { TextEditor, type TextEditorHandle } from "./TextEditor";
 import { linkOf, type TargetLookup, TargetReads, targetOf } from "./targets";
 import { readTheme } from "./theme";
-import type { Point } from "./viewport";
+import { centerOf, type Point } from "./viewport";
 
 const Bench = lazy(() => import("./bench"));
 
@@ -154,6 +165,26 @@ const messageAlert =
 
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
+
+/**
+ * Returns what the toolbar says of a refusal of of, for reason, the
+ * server's: that the nodes could not be copied, or pasted, or else that the
+ * change could not be saved (useCanvasActions' refused).
+ */
+function refusedMessage(
+  t: ReturnType<typeof useTranslation>["t"],
+  of: Refused | undefined,
+  reason: string,
+): string {
+  switch (of) {
+    case "copy":
+      return t("canvas.copy_failed", { reason });
+    case "paste":
+      return t("canvas.paste_failed", { reason });
+    default:
+      return t("canvas.edit_failed", { reason });
+  }
+}
 
 /**
  * Returns what returns the tags of the nodes of scene, each once, whatever
@@ -341,6 +372,8 @@ interface BoardCanvasProps {
   initial?: SavedView;
   /** Tells what the canvas shows, from the frame that placed it on, as it changes (CanvasEvents' view). */
   onView?: (view: CanvasView) => void;
+  /** The ID of the workspace of the project, in whose projects what the page's clipboard holds of it is pasted (FR-EDIT-07). */
+  workspaceId: string;
   /** Whether the user may change the board's nodes, as an editor of a project that is not archived. */
   editable?: boolean;
   /**
@@ -375,11 +408,23 @@ function BoardCanvasOf({
   options = {},
   initial,
   onView,
+  workspaceId,
   editable = false,
   focus,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // What the page's clipboard holds, which pastes here where it was copied
+  // in this workspace, by the account that the page is signed in to.
+  const documents = useDocuments();
+  const userId = useSuspenseQuery(sessionQuery).data?.user_id;
+  const held = useStore(documents.clipboard);
+  const copied =
+    held !== undefined &&
+    held.workspaceId === workspaceId &&
+    held.userId === userId
+      ? held
+      : undefined;
   // The page's latest onView, which the controller's events call.
   const onViewRef = useRef(onView);
   useLayoutEffect(() => {
@@ -523,7 +568,7 @@ function BoardCanvasOf({
     }
     return c;
   });
-  const actions = useCanvasActions(projectId, boardId, controller);
+  const actions = useCanvasActions(projectId, boardId, workspaceId, controller);
   // The targets of the board's jumpers that the document tells nothing of,
   // as nodes of boards that the page has not opened, which the canvas reads
   // by themselves as their jumpers' cards are drawn (targets.ts), and again
@@ -1452,8 +1497,109 @@ function BoardCanvasOf({
     });
   };
 
+  // A paste: the report of what of the clipboard the board's project lacks,
+  // under way, while which Paste is unavailable (useCanvasActions' busy),
+  // and then the dialog that lists it, of the clipboard that it was asked
+  // of, and of the point of the board where it was asked to go, with what it
+  // gives the focus back to as it closes (FR-EDIT-07 AC1): the toolbar's
+  // Paste, of a paste that it asked for, which a tap does not give the
+  // focus, and else what had the focus as the dialog opened, the canvas or
+  // the item of its tree.
+  const [pasting, setPasting] = useState<{
+    clipboard: Clipboard;
+    at: Point;
+    report: ClipboardReport;
+    opener: Opener;
+    asked: ReadonlySet<string>;
+  }>();
+  const pasteButton = useRef<HTMLButtonElement>(null);
+  const editableNow = useRef(editable);
+  useLayoutEffect(() => {
+    editableNow.current = editable;
+  });
+  // Paste is offered of what the page's clipboard holds of this workspace,
+  // on a board that may be changed, once the canvas is placed on its nodes,
+  // as a new node is (Add), and while no copy, paste, or duplicate of the
+  // canvas is under way (busy).
+  const clipboardReady = content === "ready" && copied !== undefined;
+  const pastable = editable && clipboardReady && !actions.busy;
+  // Pastes what the page's clipboard holds, its nodes' middle at at of the
+  // board, or at the canvas's centre, where at is not given: at once where
+  // nothing that they name is missing from the board's project, and else
+  // once the dialog that lists what is has been answered, which gives the
+  // focus back to opener, where it is given; and selects the pasted nodes
+  // unless the user selected others meanwhile (asked), as while the report
+  // was under way. While a copy, a paste, or a duplicate of the canvas is
+  // under way, a paste asked before the canvas renders it unavailable
+  // pastes nothing (useCanvasActions' oneAtATime).
+  const pasteAt = async (at?: Point, opener?: Opener) => {
+    const clipboard = copied?.clipboard;
+    if (!pastable || clipboard === undefined) {
+      return;
+    }
+    const point = at ?? centerOf(controller.viewport(), controller.size());
+    const asked = controller.selection();
+    const report = await actions.resolve(clipboard);
+    if (report === undefined || !editableNow.current) {
+      return;
+    }
+    if (lacksAny(report)) {
+      const active = document.activeElement;
+      setPasting({
+        clipboard,
+        at: point,
+        report,
+        opener: opener ?? (active instanceof HTMLElement ? active : null),
+        asked,
+      });
+    } else {
+      void actions.paste(clipboard, point, undefined, asked);
+    }
+  };
+  // What the clipboard's keys ask, on the canvas, or in its tree, which has
+  // selected what they act on first (clipboardKey): not in the middle of a
+  // drag, as the menu's keys do nothing then, whose nodes they would change;
+  // Cut on a board that may be changed alone; and Copy, Cut, and Duplicate
+  // of at most as many nodes as a clipboard holds.
+  const clipboardAsked = (asked: ClipboardAsk) => {
+    if (controller.gestures.following()) {
+      return;
+    }
+    if (asked === "paste") {
+      void pasteAt();
+      return;
+    }
+    const ids = [...controller.selection()];
+    if (
+      ids.length === 0 ||
+      ids.length > maxEdited ||
+      (asked === "cut" && !editable)
+    ) {
+      return;
+    }
+    void (asked === "cut" ? actions.cut(ids) : actions.copy(ids));
+  };
+  // The tree's, the same function each render, as the tree renders again
+  // for what it shows alone.
+  const clipboardNow = useRef(clipboardAsked);
+  useLayoutEffect(() => {
+    clipboardNow.current = clipboardAsked;
+  });
+  const treeClipboard = useCallback(
+    (asked: ClipboardAsk) => clipboardNow.current(asked),
+    [],
+  );
+
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
+      return;
+    }
+    const asked = clipboardKey(e);
+    if (asked !== undefined) {
+      if (!e.repeat) {
+        clipboardAsked(asked);
+      }
+      e.preventDefault();
       return;
     }
     if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -1609,6 +1755,44 @@ function BoardCanvasOf({
             {t("canvas.settings")}
           </a>
         )}
+        {/* The page's clipboard (FR-EDIT-07, plan note N71): Copy, on any
+        board, as a viewer may copy what they read, and Cut and Paste on a
+        board that may be changed. While a copy, a paste, or a duplicate is
+        under way, as a press of one of them starts, each of them, and
+        Duplicate, says that it is unavailable, rather than be disabled,
+        and keeps the keyboard's focus that it has, which the dialog of a
+        paste gives back to Paste as it closes (LastingButton). */}
+        <fieldset className="flex min-w-0 flex-wrap gap-2">
+          <legend className="sr-only">{t("canvas.clipboard")}</legend>
+          <LastingButton
+            disabled={selected === 0 || selected > maxEdited}
+            unavailable={actions.busy}
+            onClick={() => void actions.copy([...selection])}
+          >
+            {t("canvas.copy")}
+          </LastingButton>
+          {editable && (
+            <>
+              <LastingButton
+                disabled={selected === 0 || selected > maxEdited}
+                unavailable={actions.busy}
+                onClick={() => void actions.cut([...selection])}
+              >
+                {t("canvas.cut")}
+              </LastingButton>
+              <LastingButton
+                ref={pasteButton}
+                disabled={!clipboardReady}
+                unavailable={actions.busy}
+                onClick={() =>
+                  void pasteAt(undefined, () => pasteButton.current)
+                }
+              >
+                {t("canvas.paste")}
+              </LastingButton>
+            </>
+          )}
+        </fieldset>
         {editable && (
           <fieldset className="flex min-w-0 flex-wrap gap-2">
             <legend className="sr-only">{t("canvas.edit")}</legend>
@@ -1630,12 +1814,13 @@ function BoardCanvasOf({
                 {t("canvas.add_jumper")}
               </MenuItem>
             </Menu>
-            <Button
+            <LastingButton
               disabled={selected === 0 || selected > maxEdited}
+              unavailable={actions.busy}
               onClick={() => void actions.duplicate([...selection])}
             >
               {t("canvas.duplicate")}
-            </Button>
+            </LastingButton>
             <Button
               disabled={selected === 0 && connection === undefined}
               onClick={() =>
@@ -1742,11 +1927,27 @@ function BoardCanvasOf({
             ) : (
               t("canvas.connection_selected")
             )}
-            {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
-            {editable &&
-              selected > maxEdited &&
-              ` ${t("canvas.too_many", { most: maxEdited })}`}
+            {/* Why Copy, Cut, and Duplicate are disabled, of more nodes than
+            a clipboard holds. */}
+            {selected > maxEdited &&
+              ` ${
+                editable
+                  ? t("canvas.too_many", { most: maxEdited })
+                  : t("canvas.too_many_copy", { most: maxEdited })
+              }`}
           </span>
+        </p>
+        {/* What the page's clipboard holds of this workspace, which Paste
+        pastes, said as a copy or a cut puts it there, as it changes
+        nothing that the page shows (FR-EDIT-07). */}
+        <p role="status" className="text-sm text-fg-muted">
+          {copied !== undefined && (
+            <span key={copied.serial}>
+              {t("canvas.on_clipboard", {
+                count: copied.clipboard.nodes.length,
+              })}
+            </span>
+          )}
         </p>
         {namesFailed && (
           <p role="alert" className="flex flex-wrap items-center gap-2 text-sm">
@@ -1836,6 +2037,7 @@ function BoardCanvasOf({
             selection={selection}
             connection={connection}
             editable={editable}
+            onClipboard={treeClipboard}
           />
           {/* What the canvas places over its nodes, outside its element, which
           takes every touch and key of its own: the resize handle of the
@@ -1967,6 +2169,14 @@ function BoardCanvasOf({
                           >
                             {t("canvas.menu.add_jumper")}
                           </MenuItem>
+                          {copied !== undefined && (
+                            <MenuItem
+                              disabled={!pastable}
+                              onSelect={() => void pasteAt(menu.target.at)}
+                            >
+                              {t("canvas.menu.paste_here")}
+                            </MenuItem>
+                          )}
                           <MenuSeparator />
                         </>
                       )}
@@ -2010,10 +2220,22 @@ function BoardCanvasOf({
                       <MenuItem onSelect={() => controller.zoomToSelection()}>
                         {t("canvas.zoom_selection")}
                       </MenuItem>
+                      <MenuItem
+                        disabled={selected > maxEdited || actions.busy}
+                        onSelect={() => void actions.copy([...selection])}
+                      >
+                        {t("canvas.copy")}
+                      </MenuItem>
                       {editable && (
                         <>
                           <MenuItem
-                            disabled={selected > maxEdited}
+                            disabled={selected > maxEdited || actions.busy}
+                            onSelect={() => void actions.cut([...selection])}
+                          >
+                            {t("canvas.cut")}
+                          </MenuItem>
+                          <MenuItem
+                            disabled={selected > maxEdited || actions.busy}
                             onSelect={() =>
                               void actions.duplicate([...selection])
                             }
@@ -2048,40 +2270,60 @@ function BoardCanvasOf({
               />
             )}
           </div>
-          {editable && (
-            // What the board's edits say, as what became of an undo, why a
-            // batch was refused, and the undo of a bulk move: over the
-            // canvas's top, rather than above it, where each as it came or
-            // went would move the canvas down the page and back, and the
-            // board with it, under a drag's pointer too (plan note N68). A
-            // press, the wheel, or a pinch on its boxes is the canvas's, as
-            // on the board beside them, rather than lost on a box that stays
-            // until the next undo, redo, or batch: their buttons alone take
-            // their own.
-            <div className="pointer-events-none absolute inset-x-2 top-2 flex max-w-xl flex-col items-start gap-2 [&_button]:pointer-events-auto">
+          {/* What the board's edits say, as what became of an undo, why a
+          batch was refused, and the undo of a bulk move: over the canvas's
+          top, rather than above it, where each as it came or went would
+          move the canvas down the page and back, and the board with it,
+          under a drag's pointer too (plan note N68). A press, the wheel, or
+          a pinch on its boxes is the canvas's, as on the board beside them,
+          rather than lost on a box that stays until the next undo, redo, or
+          batch: their buttons alone take their own. A board that may not be
+          changed says why a copy was refused alone. */}
+          <div className="pointer-events-none absolute inset-x-2 top-2 flex max-w-xl flex-col items-start gap-2 [&_button]:pointer-events-auto">
+            {editable && (
               <HistoryStatus history={history} alertClassName={messageAlert} />
-              <Alert
-                className={messageAlert}
-                message={
-                  actions.error === null
-                    ? undefined
-                    : t("canvas.edit_failed", {
-                        reason: refusalOf(actions.error, t)?.message ?? "",
-                      })
-                }
+            )}
+            <Alert
+              className={messageAlert}
+              message={
+                actions.error === null
+                  ? undefined
+                  : refusedMessage(
+                      t,
+                      actions.refused,
+                      refusalOf(actions.error, t)?.message ?? "",
+                    )
+              }
+            />
+            {editable && moved !== undefined && (
+              // A bulk move after the one before offers its own undo for as
+              // long, rather than for what was left of the one before's.
+              <UndoMove
+                key={moved.key}
+                projectId={projectId}
+                moved={moved}
+                history={history}
+                onDone={clearMoved}
               />
-              {moved !== undefined && (
-                // A bulk move after the one before offers its own undo for
-                // as long, rather than for what was left of the one before's.
-                <UndoMove
-                  key={moved.key}
-                  projectId={projectId}
-                  moved={moved}
-                  history={history}
-                  onDone={clearMoved}
-                />
-              )}
-            </div>
+            )}
+          </div>
+          {pasting !== undefined && (
+            <PasteDialog
+              report={pasting.report}
+              opener={pasting.opener}
+              onPaste={(create) => {
+                setPasting(undefined);
+                if (editableNow.current) {
+                  void actions.paste(
+                    pasting.clipboard,
+                    pasting.at,
+                    create ? pasting.report : undefined,
+                    pasting.asked,
+                  );
+                }
+              }}
+              onCancel={() => setPasting(undefined)}
+            />
           )}
         </div>
         {inspecting && editable && (

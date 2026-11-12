@@ -265,6 +265,7 @@ function BoardContent({
         options={options}
         initial={last.initial}
         onView={last.onView}
+        workspaceId={project.workspace_id}
         editable={editable}
         focus={search.node}
       />

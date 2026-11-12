@@ -87,9 +87,10 @@ export function movedBy(
  * hundredths but for an error of the double far less than half of one,
  * which rounding its hundredths as a number takes away, as onBoard's
  * reading of its decimal would, without writing the decimal of each node
- * of a drag of thousands, in each of its moves.
+ * of a drag of thousands, in each of its moves, or of a paste's, each place
+ * that it tries (pasteOffset).
  */
-function shifted(n: number, d: number): number {
+export function shifted(n: number, d: number): number {
   const sum = Math.max(-positionLimit, Math.min(positionLimit, n + d));
   const h = Math.round(sum * 100);
   return h === 0 ? 0 : h / 100;
