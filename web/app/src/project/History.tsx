@@ -22,7 +22,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { type Level, useCommandHandlers } from "../commands/registry";
+import {
+  type Handlers,
+  type Level,
+  useCommandHandlers,
+} from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
@@ -103,38 +107,28 @@ export function useHistory(projectId: string) {
 }
 
 /**
- * Registers the commands of the undo and the redo at level, of history,
- * which the buttons that the part of the page shows send too, so that a
- * key and the palette say what became of them where the buttons do; none
- * where history is undefined, as of a board that the user may not change,
- * whose part shows no buttons. Neither can run while still says that the
- * part is not still, as the canvas in the middle of a drag, whose nodes a
- * step would change under it, which it reads as either is asked to run.
+ * Returns the commands of the undo and the redo, of history, which the
+ * buttons that a part of the page shows send too, so that a key and the
+ * palette say what became of them where the buttons do: as the canvas
+ * registers them among its own, which run only outside a drag
+ * (BoardCanvas's whileDragging).
  */
-export function useHistoryCommands(
-  history: HistoryOf | undefined,
-  level: Level,
-  still: () => boolean = () => true,
-): void {
-  useCommandHandlers(
-    level,
-    history === undefined
-      ? {}
-      : {
-          "history.undo": {
-            get enabled() {
-              return history.undoable > 0 && !history.stepping && still();
-            },
-            run: () => history.step.mutate("undo"),
-          },
-          "history.redo": {
-            get enabled() {
-              return history.redoable > 0 && !history.stepping && still();
-            },
-            run: () => history.step.mutate("redo"),
-          },
-        },
-  );
+export function historyHandlers(history: HistoryOf): Handlers {
+  return {
+    "history.undo": {
+      enabled: history.undoable > 0 && !history.stepping,
+      run: () => history.step.mutate("undo"),
+    },
+    "history.redo": {
+      enabled: history.redoable > 0 && !history.stepping,
+      run: () => history.step.mutate("redo"),
+    },
+  };
+}
+
+/** Registers the commands of the undo and the redo of history at level (historyHandlers), as the project's layout does above its pages. */
+export function useHistoryCommands(history: HistoryOf, level: Level): void {
+  useCommandHandlers(level, historyHandlers(history));
 }
 
 /** The buttons of the undo and the redo. */

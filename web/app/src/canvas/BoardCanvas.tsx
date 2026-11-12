@@ -52,10 +52,11 @@ import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { api, notFoundBy, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { type CommandId, commandOf } from "../commands/catalog";
+import { type CommandId, commandOf, commandOfKey } from "../commands/catalog";
 import { bindingText } from "../commands/keys";
 import {
   canRun,
+  type Handler,
   type Handlers,
   runHandler,
   useCommandHandlers,
@@ -72,8 +73,8 @@ import {
   HistoryButtons,
   type HistoryOf,
   HistoryStatus,
+  historyHandlers,
   useHistory,
-  useHistoryCommands,
   useOwnHistory,
 } from "../project/History";
 import { loadPart } from "../project/queries";
@@ -176,6 +177,37 @@ const messageAlert =
 
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
+
+/**
+ * The commands that run in the middle of a drag of the canvas, as its
+ * wheel does then (plan note N72): those that pan, zoom, and fit the view,
+ * which change no node, the minimap's, the drag's modes, which a drag that
+ * started keeps, Escape, which ends the drag, cancelled, and the snap,
+ * which the nodes of a move land by. No other command that the canvas
+ * registers runs then, the undo among them, by its key or from the
+ * palette, nor one of the page's by its key on the canvas, as the
+ * palette's own (BoardCanvasOf's keyDown).
+ */
+const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
+  "canvas.pan_left",
+  "canvas.pan_right",
+  "canvas.pan_up",
+  "canvas.pan_down",
+  "canvas.pan_far_left",
+  "canvas.pan_far_right",
+  "canvas.pan_far_up",
+  "canvas.pan_far_down",
+  "canvas.zoom_in",
+  "canvas.zoom_out",
+  "canvas.zoom_reset",
+  "canvas.fit",
+  "canvas.zoom_selection",
+  "canvas.minimap",
+  "canvas.mode_pan",
+  "canvas.mode_select",
+  "canvas.deselect",
+  "canvas.snap",
+]);
 
 /**
  * Returns what the toolbar says of a refusal of of, for reason, the
@@ -652,16 +684,11 @@ function BoardCanvasOf({
   const history = useHistory(projectId);
   // The undo and the redo are the toolbar's, rather than the project's
   // layout's above the page, while it shows them, and so are their
-  // commands (plan note N72), which, as the canvas's other commands that
-  // change the board, do not act in the middle of a drag, whose nodes a
-  // step would change under it, as of a move whose nodes' revisions the
-  // step changes, which the server would then refuse.
+  // commands (plan note N72), which the canvas registers among its own
+  // (canvasHandlers), as they do not act in the middle of a drag either,
+  // whose nodes a step would change under it, as of a move whose nodes'
+  // revisions the step changes, which the server would then refuse.
   useOwnHistory(editable);
-  useHistoryCommands(
-    editable ? history : undefined,
-    "page",
-    () => !controller.gestures.following(),
-  );
   // The tags of the board's nodes, which the tag filter offers, as the
   // document has them, with the one that it dims by, though no node has it
   // any longer, as once another session took it away, until it is cleared
@@ -1614,15 +1641,9 @@ function BoardCanvasOf({
   // the palette run alike, each available where the toolbar's control of
   // it is: the controller's own, as the zoom and Delete, and the toolbar's,
   // as Add, Duplicate, and the inspector; C opens the inspector at its
-  // Connect to, of the one element or branch selected. None of those that
-  // change the board acts in the middle of a drag, as the menu's keys do
-  // not, nor those that leave the board, or open over it, or scroll the
-  // page under it, as Go to target, the inspector, which is a sheet over
-  // the canvas in a narrow window, and the board's settings, which would
-  // drop the drag, or leave it under what took its place: the canvas
-  // renders nothing anew for a drag, so each says whether it can run as it
-  // is asked (a getter), of the drag under way then, rather than of the one
-  // under way as the canvas last rendered.
+  // Connect to, of the one element or branch selected. In the middle of a
+  // drag, those of whileDragging alone run (canvasHandlers below, and
+  // keyDown), as the menu's keys do nothing then.
   const registry = useRegistry();
   const [connectAsked, setConnectAsked] = useState(0);
   useEffect(() => {
@@ -1635,13 +1656,14 @@ function BoardCanvasOf({
     run: () => controller.command(id),
   });
   const create = (kind: "element" | "branch" | "jumper") => ({
-    get enabled() {
-      return content === "ready" && still();
-    },
+    enabled: content === "ready",
     run: () => void actions.create(kind),
   });
-  const several = selected > 0 && selected <= maxEdited;
-  const canvasHandlers: Handlers = {
+  // Copy, Cut, and Duplicate, of at most as many nodes as a clipboard
+  // holds, are unavailable while a copy, a paste, or a duplicate is under
+  // way, which would drop it (oneAtATime), as the toolbar's are.
+  const copiable = selected > 0 && selected <= maxEdited && !actions.busy;
+  const ofCanvas: Handlers = {
     "canvas.pan_left": ofController("canvas.pan_left"),
     "canvas.pan_right": ofController("canvas.pan_right"),
     "canvas.pan_up": ofController("canvas.pan_up"),
@@ -1670,65 +1692,42 @@ function BoardCanvasOf({
     "canvas.mode_pan": { run: () => setMode("pan") },
     "canvas.mode_select": { run: () => setMode("select") },
     "canvas.go_to_target": {
-      get enabled() {
-        return onlyLink !== undefined && still();
-      },
+      enabled: onlyLink !== undefined,
       run: goToTarget,
     },
     ...(settingsId === undefined
       ? {}
       : {
           "canvas.settings": {
-            get enabled() {
-              return still();
-            },
             run: () => showInPage(document, settingsId),
           },
         }),
     "canvas.copy": {
-      get enabled() {
-        return several && !actions.busy && still();
-      },
+      enabled: copiable,
       run: () => clipboardAsked("copy"),
     },
-    "canvas.menu": {
-      get enabled() {
-        return still();
-      },
-      run: () => controller.menuOfSelection(),
-    },
+    "canvas.menu": { run: () => controller.menuOfSelection() },
     ...(editable
       ? {
+          ...historyHandlers(history),
           "canvas.add_element": create("element"),
           "canvas.add_branch": create("branch"),
           "canvas.add_jumper": create("jumper"),
-          // As the toolbar's Duplicate, unavailable while a copy, a paste,
-          // or a duplicate is under way, which would drop it (oneAtATime).
           "canvas.duplicate": {
-            get enabled() {
-              return several && !actions.busy && still();
-            },
+            enabled: copiable,
             run: () => void actions.duplicate([...selection]),
           },
           "canvas.cut": {
-            get enabled() {
-              return several && !actions.busy && still();
-            },
+            enabled: copiable,
             run: () => clipboardAsked("cut"),
           },
           "canvas.paste": {
-            get enabled() {
-              return clipboardReady && !actions.busy && still();
-            },
+            enabled: clipboardReady && !actions.busy,
             run: () => clipboardAsked("paste"),
           },
           "canvas.connect": {
-            get enabled() {
-              return (
-                (onlyNode?.type === "element" || onlyNode?.type === "branch") &&
-                still()
-              );
-            },
+            enabled:
+              onlyNode?.type === "element" || onlyNode?.type === "branch",
             run: () => {
               setInspecting(true);
               setConnectAsked((n) => n + 1);
@@ -1736,26 +1735,39 @@ function BoardCanvasOf({
           },
           "canvas.open": {
             ...ofController("canvas.open"),
-            get enabled() {
-              return (selected === 1 || connection !== undefined) && still();
-            },
+            enabled: selected === 1 || connection !== undefined,
           },
           "canvas.delete": {
             ...ofController("canvas.delete"),
-            get enabled() {
-              return (selected > 0 || connection !== undefined) && still();
-            },
+            enabled: selected > 0 || connection !== undefined,
           },
-          "canvas.inspector": {
-            get enabled() {
-              return still();
-            },
-            run: () => setInspecting((open) => !open),
-          },
+          "canvas.inspector": { run: () => setInspecting((open) => !open) },
           "canvas.snap": { run: toggleSnap },
         }
       : {}),
   };
+  // Each command of the canvas's but those of whileDragging runs only while
+  // the canvas follows no pointer, which it reads as the command is asked
+  // to run (a getter), since the canvas renders nothing anew for a drag:
+  // those that change the board, the undo among them, and those that leave
+  // the board, open over it, or scroll the page under it, as Go to target,
+  // the inspector, which is a sheet over the canvas in a narrow window, and
+  // the board's settings, which would drop the drag, or leave it under what
+  // took its place.
+  const canvasHandlers: Handlers = {};
+  for (const [id, handler] of Object.entries(ofCanvas) as [
+    CommandId,
+    Handler,
+  ][]) {
+    canvasHandlers[id] = whileDragging.has(id)
+      ? handler
+      : {
+          get enabled() {
+            return canRun(handler) && still();
+          },
+          run: handler.run,
+        };
+  }
   useCommandHandlers("page", canvasHandlers);
   const platform = usePlatform();
   // The keys that the canvas's help names, as the page's platform has them,
@@ -1781,16 +1793,24 @@ function BoardCanvasOf({
     // The command of the canvas's, or of the page's, that the key is, on
     // the page's platform, as ? that shows the shortcuts, which runs with
     // what the canvas and the page registered for it, or, outside the
-    // app's frame, which has the registry, the canvas's own handler; the
-    // table of the shortcuts, which the app's frame shows over the page,
-    // not in the middle of a drag, as the inspector is not (still).
+    // app's frame, which has the registry, the canvas's own handler. In the
+    // middle of a drag, only one of whileDragging runs: not the table of
+    // the shortcuts, which the app's frame registers and shows over the
+    // page, as the inspector does not open then; nor a key of the page's
+    // own, as Ctrl+K, which would open the palette over the board, and
+    // Ctrl+/, which would leave it for the search, which does nothing then,
+    // and is the canvas's, rather than the page's (keysOfPage) or the
+    // browser's.
     const id = canvasKey(e, platform);
     if (id === undefined) {
+      if (!still() && commandOfKey(e, "page", platform) !== undefined) {
+        e.preventDefault();
+      }
       return;
     }
     const handler =
       registry !== undefined ? registry.handler(id) : canvasHandlers[id];
-    const can = canRun(handler) && (id !== "shortcuts.show" || still());
+    const can = canRun(handler) && (whileDragging.has(id) || still());
     // The clipboard's keys are the canvas's whatever they do, rather than
     // the browser's copy that would follow them (clipboardKey), and so are
     // Shift+F10 and the menu key, which open the context menu of what is

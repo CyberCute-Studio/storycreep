@@ -7,23 +7,25 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { focusIsNowhere } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { commandOf } from "./catalog";
-import { bindingOn } from "./keys";
+import { ariaKeyShortcuts } from "./keys";
 import { Palette } from "./Palette";
 import { useCommandHandlers, usePlatform, useRegistry } from "./registry";
 import { Shortcuts } from "./Shortcuts";
 
 /**
  * The control that has the focus, which a dialog that opens gives it back
- * to, or null where none has it, as where a click on a button gives it
- * none, as Safari's and Firefox's on macOS: the document's body, which
- * takes no focus back, so that the dialog gives the page's content the
- * focus as it closes (focusBackTo), rather than leaving it on the body.
+ * to, or null where none has it (focusIsNowhere), as where a click on a
+ * button gives it none, as Safari's and Firefox's on macOS, which leaves
+ * it on the document's body, which takes no focus back, so that the dialog
+ * gives the page's content the focus as it closes (focusBackTo), rather
+ * than leaving it on the body.
  */
 function focused(): HTMLElement | null {
   const element = document.activeElement;
-  return element instanceof HTMLElement && element !== document.body
+  return !focusIsNowhere(document) && element instanceof HTMLElement
     ? element
     : null;
 }
@@ -84,14 +86,13 @@ export function CommandsButton() {
   const { t } = useTranslation();
   const registry = useRegistry();
   const platform = usePlatform();
-  const mac = platform === "mac";
-  const keys = commandOf("palette.open").keys.some((b) =>
-    bindingOn(b, platform),
-  );
   return (
     <Button
       aria-haspopup="dialog"
-      aria-keyshortcuts={keys ? (mac ? "Meta+K" : "Control+K") : undefined}
+      aria-keyshortcuts={ariaKeyShortcuts(
+        commandOf("palette.open").keys,
+        platform,
+      )}
       onClick={() => registry?.run("palette.open")}
     >
       {t("shell.commands")}

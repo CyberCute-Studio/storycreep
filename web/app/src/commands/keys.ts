@@ -227,11 +227,47 @@ export function bindingParts(
   return parts;
 }
 
-/** Returns binding as one string, its keys joined by +, as Ctrl+K, which a control's aria-keyshortcuts and a name say. */
+/** Returns binding as one string, its keys joined by +, as Ctrl+K, which a text says, as the canvas's help. */
 export function bindingText(
   t: TFunction,
   binding: Binding,
   platform: Platform,
 ): string {
   return bindingParts(t, binding, platform).join("+");
+}
+
+/**
+ * Returns bindings as a control's aria-keyshortcuts says them, on platform,
+ * which assistive technology is told of, as Control+K, or Meta+K on macOS:
+ * each that applies there, its modifiers by the names that ARIA gives
+ * them, and its key, a letter in capitals, separated by spaces; or
+ * undefined where none applies.
+ */
+export function ariaKeyShortcuts(
+  bindings: readonly Binding[],
+  platform: Platform,
+): string | undefined {
+  const shortcuts = bindings
+    .filter((binding) => bindingOn(binding, platform))
+    .map((binding) => {
+      const parts: string[] = [];
+      if (binding.mod === true) {
+        parts.push(platform === "mac" ? "Meta" : "Control");
+      }
+      if (binding.ctrl === true) {
+        parts.push("Control");
+      }
+      if (binding.shift === true) {
+        parts.push("Shift");
+      }
+      parts.push(
+        binding.code?.startsWith("Digit") === true
+          ? binding.code.slice(5)
+          : binding.key.length === 1
+            ? binding.key.toUpperCase()
+            : binding.key,
+      );
+      return parts.join("+");
+    });
+  return shortcuts.length === 0 ? undefined : shortcuts.join(" ");
 }

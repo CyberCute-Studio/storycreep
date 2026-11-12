@@ -7,6 +7,7 @@ import {
   commandOfKey,
 } from "./catalog";
 import {
+  ariaKeyShortcuts,
   type Binding,
   bindingOn,
   type KeyInput,
@@ -71,22 +72,56 @@ function conflicts(held: Held, combo: Combo): boolean {
 
 /**
  * The bindings that are a combination that a list keeps, each recorded
- * with why it is the app's all the same: what it does is what the
- * platform's own does, or the PRD names it.
+ * with why it is the app's all the same, as what it does is what the
+ * platform's own does, or the PRD names it, and with the lists whose
+ * combination it is, so that another list's, which the reason may not
+ * hold for, fails the test.
  */
-const allowed: ReadonlyMap<string, string> = new Map([
-  [
-    "palette.open Mod+k",
-    "FR-EDIT-10 names Ctrl/Cmd+K, which Chrome, Edge, and Firefox focus their search box with",
-  ],
-  ["canvas.copy Mod+c", "copies, as the system's own does (N71)"],
-  ["canvas.cut Mod+x", "cuts, as the system's own does (N71)"],
-  ["canvas.paste Mod+v", "pastes, as the system's own does (N71)"],
-  [
-    "canvas.menu Shift+F10",
-    "opens the context menu of what is selected, as Windows' and Edge's own does",
-  ],
-]);
+const allowed: ReadonlyMap<string, { why: string; of: readonly string[] }> =
+  new Map([
+    [
+      "palette.open Mod+k",
+      {
+        why: "FR-EDIT-10 names Ctrl/Cmd+K, which Chrome, Edge, Firefox, and ChromeOS focus their search box with, and a text of macOS adds a link by, as the editor of a text does, which takes it first",
+        of: [
+          "Chrome, Windows and Linux; Edge, of the same engine",
+          "ChromeOS",
+          "Microsoft Edge, Windows",
+          "Firefox, Windows",
+          "Firefox, macOS",
+          "macOS",
+        ],
+      },
+    ],
+    [
+      "canvas.copy Mod+c",
+      {
+        why: "copies, as the system's own does (N71)",
+        of: ["ChromeOS", "Safari, macOS", "macOS", "Windows"],
+      },
+    ],
+    [
+      "canvas.cut Mod+x",
+      {
+        why: "cuts, as the system's own does (N71)",
+        of: ["ChromeOS", "macOS", "Windows"],
+      },
+    ],
+    [
+      "canvas.paste Mod+v",
+      {
+        why: "pastes, as the system's own does (N71)",
+        of: ["ChromeOS", "Safari, macOS", "macOS", "Windows"],
+      },
+    ],
+    [
+      "canvas.menu Shift+F10",
+      {
+        why: "opens the context menu of what is selected, as Windows' and Edge's own does",
+        of: ["Microsoft Edge, Windows", "Windows"],
+      },
+    ],
+  ]);
 
 function bindingKey(id: CommandId, binding: Binding): string {
   return [
@@ -179,8 +214,8 @@ describe("the commands", () => {
               continue;
             }
             const k = bindingKey(id, binding);
-            if (allowed.has(k)) {
-              used.add(k);
+            if (allowed.get(k)?.of.includes(r.of) === true) {
+              used.add(`${k} of ${r.of}`);
             } else {
               found.push(`${k} is ${r.text} of ${r.of} on ${platform}`);
             }
@@ -189,9 +224,13 @@ describe("the commands", () => {
       }
     }
     expect(found).toEqual([]);
-    // Every exception is of a binding that conflicts, so that the list
-    // holds no more than it must.
-    expect([...used].sort()).toEqual([...allowed.keys()].sort());
+    // Every exception is of a binding that conflicts with each list that
+    // it names, so that the list holds no more than it must.
+    expect([...used].sort()).toEqual(
+      [...allowed]
+        .flatMap(([k, { of }]) => of.map((list) => `${k} of ${list}`))
+        .sort(),
+    );
   });
 
   it("are checked against lists that hold only combinations that a page cannot take as typing", () => {
@@ -360,6 +399,27 @@ describe("a key", () => {
     ).toBe("chromeos");
     expect(platformOf({ platform: "Linux x86_64", userAgent: "" })).toBe(
       "linux",
+    );
+  });
+
+  it("is told of to assistive technology as ARIA names it, on the platform", () => {
+    expect(ariaKeyShortcuts(commandOf("palette.open").keys, "mac")).toBe(
+      "Meta+K",
+    );
+    expect(ariaKeyShortcuts(commandOf("palette.open").keys, "windows")).toBe(
+      "Control+K",
+    );
+    expect(ariaKeyShortcuts(commandOf("history.redo").keys, "mac")).toBe(
+      "Meta+Shift+Z",
+    );
+    expect(ariaKeyShortcuts(commandOf("history.redo").keys, "linux")).toBe(
+      "Control+Y",
+    );
+    expect(ariaKeyShortcuts(commandOf("canvas.fit").keys, "linux")).toBe(
+      "Shift+1",
+    );
+    expect(ariaKeyShortcuts(commandOf("go.trash").keys, "linux")).toBe(
+      undefined,
     );
   });
 });

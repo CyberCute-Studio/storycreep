@@ -37,6 +37,11 @@ type Entry =
   | { kind: "command"; id: CommandId; enabled: boolean }
   | { kind: "search"; query: string };
 
+/** Returns what tells entry apart from the palette's others: its command's ID, or that it is the search. */
+function entryKey(entry: Entry): string {
+  return entry.kind === "command" ? entry.id : "search";
+}
+
 /** Returns text folded as the palette compares it: by case, as the server folds tags, and without diacritics. */
 export function foldWords(text: string): string[] {
   return foldCase(text.normalize("NFD").replace(/\p{M}/gu, ""))
@@ -120,7 +125,12 @@ function PaletteBody({
   const { t } = useTranslation();
   const platform = usePlatform();
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  // The entry that the arrows moved to, by its command, so that it stays
+  // highlighted as the entries before it come and go while the palette is
+  // open, as once the board can no longer be changed, rather than its place,
+  // which another entry would take, and which Enter would run; none, as at
+  // first, and once a letter is typed, for the first entry.
+  const [active, setActive] = useState<string | undefined>(undefined);
   const listId = useId();
   const inputId = useId();
   // The entries are read anew as the page's handlers change, as once an
@@ -138,7 +148,15 @@ function PaletteBody({
     searched !== "" && registry.handler("project.search") !== undefined
       ? [...commands, { kind: "search", query: searched }]
       : commands;
-  const shown = Math.min(active, Math.max(0, entries.length - 1));
+  // The entry highlighted: the one moved to, or the first where none was;
+  // and none where the one moved to is no longer listed, as once the page
+  // took its command away, until an arrow moves to another, so that Enter
+  // runs only what was highlighted as it was pressed.
+  const moved =
+    active === undefined
+      ? 0
+      : entries.findIndex((entry) => entryKey(entry) === active);
+  const shown = entries.length === 0 ? -1 : moved;
   const optionId = (i: number) => `${listId}-${i}`;
   useEffect(() => {
     document
@@ -153,17 +171,30 @@ function PaletteBody({
     // anywhere else, anew, rather than closing it and opening it again.
     if (entry.kind === "command" && entry.id === "palette.open") {
       setQuery("");
-      setActive(0);
+      setActive(undefined);
       return;
     }
     onChoose(entry);
+  };
+  // Moves the highlight to the next entry, or the one before (by), after
+  // the one shown, or, where none is, to the first, or the last.
+  const moveBy = (by: 1 | -1) => {
+    if (entries.length === 0) {
+      setActive(undefined);
+      return;
+    }
+    const from = shown === -1 ? (by === 1 ? -1 : 0) : shown;
+    const to = (from + by + entries.length) % entries.length;
+    setActive(entryKey(entries[to]));
   };
   const keyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     // A key that an input method takes while it composes, as Enter, which
     // ends what was typed in Japanese or Chinese, and the arrows, which
     // choose among its candidates, is the input method's, rather than one
-    // that runs the command chosen, or moves through them.
-    if (e.nativeEvent.isComposing) {
+    // that runs the command chosen, or moves through them: as Safari tells
+    // of the Enter that ends it, after the composition has ended, by its
+    // keyCode alone, 229, which a key that an input method took has.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) {
       return;
     }
     // The palette's key closes it, but not its repeats, as of the key that
@@ -177,17 +208,13 @@ function PaletteBody({
     }
     switch (e.key) {
       case "ArrowDown":
-        setActive(entries.length === 0 ? 0 : (shown + 1) % entries.length);
+        moveBy(1);
         break;
       case "ArrowUp":
-        setActive(
-          entries.length === 0
-            ? 0
-            : (shown - 1 + entries.length) % entries.length,
-        );
+        moveBy(-1);
         break;
       case "Enter":
-        choose(entries[shown]);
+        choose(shown === -1 ? undefined : entries[shown]);
         break;
       default:
         return;
@@ -206,15 +233,13 @@ function PaletteBody({
         aria-expanded={true}
         aria-controls={listId}
         aria-autocomplete="list"
-        aria-activedescendant={
-          entries.length === 0 ? undefined : optionId(shown)
-        }
+        aria-activedescendant={shown === -1 ? undefined : optionId(shown)}
         autoComplete="off"
         spellCheck={false}
         value={query}
         onChange={(e) => {
           setQuery(e.currentTarget.value);
-          setActive(0);
+          setActive(undefined);
         }}
         onKeyDown={keyDown}
         className="min-h-11 w-full rounded-md border border-border bg-canvas px-3 text-fg"
@@ -235,7 +260,7 @@ function PaletteBody({
           // biome-ignore lint/a11y/useFocusableInteractive: as above.
           // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
           <div
-            key={entry.kind === "command" ? entry.id : "search"}
+            key={entryKey(entry)}
             id={optionId(i)}
             role="option"
             aria-selected={i === shown}

@@ -9,9 +9,10 @@
 // is the field's own there, as the undo's, nor once something of the page
 // has taken the key itself, nor, for a command that runs once for a key
 // held down, its repeats; and a key of a command that the page has is the
-// page's whether the command can run then or not. What the palette says of
-// each command follows the page while it is open, as the registry tells it
-// of each change of what the page can run (subscribe).
+// page's whether the command can run then or not, in a dialog too, where
+// it runs nothing, but in a field whose own key it is. What the palette
+// says of each command follows the page while it is open, as the registry
+// tells it of each change of what the page can run (subscribe).
 
 import {
   createContext,
@@ -218,18 +219,18 @@ export function useCommandHandlers(level: Level, handlers: Handlers): void {
 /**
  * Returns what takes a key that went down anywhere on the page to the
  * command of the page that it is (FR-EDIT-10): not one that something of
- * the page took itself, as the canvas its clipboard's keys, nor one in a
- * dialog, whose keys are its own, as the palette's, nor one while a modal
- * dialog is open, as a sheet, whose text a click gives the focus to none
- * of, which leaves it on the page's body, nor, for a command whose key is
- * a text field's own there, as the undo's, one in such a field, nor the
- * repeats of a key held down of a command that runs once for it
- * (CommandSpec's repeats), as the palette's and the search's, which would
- * open and close them by turns, but for the undo's and the redo's, which
- * go on. A key of a command that the page has is the page's whether the
- * command runs or not, as the undo's while a step is under way, or in the
- * middle of a drag of the canvas, rather than the browser's, as Safari's
- * Cmd+Z, which reopens the tab that was closed last.
+ * the page took itself, as the canvas its clipboard's keys, nor, for a
+ * command whose key is a text field's own there, as the undo's, one in
+ * such a field. A key of a command that the page has is then the page's
+ * whether the command runs or not, rather than the browser's, as Safari's
+ * Cmd+Z, which reopens the tab that was closed last: as the undo's while a
+ * step is under way, or one in a dialog, whose keys are its own, as the
+ * palette's, or while a modal dialog is open, as a sheet, whose text a
+ * click gives the focus to none of, which leaves it on the page's body,
+ * which runs nothing; and so are the repeats of a key held down of a
+ * command that runs once for it (CommandSpec's repeats), as the palette's
+ * and the search's, which would open and close them by turns, but for the
+ * undo's and the redo's, which go on.
  */
 export function keysOfPage(
   registry: CommandRegistry,
@@ -244,12 +245,6 @@ export function keysOfPage(
       return;
     }
     const target = e.target instanceof Element ? e.target : null;
-    if (
-      target?.closest('[role="dialog"], [role="alertdialog"]') != null ||
-      document.querySelector('[aria-modal="true"]') !== null
-    ) {
-      return;
-    }
     if (commandOf(id).outsideText === true && isTextField(target)) {
       return;
     }
@@ -258,7 +253,10 @@ export function keysOfPage(
       return;
     }
     e.preventDefault();
-    if (!e.repeat || commandOf(id).repeats === true) {
+    const inDialog =
+      target?.closest('[role="dialog"], [role="alertdialog"]') != null ||
+      document.querySelector('[aria-modal="true"]') !== null;
+    if (!inDialog && (!e.repeat || commandOf(id).repeats === true)) {
       runHandler(handler);
     }
   };

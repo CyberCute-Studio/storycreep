@@ -282,17 +282,28 @@ describe("the canvas's shortcuts", () => {
       clientX: 100,
       clientY: 100,
     });
-    for (const [key, code, shiftKey] of [
-      ["g", "KeyG", false],
-      ["i", "KeyI", false],
-      ["?", "Slash", true],
+    // The page's keys too, as Ctrl+K, which opens the palette, and Ctrl+/,
+    // which leaves the board for the search, which the canvas takes then,
+    // rather than the page or the browser: they alone are cancelled.
+    for (const [key, code, shiftKey, ctrlKey] of [
+      ["g", "KeyG", false, false],
+      ["i", "KeyI", false, false],
+      ["?", "Slash", true, false],
+      ["k", "KeyK", false, true],
+      ["/", "Slash", false, true],
     ] as const) {
-      fireEvent.keyDown(canvas, { key, code, shiftKey });
+      expect(
+        fireEvent.keyDown(canvas, { key, code, shiftKey, ctrlKey }),
+        key,
+      ).toBe(!ctrlKey);
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
     expect(screen.getByText(/Selected: Back to the dock/)).toBeDefined();
+    expect(screen.getByRole("application", { name: "Nodes of Harbour" })).toBe(
+      canvas,
+    );
     fireEvent.pointerUp(canvas, {
       ...mouse,
       buttons: 0,

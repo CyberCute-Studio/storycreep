@@ -249,6 +249,67 @@ describe("the command palette", () => {
     expect(option().textContent).not.toContain("(unavailable now)");
   });
 
+  it("keeps the entry moved to highlighted as the page's commands change, and none once it is gone, which Enter runs nothing of", () => {
+    let show: (ids: ("go.projects" | "go.trash")[]) => void = () => {};
+    function Commands() {
+      const [ids, setIds] = useState<("go.projects" | "go.trash")[]>([
+        "go.projects",
+        "go.trash",
+      ]);
+      show = setIds;
+      useCommandHandlers(
+        "page",
+        Object.fromEntries([
+          ...ids.map((id) => [id, { run: () => {} }]),
+          ["go.settings", { run: () => {} }],
+        ]),
+      );
+      return null;
+    }
+    const closed = vi.fn();
+    function Host() {
+      const registry = useRegistry();
+      const opener = useRef<HTMLElement | null>(null);
+      return registry === undefined ? null : (
+        <Palette
+          registry={registry}
+          open
+          opener={opener}
+          onOpenChange={closed}
+        />
+      );
+    }
+    render(
+      <I18nextProvider i18n={createI18n("en")}>
+        <CommandsProvider>
+          <Commands />
+          <Host />
+        </CommandsProvider>
+      </I18nextProvider>,
+    );
+    const field = screen.getByRole("combobox");
+    const selected = () =>
+      screen
+        .getAllByRole("option")
+        .filter((o) => o.getAttribute("aria-selected") === "true")
+        .map((o) => o.dataset.command);
+    expect(selected()).toEqual(["go.projects"]);
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    expect(selected()).toEqual(["go.trash"]);
+    // The entry before it goes: the one moved to stays highlighted, rather
+    // than the one that takes its place.
+    act(() => show(["go.trash"]));
+    expect(selected()).toEqual(["go.trash"]);
+    // It goes itself: none is highlighted, and Enter chooses nothing.
+    act(() => show([]));
+    expect(selected()).toEqual([]);
+    expect(field.getAttribute("aria-activedescendant")).toBeNull();
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(closed).not.toHaveBeenCalled();
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+    expect(selected()).toEqual(["go.settings"]);
+  });
+
   it("is told of a change of what the page can run, rather than of each render of the page", () => {
     const registry = new CommandRegistry();
     let undoable = false;
@@ -310,6 +371,8 @@ describe("the command palette", () => {
       isComposing: true,
     });
     fireEvent.keyDown(field, { key: "ArrowDown", isComposing: true });
+    // Safari's, which comes once the composition has ended, of keyCode 229.
+    fireEvent.keyDown(field, { key: "Enter", code: "Enter", keyCode: 229 });
     expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
     expect(
       within(palette)
@@ -412,7 +475,7 @@ describe("the keys of the page", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
-  it("do not act in a dialog, while a modal one is open, in a field for a command that a field has, once the page took the key, nor for the repeats of a key that runs once", () => {
+  it("are the page's but in a field whose own they are, and run nothing in a dialog, while a modal one is open, once the page took the key, nor for the repeats of a key that runs once", () => {
     const registry = new CommandRegistry();
     const ran: string[] = [];
     let undoable = true;
@@ -453,13 +516,22 @@ describe("the keys of the page", () => {
     const dialog = document.createElement("div");
     dialog.setAttribute("role", "dialog");
     const inDialog = document.createElement("button");
-    dialog.append(inDialog);
+    const fieldInDialog = document.createElement("input");
+    dialog.append(inDialog, fieldInDialog);
+    const sheet = document.createElement("section");
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-modal", "true");
     document.body.append(input, dialog);
     try {
       expect(press(document.body, "z")).toBe(true);
       expect(press(input, "z")).toBe(false);
       expect(press(input, "k")).toBe(true);
-      expect(press(inDialog, "k")).toBe(false);
+      // In a dialog, a key of the page's runs nothing, but is the page's,
+      // rather than the browser's, which Safari would reopen a closed tab
+      // by, but in a field whose own key it is.
+      expect(press(inDialog, "k")).toBe(true);
+      expect(press(inDialog, "z")).toBe(true);
+      expect(press(fieldInDialog, "z")).toBe(false);
       expect(press(document.body, "k", true)).toBe(true);
       expect(ran).toEqual(["undo", "palette"]);
       // Held down, the undo's key undoes on, and the palette's is the
@@ -475,14 +547,11 @@ describe("the keys of the page", () => {
       expect(press(document.body, "z", false, true)).toBe(true);
       expect(ran).toEqual(["undo", "palette", "undo"]);
       // While a modal dialog is open, as a sheet whose text a click left
-      // the focus on the body by, the keys are not the page's.
+      // the focus on the body by, the keys run nothing, and are the page's.
       undoable = true;
-      const sheet = document.createElement("section");
-      sheet.setAttribute("role", "dialog");
-      sheet.setAttribute("aria-modal", "true");
       document.body.append(sheet);
-      expect(press(document.body, "z")).toBe(false);
-      expect(press(document.body, "k")).toBe(false);
+      expect(press(document.body, "z")).toBe(true);
+      expect(press(document.body, "k")).toBe(true);
       sheet.remove();
       expect(ran).toEqual(["undo", "palette", "undo"]);
       // A command that the page has no handler of leaves the key to the
@@ -493,6 +562,7 @@ describe("the keys of the page", () => {
     } finally {
       input.remove();
       dialog.remove();
+      sheet.remove();
     }
   });
 });
