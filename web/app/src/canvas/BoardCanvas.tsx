@@ -18,10 +18,17 @@
 // connection's line selects the connection, whose ends' handles reconnect
 // it (FR-EDIT-03, plan note N69); a jumper selected has a link to its
 // target, and one whose target was deleted is drawn as broken (FR-EDIT-05).
+// A finger's long press, a right click, or Shift+F10 opens the context menu
+// of what is selected, or of the board there (FR-EDIT-09, NFR-TOUCH-02);
+// the board's nodes and connections are a tree that assistive technology
+// reads, and the keyboard moves through, after the canvas (CanvasTree.tsx), and
+// the toolbar says each change of the selection in a live region
+// (NFR-A11Y-03, NFR-A11Y-04, plan note N70).
 
 import type { Node as BoardNode } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -53,11 +60,13 @@ import {
 import { loadPart } from "../project/queries";
 import { followInPage } from "../shell/focus";
 import { Button, buttonClass, pressedClass } from "../ui/Button";
-import { Menu, MenuItem } from "../ui/Menu";
+import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { useMediaQuery } from "../ui/media";
 import { Alert } from "../ui/Page";
 import { besidePanel, useDocked } from "../ui/Panel";
 import { type CanvasActions, useCanvasActions } from "./actions";
+import { CanvasTree, type TreeHandle } from "./CanvasTree";
+import { ContextMenu } from "./ContextMenu";
 import { maxEdited } from "./commands";
 import {
   type BenchOptions,
@@ -69,7 +78,7 @@ import {
 } from "./controller";
 import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
-import type { Handle, Mode, PointerInput } from "./gestures";
+import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
 import {
   ConnectOffer,
@@ -86,6 +95,8 @@ import {
   labelContext,
   labelsOf,
   namesChanged,
+  titleOf,
+  typeOf,
 } from "./labels";
 import { portsOf } from "./layout";
 import { Minimap } from "./minimap";
@@ -393,6 +404,17 @@ function BoardCanvasOf({
   // (CanvasEvents), which holds them.
   const [connection, setConnection] = useState<string>();
   const [offer, setOffer] = useState<{ from: PortOf; at: Point }>();
+  // The context menu that the canvas asked for, of what is selected, or of
+  // the board at a point of it (FR-EDIT-09), each of a key of its own, and
+  // whether the focus was in the canvas's tree as it was asked for, which
+  // takes it back then, as the canvas does else.
+  const [menu, setMenu] = useState<{
+    key: number;
+    target: MenuTarget;
+    tree: boolean;
+  }>();
+  const menus = useRef(0);
+  const tree = useRef<TreeHandle>(null);
   const [snap, setSnap] = useState(snapKept);
   const [tagFilter, setTagFilter] = useState("");
   const [inspecting, setInspecting] = useState(false);
@@ -452,6 +474,22 @@ function BoardCanvasOf({
       selection: (ids) => setSelection(ids),
       connection: (id) => setConnection(id),
       offer: (o) => setOffer(o),
+      menu: (target, held) => {
+        setMenu({
+          key: ++menus.current,
+          target,
+          tree: tree.current?.focused() === true,
+        });
+        if (held) {
+          // A long press that opens the menu is felt, where the device can
+          // (NFR-TOUCH-02).
+          try {
+            navigator.vibrate?.(10);
+          } catch {
+            // A browser that refuses to vibrate, as before a first touch.
+          }
+        }
+      },
       zoom: (z) => zoom.setState(z, true),
       rendered: () => {
         try {
@@ -940,14 +978,50 @@ function BoardCanvasOf({
     // button, would only stop, rather than press, and from zooming the page
     // with a double tap (NFR-TOUCH-08). A button over the canvas, as the
     // one that reads its content again, keeps its taps. The browser's menu
-    // does not open over the canvas either, as a right click does nothing
-    // to the board: a Ctrl+click on a Mac, which the canvas takes as a
-    // click that adds a node to the selection, or takes it out, would else
-    // open it, and the menu would take the click's release.
+    // does not open over the canvas either, where a right click opens the
+    // canvas's own (menuOf): a Ctrl+click on a Mac, which the canvas takes
+    // as a click that adds a node to the selection, or takes it out, would
+    // else open it, and the menu would take the click's release.
     const own = (e: Event) => {
       if (!(e.target instanceof Element && e.target.closest("button"))) {
         e.preventDefault();
       }
+    };
+    // A right click on the canvas, or on a handle over it, opens the
+    // canvas's own menu, of what is under it, as a long press does
+    // (FR-EDIT-09, plan note N70), in place of the browser's: a mouse's, or
+    // a pen's barrel button's, by the event's button, as neither a
+    // Ctrl+click on a Mac, which is a click, nor the menu key, which the
+    // canvas's keys take (keyDown), nor a finger's long press, which the
+    // browser may ask its menu for after the gestures have opened the
+    // canvas's, has the right button; nor one while the canvas follows a
+    // pointer, as in the middle of a drag. One on the minimap, or on a
+    // button over the canvas, is not the board's.
+    const menuOf = (e: Event) => {
+      own(e);
+      if (!(e instanceof MouseEvent) || e.button !== 2) {
+        return;
+      }
+      const type = (e as PointerEvent).pointerType;
+      if (type === "touch" || controller.gestures.following()) {
+        return;
+      }
+      const onHandle =
+        e.target instanceof Element &&
+        e.target.closest("[data-canvas]") !== null;
+      if (
+        e.target !== host &&
+        !surfaceRef.current?.contains(e.target as Node) &&
+        !onHandle
+      ) {
+        return;
+      }
+      const r = host.getBoundingClientRect();
+      controller.gestures.menu({
+        x: e.clientX - r.left,
+        y: e.clientY - r.top,
+        kind: type === "pen" ? "pen" : "mouse",
+      });
     };
     const blur = () => {
       controller.gestures.cancelAll();
@@ -979,7 +1053,7 @@ function BoardCanvasOf({
     };
     const overMenu = (e: Event) => {
       if (ofCanvas(e)) {
-        own(e);
+        menuOf(e);
       }
     };
     const overTouch = (e: Event) => {
@@ -996,7 +1070,7 @@ function BoardCanvasOf({
     }
     host.addEventListener("touchstart", own, { passive: false });
     host.addEventListener("touchmove", own, { passive: false });
-    host.addEventListener("contextmenu", own);
+    host.addEventListener("contextmenu", menuOf);
     host.addEventListener("pointerdown", down);
     host.addEventListener("pointermove", move);
     host.addEventListener("pointerleave", leave);
@@ -1015,7 +1089,7 @@ function BoardCanvasOf({
       density?.removeEventListener("change", densityChanged);
       host.removeEventListener("touchstart", own);
       host.removeEventListener("touchmove", own);
-      host.removeEventListener("contextmenu", own);
+      host.removeEventListener("contextmenu", menuOf);
       host.removeEventListener("pointerdown", down);
       host.removeEventListener("pointermove", move);
       host.removeEventListener("pointerleave", leave);
@@ -1183,6 +1257,18 @@ function BoardCanvasOf({
     };
     controller.broken = (node) =>
       targetOf(node, doc.store.getState().view, known).state === "gone";
+    // What the canvas's tree says of a node is what its card shows, of what
+    // is known of a jumper's target alike, rather than a read of the target
+    // of every jumper of the board, which a tree of all of its nodes would
+    // else ask for at once.
+    let knownContext: { view: LabelSources; c: LabelContext } | undefined;
+    controller.described = (item) => {
+      const view = doc.store.getState().view;
+      if (knownContext?.view !== view) {
+        knownContext = { view, c: labelContext(view, t, known) };
+      }
+      return labelsOf(item.node, knownContext.c);
+    };
     // The messages of t, which is another as the locale changes.
     controller.relabel();
     sync();
@@ -1310,6 +1396,59 @@ function BoardCanvasOf({
     ),
   );
   const onlyLink = onlyTarget === undefined ? undefined : linkOf(onlyTarget);
+  // The nodes at the ends of the connection selected, which the toolbar
+  // names as it says that the connection is selected (NFR-A11Y-03).
+  const chosen = useDocumentState(doc, (state) =>
+    connection === undefined
+      ? undefined
+      : state.view.connections.get(connection),
+  );
+  const chosenFrom = useDocumentState(doc, (state) =>
+    chosen === undefined
+      ? undefined
+      : state.view.nodes.get(chosen.from_node_id),
+  );
+  const chosenTo = useDocumentState(doc, (state) =>
+    chosen === undefined ? undefined : state.view.nodes.get(chosen.to_node_id),
+  );
+
+  // The context menu is of what is selected: one of nodes goes once none
+  // is selected, and one of a connection once that connection is selected
+  // no longer, as once another session deleted what it was of.
+  const menuStale =
+    menu !== undefined &&
+    ((menu.target.kind === "node" && selected === 0) ||
+      (menu.target.kind === "connection" &&
+        connection !== menu.target.connection));
+  useEffect(() => {
+    if (menuStale) {
+      setMenu(undefined);
+    }
+  }, [menuStale]);
+  const closeMenu = useCallback(() => setMenu(undefined), []);
+  // The inspector, opened, or, where it is open already, given the focus,
+  // as Enter on a branch does.
+  const inspect = () => {
+    setInspecting(true);
+    inspectorHeading.current?.focus();
+  };
+  const navigate = useNavigate();
+  // Opens the target of the jumper selected, as its link does (TargetLink).
+  const goToTarget = () => {
+    if (onlyLink === undefined) {
+      return;
+    }
+    follow(
+      { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false },
+      onlyLink.boardId,
+      onlyLink.nodeId,
+    );
+    void navigate({
+      to: "/projects/$projectId/boards/$boardId",
+      params: { projectId, boardId: onlyLink.boardId },
+      search: { node: onlyLink.nodeId },
+    });
+  };
 
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
@@ -1317,6 +1456,18 @@ function BoardCanvasOf({
     }
     if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
       controller.gestures.setSpace(true);
+      e.preventDefault();
+      return;
+    }
+    // Shift+F10, and the menu key, open the context menu of what is
+    // selected, or of the board, as a right click on it does (NFR-A11Y-04).
+    if (
+      (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      controller.menuOfSelection();
       e.preventDefault();
       return;
     }
@@ -1524,9 +1675,45 @@ function BoardCanvasOf({
             ))}
           </select>
         </label>
-        <p className="text-sm text-fg-muted" aria-live="polite">
-          {selected > 0 && t("canvas.selected", { count: selected })}
-          {connection !== undefined && t("canvas.connection_selected")}
+        {/* What is selected, which the page says as it changes
+        (NFR-A11Y-03), whole each time: the one node selected, and the
+        nodes at the ends of the connection selected, by name, and that
+        nothing is selected, in words that the page does not show, in place
+        of those that it does. */}
+        <p
+          className="text-sm text-fg-muted"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {selected === 1 && onlyNode !== undefined ? (
+            <>
+              <span aria-hidden="true">
+                {t("canvas.selected", { count: selected })}
+              </span>
+              <span className="sr-only">
+                {t("canvas.selected_node", {
+                  title: titleOf(onlyNode, t),
+                  type: typeOf(onlyNode, t),
+                })}
+              </span>
+            </>
+          ) : selected > 0 ? (
+            t("canvas.selected", { count: selected })
+          ) : connection === undefined ? (
+            <span className="sr-only">{t("canvas.selected_none")}</span>
+          ) : chosenFrom !== undefined && chosenTo !== undefined ? (
+            <>
+              <span aria-hidden="true">{t("canvas.connection_selected")}</span>
+              <span className="sr-only">
+                {t("canvas.selected_connection", {
+                  from: titleOf(chosenFrom, t),
+                  to: titleOf(chosenTo, t),
+                })}
+              </span>
+            </>
+          ) : (
+            t("canvas.connection_selected")
+          )}
           {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
           {editable &&
             selected > maxEdited &&
@@ -1609,6 +1796,18 @@ function BoardCanvasOf({
               </div>
             )}
           </div>
+          {/* The board's nodes and connections, as a tree that assistive
+          technology reads, and the keyboard moves through, after the
+          canvas, which draws them as pixels (NFR-A11Y-03, NFR-A11Y-04). */}
+          <CanvasTree
+            ref={tree}
+            projectId={projectId}
+            boardName={boardName}
+            controller={controller}
+            selection={selection}
+            connection={connection}
+            editable={editable}
+          />
           {/* What the canvas places over its nodes, outside its element, which
           takes every touch and key of its own: the resize handle of the
           node selected, the link handles of its ports, or of the ends of
@@ -1685,6 +1884,121 @@ function BoardCanvasOf({
                 onCancel={endOffer}
                 returnFocus={hostElement}
               />
+            )}
+            {menu !== undefined && !menuStale && (
+              // The context menu, of what is selected, or of the board at
+              // its point (FR-EDIT-09): what the toolbar and the inspector
+              // do too, and, of the board, a node created where the menu
+              // was asked for. A board that may not be changed has those
+              // of its items that change nothing.
+              <ContextMenu
+                key={menu.key}
+                controller={controller}
+                at={menu.target.at}
+                label={
+                  menu.target.kind === "board"
+                    ? t("canvas.menu.board")
+                    : menu.target.kind === "connection"
+                      ? t("canvas.menu.connection")
+                      : t("canvas.menu.nodes", { count: selected })
+                }
+                onClose={closeMenu}
+                returnFocus={() => {
+                  if (!(menu.tree && tree.current?.focus() === true)) {
+                    hostRef.current?.focus({ preventScroll: true });
+                  }
+                }}
+              >
+                {menu.target.kind === "board" ? (
+                  <>
+                    {editable && content === "ready" && (
+                      <>
+                        <MenuItem
+                          onSelect={() =>
+                            void actions.create("element", menu.target.at)
+                          }
+                        >
+                          {t("canvas.menu.add_element")}
+                        </MenuItem>
+                        <MenuItem
+                          onSelect={() =>
+                            void actions.create("branch", menu.target.at)
+                          }
+                        >
+                          {t("canvas.menu.add_branch")}
+                        </MenuItem>
+                        <MenuItem
+                          onSelect={() =>
+                            void actions.create("jumper", menu.target.at)
+                          }
+                        >
+                          {t("canvas.menu.add_jumper")}
+                        </MenuItem>
+                        <MenuSeparator />
+                      </>
+                    )}
+                    <MenuItem onSelect={() => controller.fit()}>
+                      {t("canvas.fit")}
+                    </MenuItem>
+                  </>
+                ) : menu.target.kind === "connection" ? (
+                  <>
+                    <MenuItem onSelect={inspect}>
+                      {t("canvas.menu.inspect")}
+                    </MenuItem>
+                    <MenuSeparator />
+                    <MenuItem
+                      danger
+                      onSelect={() =>
+                        connection !== undefined &&
+                        void actions.removeConnection(connection)
+                      }
+                    >
+                      {t("canvas.delete")}
+                    </MenuItem>
+                  </>
+                ) : (
+                  <>
+                    {editable && onlyNode?.type === "element" && (
+                      <MenuItem onSelect={() => openText(onlyNode.id)}>
+                        {t("canvas.menu.edit_text")}
+                      </MenuItem>
+                    )}
+                    {editable && (
+                      <MenuItem onSelect={inspect}>
+                        {t("canvas.menu.inspect")}
+                      </MenuItem>
+                    )}
+                    {onlyLink !== undefined && (
+                      <MenuItem onSelect={goToTarget}>
+                        {t("canvas.go_to_target")}
+                      </MenuItem>
+                    )}
+                    <MenuItem onSelect={() => controller.zoomToSelection()}>
+                      {t("canvas.zoom_selection")}
+                    </MenuItem>
+                    {editable && (
+                      <>
+                        <MenuItem
+                          disabled={selected > maxEdited}
+                          onSelect={() =>
+                            void actions.duplicate([...selection])
+                          }
+                        >
+                          {t("canvas.duplicate")}
+                        </MenuItem>
+                        <MenuSeparator />
+                        <MenuItem
+                          danger
+                          onSelect={() => void actions.remove([...selection])}
+                        >
+                          {t("canvas.delete")}
+                        </MenuItem>
+                      </>
+                    )}
+                  </>
+                )}
+              </ContextMenu>
             )}
             {editing !== undefined && editedNode !== undefined && (
               <TextEditor

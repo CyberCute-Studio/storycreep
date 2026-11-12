@@ -27,6 +27,7 @@ import {
   Gestures,
   type Handle,
   type Link,
+  type MenuTarget,
   type Mode,
   type PointerInput,
   type SelectHow,
@@ -42,6 +43,7 @@ import {
   between,
   centerOf,
   clampZoom,
+  contains,
   emptyView,
   fitTo,
   type Point,
@@ -52,6 +54,7 @@ import {
   stepZoom,
   toScreen,
   type Viewport,
+  visibleRect,
   zoomAt,
 } from "./viewport";
 
@@ -136,6 +139,14 @@ export interface CanvasEvents {
    * that the offer would connect, ends it.
    */
   offer(offer: { from: PortOf; at: Point } | undefined): void;
+  /**
+   * The context menu of target was asked for (PRD FR-EDIT-09, plan note
+   * N70), by a long press where held says so, and else by a right click or
+   * a key: of the nodes selected, which hold the node that it was asked for
+   * on, of the connection selected, or of the board at its point, each of
+   * which the canvas selected first where it was not.
+   */
+  menu(target: MenuTarget, held: boolean): void;
   /** The first frame of the board's content was drawn. */
   rendered(): void;
   /**
@@ -218,11 +229,13 @@ export interface CanvasElements {
   band: HTMLElement;
 }
 
-/** The browser's frame scheduling, which the tests replace. */
+/** The browser's frame scheduling, and its timers, which the tests replace. */
 export interface Clock {
   request(frame: (time: number) => void): number;
   cancel(handle: number): void;
   now(): number;
+  /** Calls then once ms milliseconds have passed, unless the function that it returns is called first. */
+  after(ms: number, then: () => void): () => void;
 }
 
 /** Reports whether a and b put the same nodes at the same places. */
@@ -246,6 +259,10 @@ const browserClock: Clock = {
   request: (frame) => requestAnimationFrame(frame),
   cancel: (handle) => cancelAnimationFrame(handle),
   now: () => performance.now(),
+  after: (ms, then) => {
+    const timer = setTimeout(then, ms);
+    return () => clearTimeout(timer);
+  },
 };
 
 /** A board's canvas, apart from what draws it and the page around it. */
@@ -260,6 +277,14 @@ export class CanvasController implements GestureHost {
     kind: item.node.type,
     body: "",
   });
+  /**
+   * Returns what the canvas's accessibility tree says of a node (CanvasTree.tsx):
+   * what its card shows, of what the canvas knows of a jumper's target
+   * already, rather than what labels returns, which reads a target that it
+   * does not know as its card is first drawn, and would read every
+   * jumper's of the board at once for a tree of all of its nodes.
+   */
+  described: (item: NodeItem) => NodeLabels = (item) => this.labels(item);
   /** Whether the system asks for reduced motion, which makes every move instant. */
   reducedMotion = false;
   private editsOf: CanvasEdits | undefined;
@@ -420,6 +445,8 @@ export class CanvasController implements GestureHost {
     | undefined;
   /** What the canvas places over its nodes in each frame, as the resize handle and the text's editor (follow). */
   private readonly followers = new Set<(rectOf: ScreenRectOf) => void>();
+  /** What is told of each change of the board's content (watch). */
+  private readonly watchers = new Set<() => void>();
   /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
   private focusing: { id: string; found?: () => void } | undefined;
   private labelsVersion = 0;
@@ -665,6 +692,7 @@ export class CanvasController implements GestureHost {
     }
     if (changed || relabel) {
       this.invalidate();
+      this.tellWatchers();
     }
   }
 
@@ -672,6 +700,35 @@ export class CanvasController implements GestureHost {
   relabel(): void {
     this.labelsVersion++;
     this.invalidate();
+    this.tellWatchers();
+  }
+
+  /**
+   * Calls changed each time that the board's content, or what its cards
+   * say, changed, but in the middle of a drag, whose every move changes
+   * where its nodes are in the scene, and whose end tells of them where it
+   * left them, until the returned function is called: what the page shows
+   * of the whole board beside the canvas's pixels, as its accessibility
+   * tree, is made again then, rather than for each move.
+   */
+  watch(changed: () => void): () => void {
+    this.watchers.add(changed);
+    return () => {
+      this.watchers.delete(changed);
+    };
+  }
+
+  private tellWatchers(): void {
+    if (this.drag === undefined) {
+      for (const changed of [...this.watchers]) {
+        changed();
+      }
+    }
+  }
+
+  /** Counts the changes of what cards say that no change of a node tells of, as of the name of a speaker, or of the page's locale (relabel). */
+  labelling(): number {
+    return this.labelsVersion;
   }
 
   /** Tells that the board's content has been read, so that the canvas is placed on it. */
@@ -760,8 +817,119 @@ export class CanvasController implements GestureHost {
     return this.clock.now();
   }
 
+  after(ms: number, then: () => void): () => void {
+    return this.clock.after(ms, then);
+  }
+
   open(id: string): void {
     this.edits?.open(id);
+  }
+
+  /**
+   * Has the page show the context menu of target (PRD FR-EDIT-09, plan
+   * note N70), which a long press asked for where held says so: of the
+   * selection, where target is a node of it, and else of that node alone,
+   * which it selects first, as a tap does, so that the menu is of what the
+   * canvas shows selected; of a connection, which it selects, on a board
+   * that may be changed, which alone selects one; or of the board at
+   * target's point. It shows none of a node, or a connection, that the
+   * board no longer has.
+   */
+  menu(target: MenuTarget, held = false): void {
+    if (target.kind === "node") {
+      if (!this.has(target.node)) {
+        return;
+      }
+      if (!this.selected.has(target.node)) {
+        this.select([target.node], "replace");
+      }
+    } else if (target.kind === "connection") {
+      this.selectConnection(target.connection);
+      if (this.connection !== target.connection) {
+        return;
+      }
+    }
+    this.events.menu(target, held);
+  }
+
+  /**
+   * Has the page show the context menu of what is selected, as the keys
+   * ask for it on the canvas (NFR-A11Y-04): of the connection selected, at
+   * the middle of its line, of the nodes selected, at the middle of them,
+   * or, of no selection, of the board, each at the canvas's centre where
+   * its own point is not in view, so that the menu opens over the canvas.
+   */
+  menuOfSelection(): void {
+    const view = visibleRect(this.v, this.sz);
+    const shown = (p: Point): Point =>
+      p.x >= view.x &&
+      p.x <= view.x + view.width &&
+      p.y >= view.y &&
+      p.y <= view.y + view.height
+        ? p
+        : centerOf(this.v, this.sz);
+    const middle = (r: Rect): Point => ({
+      x: r.x + r.width / 2,
+      y: r.y + r.height / 2,
+    });
+    if (this.connection !== undefined) {
+      const item = this.scene.connections.get(this.connection);
+      if (item !== undefined) {
+        this.menu({
+          kind: "connection",
+          connection: this.connection,
+          at: shown(middle(item.bounds)),
+        });
+        return;
+      }
+    }
+    const bounds = this.scene.boundsOf(this.selected);
+    const first = [...this.selected].find((id) => this.has(id));
+    if (bounds !== undefined && first !== undefined) {
+      this.menu({ kind: "node", node: first, at: shown(middle(bounds)) });
+      return;
+    }
+    this.menu({ kind: "board", at: centerOf(this.v, this.sz) });
+  }
+
+  /**
+   * Shows r of the board, as the rectangle of a node, or of a connection's
+   * line, that the accessibility tree's focus is on, so that what marks it
+   * on the canvas is in view: where the canvas does not show it whole, with
+   * 24 px around it, it moves to have r's middle at its centre, at the zoom
+   * that it is at, animated as a move that a key asks for is.
+   */
+  reveal(r: Rect): void {
+    const v = this.target();
+    const around = 24 / v.zoom;
+    if (
+      contains(visibleRect(v, this.sz), {
+        x: r.x - around,
+        y: r.y - around,
+        width: r.width + 2 * around,
+        height: r.height + 2 * around,
+      })
+    ) {
+      return;
+    }
+    this.animateTo(
+      anchorAt(
+        { x: r.x + r.width / 2, y: r.y + r.height / 2 },
+        this.centre(),
+        v.zoom,
+      ),
+    );
+  }
+
+  /** Returns where r of the board is on the canvas, in its CSS pixels. */
+  screenRectOf(r: Rect): Rect {
+    const at = toScreen(this.v, r);
+    return {
+      x: at.x,
+      y: at.y,
+      width: r.width * this.v.zoom,
+      height: r.height * this.v.zoom,
+    };
   }
 
   /** Reports whether the scene has the node of id, as it has not once another session deleted it. */
