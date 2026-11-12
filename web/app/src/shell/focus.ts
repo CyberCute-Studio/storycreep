@@ -146,7 +146,7 @@ export function followInPage(event: InPageClick, id: string): void {
 }
 
 /** Brings the element of ID id of doc to the top of the window, and gives it the focus (followInPage). */
-function showInPage(doc: Document, id: string): void {
+export function showInPage(doc: Document, id: string): void {
   const target = doc.getElementById(id);
   target?.scrollIntoView?.({ block: "start" });
   target?.focus({ preventScroll: true });

@@ -9,7 +9,7 @@ import { Dialog } from "radix-ui";
 import { type RefObject, useId } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/Button";
-import { DialogFrame } from "../ui/Dialog";
+import { DialogFrame, focusBackTo } from "../ui/Dialog";
 import {
   type CommandId,
   type CommandSpec,
@@ -27,7 +27,8 @@ import { usePlatform } from "./registry";
 /**
  * The dialog of the table of the shortcuts, open while open says so, which
  * gives the focus back to opener, what had it as the table was asked for,
- * as it closes, since a key opens it, and no Dialog.Trigger of Radix's.
+ * or to the page's content where that has gone, as it closes, since a key
+ * opens it, and no Dialog.Trigger of Radix's.
  */
 export function Shortcuts({
   open,
@@ -45,13 +46,9 @@ export function Shortcuts({
         <DialogFrame
           title={t("shortcuts.title")}
           description={t("shortcuts.description")}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            const back = opener.current;
-            if (back?.isConnected === true) {
-              back.focus({ preventScroll: true });
-            }
-          }}
+          onCloseAutoFocus={focusBackTo(() => opener.current, {
+            preventScroll: true,
+          })}
         >
           <ShortcutTable />
           <p className="text-fg-muted">{t("shortcuts.space")}</p>

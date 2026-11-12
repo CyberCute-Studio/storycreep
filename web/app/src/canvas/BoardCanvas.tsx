@@ -56,6 +56,7 @@ import { commandOf } from "../commands/catalog";
 import { bindingText } from "../commands/keys";
 import {
   type Handlers,
+  runHandler,
   useCommands,
   usePlatform,
   useRegistry,
@@ -75,7 +76,7 @@ import {
   useOwnHistory,
 } from "../project/History";
 import { loadPart } from "../project/queries";
-import { followInPage } from "../shell/focus";
+import { followInPage, showInPage } from "../shell/focus";
 import { Button, buttonClass, LastingButton, pressedClass } from "../ui/Button";
 import type { Opener } from "../ui/Dialog";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
@@ -99,12 +100,7 @@ import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
-import {
-  type ClipboardAsk,
-  canvasKey,
-  clipboardKey,
-  menuKey,
-} from "./keyboard";
+import { type ClipboardAsk, canvasKey, clipboardKey } from "./keyboard";
 import {
   ConnectOffer,
   endPlace,
@@ -1612,7 +1608,9 @@ function BoardCanvasOf({
   // as Add, Duplicate, and the inspector; C opens the inspector at its
   // Connect to, of the one element or branch selected. None of those that
   // change the board acts in the middle of a drag, as the menu's keys do
-  // not.
+  // not, which the canvas renders nothing anew for: each says whether it
+  // can run as it is asked (a getter), of the drag under way then, rather
+  // than of the one under way as the canvas last rendered.
   const registry = useRegistry();
   const [connectAsked, setConnectAsked] = useState(0);
   useEffect(() => {
@@ -1620,12 +1618,14 @@ function BoardCanvasOf({
       document.querySelector<HTMLElement>("[data-connect-to]")?.focus();
     }
   }, [connectAsked]);
-  const still = !controller.gestures.following();
+  const still = () => !controller.gestures.following();
   const ofController = (id: Parameters<typeof controller.command>[0]) => ({
     run: () => controller.command(id),
   });
   const create = (kind: "element" | "branch" | "jumper") => ({
-    enabled: content === "ready" && still,
+    get enabled() {
+      return content === "ready" && still();
+    },
     run: () => void actions.create(kind),
   });
   const several = selected > 0 && selected <= maxEdited;
@@ -1646,9 +1646,13 @@ function BoardCanvasOf({
       ...ofController("canvas.zoom_selection"),
       enabled: selected > 0,
     },
+    // Escape ends a drag under way, cancelled, as a rubber band drawn with
+    // nothing selected, or else clears the selection (the controller's).
     "canvas.deselect": {
       ...ofController("canvas.deselect"),
-      enabled: selected > 0 || connection !== undefined,
+      get enabled() {
+        return selected > 0 || connection !== undefined || !still();
+      },
     },
     "canvas.minimap": { run: () => setShowMinimap((shown) => !shown) },
     "canvas.mode_pan": { run: () => setMode("pan") },
@@ -1661,19 +1665,19 @@ function BoardCanvasOf({
       ? {}
       : {
           "canvas.settings": {
-            run: () => {
-              const heading = document.getElementById(settingsId);
-              heading?.scrollIntoView?.({ block: "start" });
-              heading?.focus({ preventScroll: true });
-            },
+            run: () => showInPage(document, settingsId),
           },
         }),
     "canvas.copy": {
-      enabled: several && !actions.busy && still,
+      get enabled() {
+        return several && !actions.busy && still();
+      },
       run: () => clipboardAsked("copy"),
     },
     "canvas.menu": {
-      enabled: still,
+      get enabled() {
+        return still();
+      },
       run: () => controller.menuOfSelection(),
     },
     ...(editable
@@ -1681,22 +1685,33 @@ function BoardCanvasOf({
           "canvas.add_element": create("element"),
           "canvas.add_branch": create("branch"),
           "canvas.add_jumper": create("jumper"),
+          // As the toolbar's Duplicate, unavailable while a copy, a paste,
+          // or a duplicate is under way, which would drop it (oneAtATime).
           "canvas.duplicate": {
-            enabled: several && still,
+            get enabled() {
+              return several && !actions.busy && still();
+            },
             run: () => void actions.duplicate([...selection]),
           },
           "canvas.cut": {
-            enabled: several && !actions.busy && still,
+            get enabled() {
+              return several && !actions.busy && still();
+            },
             run: () => clipboardAsked("cut"),
           },
           "canvas.paste": {
-            enabled: clipboardReady && !actions.busy && still,
+            get enabled() {
+              return clipboardReady && !actions.busy && still();
+            },
             run: () => clipboardAsked("paste"),
           },
           "canvas.connect": {
-            enabled:
-              (onlyNode?.type === "element" || onlyNode?.type === "branch") &&
-              still,
+            get enabled() {
+              return (
+                (onlyNode?.type === "element" || onlyNode?.type === "branch") &&
+                still()
+              );
+            },
             run: () => {
               setInspecting(true);
               setConnectAsked((n) => n + 1);
@@ -1704,11 +1719,15 @@ function BoardCanvasOf({
           },
           "canvas.open": {
             ...ofController("canvas.open"),
-            enabled: (selected === 1 || connection !== undefined) && still,
+            get enabled() {
+              return (selected === 1 || connection !== undefined) && still();
+            },
           },
           "canvas.delete": {
             ...ofController("canvas.delete"),
-            enabled: (selected > 0 || connection !== undefined) && still,
+            get enabled() {
+              return (selected > 0 || connection !== undefined) && still();
+            },
           },
           "canvas.inspector": {
             run: () => setInspecting((open) => !open),
@@ -1729,35 +1748,49 @@ function BoardCanvasOf({
     if (e.target !== e.currentTarget) {
       return;
     }
-    const asked = clipboardKey(e);
-    if (asked !== undefined) {
-      if (!e.repeat) {
-        clipboardAsked(asked);
-      }
+    if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      controller.gestures.setSpace(true);
       e.preventDefault();
       return;
     }
-    if (e.key === " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      controller.gestures.setSpace(true);
+    // The command of the canvas's, or of the page's, that the key is, on
+    // the page's platform, as ? that shows the shortcuts. A key held down
+    // runs it once, but for those that pan and zoom on (CommandSpec's
+    // repeats), as E would else add an element with each repeat.
+    const id = canvasKey(e, platform);
+    if (id === undefined) {
+      return;
+    }
+    if (e.repeat && commandOf(id).repeats !== true) {
+      e.preventDefault();
+      return;
+    }
+    // The clipboard's keys are the canvas's whatever they do, rather than
+    // the browser's copy that would follow them (clipboardKey).
+    const asked = clipboardKey(id);
+    if (asked !== undefined) {
+      clipboardAsked(asked);
       e.preventDefault();
       return;
     }
     // Shift+F10, and the menu key, open the context menu of what is
     // selected, or of the board, as a right click on it does (NFR-A11Y-04),
     // but, as a right click, not while the canvas follows a pointer, as in
-    // the middle of a drag.
-    if (menuKey(e)) {
+    // the middle of a drag; and are never the browser's, whose menu would
+    // open over the canvas.
+    if (id === "canvas.menu") {
       if (!controller.gestures.following()) {
         controller.menuOfSelection();
       }
       e.preventDefault();
       return;
     }
-    // The canvas's other keys, each a command of the canvas's, or of the
-    // page's, as ? that shows the shortcuts, which the registry runs with
-    // what the canvas and the page registered for it.
-    const id = canvasKey(e);
-    if (id !== undefined && registry?.run(id) === true) {
+    // The canvas's other keys, which the registry runs with what the canvas
+    // and the page registered for them, or, outside the app's frame, which
+    // has the registry, the canvas's own handler.
+    if (
+      registry !== undefined ? registry.run(id) : runHandler(canvasHandlers[id])
+    ) {
       e.preventDefault();
     }
   };

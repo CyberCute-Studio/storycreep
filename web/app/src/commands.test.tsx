@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { commandIds } from "./commands/catalog";
 import { CommandRegistry, keysOfPage } from "./commands/registry";
+import { askSearchFocus } from "./search/focus";
 import { renderApp, testSession } from "./test/app";
 import { fakeApi, refused, startPage, testProject } from "./test/fake";
 
@@ -165,6 +166,43 @@ describe("the command palette", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("stays open for the repeats of its key held down, and leaves an input method's Enter to it", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    const field = within(palette).getByRole("combobox");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+    // The repeat of the key that opened it, held down a little long, comes
+    // to its field, which it has given the focus.
+    fireEvent.keyDown(field, {
+      key: "k",
+      code: "KeyK",
+      ctrlKey: true,
+      repeat: true,
+    });
+    expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
+    await user.type(field, "go components");
+    // The Enter that ends what an input method composed chooses nothing.
+    fireEvent.keyDown(field, {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+    });
+    fireEvent.keyDown(field, { key: "ArrowDown", isComposing: true });
+    expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
+    expect(
+      within(palette)
+        .getAllByRole("option")
+        .map((o) => o.getAttribute("aria-selected")),
+    ).toEqual(["true", "false"]);
+    fireEvent.keyDown(field, { key: "Enter", code: "Enter" });
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Components" }),
+    ).toBeDefined();
+  });
+
   it("searches the project for what was typed", async () => {
     const user = userEvent.setup();
     const calls = projectPages();
@@ -199,9 +237,46 @@ describe("the keys of the page", () => {
     screen.getByRole("link", { name: "Search" }).focus();
     await user.keyboard("{Control>}/{/Control}");
     expect(document.activeElement).toBe(field);
+    // The palette's search of another query, on the search's page, keeps
+    // the focus in the field, shown anew with it.
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    await user.type(within(palette).getByRole("combobox"), "keeper");
+    await user.click(
+      within(palette).getByRole("option", {
+        name: "Search the project for “keeper”",
+      }),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("searchbox", { name: "Search for" }),
+      ),
+    );
+    expect(
+      (
+        screen.getByRole("searchbox", {
+          name: "Search for",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("keeper");
   });
 
-  it("do not act in a dialog, in a field for a command that a field has, nor once the page took the key", () => {
+  it("forget the search's focus once a page other than the search's was shown in its place", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    // As of a search's key whose navigation another overtook.
+    askSearchFocus();
+    await user.click(screen.getByRole("link", { name: "Components" }));
+    await screen.findByRole("heading", { level: 1, name: "Components" });
+    const link = screen.getByRole("link", { name: "Search" });
+    await user.click(link);
+    const field = await screen.findByRole("searchbox", { name: "Search for" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.activeElement).not.toBe(field);
+  });
+
+  it("do not act in a dialog, in a field for a command that a field has, once the page took the key, nor for the repeats of a key that runs once", () => {
     const registry = new CommandRegistry();
     const ran: string[] = [];
     const remove = registry.add("app", {
@@ -211,11 +286,17 @@ describe("the keys of the page", () => {
       },
     });
     const listen = keysOfPage(registry, "windows");
-    const press = (target: Element, key: string, taken = false) => {
+    const press = (
+      target: Element,
+      key: string,
+      taken = false,
+      repeat = false,
+    ) => {
       const e = new KeyboardEvent("keydown", {
         key,
         code: `Key${key.toUpperCase()}`,
         ctrlKey: true,
+        repeat,
         bubbles: true,
         cancelable: true,
       });
@@ -239,6 +320,11 @@ describe("the keys of the page", () => {
       expect(press(inDialog, "k")).toBe(false);
       expect(press(document.body, "k", true)).toBe(true);
       expect(ran).toEqual(["undo", "palette"]);
+      // Held down, the undo's key undoes on, and the palette's is the
+      // page's, but opens the palette no more.
+      expect(press(document.body, "z", false, true)).toBe(true);
+      expect(press(document.body, "k", false, true)).toBe(true);
+      expect(ran).toEqual(["undo", "palette", "undo"]);
       // A command that cannot run now leaves the key to the browser.
       remove();
       expect(press(document.body, "z")).toBe(false);

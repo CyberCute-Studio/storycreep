@@ -49,6 +49,14 @@ export interface CommandSpec {
    * user types in, whose own they are there, as the field's undo is.
    */
   outsideText?: boolean;
+  /**
+   * Whether a key of it held down runs it again with each of the repeats
+   * that the system sends, as an arrow pans on and Ctrl+Z undoes on; one
+   * that does not runs once for a key held down, as E adds one element
+   * rather than one with each repeat, and the palette's key opens the
+   * palette rather than open and close it by turns.
+   */
+  repeats?: boolean;
 }
 
 const page = "page" as const;
@@ -74,6 +82,7 @@ export const commands = {
     group: "history",
     on: page,
     outsideText: true,
+    repeats: true,
     keys: [{ mod: true, key: "z" }],
   },
   // Redo is Cmd+Shift+Z on macOS, and ChromeOS's Ctrl+Shift+Z, which
@@ -82,6 +91,7 @@ export const commands = {
     group: "history",
     on: page,
     outsideText: true,
+    repeats: true,
     keys: [
       { mod: true, shift: true, key: "z", platforms: ["mac", "chromeos"] },
       { ctrl: true, key: "y", platforms: ["windows", "linux"] },
@@ -105,47 +115,61 @@ export const commands = {
   "canvas.pan_left": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowLeft" }],
   },
   "canvas.pan_right": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowRight" }],
   },
-  "canvas.pan_up": { group: "view", on: canvas, keys: [{ key: "ArrowUp" }] },
+  "canvas.pan_up": {
+    group: "view",
+    on: canvas,
+    repeats: true,
+    keys: [{ key: "ArrowUp" }],
+  },
   "canvas.pan_down": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowDown" }],
   },
   "canvas.pan_far_left": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowLeft", shift: true }],
   },
   "canvas.pan_far_right": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowRight", shift: true }],
   },
   "canvas.pan_far_up": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowUp", shift: true }],
   },
   "canvas.pan_far_down": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "ArrowDown", shift: true }],
   },
   "canvas.zoom_in": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "+" }, { key: "=" }],
   },
   "canvas.zoom_out": {
     group: "view",
     on: canvas,
+    repeats: true,
     keys: [{ key: "-" }, { key: "_" }],
   },
   "canvas.zoom_reset": { group: "view", on: canvas, keys: [{ key: "0" }] },

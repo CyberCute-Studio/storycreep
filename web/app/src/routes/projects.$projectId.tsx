@@ -5,14 +5,16 @@ import {
   Outlet,
   useChildMatches,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { requireSession } from "../auth/session";
 import { useCommands } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
-import { askSearchFocus } from "../search/focus";
+import { askSearchFocus, forgetSearchFocus } from "../search/focus";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
 import { textLink } from "../ui/Page";
@@ -92,12 +94,33 @@ function ProjectPages({ projectId }: { projectId: string }) {
     select: (matches) => matches.some((m) => m.staticData.wide === true),
   });
   const navigate = useNavigate();
+  const router = useRouter();
+  // The focus that the search's command asked for its page is forgotten
+  // once a page that is not the search's has been shown in its place, as
+  // one whose navigation overtook the search's, or once the project's
+  // pages are left, so that the search's page, opened later by its link,
+  // or by Back, leaves the focus where the router puts it.
+  useEffect(() => {
+    const stop = router.subscribe("onRendered", () => {
+      if (
+        !router.state.matches.some(
+          (m) => m.routeId === "/projects/$projectId/search",
+        )
+      ) {
+        forgetSearchFocus();
+      }
+    });
+    return () => {
+      stop();
+      forgetSearchFocus();
+    };
+  }, [router]);
   const go = (to: (typeof pages)[number]) => ({
     run: () => void navigate({ to, params }),
   });
   useCommands("project", {
-    // The search's page, with what the palette's search was of, or as it
-    // was last, whose field takes the focus.
+    // The search's page, of what the palette's search was of, or, from the
+    // search's key, a new one, whose field takes the focus.
     "project.search": {
       run: (query) => {
         askSearchFocus();

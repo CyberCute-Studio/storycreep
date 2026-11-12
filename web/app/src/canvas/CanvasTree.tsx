@@ -40,15 +40,11 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { CommandId } from "../commands/catalog";
+import { usePlatform } from "../commands/registry";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
-import {
-  type ClipboardAsk,
-  canvasKey,
-  clipboardKey,
-  menuKey,
-} from "./keyboard";
+import { type ClipboardAsk, canvasKey, clipboardKey } from "./keyboard";
 import {
   type TreeChoice,
   type TreeRow,
@@ -193,6 +189,7 @@ export const CanvasTree = memo(function CanvasTree({
   onClipboard: (asked: ClipboardAsk) => void;
 }) {
   const { t } = useTranslation();
+  const platform = usePlatform();
   const doc = useProjectDocument(projectId);
   const treeId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -455,7 +452,10 @@ export const CanvasTree = memo(function CanvasTree({
     deleting.current = undefined;
     const item = itemOf(e.target) ?? on;
     const modified = e.ctrlKey || e.metaKey || e.altKey;
-    if (menuKey(e)) {
+    // The command of the canvas that the key is, on the page's platform,
+    // which the keys of the menu and of the clipboard are of too.
+    const id = canvasKey(e, platform);
+    if (id === "canvas.menu") {
       const r = rectOf(controller, item);
       // As on the canvas, not while the canvas follows a pointer, as in the
       // middle of a drag, which the menu's items would change the nodes of.
@@ -480,7 +480,7 @@ export const CanvasTree = memo(function CanvasTree({
     // on a board that may be changed alone: elsewhere it selects nothing;
     // Paste pastes, wherever the focus is. None acts in the middle of a
     // drag, as the menu does not, nor for the repeats of a key held down.
-    const asked = clipboardKey(e);
+    const asked = clipboardKey(id);
     if (asked !== undefined) {
       if (
         !e.repeat &&
@@ -545,7 +545,7 @@ export const CanvasTree = memo(function CanvasTree({
         // and as Delete is below: elsewhere the key selects nothing, as it
         // opens nothing.
         if (controller.movable() && select(item, "replace")) {
-          controller.key(e);
+          controller.command("canvas.open");
         }
         break;
       case "Delete":
@@ -554,7 +554,11 @@ export const CanvasTree = memo(function CanvasTree({
         // elsewhere the key selects nothing, as it deletes nothing. The
         // focus goes to what is in the place of what the key deleted, once
         // the board no longer has it.
-        if (controller.movable() && select(item, "keep") && controller.key(e)) {
+        if (
+          controller.movable() &&
+          select(item, "keep") &&
+          controller.command("canvas.delete")
+        ) {
           deleting.current = item;
         }
         break;
@@ -566,9 +570,8 @@ export const CanvasTree = memo(function CanvasTree({
         // with it, of itself alone, whatever was typed before it, so that
         // the same letter again goes on to the node after, and a character
         // that is a key of the canvas's that zooms is always that key.
-        const id = canvasKey(e);
         if (id !== undefined && treeKeys.has(id)) {
-          if (!controller.key(e)) {
+          if (!controller.command(id)) {
             return;
           }
           break;

@@ -119,6 +119,8 @@ function batches(calls: ReturnType<typeof fakeApi>): Sent[] {
     );
 }
 
+const mouse = { pointerId: 1, pointerType: "mouse", button: 0 };
+
 async function openBoard(search = "") {
   renderApp(`/projects/${testProject.id}/boards/bd_a${search}`, {
     session: testSession,
@@ -155,6 +157,91 @@ describe("the canvas's shortcuts", () => {
     fireEvent.keyDown(canvas, { key: "E", code: "KeyE", shiftKey: true });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(batches(calls)).toHaveLength(3);
+  });
+
+  it("run once for a key held down, but for those that pan and zoom on", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    // The repeats of E held down add nothing more, and are the canvas's.
+    expect(
+      fireEvent.keyDown(canvas, { key: "e", code: "KeyE", repeat: true }),
+    ).toBe(false);
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(1);
+    // The repeats of an arrow pan on.
+    const x = canvas.dataset.x;
+    fireEvent.keyDown(canvas, {
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      repeat: true,
+    });
+    await waitFor(() => expect(canvas.dataset.x).not.toBe(x));
+  });
+
+  it("cancel a rubber band drawn with nothing selected by Escape, which selects nothing then", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    expect(fireEvent.keyDown(canvas, { key: "Escape", code: "Escape" })).toBe(
+      false,
+    );
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("0");
+  });
+
+  it("change nothing of the board in the middle of a drag, and do once it has ended", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    await screen.findByText(/Selected: /);
+    canvas.focus();
+    // A pan of the board, in the pan mode, from its empty corner.
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.keyDown(canvas, { key: "Delete", code: "Delete" });
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    fireEvent.keyDown(canvas, { key: "d", code: "KeyD" });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(0);
+    fireEvent.keyDown(canvas, { key: "Delete", code: "Delete" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
   });
 
   it("open the inspector at its Connect to by C, of the one element selected", async () => {

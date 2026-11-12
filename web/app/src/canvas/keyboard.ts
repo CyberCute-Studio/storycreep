@@ -18,10 +18,20 @@ import { type KeyInput, type Platform, platformOf } from "../commands/keys";
 
 export type { KeyInput };
 
-/** The platform whose keys the canvas follows, as the page's. */
+/**
+ * The platform of the browser, as the page's keys follow it, which the
+ * canvas and its tree pass the page's of (usePlatform) in place of: for
+ * what reads a key outside them, as the controller's tests.
+ */
 const platform: Platform = platformOf();
 
-/** Returns the command of the canvas that the key of e is, or undefined for a key that the canvas leaves to the page. */
+/**
+ * Returns the command of the canvas that the key of e is, on platform on,
+ * or undefined for a key that the canvas leaves to the page: one of those
+ * above, the menu key, or Shift+F10, which open the context menu, on the
+ * canvas and in its accessibility tree (NFR-A11Y-04, plan note N70), or a
+ * key of the clipboard (clipboardKey).
+ */
 export function canvasKey(
   e: KeyInput,
   on: Platform = platform,
@@ -29,36 +39,26 @@ export function canvasKey(
   return commandOfKey(e, "canvas", on);
 }
 
-/**
- * Reports whether the key of e asks for the context menu, on the canvas and
- * in its accessibility tree (NFR-A11Y-04, plan note N70): the menu key, or
- * Shift+F10, without Ctrl, Cmd, or Alt.
- */
-export function menuKey(e: KeyInput, on: Platform = platform): boolean {
-  return canvasKey(e, on) === "canvas.menu";
-}
-
 /** What a key asks of the page's clipboard (clipboardKey). */
 export type ClipboardAsk = "copy" | "cut" | "paste";
 
 /**
- * Returns what the key of e asks of the clipboard, on the canvas and in its
- * accessibility tree (FR-EDIT-07, plan notes N71 and N72): Ctrl and C, or
- * Cmd and C on macOS, copies the selected nodes, X cuts them, and V pastes,
- * without Shift or Alt, as they copy, cut, and paste text, by the letter
- * that the key types, or, on a layout whose letters are not Latin, as
- * Cyrillic's, by its place, as the browser's own copy goes by. The canvas
- * takes the key itself, rather than the browser's copy event that would
- * follow it, which a browser sends with nothing of the page selected, as on
- * the canvas, to the page's body, or not at all, and which, cancelled
- * without data, as the canvas would cancel it, empties the system's
- * clipboard; the page's clipboard holds the nodes.
+ * Returns what the key of the command id, as canvasKey reads it, asks of
+ * the clipboard, on the canvas and in its accessibility tree (FR-EDIT-07,
+ * plan notes N71 and N72): Ctrl and C, or Cmd and C on macOS, copies the
+ * selected nodes, X cuts them, and V pastes, without Shift or Alt, as they
+ * copy, cut, and paste text, by the letter that the key types, or, on a
+ * layout whose letters are not Latin, as Cyrillic's, by its place, as the
+ * browser's own copy goes by. The canvas takes the key itself, rather than
+ * the browser's copy event that would follow it, which a browser sends with
+ * nothing of the page selected, as on the canvas, to the page's body, or
+ * not at all, and which, cancelled without data, as the canvas would cancel
+ * it, empties the system's clipboard; the page's clipboard holds the nodes.
  */
 export function clipboardKey(
-  e: KeyInput,
-  on: Platform = platform,
+  id: CommandId | undefined,
 ): ClipboardAsk | undefined {
-  switch (canvasKey(e, on)) {
+  switch (id) {
     case "canvas.copy":
       return "copy";
     case "canvas.cut":

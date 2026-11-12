@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { DialogFrame } from "../ui/Dialog";
+import { DialogFrame, focusBackTo } from "../ui/Dialog";
 import {
   type CommandId,
   commandName,
@@ -74,15 +74,11 @@ export function Palette({
           title={t("palette.title")}
           // The palette has no Dialog.Trigger, which Radix would give the
           // focus back to, as a key opens it: the focus goes back to what
-          // had it, or, where that has gone, to the page's content, which
-          // the shell gives it (keepFocusOnPage); and then the command
-          // runs, which may move it on, as the inspector's Connect to.
+          // had it, without scrolling, or, where that has gone, to the
+          // page's content (focusBackTo); and then the command runs, which
+          // may move it on, as the inspector's Connect to.
           onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            const back = opener.current;
-            if (back?.isConnected === true) {
-              back.focus({ preventScroll: true });
-            }
+            focusBackTo(() => opener.current, { preventScroll: true })(event);
             const entry = chosen.current;
             chosen.current = undefined;
             if (entry === undefined) {
@@ -152,9 +148,20 @@ function PaletteBody({
     onChoose(entry);
   };
   const keyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    // A key that an input method takes while it composes, as Enter, which
+    // ends what was typed in Japanese or Chinese, and the arrows, which
+    // choose among its candidates, is the input method's, rather than one
+    // that runs the command chosen, or moves through them.
+    if (e.nativeEvent.isComposing) {
+      return;
+    }
+    // The palette's key closes it, but not its repeats, as of the key that
+    // opened it held down a little long, which would close it at once.
     if (commandOfKey(e, "page", platform) === "palette.open") {
       e.preventDefault();
-      onClose();
+      if (!e.repeat) {
+        onClose();
+      }
       return;
     }
     switch (e.key) {

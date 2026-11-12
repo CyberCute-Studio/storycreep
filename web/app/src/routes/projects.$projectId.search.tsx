@@ -80,16 +80,25 @@ function SearchPage() {
   const navigate = Route.useNavigate();
   const project = useSuspenseQuery(projectQuery(projectId)).data;
   const field = useRef<HTMLInputElement>(null);
+  // Whether the field of the form shown anew with the query that the
+  // palette's search asked for here takes the focus, which the field that
+  // had it went with.
+  const focusAsked = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: q shows the form anew, whose field is another then.
   useEffect(() => {
-    if (takeSearchFocus()) {
+    if (takeSearchFocus() || focusAsked.current) {
+      focusAsked.current = false;
       field.current?.focus();
+      field.current?.select();
     }
-  }, []);
+  }, [q]);
   useCommands("page", {
     "project.search": {
       run: (query) => {
-        if (query !== undefined) {
+        if (query !== undefined && query !== q) {
+          focusAsked.current = true;
           void navigate({ search: (prev) => ({ ...prev, q: query }) });
+          return;
         }
         field.current?.focus();
         field.current?.select();

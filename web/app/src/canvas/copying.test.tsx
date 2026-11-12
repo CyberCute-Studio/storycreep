@@ -763,7 +763,9 @@ describe("the canvas's clipboard", () => {
       expect(button.getAttribute("aria-disabled")).toBe("true");
     }
     expect(document.activeElement).toBe(duplicate);
+    // Its key, D, is unavailable too, which the canvas leaves to the page.
     canvas.focus();
+    expect(fireEvent.keyDown(canvas, { key: "d", code: "KeyD" })).toBe(true);
     fireEvent.keyDown(canvas, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(canvas.dataset.selected).toBe("0"));
     release();

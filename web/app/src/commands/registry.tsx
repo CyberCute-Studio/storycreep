@@ -6,7 +6,8 @@
 // same. The keys of the page act wherever the focus is (keysOfPage): not in
 // a dialog, whose keys are its own, as the palette's, nor in a field that
 // the user types in, for a command whose key is the field's own there, as
-// the undo's, nor once something of the page has taken the key itself.
+// the undo's, nor once something of the page has taken the key itself, nor,
+// for a command that runs once for a key held down, its repeats.
 
 import {
   createContext,
@@ -32,8 +33,24 @@ export interface Handler {
    * project's search, and returns false where it did nothing.
    */
   run: (query?: string) => unknown;
-  /** Whether it can run now; it can where this is unset. */
+  /**
+   * Whether it can run now; it can where this is unset. It is read as the
+   * command is asked to run, and as the palette lists it, so a handler of
+   * what the page does not render anew for, as a drag of the canvas, says
+   * it as a getter.
+   */
   enabled?: boolean;
+}
+
+/** Runs handler, and reports whether it did something: nothing where there is none, or where it cannot run now. */
+export function runHandler(
+  handler: Handler | undefined,
+  query?: string,
+): boolean {
+  if (handler === undefined || handler.enabled === false) {
+    return false;
+  }
+  return handler.run(query) !== false;
 }
 
 /** The handlers of a part of a page, by command. */
@@ -93,11 +110,7 @@ export class CommandRegistry {
 
   /** Runs the command of id, and reports whether it did something: nothing where it cannot run now. */
   run(id: CommandId, query?: string): boolean {
-    const handler = this.handler(id);
-    if (handler === undefined || handler.enabled === false) {
-      return false;
-    }
-    return handler.run(query) !== false;
+    return runHandler(this.handler(id), query);
   }
 }
 
@@ -136,8 +149,10 @@ export function useCommands(level: Level, handlers: Handlers): void {
  * the page took itself, as the canvas its clipboard's keys, nor one in a
  * dialog, whose keys are its own, as the palette's and a sheet's, nor, for
  * a command whose key is a text field's own there, as the undo's, one in
- * such a field, nor the repeats of the palette's and the search's key held
- * down, which would open and close them by turns.
+ * such a field, nor the repeats of a key held down of a command that runs
+ * once for it (CommandSpec's repeats), as the palette's and the search's,
+ * which would open and close them by turns, but for the undo's and the
+ * redo's, which go on.
  */
 export function keysOfPage(
   registry: CommandRegistry,
@@ -158,7 +173,7 @@ export function keysOfPage(
     if (commandOf(id).outsideText === true && isTextField(target)) {
       return;
     }
-    if (e.repeat && (id === "palette.open" || id === "project.search")) {
+    if (e.repeat && commandOf(id).repeats !== true) {
       e.preventDefault();
       return;
     }

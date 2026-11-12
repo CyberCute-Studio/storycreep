@@ -232,6 +232,26 @@ describe("a key", () => {
     expect(
       commandOfKey(key({ key: "e", code: "KeyE" }), "canvas", "windows"),
     ).toBe("canvas.add_element");
+    // Russian: the key of M types ь, a letter of its own script.
+    expect(
+      commandOfKey(key({ key: "ь", code: "KeyM" }), "canvas", "windows"),
+    ).toBe("canvas.minimap");
+    // A key whose place is a letter's, but which types what is no letter,
+    // is no letter's: the , of French AZERTY's key of M, the . of Dvorak's
+    // key of E, and its ; of the key of Z, held with Ctrl.
+    expect(
+      commandOfKey(key({ key: ",", code: "KeyM" }), "canvas", "windows"),
+    ).toBeUndefined();
+    expect(
+      commandOfKey(key({ key: ".", code: "KeyE" }), "canvas", "windows"),
+    ).toBeUndefined();
+    expect(
+      commandOfKey(
+        key({ key: ";", code: "KeyZ", ctrlKey: true }),
+        "page",
+        "windows",
+      ),
+    ).toBeUndefined();
     // Shift and a letter is no command of the canvas.
     expect(
       commandOfKey(
