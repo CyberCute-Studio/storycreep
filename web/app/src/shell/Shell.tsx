@@ -1,8 +1,10 @@
 // The frame of every page of the app: a link that skips to the page's
 // content, the header, which warns of a page that travels unencrypted (PRD
-// NFR-SEC-15), names the signed-in account, and signs it out, and the
-// content, as the page's main landmark, which gets the focus once the
-// control that had it goes (keepFocusOnPage).
+// NFR-SEC-15), opens the command palette (FR-EDIT-10), names the signed-in
+// account, and signs it out, and the content, as the page's main landmark,
+// which gets the focus once the control that had it goes (keepFocusOnPage).
+// The page's commands are registered within it (CommandsProvider), whose
+// keys act wherever the focus is on the page.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -16,6 +18,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { accountQuery, sessionQuery } from "../api";
 import { signOutFailure, useSignOut } from "../auth/signOut";
+import { AppCommands, CommandsButton } from "../commands/AppCommands";
+import { CommandsProvider } from "../commands/registry";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
@@ -38,42 +42,45 @@ export function Shell({ children }: { children: ReactNode }) {
   }, []);
   return (
     <Framed.Provider value={true}>
-      <div ref={frame} className="flex min-h-dvh flex-col">
-        <a
-          href={`#${CONTENT_ID}`}
-          onClick={skipToContent}
-          className="sr-only rounded-md bg-accent px-4 py-2 text-accent-fg focus:not-sr-only focus:fixed focus:start-2 focus:top-2 focus:z-10"
-        >
-          {t("shell.skip_to_content")}
-        </a>
-        <header className="border-b border-border bg-surface">
-          {unencrypted(window.location) && <UnencryptedWarning />}
-          <div className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-1">
-            {/* The product's name leads a signed-in user to the project
+      <CommandsProvider>
+        <div ref={frame} className="flex min-h-dvh flex-col">
+          <a
+            href={`#${CONTENT_ID}`}
+            onClick={skipToContent}
+            className="sr-only rounded-md bg-accent px-4 py-2 text-accent-fg focus:not-sr-only focus:fixed focus:start-2 focus:top-2 focus:z-10"
+          >
+            {t("shell.skip_to_content")}
+          </a>
+          <header className="border-b border-border bg-surface">
+            {unencrypted(window.location) && <UnencryptedWarning />}
+            <div className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-2 px-4 py-1">
+              {/* The product's name leads a signed-in user to the project
                 list, rather than to the start page, which opens the board
                 that the device last showed them, and so, from that board's
                 page, would lead nowhere (PRD FR-PROJ-04); and a signed-out
                 one to the start page, which signing in goes back to. */}
-            <Link
-              to={session ? "/projects" : "/"}
-              className="flex min-h-11 items-center text-lg font-semibold text-fg"
-            >
-              {PRODUCT_NAME}
-            </Link>
-            <div className="ms-auto flex flex-wrap items-center gap-2">
-              <SignedInControls signOut={signOut} />
-              <ErrorConsoleButton />
+              <Link
+                to={session ? "/projects" : "/"}
+                className="flex min-h-11 items-center text-lg font-semibold text-fg"
+              >
+                {PRODUCT_NAME}
+              </Link>
+              <div className="ms-auto flex flex-wrap items-center gap-2">
+                <SignedInControls signOut={signOut} />
+                <ErrorConsoleButton />
+              </div>
             </div>
-          </div>
-          <Alert
-            message={failure}
-            className="border-t border-border px-4 py-3 text-danger"
-          />
-        </header>
-        <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
-          {children}
-        </main>
-      </div>
+            <Alert
+              message={failure}
+              className="border-t border-border px-4 py-3 text-danger"
+            />
+          </header>
+          <main id={CONTENT_ID} tabIndex={-1} className="flex-1 px-4 py-8">
+            {children}
+          </main>
+        </div>
+        <AppCommands signedIn={!!session} />
+      </CommandsProvider>
     </Framed.Provider>
   );
 }
@@ -111,6 +118,7 @@ function SignedInControls({
   }
   return (
     <>
+      <CommandsButton />
       <Link
         to="/account"
         className="flex min-h-11 max-w-48 items-center rounded-md px-2 text-fg underline-offset-2 hover:underline"

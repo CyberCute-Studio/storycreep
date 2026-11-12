@@ -495,6 +495,8 @@ function PortChoices({
         <div className="min-w-0 flex-1">
           <SelectField
             label={t("inspector.connect_to")}
+            // Where the canvas's Connect, C, gives the focus (plan note N72).
+            data-connect-to=""
             value={to}
             onChange={(e) => setTo(e.currentTarget.value)}
           >

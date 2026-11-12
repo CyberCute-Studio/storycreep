@@ -6,7 +6,10 @@
 // toolbar (plan item 61), which says so to the project's layout while it is
 // shown (useOwnHistory), and the layout shows them above the page whenever
 // none does, as above a board's page that shows no canvas, as once the
-// board went; the shortcuts come later (plan item 65).
+// board went. Whichever shows them registers the commands of the undo and
+// the redo, whose keys, Ctrl+Z and Ctrl+Y, or Cmd+Z and Cmd+Shift+Z on
+// macOS, act outside the fields that the user types in, so that what they
+// say is what the buttons would (useHistoryCommands, plan note N72).
 
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -19,6 +22,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { type Level, useCommands } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
@@ -98,6 +102,34 @@ export function useHistory(projectId: string) {
   return { undoable, redoable, version, stepping, done, step };
 }
 
+/**
+ * Registers the commands of the undo and the redo at level, of history,
+ * which the buttons that the part of the page shows send too, so that a
+ * key and the palette say what became of them where the buttons do; none
+ * where history is undefined, as of a board that the user may not change,
+ * whose part shows no buttons.
+ */
+export function useHistoryCommands(
+  history: HistoryOf | undefined,
+  level: Level,
+): void {
+  useCommands(
+    level,
+    history === undefined
+      ? {}
+      : {
+          "history.undo": {
+            enabled: history.undoable > 0 && !history.stepping,
+            run: () => history.step.mutate("undo"),
+          },
+          "history.redo": {
+            enabled: history.redoable > 0 && !history.stepping,
+            run: () => history.step.mutate("redo"),
+          },
+        },
+  );
+}
+
 /** The buttons of the undo and the redo. */
 export function HistoryButtons({ history }: { history: HistoryOf }) {
   const { t } = useTranslation();
@@ -160,6 +192,7 @@ export function HistoryStatus({
 /** The undo and the redo, with what became of them, as the project's layout shows them. */
 export function History({ projectId }: { projectId: string }) {
   const history = useHistory(projectId);
+  useHistoryCommands(history, "project");
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">

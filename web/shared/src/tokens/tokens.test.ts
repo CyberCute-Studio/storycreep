@@ -18,6 +18,9 @@ const text: readonly [string, string][] = [
   ["accent", "surface"],
   // A link under the pointer.
   ["accent-hover", "canvas"],
+  // A word of a search's result that matched, marked, in its link.
+  ["accent", "surface-hover"],
+  ["accent-hover", "surface-hover"],
   ["accent-fg", "accent"],
   ["accent-fg", "accent-hover"],
   ["danger", "canvas"],

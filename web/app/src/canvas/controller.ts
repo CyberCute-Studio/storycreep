@@ -19,6 +19,7 @@
 // selected takes its place.
 
 import type { Node } from "@storycreep/shared/api";
+import type { CommandId } from "../commands/catalog";
 import type { Doc } from "../document/doc";
 import { movedBy, resizedBy } from "./edit";
 import type { Engine, FrameStats, RendererKind } from "./engine";
@@ -32,7 +33,7 @@ import {
   type PointerInput,
   type SelectHow,
 } from "./gestures";
-import { type KeyInput, keyAction } from "./keyboard";
+import { canvasKey, type KeyInput } from "./keyboard";
 import type { NodeLabels } from "./labels";
 import { type Curve, curveOf, entryPoint, portPoint, portsOf } from "./layout";
 import type { Minimap } from "./minimap";
@@ -265,6 +266,33 @@ const browserClock: Clock = {
     return () => clearTimeout(timer);
   },
 };
+
+/**
+ * Returns how far a command of the canvas's pans, in fractions of its width
+ * and height, or undefined for one that does not pan: by a tenth, or by
+ * half for the far pans, which Shift and an arrow ask for.
+ */
+export function panOf(id: CommandId): { dx: number; dy: number } | undefined {
+  switch (id) {
+    case "canvas.pan_left":
+      return { dx: 0.1, dy: 0 };
+    case "canvas.pan_right":
+      return { dx: -0.1, dy: 0 };
+    case "canvas.pan_up":
+      return { dx: 0, dy: 0.1 };
+    case "canvas.pan_down":
+      return { dx: 0, dy: -0.1 };
+    case "canvas.pan_far_left":
+      return { dx: 0.5, dy: 0 };
+    case "canvas.pan_far_right":
+      return { dx: -0.5, dy: 0 };
+    case "canvas.pan_far_up":
+      return { dx: 0, dy: 0.5 };
+    case "canvas.pan_far_down":
+      return { dx: 0, dy: -0.5 };
+  }
+  return undefined;
+}
 
 /** A board's canvas, apart from what draws it and the page around it. */
 export class CanvasController implements GestureHost {
@@ -1772,33 +1800,43 @@ export class CanvasController implements GestureHost {
     }
   }
 
-  /** Takes a key that went down on the canvas, and reports whether it was the canvas's. */
+  /** Takes a key that went down on the canvas, and reports whether it was the canvas's (command). */
   key(e: KeyInput): boolean {
-    const action = keyAction(e);
-    if (action === undefined) {
-      return false;
+    const id = canvasKey(e);
+    return id !== undefined && this.command(id);
+  }
+
+  /**
+   * Runs the command of id, as a key or the palette asks (plan note N72),
+   * and reports whether it did something: a command that the controller
+   * does not run itself, as the toolbar's Add, does nothing here, nor one
+   * that has nothing to act on, as Delete without a selection, or that the
+   * board may not be changed by, whose key is left to the page.
+   */
+  command(id: CommandId): boolean {
+    const pan = panOf(id);
+    if (pan !== undefined) {
+      const v = this.target();
+      this.animateTo(panBy(v, pan.dx * this.sz.width, pan.dy * this.sz.height));
+      return true;
     }
-    switch (action.kind) {
-      case "pan": {
-        const v = this.target();
-        this.animateTo(
-          panBy(v, action.dx * this.sz.width, action.dy * this.sz.height),
-        );
+    switch (id) {
+      case "canvas.zoom_in":
+        this.zoomStep(1);
         return true;
-      }
-      case "zoom":
-        this.zoomStep(action.direction);
+      case "canvas.zoom_out":
+        this.zoomStep(-1);
         return true;
-      case "actual":
+      case "canvas.zoom_reset":
         this.zoomTo(1);
         return true;
-      case "fit":
+      case "canvas.fit":
         this.fit();
         return true;
-      case "selection":
+      case "canvas.zoom_selection":
         this.zoomToSelection();
         return true;
-      case "deselect": {
+      case "canvas.deselect": {
         // Escape ends a drag under way, cancelled, as a move that it would
         // else leave to land the nodes that it took out of the selection,
         // and leaves the selection as it is; else it is the canvas's while
@@ -1811,7 +1849,7 @@ export class CanvasController implements GestureHost {
         this.select([], "replace");
         return had;
       }
-      case "delete":
+      case "canvas.delete":
         if (this.edits === undefined) {
           return false;
         }
@@ -1824,7 +1862,7 @@ export class CanvasController implements GestureHost {
         }
         this.edits.remove([...this.selected]);
         return true;
-      case "open":
+      case "canvas.open":
         if (this.edits === undefined) {
           return false;
         }
@@ -1838,6 +1876,7 @@ export class CanvasController implements GestureHost {
         this.edits.open([...this.selected][0]);
         return true;
     }
+    return false;
   }
 
   /**

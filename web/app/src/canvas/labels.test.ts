@@ -3,7 +3,7 @@ import { contrast } from "@storycreep/shared/contrast";
 import { describe, expect, it } from "vitest";
 import { testNode } from "../test/canvas";
 import { passOf, pathAt, statsOf } from "./bench";
-import { keyAction } from "./keyboard";
+import { canvasKey } from "./keyboard";
 import {
   type LabelContext,
   labelsOf,
@@ -528,15 +528,13 @@ describe("the canvas's keys", () => {
       altKey: false,
       shiftKey: true,
     };
-    expect(keyAction({ ...key, key: "!", code: "Digit1" })).toEqual({
-      kind: "fit",
-    });
-    expect(keyAction({ ...key, key: '"', code: "Digit2" })).toEqual({
-      kind: "selection",
-    });
-    expect(keyAction({ ...key, key: "Escape", code: "Escape" })).toEqual({
-      kind: "deselect",
-    });
+    expect(canvasKey({ ...key, key: "!", code: "Digit1" })).toBe("canvas.fit");
+    expect(canvasKey({ ...key, key: '"', code: "Digit2" })).toBe(
+      "canvas.zoom_selection",
+    );
+    expect(
+      canvasKey({ ...key, shiftKey: false, key: "Escape", code: "Escape" }),
+    ).toBe("canvas.deselect");
   });
 });
 

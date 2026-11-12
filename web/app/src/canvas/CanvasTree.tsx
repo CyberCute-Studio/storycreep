@@ -39,13 +39,14 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import type { CommandId } from "../commands/catalog";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
 import {
   type ClipboardAsk,
+  canvasKey,
   clipboardKey,
-  keyAction,
   menuKey,
 } from "./keyboard";
 import {
@@ -152,6 +153,16 @@ const Row = memo(function Row({
     </div>
   );
 });
+
+/** The canvas's keys that its tree takes too, which zoom, and Escape, whose characters, as + or 0, are never a title's letter there. */
+const treeKeys: ReadonlySet<CommandId> = new Set<CommandId>([
+  "canvas.zoom_in",
+  "canvas.zoom_out",
+  "canvas.zoom_reset",
+  "canvas.fit",
+  "canvas.zoom_selection",
+  "canvas.deselect",
+]);
 
 /**
  * The accessibility tree of the canvas of controller, of the board named
@@ -549,13 +560,14 @@ export const CanvasTree = memo(function CanvasTree({
         break;
       default: {
         // The canvas's other keys, which zoom, and Escape, but not those
-        // that pan, which are the tree's arrows here; and else a letter
-        // typed, which goes to the next node whose title starts with it,
-        // of itself alone, whatever was typed before it, so that the same
-        // letter again goes on to the node after, and a character that is
-        // a key of the canvas's is always that key.
-        const action = keyAction(e);
-        if (action !== undefined && action.kind !== "pan") {
+        // that pan, which are the tree's arrows here, nor its letters, as
+        // E, which adds an element on the canvas (plan note N72); and else
+        // a letter typed, which goes to the next node whose title starts
+        // with it, of itself alone, whatever was typed before it, so that
+        // the same letter again goes on to the node after, and a character
+        // that is a key of the canvas's that zooms is always that key.
+        const id = canvasKey(e);
+        if (id !== undefined && treeKeys.has(id)) {
           if (!controller.key(e)) {
             return;
           }

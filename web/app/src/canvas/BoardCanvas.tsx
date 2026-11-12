@@ -52,6 +52,14 @@ import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { api, notFoundBy, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { commandOf } from "../commands/catalog";
+import { bindingText } from "../commands/keys";
+import {
+  type Handlers,
+  useCommands,
+  usePlatform,
+  useRegistry,
+} from "../commands/registry";
 import { boardPart, type Part } from "../document/doc";
 import {
   useDocumentState,
@@ -63,6 +71,7 @@ import {
   type HistoryOf,
   HistoryStatus,
   useHistory,
+  useHistoryCommands,
   useOwnHistory,
 } from "../project/History";
 import { loadPart } from "../project/queries";
@@ -90,7 +99,12 @@ import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
-import { type ClipboardAsk, clipboardKey, menuKey } from "./keyboard";
+import {
+  type ClipboardAsk,
+  canvasKey,
+  clipboardKey,
+  menuKey,
+} from "./keyboard";
 import {
   ConnectOffer,
   endPlace,
@@ -640,8 +654,10 @@ function BoardCanvasOf({
   }, [targetReads]);
   const history = useHistory(projectId);
   // The undo and the redo are the toolbar's, rather than the project's
-  // layout's above the page, while it shows them.
+  // layout's above the page, while it shows them, and so are their
+  // commands (plan note N72).
   useOwnHistory(editable);
+  useHistoryCommands(editable ? history : undefined, "page");
   // The tags of the board's nodes, which the tag filter offers, as the
   // document has them, with the one that it dims by, though no node has it
   // any longer, as once another session took it away, until it is cleared
@@ -1590,6 +1606,125 @@ function BoardCanvasOf({
     [],
   );
 
+  // The canvas's commands (FR-EDIT-10, plan note N72), which its keys and
+  // the palette run alike, each available where the toolbar's control of
+  // it is: the controller's own, as the zoom and Delete, and the toolbar's,
+  // as Add, Duplicate, and the inspector; C opens the inspector at its
+  // Connect to, of the one element or branch selected. None of those that
+  // change the board acts in the middle of a drag, as the menu's keys do
+  // not.
+  const registry = useRegistry();
+  const [connectAsked, setConnectAsked] = useState(0);
+  useEffect(() => {
+    if (connectAsked > 0) {
+      document.querySelector<HTMLElement>("[data-connect-to]")?.focus();
+    }
+  }, [connectAsked]);
+  const still = !controller.gestures.following();
+  const ofController = (id: Parameters<typeof controller.command>[0]) => ({
+    run: () => controller.command(id),
+  });
+  const create = (kind: "element" | "branch" | "jumper") => ({
+    enabled: content === "ready" && still,
+    run: () => void actions.create(kind),
+  });
+  const several = selected > 0 && selected <= maxEdited;
+  const canvasHandlers: Handlers = {
+    "canvas.pan_left": ofController("canvas.pan_left"),
+    "canvas.pan_right": ofController("canvas.pan_right"),
+    "canvas.pan_up": ofController("canvas.pan_up"),
+    "canvas.pan_down": ofController("canvas.pan_down"),
+    "canvas.pan_far_left": ofController("canvas.pan_far_left"),
+    "canvas.pan_far_right": ofController("canvas.pan_far_right"),
+    "canvas.pan_far_up": ofController("canvas.pan_far_up"),
+    "canvas.pan_far_down": ofController("canvas.pan_far_down"),
+    "canvas.zoom_in": ofController("canvas.zoom_in"),
+    "canvas.zoom_out": ofController("canvas.zoom_out"),
+    "canvas.zoom_reset": ofController("canvas.zoom_reset"),
+    "canvas.fit": ofController("canvas.fit"),
+    "canvas.zoom_selection": {
+      ...ofController("canvas.zoom_selection"),
+      enabled: selected > 0,
+    },
+    "canvas.deselect": {
+      ...ofController("canvas.deselect"),
+      enabled: selected > 0 || connection !== undefined,
+    },
+    "canvas.minimap": { run: () => setShowMinimap((shown) => !shown) },
+    "canvas.mode_pan": { run: () => setMode("pan") },
+    "canvas.mode_select": { run: () => setMode("select") },
+    "canvas.go_to_target": {
+      enabled: onlyLink !== undefined,
+      run: goToTarget,
+    },
+    ...(settingsId === undefined
+      ? {}
+      : {
+          "canvas.settings": {
+            run: () => {
+              const heading = document.getElementById(settingsId);
+              heading?.scrollIntoView?.({ block: "start" });
+              heading?.focus({ preventScroll: true });
+            },
+          },
+        }),
+    "canvas.copy": {
+      enabled: several && !actions.busy && still,
+      run: () => clipboardAsked("copy"),
+    },
+    "canvas.menu": {
+      enabled: still,
+      run: () => controller.menuOfSelection(),
+    },
+    ...(editable
+      ? {
+          "canvas.add_element": create("element"),
+          "canvas.add_branch": create("branch"),
+          "canvas.add_jumper": create("jumper"),
+          "canvas.duplicate": {
+            enabled: several && still,
+            run: () => void actions.duplicate([...selection]),
+          },
+          "canvas.cut": {
+            enabled: several && !actions.busy && still,
+            run: () => clipboardAsked("cut"),
+          },
+          "canvas.paste": {
+            enabled: clipboardReady && !actions.busy && still,
+            run: () => clipboardAsked("paste"),
+          },
+          "canvas.connect": {
+            enabled:
+              (onlyNode?.type === "element" || onlyNode?.type === "branch") &&
+              still,
+            run: () => {
+              setInspecting(true);
+              setConnectAsked((n) => n + 1);
+            },
+          },
+          "canvas.open": {
+            ...ofController("canvas.open"),
+            enabled: (selected === 1 || connection !== undefined) && still,
+          },
+          "canvas.delete": {
+            ...ofController("canvas.delete"),
+            enabled: (selected > 0 || connection !== undefined) && still,
+          },
+          "canvas.inspector": {
+            run: () => setInspecting((open) => !open),
+          },
+          "canvas.snap": { run: toggleSnap },
+        }
+      : {}),
+  };
+  useCommands("page", canvasHandlers);
+  const platform = usePlatform();
+  const paletteKey = bindingText(
+    t,
+    commandOf("palette.open").keys[0],
+    platform,
+  );
+
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
       return;
@@ -1618,7 +1753,11 @@ function BoardCanvasOf({
       e.preventDefault();
       return;
     }
-    if (controller.key(e)) {
+    // The canvas's other keys, each a command of the canvas's, or of the
+    // page's, as ? that shows the shortcuts, which the registry runs with
+    // what the canvas and the page registered for it.
+    const id = canvasKey(e);
+    if (id !== undefined && registry?.run(id) === true) {
       e.preventDefault();
     }
   };
@@ -2350,9 +2489,19 @@ function BoardCanvasOf({
           />
         )}
       </div>
-      <p id={helpId} className="text-sm text-fg-muted">
-        {editable ? t("canvas.help_edit") : t("canvas.help")}
-      </p>
+      <div className="flex flex-wrap items-start gap-2">
+        <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
+          {editable
+            ? t("canvas.help_edit", { palette: paletteKey })
+            : t("canvas.help", { palette: paletteKey })}
+        </p>
+        <Button
+          aria-haspopup="dialog"
+          onClick={() => registry?.run("shortcuts.show")}
+        >
+          {t("canvas.shortcuts")}
+        </Button>
+      </div>
       {options.bench !== undefined && (
         <Suspense>
           <Bench
