@@ -699,7 +699,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** touch targets and long-press have Playwright touch tests, and axe and accessibility-tree tests pass. The full FR-EDIT-09 AC1 suite is in item 67.
 
 ### 64. Clipboard UI
-**Status:** todo · **Depends on:** 51, 62
+**Status:** done ([#77](https://github.com/CyberCute-Studio/storycreep/pull/77)) · **Depends on:** 51, 62
 **PRD:** FR-EDIT-07 (UI: AC1, AC2)
 - Copy, cut, paste, and duplicate across boards and across projects in the same workspace, by the toolbar, the context menu, and Ctrl or Cmd with C, X, and V on the canvas and in its tree, through the page's clipboard, which the page's documents hold for the account, in the tab's memory (`document/clipboard.ts`, `canvas/clipboard.ts`, `canvas/actions.ts`). Duplicate is a copy pasted back beside the selection, with the connections between its nodes (N71).
 - A dialog lists what the server's report says that the board's project lacks, and offers to create it, in the paste's batch, before it (`canvas/PasteDialog.tsx`, N58, N71).
