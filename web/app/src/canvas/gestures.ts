@@ -22,9 +22,16 @@
 // outside its element, is the canvas's as one on it is, by the same rules
 // of pointers: its drag resizes the node, in either mode, from the board's
 // point where it started, as a move does, but for one of the middle button
-// or with Space held, which pans, and it taps nothing. A rubber band, a
-// move, or a resize under way ends, cancelled, as Escape asks, or as the
-// board may no longer be changed (cancelDrag). The wheel pans, and Shift
+// or with Space held, which pans, and it taps nothing. A press on a link
+// handle, of a port of the node selected, or of an end of the connection
+// selected, which the page places over the canvas too, is the canvas's
+// alike: its drag draws a connection from the port, or takes the
+// connection's end, to the node under its pointer, and lands it there, or
+// on the empty board, as it ends (plan note N69). A tap on a connection's
+// line, on a board that may be changed, where no node is, selects the
+// connection. A rubber band, a move, a resize, or a link under way ends,
+// cancelled, as Escape asks, or as the board may no longer be changed
+// (cancelDrag). The wheel pans, and Shift
 // turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it, it
 // zooms about the pointer. Nothing needs hover or a right click, and a
 // right click, or a pen's barrel button or its eraser, does nothing; a
@@ -93,6 +100,32 @@ export interface WheelInput {
 /** How a selection changes: to the nodes given, with them added, or each added or taken out. */
 export type SelectHow = "replace" | "add" | "toggle";
 
+/**
+ * What a link handle's drag holds (plan note N69): a connection to come,
+ * from port of the node of node, or an end of the connection of
+ * connection, the one that leaves its node (from) or the one that enters
+ * its node (to), which the drag takes to another. Its handle tells its
+ * side, in CSS pixels, the square that it covers about its port, or about
+ * where its end is, where its drag has not left it.
+ */
+export type Link =
+  | { kind: "new"; node: string; port: string; side?: number }
+  | { kind: "from" | "to"; connection: string; side?: number };
+
+/** Reports whether a and b hold the same end. */
+export function sameLink(a: Link, b: Link): boolean {
+  return a.kind === "new"
+    ? b.kind === "new" && a.node === b.node && a.port === b.port
+    : b.kind === a.kind && a.connection === b.connection;
+}
+
+/**
+ * A handle that the page places over the canvas, whose press is the
+ * canvas's: the resize handle of the node of an ID, or a link handle, of
+ * what its drag holds.
+ */
+export type Handle = string | Link;
+
 /** What the gestures read of the canvas, and change. */
 export interface GestureHost {
   viewport(): Viewport;
@@ -136,6 +169,16 @@ export interface GestureHost {
   resizeEnd(commit: boolean): void;
   /** Opens the node of id, as its second tap soon after the first does, as for its text. */
   open(id: string): void;
+  /** Returns the ID of the connection whose line is within slop units of p of the board, where a tap selects one, as on a board that may be changed. */
+  connectionAt(p: Point, slop: number): string | undefined;
+  /** Selects the connection of id, in place of the selection. */
+  selectConnection(id: string): void;
+  /** Starts the drag of link, by its handle, and reports whether it did, as it does not once its node, or its connection, has gone. */
+  linkStart(link: Link): boolean;
+  /** Takes the end that the link's drag holds to at of the board, where a node within slop units takes it, but outside the canvas, and on the handle that the link left, where nothing does. */
+  linkTo(at: Point, slop: number): void;
+  /** Ends the link's drag, where it is, or, cancelled, as nothing. */
+  linkEnd(commit: boolean): void;
   /** The time, in milliseconds, by which a double tap is told from two taps. */
   now(): number;
 }
@@ -178,13 +221,15 @@ type Gesture =
       /**
        * What its drag does: pans, draws a rubber band, moves the selection,
        * which holds the node that it went down on, selects that node and
-       * then moves it (pick), or resizes the node whose handle it went down
-       * on.
+       * then moves it (pick), resizes the node whose handle it went down
+       * on, or links what the link handle that it went down on holds.
        */
-      drag: "pan" | "band" | "move" | "pick" | "resize";
-      /** The node that it went down on, which a move holds, or whose handle it went down on. */
+      drag: "pan" | "band" | "move" | "pick" | "resize" | "link";
+      /** The node that it went down on, which a move holds, or whose resize handle it went down on. */
       node?: string;
-      /** Whether it went down on a resize handle, whose press taps nothing, whatever its drag does. */
+      /** What the link handle that it went down on holds. */
+      link?: Link;
+      /** Whether it went down on a handle, whose press taps nothing, whatever its drag does. */
       handle: boolean;
       /** The tap right before it, which a tap of it on the same node soon after opens the node of (tap). */
       lastTap: { node: string; time: number } | undefined;
@@ -197,6 +242,8 @@ type Gesture =
   | { kind: "move"; id: number; anchor: Point }
   /** A resize of the node of node by its handle, from the point of the board where it started, as a move's. */
   | { kind: "resize"; id: number; node: string; anchor: Point }
+  /** A drag of a link handle, whose end follows its pointer, wherever the board moves under it. */
+  | { kind: "link"; id: number; link: Link }
   /** A rubber band, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
   | { kind: "band"; id: number; anchor: Point; input: PointerInput }
   | {
@@ -249,10 +296,11 @@ export class Gestures {
    * band, or its pan; a pen whose release the canvas did not hear of ends
    * as it hovers after it (move), as it leaves the range where the screen
    * sees it hover (leave), which it passes through as it is lifted, or as
-   * it goes down again. A press of the resize handle of the node of handle
-   * is taken by the same rules, and its pointer followed as any other.
+   * it goes down again. A press of handle, the resize handle of a node, or
+   * a link handle, is taken by the same rules, and its pointer followed as
+   * any other.
    */
-  down(p: PointerInput, handle?: string): boolean {
+  down(p: PointerInput, handle?: Handle): boolean {
     if (this.pointers.has(p.id)) {
       this.end(p, true);
     }
@@ -297,23 +345,32 @@ export class Gestures {
     // on the node itself, without the slop that finds a tap's node beside
     // it, so that a rubber band started just beside a node, as at a low
     // zoom, where the slop is as wide as a node, draws rather than moves.
-    // A drag of a node's resize handle resizes it, in either mode, but for
-    // one that pans whatever is under it.
-    const resizes = handle !== undefined && p.button === 0 && !this.space;
+    // A drag of a node's resize handle resizes it, and one of a link handle
+    // links what it holds, in either mode, but for one that pans whatever
+    // is under it.
+    const handles = handle !== undefined && p.button === 0 && !this.space;
+    const link = handles && typeof handle !== "string" ? handle : undefined;
+    const resizes = handles && typeof handle === "string";
     const node = resizes
       ? handle
-      : p.button === 0 && !this.space && this.host.movable()
+      : link === undefined &&
+          p.button === 0 &&
+          !this.space &&
+          this.host.movable()
         ? this.host.nodeAt(at, 0)
         : undefined;
-    const drag = resizes
-      ? "resize"
-      : node !== undefined && this.host.isSelected(node)
-        ? "move"
-        : node !== undefined && this.host.mode() === "select"
-          ? "pick"
-          : pans
-            ? "pan"
-            : "band";
+    const drag =
+      link !== undefined
+        ? "link"
+        : resizes
+          ? "resize"
+          : node !== undefined && this.host.isSelected(node)
+            ? "move"
+            : node !== undefined && this.host.mode() === "select"
+              ? "pick"
+              : pans
+                ? "pan"
+                : "band";
     this.gesture = {
       kind: "press",
       id: p.id,
@@ -321,6 +378,7 @@ export class Gestures {
       at,
       drag,
       node: drag === "pan" || drag === "band" ? undefined : node,
+      link,
       handle: handle !== undefined,
       lastTap,
       input: p,
@@ -392,6 +450,16 @@ export class Gestures {
           }
           this.gesture = { kind: "resize", id: p.id, node, anchor: g.at };
           this.refresh();
+        } else if (g.drag === "link") {
+          // A drag of the handle of what went links nothing, as one that
+          // cannot move its node moves nothing.
+          const link = g.link as Link;
+          if (!this.host.linkStart(link)) {
+            this.gesture = { kind: "held", id: p.id };
+            return;
+          }
+          this.gesture = { kind: "link", id: p.id, link };
+          this.refresh();
         } else if (g.drag === "move" || g.drag === "pick") {
           const node = g.node as string;
           // A drag that cannot move its node, as one whose node went, as
@@ -438,6 +506,7 @@ export class Gestures {
       case "band":
       case "move":
       case "resize":
+      case "link":
         if (g.id === p.id) {
           this.refresh();
         }
@@ -520,6 +589,12 @@ export class Gestures {
           this.host.resizeEnd(!cancelled);
         }
         return;
+      case "link":
+        if (g.id === p.id) {
+          this.gesture = { kind: "idle" };
+          this.host.linkEnd(!cancelled);
+        }
+        return;
       case "band":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
@@ -551,25 +626,37 @@ export class Gestures {
 
   /**
    * Draws the rubber band again, from the point of the board where it
-   * started to its pointer, or moves the selection, or resizes the node,
-   * under its pointer again, as the pointer moves, or the board under it,
-   * as once the wheel, a key, a pinch of the trackpad, or the canvas's new
-   * size moved it.
+   * started to its pointer, or moves the selection, resizes the node, or
+   * takes the link's end, under its pointer again, as the pointer moves,
+   * or the board under it, as once the wheel, a key, a pinch of the
+   * trackpad, or the canvas's new size moved it.
    */
   refresh(): void {
     const g = this.gesture;
-    if (g.kind !== "band" && g.kind !== "move" && g.kind !== "resize") {
+    if (
+      g.kind !== "band" &&
+      g.kind !== "move" &&
+      g.kind !== "resize" &&
+      g.kind !== "link"
+    ) {
       return;
     }
     const p = this.pointers.get(g.id);
     if (p === undefined) {
       return;
     }
+    const v = this.host.viewport();
     if (g.kind === "band") {
-      this.host.band(rectOf(toScreen(this.host.viewport(), g.anchor), p));
+      this.host.band(rectOf(toScreen(v, g.anchor), p));
       return;
     }
-    const at = toWorld(this.host.viewport(), p);
+    const at = toWorld(v, p);
+    if (g.kind === "link") {
+      // The node that takes the link's end is found as a tap's is, a
+      // finger's within its slop.
+      this.host.linkTo(at, tapSlop[p.kind] / v.zoom);
+      return;
+    }
     const delta = { x: at.x - g.anchor.x, y: at.y - g.anchor.y };
     if (g.kind === "move") {
       this.host.moveTo(delta);
@@ -594,15 +681,38 @@ export class Gestures {
   }
 
   /**
-   * Ends the rubber band, the move, or the resize under way, as cancelled,
-   * as Escape asks, or as the board may no longer be changed: the band
-   * selects nothing, the nodes go back where they were, and the pointer
-   * does nothing more until it goes up, as a drag that cannot move its
-   * node. Reports whether there was one.
+   * Tells that the link handle of link went, as once the selection changed,
+   * or what it holds went: its press, or its drag, ends, cancelled, as the
+   * resize handle's does (handleGone).
+   */
+  linkGone(link: Link): void {
+    const g = this.gesture;
+    if (g.kind === "link" && sameLink(g.link, link)) {
+      this.cancelDrag();
+    } else if (
+      g.kind === "press" &&
+      g.link !== undefined &&
+      sameLink(g.link, link)
+    ) {
+      this.gesture = { kind: "held", id: g.id };
+    }
+  }
+
+  /**
+   * Ends the rubber band, the move, the resize, or the link under way, as
+   * cancelled, as Escape asks, or as the board may no longer be changed:
+   * the band selects nothing, the nodes go back where they were, the link
+   * connects nothing, and the pointer does nothing more until it goes up,
+   * as a drag that cannot move its node. Reports whether there was one.
    */
   cancelDrag(): boolean {
     const g = this.gesture;
-    if (g.kind !== "band" && g.kind !== "move" && g.kind !== "resize") {
+    if (
+      g.kind !== "band" &&
+      g.kind !== "move" &&
+      g.kind !== "resize" &&
+      g.kind !== "link"
+    ) {
       return false;
     }
     this.gesture = { kind: "held", id: g.id };
@@ -610,8 +720,10 @@ export class Gestures {
       this.host.band(undefined);
     } else if (g.kind === "move") {
       this.host.moveEnd(false);
-    } else {
+    } else if (g.kind === "resize") {
       this.host.resizeEnd(false);
+    } else {
+      this.host.linkEnd(false);
     }
     return true;
   }
@@ -625,7 +737,8 @@ export class Gestures {
    * was read would undo the fit with its next move. A pinch starts again
    * from where its fingers are, and a press, a rubber band, a move, and a
    * resize, from where their start is on the canvas. A pan moves the board
-   * by what its pointer moves, from wherever it is.
+   * by what its pointer moves, from wherever it is, and a link's end is
+   * where its pointer is on the board now.
    */
   replaced(from: Viewport): void {
     const g = this.gesture;
@@ -644,6 +757,9 @@ export class Gestures {
         this.gesture = { ...g, anchor: kept(g.anchor) };
         this.refresh();
         return;
+      case "link":
+        this.refresh();
+        return;
       case "pan":
       case "held":
       case "idle":
@@ -653,13 +769,16 @@ export class Gestures {
 
   private startPinch(): void {
     // A second finger takes the board from what the first did: a rubber
-    // band, or a move or a resize, which goes back where it started.
+    // band, a move or a resize, which goes back where it started, or a
+    // link, which connects nothing.
     if (this.gesture.kind === "band") {
       this.host.band(undefined);
     } else if (this.gesture.kind === "move") {
       this.host.moveEnd(false);
     } else if (this.gesture.kind === "resize") {
       this.host.resizeEnd(false);
+    } else if (this.gesture.kind === "link") {
+      this.host.linkEnd(false);
     }
     const [a, b] = [...this.pointers.values()];
     const v = this.host.viewport();
@@ -674,7 +793,8 @@ export class Gestures {
 
   /**
    * Selects the node at the tap, or adds it, or takes it out, with Shift,
-   * Ctrl, or Cmd, or clears the selection on the empty board; a second tap
+   * Ctrl, or Cmd, or, where no node is, the connection whose line is there,
+   * without them, or clears the selection on the empty board; a second tap
    * on the same node soon after the first, last, the tap right before it,
    * without them, opens it, as for its text, which nothing needs: the
    * inspector and Enter open it too (NFR-TOUCH-02).
@@ -685,7 +805,9 @@ export class Gestures {
     last: { node: string; time: number } | undefined,
   ): void {
     const v = this.host.viewport();
-    const id = this.host.nodeAt(toWorld(v, at), tapSlop[at.kind] / v.zoom);
+    const where = toWorld(v, at);
+    const slop = tapSlop[at.kind] / v.zoom;
+    const id = this.host.nodeAt(where, slop);
     const additive = pressed.shift || pressed.additive;
     const now = this.host.now();
     this.lastTap =
@@ -702,7 +824,17 @@ export class Gestures {
         this.host.open(id);
       }
     } else if (!additive) {
-      this.host.select([], "replace");
+      // A line is thinner than what a mouse's slop finds a node by, so a
+      // mouse finds one within a pen's.
+      const connection = this.host.connectionAt(
+        where,
+        Math.max(slop, tapSlop.pen / v.zoom),
+      );
+      if (connection === undefined) {
+        this.host.select([], "replace");
+      } else {
+        this.host.selectConnection(connection);
+      }
     }
   }
 

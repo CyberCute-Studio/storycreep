@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { docOf, gridNodes, testNode } from "../test/canvas";
+import { docOf, gridNodes, testConnection, testNode } from "../test/canvas";
 import {
   animationTime,
   CanvasController,
   type CanvasView,
   type Clock,
+  type PortOf,
 } from "./controller";
 import type { Engine, Frame, FrameStats } from "./engine";
 import type { Theme } from "./theme";
@@ -16,6 +17,7 @@ const theme: Theme = {
   fg: 0x15171c,
   muted: 0x4b5260,
   accent: 0x2b50c8,
+  danger: 0xb3261e,
   dark: false,
 };
 
@@ -89,11 +91,20 @@ function setUp() {
     zooms: [] as number[],
     rendered: 0,
     views: [] as CanvasView[],
+    /** The connection selected, each time that it changed. */
+    connections: [] as (string | undefined)[],
+    /** What the canvas offered, to create a node and connect it, each time that it changed. */
+    offers: [] as (
+      | { from: PortOf; at: { x: number; y: number } }
+      | undefined
+    )[],
   };
   const c = new CanvasController(
     "bd_a",
     {
       selection: (ids) => events.selections.push(ids.size),
+      connection: (id) => events.connections.push(id),
+      offer: (offer) => events.offers.push(offer),
       zoom: (z) => events.zooms.push(z),
       rendered: () => {
         events.rendered++;
@@ -731,6 +742,15 @@ function editsOf(c: CanvasController) {
     sizeRevs: [] as number[],
     removed: [] as string[][],
     opened: [] as string[],
+    /** What the drags of link handles asked for, and the keys of a connection selected. */
+    connected: [] as { from: PortOf; to: string }[],
+    reconnected: [] as {
+      id: string;
+      ends: { from?: PortOf; to?: string };
+      rev: number;
+    }[],
+    removedConnections: [] as string[],
+    openedConnections: [] as string[],
   };
   c.edits = {
     move: (places, expected) => {
@@ -743,6 +763,10 @@ function editsOf(c: CanvasController) {
     },
     remove: (ids) => asked.removed.push([...ids]),
     open: (id) => asked.opened.push(id),
+    connect: (from, to) => asked.connected.push({ from, to }),
+    reconnect: (id, ends, rev) => asked.reconnected.push({ id, ends, rev }),
+    removeConnection: (id) => asked.removedConnections.push(id),
+    openConnection: (id) => asked.openedConnections.push(id),
   };
   return asked;
 }
@@ -1183,6 +1207,10 @@ describe("the canvas's controller of a board that may be changed", () => {
       sizeRevs: [],
       removed: [],
       opened: [],
+      connected: [],
+      reconnected: [],
+      removedConnections: [],
+      openedConnections: [],
     });
   });
 
@@ -1314,5 +1342,457 @@ describe("the canvas's controller of a board that may be changed", () => {
     expect(c.key(key("Enter"))).toBe(false);
     expect(c.key(key("Backspace"))).toBe(true);
     expect(asked.removed).toEqual([["nd_1", "nd_2"]]);
+  });
+});
+
+describe("the canvas's controller of a board's connections", () => {
+  /** A board of two elements, a branch of two outputs, and a jumper, with a connection from the first element to the second. */
+  function flowBoard() {
+    const times = { rev: 1, created_at: "", updated_at: "" };
+    const nodes = [
+      testNode("nd_1", 0, 0),
+      testNode("nd_2", 480, 0),
+      testNode("nd_b", 0, 400, {
+        type: "branch",
+        outputs: [
+          { id: "bo_1", node_id: "nd_b", kind: "if", order: "A", ...times },
+          { id: "bo_2", node_id: "nd_b", kind: "else", ...times },
+        ],
+      }),
+      testNode("nd_j", 480, 400, { type: "jumper" }),
+    ];
+    const connections = [testConnection("cn_1", "nd_1", "nd_2", { rev: 5 })];
+    return { nodes, connections, doc: docOf(nodes, connections) };
+  }
+
+  function setUpFlow() {
+    const s = setUp();
+    const asked = editsOf(s.c);
+    const board = flowBoard();
+    s.c.sync(board.doc, false);
+    s.c.setReady();
+    s.time.tick();
+    return { ...s, asked, board };
+  }
+
+  it("selects a connection in place of the nodes selected, and nodes in place of the connection, and draws it selected", () => {
+    const { c, time, events, frames, host } = setUpFlow();
+    c.select(["nd_1"], "replace");
+    c.selectConnection("cn_1");
+    expect(c.selection().size).toBe(0);
+    expect(c.selectedConnection()).toBe("cn_1");
+    expect(events.connections).toEqual(["cn_1"]);
+    time.tick();
+    expect(frames.at(-1)?.connection).toBe("cn_1");
+    expect(host.dataset.connection).toBe("cn_1");
+    const version = frames.at(-1)?.selectionVersion;
+    c.select(["nd_2"], "replace");
+    expect(c.selectedConnection()).toBeUndefined();
+    expect(events.connections).toEqual(["cn_1", undefined]);
+    time.tick();
+    expect(frames.at(-1)?.connection).toBeUndefined();
+    expect(frames.at(-1)?.selectionVersion).not.toBe(version);
+    expect(host.dataset.connection).toBe("");
+    // One that the board does not have is not selected.
+    c.selectConnection("cn_none");
+    expect(c.selectedConnection()).toBeUndefined();
+    expect(c.selection().size).toBe(1);
+  });
+
+  it("finds a connection under a tap as it draws it, and none on a board that may not be changed, where none is selected either", () => {
+    const { c, time } = setUpFlow();
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    time.tick();
+    // From 240, 64 to 480, 64.
+    expect(c.connectionAt({ x: 360, y: 66 }, 4)).toBe("cn_1");
+    c.selectConnection("cn_1");
+    c.edits = undefined;
+    expect(c.selectedConnection()).toBeUndefined();
+    expect(c.connectionAt({ x: 360, y: 66 }, 4)).toBeUndefined();
+    c.selectConnection("cn_1");
+    expect(c.selectedConnection()).toBeUndefined();
+  });
+
+  it("deletes the connection selected with Delete, opens it with Enter, and clears it with Escape", () => {
+    const { c, asked } = setUpFlow();
+    c.selectConnection("cn_1");
+    expect(c.key({ key: "Enter", code: "Enter" } as never)).toBe(true);
+    expect(asked.openedConnections).toEqual(["cn_1"]);
+    expect(c.key({ key: "Delete", code: "Delete" } as never)).toBe(true);
+    expect(asked.removedConnections).toEqual(["cn_1"]);
+    expect(asked.removed).toEqual([]);
+    expect(c.key({ key: "Escape", code: "Escape" } as never)).toBe(true);
+    expect(c.selectedConnection()).toBeUndefined();
+    expect(c.key({ key: "Escape", code: "Escape" } as never)).toBe(false);
+  });
+
+  it("selects a connection no longer once the board no longer has it", () => {
+    const { c, events, board } = setUpFlow();
+    c.selectConnection("cn_1");
+    c.sync(docOf(board.nodes, []), false);
+    expect(c.selectedConnection()).toBeUndefined();
+    expect(events.connections).toEqual(["cn_1", undefined]);
+  });
+
+  // Verifies: FR-EDIT-03/AC3
+  it("connects a port to the node that its link's drag lands on, and offers to create a node where it lands on the empty board, showing its line until the offer ends", () => {
+    const { c, time, asked, events, frames, host } = setUpFlow();
+    const link = { kind: "new", node: "nd_1", port: "out" } as const;
+    expect(c.linkStart(link)).toBe(true);
+    expect(c.links()).toBe(true);
+    // Over the empty board, the line goes from the port to the pointer.
+    c.linkTo({ x: 300, y: 300 }, 0);
+    time.tick();
+    expect(host.dataset.linking).toBe("true");
+    expect(frames.at(-1)?.link).toMatchObject({
+      p0: { x: 240, y: 64 },
+      p3: { x: 300, y: 300 },
+    });
+    // Over a node, it enters the node, at the middle of its left edge.
+    c.linkTo({ x: 600, y: 420 }, 0);
+    time.tick();
+    expect(frames.at(-1)?.link).toMatchObject({ p3: { x: 480, y: 436 } });
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([
+      { from: { node: "nd_1", port: "out" }, to: "nd_j" },
+    ]);
+    time.tick();
+    expect(frames.at(-1)?.link).toBeUndefined();
+    expect(host.dataset.linking).toBe("false");
+    // Dropped on the empty board, it connects nothing, and offers a node
+    // there, whose line stays until the page ends the offer.
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 300, y: 300 }, 0);
+    c.linkEnd(true);
+    expect(asked.connected).toHaveLength(1);
+    const offer = {
+      from: { node: "nd_1", port: "out" },
+      at: { x: 300, y: 300 },
+    };
+    expect(events.offers).toEqual([offer]);
+    time.tick();
+    expect(frames.at(-1)?.link).toMatchObject({ p3: { x: 300, y: 300 } });
+    c.endOffer();
+    expect(events.offers).toEqual([offer, undefined]);
+    time.tick();
+    expect(frames.at(-1)?.link).toBeUndefined();
+    // Cancelled, it asks for nothing.
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 300, y: 300 }, 0);
+    c.linkEnd(false);
+    expect(events.offers).toHaveLength(2);
+    // A node may connect to itself, by a loop.
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 100, y: 64 }, 0);
+    c.linkEnd(true);
+    expect(asked.connected.at(-1)).toEqual({
+      from: { node: "nd_1", port: "out" },
+      to: "nd_1",
+    });
+  });
+
+  it("tells the page that it offers nothing once the next link starts, or the board may no longer be changed, so that the page shows no offer without its line", () => {
+    const { c, time, events, frames } = setUpFlow();
+    const link = { kind: "new", node: "nd_1", port: "out" } as const;
+    const offer = {
+      from: { node: "nd_1", port: "out" },
+      at: { x: 300, y: 300 },
+    };
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo(offer.at, 0);
+    c.linkEnd(true);
+    expect(events.offers).toEqual([offer]);
+    // The next link ends the offer before it.
+    expect(c.linkStart(link)).toBe(true);
+    expect(events.offers).toEqual([offer, undefined]);
+    c.linkTo(offer.at, 0);
+    c.linkEnd(true);
+    expect(events.offers).toEqual([offer, undefined, offer]);
+    c.edits = undefined;
+    expect(events.offers).toEqual([offer, undefined, offer, undefined]);
+    time.tick();
+    expect(frames.at(-1)?.link).toBeUndefined();
+  });
+
+  it("connects nothing, and offers nothing, where a link is let go outside the canvas, whose node there is not shown", () => {
+    const { c, time, asked, events, frames } = setUpFlow();
+    // The canvas, 1000 wide, shows the board up to 500 at twice its size:
+    // the second element, from 480, is under its edge, and beyond it.
+    c.setViewport({ x: 0, y: 0, zoom: 2 });
+    time.tick();
+    const link = { kind: "new", node: "nd_1", port: "out" } as const;
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 600, y: 64 }, 0);
+    time.tick();
+    // The line goes to the pointer, and enters no node there.
+    expect(frames.at(-1)?.link).toMatchObject({ p3: { x: 600, y: 64 } });
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([]);
+    expect(events.offers).toEqual([]);
+    // Nor over the empty board beyond the canvas, above it.
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 300, y: -40 }, 0);
+    c.linkEnd(true);
+    expect(events.offers).toEqual([]);
+    // An end of a connection let go there stays as it was.
+    expect(c.linkStart({ kind: "to", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 600, y: 420 }, 0);
+    c.linkEnd(true);
+    expect(asked.reconnected).toEqual([]);
+    // Back on the canvas, the node under the pointer takes it.
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 600, y: 64 }, 0);
+    c.linkTo({ x: 490, y: 64 }, 0);
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([
+      { from: { node: "nd_1", port: "out" }, to: "nd_2" },
+    ]);
+  });
+
+  it("connects nothing, and offers nothing, where a connection to come is let go on the handle that it left, and makes a loop only beyond it", () => {
+    const { c, time, asked, events } = setUpFlow();
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    time.tick();
+    // A finger's handle, 44 px about the port at 240, 64.
+    const link = { kind: "new", node: "nd_1", port: "out", side: 44 } as const;
+    // On the half of the handle that is over the node, which a tap's slop
+    // would else find, and on the half beside it, over the empty board.
+    for (const at of [
+      { x: 230, y: 70 },
+      { x: 262, y: 42 },
+    ]) {
+      expect(c.linkStart(link)).toBe(true);
+      c.linkTo(at, 12);
+      c.linkEnd(true);
+    }
+    expect(asked.connected).toEqual([]);
+    expect(events.offers).toEqual([]);
+    // Zoomed in, the handle covers less of the board.
+    c.setViewport({ x: 0, y: 0, zoom: 2 });
+    time.tick();
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 225, y: 64 }, 6);
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([
+      { from: { node: "nd_1", port: "out" }, to: "nd_1" },
+    ]);
+    // Beside the handle, over the empty board, it offers a node.
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    time.tick();
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo({ x: 300, y: 64 }, 12);
+    c.linkEnd(true);
+    expect(events.offers).toHaveLength(1);
+  });
+
+  it("leaves an end of a connection as it was where it is let go on the handle that it left, though the row of another output is nearer there, or another node is under it", () => {
+    const { c, time, asked, board } = setUpFlow();
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    time.tick();
+    // A connection that leaves the branch by its first output, at 240, 470,
+    // and a node whose edge is 10 units from where the first connection
+    // enters the second element, at 480, 64.
+    c.sync(
+      docOf(
+        [...board.nodes, testNode("nd_3", 230, 0)],
+        [
+          ...board.connections,
+          testConnection("cn_2", "nd_b", "nd_2", { from_port: "bo_1", rev: 3 }),
+        ],
+      ),
+      false,
+    );
+    // A finger's handle, 44 px about the end: the row of the second output,
+    // at 498, is the nearer 20 units below the first's, within the handle.
+    const from = { kind: "from", connection: "cn_2", side: 44 } as const;
+    expect(c.linkStart(from)).toBe(true);
+    c.linkTo({ x: 236, y: 490 }, 12);
+    c.linkEnd(true);
+    expect(asked.reconnected).toEqual([]);
+    // Beyond the handle, the output of the nearest row takes it.
+    expect(c.linkStart(from)).toBe(true);
+    c.linkTo({ x: 236, y: 496 }, 12);
+    c.linkEnd(true);
+    expect(asked.reconnected).toEqual([
+      {
+        id: "cn_2",
+        ends: { from: { node: "nd_b", port: "bo_2" } },
+        rev: 3,
+      },
+    ]);
+    // The end that enters a node, let go on its handle over the node beside
+    // it, and then beyond the handle, on that node.
+    const to = { kind: "to", connection: "cn_1", side: 44 } as const;
+    expect(c.linkStart(to)).toBe(true);
+    c.linkTo({ x: 465, y: 64 }, 12);
+    c.linkEnd(true);
+    expect(asked.reconnected).toHaveLength(1);
+    expect(c.linkStart(to)).toBe(true);
+    c.linkTo({ x: 440, y: 64 }, 12);
+    c.linkEnd(true);
+    expect(asked.reconnected.at(-1)).toEqual({
+      id: "cn_1",
+      ends: { to: "nd_3" },
+      rev: 5,
+    });
+  });
+
+  it("offers nothing once the board no longer has the port that the offer would connect, as of an output, or of a node, that another session deleted", () => {
+    const { c, time, events, frames, board } = setUpFlow();
+    const link = { kind: "new", node: "nd_b", port: "bo_1" } as const;
+    const offer = {
+      from: { node: "nd_b", port: "bo_1" },
+      at: { x: 300, y: 300 },
+    };
+    expect(c.linkStart(link)).toBe(true);
+    c.linkTo(offer.at, 0);
+    c.linkEnd(true);
+    expect(events.offers).toEqual([offer]);
+    // Another node's going leaves the offer.
+    const rest = board.nodes.filter((n) => n.id !== "nd_j");
+    c.sync(docOf(rest, board.connections), false);
+    expect(events.offers).toEqual([offer]);
+    // The branch's output goes, and the offer, and its line, with it.
+    c.sync(
+      docOf(
+        rest.map((n) =>
+          n.id === "nd_b"
+            ? { ...n, outputs: n.outputs?.filter((o) => o.id !== "bo_1") }
+            : n,
+        ),
+        board.connections,
+      ),
+      false,
+    );
+    expect(events.offers).toEqual([offer, undefined]);
+    time.tick();
+    expect(frames.at(-1)?.link).toBeUndefined();
+    // An offer of a node's port ends as the node goes.
+    const second = { ...offer, from: { node: "nd_1", port: "out" } };
+    c.sync(docOf(rest, board.connections), false);
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.linkTo(second.at, 0);
+    c.linkEnd(true);
+    expect(events.offers).toEqual([offer, undefined, second]);
+    c.sync(
+      docOf(
+        rest.filter((n) => n.id !== "nd_1"),
+        [],
+      ),
+      false,
+    );
+    expect(events.offers).toEqual([offer, undefined, second, undefined]);
+  });
+
+  it("starts no link of a port that its node does not have, of a jumper, while another drag is under way, or on a board that may not be changed", () => {
+    const { c } = setUpFlow();
+    expect(c.linkStart({ kind: "new", node: "nd_j", port: "out" })).toBe(false);
+    expect(c.linkStart({ kind: "new", node: "nd_b", port: "bo_9" })).toBe(
+      false,
+    );
+    expect(c.linkStart({ kind: "new", node: "nd_9", port: "out" })).toBe(false);
+    expect(c.linkStart({ kind: "to", connection: "cn_9" })).toBe(false);
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(false);
+    c.moveEnd(false);
+    expect(c.linkStart({ kind: "new", node: "nd_b", port: "bo_2" })).toBe(true);
+    // The board may no longer be changed: the link ends, cancelled.
+    c.gestures.down(
+      {
+        id: 1,
+        x: 0,
+        y: 0,
+        kind: "mouse",
+        button: 0,
+        buttons: 1,
+        shift: false,
+        additive: false,
+      },
+      { kind: "new", node: "nd_1", port: "out" },
+    );
+    c.edits = undefined;
+    expect(c.links()).toBe(true);
+    c.linkEnd(false);
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(false);
+  });
+
+  it("reconnects the end of a connection that its handle's drag takes to another node, or to another port, expecting its revision as the drag started, and leaves it as it was elsewhere", () => {
+    const { c, asked, events, board } = setUpFlow();
+    // The end that enters a node, to another node.
+    expect(c.linkStart({ kind: "to", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 600, y: 420 }, 0);
+    // The connection changes elsewhere while the drag is under way.
+    c.sync(
+      docOf(board.nodes, [testConnection("cn_1", "nd_1", "nd_2", { rev: 6 })]),
+      false,
+    );
+    c.linkEnd(true);
+    expect(asked.reconnected).toEqual([
+      { id: "cn_1", ends: { to: "nd_j" }, rev: 5 },
+    ]);
+    // On its own node, or on the empty board, it stays, and offers nothing.
+    expect(c.linkStart({ kind: "to", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 500, y: 64 }, 0);
+    c.linkEnd(true);
+    expect(c.linkStart({ kind: "to", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 300, y: 300 }, 0);
+    c.linkEnd(true);
+    expect(asked.reconnected).toHaveLength(1);
+    expect(events.offers).toEqual([]);
+    // The end that leaves a node, to the output of a branch whose row is
+    // nearest the pointer: the first's at 470, the second's at 498.
+    expect(c.linkStart({ kind: "from", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 100, y: 515 }, 0);
+    c.linkEnd(true);
+    expect(asked.reconnected.at(-1)).toEqual({
+      id: "cn_1",
+      ends: { from: { node: "nd_b", port: "bo_2" } },
+      rev: 6,
+    });
+    // A jumper, which no connection leaves, takes none, nor its own port.
+    expect(c.linkStart({ kind: "from", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 600, y: 420 }, 0);
+    c.linkEnd(true);
+    expect(c.linkStart({ kind: "from", connection: "cn_1" })).toBe(true);
+    c.linkTo({ x: 100, y: 64 }, 0);
+    c.linkEnd(true);
+    expect(asked.reconnected).toHaveLength(2);
+  });
+
+  it("connects nothing to a node that went while the link was under way, nor from one", () => {
+    const { c, asked, events, board } = setUpFlow();
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.linkTo({ x: 600, y: 64 }, 0);
+    c.sync(
+      docOf(
+        board.nodes.filter((n) => n.id !== "nd_2"),
+        [],
+      ),
+      false,
+    );
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([]);
+    expect(events.offers).toEqual([]);
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.linkTo({ x: 600, y: 420 }, 0);
+    c.sync(
+      docOf(
+        board.nodes.filter((n) => n.id !== "nd_1" && n.id !== "nd_2"),
+        [],
+      ),
+      false,
+    );
+    c.linkEnd(true);
+    expect(asked.connected).toEqual([]);
+  });
+
+  it("tells how many of the board's jumpers are broken, as the page says of each", () => {
+    const { c, time, host } = setUpFlow();
+    expect(host.dataset.broken).toBe("0");
+    c.broken = (node) => node.id === "nd_j";
+    c.relabel();
+    time.tick();
+    expect(host.dataset.broken).toBe("1");
   });
 });

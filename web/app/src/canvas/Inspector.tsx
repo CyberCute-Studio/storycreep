@@ -5,8 +5,12 @@
 // at it, and its place and size, which a drag changes too, as fields that
 // need no drag (WCAG 2.5.7); its colour, its tags, with the project's as
 // suggestions, an element's cover image, and its text, which the canvas's
-// editor opens over the node. Of several, it aligns, distributes, colours,
-// and tags them. Of either, it duplicates and deletes what is selected.
+// editor opens over the node, with the connections that leave an element, a
+// branch's outputs, a jumper's target, and the jumpers that target the
+// node (InspectorFlow.tsx, plan note N69). Of several, it aligns,
+// distributes, colours, and tags them. Of either, it duplicates and deletes
+// what is selected. Of the connection selected, in place of nodes, it is
+// the connection's form.
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -61,15 +65,34 @@ import {
   tagKey,
   tagsOf,
 } from "./edit";
+import {
+  Choices,
+  ConnectionInspector,
+  JumperTarget,
+  Outputs,
+  ReferencedBy,
+} from "./InspectorFlow";
+import type { FollowLink } from "./Links";
 import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
+import type { TargetLookup } from "./targets";
 
 /** What the inspector is given. */
 export interface InspectorProps {
   projectId: string;
   /** The selected nodes, as the canvas has them. */
   selection: ReadonlySet<string>;
+  /** The connection selected, in place of nodes, if one is. */
+  connection?: string;
   actions: CanvasActions;
+  /** What tells of a jumper's target that the document does not (targets.ts). */
+  targets: TargetLookup;
+  /** Selects the connection of id on the canvas, whose inspector this then is. */
+  onSelectConnection: (id: string) => void;
+  /** Selects the node of id on the canvas, in place of what is selected. */
+  onSelectNode: (id: string) => void;
+  /** Tells of a click of a link to a node on a board's canvas, which the canvas opens itself where the address names it already (Links.tsx). */
+  onFollow: FollowLink;
   /** Opens the editor of the text of the element of id over it on the canvas. */
   onEditText: (id: string) => void;
   onClose: () => void;
@@ -82,7 +105,12 @@ export interface InspectorProps {
 export function Inspector({
   projectId,
   selection,
+  connection: connectionId,
   actions,
+  targets,
+  onSelectConnection,
+  onSelectNode,
+  onFollow,
   onEditText,
   onClose,
   returnFocus,
@@ -90,6 +118,21 @@ export function Inspector({
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
+  // The inspector's heading takes the focus as a button of the inspector
+  // has it show another thing in place of what the button was of, as a
+  // choice's Edit, which shows the connection's form, and which goes with
+  // what it was of, as does the button that removes a branch's output, with
+  // the output's row, and Try again, of a read of a board's nodes that
+  // failed, with what said so: the focus would else fall to the page's
+  // content, out of the inspector (WCAG 2.4.3), as it does not where the
+  // canvas opens the inspector of what Enter asks for.
+  const ownHeading = useRef<HTMLHeadingElement>(null);
+  const heading = headingRef ?? ownHeading;
+  const toHeading = () => heading.current?.focus();
+  const editConnection = (id: string) => {
+    onSelectConnection(id);
+    toHeading();
+  };
   const ids = useMemo(() => [...selection], [selection]);
   // The selected nodes as the document has them, which the inspector shows
   // anew only once one of them changes.
@@ -104,23 +147,68 @@ export function Inspector({
       }),
     ),
   );
+  // The connection selected, as the document has it.
+  const connection = useDocumentState(doc, (state) => {
+    const c =
+      connectionId === undefined
+        ? undefined
+        : state.view.connections.get(connectionId);
+    return c?.deleted_at === undefined ? c : undefined;
+  });
+  const ends = useDocumentState(
+    doc,
+    useShallow((state) =>
+      connection === undefined
+        ? []
+        : [
+            state.view.nodes.get(connection.from_node_id),
+            state.view.nodes.get(connection.to_node_id),
+          ],
+    ),
+  );
   const single = nodes.length === 1 ? nodes[0] : undefined;
   const tooMany = nodes.length > maxEdited;
+  const untitled = t("boards.untitled_node");
   const title =
-    single !== undefined
-      ? titleOf(single, t)
-      : nodes.length === 0
-        ? t("inspector.title")
-        : t("inspector.selected", { count: nodes.length });
+    connection !== undefined
+      ? t("inspector.connection")
+      : single !== undefined
+        ? titleOf(single, t)
+        : nodes.length === 0
+          ? t("inspector.title")
+          : t("inspector.selected", { count: nodes.length });
+  const subtitle =
+    connection !== undefined
+      ? t("inspector.connection_ends", {
+          from: ends[0] === undefined ? untitled : titleOf(ends[0], t),
+          to: ends[1] === undefined ? untitled : titleOf(ends[1], t),
+        })
+      : (single && typeOf(single, t)) || undefined;
   return (
     <Panel
       title={title}
-      subtitle={(single && typeOf(single, t)) || undefined}
+      subtitle={subtitle}
       onClose={onClose}
       returnFocus={returnFocus}
-      headingRef={headingRef}
+      headingRef={heading}
     >
-      {nodes.length === 0 ? (
+      {connection !== undefined ? (
+        <ConnectionInspector
+          // The parts of one connection, made anew for another.
+          key={connection.id}
+          projectId={projectId}
+          connection={connection}
+          actions={actions}
+          onSelectNode={(id) => {
+            onSelectNode(id);
+            toHeading();
+          }}
+          onDelete={() => {
+            void actions.removeConnection(connection.id);
+            toHeading();
+          }}
+        />
+      ) : nodes.length === 0 ? (
         <p className="text-fg-muted">{t("inspector.empty")}</p>
       ) : (
         <div className="space-y-6">
@@ -144,6 +232,37 @@ export function Inspector({
               {single.type === "element" && (
                 <Cover projectId={projectId} node={single} />
               )}
+              {single.type === "element" && (
+                <Choices
+                  projectId={projectId}
+                  node={single}
+                  actions={actions}
+                  onSelectConnection={editConnection}
+                />
+              )}
+              {single.type === "branch" && (
+                <Outputs
+                  projectId={projectId}
+                  node={single}
+                  actions={actions}
+                  onSelectConnection={editConnection}
+                  heading={() => heading.current}
+                />
+              )}
+              {single.type === "jumper" && (
+                <JumperTarget
+                  projectId={projectId}
+                  node={single}
+                  targets={targets}
+                  onFollow={onFollow}
+                  heading={() => heading.current}
+                />
+              )}
+              <ReferencedBy
+                projectId={projectId}
+                node={single}
+                onFollow={onFollow}
+              />
             </Fragment>
           )}
           {nodes.length > 1 && <Arrange nodes={nodes} actions={actions} />}

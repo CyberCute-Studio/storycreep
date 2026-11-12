@@ -18,8 +18,10 @@ export interface Theme {
   fg: number;
   /** A node's type and text. */
   muted: number;
-  /** The selection's outline, and the rubber band. */
+  /** The selection's outline, the rubber band, and the line of a link under way. */
   accent: number;
+  /** What is wrong, as a broken jumper's edge and the line that says so. */
+  danger: number;
   /** Whether the theme is dark, which picks the palette's colours. */
   dark: boolean;
 }
@@ -32,13 +34,15 @@ const tokens = {
   fg: "--color-fg",
   muted: "--color-fg-muted",
   accent: "--color-accent",
+  danger: "--color-danger",
 } as const;
 
 /**
  * The system's colours that the browser draws a page in, in forced colours,
  * as under Windows's contrast themes, for each of the tokens, as it draws
  * the page's own elements: the board and the cards on Canvas, their edges
- * and text in CanvasText, and the selection in Highlight. The browser
+ * and text in CanvasText, what is wrong among them, which its words say,
+ * and the selection in Highlight. The browser
  * forces the colour of the probe that reads a token as well, so that each
  * token would read as the text's colour, and the board be drawn in one.
  */
@@ -49,6 +53,7 @@ const systemColors: Record<keyof typeof tokens, string> = {
   fg: "CanvasText",
   muted: "CanvasText",
   accent: "Highlight",
+  danger: "CanvasText",
 };
 
 /** The light theme's colours, for a page that has none of the tokens, as the tests' jsdom. */
@@ -59,6 +64,7 @@ const fallback: Theme = {
   fg: 0x15171c,
   muted: 0x4b5260,
   accent: 0x2b50c8,
+  danger: 0xb3261e,
   dark: false,
 };
 
@@ -96,6 +102,7 @@ export function readTheme(element: HTMLElement, forced = false): Theme {
       fg: read("fg"),
       muted: read("muted"),
       accent: read("accent"),
+      danger: read("danger"),
       // Dark where the board stands out of white more than of black, as
       // light text would on it, by the contrast that the palette's colours
       // are measured by against it.
@@ -115,6 +122,7 @@ export function sameTheme(a: Theme, b: Theme): boolean {
     a.fg === b.fg &&
     a.muted === b.muted &&
     a.accent === b.accent &&
+    a.danger === b.danger &&
     a.dark === b.dark
   );
 }

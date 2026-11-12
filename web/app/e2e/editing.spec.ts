@@ -1,15 +1,17 @@
-import type { Locator, Page, Request } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
 import {
   canvasOf,
+  dragOn,
   drawn,
   makeBoard,
   makeProject,
   onPage,
+  pointOf,
+  sentBatches,
   settled,
   type TestBoard,
   test,
-  touchGesture,
   viewOf,
 } from "./boards.ts";
 import { apply, signedIn } from "./content.ts";
@@ -49,54 +51,9 @@ async function openBoard(
   return { ...board, projectId, session };
 }
 
-/** Returns where the board's point p is on the page, in canvas as it is now. */
-async function pointOf(canvas: Locator, p: { x: number; y: number }) {
-  return onPage(canvas, await settled(canvas), p);
-}
-
 /** The middle of the node of the grid's col and row, 240 by 128 at 320 by 200 apart. */
 function middleOf(col: number, row: number) {
   return { x: col * 320 + 120, y: row * 200 + 64 };
-}
-
-/** Drags from one point of the page to another: a mouse's on the desktop, and a finger's on the tablet. */
-async function dragOn(
-  page: Page,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-) {
-  if (test.info().project.use.hasTouch) {
-    // A session of the browser's protocol for each drag, which ends with it,
-    // rather than one more left open on the page for each drag of a test.
-    const cdp = await page.context().newCDPSession(page);
-    try {
-      await touchGesture(cdp, [{ from, to }], 12);
-    } finally {
-      await cdp.detach();
-    }
-    return;
-  }
-  await page.mouse.move(from.x, from.y);
-  await page.mouse.down();
-  await page.mouse.move(to.x, to.y, { steps: 12 });
-  await page.mouse.up();
-}
-
-/** Returns the commands of the batches that page sends from now on, as it sends them. */
-function sentBatches(page: Page): { type: string; payload: unknown }[][] {
-  const sent: { type: string; payload: unknown }[][] = [];
-  page.on("request", (request: Request) => {
-    if (request.method() === "POST" && request.url().endsWith("/commands")) {
-      sent.push(
-        (
-          request.postDataJSON() as {
-            commands: { type: string; payload: unknown }[];
-          }
-        ).commands,
-      );
-    }
-  });
-  return sent;
 }
 
 /** Returns the position of the node of id, as the server has it. */

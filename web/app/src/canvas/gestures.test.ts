@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type GestureHost,
   Gestures,
+  type Link,
   type Mode,
   type PointerInput,
   type SelectHow,
@@ -45,6 +46,17 @@ function host(mode: Mode = "pan", movable = false) {
     released: [] as number[],
     /** Where another node, nd_b, is, if the board has one, over nd_a where they overlap. */
     other: undefined as Rect | undefined,
+    /** What the drags of link handles did: what each held as it started, where it took its end, with the slop that finds a node there, and how it ended. */
+    links: [] as (
+      | { start: Link }
+      | { to: { x: number; y: number }; slop: number }
+      | { end: boolean }
+    )[],
+    /** A connection, cn_a, whose line is along y = 400 of the board, from x = 0 to 400, where the board has one, and the slops that it was looked for with. */
+    connection: false,
+    slops: [] as number[],
+    /** The connections that a tap selected. */
+    connections: [] as string[],
   };
   const node = { x: 100, y: 100, width: 240, height: 120 };
   const overlaps = (a: Rect, r: Rect) =>
@@ -119,6 +131,28 @@ function host(mode: Mode = "pan", movable = false) {
     },
     open: (id) => {
       state.opened.push(id);
+    },
+    connectionAt: (p, slop) => {
+      state.slops.push(slop);
+      return state.connection &&
+        p.x >= 0 &&
+        p.x <= 400 &&
+        Math.abs(p.y - 400) <= slop
+        ? "cn_a"
+        : undefined;
+    },
+    selectConnection: (id) => {
+      state.connections.push(id);
+    },
+    linkStart: (link) => {
+      state.links.push({ start: link });
+      return state.present && !state.refuses;
+    },
+    linkTo: (at, slop) => {
+      state.links.push({ to: at, slop });
+    },
+    linkEnd: (commit) => {
+      state.links.push({ end: commit });
     },
     now: () => state.now,
     band: (r) => {
@@ -993,5 +1027,149 @@ describe("the canvas's gestures of a node's resize handle", () => {
     gestures.up(touch(1, 400, 260));
     expect(state.resizes).toEqual([{ start: "nd_a" }]);
     expect(state.released).toContain(1);
+  });
+});
+
+describe("the canvas's gestures of a link handle and of a connection", () => {
+  const port: Link = { kind: "new", node: "nd_a", port: "out" };
+
+  // Verifies: NFR-TOUCH-05
+  it("links what a handle holds by a drag of it, from 8 px of a finger and 4 of a mouse, in either mode, taking its end to the pointer with a tap's slop, and taps nothing", () => {
+    for (const mode of ["pan", "select"] as const) {
+      const { state, gestures } = host(mode, true);
+      // A finger's tap on the handle selects, moves, and links nothing.
+      gestures.down(touch(1, 340, 160), port);
+      gestures.move(touch(1, 345, 164));
+      gestures.up(touch(1, 345, 164));
+      expect(state.links).toEqual([]);
+      expect(state.selects).toEqual([]);
+      expect(state.moves).toEqual([]);
+      gestures.down(touch(1, 340, 160), port);
+      gestures.move(touch(1, 350, 160));
+      gestures.up(touch(1, 500, 300));
+      expect(state.links).toEqual([
+        { start: port },
+        { to: { x: 350, y: 160 }, slop: 12 },
+        { to: { x: 500, y: 300 }, slop: 12 },
+        { end: true },
+      ]);
+      state.links = [];
+      gestures.down(mouse(340, 160), port);
+      gestures.move(mouse(345, 160));
+      gestures.up(mouse(345, 160));
+      expect(state.links).toEqual([
+        { start: port },
+        { to: { x: 345, y: 160 }, slop: 1 },
+        { to: { x: 345, y: 160 }, slop: 1 },
+        { end: true },
+      ]);
+      expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+      expect(state.selects).toEqual([]);
+    }
+  });
+
+  it("keeps a link's end under its pointer as the board moves under it, at the zoom's slop", () => {
+    const { state, gestures } = host("pan", true);
+    state.v = { x: 0, y: 0, zoom: 2 };
+    gestures.down(touch(1, 680, 320), port);
+    gestures.move(touch(1, 700, 320));
+    expect(state.links.at(-1)).toEqual({ to: { x: 350, y: 160 }, slop: 6 });
+    gestures.wheel({
+      x: 700,
+      y: 320,
+      dx: 100,
+      dy: 0,
+      deltaMode: 0,
+      zoom: false,
+      shift: false,
+    });
+    gestures.refresh();
+    expect(state.links.at(-1)).toEqual({ to: { x: 400, y: 160 }, slop: 6 });
+    const from = state.v;
+    state.v = { x: 500, y: 500, zoom: 1 };
+    gestures.replaced(from);
+    expect(state.links.at(-1)).toEqual({ to: { x: 1200, y: 820 }, slop: 12 });
+  });
+
+  it("ends a link, cancelled, as a second finger pinches, as Escape asks, or as its handle goes, holds one that the host refuses, and pans by a drag of the handle with Space held", () => {
+    const { state, gestures } = host("pan", true);
+    gestures.down(touch(1, 340, 160), port);
+    gestures.move(touch(1, 360, 160));
+    gestures.down(touch(2, 600, 400));
+    expect(state.links.at(-1)).toEqual({ end: false });
+    gestures.cancelAll();
+    // Escape, or a board that may no longer be changed.
+    state.links = [];
+    gestures.down(mouse(340, 160), port);
+    gestures.move(mouse(360, 160));
+    expect(gestures.cancelDrag()).toBe(true);
+    expect(state.links.at(-1)).toEqual({ end: false });
+    // The pointer does nothing more until it goes up.
+    gestures.move(mouse(400, 200));
+    gestures.up(mouse(400, 200));
+    expect(state.links.filter((l) => "end" in l)).toEqual([{ end: false }]);
+    // The handle of another link going ends nothing; its own ends the drag,
+    // or its press, which then links nothing.
+    state.links = [];
+    gestures.down(mouse(340, 160), port);
+    gestures.move(mouse(360, 160));
+    gestures.linkGone({ kind: "to", connection: "cn_a" });
+    expect(state.links.at(-1)).toEqual({ to: { x: 360, y: 160 }, slop: 1 });
+    gestures.linkGone({ ...port });
+    expect(state.links.at(-1)).toEqual({ end: false });
+    gestures.up(mouse(360, 160));
+    state.links = [];
+    gestures.down(mouse(340, 160), port);
+    gestures.linkGone(port);
+    gestures.move(mouse(380, 160));
+    gestures.up(mouse(380, 160));
+    expect(state.links).toEqual([]);
+    // A link that the host refuses, as of a node that went, does nothing.
+    state.refuses = true;
+    gestures.down(mouse(340, 160), port);
+    gestures.move(mouse(380, 160));
+    gestures.up(mouse(380, 160));
+    expect(state.links).toEqual([{ start: port }]);
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    state.refuses = false;
+    // With Space held, the handle's drag pans, as the canvas under it.
+    state.links = [];
+    gestures.setSpace(true);
+    gestures.down(mouse(340, 160), port);
+    gestures.move(mouse(360, 160));
+    gestures.up(mouse(360, 160));
+    expect(state.links).toEqual([]);
+    expect(state.v.x).toBe(-20);
+  });
+
+  it("selects the connection whose line a tap is on, where no node is, a mouse's within a pen's slop, and not with Shift, Ctrl, or Cmd", () => {
+    const { state, gestures } = host("pan", true);
+    state.connection = true;
+    state.selected = ["nd_a"];
+    gestures.down(mouse(200, 404));
+    gestures.up(mouse(200, 404));
+    expect(state.connections).toEqual(["cn_a"]);
+    expect(state.slops).toEqual([6]);
+    expect(state.selects).toEqual([]);
+    // A finger's, within its own.
+    gestures.down(touch(1, 200, 410));
+    gestures.up(touch(1, 200, 410));
+    expect(state.connections).toEqual(["cn_a", "cn_a"]);
+    expect(state.slops).toEqual([6, 12]);
+    // With Shift, it selects nothing, and clears nothing.
+    gestures.down(mouse(200, 404, { shift: true }));
+    gestures.up(mouse(200, 404, { shift: true }));
+    expect(state.connections).toHaveLength(2);
+    expect(state.selects).toEqual([]);
+    // Beside the line, the tap clears the selection, as on the empty board.
+    gestures.down(mouse(200, 420));
+    gestures.up(mouse(200, 420));
+    expect(state.selects).toEqual([{ ids: [], how: "replace" }]);
+    // A node under the tap is selected rather than a line there.
+    state.other = { x: 0, y: 380, width: 400, height: 40 };
+    gestures.down(mouse(200, 400));
+    gestures.up(mouse(200, 400));
+    expect(state.selects.at(-1)).toEqual({ ids: ["nd_b"], how: "replace" });
+    expect(state.connections).toHaveLength(2);
   });
 });
