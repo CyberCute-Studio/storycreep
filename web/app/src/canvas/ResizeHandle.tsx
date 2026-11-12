@@ -22,7 +22,7 @@ import { type PointerEvent, useEffect, useLayoutEffect, useRef } from "react";
 import type { CanvasController, ScreenRectOf } from "./controller";
 
 /** The handle's side, in CSS pixels (FR-EDIT-09). */
-const side = 44;
+export const resizeHandleSide = 44;
 
 /**
  * Reports whether a node that the canvas draws at r is large enough for a
@@ -33,7 +33,7 @@ export function hasRoomForHandle(r: {
   width: number;
   height: number;
 }): boolean {
-  return r.width >= 2 * side && r.height >= 2 * side;
+  return r.width >= 2 * resizeHandleSide && r.height >= 2 * resizeHandleSide;
 }
 
 /** The resize handle of the node of id. */
@@ -65,8 +65,9 @@ export function ResizeHandle({
           controller.moves() ||
           (!hasRoomForHandle(r) && !controller.resizes(id));
         if (r !== undefined) {
-          el.style.transform = `translate(${r.x + r.width - side / 2}px, ${
-            r.y + r.height - side / 2
+          const half = resizeHandleSide / 2;
+          el.style.transform = `translate(${r.x + r.width - half}px, ${
+            r.y + r.height - half
           }px)`;
         }
       }),

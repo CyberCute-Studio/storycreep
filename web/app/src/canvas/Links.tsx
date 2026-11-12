@@ -31,6 +31,7 @@ import { useMediaQuery } from "../ui/media";
 import type { CanvasController, PortOf, ScreenRectOf } from "./controller";
 import type { Link } from "./gestures";
 import { entryPoint, outputOffset, portPoint, portsOf } from "./layout";
+import { hasRoomForHandle, resizeHandleSide } from "./ResizeHandle";
 import type { Point } from "./viewport";
 
 /** The query of a device with a touch screen, whose link handles are of a fingertip's size (FR-EDIT-09). */
@@ -72,6 +73,50 @@ export function portPlace(
           outputOffset(0, ports.length, height)
         : height,
   };
+}
+
+/**
+ * Reports whether a press at on of the canvas, which went down on the
+ * handle of the port from, is the resize handle's of the port's node
+ * instead. The last output of a branch is 22 units above its node's bottom
+ * right corner, as the canvas lays a branch out, and the one output of a
+ * branch 26, and the resize handle is on that corner, so that the port's
+ * handle, which is above, covers the resize handle's upper part, two fifths
+ * of it for a finger at 100% on a branch of one output, where a press would
+ * else link, rather than resize: where the two squares cover each other, a
+ * press is of the handle whose middle is nearer, the resize handle's within
+ * that handle's square, nearer the corner than the port. A node that the
+ * canvas draws too small for a resize handle has none (hasRoomForHandle),
+ * and its port's handle has every press on it.
+ */
+export function resizeTakes(
+  controller: CanvasController,
+  from: PortOf,
+  on: Point,
+): boolean {
+  const item = controller.scene.nodes.get(from.node);
+  if (item === undefined) {
+    return false;
+  }
+  const { rect } = item;
+  const zoom = controller.viewport().zoom;
+  if (
+    !hasRoomForHandle({ width: rect.width * zoom, height: rect.height * zoom })
+  ) {
+    return false;
+  }
+  const corner = controller.screenPoint({
+    x: rect.x + rect.width,
+    y: rect.y + rect.height,
+  });
+  const port = controller.screenPoint(portPoint(item.node, rect, from.port));
+  const reach = resizeHandleSide / 2;
+  return (
+    Math.abs(on.x - corner.x) <= reach &&
+    Math.abs(on.y - corner.y) <= reach &&
+    Math.hypot(on.x - corner.x, on.y - corner.y) <
+      Math.hypot(on.x - port.x, on.y - port.y)
+  );
 }
 
 /**

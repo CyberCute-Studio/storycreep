@@ -122,9 +122,10 @@ export function Inspector({
   // has it show another thing in place of what the button was of, as a
   // choice's Edit, which shows the connection's form, and which goes with
   // what it was of, as does the button that removes a branch's output, with
-  // the output's row: the focus would else fall to the page, or, from a
-  // sheet over it, to nothing (WCAG 2.4.3), as it does not where the canvas
-  // opens the inspector of what Enter asks for.
+  // the output's row, and Try again, of a read of a board's nodes that
+  // failed, with what said so: the focus would else fall to the page's
+  // content, out of the inspector (WCAG 2.4.3), as it does not where the
+  // canvas opens the inspector of what Enter asks for.
   const ownHeading = useRef<HTMLHeadingElement>(null);
   const heading = headingRef ?? ownHeading;
   const toHeading = () => heading.current?.focus();
@@ -254,6 +255,7 @@ export function Inspector({
                   node={single}
                   targets={targets}
                   onFollow={onFollow}
+                  heading={() => heading.current}
                 />
               )}
               <ReferencedBy

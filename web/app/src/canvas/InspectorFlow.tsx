@@ -14,6 +14,7 @@
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import {
   type FormEvent,
   type PointerEvent,
@@ -49,19 +50,15 @@ import {
   reconnectCommand,
 } from "./flow";
 import type { FollowLink } from "./Links";
-import {
-  type LabelContext,
-  outputLabel,
-  plainText,
-  targetLabel,
-  titleOf,
-  typeOf,
-} from "./labels";
+import { outputLabel, plainText, targetLabel, titleOf, typeOf } from "./labels";
 import { linkOf, type TargetLookup, targetOf } from "./targets";
 
 /** Returns what names node in a list of a board's nodes: its title, as its card shows it, and its type. */
-function nodeOption(node: Node, t: LabelContext["t"]): string {
-  return `${titleOf(node, t)} (${typeOf(node, t)})`;
+function nodeOption(node: Node, t: TFunction): string {
+  return t("inspector.node_option", {
+    node: titleOf(node, t),
+    type: typeOf(node, t),
+  });
 }
 
 /** A node of a list of a board's nodes, with what names it there. */
@@ -77,7 +74,7 @@ const byName = new Intl.Collator();
 function namedNodes(
   nodes: ReadonlyMap<string, Node>,
   boardId: string,
-  t: LabelContext["t"],
+  t: TFunction,
 ): NamedNode[] {
   const out: NamedNode[] = [];
   for (const node of nodes.values()) {
@@ -202,6 +199,23 @@ function useLeaving(doc: ProjectDocument, nodeId: string): Connection[] {
     [nodeId],
   );
   return useDocumentState(doc, select);
+}
+
+/**
+ * Returns what the form of key holds as chosen, in its lists, and what
+ * holds another thing as chosen for it, so that the lists show what was
+ * chosen whatever their options become, as once another session deleted
+ * the node chosen, where a list that held its own choice would show its
+ * first option in its place, which Save would then send. What a form of
+ * another key held, as the one shown before it saved, is chosen no longer,
+ * and the form shows what its entity has.
+ */
+function useChosen<T>(key: string): [T | undefined, (chosen: T) => void] {
+  const [choice, setChoice] = useState<{ key: string; chosen: T }>();
+  return [
+    choice?.key === key ? choice.chosen : undefined,
+    (chosen) => setChoice({ key, chosen }),
+  ];
 }
 
 /**
@@ -574,7 +588,9 @@ export function Choices({
  * output, or the else, which a branch has one of at most, and only while it
  * has a conditional output. Its buttons are named by its place in the list
  * too, as those of two outputs of the same condition, as of the empty one
- * that each has as it is added, would else be named alike. The button that
+ * that each has as it is added, would else be named alike, and so is the
+ * region of its connections, whose list, Connect to, and Connect are named
+ * as those of every output are, and are told apart by it. The button that
  * removes an output goes with the output's row, so the inspector's heading
  * takes the focus that it had, or that the dialog that it opened had, rather
  * than the page's content, out of the inspector (WCAG 2.4.3).
@@ -689,7 +705,7 @@ export function Outputs({
                   projectId={projectId}
                   node={node}
                   port={output.id}
-                  heading={t("inspector.output_choices")}
+                  heading={t("inspector.output_choices", named)}
                   leaving={leaving}
                   targets={targets}
                   actions={actions}
@@ -753,17 +769,24 @@ const targetField = payloadField("target", "target.board_id", "target.node_id");
  * read them, as a board's content is, so that the list names the node
  * chosen and offers the board's others; those of a board that the project
  * no longer has, as one in the trash, which no read would find, are not.
+ * Try again, of a read that failed, goes as the read starts again, with
+ * what said that it failed, so the inspector's heading takes the focus that
+ * it had, rather than the page's content, out of the inspector (WCAG
+ * 2.4.3).
  */
 export function JumperTarget({
   projectId,
   node,
   targets,
   onFollow,
+  heading,
 }: {
   projectId: string;
   node: Node;
   targets: TargetLookup;
   onFollow: FollowLink;
+  /** Returns the inspector's heading, which takes the focus of a button that went as it was pressed. */
+  heading: () => HTMLElement | null;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -780,16 +803,11 @@ export function JumperTarget({
         .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1)),
     [boards],
   );
-  // The board and the node chosen, of the form shown, as of its key, and
-  // else those of the target that the form shows: the lists show them as
-  // they are held here, whatever their options become, as once the board's
-  // nodes have been read, or one of them has gone.
-  const [choice, setChoice] = useState<{
-    key: string;
-    board: string;
-    node: string;
-  }>();
-  const chosen = choice?.key === held.key ? choice : undefined;
+  // The board and the node chosen, of the form shown, and else those of the
+  // target that the form shows: the lists show them as they are held here,
+  // whatever their options become, as once the board's nodes have been
+  // read, or one of them has gone.
+  const [chosen, choose] = useChosen<{ board: string; node: string }>(held.key);
   const board = chosen?.board ?? shown.target?.board_id ?? "";
   /** Returns the node of the target that the form shows, where it is of the board of id, and else none. */
   const shownNodeOf = (id: string) =>
@@ -923,7 +941,7 @@ export function JumperTarget({
             // The nodes of another board are another list, which starts
             // with none chosen, and the target's own board's with the
             // target.
-            setChoice({ key: held.key, board: id, node: shownNodeOf(id) });
+            choose({ board: id, node: shownNodeOf(id) });
             setProblem(undefined);
           }}
           error={refusal?.fields["target.board_id"]}
@@ -946,11 +964,7 @@ export function JumperTarget({
             name="node"
             value={chosenNode}
             onChange={(e) => {
-              setChoice({
-                key: held.key,
-                board,
-                node: e.currentTarget.value,
-              });
+              choose({ board, node: e.currentTarget.value });
               setProblem(undefined);
             }}
             disabled={reading === "loading"}
@@ -985,7 +999,12 @@ export function JumperTarget({
         {reading === "failed" && (
           <p role="alert" className="flex flex-wrap items-center gap-2">
             {t("inspector.target_nodes_failed")}
-            <Button onClick={() => setAttempt((n) => n + 1)}>
+            <Button
+              onClick={() => {
+                setAttempt((n) => n + 1);
+                heading()?.focus();
+              }}
+            >
               {t("canvas.retry")}
             </Button>
           </p>
@@ -1030,7 +1049,10 @@ function whenSent(doc: ProjectDocument, signal: AbortSignal): Promise<void> {
  * canvas: read as the inspector shows the node, and again once a jumper
  * that the page holds comes to target it, or no longer does, each time
  * once the page's batches have been answered, so that the read finds the
- * node that one of them creates, and the target that one of them sets.
+ * node that one of them creates, and the target that one of them sets. A
+ * jumper that the document holds is titled as the document has it, as its
+ * board is named, rather than as the read found it, which no change of its
+ * title makes again.
  */
 export function ReferencedBy({
   projectId,
@@ -1045,6 +1067,7 @@ export function ReferencedBy({
   const doc = useProjectDocument(projectId);
   const headingId = useId();
   const boards = useDocumentState(doc, (state) => state.view.boards);
+  const nodes = useDocumentState(doc, (state) => state.view.nodes);
   // The jumpers that the page holds that target the node, which the list
   // is read again for as they change, found once for each state of the
   // document's nodes.
@@ -1117,7 +1140,7 @@ export function ReferencedBy({
                   className={textLink}
                   onClick={(e) => onFollow(e, jumper.board_id, jumper.id)}
                 >
-                  {titleOf(jumper, t)}
+                  {titleOf(nodes.get(jumper.id) ?? jumper, t)}
                 </RouterLink>
                 {" · "}
                 {boards.get(jumper.board_id)?.name ?? t("boards.unknown_board")}
@@ -1207,18 +1230,11 @@ function ConnectionForm({
       ),
     [named, t],
   );
-  // The port and the node chosen, of the form shown, as of its key, and
-  // else those of the connection that the form shows: the lists show them
-  // as they are held here, whatever their options become, as once another
-  // session deleted the node chosen, or its output, where a list that held
-  // its own choice would show its first option in its place, which Save
-  // would then send.
-  const [choice, setChoice] = useState<{
-    key: string;
-    from?: string;
-    to?: string;
-  }>();
-  const chosen = choice?.key === held.key ? choice : undefined;
+  // The port and the node chosen, of the form shown, and else those of the
+  // connection that the form shows: the lists show them as they are held
+  // here, whatever their options become, as once another session deleted
+  // the node chosen, or its output.
+  const [chosen, choose] = useChosen<{ from?: string; to?: string }>(held.key);
   const from = chosen?.from ?? portValue(shown.from_node_id, shown.from_port);
   const to = chosen?.to ?? shown.to_node_id;
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -1307,13 +1323,7 @@ function ConnectionForm({
           label={t("inspector.leaves")}
           name="from"
           value={from}
-          onChange={(e) =>
-            setChoice({
-              ...chosen,
-              key: held.key,
-              from: e.currentTarget.value,
-            })
-          }
+          onChange={(e) => choose({ ...chosen, from: e.currentTarget.value })}
           error={refusal?.fields.from_node_id ?? refusal?.fields.from_port}
         >
           {/* A port that the list does not have, as of an output deleted
@@ -1331,9 +1341,7 @@ function ConnectionForm({
           label={t("inspector.enters")}
           name="to"
           value={to}
-          onChange={(e) =>
-            setChoice({ ...chosen, key: held.key, to: e.currentTarget.value })
-          }
+          onChange={(e) => choose({ ...chosen, to: e.currentTarget.value })}
           error={refusal?.fields.to_node_id}
         >
           {/* A node that the list does not have, as one deleted since,

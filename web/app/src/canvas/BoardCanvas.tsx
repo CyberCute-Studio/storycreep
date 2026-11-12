@@ -77,6 +77,7 @@ import {
   type FollowLink,
   LinkHandle,
   portPlace,
+  resizeTakes,
   TargetLink,
 } from "./Links";
 import {
@@ -1266,17 +1267,23 @@ function BoardCanvasOf({
   // of the canvas, by the same rules as a press on it (Gestures' down), and
   // the canvas's element captures its pointer, as it does a press's on it,
   // so that its moves, its release, and its loss come to the canvas, which
-  // follows them as those of every pointer.
+  // follows them as those of every pointer. A press on a port's link handle
+  // where it covers the resize handle of its node, nearer that handle's
+  // middle than the port, is the resize handle's (resizeTakes).
   const pressHandle = useCallback(
     (e: ReactPointerEvent<HTMLElement>, handle: Handle) => {
       const host = hostRef.current;
-      if (
-        host !== null &&
-        controller.down(
-          pointerInput(e.nativeEvent, host.getBoundingClientRect()),
-          handle,
-        )
-      ) {
+      if (host === null) {
+        return;
+      }
+      const input = pointerInput(e.nativeEvent, host.getBoundingClientRect());
+      const pressed =
+        typeof handle !== "string" &&
+        handle.kind === "new" &&
+        resizeTakes(controller, handle, input)
+          ? handle.node
+          : handle;
+      if (controller.down(input, pressed)) {
         host.focus({ preventScroll: true });
         host.setPointerCapture?.(e.pointerId);
         e.preventDefault();

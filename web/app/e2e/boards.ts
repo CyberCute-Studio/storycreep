@@ -187,12 +187,23 @@ export async function viewOf(canvas: Locator): Promise<View> {
 
 /**
  * Returns what canvas shows once it has stopped moving, as after the
- * animation of a zoom or a fit, which a test that reads it waits for.
+ * animation of a zoom or a fit, which a test that reads it waits for: the
+ * same view twice, 300 ms and two of the page's frames apart, as the canvas
+ * writes its view as it draws a frame, and a page that drew none meanwhile,
+ * as one that the machine kept waiting in the middle of an animation, would
+ * else show the view of its last frame twice, and a test take what the
+ * canvas places over its nodes, as a handle, where it no longer is.
  */
 export async function settled(canvas: Locator): Promise<View> {
   let last = await viewOf(canvas);
   for (let tries = 0; tries < 20; tries++) {
     await canvas.page().waitForTimeout(300);
+    await canvas.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     const now = await viewOf(canvas);
     if (now.x === last.x && now.y === last.y && now.zoom === last.zoom) {
       return now;

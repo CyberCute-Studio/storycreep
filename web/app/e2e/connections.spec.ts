@@ -129,6 +129,22 @@ async function middleOf(locator: Locator) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+/**
+ * Drags handle, which the canvas places over itself, to the board's point p
+ * of canvas: where the handle is is read once the canvas has stopped
+ * moving, which the read of the point waits for, as the handle follows its
+ * node in each frame that the canvas draws.
+ */
+async function dragHandle(
+  page: Page,
+  canvas: Locator,
+  handle: Locator,
+  p: { x: number; y: number },
+) {
+  const to = await pointOf(canvas, p);
+  await dragOn(page, await middleOf(handle), to);
+}
+
 /** Returns what the API lists at path of the project of flow. */
 async function listed<T>(page: Page, flow: Flow, path: string): Promise<T[]> {
   const res = await page.request.get(
@@ -171,11 +187,7 @@ test.describe("a board's canvas, connecting its nodes", () => {
       test.info().project.use.hasTouch ? 44 : 24,
       1,
     );
-    await dragOn(
-      page,
-      await middleOf(handle),
-      await pointOf(canvas, { x: 600, y: 64 }),
-    );
+    await dragHandle(page, canvas, handle, { x: 600, y: 64 });
     await expect.poll(() => sent.length).toBe(1);
     expect(sent[0]).toMatchObject([
       {
@@ -207,7 +219,7 @@ test.describe("a board's canvas, connecting its nodes", () => {
     const handle = page.locator('[data-link="new"]');
     await expect(handle).toBeVisible();
     const empty = { x: 360, y: 220 };
-    await dragOn(page, await middleOf(handle), await pointOf(canvas, empty));
+    await dragHandle(page, canvas, handle, empty);
     const offer = page.getByRole("dialog", { name: en["canvas.connect_new"] });
     await expect(offer).toBeVisible();
     // Cancelled, by a tap right after the drag, which the browser takes for
@@ -226,7 +238,7 @@ test.describe("a board's canvas, connecting its nodes", () => {
     await expect(canvas).toHaveAttribute("data-nodes", "4");
     // Chosen, the node and its connection are one batch.
     await expect(handle).toBeVisible();
-    await dragOn(page, await middleOf(handle), await pointOf(canvas, empty));
+    await dragHandle(page, canvas, handle, empty);
     await expect(offer).toBeVisible();
     expect(await violations(page)).toEqual([]);
     await press(offer.getByRole("button", { name: en["canvas.add_element"] }));
@@ -286,11 +298,7 @@ test.describe("a board's canvas, connecting its nodes", () => {
     const end = page.locator('[data-link="to"]');
     await expect(end).toBeVisible();
     // To the jumper, which a connection may enter.
-    await dragOn(
-      page,
-      await middleOf(end),
-      await pointOf(canvas, { x: 600, y: 356 }),
-    );
+    await dragHandle(page, canvas, end, { x: 600, y: 356 });
     await expect.poll(() => sent.length).toBe(1);
     expect(sent[0]).toMatchObject([
       {
@@ -308,6 +316,42 @@ test.describe("a board's canvas, connecting its nodes", () => {
     ]);
     await expect(canvas).toHaveAttribute("data-connections", "0");
     await expect(canvas).toHaveAttribute("data-connection", "");
+  });
+
+  test("resizes a branch of one output by the upper part of its resize handle, which the handle of its port covers on a touch screen", async ({
+    page,
+  }) => {
+    const flow = await makeFlow(page);
+    await apply(page.request, flow.session, flow.projectId, [
+      {
+        type: "branch_output.create",
+        payload: { id: newId("branch_output"), node_id: flow.fork },
+      },
+    ]);
+    const canvas = await openOn(page, flow, flow.fork);
+    await settled(canvas);
+    const sent = sentBatches(page);
+    await expect(page.locator('[data-link="new"]')).toBeVisible();
+    const resize = page.locator(".cursor-nwse-resize");
+    await expect(resize).toBeVisible();
+    // The port is 26 px above the branch's corner at 100%, on which the
+    // resize handle is, so that a finger's handle of the port, 44 px, is
+    // over that handle down to 4 px above the corner: a press 8 px above
+    // it, nearer the corner than the port, resizes, and links nothing.
+    const corner = await middleOf(resize);
+    const from = { x: corner.x, y: corner.y - 8 };
+    await dragOn(page, from, { x: from.x + 80, y: from.y + 40 });
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]).toMatchObject([
+      {
+        type: "node.update",
+        payload: { id: flow.fork, size: expect.any(Object) },
+      },
+    ]);
+    await expect(canvas).toHaveAttribute("data-connections", "0");
+    await expect(
+      page.getByRole("dialog", { name: en["canvas.connect_new"] }),
+    ).toBeHidden();
   });
 });
 
@@ -397,13 +441,15 @@ test.describe("a board's canvas, its branches and jumpers", () => {
     await expect(canvas).toHaveAttribute("data-broken", "0");
     expect(await violations(page)).toEqual([]);
     // A sheet, on the tablet, covers the canvas: closed, the jumper's link
-    // is above its card, and one tap of it opens the target.
+    // is above its card, and one tap of it opens the target. It is the
+    // first of the page's two links to the target on the desktop, whose
+    // inspector, beside the canvas, has the other.
     if (test.info().project.use.hasTouch) {
       await press(panel.getByRole("button", { name: en["panel.close"] }));
     }
     const link = page
       .getByRole("link", { name: en["canvas.go_to_target"] })
-      .last();
+      .first();
     await press(link);
     await expect(page).toHaveURL(
       new RegExp(`/boards/${flow.lighthouse}\\?node=${flow.lamp}`),

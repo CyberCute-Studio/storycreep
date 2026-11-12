@@ -728,6 +728,50 @@ describe("the canvas's connections", () => {
     await linkHandle("to");
   });
 
+  it("resizes by a press where a port's handle covers the resize handle, nearer that handle's middle, and links by one nearer the port", async () => {
+    // A touch screen, whose link handles are 44 wide, in a window wide
+    // enough for a docked inspector.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches:
+        query === "(any-pointer: coarse)" || query.startsWith("(min-width"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { calls } = flowProject({
+      nodes: [
+        // A branch of one output, 240 by 96: its port is at 240, 70, 26
+        // units above its corner, which the resize handle is on, so that
+        // the port's handle covers that handle from 22 to 4 above the
+        // corner at 100%.
+        testNode("nd_b", 0, 0, {
+          type: "branch",
+          kind: undefined,
+          outputs: [output("bo_1", "nd_b", "if", "V")],
+        }),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_b");
+    expect(canvas.dataset.zoom).toBe("1");
+    const handle = await linkHandle("new", "bo_1");
+    expect(handle.style.width).toBe(`${linkHandleSides.touch}px`);
+    // 8 above the corner, and 18 below the port: the resize handle's.
+    dragHandle(canvas, handle, { x: 240, y: 88 }, { x: 280, y: 128 });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      { type: "node.update", payload: { id: "nd_b", size: expect.anything() } },
+    ]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // 16 above the corner, and 10 below the port: the port's, which links.
+    dragHandle(canvas, handle, { x: 240, y: 80 }, { x: 400, y: 300 });
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Create a node here and connect it",
+      }),
+    ).toBeDefined();
+    expect(batches(calls)).toHaveLength(1);
+  });
+
   it("selects no connection, and shows no link handle, on a board that the user may not change", async () => {
     flowProject({
       nodes: [testNode("nd_1", 0, 0), testNode("nd_2", 480, 0)],
@@ -1113,6 +1157,15 @@ describe("the inspector of a board's flow", () => {
           within(row(id)).getByRole("button", { name }),
         );
       }
+      // And so has one region, of the output's connections, whose Connect
+      // to and Connect are named as every output's are.
+      const name = `Connections of output ${place} (else if)`;
+      const region = within(inspector).getByRole("region", { name });
+      expect(row(id).contains(region)).toBe(true);
+      expect(within(region).getByLabelText("Connect to")).toBeDefined();
+      expect(within(region).getByRole("button", { name: "Connect" })).toBe(
+        within(row(id)).getByRole("button", { name: "Connect" }),
+      );
     }
   });
 
@@ -1455,8 +1508,9 @@ describe("the canvas's jumpers", () => {
     ).toEqual([]);
   });
 
-  it("names the target of a jumper on a board whose nodes could not be read as its target, rather than as a node that was deleted", async () => {
-    flowProject({
+  it("names the target of a jumper on a board whose nodes could not be read as its target, rather than as a node that was deleted, and gives the inspector's heading the focus of Try again", async () => {
+    const user = userEvent.setup();
+    const { calls } = flowProject({
       nodes: [
         testNode("nd_j", 0, 0, {
           type: "jumper",
@@ -1484,6 +1538,27 @@ describe("the canvas's jumpers", () => {
     const list = within(inspector).getByLabelText("Node") as HTMLSelectElement;
     expect(list.value).toBe("nd_lamp");
     expect(list.selectedOptions[0]?.textContent).toBe("The current target");
+    // Try again goes as the read starts again, with what said that it
+    // failed: the inspector's heading has the focus that it had.
+    const reads = () =>
+      calls.mock.calls.filter(
+        ([operation, input]) =>
+          operation === "listBoardNodes" &&
+          (input as { path: { board_id: string } }).path.board_id === "bd_b",
+      ).length;
+    const before = reads();
+    await user.click(
+      within(inspector).getByRole("button", { name: "Try again" }),
+    );
+    expect(document.activeElement).toBe(
+      within(inspector).getByRole("heading", { name: "To the lamp" }),
+    );
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    expect(
+      await within(inspector).findByText(
+        "The board's nodes could not be read.",
+      ),
+    ).toBeDefined();
   });
 
   it("opens a jumper's target on its own board by its link though the address names the target already, as once the link was followed before", async () => {
@@ -1655,5 +1730,47 @@ describe("the canvas's jumpers", () => {
     const link = within(list).getByRole("link", { name: "Down to the dock" });
     expect(link.getAttribute("href")).toContain("/boards/bd_b?node=nd_j");
     expect(within(list).getByText(/Lighthouse/)).toBeDefined();
+  });
+
+  it("titles a jumper that targets a node as the document has it, as once another session gave it another title, which no read of the list tells of", async () => {
+    const realtime = fakeRealtime();
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_dock", 0, 0, { title: "The dock" }),
+        testNode("nd_j", 480, 0, {
+          type: "jumper",
+          kind: undefined,
+          title: "Back to the dock",
+          target: { board_id: "bd_a", node_id: "nd_dock" },
+        }),
+      ],
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_dock`, {
+      session: testSession,
+      realtime,
+    });
+    const inspector = await screen.findByRole("region", { name: "The dock" });
+    const list = await within(inspector).findByRole("list", {
+      name: "Referenced by",
+    });
+    expect(
+      within(list).getByRole("link", { name: "Back to the dock" }),
+    ).toBeDefined();
+    const reads = () =>
+      calls.mock.calls.filter(
+        ([operation]) => operation === "listNodeReferrers",
+      ).length;
+    const before = reads();
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.update", payload: { id: "nd_j", title: "Home" } }],
+        [{ id: "nd_j", rev: 2 }],
+      ),
+    );
+    expect(
+      await within(list).findByRole("link", { name: "Home" }),
+    ).toBeDefined();
+    expect(reads()).toBe(before);
   });
 });
