@@ -18,6 +18,7 @@ import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
 import "../test/editor";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
+import { fakeRealtime } from "../test/realtime";
 import type { Engine } from "./engine";
 import { linkHandleSides } from "./Links";
 
@@ -558,6 +559,73 @@ describe("the canvas's connections", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("leaves the focus where a press outside what a dropped connection offers took it, as to a field of the inspector, and gives the canvas the focus that the box had", async () => {
+    const user = userEvent.setup();
+    const { calls } = flowProject({
+      nodes: [testNode("nd_1", 0, 0), testNode("nd_2", 480, 0)],
+    });
+    const canvas = await openBoard("?node=nd_1");
+    const inspector = await screen.findByRole("region", { name: "nd_1" });
+    const handle = await linkHandle("new", "out");
+    const offered = () =>
+      screen.findByRole("dialog", {
+        name: "Create a node here and connect it",
+      });
+    /** Waits until the box has gone, and for the turn after, in which it says where the focus goes. */
+    const gone = async () => {
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    };
+    // The box has the focus, which Escape gives the canvas, whose keys the
+    // user goes on with.
+    dragHandle(canvas, handle, { x: 240, y: 64 }, { x: 300, y: 300 });
+    expect((await offered()).contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    await gone();
+    expect(document.activeElement).toBe(canvas);
+    // A press on a field of the inspector ends the offer, and the field
+    // keeps the focus that the press gave it, rather than the canvas, where
+    // Backspace would delete the node selected.
+    dragHandle(canvas, handle, { x: 240, y: 64 }, { x: 300, y: 300 });
+    await offered();
+    const field = within(inspector).getByLabelText("Connect to");
+    await user.click(field);
+    await gone();
+    expect(document.activeElement).toBe(field);
+    expect(batches(calls)).toEqual([]);
+  });
+
+  it("offers a node no longer once another session deleted the node that the connection would leave", async () => {
+    const realtime = fakeRealtime();
+    const { calls } = flowProject({
+      nodes: [testNode("nd_1", 0, 0), testNode("nd_2", 480, 0)],
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    const handle = await linkHandle("new", "out");
+    dragHandle(canvas, handle, { x: 240, y: 64 }, { x: 300, y: 300 });
+    await screen.findByRole("dialog", {
+      name: "Create a node here and connect it",
+    });
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.delete", payload: { id: "nd_1" } }],
+        [{ id: "nd_1", rev: 2 }],
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The canvas says so in the frame after.
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("1"));
+    expect(batches(calls)).toEqual([]);
+  });
+
   it("selects a connection by a click on its line, says so, reconnects it by a drag of its end's handle, and deletes it with Delete", async () => {
     const { calls } = flowProject({
       nodes: [
@@ -807,9 +875,10 @@ describe("the inspector of a board's flow", () => {
     // Each output has a link handle on the canvas once the branch is drawn
     // large enough for them.
     expect(document.querySelectorAll('[data-link="new"]').length).toBe(3);
+    // Its buttons name it by its place in the list, and its row's words.
     await user.click(
       within(row(second)).getByRole("button", {
-        name: /^Move the output .* up$/,
+        name: "Move output 2 (else if) up",
       }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(4));
@@ -823,7 +892,9 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(outputs().slice(0, 2)).toEqual([second, first]));
     // An output without connections is removed at once.
     await user.click(
-      within(row(first)).getByRole("button", { name: /^Remove the output/ }),
+      within(row(first)).getByRole("button", {
+        name: "Remove output 2 (else if)",
+      }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(5));
     expect(batches(calls)[4]).toEqual([
@@ -836,7 +907,7 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(outputs()).toHaveLength(2));
     // The last conditional output stays while the branch has an else.
     expect(
-      within(row(second)).getByRole("button", { name: /^Remove the output/ }),
+      within(row(second)).getByRole("button", { name: "Remove output 1 (if)" }),
     ).toHaveProperty("disabled", true);
     // The else, connected, asks before it goes, with its connection.
     const other = outputs()[1] as string;
@@ -850,7 +921,9 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(6));
     await waitFor(() => expect(canvas.dataset.connections).toBe("1"));
     await user.click(
-      within(row(other)).getByRole("button", { name: /^Remove the output/ }),
+      within(row(other)).getByRole("button", {
+        name: "Remove output 2 (else)",
+      }),
     );
     const confirm = await screen.findByRole("alertdialog", {
       name: "Remove the output?",
@@ -875,6 +948,113 @@ describe("the inspector of a board's flow", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await waitFor(() => expect(canvas.dataset.connections).toBe("0"));
     await waitFor(() => expect(outputs()).toEqual([second]));
+  });
+
+  it("names the buttons of two outputs of the same condition apart, by their places", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_b", 0, 0, {
+          type: "branch",
+          kind: undefined,
+          outputs: [
+            output("bo_1", "nd_b", "if", "A"),
+            output("bo_2", "nd_b", "elseif", "B"),
+            output("bo_3", "nd_b", "elseif", "C"),
+          ],
+        }),
+      ],
+    });
+    await openBoard("?node=nd_b");
+    const inspector = await screen.findByRole("region", { name: "nd_b" });
+    const row = (id: string) =>
+      inspector.querySelector(`[data-output="${id}"]`) as HTMLElement;
+    for (const [id, place] of [
+      ["bo_2", 2],
+      ["bo_3", 3],
+    ] as const) {
+      for (const name of [
+        `Move output ${place} (else if) up`,
+        `Move output ${place} (else if) down`,
+        `Remove output ${place} (else if)`,
+      ]) {
+        // One button of the inspector has the name, the row's.
+        expect(within(inspector).getByRole("button", { name })).toBe(
+          within(row(id)).getByRole("button", { name }),
+        );
+      }
+    }
+  });
+
+  it("keeps the node chosen for a connection though another session deletes it meanwhile, rather than show, and save, another of the list in its place", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const { calls } = flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0, { title: "The quay" }),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+        testNode("nd_4", 480, 600, { title: "A cellar" }),
+        testNode("nd_5", 480, 900, { title: "The lamp" }),
+      ],
+      connections: [testConnection("cn_1", "nd_1", "nd_2")],
+    });
+    renderApp(`/projects/${testProject.id}/boards/bd_a?node=nd_1`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await screen.findByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+    /** Deletes the node of id, as another session does. */
+    const deleted = (id: string) =>
+      act(() =>
+        realtime.send(
+          testProject.id,
+          [{ type: "node.delete", payload: { id } }],
+          [{ id, rev: 2 }],
+        ),
+      );
+    // The node chosen to connect to, once it has gone, is chosen no longer:
+    // the list shows that none is, and Connect sends nothing.
+    const node = await screen.findByRole("region", { name: "The quay" });
+    const connectTo = within(node).getByLabelText(
+      "Connect to",
+    ) as HTMLSelectElement;
+    await user.selectOptions(connectTo, "nd_5");
+    const connect = within(node).getByRole("button", { name: "Connect" });
+    expect(connect).toHaveProperty("disabled", false);
+    deleted("nd_5");
+    await waitFor(() => expect(connect).toHaveProperty("disabled", true));
+    expect(connectTo.value).toBe("");
+    // The node chosen for the connection to enter stays what its form
+    // shows, as one that was deleted, rather than the first of the list.
+    await user.click(
+      within(node).getByRole("button", { name: "Edit choice 1" }),
+    );
+    const inspector = await screen.findByRole("region", { name: "Connection" });
+    const enters = () =>
+      within(inspector).getByLabelText("Enters") as HTMLSelectElement;
+    await user.selectOptions(enters(), "nd_3");
+    deleted("nd_3");
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("3"));
+    expect(enters().value).toBe("nd_3");
+    expect(enters().selectedOptions[0].textContent).toBe(
+      "A node that was deleted",
+    );
+    // Another chosen, Save sends that one.
+    await user.selectOptions(enters(), "nd_4");
+    await user.click(
+      within(inspector).getByRole("button", { name: "Save the connection" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toEqual([
+      {
+        type: "connection.reconnect",
+        payload: { id: "cn_1", to_node_id: "nd_4" },
+        expected_rev: { cn_1: 1 },
+      },
+    ]);
   });
 
   it("changes the connection selected in its inspector: its label, the node that it enters, and its place, and deletes it", async () => {

@@ -132,9 +132,9 @@ export function LinkHandle({
   useLayoutEffect(() => {
     placeNow.current = place;
   });
-  // What the handle holds, the same object while it holds the same: of a
-  // connection to come, with the handle's side, within which its drag has
-  // not left it, and, let go, connects nothing.
+  // What the handle holds, the same object while it holds the same, with
+  // the handle's side, within which its drag has not left it, and, let go,
+  // connects nothing, and leaves an end of a connection as it was.
   const kind = link.kind;
   const node = link.kind === "new" ? link.node : undefined;
   const port = link.kind === "new" ? link.port : undefined;
@@ -143,7 +143,7 @@ export function LinkHandle({
     () =>
       kind === "new"
         ? { kind, node: node as string, port: port as string, side }
-        : { kind, connection: connection as string },
+        : { kind, connection: connection as string, side },
     [kind, node, port, connection, side],
   );
 
@@ -214,7 +214,7 @@ export function ConnectOffer({
   at: Point;
   onChoose: (type: Node["type"]) => void;
   onCancel: () => void;
-  /** Returns what gets the focus once the box has gone, the canvas. */
+  /** Returns what gets the focus that the box had once the box has gone, the canvas. */
   returnFocus: () => HTMLElement | null;
 }) {
   const { t } = useTranslation();
@@ -258,9 +258,17 @@ export function ConnectOffer({
           // The box follows its point of the board in each frame, as the
           // wheel pans the canvas under it.
           updatePositionStrategy="always"
+          // The canvas takes the focus that the box had, which fell to the
+          // page's body as the box went: not the focus that a press outside
+          // the box gave another thing meanwhile, as a field of the
+          // inspector beside the canvas, whose keys, as Backspace, would
+          // else go to the canvas, and delete the selection.
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            returnFocus()?.focus({ preventScroll: true });
+            const active = document.activeElement;
+            if (active === null || active === document.body) {
+              returnFocus()?.focus({ preventScroll: true });
+            }
           }}
           className="z-10 w-64 space-y-2 rounded-md border border-border bg-canvas p-3 text-fg shadow-lg"
         >

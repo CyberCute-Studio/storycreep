@@ -2,7 +2,7 @@ import type { Board, Node } from "@storycreep/shared/api";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testNode } from "../test/canvas";
 import { type LabelContext, labelsOf, sameLabels, targetLabel } from "./labels";
-import { type TargetLookup, TargetReads, targetOf } from "./targets";
+import { linkOf, type TargetLookup, TargetReads, targetOf } from "./targets";
 
 const board = (id: string, name: string) => ({ id, name }) as unknown as Board;
 
@@ -159,6 +159,23 @@ describe("a jumper's target", () => {
     expect(targetLabel({ state: "none" }, context())).toBe(
       "canvas.node.jumper_none",
     );
+  });
+
+  it("has a link where the project may have it still, found or not read yet, of a board that is known, and none where it is gone, or none", () => {
+    expect(linkOf(targetOf(jumper("nd_lamp", "bd_b"), view))).toEqual({
+      boardId: "bd_b",
+      nodeId: "nd_lamp",
+    });
+    expect(linkOf(targetOf(jumper("nd_far", "bd_c"), view))).toEqual({
+      boardId: "bd_c",
+      nodeId: "nd_far",
+    });
+    // A target whose board is not told has no address to open.
+    expect(linkOf(targetOf(jumper("nd_far"), view))).toBeUndefined();
+    expect(
+      linkOf(targetOf(jumper("nd_gone", "bd_b"), view, lookupOf(["bd_b"]))),
+    ).toBeUndefined();
+    expect(linkOf(targetOf(jumper(), view))).toBeUndefined();
   });
 });
 

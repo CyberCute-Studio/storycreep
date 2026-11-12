@@ -131,8 +131,9 @@ export interface CanvasEvents {
    * connect from to it, as a drag of a port's handle that landed on the
    * empty board asks (FR-EDIT-03 AC3), whose line the canvas shows until
    * the page says what became of the offer (CanvasController's endOffer),
-   * or nothing, once the offer has ended, as the page, the next link, or a
-   * board that may no longer be changed ends it.
+   * or nothing, once the offer has ended, as the page, the next link, a
+   * board that may no longer be changed, or one that no longer has the port
+   * that the offer would connect, ends it.
    */
   offer(offer: { from: PortOf; at: Point } | undefined): void;
   /** The first frame of the board's content was drawn. */
@@ -649,6 +650,19 @@ export class CanvasController implements GestureHost {
         this.setConnection(undefined);
       }
     }
+    if (changed && this.offered !== undefined) {
+      // What the canvas offers ends once the board no longer has the port
+      // that it would connect, as of a node, or of a branch's output, that
+      // another session deleted, whose line the canvas can no longer draw,
+      // and which the server would refuse the new node's batch for.
+      const from = this.scene.nodes.get(this.offered.from.node);
+      if (
+        from === undefined ||
+        !portsOf(from.node).includes(this.offered.from.port)
+      ) {
+        this.endOffer();
+      }
+    }
     if (changed || relabel) {
       this.invalidate();
     }
@@ -1001,8 +1015,8 @@ export class CanvasController implements GestureHost {
    * nearest, while a jumper, which no connection leaves, and a branch
    * without outputs, take none. Nothing takes it outside the canvas, as
    * over the inspector beside it, where what is under the pointer is not
-   * shown, nor, of a connection to come, on the handle that it left
-   * (onOwnHandle), where it is let go for nothing.
+   * shown, nor on the handle that it left (onOwnHandle), where it is let go
+   * for nothing.
    */
   linkTo(at: Point, slop: number): void {
     const d = this.drag;
@@ -1050,22 +1064,47 @@ export class CanvasController implements GestureHost {
   }
 
   /**
-   * Reports whether at of the board is on the handle that link's drag left:
-   * of a connection to come whose handle told its side, within the square
-   * of that side about its port, as the canvas shows it, where the drag has
-   * not left the handle, or has come back to it.
+   * Reports whether at of the board is on the handle that link's drag left,
+   * of a handle that told its side: within the square of that side, as the
+   * canvas shows it, about the port of a connection to come, or about where
+   * the end of a connection leaves its node, or enters it, where the drag
+   * has not left the handle, or has come back to it. A finger's handle is
+   * wider than the rows of a branch's outputs are apart, below 158%, so
+   * that an end that a finger slipped on as it pressed its handle, and that
+   * the nearest row then took, would else leave by the output beside its
+   * own.
    */
   private onOwnHandle(link: Link, at: Point): boolean {
-    if (link.kind !== "new" || link.side === undefined) {
+    if (link.side === undefined) {
       return false;
     }
-    const from = this.scene.nodes.get(link.node);
-    if (from === undefined) {
+    let point: Point | undefined;
+    if (link.kind === "new") {
+      const from = this.scene.nodes.get(link.node);
+      point =
+        from === undefined
+          ? undefined
+          : portPoint(from.node, from.rect, link.port);
+    } else {
+      const c = this.connectionOf(link.connection);
+      if (c !== undefined && link.kind === "from") {
+        const from = this.scene.nodes.get(c.from_node_id);
+        point =
+          from === undefined
+            ? undefined
+            : portPoint(from.node, from.rect, c.from_port);
+      } else if (c !== undefined) {
+        const to = this.scene.nodes.rect(c.to_node_id);
+        point = to === undefined ? undefined : entryPoint(to);
+      }
+    }
+    if (point === undefined) {
       return false;
     }
-    const port = portPoint(from.node, from.rect, link.port);
     const reach = link.side / 2 / this.v.zoom;
-    return Math.abs(at.x - port.x) <= reach && Math.abs(at.y - port.y) <= reach;
+    return (
+      Math.abs(at.x - point.x) <= reach && Math.abs(at.y - point.y) <= reach
+    );
   }
 
   /**
@@ -1078,8 +1117,8 @@ export class CanvasController implements GestureHost {
    * connection's revision as the drag started, and one that landed
    * elsewhere stays as it was. What went meanwhile, as a node that another
    * session deleted, connects nothing, and neither does a link let go where
-   * nothing takes it (linkTo): outside the canvas, or, of a connection to
-   * come, on the handle that it left, which offers nothing either.
+   * nothing takes it (linkTo): outside the canvas, or on the handle that it
+   * left, which offers nothing either.
    */
   linkEnd(commit: boolean): void {
     const d = this.drag;

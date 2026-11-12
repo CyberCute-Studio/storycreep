@@ -105,6 +105,22 @@ export function targetOf(
       };
 }
 
+/**
+ * Returns the node that a link to target opens, with its board, or
+ * undefined where it has no link: a target that the project may have still,
+ * one found, or one that the page has not read yet, of a board that is
+ * known, has one, on the jumper selected and in its inspector alike, and
+ * one that is gone, or none, has not.
+ */
+export function linkOf(
+  target: JumperTarget,
+): { boardId: string; nodeId: string } | undefined {
+  return (target.state === "found" || target.state === "unknown") &&
+    target.boardId !== undefined
+    ? { boardId: target.boardId, nodeId: target.nodeId }
+    : undefined;
+}
+
 /** How many targets are read at once. */
 const readsAtOnce = 4;
 

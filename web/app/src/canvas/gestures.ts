@@ -104,13 +104,13 @@ export type SelectHow = "replace" | "add" | "toggle";
  * What a link handle's drag holds (plan note N69): a connection to come,
  * from port of the node of node, or an end of the connection of
  * connection, the one that leaves its node (from) or the one that enters
- * its node (to), which the drag takes to another. The handle of a
- * connection to come tells its side, in CSS pixels, the square about its
- * port that it covers, where its drag has not left it.
+ * its node (to), which the drag takes to another. Its handle tells its
+ * side, in CSS pixels, the square that it covers about its port, or about
+ * where its end is, where its drag has not left it.
  */
 export type Link =
   | { kind: "new"; node: string; port: string; side?: number }
-  | { kind: "from" | "to"; connection: string };
+  | { kind: "from" | "to"; connection: string; side?: number };
 
 /** Reports whether a and b hold the same end. */
 export function sameLink(a: Link, b: Link): boolean {
@@ -175,7 +175,7 @@ export interface GestureHost {
   selectConnection(id: string): void;
   /** Starts the drag of link, by its handle, and reports whether it did, as it does not once its node, or its connection, has gone. */
   linkStart(link: Link): boolean;
-  /** Takes the end that the link's drag holds to at of the board, where a node within slop units takes it, but outside the canvas, and on the handle that a connection to come left, where nothing does. */
+  /** Takes the end that the link's drag holds to at of the board, where a node within slop units takes it, but outside the canvas, and on the handle that the link left, where nothing does. */
   linkTo(at: Point, slop: number): void;
   /** Ends the link's drag, where it is, or, cancelled, as nothing. */
   linkEnd(commit: boolean): void;

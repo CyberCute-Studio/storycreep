@@ -91,7 +91,7 @@ import { Minimap } from "./minimap";
 import { ResizeHandle } from "./ResizeHandle";
 import type { Scene } from "./scene";
 import { TextEditor, type TextEditorHandle } from "./TextEditor";
-import { type TargetLookup, TargetReads, targetOf } from "./targets";
+import { linkOf, type TargetLookup, TargetReads, targetOf } from "./targets";
 import { readTheme } from "./theme";
 import type { Point } from "./viewport";
 
@@ -1302,6 +1302,7 @@ function BoardCanvasOf({
         : undefined,
     ),
   );
+  const onlyLink = onlyTarget === undefined ? undefined : linkOf(onlyTarget);
 
   const keyDown = (e: ReactKeyboardEvent) => {
     if (e.target !== e.currentTarget) {
@@ -1656,16 +1657,13 @@ function BoardCanvasOf({
               ))}
             {onlyNode !== undefined &&
               onlyNode.id !== editing &&
-              onlyTarget !== undefined &&
-              (onlyTarget.state === "found" ||
-                onlyTarget.state === "unknown") &&
-              onlyTarget.boardId !== undefined && (
+              onlyLink !== undefined && (
                 <TargetLink
                   id={onlyNode.id}
                   controller={controller}
                   projectId={projectId}
-                  boardId={onlyTarget.boardId}
-                  nodeId={onlyTarget.nodeId}
+                  boardId={onlyLink.boardId}
+                  nodeId={onlyLink.nodeId}
                   onFollow={follow}
                 />
               )}
