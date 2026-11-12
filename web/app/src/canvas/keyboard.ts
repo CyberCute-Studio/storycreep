@@ -31,6 +31,20 @@ export interface KeyInput {
 }
 
 /**
+ * Reports whether the key of e asks for the context menu, on the canvas and
+ * in its accessibility tree (NFR-A11Y-04, plan note N70): the menu key, or
+ * Shift+F10, without Ctrl, Cmd, or Alt.
+ */
+export function menuKey(e: KeyInput): boolean {
+  return (
+    (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  );
+}
+
+/**
  * Returns what the key of e does on a canvas, in fractions of its width and
  * height for a pan, or undefined for a key that the canvas leaves to the
  * browser.

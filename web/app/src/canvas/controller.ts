@@ -46,6 +46,7 @@ import {
   contains,
   emptyView,
   fitTo,
+  middleOf,
   type Point,
   panBy,
   type Rect,
@@ -447,6 +448,8 @@ export class CanvasController implements GestureHost {
   private readonly followers = new Set<(rectOf: ScreenRectOf) => void>();
   /** What is told of each change of the board's content (watch). */
   private readonly watchers = new Set<() => void>();
+  /** Whether the board's content changed in the middle of a drag, which told nothing of it, and whose end tells of it (tellWatchers). */
+  private untold = false;
   /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
   private focusing: { id: string; found?: () => void } | undefined;
   private labelsVersion = 0;
@@ -707,9 +710,11 @@ export class CanvasController implements GestureHost {
    * Calls changed each time that the board's content, or what its cards
    * say, changed, but in the middle of a drag, whose every move changes
    * where its nodes are in the scene, and whose end tells of them where it
-   * left them, until the returned function is called: what the page shows
-   * of the whole board beside the canvas's pixels, as its accessibility
-   * tree, is made again then, rather than for each move.
+   * left them, and of what else changed meanwhile, as what another session
+   * did, though the drag itself left the board as it was (tellUntold),
+   * until the returned function is called: what the page shows of the whole
+   * board beside the canvas's pixels, as its accessibility tree, is made
+   * again then, rather than for each move.
    */
   watch(changed: () => void): () => void {
     this.watchers.add(changed);
@@ -719,10 +724,24 @@ export class CanvasController implements GestureHost {
   }
 
   private tellWatchers(): void {
-    if (this.drag === undefined) {
-      for (const changed of [...this.watchers]) {
-        changed();
-      }
+    if (this.drag !== undefined) {
+      this.untold = true;
+      return;
+    }
+    this.untold = false;
+    for (const changed of [...this.watchers]) {
+      changed();
+    }
+  }
+
+  /**
+   * Tells of what changed in the middle of the drag that has just ended,
+   * where its end told of nothing, as that of a link, which changes nothing
+   * of the scene, or of a move that left its nodes where they were.
+   */
+  private tellUntold(): void {
+    if (this.untold) {
+      this.tellWatchers();
     }
   }
 
@@ -868,17 +887,13 @@ export class CanvasController implements GestureHost {
       p.y <= view.y + view.height
         ? p
         : centerOf(this.v, this.sz);
-    const middle = (r: Rect): Point => ({
-      x: r.x + r.width / 2,
-      y: r.y + r.height / 2,
-    });
     if (this.connection !== undefined) {
       const item = this.scene.connections.get(this.connection);
       if (item !== undefined) {
         this.menu({
           kind: "connection",
           connection: this.connection,
-          at: shown(middle(item.bounds)),
+          at: shown(middleOf(item.bounds)),
         });
         return;
       }
@@ -886,7 +901,7 @@ export class CanvasController implements GestureHost {
     const bounds = this.scene.boundsOf(this.selected);
     const first = [...this.selected].find((id) => this.has(id));
     if (bounds !== undefined && first !== undefined) {
-      this.menu({ kind: "node", node: first, at: shown(middle(bounds)) });
+      this.menu({ kind: "node", node: first, at: shown(middleOf(bounds)) });
       return;
     }
     this.menu({ kind: "board", at: centerOf(this.v, this.sz) });
@@ -912,13 +927,7 @@ export class CanvasController implements GestureHost {
     ) {
       return;
     }
-    this.animateTo(
-      anchorAt(
-        { x: r.x + r.width / 2, y: r.y + r.height / 2 },
-        this.centre(),
-        v.zoom,
-      ),
-    );
+    this.animateTo(anchorAt(middleOf(r), this.centre(), v.zoom));
   }
 
   /** Returns where r of the board is on the canvas, in its CSS pixels. */
@@ -1062,6 +1071,7 @@ export class CanvasController implements GestureHost {
       }
     }
     this.syncScene();
+    this.tellUntold();
     // A frame of the move hid the resize handle, which a frame shows again,
     // though the move left the scene as it was, as one that came back where
     // it started, or never left it.
@@ -1143,6 +1153,7 @@ export class CanvasController implements GestureHost {
       this.edits?.resize(r.id, r.size, r.rev);
     }
     this.syncScene();
+    this.tellUntold();
   }
 
   /**
@@ -1295,6 +1306,7 @@ export class CanvasController implements GestureHost {
     }
     this.drag = undefined;
     this.invalidate();
+    this.tellUntold();
     const edits = this.edits;
     if (!commit || edits === undefined || d.at === undefined || d.idle) {
       return;
@@ -1505,16 +1517,7 @@ export class CanvasController implements GestureHost {
   /** Returns where the node of id is on the canvas, in its CSS pixels. */
   private screenRect: ScreenRectOf = (id) => {
     const r = this.scene.nodes.rect(id);
-    if (r === undefined) {
-      return undefined;
-    }
-    const at = toScreen(this.v, r);
-    return {
-      x: at.x,
-      y: at.y,
-      width: r.width * this.v.zoom,
-      height: r.height * this.v.zoom,
-    };
+    return r === undefined ? undefined : this.screenRectOf(r);
   };
 
   /**

@@ -80,6 +80,7 @@ import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
+import { menuKey } from "./keyboard";
 import {
   ConnectOffer,
   endPlace,
@@ -1463,12 +1464,7 @@ function BoardCanvasOf({
     // selected, or of the board, as a right click on it does (NFR-A11Y-04),
     // but, as a right click, not while the canvas follows a pointer, as in
     // the middle of a drag.
-    if (
-      (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
-      !e.ctrlKey &&
-      !e.metaKey &&
-      !e.altKey
-    ) {
+    if (menuKey(e)) {
       if (!controller.gestures.following()) {
         controller.menuOfSelection();
       }
@@ -1505,6 +1501,12 @@ function BoardCanvasOf({
       if (e.button !== 0) {
         return;
       }
+      // A press outside the context menu closes it, as one on the board
+      // does, whose focus the canvas takes: the minimap keeps its press to
+      // itself, and takes no focus, so the menu, which hears of neither,
+      // is closed here, rather than stay open over a board that the press
+      // moves under it.
+      closeMenu();
       minimapPress.current = e.pointerId;
       e.currentTarget.setPointerCapture?.(e.pointerId);
     } else if ((e.buttons & 1) === 0) {
@@ -1683,11 +1685,19 @@ function BoardCanvasOf({
         (NFR-A11Y-03), whole each time: the one node selected, and the
         nodes at the ends of the connection selected, by name, and that
         nothing is selected, in words that the page does not show, in place
-        of those that it does. */}
+        of those that it does. The one node selected that the document
+        has not yet, as one that the page creates, and selects before its
+        batch shows it, is said once, by its name, as the document has it,
+        rather than as one node first and by name right after (aria-busy);
+        and a new name of what is selected is said as it is given, as what
+        is selected is called so from then on. */}
         <p
           className="text-sm text-fg-muted"
           aria-live="polite"
           aria-atomic="true"
+          aria-busy={
+            selected === 1 && onlyNode === undefined ? true : undefined
+          }
         >
           {selected === 1 && onlyNode !== undefined ? (
             <>

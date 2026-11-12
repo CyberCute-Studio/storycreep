@@ -274,6 +274,11 @@ export function intersects(a: Rect, b: Rect): boolean {
   );
 }
 
+/** Returns the middle of r. */
+export function middleOf(r: Rect): Point {
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+}
+
 /** Reports whether outer holds inner whole. */
 export function contains(outer: Rect, inner: Rect): boolean {
   return (

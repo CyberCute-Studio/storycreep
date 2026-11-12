@@ -1944,4 +1944,41 @@ describe("the canvas's controller of the context menu and the accessibility tree
     c.relabel();
     expect(told).toBe(3);
   });
+
+  it("tells at a drag's end of what changed in the middle of it, though the drag left the board as it was: of a link's, and of a move that moved nothing", () => {
+    const { c, nodes, connections } = setUpBoard();
+    let told = 0;
+    c.watch(() => {
+      told++;
+    });
+    const renamed = (title: string) =>
+      docOf(
+        [...nodes.slice(0, 2), testNode("nd_3", 480, 400, { title })],
+        connections,
+      );
+    // Another session renames a node while a link is dragged, and the
+    // link is let go for nothing.
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.sync(renamed("Quay"), false);
+    expect(told).toBe(0);
+    c.linkEnd(false);
+    expect(told).toBe(1);
+    // A link's drag during which nothing changed tells of nothing.
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.linkEnd(false);
+    expect(told).toBe(1);
+    // And while a move that has yet to move its node is under way.
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.sync(renamed("Pier"), false);
+    expect(told).toBe(1);
+    c.moveEnd(true);
+    expect(told).toBe(2);
+    // As of a resize that did not resize.
+    expect(c.resizeStart("nd_1")).toBe(true);
+    c.sync(renamed("Mole"), false);
+    expect(told).toBe(2);
+    c.resizeEnd(true);
+    expect(told).toBe(3);
+  });
 });

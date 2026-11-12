@@ -12,11 +12,14 @@
 // node to it or takes it out, as a click does; Enter opens it, Delete
 // deletes it, and Shift+F10, or the menu key, opens its context menu, each
 // with the rest of the selection where it is of it, as a long press on it
-// does. The canvas's other keys, which zoom, and Escape, do here what they
-// do on the canvas. The tree is not drawn: the canvas shows what the focus
-// is on, moving to it where it is out of view, with the focus ring around
-// its node, or around its connection's line, which the canvas places in
-// each frame.
+// does, and none of them does anything of an item whose node, or whose
+// connection, the board no longer has, though the tree, which is made again
+// a moment after the board changes, shows it still. A Backspace right after
+// a letter typed takes the letter back, and deletes nothing. The canvas's
+// other keys, which zoom, and Escape, do here what they do on the canvas.
+// The tree is not drawn: the canvas shows what the focus is on, moving to
+// it where it is out of view, with the focus ring around its node, or
+// around its connection's line, which the canvas places in each frame.
 
 import {
   type FocusEvent,
@@ -37,7 +40,7 @@ import { useTranslation } from "react-i18next";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
-import { keyAction } from "./keyboard";
+import { keyAction, menuKey } from "./keyboard";
 import {
   type TreeChoice,
   type TreeRow,
@@ -45,7 +48,7 @@ import {
   treeRows,
   typedRow,
 } from "./tree";
-import type { Rect } from "./viewport";
+import { middleOf, type Rect } from "./viewport";
 
 /** What the tree's focus is on: a node, or a connection that leaves it. */
 interface Item {
@@ -66,6 +69,13 @@ const typingTime = 500;
 
 function sameItem(a: Item | undefined, b: Item | undefined): boolean {
   return a?.node === b?.node && a?.connection === b?.connection;
+}
+
+/** Returns where item is on the board of controller: its node, or the rectangle that its connection's line takes, or undefined for one that the board no longer has. */
+function rectOf(controller: CanvasController, item: Item): Rect | undefined {
+  return item.connection === undefined
+    ? controller.scene.nodes.rect(item.node)
+    : controller.scene.connections.get(item.connection)?.bounds;
 }
 
 /** A node of the tree, with the connections that leave it, once it is expanded. */
@@ -130,8 +140,13 @@ const Row = memo(function Row({
   );
 });
 
-/** The accessibility tree of the canvas of controller, of the board named boardName. */
-export function CanvasTree({
+/**
+ * The accessibility tree of the canvas of controller, of the board named
+ * boardName. It is rendered again for what it shows alone, the board's
+ * content, the selection, and its own focus, rather than with the page
+ * around it each time, as a tree of every node of the board.
+ */
+export const CanvasTree = memo(function CanvasTree({
   ref,
   projectId,
   boardName,
@@ -199,7 +214,7 @@ export function CanvasTree({
   // the focus of once the board no longer has it.
   const wantsFocus = useRef(false);
   const deleting = useRef<Item>(undefined);
-  const typed = useRef({ text: "", at: 0 });
+  const typed = useRef({ text: "", at: Number.NEGATIVE_INFINITY });
 
   const index = useMemo(() => {
     const of = new Map<string, number>();
@@ -246,8 +261,19 @@ export function CanvasTree({
   // what had it went from the tree, as a node deleted, which leaves the
   // browser's focus on nothing.
   useLayoutEffect(() => {
-    const tree = root.current;
-    if (tree === null || on === undefined) {
+    if (on === undefined) {
+      // A board that has no node left has no tree, whose focus went with
+      // its last item, as one that the tree's Delete deleted: the tree
+      // that the board's next node makes takes no focus of its own, and
+      // shows none on the canvas.
+      wantsFocus.current = false;
+      deleting.current = undefined;
+      if (inside) {
+        setInside(false);
+      }
+      return;
+    }
+    if (root.current === null) {
       return;
     }
     const lost = inside && focusIsNowhere(document);
@@ -269,12 +295,6 @@ export function CanvasTree({
     focused: () => root.current?.contains(document.activeElement) === true,
   }));
 
-  /** Returns where item is on the board: its node, or the rectangle that its connection's line takes. */
-  const rectOf = (item: Item): Rect | undefined =>
-    item.connection === undefined
-      ? controller.scene.nodes.rect(item.node)
-      : controller.scene.connections.get(item.connection)?.bounds;
-
   // The focus ring, around what the focus is on, where the canvas has it,
   // which the canvas places in each frame, as it places a handle.
   const shown = useRef<Item>(undefined);
@@ -290,12 +310,7 @@ export function CanvasTree({
           return;
         }
         const item = shown.current;
-        const r =
-          item === undefined
-            ? undefined
-            : item.connection === undefined
-              ? controller.scene.nodes.rect(item.node)
-              : controller.scene.connections.get(item.connection)?.bounds;
+        const r = item === undefined ? undefined : rectOf(controller, item);
         el.hidden = r === undefined;
         if (r !== undefined) {
           const at = controller.screenRectOf(r);
@@ -348,35 +363,67 @@ export function CanvasTree({
         : []),
     ]);
 
-  /** Selects item, in place of the selection, or, where toggle says so, adds its node to the selection, or takes it out. */
-  const select = (item: Item, toggle: boolean) => {
-    if (item.connection !== undefined) {
-      controller.selectConnection(item.connection);
-    } else {
-      controller.select([item.node], toggle ? "toggle" : "replace");
-    }
+  /**
+   * Selects the connection of id, and reports whether it is the one
+   * selected then, as it is not on a board that may not be changed, nor
+   * once the board no longer has it.
+   */
+  const selectConnection = (id: string): boolean => {
+    controller.selectConnection(id);
+    return controller.selectedConnection() === id;
   };
 
-  /** Has the canvas's keys act on item: with the selection, where it is of it, and else selected alone. */
-  const take = (item: Item) => {
+  /**
+   * Selects item, in place of the selection, or, where toggle says so, adds
+   * its node to the selection, or takes it out, and reports whether it did:
+   * not an item that the board no longer has, as one that another session
+   * deleted a moment ago, which the tree shows until it is made again, and
+   * which selects nothing.
+   */
+  const select = (item: Item, toggle: boolean): boolean => {
     if (item.connection !== undefined) {
-      controller.selectConnection(item.connection);
-    } else if (!controller.isSelected(item.node)) {
+      return selectConnection(item.connection);
+    }
+    if (!controller.has(item.node)) {
+      return false;
+    }
+    controller.select([item.node], toggle ? "toggle" : "replace");
+    return true;
+  };
+
+  /**
+   * Has the canvas's keys act on item: with the selection, where it is of
+   * it, and else selected alone. It reports whether they do, as they do not
+   * on an item that the board no longer has (select), whose key would else
+   * act on what was selected before it, as a Delete that deleted the nodes
+   * selected in place of a connection that had gone.
+   */
+  const take = (item: Item): boolean => {
+    if (item.connection !== undefined) {
+      return selectConnection(item.connection);
+    }
+    if (!controller.has(item.node)) {
+      return false;
+    }
+    if (!controller.isSelected(item.node)) {
       controller.select([item.node], "replace");
     }
+    return true;
   };
 
   const keyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     deleting.current = undefined;
     const item = itemOf(e.target) ?? on;
     const modified = e.ctrlKey || e.metaKey || e.altKey;
-    if (
-      (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
-      !modified
-    ) {
-      const r = rectOf(item);
+    if (menuKey(e)) {
+      const r = rectOf(controller, item);
       if (r !== undefined) {
-        const at = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        // The menu opens at the item's middle, which the canvas shows
+        // first, as it does when the focus comes to the item, where it has
+        // moved away from it since, as by a wheel, or by a key that zooms:
+        // the menu would else open out of view.
+        controller.reveal(r);
+        const at = middleOf(r);
         controller.menu(
           item.connection === undefined
             ? { kind: "node", node: item.node, at }
@@ -397,6 +444,9 @@ export function CanvasTree({
     const all = items();
     const at = all.findIndex((i) => sameItem(i, item));
     const row = index.get(item.node) ?? 0;
+    // Whether the key comes within the typing time of a letter typed, or
+    // of a Backspace that took one back.
+    const typing = e.timeStamp - typed.current.at < typingTime;
     switch (e.key) {
       case "ArrowDown":
         go(all[Math.min(at + 1, all.length - 1)]);
@@ -432,20 +482,28 @@ export function CanvasTree({
         }
         break;
       case "Enter":
-        select(item, false);
-        controller.key(e);
+        if (select(item, false)) {
+          controller.key(e);
+        }
         break;
       case "Delete":
       case "Backspace":
+        // A Backspace right after a letter typed takes the letter back, as
+        // it does wherever letters are typed, rather than delete the node
+        // that the letters found.
+        if (e.key === "Backspace" && typing) {
+          typed.current = {
+            text: typed.current.text.slice(0, -1),
+            at: e.timeStamp,
+          };
+          break;
+        }
         // On a board that may be changed, as the canvas's own Delete is:
         // elsewhere the key selects nothing, as it deletes nothing. The
         // focus goes to what is in the place of what the key deleted, once
         // the board no longer has it.
-        if (controller.movable()) {
-          take(item);
-          if (controller.key(e)) {
-            deleting.current = item;
-          }
+        if (controller.movable() && take(item) && controller.key(e)) {
+          deleting.current = item;
         }
         break;
       default: {
@@ -453,11 +511,9 @@ export function CanvasTree({
         // that pan, which are the tree's arrows here; and a letter typed,
         // which finds a node by its title, as does a character that is a
         // key of the canvas's while it goes on from letters typed.
-        const typing =
-          e.key.length === 1 &&
-          e.timeStamp - typed.current.at < typingTime &&
-          typed.current.text !== "";
-        const action = typing ? undefined : keyAction(e);
+        const goesOn =
+          e.key.length === 1 && typing && typed.current.text !== "";
+        const action = goesOn ? undefined : keyAction(e);
         if (action !== undefined && action.kind !== "pan") {
           if (!controller.key(e)) {
             return;
@@ -467,7 +523,7 @@ export function CanvasTree({
         if (e.key.length !== 1) {
           return;
         }
-        const text = (typing ? typed.current.text : "") + e.key;
+        const text = (goesOn ? typed.current.text : "") + e.key;
         typed.current = { text, at: e.timeStamp };
         const found = typedRow(rows, row, text);
         if (found !== undefined) {
@@ -488,7 +544,7 @@ export function CanvasTree({
     if (!sameItem(item, current)) {
       setCurrent(item);
     }
-    const r = rectOf(item);
+    const r = rectOf(controller, item);
     if (r !== undefined) {
       controller.reveal(r);
     }
@@ -562,4 +618,4 @@ export function CanvasTree({
       </div>
     </>
   );
-}
+});

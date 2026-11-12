@@ -43,7 +43,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
+  // What a test gave the browser to vibrate with, which jsdom has not.
+  Reflect.deleteProperty(navigator, "vibrate");
 });
 
 const harbour: Board = {
@@ -403,10 +404,146 @@ describe("the canvas's accessibility tree", () => {
     );
   });
 
-  it("has no tree of a board without nodes, and no connection to select on a board that may not be changed", async () => {
+  it("has no tree of a board without nodes", async () => {
     boardPage([]);
     await openBoard();
     expect(screen.queryByRole("tree")).toBeNull();
+  });
+
+  it("tells of no connection selected, selects none, and opens no menu of one, on a board that may not be changed", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(testProject, "role", "get").mockReturnValue("viewer");
+    const { nodes, connections } = quay();
+    boardPage(nodes, connections);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const [first] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    await user.keyboard("{ArrowRight}{ArrowRight}");
+    const choice = within(tree).getByRole("treeitem", {
+      name: "Connection to Quay",
+    });
+    expect(document.activeElement).toBe(choice);
+    expect(choice.hasAttribute("aria-selected")).toBe(false);
+    await user.keyboard(" {Enter}");
+    fireEvent.keyDown(choice, { key: "F10", shiftKey: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(canvas.dataset.connection).toBe("");
+    expect(choice.hasAttribute("aria-selected")).toBe(false);
+    expect(screen.queryByRole("menu")).toBeNull();
+    // A node is selected there, as on the canvas.
+    await user.keyboard("{ArrowLeft} ");
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    expect(first.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("takes a letter typed back with Backspace, which deletes the node only once the typing is over", async () => {
+    const user = userEvent.setup();
+    const { nodes, connections } = quay();
+    const calls = boardPage(nodes, connections);
+    await openBoard();
+    const tree = await treeOf();
+    const [first, second] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    await user.keyboard("q{Backspace}{Backspace}");
+    expect(document.activeElement).toBe(second);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(batches(calls)).toHaveLength(0);
+    expect(namesOf(tree)).toHaveLength(3);
+    // Once the typing time has passed, Backspace is the canvas's Delete.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await user.keyboard("{Backspace}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      { type: "node.delete", payload: { id: "nd_2" } },
+    ]);
+  });
+
+  it("does nothing by Delete, Enter, or Space of an item whose node the board no longer has, as it would else to what was selected before", async () => {
+    const user = userEvent.setup();
+    const { nodes, connections } = quay();
+    const calls = boardPage(nodes, connections);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const [first] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    // Items as the tree shows them of what another session deleted, in the
+    // moment before it is made again.
+    const gone = document.createElement("div");
+    gone.setAttribute("role", "treeitem");
+    gone.dataset.node = "nd_gone";
+    const goneChoice = document.createElement("div");
+    goneChoice.setAttribute("role", "treeitem");
+    goneChoice.dataset.node = "nd_1";
+    goneChoice.dataset.connection = "cn_gone";
+    tree.append(gone, goneChoice);
+    try {
+      for (const item of [gone, goneChoice]) {
+        fireEvent.keyDown(item, { key: "Delete" });
+        fireEvent.keyDown(item, { key: "Enter" });
+        fireEvent.keyDown(item, { key: " " });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(batches(calls)).toHaveLength(0);
+      expect(screen.queryByRole("form")).toBeNull();
+      expect(canvas.dataset.selected).toBe("1");
+      expect(first.getAttribute("aria-selected")).toBe("true");
+    } finally {
+      gone.remove();
+      goneChoice.remove();
+    }
+  });
+
+  it("takes no focus, and shows none on the canvas, in the tree of the node that a board gets after its last went by the tree's Delete", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0, { title: "Harbour" })]);
+    await openBoard();
+    const tree = await treeOf();
+    within(tree).getByRole("treeitem").focus();
+    await user.keyboard("{Delete}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole("tree")).toBeNull());
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    const add = within(edit).getByRole("button", { name: "Add" });
+    await user.click(add);
+    await user.click(await screen.findByRole("menuitem", { name: "Element" }));
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    const again = await treeOf();
+    await waitFor(() => expect(said().hasAttribute("aria-busy")).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(again.contains(document.activeElement)).toBe(false);
+    expect(
+      document.querySelector<HTMLElement>("[data-tree-focus]")?.hidden,
+    ).toBe(true);
+  });
+
+  // Verifies: NFR-A11Y-04
+  it("shows the item that the menu key opens the menu of, where the canvas has moved away from it since the focus came to it", async () => {
+    const { nodes, connections } = quay();
+    boardPage(nodes, connections);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const third = within(tree).getByRole("treeitem", {
+      name: "Lighthouse, Narration",
+    });
+    third.focus();
+    const inView = () => {
+      const at = screenOf(canvas, { x: 120, y: 464 });
+      return (
+        at.clientX >= 0 &&
+        at.clientX <= 800 &&
+        at.clientY >= 0 &&
+        at.clientY <= 600
+      );
+    };
+    await waitFor(() => expect(inView()).toBe(true));
+    fireEvent.wheel(canvas, { deltaY: 6000 });
+    await waitFor(() => expect(inView()).toBe(false));
+    fireEvent.keyDown(third, { key: "ContextMenu" });
+    await screen.findByRole("menu", { name: "Actions on the selected node" });
+    await waitFor(() => expect(inView()).toBe(true));
   });
 });
 
@@ -415,7 +552,10 @@ describe("the canvas's context menu", () => {
   it("opens by a finger held for 400 ms on a node, which it selects, and does from it what the toolbar does, as deleting the node", async () => {
     const user = userEvent.setup();
     const vibrate = vi.fn(() => true);
-    vi.stubGlobal("navigator", Object.assign(navigator, { vibrate }));
+    Object.defineProperty(navigator, "vibrate", {
+      value: vibrate,
+      configurable: true,
+    });
     const { nodes, connections } = quay();
     const calls = boardPage(nodes, connections);
     const canvas = await openBoard();
@@ -432,7 +572,9 @@ describe("the canvas's context menu", () => {
     const menu = await screen.findByRole("menu", {
       name: "Actions on the selected node",
     });
-    expect(canvas.dataset.selected).toBe("1");
+    // The canvas tells of its selection in the frame that draws it, which
+    // may be after the page shows the menu.
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
     expect(vibrate).toHaveBeenCalledTimes(1);
     fireEvent.pointerUp(canvas, { ...finger, buttons: 0, ...at });
     expect(
@@ -593,6 +735,29 @@ describe("the canvas's context menu", () => {
     ).toEqual(["Open the inspector", "Delete"]);
     await user.keyboard("{Escape}");
     await waitFor(() => expect(document.activeElement).toBe(choice));
+  });
+
+  it("closes by a press on the minimap, which moves the board, as by one on the board", async () => {
+    const { nodes, connections } = quay();
+    boardPage(nodes, connections);
+    const canvas = await openBoard();
+    const minimap = canvas.querySelector<HTMLCanvasElement>(
+      "[aria-hidden=true] > canvas.cursor-pointer",
+    );
+    if (minimap === null) {
+      throw new Error("the canvas has no minimap");
+    }
+    for (const pointer of [mouse, finger]) {
+      fireEvent.contextMenu(canvas, {
+        button: 2,
+        ...screenOf(canvas, { x: 120, y: 64 }),
+      });
+      await screen.findByRole("menu", { name: "Actions on the selected node" });
+      fireEvent.pointerDown(minimap, { ...pointer, buttons: 1 });
+      fireEvent.pointerUp(minimap, { ...pointer, buttons: 0 });
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(canvas));
+    }
   });
 
   it("has only what changes nothing on a board that may not be changed", async () => {

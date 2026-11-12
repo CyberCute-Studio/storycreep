@@ -10,10 +10,11 @@
 // press outside it closes it, and is the canvas's, as on the board beside it.
 
 import { DropdownMenu } from "radix-ui";
-import { type ReactNode, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { focusIsNowhere } from "../shell/focus";
 import { menuClass } from "../ui/Menu";
 import type { CanvasController } from "./controller";
+import { besideBoardAnchor, boardAnchorClass, useBoardAnchor } from "./Links";
 import type { Point } from "./viewport";
 
 /** A menu of children, its items, at at of the board of controller, named label. */
@@ -35,18 +36,7 @@ export function ContextMenu({
   returnFocus: () => void;
   children: ReactNode;
 }) {
-  const anchor = useRef<HTMLSpanElement>(null);
-  useEffect(
-    () =>
-      controller.follow(() => {
-        const el = anchor.current;
-        if (el !== null) {
-          const p = controller.screenPoint(at);
-          el.style.transform = `translate(${p.x}px, ${p.y}px)`;
-        }
-      }),
-    [controller, at],
-  );
+  const anchor = useBoardAnchor<HTMLSpanElement>(controller, at);
   return (
     <DropdownMenu.Root
       open
@@ -60,24 +50,14 @@ export function ContextMenu({
       {/* What the menu opens from is its point of the board, which nothing
       presses: the canvas opens it. */}
       <DropdownMenu.Trigger asChild>
-        <span
-          ref={anchor}
-          aria-hidden="true"
-          className="absolute top-0 left-0 size-px"
-        />
+        <span ref={anchor} aria-hidden="true" className={boardAnchorClass} />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           aria-label={label}
           // The menu is named by its label, rather than by its point.
           aria-labelledby={undefined}
-          side="right"
-          align="start"
-          sideOffset={8}
-          collisionPadding={8}
-          // The menu follows its point of the board in each frame, as the
-          // wheel pans the canvas under it.
-          updatePositionStrategy="always"
+          {...besideBoardAnchor}
           // What had the focus as the menu opened takes it back, the canvas
           // or the item of its tree, where no control has it, as on the
           // page's body, or on its content, which the shell gives it once

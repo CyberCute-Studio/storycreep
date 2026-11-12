@@ -19,6 +19,7 @@ import { Link as RouterLink } from "@tanstack/react-router";
 import { Popover } from "radix-ui";
 import {
   type PointerEvent,
+  type RefObject,
   useEffect,
   useId,
   useLayoutEffect,
@@ -253,6 +254,48 @@ export function LinkHandle({
 }
 
 /**
+ * Returns the ref of the element that a box of the page's opens from at at
+ * of the board of controller, as what a dropped connection offers, and the
+ * canvas's context menu (ContextMenu.tsx): an element of one pixel, which
+ * the canvas places at that point in each frame, so that the box follows
+ * the point as the canvas moves.
+ */
+export function useBoardAnchor<T extends HTMLElement>(
+  controller: CanvasController,
+  at: Point,
+): RefObject<T | null> {
+  const anchor = useRef<T>(null);
+  useEffect(
+    () =>
+      controller.follow(() => {
+        const el = anchor.current;
+        if (el !== null) {
+          const p = controller.screenPoint(at);
+          el.style.transform = `translate(${p.x}px, ${p.y}px)`;
+        }
+      }),
+    [controller, at],
+  );
+  return anchor;
+}
+
+/** The classes of the element that a box opens from at a point of the board (useBoardAnchor). */
+export const boardAnchorClass = "absolute top-0 left-0 size-px";
+
+/**
+ * Where a box is beside its point of the board (useBoardAnchor): to its
+ * right, within the window, and placed again in each frame, as the wheel
+ * pans the canvas under it.
+ */
+export const besideBoardAnchor = {
+  side: "right",
+  align: "start",
+  sideOffset: 8,
+  collisionPadding: 8,
+  updatePositionStrategy: "always",
+} as const;
+
+/**
  * What a connection dropped on the empty board offers (FR-EDIT-03 AC3): to
  * create a node there, an element, a branch, or a jumper, and connect it,
  * in a box at the point of the board where it was dropped, which follows
@@ -276,18 +319,7 @@ export function ConnectOffer({
 }) {
   const { t } = useTranslation();
   const titleId = useId();
-  const anchor = useRef<HTMLDivElement>(null);
-  useEffect(
-    () =>
-      controller.follow(() => {
-        const el = anchor.current;
-        if (el !== null) {
-          const p = controller.screenPoint(at);
-          el.style.transform = `translate(${p.x}px, ${p.y}px)`;
-        }
-      }),
-    [controller, at],
-  );
+  const anchor = useBoardAnchor<HTMLDivElement>(controller, at);
   const types: { type: Node["type"]; label: string }[] = [
     { type: "element", label: t("canvas.add_element") },
     { type: "branch", label: t("canvas.add_branch") },
@@ -303,18 +335,12 @@ export function ConnectOffer({
       }}
     >
       <Popover.Anchor asChild>
-        <div ref={anchor} className="absolute top-0 left-0 size-px" />
+        <div ref={anchor} className={boardAnchorClass} />
       </Popover.Anchor>
       <Popover.Portal>
         <Popover.Content
           aria-labelledby={titleId}
-          side="right"
-          align="start"
-          sideOffset={8}
-          collisionPadding={8}
-          // The box follows its point of the board in each frame, as the
-          // wheel pans the canvas under it.
-          updatePositionStrategy="always"
+          {...besideBoardAnchor}
           // The canvas takes the focus that the box had, which fell to the
           // page's body as the box went: not the focus that a press outside
           // the box gave another thing meanwhile, as a field of the
