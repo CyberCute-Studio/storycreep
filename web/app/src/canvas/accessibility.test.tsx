@@ -624,5 +624,20 @@ describe("the canvas's context menu", () => {
         .getAllByRole("menuitem")
         .map((item) => item.textContent),
     ).toEqual(["Fit to content"]);
+    // The browser's own menu does not open over the canvas's, as for the
+    // menu key, which asks for it as it goes up, once the focus is here.
+    expect(fireEvent.contextMenu(board)).toBe(false);
+    fireEvent.keyDown(board, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    // Delete in the tree deletes nothing here, and selects nothing.
+    const tree = await treeOf();
+    const quayItem = within(tree).getByRole("treeitem", {
+      name: "Quay, Narration",
+    });
+    quayItem.focus();
+    fireEvent.keyDown(quayItem, { key: "Delete" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(quayItem.getAttribute("aria-selected")).toBe("false");
+    expect(canvas.dataset.selected).toBe("1");
   });
 });

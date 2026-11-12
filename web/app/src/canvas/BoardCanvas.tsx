@@ -1460,14 +1460,18 @@ function BoardCanvasOf({
       return;
     }
     // Shift+F10, and the menu key, open the context menu of what is
-    // selected, or of the board, as a right click on it does (NFR-A11Y-04).
+    // selected, or of the board, as a right click on it does (NFR-A11Y-04),
+    // but, as a right click, not while the canvas follows a pointer, as in
+    // the middle of a drag.
     if (
       (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
       !e.ctrlKey &&
       !e.metaKey &&
       !e.altKey
     ) {
-      controller.menuOfSelection();
+      if (!controller.gestures.following()) {
+        controller.menuOfSelection();
+      }
       e.preventDefault();
       return;
     }

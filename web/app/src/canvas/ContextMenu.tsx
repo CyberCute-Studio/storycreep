@@ -93,6 +93,10 @@ export function ContextMenu({
               returnFocus();
             }
           }}
+          // The browser's own menu does not open over this one: the menu
+          // key asks for it as it goes up, on Windows, where the focus is
+          // by then, in this menu, which the key's going down opened.
+          onContextMenu={(event) => event.preventDefault()}
           className={`${menuClass} text-fg`}
         >
           {children}

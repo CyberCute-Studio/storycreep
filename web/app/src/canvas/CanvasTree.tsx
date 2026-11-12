@@ -437,11 +437,15 @@ export function CanvasTree({
         break;
       case "Delete":
       case "Backspace":
-        take(item);
-        // The focus goes to what is in the place of what the key deleted,
-        // once the board no longer has it.
-        if (controller.key(e)) {
-          deleting.current = item;
+        // On a board that may be changed, as the canvas's own Delete is:
+        // elsewhere the key selects nothing, as it deletes nothing. The
+        // focus goes to what is in the place of what the key deleted, once
+        // the board no longer has it.
+        if (controller.movable()) {
+          take(item);
+          if (controller.key(e)) {
+            deleting.current = item;
+          }
         }
         break;
       default: {
