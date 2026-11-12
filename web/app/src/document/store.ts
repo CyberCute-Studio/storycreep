@@ -2302,6 +2302,20 @@ export class ProjectDocument {
   }
 
   /**
+   * Resolves once the page shows what the batch answered with seq did, of
+   * an operation that has the document read a part of the project again, as
+   * a paste has the board that it pastes onto read (the clipboard.paste
+   * applier), whose nodes the page shows only then: once the document is as
+   * of seq, or after confirmWait, as while another session's operation
+   * before it is slow to come, and then once the parts that it is reading
+   * again have been read.
+   */
+  async shown(seq: number): Promise<void> {
+    await this.whenConfirmed(seq, confirmWait);
+    await Promise.allSettled([...this.rereads.values()].map((r) => r.done));
+  }
+
+  /**
    * Sends the latest step of the history to undo or to redo. One asked for
    * while another of the same is under way, as by a second click before the
    * first has disabled the button, is that one, and settles as it does, so

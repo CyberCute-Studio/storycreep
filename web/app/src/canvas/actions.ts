@@ -1,26 +1,43 @@
 // What a board's canvas changes of the board (PRD FR-EDIT-02, FR-EDIT-03,
-// FR-EDIT-04, FR-EDIT-06), as its toolbar, its inspector, its keys, and its
-// drags ask, of its nodes, its connections, and its branches' outputs (plan
-// notes N68 and N69): each a batch
+// FR-EDIT-04, FR-EDIT-06, FR-EDIT-07), as its toolbar, its inspector, its
+// keys, and its drags ask, of its nodes, its connections, and its branches'
+// outputs (plan notes N68, N69, and N71): each a batch
 // of commands, whose undo is one step, of a colour, a tag, or a duplicate of
 // at most maxEdited nodes, which the canvas's controls hold a selection to
 // (plan note N68), sent through the project's document, which shows it at once (optimistic,
 // NFR-PERF-06), and the server's refusal of which the canvas's toolbar says
 // (error), while the document shows the board again as it was: the latest
 // refusal of any of them, though another was sent after it, until the next
-// is sent.
+// is sent. A copy, and the report of what a paste would resolve to
+// nothing, are requests of their own, whose refusal the toolbar says too;
+// a paste is a batch whose nodes the page shows once the board has been
+// read again, as the document predicts none of what it resolves (N58).
 
-import type { CommandResultBody, Node } from "@storycreep/shared/api";
+import type {
+  Clipboard,
+  ClipboardReport,
+  CommandResultBody,
+  Node,
+} from "@storycreep/shared/api";
 import { newId } from "@storycreep/shared/ids";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useProjectDocument } from "../document/react";
+import { api, sessionQuery } from "../api";
+import { csrfHeaders } from "../auth/session";
+import { holdCopy } from "../document/clipboard";
+import { useDocuments, useProjectDocument } from "../document/react";
 import type { PaletteColor } from "../project/colors";
 import type { Command } from "../project/queries";
 import {
+  createCommands,
+  pasteBatches,
+  pasteCommand,
+  pasteOffset,
+  withinLimits,
+} from "./clipboard";
+import {
   createCommand,
   deleteBatch,
-  duplicateBatch,
   maxEdited,
   moveBatch,
   updateBatch,
@@ -58,27 +75,56 @@ import { centerOf, type Point, type Size } from "./viewport";
 /** What the canvas's controls change of the board. */
 export type CanvasActions = ReturnType<typeof useCanvasActions>;
 
+/** What a refusal that the toolbar says was of: a batch of an edit, a copy, or the report that a paste reads first. */
+export type Refused = "edit" | "copy" | "paste";
+
 /**
  * Returns what the canvas of the board boardId, of the project projectId,
- * driven by controller, changes of it, each as a batch of the page's,
- * through commands, and the refusal that the toolbar says.
+ * of the workspace workspaceId, driven by controller, changes of it, each as
+ * a batch of the page's, through commands, and the refusal that the toolbar
+ * says.
  */
 export function useCanvasActions(
   projectId: string,
   boardId: string,
+  workspaceId: string,
   controller: CanvasController,
 ) {
   const doc = useProjectDocument(projectId);
+  const documents = useDocuments();
+  const queryClient = useQueryClient();
   // A mutation, as useCommands' is, so that a refusal reaches what the app
-  // does of every mutation's (createQueryClient).
+  // does of every mutation's (createQueryClient), as do the copy's and the
+  // report's, which read, though by a POST.
   const { mutateAsync } = useMutation({
     mutationFn: (batch: Command[]) => doc.send(batch),
+  });
+  const { mutateAsync: copyNodes } = useMutation({
+    mutationFn: async (nodeIds: string[]) =>
+      (
+        await api.call("copyNodes", {
+          path: { project_id: projectId },
+          headers: csrfHeaders(queryClient.getQueryData(sessionQuery.queryKey)),
+          body: { node_ids: nodeIds },
+        })
+      ).body,
+  });
+  const { mutateAsync: resolveClipboard } = useMutation({
+    mutationFn: async (clipboard: Clipboard) =>
+      (
+        await api.call("resolveClipboard", {
+          path: { project_id: projectId },
+          headers: csrfHeaders(queryClient.getQueryData(sessionQuery.queryKey)),
+          body: { board_id: boardId, clipboard },
+        })
+      ).body,
   });
   // The latest refusal of a batch, with the error that it was refused with:
   // the mutation's own error is of its latest batch alone, as its observer
   // no longer follows one sent before that is still under way, as a drag's
-  // move while the user duplicates, whose refusal it would not say.
-  const [refusal, setRefusal] = useState<{ error: unknown }>();
+  // move while the user duplicates, whose refusal it would not say; or of a
+  // copy, or of a paste's report, which the toolbar says otherwise (of).
+  const [refusal, setRefusal] = useState<{ error: unknown; of: Refused }>();
   const ops = useMemo(() => {
     const view = () => doc.store.getState().view;
     /** The nodes of ids that the board has, as the page shows them. */
@@ -106,7 +152,7 @@ export function useCanvasActions(
       try {
         return await mutateAsync(batch);
       } catch (error) {
-        setRefusal({ error });
+        setRefusal({ error, of: "edit" });
         return undefined;
       }
     };
@@ -126,6 +172,70 @@ export function useCanvasActions(
     ): Promise<boolean> => {
       const nodes = nodesOf(ids).map((n) => n.id);
       return nodes.length > maxEdited ? Promise.resolve(false) : edit(nodes);
+    };
+    /**
+     * Copies the nodes of ids that the board has, at most maxEdited of
+     * them, as many as a clipboard holds, and resolves with the clipboard
+     * that the server answers with, or with undefined once it was refused,
+     * which the toolbar says, or for no node, or more, of which it asks
+     * nothing.
+     */
+    const copyOf = async (
+      ids: Iterable<string>,
+    ): Promise<Clipboard | undefined> => {
+      const nodes = nodesOf(ids).map((n) => n.id);
+      if (nodes.length === 0 || nodes.length > maxEdited) {
+        return undefined;
+      }
+      setRefusal(undefined);
+      try {
+        return await copyNodes(nodes);
+      } catch (error) {
+        setRefusal({ error, of: "copy" });
+        return undefined;
+      }
+    };
+    /**
+     * Has the page's clipboard hold clipboard, copied by the account of
+     * userId, unless the page is signed in to another account since, or
+     * signed out, whose clipboard it would else be (Documents).
+     */
+    const hold = (clipboard: Clipboard, userId: string | undefined) => {
+      const now = queryClient.getQueryData(sessionQuery.queryKey)?.user_id;
+      if (userId !== undefined && now === userId) {
+        holdCopy(documents.clipboard, { userId, workspaceId, clipboard });
+      }
+    };
+    /** The ID of the account that the page is signed in to. */
+    const user = () => queryClient.getQueryData(sessionQuery.queryKey)?.user_id;
+    /**
+     * Sends the batches that paste clipboard onto the board, moved by
+     * offset, with what creates come first, each once the one before it has
+     * applied, and selects the pasted nodes, which the selection keeps
+     * while the page has them not yet, until the board has been read again
+     * after the paste, which brings them (ProjectDocument.shown), and
+     * resolves with whether every batch applied.
+     */
+    const pasting = (
+      clipboard: Clipboard,
+      offset: Point,
+      creates: Command[] = [],
+    ): Promise<boolean> => {
+      const { command, nodes } = pasteCommand(boardId, clipboard, offset);
+      const done = (async () => {
+        for (const batch of pasteBatches(creates, command)) {
+          const answer = await sendOne(batch);
+          if (answer === undefined) {
+            return false;
+          }
+          if (batch.includes(command) && answer?.status === "applied") {
+            await doc.shown(answer.seq);
+          }
+        }
+        return true;
+      })();
+      controller.selectComing(nodes, done);
+      return done;
     };
     /**
      * Moves the nodes of places there, in one batch, expecting the
@@ -200,22 +310,96 @@ export function useCanvasActions(
       },
       /**
        * Duplicates the nodes of ids onto the board, beside them, at most
-       * maxEdited of them, and selects the copies, which the selection
-       * keeps until their batch has settled, though the scene has them not
-       * yet (selectComing).
+       * maxEdited of them, with the connections between them, as a copy of
+       * them pasted back onto the board, moved by offset across and down
+       * (FR-EDIT-07), which leaves the page's clipboard as it was, and
+       * selects the copies, once the copy has been answered.
        */
       duplicate(ids: readonly string[]): Promise<boolean> {
-        return editing(ids, (nodes) => {
-          const { batch, copies } = duplicateBatch(view(), nodes, {
-            x: offset,
-            y: offset,
-          });
-          const sent = send(batch);
-          if (copies.length > 0) {
-            controller.selectComing(copies, sent);
-          }
-          return sent;
+        return editing(ids, async (nodes) => {
+          const clipboard = await copyOf(nodes);
+          return (
+            clipboard !== undefined &&
+            pasting(
+              clipboard,
+              withinLimits(clipboard, { x: offset, y: offset }),
+            )
+          );
         });
+      },
+      /**
+       * Copies the nodes of ids, at most maxEdited of them, to the page's
+       * clipboard, in place of what it held, as the server's copy answers
+       * them, and resolves with whether it did (FR-EDIT-07).
+       */
+      async copy(ids: readonly string[]): Promise<boolean> {
+        const userId = user();
+        const clipboard = await copyOf(ids);
+        if (clipboard === undefined) {
+          return false;
+        }
+        hold(clipboard, userId);
+        return true;
+      },
+      /**
+       * Copies the nodes of ids to the page's clipboard, as copy does, and
+       * then deletes them to the trash, as remove does, once they have been
+       * copied, and resolves with whether both were done: a copy refused
+       * deletes nothing.
+       */
+      async cut(ids: readonly string[]): Promise<boolean> {
+        const userId = user();
+        const clipboard = await copyOf(ids);
+        if (clipboard === undefined) {
+          return false;
+        }
+        hold(clipboard, userId);
+        return send(
+          deleteBatch(
+            view(),
+            nodesOf(ids).map((n) => n.id),
+          ),
+        );
+      },
+      /**
+       * Resolves with what of clipboard a paste onto the board would
+       * resolve to nothing, as the server reports it (FR-EDIT-07 AC1), or
+       * with undefined once the report was refused, which the toolbar says.
+       */
+      async resolve(
+        clipboard: Clipboard,
+      ): Promise<ClipboardReport | undefined> {
+        setRefusal(undefined);
+        try {
+          return await resolveClipboard(clipboard);
+        } catch (error) {
+          setRefusal({ error, of: "paste" });
+          return undefined;
+        }
+      },
+      /**
+       * Pastes clipboard onto the board, its nodes' middle at at, as
+       * pasteOffset places them, after creating what report lists that
+       * the board's project lacks, where it is given (FR-EDIT-07 AC1), and
+       * selects the pasted nodes, once the page shows them, and resolves
+       * with whether it did.
+       */
+      paste(
+        clipboard: Clipboard,
+        at: Point,
+        report?: ClipboardReport,
+      ): Promise<boolean> {
+        const corners = new Set<string>();
+        controller.scene.nodes.forEach((_, item) => {
+          corners.add(`${item.node.position.x},${item.node.position.y}`);
+        });
+        return pasting(
+          clipboard,
+          pasteOffset(clipboard, at, controller.snap, (p) =>
+            corners.has(`${p.x},${p.y}`),
+          ),
+          report === undefined ? [] : createCommands(report, boardId),
+        );
       },
       /** Aligns the nodes of ids as how says, in one batch. */
       async align(ids: readonly string[], how: Alignment): Promise<boolean> {
@@ -391,11 +575,26 @@ export function useCanvasActions(
       /** The nodes of ids that the board has, as the page shows them. */
       nodesOf,
     };
-  }, [doc, boardId, controller, mutateAsync]);
-  // The latest refusal of any batch of theirs, which the toolbar says, or
-  // null for none: the same object until either changes.
+  }, [
+    doc,
+    documents,
+    queryClient,
+    boardId,
+    workspaceId,
+    controller,
+    mutateAsync,
+    copyNodes,
+    resolveClipboard,
+  ]);
+  // The latest refusal of any batch of theirs, or of a copy or a paste's
+  // report, which the toolbar says, and of what, or null for none: the same
+  // object until either changes.
   return useMemo(
-    () => ({ ...ops, error: refusal === undefined ? null : refusal.error }),
+    () => ({
+      ...ops,
+      error: refusal === undefined ? null : refusal.error,
+      refused: refusal?.of,
+    }),
     [ops, refusal],
   );
 }

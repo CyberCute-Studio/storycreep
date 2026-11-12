@@ -4,7 +4,9 @@
 // project while a page of it is shown (acquire), and is dropped a while
 // after none is, and at once, with every other, once the page is signed in
 // to another account or signed out, when the real-time channel's socket,
-// which went with the session before, is opened anew. Signing out also
+// which went with the session before, is opened anew, and the page's
+// clipboard (clipboard.ts), which holds the account's nodes, is emptied with
+// them. Signing out also
 // clears the undo histories that the tab's storage keeps (PRD FR-EDIT-08:
 // the history is the user's), which another account's, kept under its own
 // key, never reads, as does a page that finds itself signed out once it
@@ -13,6 +15,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { sessionQuery } from "../api";
 import type { ErrorLog } from "../errors/log";
+import { type ClipboardStore, createClipboard } from "./clipboard";
 import type { Realtime } from "./realtime";
 import { ProjectDocument } from "./store";
 import { clearHistories } from "./undo";
@@ -38,6 +41,8 @@ interface Held {
 
 /** The page's documents. */
 export class Documents {
+  /** The page's clipboard, of the nodes that the account copied last, on any of its projects' boards. */
+  readonly clipboard: ClipboardStore = createClipboard();
   private readonly options: DocumentsOptions;
   private readonly held = new Map<string, Held>();
   private readonly stop: () => void;
@@ -68,6 +73,7 @@ export class Documents {
       if (now?.user_id !== userId) {
         userId = now?.user_id;
         this.clear();
+        this.clipboard.setState(undefined, true);
         // The socket went with the cookie of the session before, whose
         // subscriptions the next documents' would otherwise be for a while.
         options.realtime?.reconnect();

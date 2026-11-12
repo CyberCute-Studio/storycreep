@@ -14,6 +14,7 @@ import (
 )
 
 type clipboardCopyInput struct {
+	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		NodeIDs []string `json:"node_ids" minItems:"1" maxItems:"1000" nullable:"false" doc:"The IDs of the nodes to copy, at most 1000, each once, of one board of the project, none of them in its trash, itself or with its board"`
@@ -25,6 +26,7 @@ type clipboardCopyOutput struct {
 }
 
 type clipboardResolveInput struct {
+	SessionCSRFInput
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		BoardID   string              `json:"board_id" doc:"The ID of the board that the clipboard would be pasted onto, a board of the project that is not in its trash"`
@@ -41,7 +43,10 @@ type clipboardResolveOutput struct {
 // resolve to nothing (PRD FR-EDIT-07), which the command clipboard.paste
 // pastes. Each is a POST, as the nodes and the clipboard that it reads do not
 // fit in a URL, but reads, and changes nothing, so a role that reads the
-// project's content may use it.
+// project's content may use it. As a POST, a request of either made with the
+// session cookie needs the session's CSRF token, as every request that is
+// not a GET, a HEAD, or an OPTIONS does (sessions.go), which its input
+// declares (SessionCSRFInput).
 func registerClipboard(m *api.Mux, clipboards *clipboard.Service) {
 	api.Register(m, api.ReadProject, huma.Operation{
 		OperationID: "copyNodes",
@@ -60,7 +65,7 @@ func registerClipboard(m *api.Mux, clipboards *clipboard.Service) {
 			"take, as more than 10000 connections between them, or more than 4 MiB (4194304 bytes) of JSON with " +
 			"the new IDs that a paste of it gives, so that a paste of it fits in a request's body, at " +
 			"body.node_ids, or at its place in it for a branch of more than 1000 outputs, once the project is " +
-			"found." + tokenAuthDoc(scope.ProjectRead),
+			"found." + tokenPostReadDoc(scope.ProjectRead),
 		Tags: []string{"Clipboard"},
 	}, func(ctx context.Context, in *clipboardCopyInput) (*clipboardCopyOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)
@@ -98,7 +103,7 @@ func registerClipboard(m *api.Mux, clipboards *clipboard.Service) {
 			"the server reads refuses." + projectNotFoundDoc + tokenNotFoundDoc + " A board that the project " +
 			"does not have, or has in its trash, is answered with 422 validation_failed at body.board_id, and a " +
 			"clipboard that the server does not read otherwise, at its field of body.clipboard, once the project " +
-			"is found." + tokenAuthDoc(scope.ProjectRead),
+			"is found." + tokenPostReadDoc(scope.ProjectRead),
 		Tags: []string{"Clipboard"},
 	}, func(ctx context.Context, in *clipboardResolveInput) (*clipboardResolveOutput, error) {
 		id, actor, err := projectActor(ctx, in.ProjectID)

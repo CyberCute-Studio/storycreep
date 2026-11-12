@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { docOf, gridNodes, testNode } from "../test/canvas";
-import {
-  deleteBatch,
-  duplicateBatch,
-  maxEdited,
-  maxNodes,
-  moveBatch,
-  updateBatch,
-} from "./commands";
+import { deleteBatch, maxNodes, moveBatch, updateBatch } from "./commands";
 
 describe("the commands of the canvas's edits", () => {
   // Verifies: FR-EDIT-02/AC2
@@ -82,28 +75,6 @@ describe("the commands of the canvas's edits", () => {
         expected_rev: { nd_a: 1, nd_b: 7 },
       },
     ]);
-  });
-
-  it("duplicates each node beside it, of new IDs, in one batch of as many as a batch holds", () => {
-    const nodes = gridNodes(maxEdited, 100);
-    let n = 0;
-    const { batch, copies } = duplicateBatch(
-      docOf(nodes),
-      nodes.map((node) => node.id),
-      { x: 32, y: 32 },
-      () => `nd_copy_${n++}`,
-    );
-    expect(batch).toHaveLength(maxEdited);
-    expect(copies).toHaveLength(maxEdited);
-    expect(batch[1]).toEqual({
-      type: "node.duplicate",
-      payload: {
-        id: "nd_copy_1",
-        source_id: nodes[1].id,
-        position: { x: nodes[1].position.x + 32, y: 32 },
-      },
-      expected_rev: { [nodes[1].id]: 1 },
-    });
   });
 
   it("changes only the nodes that a change changes, each with its own revision", () => {

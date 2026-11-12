@@ -224,7 +224,11 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * that the canvas places over one node, which are as far apart as the
  * canvas draws their places, and of which a press is of the one that it is
  * on, or, where they cover each other, of the nearer (plan notes N69 and
- * N70).
+ * N70). Nor is a control that another element covers at its middle, in
+ * the window, as the context menu covers the handles of the node that it
+ * opens over, which a tap there does not press, as it presses what covers
+ * it (plan note N71); one beyond the window, as below the page's fold, is
+ * a control still.
  */
 export async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -254,6 +258,21 @@ export async function smallTargets(page: Page): Promise<string[]> {
       const box = pressed.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) {
         continue;
+      }
+      const middle = {
+        x: box.left + box.width / 2,
+        y: box.top + box.height / 2,
+      };
+      if (
+        middle.x >= 0 &&
+        middle.y >= 0 &&
+        middle.x < innerWidth &&
+        middle.y < innerHeight
+      ) {
+        const top = document.elementFromPoint(middle.x, middle.y);
+        if (top !== null && !pressed.contains(top) && !top.contains(pressed)) {
+          continue;
+        }
       }
       const name =
         el.getAttribute("aria-label") ||

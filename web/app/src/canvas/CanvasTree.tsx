@@ -42,7 +42,12 @@ import { useTranslation } from "react-i18next";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
-import { keyAction, menuKey } from "./keyboard";
+import {
+  type ClipboardAsk,
+  clipboardKey,
+  keyAction,
+  menuKey,
+} from "./keyboard";
 import {
   type TreeChoice,
   type TreeRow,
@@ -162,6 +167,7 @@ export const CanvasTree = memo(function CanvasTree({
   selection,
   connection,
   editable,
+  onClipboard,
 }: {
   ref?: Ref<TreeHandle>;
   projectId: string;
@@ -172,6 +178,8 @@ export const CanvasTree = memo(function CanvasTree({
   connection: string | undefined;
   /** Whether the user may change the board, which alone selects a connection. */
   editable: boolean;
+  /** Copies, cuts, or pastes, as the clipboard's keys ask (clipboardKey), once the tree has selected what they act on. */
+  onClipboard: (asked: ClipboardAsk) => void;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -452,6 +460,26 @@ export const CanvasTree = memo(function CanvasTree({
             ? { kind: "node", node: item.node, at }
             : { kind: "connection", connection: item.connection, at },
         );
+      }
+      e.preventDefault();
+      return;
+    }
+    // Copy and Cut act on the node that the focus is on, with the rest of
+    // the selection where it is of it, as Delete does, and Cut, as Delete,
+    // on a board that may be changed alone: elsewhere it selects nothing;
+    // Paste pastes, wherever the focus is. None acts in the middle of a
+    // drag, as the menu does not, nor for the repeats of a key held down.
+    const asked = clipboardKey(e);
+    if (asked !== undefined) {
+      if (
+        !e.repeat &&
+        !controller.gestures.following() &&
+        (asked === "paste" ||
+          (item.connection === undefined &&
+            (asked === "copy" || controller.movable()) &&
+            select(item, "keep")))
+      ) {
+        onClipboard(asked);
       }
       e.preventDefault();
       return;

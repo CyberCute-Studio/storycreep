@@ -191,6 +191,8 @@ test.describe("the canvas's touch model", () => {
       en["canvas.menu.edit_text"],
       en["canvas.menu.inspect"],
       en["canvas.zoom_selection"],
+      en["canvas.copy"],
+      en["canvas.cut"],
       en["canvas.duplicate"],
       en["canvas.delete"],
     ]);

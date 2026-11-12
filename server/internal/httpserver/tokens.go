@@ -54,6 +54,15 @@ func tokenChangeDoc(s scope.Scope) string {
 		"token needs none."
 }
 
+// tokenPostReadDoc says, in the description of an operation that reads, and
+// changes nothing, but is a POST, as what it reads does not fit in a URL, and
+// takes an API token that holds the scope s, what it needs of a request.
+func tokenPostReadDoc(s scope.Scope) string {
+	return tokenAuthDoc(s) + " It is a POST, so a request made with the session cookie also needs the session's " +
+		"CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token " +
+		"needs none."
+}
+
 // tokenNotFoundDoc says, in the description of an operation on a project
 // that takes an API token, that a token answers a project that it does not
 // cover as one that does not exist.

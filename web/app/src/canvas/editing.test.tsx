@@ -1282,7 +1282,7 @@ describe("the canvas's edits", () => {
     expect(batches(calls)).toHaveLength(1);
   });
 
-  it("offers no colour, tag, or duplicate of more nodes than one batch changes, and says why, while it moves and deletes them all", async () => {
+  it("offers no colour, tag, copy, cut, or duplicate of more nodes than one batch changes or a clipboard holds, and says why, while it moves and deletes them all", async () => {
     const user = userEvent.setup();
     // 1,001 nodes, close together, which the select mode's rubber band
     // selects all of from the empty corner beside them.
@@ -1315,9 +1315,16 @@ describe("the canvas's edits", () => {
     expect(
       within(edit).getByRole("button", { name: "Duplicate" }),
     ).toHaveProperty("disabled", true);
+    const clipboard = screen.getByRole("group", { name: "Clipboard" });
+    for (const name of ["Copy", "Cut"]) {
+      expect(within(clipboard).getByRole("button", { name })).toHaveProperty(
+        "disabled",
+        true,
+      );
+    }
     expect(
       screen.getByText(
-        "1,001 nodes selected Duplicate, a colour, and a tag change at most 1,000 nodes at once.",
+        "1,001 nodes selected Copy, Cut, Duplicate, a colour, and a tag take at most 1,000 nodes at once.",
       ),
     ).toBeDefined();
     expect(within(edit).getByRole("button", { name: "Delete" })).toHaveProperty(

@@ -7,7 +7,9 @@
 // and Backspace delete the selected nodes and Enter opens the text of the
 // one selected (plan note N68). None is held with Ctrl, Cmd, or Alt, whose
 // combinations are the browser's, as Ctrl and + zoom the page (FR-EDIT-10
-// AC2). Item 65 gives them command IDs and the help overlay.
+// AC2), but for the clipboard's, which copy, cut, and paste nodes where
+// they would copy, cut, and paste text (clipboardKey, plan note N71). Item
+// 65 gives them command IDs and the help overlay.
 
 /** What a key does on the canvas. */
 export type KeyAction =
@@ -42,6 +44,41 @@ export function menuKey(e: KeyInput): boolean {
     !e.metaKey &&
     !e.altKey
   );
+}
+
+/** What a key asks of the page's clipboard (clipboardKey). */
+export type ClipboardAsk = "copy" | "cut" | "paste";
+
+/**
+ * Returns what the key of e asks of the clipboard, on the canvas and in its
+ * accessibility tree (FR-EDIT-07, plan note N71): Ctrl or Cmd and C copies
+ * the selected nodes, X cuts them, and V pastes, without Shift or Alt, as
+ * they copy, cut, and paste text, by the letter that the key types, or, on
+ * a layout whose letters are not Latin, as Cyrillic's, by its place, as the
+ * browser's own copy goes by. The canvas takes the key itself, rather than
+ * the browser's copy event that would follow it, which a browser sends with
+ * nothing of the page selected, as on the canvas, to the page's body, or
+ * not at all, and which, cancelled without data, as the canvas would cancel
+ * it, empties the system's clipboard; the page's clipboard holds the nodes.
+ */
+export function clipboardKey(e: KeyInput): ClipboardAsk | undefined {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) {
+    return undefined;
+  }
+  const letter = /^[a-z]$/i.test(e.key)
+    ? e.key.toLowerCase()
+    : /^Key[A-Z]$/.test(e.code)
+      ? e.code.slice(3).toLowerCase()
+      : undefined;
+  switch (letter) {
+    case "c":
+      return "copy";
+    case "x":
+      return "cut";
+    case "v":
+      return "paste";
+  }
+  return undefined;
 }
 
 /**
