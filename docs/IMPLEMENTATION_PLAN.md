@@ -682,7 +682,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-06 AC1, FR-TEXT-01 AC3, and FR-EDIT-09 AC3 pass, jump-to links have UI tests, and the harness reports NFR-PERF-06.
 
 ### 62. Connections, branch outputs, and jumpers on the canvas
-**Status:** todo · **Depends on:** 43, 61
+**Status:** done ([#75](https://github.com/CyberCute-Studio/storycreep/pull/75)) · **Depends on:** 43, 61
 **PRD:** FR-EDIT-03 (UI: AC3), FR-EDIT-04 (UI), FR-EDIT-05 (UI: AC1 broken rendering)
 - Port handles that enlarge on touch: a link handle on each port that connections leave of the one selected node, 44 px on a device with a touch screen and 24 px on one without, whose press the canvas's gestures follow as a drag of their own (`canvas/Links.tsx`, `gestures.ts`, `controller.ts`). Drag to connect, reconnect, by the handles at the ends of the connection selected, which a tap on its line selects, and reorder choices, in the inspector, by a drag of a row's handle or by its buttons, each a batch of `canvas/flow.ts` and `actions.ts`. Dropping on empty canvas offers "create node here and connect", in one batch of the node and its connection, and cancelling leaves nothing behind (N69).
 - Branch output ports with add, remove, and reorder, in the inspector (`canvas/InspectorFlow.tsx`), whose removal asks first where connections leave the output, and where the connection selected has its form: its label, in the rich-text editor of item 57, and its ends. The conditions of connections and of outputs wait for item 67's editor (N69).
