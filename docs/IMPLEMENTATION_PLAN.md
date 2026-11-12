@@ -691,7 +691,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-EDIT-03 AC3 passes. Branch-output editing, jumper navigation, and the broken-jumper rendering of FR-EDIT-05 AC1 have UI tests. The validation and publish-blocking parts of FR-EDIT-05 AC1 land in item 78.
 
 ### 63. Touch interaction model and canvas accessibility tree
-**Status:** todo · **Depends on:** 62
+**Status:** done ([#76](https://github.com/CyberCute-Studio/storycreep/pull/76)) · **Depends on:** 62
 **PRD:** FR-EDIT-09 (AC2 enforced), NFR-TOUCH-01/02/06, NFR-A11Y-03/04
 - Long-press (400 ms) context menus: a finger's press, or a pen's, held still on the canvas opens the menu of the selection that holds the node under it, or of that node, of the connection there, or of the board at that point (`canvas/gestures.ts`, `canvas/ContextMenu.tsx`), which a mouse's right click and Shift+F10 open too, so that no interaction needs hover or a right click. Targets of at least 44 px, 8 px apart, on the board's page, which `smallTargets` (`e2e/fixtures.ts`) checks in each of its states. Panels as sheets: the inspector (N68), which keeps what was typed in it as a tablet turns (N70).
 - An accessibility tree of nodes and connections: an ARIA tree after the canvas, of the board's nodes in reading order, each with the connections that leave it (`canvas/tree.ts`, `canvas/CanvasTree.tsx`), through which the keyboard selects, opens, and deletes, with its focus shown on the canvas. Selection changes are announced through an ARIA live region, the toolbar's, by name (N70).
