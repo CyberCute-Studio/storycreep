@@ -283,9 +283,18 @@ export function Inspector({
           <section className="space-y-2">
             <h3 className="text-lg font-semibold">{t("inspector.actions")}</h3>
             <div className="flex flex-wrap gap-2">
+              {/* Duplicate has the inspector show the copies, once the page
+              shows them, in place of the nodes that it was of, and nothing
+              meanwhile, as the selection holds the copies to come: the
+              heading takes the focus, which the button would else leave to
+              the page's content as it goes; and it is offered while no
+              copy, paste, or duplicate of the canvas is under way. */}
               <Button
-                disabled={tooMany}
-                onClick={() => void actions.duplicate(nodes.map((n) => n.id))}
+                disabled={tooMany || actions.busy}
+                onClick={() => {
+                  void actions.duplicate(nodes.map((n) => n.id));
+                  toHeading();
+                }}
               >
                 {t("canvas.duplicate")}
               </Button>

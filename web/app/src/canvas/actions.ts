@@ -13,9 +13,10 @@
 // and a copy is asked once the page's batches before it have been answered,
 // so that it copies what they change; a paste is a batch whose nodes the
 // page shows once the board has been read again, as the document predicts
-// none of what it resolves (N58), and the canvas pastes, and duplicates,
-// one at a time, as the next would else not see where the one before put
-// its nodes, and put its own over them.
+// none of what it resolves (N58), and the canvas copies, pastes, and
+// duplicates one at a time, which its controls say (busy), as a paste
+// would else not see where the one before put its nodes, and put its own
+// over them, or paste what the clipboard held before the copy just asked.
 
 import type {
   Clipboard,
@@ -80,7 +81,7 @@ import { centerOf, type Point, type Size } from "./viewport";
 /** What the canvas's controls change of the board. */
 export type CanvasActions = ReturnType<typeof useCanvasActions>;
 
-/** What a refusal that the toolbar says was of: a batch of an edit, a copy, or a paste, its report or its batch. */
+/** What a refusal that the toolbar says was of: an edit, a batch or a duplicate's copy, a copy of Copy or Cut, or a paste, its report or its batch. */
 export type Refused = "edit" | "copy" | "paste";
 
 /**
@@ -130,8 +131,10 @@ export function useCanvasActions(
   // move while the user duplicates, whose refusal it would not say; or of a
   // copy, or of a paste's report, which the toolbar says otherwise (of).
   const [refusal, setRefusal] = useState<{ error: unknown; of: Refused }>();
-  // Whether a paste or a duplicate of the canvas is under way (oneAtATime).
+  // Whether a copy, a paste, or a duplicate of the canvas is under way
+  // (oneAtATime), at once, and as the canvas's controls render it.
   const underWay = useRef(false);
+  const [busy, setBusy] = useState(false);
   const ops = useMemo(() => {
     const view = () => doc.store.getState().view;
     /** The nodes of ids that the board has, as the page shows them. */
@@ -186,7 +189,8 @@ export function useCanvasActions(
      * Copies the nodes of ids that the board has, at most maxEdited of
      * them, as many as a clipboard holds, and resolves with the clipboard
      * that the server answers with, or with undefined once it was refused,
-     * which the toolbar says, or for no node, or more, of which it asks
+     * which the toolbar says as a refusal of of, of a copy, or of the edit
+     * that Duplicate is, or for no node, or more, of which it asks
      * nothing. It asks once the page's batches sent before it have been
      * answered (ProjectDocument.sent), as the server copies what it has: a
      * node that the page has just added, moved, or changed, whose batch is
@@ -195,6 +199,7 @@ export function useCanvasActions(
      */
     const copyOf = async (
       ids: Iterable<string>,
+      of: Refused,
     ): Promise<Clipboard | undefined> => {
       const asked = [...ids];
       const count = nodesOf(asked).length;
@@ -210,7 +215,7 @@ export function useCanvasActions(
       try {
         return await copyNodes(nodes);
       } catch (error) {
-        setRefusal({ error, of: "copy" });
+        setRefusal({ error, of });
         return undefined;
       }
     };
@@ -227,12 +232,17 @@ export function useCanvasActions(
       }
     };
     /**
-     * Runs work, a paste or a duplicate, and resolves with what it resolves
-     * with, unless another of the canvas's is under way, from the copy or
-     * the report that it asks first until the page shows its nodes, or it
-     * has ended otherwise, which the board does not show yet, and over
-     * whose nodes the next would put its own, as it would not see them: of
-     * that, it runs nothing, and resolves with none at once.
+     * Runs work, a copy, a paste, or a duplicate, and resolves with what it
+     * resolves with, unless another of the canvas's is under way: a copy
+     * until the server has answered it, and a paste and a duplicate from
+     * the report or the copy that they ask first until the page shows
+     * their nodes, or they have ended otherwise. Of that, it runs nothing,
+     * and resolves with none at once, as a paste would not see the nodes
+     * that the board does not show yet, and would put its own over them,
+     * nor the nodes of a copy not yet answered, and would paste what the
+     * clipboard held before, and the controls of all three say that they
+     * are unavailable meanwhile (busy), as the nodes that a paste selects
+     * before the page shows them have nothing to copy yet.
      */
     const oneAtATime = async <T>(
       work: () => Promise<T>,
@@ -242,11 +252,26 @@ export function useCanvasActions(
         return none;
       }
       underWay.current = true;
+      setBusy(true);
       try {
         return await work();
       } finally {
         underWay.current = false;
+        setBusy(false);
       }
+    };
+    /**
+     * Returns what tells whether a node of the board, as the scene has it
+     * now, has its corner at a point, as a node that the canvas adds, or
+     * pastes, is placed beside it rather than over it (freePlace,
+     * pasteOffset).
+     */
+    const cornerTaken = (): ((corner: Point) => boolean) => {
+      const corners = new Set<string>();
+      controller.scene.nodes.forEach((_, item) => {
+        corners.add(`${item.node.position.x},${item.node.position.y}`);
+      });
+      return (p) => corners.has(`${p.x},${p.y}`);
     };
     /**
      * Sends the batches that paste clipboard onto the board, moved by
@@ -314,16 +339,7 @@ export function useCanvasActions(
       create(type: Node["type"], at?: Point): Promise<boolean> {
         const size = newNodeSize(type);
         const centre = at ?? centerOf(controller.viewport(), controller.size());
-        const corners = new Set<string>();
-        controller.scene.nodes.forEach((_, item) => {
-          corners.add(`${item.node.position.x},${item.node.position.y}`);
-        });
-        const corner = freePlace(
-          centre,
-          size,
-          (p) => corners.has(`${p.x},${p.y}`),
-          controller.snap,
-        );
+        const corner = freePlace(centre, size, cornerTaken(), controller.snap);
         const id = newId("node");
         const sent = send([createCommand(boardId, type, corner, id)]);
         controller.selectComing([id], sent);
@@ -362,13 +378,14 @@ export function useCanvasActions(
        * between them, as a copy of them pasted back onto the board, moved
        * by offset across and down (FR-EDIT-07), which leaves the page's
        * clipboard as it was, and selects the copies, once the copy has been
-       * answered, as pasting does; none while a paste or another duplicate
-       * is under way (oneAtATime).
+       * answered, as pasting does, and the toolbar says a refusal of its
+       * copy as of its paste, of an edit; none while a copy, a paste, or
+       * another duplicate is under way (oneAtATime).
        */
       duplicate(ids: readonly string[]): Promise<boolean> {
         return oneAtATime(async () => {
           const asked = controller.selection();
-          const clipboard = await copyOf(ids);
+          const clipboard = await copyOf(ids, "edit");
           return (
             clipboard !== undefined &&
             pasting(
@@ -384,11 +401,15 @@ export function useCanvasActions(
       /**
        * Copies the nodes of ids, at most maxEdited of them, to the page's
        * clipboard, in place of what it held, as the server's copy answers
-       * them, and resolves with whether it did (FR-EDIT-07).
+       * them, and resolves with whether it did (FR-EDIT-07); none while a
+       * copy, a paste, or a duplicate is under way (oneAtATime).
        */
       async copy(ids: readonly string[]): Promise<boolean> {
         const userId = user();
-        const clipboard = await copyOf(ids);
+        const clipboard = await oneAtATime(
+          () => copyOf(ids, "copy"),
+          undefined,
+        );
         if (clipboard === undefined) {
           return false;
         }
@@ -398,12 +419,15 @@ export function useCanvasActions(
       /**
        * Copies the nodes of ids to the page's clipboard, as copy does, and
        * then deletes them to the trash, as remove does, once they have been
-       * copied, and resolves with whether both were done: a copy refused
-       * deletes nothing.
+       * copied, and resolves with whether both were done: a copy refused,
+       * or not asked, deletes nothing.
        */
       async cut(ids: readonly string[]): Promise<boolean> {
         const userId = user();
-        const clipboard = await copyOf(ids);
+        const clipboard = await oneAtATime(
+          () => copyOf(ids, "copy"),
+          undefined,
+        );
         if (clipboard === undefined) {
           return false;
         }
@@ -419,8 +443,8 @@ export function useCanvasActions(
        * Resolves with what of clipboard a paste onto the board would
        * resolve to nothing, as the server reports it (FR-EDIT-07 AC1), or
        * with undefined once the report was refused, which the toolbar says,
-       * or while a paste or a duplicate is under way, of which it asks
-       * nothing (oneAtATime).
+       * or while a copy, a paste, or a duplicate is under way, of which it
+       * asks nothing (oneAtATime).
        */
       resolve(clipboard: Clipboard): Promise<ClipboardReport | undefined> {
         return oneAtATime(async () => {
@@ -440,7 +464,8 @@ export function useCanvasActions(
        * selects the pasted nodes, once the page shows them, unless the
        * selection is no longer asked, the one that the paste was asked
        * with, where it is given, and resolves with whether it did; it pastes
-       * nothing while a paste or a duplicate is under way (oneAtATime).
+       * nothing while a copy, a paste, or a duplicate is under way
+       * (oneAtATime).
        */
       paste(
         clipboard: Clipboard,
@@ -448,21 +473,17 @@ export function useCanvasActions(
         report?: ClipboardReport,
         asked?: ReadonlySet<string>,
       ): Promise<boolean> {
-        return oneAtATime(() => {
-          const corners = new Set<string>();
-          controller.scene.nodes.forEach((_, item) => {
-            corners.add(`${item.node.position.x},${item.node.position.y}`);
-          });
-          return pasting(
-            clipboard,
-            pasteOffset(clipboard, at, controller.snap, (p) =>
-              corners.has(`${p.x},${p.y}`),
+        return oneAtATime(
+          () =>
+            pasting(
+              clipboard,
+              pasteOffset(clipboard, at, controller.snap, cornerTaken()),
+              report === undefined ? [] : createCommands(report, boardId),
+              asked,
+              "paste",
             ),
-            report === undefined ? [] : createCommands(report, boardId),
-            asked,
-            "paste",
-          );
-        }, false);
+          false,
+        );
       },
       /** Aligns the nodes of ids as how says, in one batch. */
       async align(ids: readonly string[], how: Alignment): Promise<boolean> {
@@ -650,14 +671,17 @@ export function useCanvasActions(
     resolveClipboard,
   ]);
   // The latest refusal of any batch of theirs, or of a copy or a paste's
-  // report, which the toolbar says, and of what, or null for none: the same
-  // object until either changes.
+  // report, which the toolbar says, and of what, or null for none, and
+  // whether a copy, a paste, or a duplicate is under way, while which the
+  // canvas offers none of them (oneAtATime): the same object until one of
+  // them changes.
   return useMemo(
     () => ({
       ...ops,
       error: refusal === undefined ? null : refusal.error,
       refused: refusal?.of,
+      busy,
     }),
-    [ops, refusal],
+    [ops, refusal, busy],
   );
 }

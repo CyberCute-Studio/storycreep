@@ -587,8 +587,13 @@ describe("the canvas's clipboard", () => {
     fireEvent.keyDown(other, { key: "v", code: "KeyV", metaKey: true });
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
     expect(batches(calls)[0].map((c) => c.type)).toEqual(["clipboard.paste"]);
-    await waitFor(() => expect(other.dataset.selected).toBe("1"));
-    // The pasted node, selected, is cut, as a copy and its deletion.
+    // The pasted node, selected once the page shows it, as Cut, which is
+    // unavailable until then, says, is cut, as a copy and its deletion.
+    await waitFor(() => {
+      expect(other.dataset.nodes).toBe("1");
+      expect(other.dataset.selected).toBe("1");
+      expect(clipboardButton("Cut").getAttribute("aria-disabled")).toBeNull();
+    });
     fireEvent.keyDown(other, { key: "x", code: "KeyX", ctrlKey: true });
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
     expect(batches(calls)[1].map((c) => c.type)).toEqual(["node.delete"]);
@@ -719,7 +724,7 @@ describe("the canvas's clipboard", () => {
     expect(await screen.findByText("1 node on the clipboard")).toBeDefined();
   });
 
-  it("duplicates one at a time, and keeps a selection that the user made while the copy was under way", async () => {
+  it("duplicates one at a time, which its controls say, and keeps a selection that the user made while the copy was under way", async () => {
     const { nodes, connections } = quayAndDock();
     let release = () => {};
     const answered = new Promise<void>((resolve) => {
@@ -740,9 +745,19 @@ describe("the canvas's clipboard", () => {
     ).getByRole("button", { name: "Duplicate" });
     await userEvent.click(duplicate);
     // A second Duplicate, before the first's copies show, which it would
-    // put its own over, duplicates nothing.
+    // put its own over, duplicates nothing, and Duplicate, Copy, Cut, and
+    // Paste say that they are unavailable meanwhile, keeping the focus.
     await userEvent.click(duplicate);
     await waitFor(() => expect(bodiesOf(calls, "copyNodes")).toHaveLength(1));
+    for (const button of [
+      duplicate,
+      clipboardButton("Copy"),
+      clipboardButton("Cut"),
+      clipboardButton("Paste"),
+    ]) {
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+    }
+    expect(document.activeElement).toBe(duplicate);
     canvas.focus();
     fireEvent.keyDown(canvas, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(canvas.dataset.selected).toBe("0"));
@@ -751,6 +766,100 @@ describe("the canvas's clipboard", () => {
     expect(batches(calls)).toHaveLength(1);
     expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
     expect(canvas.dataset.selected).toBe("0");
+    await waitFor(() =>
+      expect(duplicate.getAttribute("aria-disabled")).toBeNull(),
+    );
+  });
+
+  it("pastes nothing while a copy is under way, rather than what the clipboard held before it, and then what it copied", async () => {
+    const { nodes, connections } = quayAndDock();
+    let release = () => {};
+    const answered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let slow = false;
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      copy: async () => {
+        if (slow) {
+          await answered;
+          return clipboardOf(["nd_quay", "nd_dock"], nodes, connections);
+        }
+        return clipboardOf(["nd_quay"], nodes, connections);
+      },
+    });
+    const { canvas } = await openHarbour("?node=nd_quay");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "c", code: "KeyC", ctrlKey: true });
+    await screen.findByText("1 node on the clipboard");
+    // Quay and Dock, copied in place of Quay alone, and pasted before
+    // their copy is answered.
+    slow = true;
+    await selectAll(canvas, 2);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "c", code: "KeyC", ctrlKey: true });
+    await waitFor(() => expect(bodiesOf(calls, "copyNodes")).toHaveLength(2));
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    release();
+    await waitFor(() =>
+      expect(clipboardButton("Paste").getAttribute("aria-disabled")).toBeNull(),
+    );
+    expect(screen.getByText("2 nodes on the clipboard")).toBeDefined();
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const paste = batches(calls)[0][0].payload as { clipboard: Clipboard };
+    expect(paste.clipboard.nodes.map((n) => n.id)).toEqual([
+      "nd_quay",
+      "nd_dock",
+    ]);
+  });
+
+  it("says that the change could not be saved of a Duplicate whose copy is refused, and gives the inspector's heading the focus of the inspector's Duplicate", async () => {
+    const { nodes, connections } = quayAndDock();
+    let refuse = true;
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      copy: () => {
+        if (refuse) {
+          throw refused(422, {
+            code: "validation_failed",
+            message: "The nodes are too large to copy.",
+          });
+        }
+        return clipboardOf(["nd_quay"], nodes, connections);
+      },
+    });
+    // The link opens Quay with its inspector.
+    const { canvas } = await openHarbour("?node=nd_quay");
+    const inspector = await screen.findByRole("region", { name: "Quay" });
+    const heading = within(inspector).getByRole("heading", { name: "Quay" });
+    await userEvent.click(
+      within(inspector).getByRole("button", { name: "Duplicate" }),
+    );
+    expect(document.activeElement).toBe(heading);
+    expect(
+      await screen.findByText(
+        "The change could not be saved: The nodes are too large to copy.",
+      ),
+    ).toBeDefined();
+    expect(batches(calls)).toEqual([]);
+
+    refuse = false;
+    await waitFor(() =>
+      expect(
+        within(inspector).getByRole("button", { name: "Duplicate" }),
+      ).toHaveProperty("disabled", false),
+    );
+    await userEvent.click(
+      within(inspector).getByRole("button", { name: "Duplicate" }),
+    );
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("3"));
+    expect(batches(calls)[0].map((c) => c.type)).toEqual(["clipboard.paste"]);
+    expect(document.activeElement).toBe(heading);
   });
 
   it("says that the nodes could not be pasted of a paste's batch refused", async () => {

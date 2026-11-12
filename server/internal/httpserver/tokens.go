@@ -49,18 +49,23 @@ func tokenAuthDoc(s scope.Scope) string {
 // something and takes an API token that holds the scope s, what it needs of a
 // request.
 func tokenChangeDoc(s scope.Scope) string {
-	return tokenAuthDoc(s) + " It changes something, so a request made with the session cookie also needs the " +
-		"session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a " +
-		"token needs none."
+	return tokenAuthDoc(s) + sessionCSRFDoc("It changes something")
 }
 
 // tokenPostReadDoc says, in the description of an operation that reads, and
 // changes nothing, but is a POST, as what it reads does not fit in a URL, and
 // takes an API token that holds the scope s, what it needs of a request.
 func tokenPostReadDoc(s scope.Scope) string {
-	return tokenAuthDoc(s) + " It is a POST, so a request made with the session cookie also needs the session's " +
-		"CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token " +
-		"needs none."
+	return tokenAuthDoc(s) + sessionCSRFDoc("It is a POST")
+}
+
+// sessionCSRFDoc says, in the description of an operation that takes an API
+// token, that a request of it made with the session cookie needs the
+// session's CSRF token, for the reason why, and one made with a token does
+// not, as SessionCSRFInput declares, in the same words for each operation.
+func sessionCSRFDoc(why string) string {
+	return " " + why + ", so a request made with the session cookie also needs the session's CSRF token in the " +
+		"X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none."
 }
 
 // tokenNotFoundDoc says, in the description of an operation on a project
