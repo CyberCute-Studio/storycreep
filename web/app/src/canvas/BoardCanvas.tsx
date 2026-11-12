@@ -404,6 +404,9 @@ function BoardCanvasOf({
   // and connect from to it (FR-EDIT-03 AC3), each as the canvas tells it
   // (CanvasEvents), which holds them.
   const [connection, setConnection] = useState<string>();
+  // The changes of the selection, of nodes or of a connection, counted,
+  // each of which the toolbar's live region says (NFR-A11Y-03).
+  const [selections, setSelections] = useState(0);
   const [offer, setOffer] = useState<{ from: PortOf; at: Point }>();
   // The context menu that the canvas asked for, of what is selected, or of
   // the board at a point of it (FR-EDIT-09), each of a key of its own, and
@@ -479,8 +482,14 @@ function BoardCanvasOf({
   const forcedColors = useMediaQuery(forcedColorsQuery, false);
   const [controller] = useState(() => {
     const c = new CanvasController(boardId, {
-      selection: (ids) => setSelection(ids),
-      connection: (id) => setConnection(id),
+      selection: (ids) => {
+        setSelection(ids);
+        setSelections((n) => n + 1);
+      },
+      connection: (id) => {
+        setConnection(id);
+        setSelections((n) => n + 1);
+      },
       offer: (o) => setOffer(o),
       menu: (target, held) => {
         setMenu({
@@ -1685,7 +1694,11 @@ function BoardCanvasOf({
         batch shows it, is said once, by its name, as the document has it,
         rather than as one node first and by name right after (aria-busy);
         and a new name of what is selected is said as it is given, as what
-        is selected is called so from then on. */}
+        is selected is called so from then on. A live region is read as
+        its content changes, which the words of a selection that are those
+        of the one before it, as of another node of the same name, or of as
+        many other nodes, would not: what says the selection is put there
+        anew for each change of it (selections). */}
         <p
           className="text-sm text-fg-muted"
           aria-live="polite"
@@ -1694,39 +1707,43 @@ function BoardCanvasOf({
             selected === 1 && onlyNode === undefined ? true : undefined
           }
         >
-          {selected === 1 && onlyNode !== undefined ? (
-            <>
-              <span aria-hidden="true">
-                {t("canvas.selected", { count: selected })}
-              </span>
-              <span className="sr-only">
-                {t("canvas.selected_node", {
-                  title: titleOf(onlyNode, t),
-                  type: typeOf(onlyNode, t),
-                })}
-              </span>
-            </>
-          ) : selected > 0 ? (
-            t("canvas.selected", { count: selected })
-          ) : connection === undefined ? (
-            <span className="sr-only">{t("canvas.selected_none")}</span>
-          ) : chosenFrom !== undefined && chosenTo !== undefined ? (
-            <>
-              <span aria-hidden="true">{t("canvas.connection_selected")}</span>
-              <span className="sr-only">
-                {t("canvas.selected_connection", {
-                  from: titleOf(chosenFrom, t),
-                  to: titleOf(chosenTo, t),
-                })}
-              </span>
-            </>
-          ) : (
-            t("canvas.connection_selected")
-          )}
-          {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
-          {editable &&
-            selected > maxEdited &&
-            ` ${t("canvas.too_many", { most: maxEdited })}`}
+          <span key={selections}>
+            {selected === 1 && onlyNode !== undefined ? (
+              <>
+                <span aria-hidden="true">
+                  {t("canvas.selected", { count: selected })}
+                </span>
+                <span className="sr-only">
+                  {t("canvas.selected_node", {
+                    title: titleOf(onlyNode, t),
+                    type: typeOf(onlyNode, t),
+                  })}
+                </span>
+              </>
+            ) : selected > 0 ? (
+              t("canvas.selected", { count: selected })
+            ) : connection === undefined ? (
+              <span className="sr-only">{t("canvas.selected_none")}</span>
+            ) : chosenFrom !== undefined && chosenTo !== undefined ? (
+              <>
+                <span aria-hidden="true">
+                  {t("canvas.connection_selected")}
+                </span>
+                <span className="sr-only">
+                  {t("canvas.selected_connection", {
+                    from: titleOf(chosenFrom, t),
+                    to: titleOf(chosenTo, t),
+                  })}
+                </span>
+              </>
+            ) : (
+              t("canvas.connection_selected")
+            )}
+            {/* Why Duplicate is disabled, of more nodes than a batch holds. */}
+            {editable &&
+              selected > maxEdited &&
+              ` ${t("canvas.too_many", { most: maxEdited })}`}
+          </span>
         </p>
         {namesFailed && (
           <p role="alert" className="flex flex-wrap items-center gap-2 text-sm">

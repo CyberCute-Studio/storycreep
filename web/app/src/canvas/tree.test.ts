@@ -148,7 +148,32 @@ describe("the canvas's accessibility tree", () => {
     ]);
   });
 
-  it("finds the next node whose title starts with what is typed, whatever its case, around the list's end, and stays on one that goes on matching", () => {
+  it("lists a connection that leaves a node by a port that the node does not have, as the canvas draws it, after the others, so that the node holds as many as its row counts", () => {
+    const { doc, nodes, connections } = board();
+    const more = docOf(nodes, [
+      ...connections,
+      testConnection("cn_5", "nd_b", "nd_2", { from_port: "bo_gone" }),
+      testConnection("cn_6", "nd_j", "nd_1"),
+    ]);
+    const scene = new Scene("bd_a");
+    scene.sync(more);
+    const rows = treeRows()(scene, describeOf(doc), 0, t);
+    const choices = treeChoices(scene, more, new Set(["nd_b", "nd_j"]), t);
+    expect(choices.get("nd_b")?.map((c) => c.id)).toEqual([
+      "cn_4",
+      "cn_3",
+      "cn_5",
+    ]);
+    expect(choices.get("nd_b")?.[2].label).toBe(
+      "canvas.tree.connection(canvas.node.untitled)",
+    );
+    expect(choices.get("nd_j")?.map((c) => c.id)).toEqual(["cn_6"]);
+    for (const row of rows) {
+      expect(choices.get(row.id)?.length ?? row.leaving).toBe(row.leaving);
+    }
+  });
+
+  it("finds the next node whose title starts with the letter typed, whatever its case, around the list's end, and the same node where no other starts so", () => {
     const rows = [
       { title: "Harbour" },
       { title: "Quay" },
@@ -158,9 +183,7 @@ describe("the canvas's accessibility tree", () => {
     expect(typedRow(rows, 0, "h")).toBe(2);
     expect(typedRow(rows, 2, "H")).toBe(0);
     expect(typedRow(rows, 3, "q")).toBe(1);
-    // What goes on from a letter stays where it still matches.
-    expect(typedRow(rows, 2, "harbour m")).toBe(2);
-    expect(typedRow(rows, 0, "harbour m")).toBe(2);
+    expect(typedRow(rows, 1, "q")).toBe(1);
     expect(typedRow(rows, 0, "x")).toBeUndefined();
     expect(typedRow(rows, 0, "")).toBeUndefined();
     expect(typedRow([], 0, "h")).toBeUndefined();

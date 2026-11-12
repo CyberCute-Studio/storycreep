@@ -441,69 +441,96 @@ describe("the canvas's accessibility tree", () => {
     expect(first.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("takes a letter typed back with Backspace, which deletes the node only once the typing is over", async () => {
-    const user = userEvent.setup();
-    const { nodes, connections } = quay();
-    const calls = boardPage(nodes, connections);
-    await openBoard();
-    const tree = await treeOf();
-    const [first, second] = within(tree).getAllByRole("treeitem");
-    first.focus();
-    await user.keyboard("q{Backspace}{Backspace}");
-    expect(document.activeElement).toBe(second);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(batches(calls)).toHaveLength(0);
-    expect(namesOf(tree)).toHaveLength(3);
-    // Once the typing time has passed, Backspace is the canvas's Delete.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await user.keyboard("{Backspace}");
-    await waitFor(() => expect(batches(calls)).toHaveLength(1));
-    expect(batches(calls)[0]).toMatchObject([
-      { type: "node.delete", payload: { id: "nd_2" } },
-    ]);
-  });
-
   // Verifies: NFR-A11Y-04
-  it("takes a space typed after letters as one of the title that they find, rather than select what the focus is on", async () => {
+  it("goes by a letter typed to the next node whose title starts with it, by the same letter again to the one after it, and keeps none of the letters typed: Space right after one selects, and Backspace deletes", async () => {
     const user = userEvent.setup();
-    boardPage([
-      testNode("nd_1", 0, 0, { title: "Old quay" }),
-      testNode("nd_2", 0, 400, { title: "New harbour" }),
-      testNode("nd_3", 0, 800, { title: "New quay" }),
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { title: "Harbour" }),
+      testNode("nd_2", 0, 400, { title: "Hall" }),
+      testNode("nd_3", 0, 800, { title: "Quay" }),
+      testNode("nd_4", 0, 1200, { title: "hut" }),
     ]);
     const canvas = await openBoard();
     const tree = await treeOf();
-    const [first, second, third] = within(tree).getAllByRole("treeitem");
+    const [first, second, third, fourth] =
+      within(tree).getAllByRole("treeitem");
     first.focus();
-    // Before any letter, Space selects.
-    await user.keyboard(" ");
-    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
-    expect(first.getAttribute("aria-selected")).toBe("true");
-    await user.keyboard("new");
+    // The same letter, as fast as it is typed, goes on to the next node
+    // that starts with it, whatever its case, and around the list's end.
+    await user.keyboard("h");
     expect(document.activeElement).toBe(second);
-    await user.keyboard(" q");
-    expect(document.activeElement).toBe(third);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(first.getAttribute("aria-selected")).toBe("true");
-    expect(second.getAttribute("aria-selected")).toBe("false");
-    expect(third.getAttribute("aria-selected")).toBe("false");
-    // Once the typing time has passed, Space selects again.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await user.keyboard(" ");
-    await waitFor(() =>
-      expect(third.getAttribute("aria-selected")).toBe("true"),
-    );
-    expect(first.getAttribute("aria-selected")).toBe("false");
-    // A key that moves the focus ends the typing: the Space right after it
-    // selects what the focus is on then.
-    await user.keyboard("o");
+    await user.keyboard("hh");
     expect(document.activeElement).toBe(first);
-    await user.keyboard("{ArrowDown} ");
-    expect(document.activeElement).toBe(second);
+    // Another letter right after it starts anew, of a title that does not
+    // start with the two.
+    await user.keyboard("q");
+    expect(document.activeElement).toBe(third);
+    await user.keyboard("h");
+    expect(document.activeElement).toBe(fourth);
+    // A character that is a key of the canvas's is that key right after a
+    // letter, as the one that zooms.
+    const zoom = canvas.dataset.zoom;
+    await user.keyboard("q+");
+    expect(document.activeElement).toBe(third);
+    await waitFor(() => expect(canvas.dataset.zoom).not.toBe(zoom));
+    // Space right after a letter selects the node that the letter found.
+    await user.keyboard("h ");
+    expect(document.activeElement).toBe(fourth);
     await waitFor(() =>
-      expect(second.getAttribute("aria-selected")).toBe("true"),
+      expect(fourth.getAttribute("aria-selected")).toBe("true"),
     );
-    expect(third.getAttribute("aria-selected")).toBe("false");
+    expect(canvas.dataset.selected).toBe("1");
+    // And Backspace right after a letter deletes it.
+    await user.keyboard("q{Backspace}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      { type: "node.delete", payload: { id: "nd_3" } },
+    ]);
+  });
+
+  // Verifies: NFR-A11Y-03
+  it("says the selection again as it changes to another node of the same name, which the same words would else say nothing of", async () => {
+    const user = userEvent.setup();
+    boardPage([
+      testNode("nd_1", 0, 0, { title: "" }),
+      testNode("nd_2", 0, 400, { title: "" }),
+    ]);
+    await openBoard();
+    const tree = await treeOf();
+    const [first, second] = within(tree).getAllByRole("treeitem");
+    const region = said();
+    first.focus();
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(spoken(region)).toBe("Selected: Untitled, Narration."),
+    );
+    // A live region is read as its content changes: what it holds is put
+    // there anew for the selection that came after, in the same words.
+    let changes = 0;
+    const observer = new MutationObserver((records) => {
+      changes += records.length;
+    });
+    observer.observe(region, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    try {
+      await user.keyboard("{ArrowDown} ");
+      await waitFor(() =>
+        expect(second.getAttribute("aria-selected")).toBe("true"),
+      );
+      expect(first.getAttribute("aria-selected")).toBe("false");
+      await waitFor(() => expect(changes).toBeGreaterThan(0));
+      expect(spoken(region)).toBe("Selected: Untitled, Narration.");
+      // What was said stays as it is while the selection does.
+      changes = 0;
+      await user.keyboard("{ArrowUp}{ArrowDown}");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(changes).toBe(0);
+    } finally {
+      observer.disconnect();
+    }
   });
 
   it("does nothing by Delete, Enter, or Space of an item whose node the board no longer has, as it would else to what was selected before", async () => {

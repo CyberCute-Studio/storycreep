@@ -9,7 +9,7 @@
 // pixels tell none of it to assistive technology; the tree (CanvasTree.tsx) is
 // what does.
 
-import type { Connection, Node } from "@storycreep/shared/api";
+import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import type { Doc } from "../document/doc";
 import { choicesOfPort } from "./flow";
 import {
@@ -132,7 +132,8 @@ export function treeRows(): (
  * branch's outputs, and of each port's choices (FR-EDIT-03 AC1), each named
  * by the node that it enters, as that node's card titles it, by its label,
  * as plain words, where it has one, and, of a branch's, by the row of the
- * output that it leaves, as the branch's card says it. It reads the scene's
+ * output that it leaves, as the branch's card says it, and, after them,
+ * those of a port that the node does not have. It reads the scene's
  * connections once for all of ids, rather than once for each.
  */
 export function treeChoices(
@@ -183,62 +184,75 @@ function choicesOfNode(
     variableKey: (variable: string) => view.variables.get(variable)?.key,
   };
   const choices: TreeChoice[] = [];
-  for (const port of portsOf(node)) {
+  const list = (c: Connection, output: BranchOutput | undefined) => {
+    const to = scene.nodes.get(c.to_node_id)?.node;
+    const target = to === undefined ? c.to_node_id : titleOf(to, t);
+    const label = oneLine(plainText(c.label, names), betweenLines);
+    choices.push({
+      id: c.id,
+      label:
+        output === undefined
+          ? label === ""
+            ? t("canvas.tree.connection", { target })
+            : t("canvas.tree.connection_labelled", { target, label })
+          : label === ""
+            ? t("canvas.tree.output_connection", {
+                output: outputLabel(output, t),
+                target,
+              })
+            : t("canvas.tree.output_connection_labelled", {
+                output: outputLabel(output, t),
+                target,
+                label,
+              }),
+    });
+  };
+  const ports = portsOf(node);
+  for (const port of ports) {
     const output =
       node.type === "branch"
         ? node.outputs?.find((o) => o.id === port)
         : undefined;
     for (const c of choicesOfPort(leaving, port)) {
-      const to = scene.nodes.get(c.to_node_id)?.node;
-      const target = to === undefined ? c.to_node_id : titleOf(to, t);
-      const label = oneLine(plainText(c.label, names), betweenLines);
-      choices.push({
-        id: c.id,
-        label:
-          output === undefined
-            ? label === ""
-              ? t("canvas.tree.connection", { target })
-              : t("canvas.tree.connection_labelled", { target, label })
-            : label === ""
-              ? t("canvas.tree.output_connection", {
-                  output: outputLabel(output, t),
-                  target,
-                })
-              : t("canvas.tree.output_connection_labelled", {
-                  output: outputLabel(output, t),
-                  target,
-                  label,
-                }),
-      });
+      list(c, output);
+    }
+  }
+  // A connection that leaves the node by a port that it does not have, as
+  // an output in the trash, which the canvas draws from the node's middle
+  // (layout.ts's portPoint), is listed after the others, by the node that
+  // it enters alone, so that the node holds as many as its row counts
+  // (treeRows), and each that is drawn can be reached.
+  const others = new Set(
+    leaving.map((c) => c.from_port).filter((port) => !ports.includes(port)),
+  );
+  for (const port of [...others].sort()) {
+    for (const c of choicesOfPort(leaving, port)) {
+      list(c, undefined);
     }
   }
   return choices;
 }
 
 /**
- * Returns the place in rows of the row that typing typed finds from the
- * place from: the next after it whose title starts with typed, whatever
- * its case, around the list's end to its start, or, of what is typed on
- * from one letter to the next, the row at from itself where it still
- * starts so; none where no title starts so.
+ * Returns the place in rows of the row that the letter typed finds from
+ * the place from: the next after it whose title starts with the letter,
+ * whatever its case, around the list's end to its start, and so the row at
+ * from itself where no other starts so; none where no title starts so. It
+ * is of the one letter, and of none typed before it, so that the same
+ * letter again goes on to the next row that starts with it.
  */
 export function typedRow(
   rows: readonly Pick<TreeRow, "title">[],
   from: number,
-  typed: string,
+  letter: string,
 ): number | undefined {
-  const prefix = typed.toLocaleLowerCase();
-  if (prefix === "" || rows.length === 0) {
+  const start = letter.toLocaleLowerCase();
+  if (start === "") {
     return undefined;
   }
-  const starts = (i: number) =>
-    rows[i].title.toLocaleLowerCase().startsWith(prefix);
-  // What goes on from the letters before it stays on the row that they
-  // found, while it still starts so; one letter moves on to the next.
-  const first = typed.length > 1 ? from : from + 1;
-  for (let n = 0; n < rows.length; n++) {
-    const i = (((first + n) % rows.length) + rows.length) % rows.length;
-    if (starts(i)) {
+  for (let n = 1; n <= rows.length; n++) {
+    const i = (((from + n) % rows.length) + rows.length) % rows.length;
+    if (rows[i].title.toLocaleLowerCase().startsWith(start)) {
       return i;
     }
   }

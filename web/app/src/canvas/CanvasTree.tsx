@@ -14,11 +14,11 @@
 // with the rest of the selection where it is of it, as a long press on it
 // does, and none of them does anything of an item whose node, or whose
 // connection, the board no longer has, though the tree, which is made again
-// a moment after the board changes, shows it still. A Backspace right after
-// a letter typed takes the letter back, and deletes nothing, and a space
-// right after one goes on from it, as a character of the title, and selects
-// nothing. The canvas's other keys, which zoom, and Escape, do here what
-// they do on the canvas.
+// a moment after the board changes, shows it still. A letter typed is of
+// itself alone, whatever was typed before it: the same letter again goes on
+// to the next node that starts with it, and Space selects, and Backspace
+// deletes, right after one as at any time. The canvas's other keys, which
+// zoom, and Escape, do here what they do on the canvas.
 // The tree is not drawn: the canvas shows what the focus is on, moving to
 // it where it is out of view, with the focus ring around its node, or
 // around its connection's line, which the canvas places in each frame.
@@ -65,27 +65,6 @@ export interface TreeHandle {
   /** Reports whether the focus is in the tree. */
   focused(): boolean;
 }
-
-/** How long after a letter the next one goes on from it, rather than starts anew, in milliseconds. */
-const typingTime = 500;
-
-/**
- * The keys that end the letters typed, whatever the time since: those that
- * move the tree's focus, or act on its item, after which a letter starts
- * anew, and a Space, or a Backspace, is the tree's key again, of the item
- * that the focus is on then, rather than a character typed, or one taken
- * back.
- */
-const endsTyping: ReadonlySet<string> = new Set([
-  "ArrowDown",
-  "ArrowUp",
-  "ArrowLeft",
-  "ArrowRight",
-  "Home",
-  "End",
-  "Enter",
-  "Delete",
-]);
 
 function sameItem(a: Item | undefined, b: Item | undefined): boolean {
   return a?.node === b?.node && a?.connection === b?.connection;
@@ -231,7 +210,6 @@ export const CanvasTree = memo(function CanvasTree({
   // had it last, as by the context menu as it goes (TreeHandle's focus),
   // which the canvas does not move to again.
   const givenBack = useRef(false);
-  const typed = useRef({ text: "", at: Number.NEGATIVE_INFINITY });
 
   const index = useMemo(() => {
     const of = new Map<string, number>();
@@ -464,25 +442,13 @@ export const CanvasTree = memo(function CanvasTree({
       e.preventDefault();
       return;
     }
-    // Whether the key comes within the typing time of a letter typed, or
-    // of a Backspace that took one back, and whether its character goes on
-    // from the letters typed, of which there are some then.
-    const typing = e.timeStamp - typed.current.at < typingTime;
-    const goesOn = e.key.length === 1 && typing && typed.current.text !== "";
-    // Space selects, but one that goes on from letters typed is a character
-    // of the title that they find, as the one between two of its words,
-    // which would else select the node that the letters found so far, in
-    // place of the selection.
-    if (e.key === " " && !e.altKey && !(goesOn && !e.ctrlKey && !e.metaKey)) {
+    if (e.key === " " && !e.altKey) {
       select(item, e.shiftKey || e.ctrlKey || e.metaKey);
       e.preventDefault();
       return;
     }
     if (modified) {
       return;
-    }
-    if (endsTyping.has(e.key)) {
-      typed.current = { text: "", at: Number.NEGATIVE_INFINITY };
     }
     const all = items();
     const at = all.findIndex((i) => sameItem(i, item));
@@ -531,16 +497,6 @@ export const CanvasTree = memo(function CanvasTree({
         break;
       case "Delete":
       case "Backspace":
-        // A Backspace right after a letter typed takes the letter back, as
-        // it does wherever letters are typed, rather than delete the node
-        // that the letters found.
-        if (e.key === "Backspace" && typing) {
-          typed.current = {
-            text: typed.current.text.slice(0, -1),
-            at: e.timeStamp,
-          };
-          break;
-        }
         // On a board that may be changed, as the canvas's own Delete is:
         // elsewhere the key selects nothing, as it deletes nothing. The
         // focus goes to what is in the place of what the key deleted, once
@@ -551,11 +507,12 @@ export const CanvasTree = memo(function CanvasTree({
         break;
       default: {
         // The canvas's other keys, which zoom, and Escape, but not those
-        // that pan, which are the tree's arrows here; and a letter typed,
-        // which finds a node by its title, as does a character that is a
-        // key of the canvas's, or a space, while it goes on from letters
-        // typed.
-        const action = goesOn ? undefined : keyAction(e);
+        // that pan, which are the tree's arrows here; and else a letter
+        // typed, which goes to the next node whose title starts with it,
+        // of itself alone, whatever was typed before it, so that the same
+        // letter again goes on to the node after, and a character that is
+        // a key of the canvas's is always that key.
+        const action = keyAction(e);
         if (action !== undefined && action.kind !== "pan") {
           if (!controller.key(e)) {
             return;
@@ -565,9 +522,7 @@ export const CanvasTree = memo(function CanvasTree({
         if (e.key.length !== 1) {
           return;
         }
-        const text = (goesOn ? typed.current.text : "") + e.key;
-        typed.current = { text, at: e.timeStamp };
-        const found = typedRow(rows, row, text);
+        const found = typedRow(rows, row, e.key);
         if (found !== undefined) {
           go({ node: rows[found].id });
         }
