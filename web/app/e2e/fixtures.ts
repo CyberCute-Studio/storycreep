@@ -215,7 +215,10 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * field, an item of a menu, what takes the keyboard's focus, and a handle
  * that the canvas places over itself. Not one is what the page does not
  * show, what it shows to assistive technology alone, as the link that
- * skips to the content, what is inert under a sheet or a dialog, a
+ * skips to the content, what is inert under a sheet or a dialog, or what a
+ * modal dialog or menu hides, as Radix's marks every element outside it
+ * (`data-aria-hidden`), whose presses it takes for its own, which close it,
+ * as the paste's dialog hides the canvas's toolbar (plan note N71), a
  * link within a line of text, whose line is its height, and a checkbox or a
  * radio button but with its label, which a tap on presses it. Two controls
  * of which one holds the other, or that the page shows over each other, as
@@ -243,7 +246,7 @@ export async function smallTargets(page: Page): Promise<string[]> {
       if (
         !(el instanceof HTMLElement) ||
         !el.checkVisibility({ visibilityProperty: true }) ||
-        el.closest("[inert], .sr-only") !== null
+        el.closest("[inert], [data-aria-hidden], .sr-only") !== null
       ) {
         continue;
       }
