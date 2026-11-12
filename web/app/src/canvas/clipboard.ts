@@ -314,11 +314,12 @@ export function commandBytes(command: Command): number {
 }
 
 /**
- * Returns the batches that send creates and then paste, in their order: the
- * paste's with as many of the last of creates as fit in it, and before it,
- * batches of the others, each of at most maxBatchCommands commands and
- * maxBatchBytes bytes, as a batch of the API takes, so that what is created
- * is in the paste's batch where it fits, and the paste and what it resolves
+ * Returns the batches that send creates and then paste, in their order:
+ * creates in batches of at most maxBatchCommands commands and maxBatchBytes
+ * bytes, as a batch of the API takes, each filled before the next is begun,
+ * the last of which the paste joins where it fits in it, and
+ * else a batch of its own after them, so that what is created is in the
+ * paste's batch where it all fits there, and the paste and what it resolves
  * to are one step of the history then. A paste that creates nothing, as a
  * duplicate, is a batch of its own, whose JSON it does not write to measure
  * it, as a clipboard is never more than a batch holds with its new IDs.

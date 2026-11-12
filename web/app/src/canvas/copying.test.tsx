@@ -4,6 +4,7 @@ import type {
   ClipboardReport,
   Connection,
   Node,
+  SignedInBody,
 } from "@storycreep/shared/api";
 import {
   act,
@@ -14,6 +15,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { sessionQuery } from "../api";
 import { holdCopy } from "../document/clipboard";
 import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
@@ -886,5 +888,76 @@ describe("the canvas's clipboard", () => {
         "The nodes could not be pasted: A node would be too far away.",
       ),
     ).toBeDefined();
+  });
+
+  it("asks a paste's report once the page's batches before it have been answered, as the server reports what it has", async () => {
+    const { nodes, connections } = quayAndDock();
+    let release = () => {};
+    const created = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let slow = false;
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      apply: () => (slow ? created : Promise.resolve()),
+    });
+    await openHarbour("?node=nd_quay");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    // A node added, whose batch is under way as Paste is pressed.
+    slow = true;
+    await userEvent.click(
+      within(screen.getByRole("group", { name: "Edit the board" })).getByRole(
+        "button",
+        { name: "Add" },
+      ),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Element" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await userEvent.click(clipboardButton("Paste"));
+    await act(async () => {});
+    expect(bodiesOf(calls, "resolveClipboard")).toEqual([]);
+    expect(clipboardButton("Paste").getAttribute("aria-disabled")).toBe("true");
+    slow = false;
+    release();
+    await waitFor(() =>
+      expect(bodiesOf(calls, "resolveClipboard")).toHaveLength(1),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(batches(calls)[1].map((c) => c.type)).toEqual(["clipboard.paste"]);
+  });
+
+  it("deletes nothing of a Cut whose copy is answered once the page is signed in to another account, whose clipboard it is not", async () => {
+    const { nodes, connections } = quayAndDock();
+    let release = () => {};
+    const answered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      copy: async () => {
+        await answered;
+        return clipboardOf(["nd_quay"], nodes, connections);
+      },
+    });
+    const { queryClient, documents } = await openHarbour("?node=nd_quay");
+    await userEvent.click(clipboardButton("Cut"));
+    await waitFor(() => expect(bodiesOf(calls, "copyNodes")).toHaveLength(1));
+    const other: SignedInBody = { ...testSession, user_id: "usr_other" };
+    act(() => queryClient.setQueryData(sessionQuery.queryKey, other));
+    release();
+    await waitFor(() =>
+      expect(clipboardButton("Cut").getAttribute("aria-disabled")).toBeNull(),
+    );
+    await act(async () => {});
+    // Nor asks the deletion, which the document of the account before
+    // would refuse to send as another's.
+    expect(batches(calls)).toEqual([]);
+    expect(screen.queryByText(/could not be saved/)).toBeNull();
+    expect(documents.clipboard.getState()).toBeUndefined();
   });
 });

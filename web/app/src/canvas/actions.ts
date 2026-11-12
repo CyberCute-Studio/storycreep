@@ -10,8 +10,8 @@
 // refusal of any of them, though another was sent after it, until the next
 // is sent. A copy, and the report of what a paste would resolve to
 // nothing, are requests of their own, whose refusal the toolbar says too,
-// and a copy is asked once the page's batches before it have been answered,
-// so that it copies what they change; a paste is a batch whose nodes the
+// and each is asked once the page's batches before it have been answered,
+// so that it reads what they change; a paste is a batch whose nodes the
 // page shows once the board has been read again, as the document predicts
 // none of what it resolves (N58), and the canvas copies, pastes, and
 // duplicates one at a time, which its controls say (busy), as a paste
@@ -224,12 +224,18 @@ export function useCanvasActions(
     /**
      * Has the page's clipboard hold clipboard, copied by the account of
      * userId, unless the page is signed in to another account since, or
-     * signed out, whose clipboard it would else be (Documents).
+     * signed out, whose clipboard it would else be (Documents), and
+     * reports whether it does.
      */
-    const hold = (clipboard: Clipboard, userId: string | undefined) => {
-      if (userId !== undefined && user() === userId) {
-        holdCopy(documents.clipboard, { userId, workspaceId, clipboard });
+    const hold = (
+      clipboard: Clipboard,
+      userId: string | undefined,
+    ): boolean => {
+      if (userId === undefined || user() !== userId) {
+        return false;
       }
+      holdCopy(documents.clipboard, { userId, workspaceId, clipboard });
+      return true;
     };
     /**
      * Runs work, a copy, a paste, or a duplicate, and resolves with what it
@@ -410,17 +416,15 @@ export function useCanvasActions(
           () => copyOf(ids, "copy"),
           undefined,
         );
-        if (clipboard === undefined) {
-          return false;
-        }
-        hold(clipboard, userId);
-        return true;
+        return clipboard !== undefined && hold(clipboard, userId);
       },
       /**
        * Copies the nodes of ids to the page's clipboard, as copy does, and
-       * then deletes them to the trash, as remove does, once they have been
-       * copied, and resolves with whether both were done: a copy refused,
-       * or not asked, deletes nothing.
+       * then deletes them to the trash, as remove does, once the clipboard
+       * holds them, and resolves with whether both were done: a copy
+       * refused, or not asked, or answered once the page is signed in to
+       * another account, which the clipboard does not hold, deletes
+       * nothing.
        */
       async cut(ids: readonly string[]): Promise<boolean> {
         const userId = user();
@@ -428,10 +432,9 @@ export function useCanvasActions(
           () => copyOf(ids, "copy"),
           undefined,
         );
-        if (clipboard === undefined) {
+        if (clipboard === undefined || !hold(clipboard, userId)) {
           return false;
         }
-        hold(clipboard, userId);
         return send(
           deleteBatch(
             view(),
@@ -444,11 +447,17 @@ export function useCanvasActions(
        * resolve to nothing, as the server reports it (FR-EDIT-07 AC1), or
        * with undefined once the report was refused, which the toolbar says,
        * or while a copy, a paste, or a duplicate is under way, of which it
-       * asks nothing (oneAtATime).
+       * asks nothing (oneAtATime). It asks once the page's batches sent
+       * before it, and the step of the history under way, have been
+       * answered (ProjectDocument.sent), as copyOf asks the copy, as the
+       * server reports of what it has: an undo of a paste that created a
+       * variable, under way, would else be reported as the variable that
+       * the project has still, and the paste after it sent without it.
        */
       resolve(clipboard: Clipboard): Promise<ClipboardReport | undefined> {
         return oneAtATime(async () => {
           setRefusal(undefined);
+          await doc.sent();
           try {
             return await resolveClipboard(clipboard);
           } catch (error) {
