@@ -1491,6 +1491,7 @@ function BoardCanvasOf({
     at: Point;
     report: ClipboardReport;
     opener: Opener;
+    asked: ReadonlySet<string>;
   }>();
   const pasteButton = useRef<HTMLButtonElement>(null);
   const editableNow = useRef(editable);
@@ -1506,13 +1507,17 @@ function BoardCanvasOf({
   // board, or at the canvas's centre, where at is not given: at once where
   // nothing that they name is missing from the board's project, and else
   // once the dialog that lists what is has been answered, which gives the
-  // focus back to opener, where it is given.
+  // focus back to opener, where it is given; and selects the pasted nodes
+  // unless the user selected others meanwhile (asked), as while the report
+  // was under way. A paste or a duplicate under way pastes nothing more
+  // until its own nodes show (useCanvasActions' oneAtATime).
   const pasteAt = async (at?: Point, opener?: Opener) => {
     const clipboard = copied?.clipboard;
     if (!pastable || clipboard === undefined || resolvingNow.current) {
       return;
     }
     const point = at ?? centerOf(controller.viewport(), controller.size());
+    const asked = controller.selection();
     resolvingNow.current = true;
     setResolving(true);
     try {
@@ -1527,9 +1532,10 @@ function BoardCanvasOf({
           at: point,
           report,
           opener: opener ?? (active instanceof HTMLElement ? active : null),
+          asked,
         });
       } else {
-        void actions.paste(clipboard, point);
+        void actions.paste(clipboard, point, undefined, asked);
       }
     } finally {
       resolvingNow.current = false;
@@ -2296,6 +2302,7 @@ function BoardCanvasOf({
                     pasting.clipboard,
                     pasting.at,
                     create ? pasting.report : undefined,
+                    pasting.asked,
                   );
                 }
               }}

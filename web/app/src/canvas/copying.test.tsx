@@ -137,9 +137,11 @@ type Sent = { type: string; payload: unknown; expected_rev?: unknown }[];
 /**
  * Answers the board's pages, of Harbour, of nodes and connections, and of
  * Lighthouse, empty, as the project's role says, and copies, reports, and
- * applies each batch as the server does: a paste puts its nodes on its
- * board, which the board's next read answers with. report answers each
- * report, and copy each copy, as with a refusal it throws.
+ * applies each batch as the server does: a creation puts its node on its
+ * board, and a paste its nodes, which the board's next read answers with.
+ * report answers each report, and copy each copy, as with a refusal it
+ * throws, once what it returns has resolved; apply is waited for before
+ * each batch is applied, and refuses it where it throws.
  */
 function clipboardPage({
   nodes,
@@ -147,19 +149,21 @@ function clipboardPage({
   role = "owner",
   report = () => nothing,
   copy,
+  apply,
 }: {
   nodes: Node[];
   connections: Connection[];
   role?: "owner" | "viewer";
   report?: () => ClipboardReport;
-  copy?: () => Clipboard;
+  copy?: () => Clipboard | Promise<Clipboard>;
+  apply?: (commands: Sent) => Promise<void>;
 }) {
   let seq = testProject.seq;
   const onBoard = new Map<string, Node[]>([
     ["bd_a", nodes],
     ["bd_b", []],
   ]);
-  return fakeApi((operation, input) => {
+  return fakeApi(async (operation, input) => {
     const body = (input as { body?: unknown } | undefined)?.body;
     const boardId = (input as { path?: { board_id?: string } } | undefined)
       ?.path?.board_id;
@@ -185,10 +189,10 @@ function clipboardPage({
         return { items: [] };
       case "copyNodes":
         return (
-          copy?.() ??
+          (await copy?.()) ??
           clipboardOf(
             (body as { node_ids: string[] }).node_ids,
-            nodes,
+            [...onBoard.values()].flat(),
             connections,
           )
         );
@@ -196,8 +200,26 @@ function clipboardPage({
         return report();
       case "applyCommands": {
         const { commands } = body as { commands: Sent };
+        await apply?.(commands);
         seq++;
+        // The revisions of the nodes created, which a paste's are not, as the
+        // board read again brings them.
+        const revisions: { id: string; rev: number }[] = [];
         for (const command of commands) {
+          if (command.type === "node.create") {
+            const p = command.payload as {
+              id: string;
+              board_id: string;
+              position: { x: number; y: number };
+            };
+            onBoard.set(p.board_id, [
+              ...(onBoard.get(p.board_id) ?? []),
+              testNode(p.id, p.position.x, p.position.y, {
+                board_id: p.board_id,
+              }),
+            ]);
+            revisions.push({ id: p.id, rev: 1 });
+          }
           if (command.type === "clipboard.paste") {
             const p = command.payload as {
               board_id: string;
@@ -222,7 +244,7 @@ function clipboardPage({
         return {
           status: "applied",
           seq,
-          revisions: [],
+          revisions,
           not_reconnected: [],
           undo: [],
         };
@@ -423,6 +445,15 @@ describe("the canvas's clipboard", () => {
       within(dialog).getByText(
         "Elara (elara), with its type, Person, which this project lacks too",
       ),
+    ).toBeDefined();
+    // The attribute that the type is created with, as Create and paste
+    // creates it, though the report lists it of no type of the project's.
+    expect(
+      within(
+        within(dialog)
+          .getByRole("heading", { name: "Attributes to create" })
+          .closest("section") as HTMLElement,
+      ).getByText("Fear (fear)"),
     ).toBeDefined();
     expect(
       within(dialog).getByText(
@@ -660,5 +691,91 @@ describe("the canvas's clipboard", () => {
     expect(
       (batches(calls)[0][0].payload as { offset: unknown }).offset,
     ).toEqual({ x: snap(at.x - 120), y: snap(at.y - 64) });
+  });
+
+  it("copies a node that the page has just added once the batch that creates it has applied, as the server copies what it has", async () => {
+    const { nodes, connections } = quayAndDock();
+    let release = () => {};
+    const created = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = clipboardPage({ nodes, connections, apply: () => created });
+    const { canvas } = await openHarbour();
+    await userEvent.click(screen.getByRole("button", { name: "Add" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Element" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const id = (batches(calls)[0][0].payload as { id: string }).id;
+    // The new node, selected at once, as the page shows it at once.
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    await userEvent.click(clipboardButton("Copy"));
+    await act(async () => {});
+    expect(bodiesOf(calls, "copyNodes")).toEqual([]);
+    release();
+    await waitFor(() =>
+      expect(bodiesOf(calls, "copyNodes")).toEqual([{ node_ids: [id] }]),
+    );
+    expect(await screen.findByText("1 node on the clipboard")).toBeDefined();
+  });
+
+  it("duplicates one at a time, and keeps a selection that the user made while the copy was under way", async () => {
+    const { nodes, connections } = quayAndDock();
+    let release = () => {};
+    const answered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = clipboardPage({
+      nodes,
+      connections,
+      copy: async () => {
+        await answered;
+        return clipboardOf(["nd_quay", "nd_dock"], nodes, connections);
+      },
+    });
+    const { canvas } = await openHarbour();
+    await selectAll(canvas, 2);
+    const duplicate = within(
+      screen.getByRole("group", { name: "Edit the board" }),
+    ).getByRole("button", { name: "Duplicate" });
+    await userEvent.click(duplicate);
+    // A second Duplicate, before the first's copies show, which it would
+    // put its own over, duplicates nothing.
+    await userEvent.click(duplicate);
+    await waitFor(() => expect(bodiesOf(calls, "copyNodes")).toHaveLength(1));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("0"));
+    release();
+    await waitFor(() => expect(canvas.dataset.nodes).toBe("4"));
+    expect(batches(calls)).toHaveLength(1);
+    expect(bodiesOf(calls, "copyNodes")).toHaveLength(1);
+    expect(canvas.dataset.selected).toBe("0");
+  });
+
+  it("says that the nodes could not be pasted of a paste's batch refused", async () => {
+    const { nodes, connections } = quayAndDock();
+    clipboardPage({
+      nodes,
+      connections,
+      apply: async (commands) => {
+        if (commands.some((c) => c.type === "clipboard.paste")) {
+          throw refused(422, {
+            code: "validation_failed",
+            message: "A node would be too far away.",
+          });
+        }
+      },
+    });
+    const { router } = await openHarbour("?node=nd_quay");
+    await userEvent.click(clipboardButton("Copy"));
+    await screen.findByText("1 node on the clipboard");
+    await openLighthouse(router);
+    await userEvent.click(clipboardButton("Paste"));
+    expect(
+      await screen.findByText(
+        "The nodes could not be pasted: A node would be too far away.",
+      ),
+    ).toBeDefined();
   });
 });

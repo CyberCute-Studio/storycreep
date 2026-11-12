@@ -15,6 +15,7 @@ import {
   pasteBatches,
   pasteCommand,
   pasteOffset,
+  typesCreated,
   withinLimits,
 } from "./clipboard";
 import { positionLimit } from "./edit";
@@ -154,6 +155,16 @@ describe("the paste of a clipboard", () => {
         corners.has(`${p.x},${p.y}`),
       ),
     ).toEqual({ x: 64, y: 64 });
+    // Off the grid, a corner is in hundredths, as the server keeps it, and
+    // as the board's nodes have it, rather than the double of a sum of two
+    // places in hundredths, as 0.1 and 0.2, which is a hair from 0.3.
+    const fractional = clipboardOf([element("nd_c", 0.1, 0)]);
+    const fractionalCorners = new Set(["0.3,0", "32.3,32"]);
+    expect(
+      pasteOffset(fractional, { x: 120.3, y: 64 }, false, (p) =>
+        fractionalCorners.has(`${p.x},${p.y}`),
+      ),
+    ).toEqual({ x: 64.2, y: 64 });
   });
 
   it("keeps every node within the board's limits, which the server would refuse the paste for", () => {
@@ -262,6 +273,13 @@ describe("what a paste creates first", () => {
       ],
       attributes: [{ attribute: fear, component_type_id: "ct_theirs" }],
     };
+    // What the dialog names of the type created, as it creates it.
+    expect(typesCreated(report)).toEqual([
+      {
+        type: { id: "ct_person", key: "person", name: "Person" },
+        attributes: [fear, mood],
+      },
+    ]);
     expect(createCommands(report, "bd_lighthouse", counter())).toEqual([
       {
         type: "variable.create",

@@ -10,15 +10,15 @@
 import type {
   Clipboard,
   ClipboardAttribute,
+  ClipboardComponentType,
   ClipboardReport,
-  MissingComponent,
   NodePosition,
 } from "@storycreep/shared/api";
 import { type IdKind, newId } from "@storycreep/shared/ids";
 import type { Command } from "../document/store";
-import { positionLimit, snapped } from "./edit";
+import { positionLimit, shifted, snapped, offset as step } from "./edit";
 import { nodeRect } from "./layout";
-import type { Point, Rect } from "./viewport";
+import { type Point, type Rect, union } from "./viewport";
 
 /** Makes a new ID of kind, as the client makes those of what it creates. */
 export type MakeId = (kind: IdKind) => string;
@@ -63,23 +63,7 @@ export function pasteCommand(
 
 /** Returns the rectangle that the nodes of clipboard take where they were copied, as the canvas lays them out, or undefined for one of no node. */
 export function boundsOf(clipboard: Clipboard): Rect | undefined {
-  let bounds: Rect | undefined;
-  for (const node of clipboard.nodes) {
-    const r = nodeRect(node);
-    if (bounds === undefined) {
-      bounds = r;
-      continue;
-    }
-    const left = Math.min(bounds.x, r.x);
-    const top = Math.min(bounds.y, r.y);
-    bounds = {
-      x: left,
-      y: top,
-      width: Math.max(bounds.x + bounds.width, r.x + r.width) - left,
-      height: Math.max(bounds.y + bounds.height, r.y + r.height) - top,
-    };
-  }
-  return bounds;
+  return union(clipboard.nodes.map(nodeRect));
 }
 
 /**
@@ -105,17 +89,16 @@ export function withinLimits(clipboard: Clipboard, offset: Point): Point {
   };
 }
 
-/** How far a paste moves on from where a node of the board has its corner already, in units of the board: four steps of the grid, as a new node does (freePlace). */
-const step = 32;
-
 /**
  * Returns the offset that pastes the nodes of clipboard with their middle at
  * at of the board, on the grid where snap is on, as a new node is placed
- * (freePlace): moved by four steps of the grid across and down as often as
- * it takes, up to 100 times, where a node of the board has its corner where
- * one of them would have its own, as taken tells, as of a paste back where
- * the nodes were copied from, so that the copies do not hide them; and then
- * within the board's limits (withinLimits).
+ * (freePlace): moved by four steps of the grid across and down (offset) as
+ * often as it takes, up to 100 times, where a node of the board has its
+ * corner where one of them would have its own, as taken tells of the corner
+ * in hundredths, as the server keeps it, rather than as the double of a sum
+ * of two places off the grid, which may be a hair from it, as of a paste
+ * back where the nodes were copied from, so that the copies do not hide
+ * them; and then within the board's limits (withinLimits).
  */
 export function pasteOffset(
   clipboard: Clipboard,
@@ -133,10 +116,13 @@ export function pasteOffset(
   };
   const hides = (d: Point) =>
     clipboard.nodes.some((n) =>
-      taken({ x: n.position.x + d.x, y: n.position.y + d.y }),
+      taken({
+        x: shifted(n.position.x, d.x),
+        y: shifted(n.position.y, d.y),
+      }),
     );
   for (let i = 0; i < 100 && hides(offset); i++) {
-    offset = { x: offset.x + step, y: offset.y + step };
+    offset = { x: shifted(offset.x, step), y: shifted(offset.y, step) };
   }
   return withinLimits(clipboard, offset);
 }
@@ -185,6 +171,51 @@ function attributeCreate(
   };
 }
 
+/** A component type that a paste creates, with the attribute definitions that it creates of it (typesCreated). */
+export interface TypeCreated {
+  type: ClipboardComponentType;
+  attributes: ClipboardAttribute[];
+}
+
+/**
+ * Returns the component types that a paste creates of what report lists:
+ * each that a component that resolves to none has no type of the project
+ * for, once for its key, in the order of the first of their components,
+ * each with the attribute definitions that the clipboard declares of its
+ * components, once for each key, the first that it declares, which the
+ * report does not list among those that a type lacks, as of a type that the
+ * project does not have, and which the dialog names with them (PasteDialog).
+ */
+export function typesCreated(report: ClipboardReport): TypeCreated[] {
+  const types = new Map<
+    string,
+    {
+      type: ClipboardComponentType;
+      attributes: Map<string, ClipboardAttribute>;
+    }
+  >();
+  for (const missing of report.components) {
+    if (missing.component_type_id !== undefined) {
+      continue;
+    }
+    const { type, attributes } = missing.component;
+    let made = types.get(type.key);
+    if (made === undefined) {
+      made = { type, attributes: new Map() };
+      types.set(type.key, made);
+    }
+    for (const attribute of attributes) {
+      if (!made.attributes.has(attribute.key)) {
+        made.attributes.set(attribute.key, attribute);
+      }
+    }
+  }
+  return [...types.values()].map(({ type, attributes }) => ({
+    type,
+    attributes: [...attributes.values()],
+  }));
+}
+
 /**
  * Returns the commands that create what report lists that a paste onto the
  * board of boardId resolves to nothing, as the server's report gives it, so
@@ -222,37 +253,22 @@ export function createCommands(
       },
     });
   }
-  // The types created, by their keys, and the type of each component.
-  const types = new Map<
-    string,
-    { id: string; attributes: Map<string, ClipboardAttribute> }
-  >();
-  const components: { missing: MissingComponent; typeId: string }[] = [];
-  for (const missing of report.components) {
-    if (missing.component_type_id !== undefined) {
-      components.push({ missing, typeId: missing.component_type_id });
-      continue;
-    }
-    const type = missing.component.type;
-    let made = types.get(type.key);
-    if (made === undefined) {
-      made = { id: makeId("component_type"), attributes: new Map() };
-      types.set(type.key, made);
-      out.push({
-        type: "component_type.create",
-        payload: { id: made.id, name: type.name, key: type.key },
-      });
-    }
-    for (const attribute of missing.component.attributes) {
-      if (!made.attributes.has(attribute.key)) {
-        made.attributes.set(attribute.key, attribute);
-      }
-    }
-    components.push({ missing, typeId: made.id });
+  // The types created (typesCreated), each with an ID of its own, by their
+  // keys, which the components of no type of the project's are of.
+  const created = typesCreated(report).map((made) => ({
+    ...made,
+    id: makeId("component_type"),
+  }));
+  const types = new Map(created.map((made) => [made.type.key, made.id]));
+  for (const { id, type } of created) {
+    out.push({
+      type: "component_type.create",
+      payload: { id, name: type.name, key: type.key },
+    });
   }
-  for (const made of types.values()) {
-    for (const attribute of made.attributes.values()) {
-      out.push(attributeCreate(made.id, attribute, makeId));
+  for (const { id, attributes } of created) {
+    for (const attribute of attributes) {
+      out.push(attributeCreate(id, attribute, makeId));
     }
   }
   for (const missing of report.attributes) {
@@ -260,14 +276,16 @@ export function createCommands(
       attributeCreate(missing.component_type_id, missing.attribute, makeId),
     );
   }
-  for (const { missing, typeId } of components) {
+  for (const missing of report.components) {
+    const { component } = missing;
     out.push({
       type: "component.create",
       payload: {
         id: makeId("component"),
-        component_type_id: typeId,
-        name: missing.component.name,
-        key: missing.component.key,
+        component_type_id:
+          missing.component_type_id ?? types.get(component.type.key) ?? "",
+        name: component.name,
+        key: component.key,
       },
     });
   }
@@ -301,7 +319,9 @@ export function commandBytes(command: Command): number {
  * batches of the others, each of at most maxBatchCommands commands and
  * maxBatchBytes bytes, as a batch of the API takes, so that what is created
  * is in the paste's batch where it fits, and the paste and what it resolves
- * to are one step of the history then.
+ * to are one step of the history then. A paste that creates nothing, as a
+ * duplicate, is a batch of its own, whose JSON it does not write to measure
+ * it, as a clipboard is never more than a batch holds with its new IDs.
  */
 export function pasteBatches(
   creates: readonly Command[],
@@ -311,6 +331,9 @@ export function pasteBatches(
     bytes: maxBatchBytes,
   },
 ): Command[][] {
+  if (creates.length === 0) {
+    return [[paste]];
+  }
   const batches: Command[][] = [];
   let run: Command[] = [];
   let bytes = 0;

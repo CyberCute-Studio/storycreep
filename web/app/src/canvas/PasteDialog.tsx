@@ -3,7 +3,9 @@
 // what of the clipboard a paste onto the board would resolve to nothing, as
 // pasted into another project, or onto another board, whose variables the
 // expressions name. The dialog lists the variables, the components, and the
-// attribute definitions that the paste can create first, and says how many
+// attribute definitions that the paste can create first, those of a type
+// that it creates with a component among them (typesCreated), as all that
+// Create and paste creates (createCommands), and says how many
 // speakers, nodes, and cover images it leaves out, which it cannot; the user
 // pastes with what is missing created, as the report gives it, or without,
 // whose names then name nothing, which the validation reports, or cancels,
@@ -19,7 +21,7 @@ import { useTranslation } from "react-i18next";
 import { typeName } from "../content/ValueField";
 import { Button } from "../ui/Button";
 import { closesBy, DialogFrame, focusBackTo, type Opener } from "../ui/Dialog";
-import { creatable } from "./clipboard";
+import { creatable, typesCreated } from "./clipboard";
 
 type TFunction = ReturnType<typeof useTranslation>["t"];
 
@@ -113,12 +115,10 @@ export function PasteDialog({
         />
         <Listed
           heading={t("paste.attributes")}
-          items={report.attributes.map((a) =>
-            t("paste.attribute", {
-              name: a.attribute.name,
-              key: a.attribute.key,
-            }),
-          )}
+          items={[
+            ...typesCreated(report).flatMap((made) => made.attributes),
+            ...report.attributes.map((a) => a.attribute),
+          ].map((a) => t("paste.attribute", { name: a.name, key: a.key }))}
         />
         {(report.speakers.length > 0 ||
           report.nodes.length > 0 ||
