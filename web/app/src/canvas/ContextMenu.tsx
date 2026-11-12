@@ -11,6 +11,7 @@
 
 import { DropdownMenu } from "radix-ui";
 import { type ReactNode, useEffect, useRef } from "react";
+import { focusIsNowhere } from "../shell/focus";
 import { menuClass } from "../ui/Menu";
 import type { CanvasController } from "./controller";
 import type { Point } from "./viewport";
@@ -78,15 +79,17 @@ export function ContextMenu({
           // wheel pans the canvas under it.
           updatePositionStrategy="always"
           // What had the focus as the menu opened takes it back, the canvas
-          // or the item of its tree: not the focus that an item of the menu,
+          // or the item of its tree, where no control has it, as on the
+          // page's body, or on its content, which the shell gives it once
+          // what had it before the menu went, as the tree's item of a node
+          // that the menu deleted: not the focus that an item of the menu,
           // or a press outside it, gave another thing meanwhile, as the
           // editor of a text, or a field of the inspector, whose keys, as
           // Backspace, would else go to the canvas, and delete the
           // selection.
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            const active = document.activeElement;
-            if (active === null || active === document.body) {
+            if (focusIsNowhere(document)) {
               returnFocus();
             }
           }}

@@ -206,3 +206,100 @@ export async function atStart(page: Page, name: string): Promise<void> {
     page.getByRole("banner").getByRole("link", { name, exact: true }),
   ).toBeVisible();
 }
+
+/**
+ * Returns what of page a finger would miss (PRD NFR-TOUCH-01): each control
+ * that the page shows smaller than 44 by 44 CSS px, and each two controls
+ * closer to each other than 8 px, by what names them, so that a test
+ * expects none. A control is what a tap acts on: a link, a button, a
+ * field, an item of a menu, what takes the keyboard's focus, and a handle
+ * that the canvas places over itself. Not one is what the page does not
+ * show, what it shows to assistive technology alone, as the link that
+ * skips to the content, what is inert under a sheet or a dialog, a
+ * link within a line of text, whose line is its height, and a checkbox or a
+ * radio button but with its label, which a tap on presses it. Two controls
+ * of which one holds the other, or that the page shows over each other, as
+ * a handle over the canvas, are not beside each other, and nothing is
+ * beside the canvas itself, the surface that a menu opens over; nor are two handles
+ * that the canvas places over one node, which are as far apart as the
+ * canvas draws their places, and of which a press is of the one that it is
+ * on, or, where they cover each other, of the nearer (plan notes N69 and
+ * N70).
+ */
+export async function smallTargets(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const controls =
+      'a[href], button, input:not([type="hidden"]), select, textarea, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], [tabindex="0"], [data-canvas]';
+    // The canvas, which is the page's surface under what is over it.
+    const surface = '[role="application"]';
+    const found: { el: Element; box: DOMRect; name: string }[] = [];
+    for (const el of document.querySelectorAll(controls)) {
+      if (
+        !(el instanceof HTMLElement) ||
+        !el.checkVisibility({ visibilityProperty: true }) ||
+        el.closest("[inert], .sr-only") !== null
+      ) {
+        continue;
+      }
+      const style = getComputedStyle(el);
+      if (el.tagName === "A" && style.display === "inline") {
+        continue;
+      }
+      // A checkbox, or a radio button, is pressed by its label too.
+      const pressed =
+        el instanceof HTMLInputElement &&
+        (el.type === "checkbox" || el.type === "radio")
+          ? (el.closest("label") ?? el)
+          : el;
+      const box = pressed.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) {
+        continue;
+      }
+      const name =
+        el.getAttribute("aria-label") ||
+        (el.textContent ?? "").trim().slice(0, 40) ||
+        (el instanceof HTMLInputElement
+          ? (el.labels?.[0]?.textContent ?? "").trim().slice(0, 40)
+          : "") ||
+        el.tagName.toLowerCase();
+      found.push({
+        el: pressed,
+        box,
+        name: `${el.tagName.toLowerCase()} "${name}"`,
+      });
+    }
+    const missed: string[] = [];
+    for (const [i, a] of found.entries()) {
+      if (Math.round(a.box.width) < 44 || Math.round(a.box.height) < 44) {
+        missed.push(
+          `${a.name} is ${Math.round(a.box.width)} by ${Math.round(a.box.height)}`,
+        );
+      }
+      for (const b of found.slice(i + 1)) {
+        if (
+          a.el.contains(b.el) ||
+          b.el.contains(a.el) ||
+          (a.el.matches("[data-canvas]") && b.el.matches("[data-canvas]")) ||
+          a.el.matches(surface) ||
+          b.el.matches(surface)
+        ) {
+          continue;
+        }
+        // How far apart the two are, across or down: less than nothing
+        // where the page shows one over the other.
+        const gap = Math.round(
+          Math.max(
+            b.box.left - a.box.right,
+            a.box.left - b.box.right,
+            b.box.top - a.box.bottom,
+            a.box.top - b.box.bottom,
+          ),
+        );
+        if (gap >= 0 && gap < 8) {
+          missed.push(`${a.name} and ${b.name} are ${gap} apart`);
+        }
+      }
+    }
+    return missed;
+  });
+}

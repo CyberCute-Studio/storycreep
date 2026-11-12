@@ -35,6 +35,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useProjectDocument } from "../document/react";
+import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
 import { keyAction } from "./keyboard";
 import {
@@ -249,10 +250,7 @@ export function CanvasTree({
     if (tree === null || on === undefined) {
       return;
     }
-    const lost =
-      inside &&
-      (document.activeElement === null ||
-        document.activeElement === document.body);
+    const lost = inside && focusIsNowhere(document);
     const deleted =
       deleting.current !== undefined && !sameItem(deleting.current, on);
     if (wantsFocus.current || lost || deleted) {
