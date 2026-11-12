@@ -165,7 +165,7 @@ test.describe("the project's search", () => {
     await expect(
       page.getByRole("heading", { level: 1, name: en["variables.title"] }),
     ).toBeVisible();
-    await page.keyboard.press("ControlOrMeta+/");
+    await page.keyboard.press("Control+/");
     const field = page.getByRole("searchbox", { name: en["search.field"] });
     await expect(field).toBeFocused();
     await page.keyboard.type("ELA tru");

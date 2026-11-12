@@ -73,7 +73,7 @@ function searchQuery(projectId: string, q: string, type: Kind | undefined) {
 // a link to where it is: a node, or a connection, on its board's canvas,
 // by its node, which the canvas selects and shows whole, as a usage list's
 // site does (plan item 61), and a variable or a component in its panel.
-// The search's command, Ctrl+/ or Cmd+/, gives the field the focus here,
+// The search's command, Ctrl+/ on every platform, gives the field the focus here,
 // and opens the page with the focus in it from the project's other pages
 // (FR-EDIT-10).
 function SearchPage() {

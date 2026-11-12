@@ -175,6 +175,14 @@ export const reservedLists: readonly ReservedList[] = [
       Ctrl+Cmd+1`,
   },
   {
+    // Show Status Bar, of Safari's View menu, whose key the menu shows, and
+    // its list of shortcuts leaves out.
+    of: "Safari's View menu, macOS",
+    source: "https://support.apple.com/guide/safari/ibrw1012/mac",
+    platforms: ["macos"],
+    anywhere: "Cmd+/",
+  },
+  {
     of: "macOS",
     source: "https://support.apple.com/en-us/102650",
     platforms: ["macos"],

@@ -274,6 +274,16 @@ describe("a key", () => {
     ).toBeUndefined();
   });
 
+  it("searches with Ctrl+/ on every platform, and leaves Cmd+/ to Safari on macOS", () => {
+    const slash = key({ key: "/", code: "Slash", ctrlKey: true });
+    for (const platform of ["windows", "chromeos", "linux", "mac"] as const) {
+      expect(commandOfKey(slash, "page", platform)).toBe("project.search");
+    }
+    expect(
+      commandOfKey({ ...slash, ctrlKey: false, metaKey: true }, "page", "mac"),
+    ).toBeUndefined();
+  });
+
   it("redoes with Ctrl+Y on Windows, Ctrl+Shift+Z on ChromeOS, and Cmd+Shift+Z on macOS", () => {
     expect(
       commandOfKey(

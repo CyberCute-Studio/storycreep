@@ -48,7 +48,7 @@ export const Route = createFileRoute("/projects/$projectId")({
 // under a link back to its workspace's projects, its search (FR-PROJ-03),
 // the undo and redo of the user's changes (FR-EDIT-08), and the note that an
 // archived project is read-only. The palette goes to each of its pages, and
-// Ctrl+/, Cmd+/ on macOS, to its search, with the focus in the search's
+// Ctrl+/, on macOS too, to its search, with the focus in the search's
 // field (FR-EDIT-10, plan note N72). They follow the project's document while they are shown (PRD
 // §10.6), and show the page of no page once the project can no longer be
 // read, as once it went to the trash elsewhere.

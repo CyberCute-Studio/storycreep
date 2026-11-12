@@ -73,10 +73,12 @@ export const commands = {
     keys: [{ mod: true, key: "k" }],
   },
   "shortcuts.show": { group: "general", on: canvas, keys: [{ key: "?" }] },
+  // Ctrl+/ on every platform, macOS's too, where Cmd+/ is Safari's Show
+  // Status Bar, and no browser's or system's list gives Ctrl+/.
   "project.search": {
     group: "search",
     on: page,
-    keys: [{ mod: true, key: "/" }],
+    keys: [{ ctrl: true, key: "/" }],
   },
   "history.undo": {
     group: "history",
