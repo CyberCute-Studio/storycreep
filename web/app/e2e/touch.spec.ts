@@ -359,6 +359,10 @@ test.describe("the canvas's accessibility tree", () => {
     const quay = tree.getByRole("treeitem", { name: "Quay, Dialogue" });
     await expect(quay).toHaveAttribute("aria-expanded", "false");
     await expect(quay).toHaveAttribute("aria-selected", "false");
+    // An item has a box, in the tree's, which the page does not show,
+    // rather than none, which a screen reader that goes by where things
+    // are may pass over.
+    expect((await quay.boundingBox())?.height).toBeGreaterThanOrEqual(1);
     // The selection, made on the canvas, is the tree's, and the toolbar
     // says it, by the node's name, in a live region.
     const at = await middleOf(canvas, places.quay);

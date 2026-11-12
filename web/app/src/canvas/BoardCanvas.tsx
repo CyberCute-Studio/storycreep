@@ -1027,12 +1027,9 @@ function BoardCanvasOf({
       ) {
         return;
       }
-      const r = host.getBoundingClientRect();
-      controller.gestures.menu({
-        x: e.clientX - r.left,
-        y: e.clientY - r.top,
-        kind: type === "pen" ? "pen" : "mouse",
-      });
+      controller.gestures.menu(
+        pointerInput(e as PointerEvent, host.getBoundingClientRect()),
+      );
     };
     const blur = () => {
       controller.gestures.cancelAll();
@@ -1250,15 +1247,19 @@ function BoardCanvasOf({
     };
     // The keys that labels names, each a literal there, are the catalog's,
     // as extraction reads them. What labels read of the document is made
-    // once for each state of it that they read, rather than for each card.
-    let context: { view: LabelSources; c: LabelContext } | undefined;
-    controller.labels = (item) => {
-      const view = doc.store.getState().view;
-      if (context?.view !== view) {
-        context = { view, c: labelContext(view, t, targets) };
-      }
-      return labelsOf(item.node, context.c);
+    // once for each state of it that they read, rather than for each card,
+    // with the targets of jumpers that lookup tells of.
+    const labelsBy = (lookup: TargetLookup) => {
+      let context: { view: LabelSources; c: LabelContext } | undefined;
+      return (item: { node: BoardNode }) => {
+        const view = doc.store.getState().view;
+        if (context?.view !== view) {
+          context = { view, c: labelContext(view, t, lookup) };
+        }
+        return labelsOf(item.node, context.c);
+      };
     };
+    controller.labels = labelsBy(targets);
     // A jumper that is known to be broken, by what the document tells, or
     // by a read of its target that was made, rather than by one that this
     // would ask for, of every jumper of the board at once.
@@ -1272,14 +1273,7 @@ function BoardCanvasOf({
     // is known of a jumper's target alike, rather than a read of the target
     // of every jumper of the board, which a tree of all of its nodes would
     // else ask for at once.
-    let knownContext: { view: LabelSources; c: LabelContext } | undefined;
-    controller.described = (item) => {
-      const view = doc.store.getState().view;
-      if (knownContext?.view !== view) {
-        knownContext = { view, c: labelContext(view, t, known) };
-      }
-      return labelsOf(item.node, knownContext.c);
-    };
+    controller.described = labelsBy(known);
     // The messages of t, which is another as the locale changes.
     controller.relabel();
     sync();
@@ -1407,6 +1401,9 @@ function BoardCanvasOf({
     ),
   );
   const onlyLink = onlyTarget === undefined ? undefined : linkOf(onlyTarget);
+  // The name of its type, which the toolbar says with its title as it says
+  // that it is selected: none, of a type that the page does not know.
+  const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
   // The nodes at the ends of the connection selected, which the toolbar
   // names as it says that the connection is selected (NFR-A11Y-03).
   const chosen = useDocumentState(doc, (state) =>
@@ -1698,7 +1695,11 @@ function BoardCanvasOf({
         its content changes, which the words of a selection that are those
         of the one before it, as of another node of the same name, or of as
         many other nodes, would not: what says the selection is put there
-        anew for each change of it (selections). */}
+        anew for each change of it (selections), and nothing is there
+        before the first, so that a board that opens says nothing of a
+        selection that did not change. A node of a type that the page does
+        not know, which has no name of its type to say, is said as the page
+        shows it, as one node. */}
         <p
           className="text-sm text-fg-muted"
           aria-live="polite"
@@ -1708,7 +1709,7 @@ function BoardCanvasOf({
           }
         >
           <span key={selections}>
-            {selected === 1 && onlyNode !== undefined ? (
+            {selected === 1 && onlyNode !== undefined && onlyType !== "" ? (
               <>
                 <span aria-hidden="true">
                   {t("canvas.selected", { count: selected })}
@@ -1716,14 +1717,16 @@ function BoardCanvasOf({
                 <span className="sr-only">
                   {t("canvas.selected_node", {
                     title: titleOf(onlyNode, t),
-                    type: typeOf(onlyNode, t),
+                    type: onlyType,
                   })}
                 </span>
               </>
             ) : selected > 0 ? (
               t("canvas.selected", { count: selected })
             ) : connection === undefined ? (
-              <span className="sr-only">{t("canvas.selected_none")}</span>
+              selections > 0 && (
+                <span className="sr-only">{t("canvas.selected_none")}</span>
+              )
             ) : chosenFrom !== undefined && chosenTo !== undefined ? (
               <>
                 <span aria-hidden="true">

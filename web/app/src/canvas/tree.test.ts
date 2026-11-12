@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import { docOf, testConnection, testNode } from "../test/canvas";
 import { labelContext, labelsOf } from "./labels";
 import { type NodeItem, Scene } from "./scene";
-import { type TreeMessages, treeChoices, treeRows, typedRow } from "./tree";
+import {
+  nodeLabel,
+  type TreeMessages,
+  treeChoices,
+  treeRows,
+  typedRow,
+} from "./tree";
 
 /** The page's messages, as their keys and their arguments, in the arguments' order. */
 const t: TreeMessages = (key, args) =>
@@ -87,6 +93,15 @@ describe("the canvas's accessibility tree", () => {
       "Onward",
     ]);
     expect(rows.map((row) => row.leaving)).toEqual([2, 0, 2, 0]);
+  });
+
+  it("names a node of a type that the canvas does not know by its title alone, as its card shows it", () => {
+    expect(nodeLabel({ title: "Harbour", kind: "", body: "" }, t)).toBe(
+      "Harbour",
+    );
+    expect(
+      nodeLabel({ title: "Harbour", kind: "Narration", body: "" }, t),
+    ).toBe("canvas.tree.node(Harbour|Narration)");
   });
 
   it("names a node anew once it changes, or once what its card says of other things does, and else as it named it", () => {

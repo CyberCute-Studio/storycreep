@@ -250,7 +250,9 @@ describe("the canvas's accessibility tree", () => {
     const tree = await treeOf();
     const region = said();
     expect(region.getAttribute("aria-atomic")).toBe("true");
-    expect(spoken(region)).toBe("Nothing is selected.");
+    // Nothing is in it before the selection first changes, which a reader
+    // might else say of a board that has only opened.
+    expect(region.textContent).toBe("");
     const first = screenOf(canvas, { x: 120, y: 64 });
     fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...first });
     fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...first });
@@ -405,6 +407,51 @@ describe("the canvas's accessibility tree", () => {
     );
   });
 
+  // Verifies: NFR-A11Y-04
+  it("has the focus, after a Delete of several nodes, on the node after the one that it was on, though nodes before it went with it", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { title: "Harbour" }),
+      testNode("nd_2", 0, 400, { title: "Hall" }),
+      testNode("nd_3", 0, 800, { title: "Quay" }),
+      testNode("nd_4", 0, 1200, { title: "Dock" }),
+      testNode("nd_5", 0, 1600, { title: "Lighthouse" }),
+    ]);
+    const canvas = await openBoard();
+    const tree = await treeOf();
+    const [first] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    // The first three, selected one after another, down the tree, which
+    // leaves the focus on the last of them.
+    await user.keyboard(
+      " {ArrowDown}{Shift>} {/Shift}{ArrowDown}{Shift>} {/Shift}",
+    );
+    await waitFor(() => expect(canvas.dataset.selected).toBe("3"));
+    await user.keyboard("{Delete}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() =>
+      expect(namesOf(tree)).toEqual([
+        "Dock, Narration",
+        "Lighthouse, Narration",
+      ]),
+    );
+    // Dock is in Quay's place, and not Lighthouse, two nodes on, where
+    // Quay was among the five.
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("aria-label")).toBe(
+        "Dock, Narration",
+      ),
+    );
+    // And the node before, where none is after the one that went.
+    await user.keyboard("{ArrowDown}{Delete}");
+    await waitFor(() => expect(namesOf(tree)).toEqual(["Dock, Narration"]));
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute("aria-label")).toBe(
+        "Dock, Narration",
+      ),
+    );
+  });
+
   it("has no tree of a board without nodes", async () => {
     boardPage([]);
     await openBoard();
@@ -531,6 +578,19 @@ describe("the canvas's accessibility tree", () => {
     } finally {
       observer.disconnect();
     }
+  });
+
+  it("names a node of a type that the page does not know by its title alone, and says it selected as one node, with no name of a type", async () => {
+    const user = userEvent.setup();
+    boardPage([
+      testNode("nd_1", 0, 0, { title: "Harbour", type: "portal" as never }),
+    ]);
+    await openBoard();
+    const tree = await treeOf();
+    expect(namesOf(tree)).toEqual(["Harbour"]);
+    within(tree).getByRole("treeitem").focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(spoken(said())).toBe("1 node selected"));
   });
 
   it("does nothing by Delete, Enter, or Space of an item whose node the board no longer has, as it would else to what was selected before", async () => {

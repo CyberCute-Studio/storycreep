@@ -77,6 +77,9 @@ function rectOf(controller: CanvasController, item: Item): Rect | undefined {
     : controller.scene.connections.get(item.connection)?.bounds;
 }
 
+/** The classes of an item of the tree: at least a pixel high, with the connections under it, where it shows them. */
+const itemClass = "min-h-px";
+
 /** A node of the tree, with the connections that leave it, once it is expanded. */
 const Row = memo(function Row({
   treeId,
@@ -108,6 +111,10 @@ const Row = memo(function Row({
   /** Whether a connection may be selected, as on a board that may be changed. */
   selectable: boolean;
 }) {
+  // An item has a box, a pixel high, in the tree's, which the page does not
+  // show (sr-only), as what a page shows to assistive technology alone has:
+  // an element without one, as an empty one is, is one that a screen
+  // reader that goes by where things are may pass over.
   return (
     <div
       role="treeitem"
@@ -117,6 +124,7 @@ const Row = memo(function Row({
       aria-selected={selected}
       aria-expanded={leaving > 0 ? expanded : undefined}
       tabIndex={tab ? 0 : -1}
+      className={itemClass}
     >
       {choices !== undefined && choices.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: the group of a tree's item, which a fieldset is not.
@@ -131,6 +139,7 @@ const Row = memo(function Row({
               aria-label={choice.label}
               aria-selected={selectable ? choice.id === chosen : undefined}
               tabIndex={choice.id === tabChoice ? 0 : -1}
+              className={itemClass}
             />
           ))}
         </div>
@@ -194,10 +203,14 @@ export const CanvasTree = memo(function CanvasTree({
     () => treeChoices(controller.scene, doc.store.getState().view, expanded, t),
     [controller, doc, expanded, t, seen],
   );
-  // What the tree's focus was last on, and where it was among the nodes,
-  // by which what is in its place is found once the board no longer has it.
+  // What the tree's focus was last on, and the nodes as the tree listed
+  // them then, with where it was among them, by which what is in its place
+  // is found once the board no longer has it.
   const [current, setCurrent] = useState<Item>();
-  const place = useRef(0);
+  const place = useRef<{ rows: readonly TreeRow[]; at: number }>({
+    rows: [],
+    at: 0,
+  });
   // Whether the focus is in the tree, which the canvas shows the ring for.
   const [inside, setInside] = useState(false);
   // Whether the item that the tree's focus is on is to take the browser's
@@ -222,6 +235,11 @@ export const CanvasTree = memo(function CanvasTree({
   // node of a connection that the tree no longer shows, as one deleted, or
   // of a node collapsed, the node in the place of one that the board no
   // longer has, or, before any, the first node selected, or the first node.
+  // In the place of a node that went is the first after it, as the tree
+  // listed them, that the board still has, or else the last before it: not
+  // the node that is as far down the tree now as it was, which is further
+  // on by each node before it that went with it, as the rest of a
+  // selection that Delete deleted.
   const on = useMemo<Item | undefined>(() => {
     if (rows.length === 0) {
       return undefined;
@@ -232,7 +250,18 @@ export const CanvasTree = memo(function CanvasTree({
       };
     }
     if (!index.has(current.node)) {
-      return { node: rows[Math.min(place.current, rows.length - 1)].id };
+      const { rows: were, at } = place.current;
+      for (let i = at; i < were.length; i++) {
+        if (index.has(were[i].id)) {
+          return { node: were[i].id };
+        }
+      }
+      for (let i = Math.min(at, were.length) - 1; i >= 0; i--) {
+        if (index.has(were[i].id)) {
+          return { node: were[i].id };
+        }
+      }
+      return { node: rows[Math.min(at, rows.length - 1)].id };
     }
     if (
       current.connection !== undefined &&
@@ -245,9 +274,9 @@ export const CanvasTree = memo(function CanvasTree({
   }, [rows, index, choices, current, selection]);
   useLayoutEffect(() => {
     if (on !== undefined) {
-      place.current = index.get(on.node) ?? 0;
+      place.current = { rows, at: index.get(on.node) ?? 0 };
     }
-  }, [on, index]);
+  }, [on, rows, index]);
 
   const elementOf = (item: Item): HTMLElement | null =>
     document.getElementById(`${treeId}-${item.connection ?? item.node}`);
@@ -371,52 +400,37 @@ export const CanvasTree = memo(function CanvasTree({
     ]);
 
   /**
-   * Selects the connection of id, and reports whether it is the one
-   * selected then, as it is not on a board that may not be changed, nor
-   * once the board no longer has it.
+   * Selects item, and reports whether it did: in place of the selection
+   * (replace); or, of a node, added to the selection, or taken out of it
+   * (toggle); or, of a node of the selection, with the rest of it, as it
+   * is, and else in place of it (keep), as a key of the canvas's that acts
+   * on what is selected asks. A connection is selected in place of the
+   * selection each way, and is not on a board that may not be changed. An
+   * item that the board no longer has, as one that another session deleted
+   * a moment ago, which the tree shows until it is made again, selects
+   * nothing, and its key does nothing, rather than act on what was selected
+   * before it, as a Delete that deleted the nodes selected in place of a
+   * connection that had gone.
    */
-  const selectConnection = (id: string): boolean => {
-    controller.selectConnection(id);
-    return controller.selectedConnection() === id;
-  };
-
-  /**
-   * Selects item, in place of the selection, or, where toggle says so, adds
-   * its node to the selection, or takes it out, and reports whether it did:
-   * not an item that the board no longer has, as one that another session
-   * deleted a moment ago, which the tree shows until it is made again, and
-   * which selects nothing.
-   */
-  const select = (item: Item, toggle: boolean): boolean => {
+  const select = (item: Item, how: "replace" | "toggle" | "keep"): boolean => {
     if (item.connection !== undefined) {
-      return selectConnection(item.connection);
+      controller.selectConnection(item.connection);
+      return controller.selectedConnection() === item.connection;
     }
     if (!controller.has(item.node)) {
       return false;
     }
-    controller.select([item.node], toggle ? "toggle" : "replace");
-    return true;
-  };
-
-  /**
-   * Has the canvas's keys act on item: with the selection, where it is of
-   * it, and else selected alone. It reports whether they do, as they do not
-   * on an item that the board no longer has (select), whose key would else
-   * act on what was selected before it, as a Delete that deleted the nodes
-   * selected in place of a connection that had gone.
-   */
-  const take = (item: Item): boolean => {
-    if (item.connection !== undefined) {
-      return selectConnection(item.connection);
-    }
-    if (!controller.has(item.node)) {
-      return false;
-    }
-    if (!controller.isSelected(item.node)) {
-      controller.select([item.node], "replace");
+    if (how !== "keep" || !controller.isSelected(item.node)) {
+      controller.select([item.node], how === "toggle" ? "toggle" : "replace");
     }
     return true;
   };
+  /** Returns how a Space, or a click, of e selects: with Shift, Ctrl, or Cmd, it adds a node to the selection, or takes it out. */
+  const howOf = (e: {
+    shiftKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+  }) => (e.shiftKey || e.ctrlKey || e.metaKey ? "toggle" : "replace");
 
   const keyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     deleting.current = undefined;
@@ -443,7 +457,7 @@ export const CanvasTree = memo(function CanvasTree({
       return;
     }
     if (e.key === " " && !e.altKey) {
-      select(item, e.shiftKey || e.ctrlKey || e.metaKey);
+      select(item, howOf(e));
       e.preventDefault();
       return;
     }
@@ -491,7 +505,7 @@ export const CanvasTree = memo(function CanvasTree({
         // On a board that may be changed, as the canvas's own Enter is,
         // and as Delete is below: elsewhere the key selects nothing, as it
         // opens nothing.
-        if (controller.movable() && select(item, false)) {
+        if (controller.movable() && select(item, "replace")) {
           controller.key(e);
         }
         break;
@@ -501,7 +515,7 @@ export const CanvasTree = memo(function CanvasTree({
         // elsewhere the key selects nothing, as it deletes nothing. The
         // focus goes to what is in the place of what the key deleted, once
         // the board no longer has it.
-        if (controller.movable() && take(item) && controller.key(e)) {
+        if (controller.movable() && select(item, "keep") && controller.key(e)) {
           deleting.current = item;
         }
         break;
@@ -562,7 +576,7 @@ export const CanvasTree = memo(function CanvasTree({
   const click = (e: MouseEvent<HTMLDivElement>) => {
     const item = itemOf(e.target);
     if (item !== undefined) {
-      select(item, e.shiftKey || e.ctrlKey || e.metaKey);
+      select(item, howOf(e));
       go(item);
     }
   };

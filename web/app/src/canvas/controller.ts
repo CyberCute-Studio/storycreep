@@ -881,10 +881,7 @@ export class CanvasController implements GestureHost {
   menuOfSelection(): void {
     const view = visibleRect(this.v, this.sz);
     const shown = (p: Point): Point =>
-      p.x >= view.x &&
-      p.x <= view.x + view.width &&
-      p.y >= view.y &&
-      p.y <= view.y + view.height
+      contains(view, { ...p, width: 0, height: 0 })
         ? p
         : centerOf(this.v, this.sz);
     if (this.connection !== undefined) {

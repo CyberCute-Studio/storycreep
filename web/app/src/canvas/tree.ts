@@ -58,8 +58,11 @@ export interface TreeChoice {
 /** What is between the lines of a text that a name says on one line (oneLine), as a name is read. */
 const betweenLines = "; ";
 
-/** Returns what names a node whose card shows labels: its title, the line of its type, and what its card's body says, on one line. */
+/** Returns what names a node whose card shows labels: its title, the line of its type, and what its card's body says, on one line; or its title alone, of a type that the canvas does not know, whose card shows no more (labelsOf). */
 export function nodeLabel(labels: NodeLabels, t: TreeMessages): string {
+  if (labels.kind === "") {
+    return labels.title;
+  }
   const body = oneLine(labels.body, betweenLines);
   return body === ""
     ? t("canvas.tree.node", { title: labels.title, kind: labels.kind })
