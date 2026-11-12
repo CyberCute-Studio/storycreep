@@ -1616,9 +1616,13 @@ function BoardCanvasOf({
   // as Add, Duplicate, and the inspector; C opens the inspector at its
   // Connect to, of the one element or branch selected. None of those that
   // change the board acts in the middle of a drag, as the menu's keys do
-  // not, which the canvas renders nothing anew for: each says whether it
-  // can run as it is asked (a getter), of the drag under way then, rather
-  // than of the one under way as the canvas last rendered.
+  // not, nor those that leave the board, or open over it, or scroll the
+  // page under it, as Go to target, the inspector, which is a sheet over
+  // the canvas in a narrow window, and the board's settings, which would
+  // drop the drag, or leave it under what took its place: the canvas
+  // renders nothing anew for a drag, so each says whether it can run as it
+  // is asked (a getter), of the drag under way then, rather than of the one
+  // under way as the canvas last rendered.
   const registry = useRegistry();
   const [connectAsked, setConnectAsked] = useState(0);
   useEffect(() => {
@@ -1666,13 +1670,18 @@ function BoardCanvasOf({
     "canvas.mode_pan": { run: () => setMode("pan") },
     "canvas.mode_select": { run: () => setMode("select") },
     "canvas.go_to_target": {
-      enabled: onlyLink !== undefined,
+      get enabled() {
+        return onlyLink !== undefined && still();
+      },
       run: goToTarget,
     },
     ...(settingsId === undefined
       ? {}
       : {
           "canvas.settings": {
+            get enabled() {
+              return still();
+            },
             run: () => showInPage(document, settingsId),
           },
         }),
@@ -1738,6 +1747,9 @@ function BoardCanvasOf({
             },
           },
           "canvas.inspector": {
+            get enabled() {
+              return still();
+            },
             run: () => setInspecting((open) => !open),
           },
           "canvas.snap": { run: toggleSnap },
@@ -1767,53 +1779,37 @@ function BoardCanvasOf({
       return;
     }
     // The command of the canvas's, or of the page's, that the key is, on
-    // the page's platform, as ? that shows the shortcuts. A key held down
-    // runs it once, but for those that pan and zoom on (CommandSpec's
-    // repeats), as E would else add an element with each repeat: its
-    // repeats are the canvas's where the key's command can run, as the key
-    // itself is then, and the page's where it cannot, as Enter with nothing
-    // selected, but for the clipboard's keys and the menu's, which are the
-    // canvas's whatever they do, as below.
+    // the page's platform, as ? that shows the shortcuts, which runs with
+    // what the canvas and the page registered for it, or, outside the
+    // app's frame, which has the registry, the canvas's own handler; the
+    // table of the shortcuts, which the app's frame shows over the page,
+    // not in the middle of a drag, as the inspector is not (still).
     const id = canvasKey(e, platform);
     if (id === undefined) {
       return;
     }
+    const handler =
+      registry !== undefined ? registry.handler(id) : canvasHandlers[id];
+    const can = canRun(handler) && (id !== "shortcuts.show" || still());
+    // The clipboard's keys are the canvas's whatever they do, rather than
+    // the browser's copy that would follow them (clipboardKey), and so are
+    // Shift+F10 and the menu key, which open the context menu of what is
+    // selected, or of the board, as a right click on it does (NFR-A11Y-04),
+    // but, as a right click, not in the middle of a drag, and are never the
+    // browser's, whose menu would open over the canvas.
+    const own = clipboardKey(id) !== undefined || id === "canvas.menu";
+    // A key held down runs its command once, but for those that pan and
+    // zoom on (CommandSpec's repeats), as E would else add an element with
+    // each repeat: its repeats are the canvas's where the key's command can
+    // run, as the key itself is then, and the page's where it cannot, as
+    // Enter with nothing selected, but for the canvas's own, as above.
     if (e.repeat && commandOf(id).repeats !== true) {
-      if (
-        clipboardKey(id) !== undefined ||
-        id === "canvas.menu" ||
-        (registry !== undefined ? registry.can(id) : canRun(canvasHandlers[id]))
-      ) {
+      if (own || can) {
         e.preventDefault();
       }
       return;
     }
-    // The clipboard's keys are the canvas's whatever they do, rather than
-    // the browser's copy that would follow them (clipboardKey).
-    const asked = clipboardKey(id);
-    if (asked !== undefined) {
-      clipboardAsked(asked);
-      e.preventDefault();
-      return;
-    }
-    // Shift+F10, and the menu key, open the context menu of what is
-    // selected, or of the board, as a right click on it does (NFR-A11Y-04),
-    // but, as a right click, not while the canvas follows a pointer, as in
-    // the middle of a drag; and are never the browser's, whose menu would
-    // open over the canvas.
-    if (id === "canvas.menu") {
-      if (!controller.gestures.following()) {
-        controller.menuOfSelection();
-      }
-      e.preventDefault();
-      return;
-    }
-    // The canvas's other keys, which the registry runs with what the canvas
-    // and the page registered for them, or, outside the app's frame, which
-    // has the registry, the canvas's own handler.
-    if (
-      registry !== undefined ? registry.run(id) : runHandler(canvasHandlers[id])
-    ) {
+    if ((can && runHandler(handler)) || own) {
       e.preventDefault();
     }
   };

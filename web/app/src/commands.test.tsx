@@ -249,6 +249,42 @@ describe("the command palette", () => {
     expect(option().textContent).not.toContain("(unavailable now)");
   });
 
+  it("is told of a change of what the page can run, rather than of each render of the page", () => {
+    const registry = new CommandRegistry();
+    let undoable = false;
+    const handlers = {
+      current: {
+        "history.undo": {
+          get enabled() {
+            return undoable;
+          },
+          run: () => {},
+        },
+      },
+    };
+    const told = vi.fn();
+    const stop = registry.subscribe(told);
+    registry.add("page", handlers);
+    expect(told).toHaveBeenCalledTimes(1);
+    registry.changed();
+    registry.changed();
+    expect(told).toHaveBeenCalledTimes(1);
+    undoable = true;
+    registry.changed();
+    expect(told).toHaveBeenCalledTimes(2);
+    const remove = registry.add("app", {
+      current: { "palette.open": { run: () => {} } },
+    });
+    expect(told).toHaveBeenCalledTimes(3);
+    remove();
+    expect(told).toHaveBeenCalledTimes(4);
+    stop();
+    // While none listens, each change counts.
+    const before = registry.revision();
+    registry.changed();
+    expect(registry.revision()).toBe(before + 1);
+  });
+
   it("stays open for the repeats of its key held down, and leaves an input method's Enter to it", async () => {
     const user = userEvent.setup();
     projectPages();
@@ -376,13 +412,19 @@ describe("the keys of the page", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
-  it("do not act in a dialog, in a field for a command that a field has, once the page took the key, nor for the repeats of a key that runs once", () => {
+  it("do not act in a dialog, while a modal one is open, in a field for a command that a field has, once the page took the key, nor for the repeats of a key that runs once", () => {
     const registry = new CommandRegistry();
     const ran: string[] = [];
+    let undoable = true;
     const remove = registry.add("app", {
       current: {
         "palette.open": { run: () => void ran.push("palette") },
-        "history.undo": { run: () => void ran.push("undo") },
+        "history.undo": {
+          get enabled() {
+            return undoable;
+          },
+          run: () => void ran.push("undo"),
+        },
       },
     });
     const listen = keysOfPage(registry, "windows");
@@ -425,8 +467,26 @@ describe("the keys of the page", () => {
       expect(press(document.body, "z", false, true)).toBe(true);
       expect(press(document.body, "k", false, true)).toBe(true);
       expect(ran).toEqual(["undo", "palette", "undo"]);
-      // A command that cannot run now leaves the key to the browser, and
-      // the repeats of its key too.
+      // A command that cannot run now, as an undo while a step is under
+      // way, takes its key all the same, which Safari would reopen a closed
+      // tab by, and runs nothing.
+      undoable = false;
+      expect(press(document.body, "z")).toBe(true);
+      expect(press(document.body, "z", false, true)).toBe(true);
+      expect(ran).toEqual(["undo", "palette", "undo"]);
+      // While a modal dialog is open, as a sheet whose text a click left
+      // the focus on the body by, the keys are not the page's.
+      undoable = true;
+      const sheet = document.createElement("section");
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      document.body.append(sheet);
+      expect(press(document.body, "z")).toBe(false);
+      expect(press(document.body, "k")).toBe(false);
+      sheet.remove();
+      expect(ran).toEqual(["undo", "palette", "undo"]);
+      // A command that the page has no handler of leaves the key to the
+      // browser, and the repeats of its key too.
       remove();
       expect(press(document.body, "z")).toBe(false);
       expect(press(document.body, "k", false, true)).toBe(false);
@@ -579,6 +639,48 @@ describe("the project's search", () => {
       await screen.findByText("Nothing in the project matches “true”."),
     ).toBeDefined();
     expect(searches(calls)).toEqual([expect.objectContaining({ q: "true" })]);
+  });
+
+  it("searches for a query as the server takes it, of at most 200 characters, without control characters", async () => {
+    const user = userEvent.setup();
+    const calls = projectPages();
+    // An address of a query too long, with a tab, as one pasted from a
+    // table: 11 characters and 189 of 300 that are one code point each.
+    const want = `quay north ${"ž".repeat(189)}`;
+    renderApp(
+      `/projects/${testProject.id}/search?q=${encodeURIComponent(
+        `quay\tnorth ${"ž".repeat(300)}`,
+      )}`,
+      { session: testSession },
+    );
+    await waitFor(() =>
+      expect(searches(calls)).toEqual([expect.objectContaining({ q: want })]),
+    );
+    const field = screen.getByRole<HTMLInputElement>("searchbox", {
+      name: "Search for",
+    });
+    expect(field.value).toBe(want);
+    // The palette's search, whose field has no limit, as a paste makes it
+    // longer, searches for what the server takes of it, as it says.
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    const typed = within(palette).getByRole("combobox");
+    fireEvent.change(typed, {
+      target: { value: `dock\u0007${"a".repeat(250)}` },
+    });
+    const searched = `dock ${"a".repeat(195)}`;
+    await user.click(
+      within(palette).getByRole("option", {
+        name: `Search the project for “${searched}”`,
+      }),
+    );
+    await waitFor(() =>
+      expect(searches(calls)).toEqual([
+        expect.objectContaining({ q: want }),
+        expect.objectContaining({ q: searched }),
+      ]),
+    );
+    await waitFor(() => expect(field.value).toBe(searched));
   });
 
   it("says that nothing matches, and why the server refused a search", async () => {

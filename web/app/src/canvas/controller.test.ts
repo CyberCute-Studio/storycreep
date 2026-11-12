@@ -385,10 +385,13 @@ describe("the canvas's controller", () => {
     expect(c.viewport().zoom).toBe(1);
     expect(c.viewport().x).toBeCloseTo(120 - 500);
     // Escape is the canvas's while there is a selection that it clears, and
-    // the page's else.
+    // the page's else; and so is Shift and 2, while there is a selection
+    // that it shows.
     c.select(["nd_1"], "replace");
+    expect(key("@", { code: "Digit2", shiftKey: true })).toBe(true);
     expect(key("Escape")).toBe(true);
     expect(key("Escape")).toBe(false);
+    expect(key("@", { code: "Digit2", shiftKey: true })).toBe(false);
   });
 
   it("draws at once as the canvas is resized, rather than a frame of nothing first", () => {

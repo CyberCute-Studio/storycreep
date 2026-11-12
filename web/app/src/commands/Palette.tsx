@@ -21,6 +21,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { searchText } from "../search/query";
 import { DialogFrame, focusBackTo } from "../ui/Dialog";
 import {
   type CommandId,
@@ -130,9 +131,12 @@ function PaletteBody({
     .available()
     .filter((id) => nameMatches(commandName(t, id), query))
     .map((id) => ({ kind: "command", id, enabled: registry.can(id) }));
+  // The search of what was typed, as the server takes it, of at most 200
+  // characters, as a paste may make it longer (searchText).
+  const searched = searchText(query);
   const entries: Entry[] =
-    query.trim() !== "" && registry.handler("project.search") !== undefined
-      ? [...commands, { kind: "search", query: query.trim() }]
+    searched !== "" && registry.handler("project.search") !== undefined
+      ? [...commands, { kind: "search", query: searched }]
       : commands;
   const shown = Math.min(active, Math.max(0, entries.length - 1));
   const optionId = (i: number) => `${listId}-${i}`;

@@ -4,12 +4,14 @@
 // keys, and the keys of the page run the command by its ID through the
 // registry, so that a command's key and its entry in the palette run the
 // same. The keys of the page act wherever the focus is (keysOfPage): not in
-// a dialog, whose keys are its own, as the palette's, nor in a field that
-// the user types in, for a command whose key is the field's own there, as
-// the undo's, nor once something of the page has taken the key itself, nor,
-// for a command that runs once for a key held down, its repeats. What the
-// palette says of each command follows the page while it is open, as the
-// registry tells it of each change of the handlers (subscribe).
+// a dialog, whose keys are its own, as the palette's, nor while a modal one
+// is open, nor in a field that the user types in, for a command whose key
+// is the field's own there, as the undo's, nor once something of the page
+// has taken the key itself, nor, for a command that runs once for a key
+// held down, its repeats; and a key of a command that the page has is the
+// page's whether the command can run then or not. What the palette says of
+// each command follows the page while it is open, as the registry tells it
+// of each change of what the page can run (subscribe).
 
 import {
   createContext,
@@ -26,8 +28,8 @@ import { isTextField, type Platform, platformOf } from "./keys";
 
 /**
  * What a part of a page runs a command with: run, which reports whether it
- * did something, as a key that did nothing is left to the browser, and
- * whether it can run now, which the palette says of it.
+ * did something, as a key of the canvas's that did nothing is left to the
+ * page, and whether it can run now, which the palette says of it.
  */
 export interface Handler {
   /**
@@ -86,6 +88,8 @@ export class CommandRegistry {
   private added = 0;
   private listeners = new Set<() => void>();
   private changes = 0;
+  /** What the page could run as the listeners were told of it last (changed), or undefined before they were. */
+  private said: string | undefined;
 
   /** Adds the handlers of a part of the page, and returns what takes them away. */
   add(level: Level, handlers: RefObject<Handlers>): () => void {
@@ -99,24 +103,45 @@ export class CommandRegistry {
   }
 
   /**
-   * Calls listener whenever the handlers have changed, as once a part of
-   * the page rendered anew with what it can run now, and returns what stops
-   * it: as the palette renders anew, so that what it says of each command
-   * is what the page says of it, rather than what it said as the palette
-   * opened (useSyncExternalStore's subscribe).
+   * Calls listener whenever what the page can run has changed, as once a
+   * part of the page rendered anew with an undo that it can run now, and
+   * returns what stops it: as the palette renders anew, so that what it
+   * says of each command is what the page says of it, rather than what it
+   * said as the palette opened (useSyncExternalStore's subscribe).
    */
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
+    this.said = undefined;
     return () => {
       this.listeners.delete(listener);
     };
   };
 
-  /** Returns how many times the handlers have changed (useSyncExternalStore's getSnapshot). */
+  /** Returns how many times what the page can run has changed (useSyncExternalStore's getSnapshot). */
   readonly revision = (): number => this.changes;
 
-  /** Tells the listeners that the handlers have changed (subscribe). */
+  /**
+   * Tells the listeners that the handlers may have changed, as a part of
+   * the page that registers them rendered anew (subscribe): those that a
+   * listener is told of are the changes of which commands the page has,
+   * and of whether each can run, rather than every render of every part
+   * of the page that has handlers, as of the canvas, which the palette
+   * would read its entries anew for. While none listens, each counts, as
+   * a listener that subscribes compares the count with the one that it
+   * rendered with.
+   */
   changed(): void {
+    if (this.listeners.size === 0) {
+      this.changes++;
+      return;
+    }
+    const now = this.available()
+      .map((id) => (this.can(id) ? id : `-${id}`))
+      .join(" ");
+    if (now === this.said) {
+      return;
+    }
+    this.said = now;
     this.changes++;
     for (const listener of [...this.listeners]) {
       listener();
@@ -170,11 +195,12 @@ export function usePlatform(): Platform {
 
 /**
  * Registers handlers, as the part of the page that calls it has them in
- * its latest render, while it is shown, at level, and tells the registry's
- * listeners of each render, which may have changed what they can run now,
- * as the palette that is open (CommandRegistry's subscribe). It is named
- * apart from the project's useCommands, which sends a batch of commands of
- * the project's content (N62).
+ * its latest render, while it is shown, at level, and tells the registry
+ * of each render, which may have changed what they can run now, which the
+ * registry tells its listeners of where it did, as the palette that is
+ * open (CommandRegistry's changed). It is named apart from the project's
+ * useCommands, which sends a batch of commands of the project's content
+ * (N62).
  */
 export function useCommandHandlers(level: Level, handlers: Handlers): void {
   const registry = useContext(Registry);
@@ -193,12 +219,17 @@ export function useCommandHandlers(level: Level, handlers: Handlers): void {
  * Returns what takes a key that went down anywhere on the page to the
  * command of the page that it is (FR-EDIT-10): not one that something of
  * the page took itself, as the canvas its clipboard's keys, nor one in a
- * dialog, whose keys are its own, as the palette's and a sheet's, nor, for
- * a command whose key is a text field's own there, as the undo's, one in
- * such a field, nor the repeats of a key held down of a command that runs
- * once for it (CommandSpec's repeats), as the palette's and the search's,
- * which would open and close them by turns, but for the undo's and the
- * redo's, which go on.
+ * dialog, whose keys are its own, as the palette's, nor one while a modal
+ * dialog is open, as a sheet, whose text a click gives the focus to none
+ * of, which leaves it on the page's body, nor, for a command whose key is
+ * a text field's own there, as the undo's, one in such a field, nor the
+ * repeats of a key held down of a command that runs once for it
+ * (CommandSpec's repeats), as the palette's and the search's, which would
+ * open and close them by turns, but for the undo's and the redo's, which
+ * go on. A key of a command that the page has is the page's whether the
+ * command runs or not, as the undo's while a step is under way, or in the
+ * middle of a drag of the canvas, rather than the browser's, as Safari's
+ * Cmd+Z, which reopens the tab that was closed last.
  */
 export function keysOfPage(
   registry: CommandRegistry,
@@ -213,23 +244,22 @@ export function keysOfPage(
       return;
     }
     const target = e.target instanceof Element ? e.target : null;
-    if (target?.closest('[role="dialog"], [role="alertdialog"]') != null) {
+    if (
+      target?.closest('[role="dialog"], [role="alertdialog"]') != null ||
+      document.querySelector('[aria-modal="true"]') !== null
+    ) {
       return;
     }
     if (commandOf(id).outsideText === true && isTextField(target)) {
       return;
     }
-    // The repeats of a key that runs once are the page's where the key ran
-    // its command, and the browser's where it did not, as the key itself
-    // was.
-    if (e.repeat && commandOf(id).repeats !== true) {
-      if (registry.can(id)) {
-        e.preventDefault();
-      }
+    const handler = registry.handler(id);
+    if (handler === undefined) {
       return;
     }
-    if (registry.run(id)) {
-      e.preventDefault();
+    e.preventDefault();
+    if (!e.repeat || commandOf(id).repeats === true) {
+      runHandler(handler);
     }
   };
 }

@@ -255,6 +255,59 @@ describe("the canvas's shortcuts", () => {
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
   });
 
+  it("leave the board, and open nothing over it, in the middle of a drag no more, and do once it has ended", async () => {
+    boardPage([
+      testNode("nd_j", 0, 0, {
+        type: "jumper",
+        kind: undefined,
+        title: "Back to the dock",
+        target: { board_id: "bd_a", node_id: "nd_dock" },
+      }),
+      testNode("nd_dock", 4000, 3000, { title: "The dock" }),
+    ]);
+    const canvas = await openBoard("?node=nd_j");
+    await screen.findByText(/Selected: Back to the dock/);
+    const inspector = screen.getByRole("button", { name: "Inspector" });
+    const wasOpen = inspector.getAttribute("aria-pressed");
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    for (const [key, code, shiftKey] of [
+      ["g", "KeyG", false],
+      ["i", "KeyI", false],
+      ["?", "Slash", true],
+    ] as const) {
+      fireEvent.keyDown(canvas, { key, code, shiftKey });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
+    expect(screen.getByText(/Selected: Back to the dock/)).toBeDefined();
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.keyDown(canvas, { key: "i", code: "KeyI" });
+    await waitFor(() =>
+      expect(inspector.getAttribute("aria-pressed")).not.toBe(wasOpen),
+    );
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "g", code: "KeyG" });
+    expect(await screen.findByText(/Selected: The dock/)).toBeDefined();
+  });
+
   it("open the inspector at its Connect to by C, of the one element selected", async () => {
     boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
     const canvas = await openBoard("?node=nd_1");

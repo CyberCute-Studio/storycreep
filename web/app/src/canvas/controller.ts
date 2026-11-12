@@ -1827,8 +1827,7 @@ export class CanvasController implements GestureHost {
         this.fit();
         return true;
       case "canvas.zoom_selection":
-        this.zoomToSelection();
-        return true;
+        return this.zoomToSelection();
       case "canvas.deselect": {
         // Escape ends a drag under way, cancelled, as a move that it would
         // else leave to land the nodes that it took out of the selection,

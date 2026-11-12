@@ -15,6 +15,7 @@ import { useDocumentState, useProjectDocument } from "../document/react";
 import { HistoryOwned, LayoutHistory } from "../project/History";
 import { editsProject, managesProject, projectQuery } from "../project/queries";
 import { askSearchFocus, forgetSearchFocus } from "../search/focus";
+import { searchText } from "../search/query";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
 import { textLink } from "../ui/Page";
@@ -119,15 +120,17 @@ function ProjectPages({ projectId }: { projectId: string }) {
     run: () => void navigate({ to, params }),
   });
   useCommandHandlers("project", {
-    // The search's page, of what the palette's search was of, or, from the
-    // search's key, a new one, whose field takes the focus.
+    // The search's page, of what the palette's search was of, as the
+    // server takes it (searchText), or, from the search's key, a new one,
+    // whose field takes the focus.
     "project.search": {
-      run: (query) => {
+      run: (asked) => {
+        const query = asked === undefined ? "" : searchText(asked);
         askSearchFocus();
         void navigate({
           to: "/projects/$projectId/search",
           params,
-          search: query === undefined ? {} : { q: query },
+          search: query === "" ? {} : { q: query },
         });
       },
     },

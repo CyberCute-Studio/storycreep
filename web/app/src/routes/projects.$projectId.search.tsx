@@ -8,6 +8,7 @@ import { refusalOf } from "../auth/refusal";
 import { useCommandHandlers } from "../commands/registry";
 import { projectQuery } from "../project/queries";
 import { takeSearchFocus } from "../search/focus";
+import { searchText } from "../search/query";
 import { Button, MoreButton } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
 import { Alert, Page, Status, textLink } from "../ui/Page";
@@ -26,14 +27,16 @@ interface SearchSearch {
 export const Route = createFileRoute("/projects/$projectId/search")({
   // What the address spells, as the router reads it (router.ts): a query
   // of true or false, or of a number as String writes it, as 42, is read as
-  // a boolean or a number, whose text is the query's all the same.
+  // a boolean or a number, whose text is the query's all the same; and a
+  // query as the server takes it, of at most 200 characters, without
+  // control characters (searchText).
   validateSearch: (search: Record<string, unknown>): SearchSearch => {
     const out: SearchSearch = {};
     const q =
       typeof search.q === "string" ||
       typeof search.q === "number" ||
       typeof search.q === "boolean"
-        ? String(search.q).trim()
+        ? searchText(String(search.q))
         : "";
     if (q !== "") {
       out.q = q;
@@ -103,8 +106,9 @@ function SearchPage() {
   }, [q]);
   useCommandHandlers("page", {
     "project.search": {
-      run: (query) => {
-        if (query !== undefined && query !== q) {
+      run: (asked) => {
+        const query = asked === undefined ? undefined : searchText(asked);
+        if (query !== undefined && query !== "" && query !== q) {
           focusAsked.current = true;
           void navigate({ search: (prev) => ({ ...prev, q: query }) });
           return;
@@ -112,7 +116,7 @@ function SearchPage() {
         // The search of the query that the page shows already: the field
         // shows it too, in place of what was typed in it and not sent.
         const input = field.current;
-        if (input !== null && query !== undefined) {
+        if (input !== null && query !== undefined && query !== "") {
           input.value = query;
         }
         input?.focus();
@@ -122,9 +126,9 @@ function SearchPage() {
   });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const text = String(
-      new FormData(event.currentTarget).get("q") ?? "",
-    ).trim();
+    const text = searchText(
+      String(new FormData(event.currentTarget).get("q") ?? ""),
+    );
     void navigate({
       search: (prev) => ({ ...prev, q: text === "" ? undefined : text }),
     });
