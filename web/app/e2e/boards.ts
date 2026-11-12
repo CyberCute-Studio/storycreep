@@ -318,3 +318,33 @@ export function sentBatches(
   });
   return sent;
 }
+
+/**
+ * Holds a finger still at p of the page, as a touch screen does, through
+ * Chromium's DevTools protocol, until held resolves, as once the page shows
+ * what a long press opens, or for the time that it resolves after, and then
+ * lifts it.
+ */
+export async function holdFinger(
+  page: Page,
+  p: { x: number; y: number },
+  held: () => Promise<unknown>,
+): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ id: 0, x: p.x, y: p.y }],
+    });
+    try {
+      await held();
+    } finally {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchEnd",
+        touchPoints: [],
+      });
+    }
+  } finally {
+    await cdp.detach();
+  }
+}

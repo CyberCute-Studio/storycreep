@@ -148,24 +148,26 @@ export function useCanvasActions(
     };
     return {
       /**
-       * Creates a node of type at the centre of the canvas, on the grid
-       * where it snaps, beside a node that is there already, and selects it.
+       * Creates a node of type whose middle is at at of the board, as the
+       * context menu of the board there asks, or, without one, at the
+       * centre of the canvas, on the grid where it snaps, beside a node
+       * that is there already, and selects it.
        */
-      create(type: Node["type"]): Promise<boolean> {
+      create(type: Node["type"], at?: Point): Promise<boolean> {
         const size = newNodeSize(type);
-        const centre = centerOf(controller.viewport(), controller.size());
+        const centre = at ?? centerOf(controller.viewport(), controller.size());
         const corners = new Set<string>();
         controller.scene.nodes.forEach((_, item) => {
           corners.add(`${item.node.position.x},${item.node.position.y}`);
         });
-        const at = freePlace(
+        const corner = freePlace(
           centre,
           size,
           (p) => corners.has(`${p.x},${p.y}`),
           controller.snap,
         );
         const id = newId("node");
-        const sent = send([createCommand(boardId, type, at, id)]);
+        const sent = send([createCommand(boardId, type, corner, id)]);
         controller.selectComing([id], sent);
         return sent;
       },

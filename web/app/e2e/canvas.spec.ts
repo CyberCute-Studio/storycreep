@@ -280,13 +280,19 @@ test.describe("a board's canvas", () => {
       "data-visible",
       String(board.nodeIds.length),
     );
-    // A right click does nothing to the board.
+    // A drag with the right button moves nothing of the board: its click
+    // opens the canvas's own menu, which nothing needs (plan note N70), and
+    // which Escape closes, with the focus on the canvas again.
     const v3 = await settled(canvas);
     await page.mouse.move(box.x + 300, box.y + 200);
     await page.mouse.down({ button: "right" });
     await page.mouse.move(box.x + 100, box.y + 100, { steps: 5 });
     await page.mouse.up({ button: "right" });
     expect(await settled(canvas)).toEqual(v3);
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toBeHidden();
+    await expect(canvas).toBeFocused();
     // Nor on the minimap, where a click of the primary button centres the
     // canvas.
     const minimap = canvas.locator("canvas").last();

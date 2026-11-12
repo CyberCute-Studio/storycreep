@@ -33,8 +33,13 @@
 // cancelled, as Escape asks, or as the board may no longer be changed
 // (cancelDrag). The wheel pans, and Shift
 // turns it sideways; with Ctrl or Cmd, as a trackpad's pinch sends it, it
-// zooms about the pointer. Nothing needs hover or a right click, and a
-// right click, or a pen's barrel button or its eraser, does nothing; a
+// zooms about the pointer. A finger's press, or a pen's, held for 400 ms
+// where it went down, opens the context menu of what is under it, the
+// node, the connection, or the board there (FR-EDIT-09, NFR-TOUCH-02, plan
+// note N70), and does nothing more until it goes up; the page opens the
+// same menu for a mouse's right click (menu), and for the keys. Nothing
+// needs hover or a right click, and a press of a mouse's right button, or
+// of a pen's barrel button or its eraser, is not followed; a
 // press ends, as cancelled, once its mouse or its pen moves, or leaves the
 // canvas, without the button that pressed it, as a pen does that leaves
 // the range where the screen sees it hover. A gesture under way when the
@@ -120,6 +125,16 @@ export function sameLink(a: Link, b: Link): boolean {
 }
 
 /**
+ * What a context menu is of (PRD FR-EDIT-09, plan note N70): the node, or
+ * the connection, at its point, found as a tap finds one, or the board
+ * itself there, each with the point of the board that it was asked for at.
+ */
+export type MenuTarget =
+  | { kind: "node"; node: string; at: Point }
+  | { kind: "connection"; connection: string; at: Point }
+  | { kind: "board"; at: Point };
+
+/**
  * A handle that the page places over the canvas, whose press is the
  * canvas's: the resize handle of the node of an ID, or a link handle, of
  * what its drag holds.
@@ -181,6 +196,10 @@ export interface GestureHost {
   linkEnd(commit: boolean): void;
   /** The time, in milliseconds, by which a double tap is told from two taps. */
   now(): number;
+  /** Calls then once ms milliseconds have passed, unless the function that it returns is called first, as the time of a long press is counted. */
+  after(ms: number, then: () => void): () => void;
+  /** Opens the context menu of target, as a long press on it asks, where held says so, or a right click. */
+  menu(target: MenuTarget, held: boolean): void;
 }
 
 /**
@@ -199,6 +218,9 @@ const tapSlop = { touch: 12, pen: 6, mouse: 1 } as const;
 
 /** How soon after a tap on a node another on it opens it, in milliseconds. */
 export const doubleTapTime = 500;
+
+/** How long a finger's press, or a pen's, is held where it went down before it opens the context menu, in milliseconds (FR-EDIT-09, NFR-TOUCH-02). */
+export const longPressTime = 400;
 
 /** How much a pixel of a zooming wheel's delta zooms: e to its negative, so that zooming in and out by the same delta come back. */
 const wheelZoomRate = 0.01;
@@ -236,7 +258,7 @@ type Gesture =
       input: PointerInput;
     }
   | { kind: "pan"; id: number; last: Point }
-  /** A drag that does nothing until its pointer goes up, as one that would have moved a node that went meanwhile, or whose handle went. */
+  /** A press that does nothing until its pointer goes up, as a drag that would have moved a node that went meanwhile, or whose handle went, or a long press, which opened the context menu. */
   | { kind: "held"; id: number }
   /** A move of the selection, from the point of the board where it started, which stays there as the wheel or a key moves the board. */
   | { kind: "move"; id: number; anchor: Point }
@@ -262,6 +284,8 @@ export class Gestures {
   private space = false;
   /** The node of the last tap, and when it was, which a second tap on it soon after opens, until the next press takes it (down). */
   private lastTap: { node: string; time: number } | undefined;
+  /** Ends the count of the time of the long press of the press under way, if it has one (endHold). */
+  private unhold: (() => void) | undefined;
 
   constructor(private readonly host: GestureHost) {}
 
@@ -383,7 +407,81 @@ export class Gestures {
       lastTap,
       input: p,
     };
+    // A finger's press, or a pen's tip's, on the canvas itself, held where
+    // it went down, opens the context menu of what is under it (longPress):
+    // not a mouse's, whose right button asks for it, nor a press of a
+    // handle, which is a drag's alone. The count before it has ended.
+    this.endHold();
+    if (handle === undefined && p.kind !== "mouse") {
+      this.unhold = this.host.after(longPressTime, () => this.longPress());
+    }
     return true;
+  }
+
+  /**
+   * Ends the count of the time of the long press, if one is under way: as
+   * its press ends, becomes a drag, or is joined by a second finger, and
+   * before the count of the press after it starts, so that a count that
+   * comes to its end is of the press under way.
+   */
+  private endHold(): void {
+    this.unhold?.();
+    this.unhold = undefined;
+  }
+
+  /**
+   * Takes the end of the time of the long press of the press under way,
+   * which is still one, neither a drag, which it is from its threshold on,
+   * nor a pinch, nor ended, each of which ends the count (endHold): it
+   * opens the context menu of what is under its pointer, where the pointer
+   * is now, and does nothing more until it goes up, so that it taps
+   * nothing, and drags nothing, after (FR-EDIT-09).
+   */
+  private longPress(): void {
+    this.unhold = undefined;
+    const g = this.gesture;
+    if (g.kind !== "press") {
+      return;
+    }
+    const p = this.pointers.get(g.id);
+    if (p === undefined) {
+      return;
+    }
+    this.gesture = { kind: "held", id: g.id };
+    this.menu(p, true);
+  }
+
+  /**
+   * Opens the context menu of what is at p of the canvas, found as a tap of
+   * a pointer of p's kind finds it: the node there, or else the connection
+   * whose line is there, on a board that may be changed, or else the board
+   * itself. A long press opens it so, which held tells of, and the page
+   * for a mouse's right click, which the gestures do not follow.
+   */
+  menu(p: Pick<PointerInput, "x" | "y" | "kind">, held = false): void {
+    const v = this.host.viewport();
+    const at = toWorld(v, p);
+    const slop = tapSlop[p.kind] / v.zoom;
+    const node = this.host.nodeAt(at, slop);
+    if (node !== undefined) {
+      this.host.menu({ kind: "node", node, at }, held);
+      return;
+    }
+    const connection = this.host.connectionAt(
+      at,
+      Math.max(slop, tapSlop.pen / v.zoom),
+    );
+    this.host.menu(
+      connection === undefined
+        ? { kind: "board", at }
+        : { kind: "connection", connection, at },
+      held,
+    );
+  }
+
+  /** Reports whether the canvas follows a pointer, as one that is down on it. */
+  following(): boolean {
+    return this.pointers.size > 0;
   }
 
   /**
@@ -440,6 +538,7 @@ export class Gestures {
         if (moved < dragThresholds[g.input.kind]) {
           return;
         }
+        this.endHold();
         if (g.drag === "resize") {
           // A drag of the handle of a node that went resizes nothing, as one
           // that cannot move its node moves nothing.
@@ -562,6 +661,7 @@ export class Gestures {
       case "press":
         if (g.id === p.id) {
           this.gesture = { kind: "idle" };
+          this.endHold();
           // A click of the middle button is a pan that did not move, and a
           // tap of a resize handle, as one with Space held, which pans, a
           // drag of it that did not.
@@ -768,9 +868,10 @@ export class Gestures {
   }
 
   private startPinch(): void {
-    // A second finger takes the board from what the first did: a rubber
-    // band, a move or a resize, which goes back where it started, or a
-    // link, which connects nothing.
+    // A second finger takes the board from what the first did: a press,
+    // whose long press it ends, a rubber band, a move or a resize, which
+    // goes back where it started, or a link, which connects nothing.
+    this.endHold();
     if (this.gesture.kind === "band") {
       this.host.band(undefined);
     } else if (this.gesture.kind === "move") {

@@ -168,7 +168,9 @@ describe("a board's canvas", () => {
     canvas.focus();
     // Space goes down on the canvas, and up once the focus has left it.
     await user.keyboard("[Space>]");
-    await user.tab();
+    // Back to the toolbar: the stop after the canvas is its tree, whose
+    // focus the canvas shows, moving the board to the node that it is on.
+    await user.tab({ shift: true });
     expect(document.activeElement).not.toBe(canvas);
     await user.keyboard("[/Space]");
     await user.pointer([

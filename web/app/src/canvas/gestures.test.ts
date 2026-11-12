@@ -3,6 +3,8 @@ import {
   type GestureHost,
   Gestures,
   type Link,
+  longPressTime,
+  type MenuTarget,
   type Mode,
   type PointerInput,
   type SelectHow,
@@ -57,6 +59,10 @@ function host(mode: Mode = "pan", movable = false) {
     slops: [] as number[],
     /** The connections that a tap selected. */
     connections: [] as string[],
+    /** What the gestures count the time of, as a long press's, until it is up, or they end the count. */
+    timers: [] as { ms: number; then: () => void; ended: boolean }[],
+    /** The context menus that the gestures opened, and whether a long press asked for each. */
+    menus: [] as { target: MenuTarget; held: boolean }[],
   };
   const node = { x: 100, y: 100, width: 240, height: 120 };
   const overlaps = (a: Rect, r: Rect) =>
@@ -155,6 +161,16 @@ function host(mode: Mode = "pan", movable = false) {
       state.links.push({ end: commit });
     },
     now: () => state.now,
+    after: (ms, then) => {
+      const timer = { ms, then, ended: false };
+      state.timers.push(timer);
+      return () => {
+        timer.ended = true;
+      };
+    },
+    menu: (target, held) => {
+      state.menus.push({ target, held });
+    },
     band: (r) => {
       state.bands.push(r);
     },
@@ -1171,5 +1187,164 @@ describe("the canvas's gestures of a link handle and of a connection", () => {
     gestures.up(mouse(200, 400));
     expect(state.selects.at(-1)).toEqual({ ids: ["nd_b"], how: "replace" });
     expect(state.connections).toHaveLength(2);
+  });
+});
+
+describe("the canvas's gestures of a long press", () => {
+  /** Lets the time of the long presses that the gestures count be up, of those whose count they have not ended. */
+  function hold(state: ReturnType<typeof host>["state"]) {
+    for (const timer of state.timers.splice(0)) {
+      if (!timer.ended) {
+        timer.then();
+      }
+    }
+  }
+
+  // Verifies: NFR-TOUCH-02
+  it("opens the context menu of the node under a finger, or a pen, held for 400 ms where it went down, and taps and drags nothing after", () => {
+    const { state, gestures } = host("pan", true);
+    gestures.down(touch(1, 200, 150));
+    expect(state.timers.map((t) => t.ms)).toEqual([longPressTime]);
+    expect(longPressTime).toBe(400);
+    // Within the drag's threshold, the press is held still.
+    gestures.move(touch(1, 203, 152));
+    hold(state);
+    expect(state.menus).toEqual([
+      {
+        target: { kind: "node", node: "nd_a", at: { x: 203, y: 152 } },
+        held: true,
+      },
+    ]);
+    // The finger moves on, and lifts: no pan, no move, and no tap.
+    gestures.move(touch(1, 260, 150));
+    gestures.up(touch(1, 260, 150));
+    expect(state.v).toEqual({ x: 0, y: 0, zoom: 1 });
+    expect(state.selects).toEqual([]);
+    expect(state.moves).toEqual([]);
+    expect(state.released).toEqual([1]);
+    // The tap after it is a tap again, and no second tap of one before.
+    gestures.down(touch(1, 200, 150));
+    gestures.up(touch(1, 200, 150));
+    expect(state.selects).toEqual([{ ids: ["nd_a"], how: "replace" }]);
+    expect(state.opened).toEqual([]);
+    // A pen's tip is held as a finger is.
+    state.menus = [];
+    state.timers = [];
+    gestures.down(mouse(200, 150, { kind: "pen" }));
+    hold(state);
+    expect(state.menus).toHaveLength(1);
+    gestures.up(mouse(200, 150, { kind: "pen", buttons: 0 }));
+  });
+
+  // Verifies: NFR-TOUCH-02
+  it("opens the menu of the connection whose line the finger is on, on a board that may be changed, and of the board itself elsewhere", () => {
+    const { state, gestures } = host("pan", true);
+    state.connection = true;
+    gestures.down(touch(1, 200, 408));
+    hold(state);
+    gestures.up(touch(1, 200, 408));
+    gestures.down(touch(1, 600, 500));
+    hold(state);
+    gestures.up(touch(1, 600, 500));
+    expect(state.menus).toEqual([
+      {
+        target: {
+          kind: "connection",
+          connection: "cn_a",
+          at: { x: 200, y: 408 },
+        },
+        held: true,
+      },
+      { target: { kind: "board", at: { x: 600, y: 500 } }, held: true },
+    ]);
+    // At another zoom, the point is the board's.
+    state.menus = [];
+    state.v = { x: 100, y: 50, zoom: 2 };
+    gestures.down(touch(1, 20, 20));
+    hold(state);
+    expect(state.menus[0].target).toEqual({
+      kind: "board",
+      at: { x: 110, y: 60 },
+    });
+  });
+
+  it("opens no menu for a press that became a drag, a pinch, or a tap before its time was up, nor for a mouse's, nor for a press of a handle", () => {
+    const { state, gestures } = host("pan", true);
+    // A drag, from its threshold on, which ends the count.
+    gestures.down(touch(1, 200, 150));
+    expect(state.timers.at(-1)?.ended).toBe(false);
+    gestures.move(touch(1, 200, 170));
+    expect(state.timers.at(-1)?.ended).toBe(true);
+    hold(state);
+    gestures.up(touch(1, 200, 170));
+    expect(state.v.y).toBe(-20);
+    // A tap, which ends the count.
+    gestures.down(touch(1, 200, 150));
+    gestures.up(touch(1, 200, 150));
+    expect(state.timers.at(-1)?.ended).toBe(true);
+    hold(state);
+    // A pinch, whose second finger ends the count of the first, and counts
+    // none of its own.
+    gestures.down(touch(1, 200, 150));
+    gestures.down(touch(2, 300, 150));
+    expect(state.timers).toHaveLength(1);
+    expect(state.timers[0].ended).toBe(true);
+    hold(state);
+    gestures.up(touch(1, 200, 150));
+    gestures.up(touch(2, 300, 150));
+    // A press that was cancelled, whose count ended with it, and the press
+    // after it, lifted in time: the time of the first is not the second's.
+    gestures.down(touch(1, 200, 150));
+    const first = state.timers.at(-1);
+    gestures.cancel({ id: 1 });
+    expect(first?.ended).toBe(true);
+    gestures.down(touch(1, 200, 150));
+    expect(state.timers.at(-1)).not.toBe(first);
+    gestures.up(touch(1, 200, 150));
+    hold(state);
+    // A mouse's press, held, and a press of the resize handle, or of a
+    // link handle, count none.
+    state.timers = [];
+    gestures.down(mouse(200, 150));
+    gestures.up(mouse(200, 150));
+    gestures.down(touch(1, 340, 220), "nd_a");
+    gestures.up(touch(1, 340, 220));
+    gestures.down(touch(1, 340, 160), {
+      kind: "new",
+      node: "nd_a",
+      port: "out",
+    });
+    gestures.up(touch(1, 340, 160));
+    expect(state.timers).toEqual([]);
+    expect(state.menus).toEqual([]);
+  });
+
+  // Verifies: NFR-TOUCH-02
+  it("opens the same menu as the page asks for it at a point, as for a mouse's right click, found as a click finds what is there", () => {
+    const { state, gestures } = host("pan", true);
+    state.connection = true;
+    gestures.menu({ x: 200, y: 150, kind: "mouse" });
+    gestures.menu({ x: 200, y: 404, kind: "mouse" });
+    gestures.menu({ x: 200, y: 420, kind: "mouse" });
+    expect(state.menus).toEqual([
+      {
+        target: { kind: "node", node: "nd_a", at: { x: 200, y: 150 } },
+        held: false,
+      },
+      {
+        target: {
+          kind: "connection",
+          connection: "cn_a",
+          at: { x: 200, y: 404 },
+        },
+        held: false,
+      },
+      { target: { kind: "board", at: { x: 200, y: 420 } }, held: false },
+    ]);
+    // The right button's press is not followed, so that the page asks.
+    expect(gestures.down(mouse(200, 150, { button: 2 }))).toBe(false);
+    expect(gestures.following()).toBe(false);
+    gestures.down(mouse(200, 150));
+    expect(gestures.following()).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ import {
   type PortOf,
 } from "./controller";
 import type { Engine, Frame, FrameStats } from "./engine";
+import type { MenuTarget } from "./gestures";
 import type { Theme } from "./theme";
 
 const theme: Theme = {
@@ -26,6 +27,8 @@ function fakeClock() {
   let now = 0;
   let next = 1;
   const frames = new Map<number, (time: number) => void>();
+  /** What the clock calls once its time is up, as the end of a long press's time. */
+  const timers = new Set<{ at: number; then: () => void }>();
   const clock: Clock = {
     request: (frame) => {
       frames.set(next, frame);
@@ -33,12 +36,22 @@ function fakeClock() {
     },
     cancel: (handle) => frames.delete(handle),
     now: () => now,
+    after: (ms, then) => {
+      const timer = { at: now + ms, then };
+      timers.add(timer);
+      return () => timers.delete(timer);
+    },
   };
   return {
     clock,
     /** Moves the time on by ms and runs the frames that were asked for. */
     tick(ms = 16) {
       now += ms;
+      for (const timer of [...timers]) {
+        if (timer.at <= now && timers.delete(timer)) {
+          timer.then();
+        }
+      }
       const due = [...frames.values()];
       frames.clear();
       for (const frame of due) {
@@ -98,6 +111,8 @@ function setUp() {
       | { from: PortOf; at: { x: number; y: number } }
       | undefined
     )[],
+    /** The context menus that the canvas asked the page for, and whether a long press asked for each. */
+    menus: [] as { target: MenuTarget; held: boolean }[],
   };
   const c = new CanvasController(
     "bd_a",
@@ -105,6 +120,7 @@ function setUp() {
       selection: (ids) => events.selections.push(ids.size),
       connection: (id) => events.connections.push(id),
       offer: (offer) => events.offers.push(offer),
+      menu: (target, held) => events.menus.push({ target, held }),
       zoom: (z) => events.zooms.push(z),
       rendered: () => {
         events.rendered++;
@@ -1794,5 +1810,175 @@ describe("the canvas's controller of a board's connections", () => {
     c.relabel();
     time.tick();
     expect(host.dataset.broken).toBe("1");
+  });
+});
+
+describe("the canvas's controller of the context menu and the accessibility tree", () => {
+  function setUpBoard(editable = true) {
+    const s = setUp();
+    const asked = editable ? editsOf(s.c) : undefined;
+    const nodes = [
+      testNode("nd_1", 0, 0),
+      testNode("nd_2", 480, 0),
+      testNode("nd_3", 480, 400),
+    ];
+    const connections = [testConnection("cn_1", "nd_1", "nd_2")];
+    s.c.sync(docOf(nodes, connections), false);
+    s.c.setReady();
+    s.time.tick();
+    return { ...s, asked, nodes, connections };
+  }
+
+  // Verifies: NFR-TOUCH-02
+  it("opens the context menu of the selection that holds the node asked for, and else of that node alone, which it selects, and of a connection, which it selects too", () => {
+    const { c, events } = setUpBoard();
+    c.select(["nd_1", "nd_2"], "replace");
+    const at = { x: 10, y: 10 };
+    c.menu({ kind: "node", node: "nd_2", at }, true);
+    expect([...c.selection()]).toEqual(["nd_1", "nd_2"]);
+    c.menu({ kind: "node", node: "nd_3", at });
+    expect([...c.selection()]).toEqual(["nd_3"]);
+    c.menu({ kind: "connection", connection: "cn_1", at });
+    expect(c.selectedConnection()).toBe("cn_1");
+    expect(c.selection().size).toBe(0);
+    c.menu({ kind: "board", at });
+    expect(c.selectedConnection()).toBe("cn_1");
+    expect(events.menus).toEqual([
+      { target: { kind: "node", node: "nd_2", at }, held: true },
+      { target: { kind: "node", node: "nd_3", at }, held: false },
+      { target: { kind: "connection", connection: "cn_1", at }, held: false },
+      { target: { kind: "board", at }, held: false },
+    ]);
+    // None of what the board no longer has.
+    c.menu({ kind: "node", node: "nd_gone", at });
+    c.menu({ kind: "connection", connection: "cn_gone", at });
+    expect(events.menus).toHaveLength(4);
+  });
+
+  it("opens no menu of a connection on a board that may not be changed, which selects none", () => {
+    const { c, events } = setUpBoard(false);
+    c.menu({ kind: "connection", connection: "cn_1", at: { x: 0, y: 0 } });
+    expect(events.menus).toEqual([]);
+    c.menu({ kind: "node", node: "nd_1", at: { x: 0, y: 0 } });
+    expect(events.menus).toHaveLength(1);
+    expect([...c.selection()]).toEqual(["nd_1"]);
+  });
+
+  // Verifies: NFR-A11Y-04
+  it("opens the menu that the keys ask for of the connection selected, of the nodes selected, or of the board, over the canvas", () => {
+    const { c, events } = setUpBoard();
+    c.setViewport({ x: 0, y: 0, zoom: 1 });
+    c.menuOfSelection();
+    expect(events.menus.at(-1)?.target).toEqual({
+      kind: "board",
+      at: { x: 500, y: 300 },
+    });
+    c.select(["nd_2", "nd_3"], "replace");
+    c.menuOfSelection();
+    // The middle of the two nodes, 480 to 720 across and 0 to 528 down.
+    expect(events.menus.at(-1)?.target).toEqual({
+      kind: "node",
+      node: "nd_2",
+      at: { x: 600, y: 264 },
+    });
+    expect(c.selection().size).toBe(2);
+    c.selectConnection("cn_1");
+    c.menuOfSelection();
+    const target = events.menus.at(-1)?.target;
+    expect(target?.kind).toBe("connection");
+    expect(target?.at.x).toBeGreaterThan(240);
+    expect(target?.at.x).toBeLessThan(480);
+    // What is selected out of view has its menu at the canvas's centre.
+    c.select(["nd_3"], "replace");
+    c.setViewport({ x: 5000, y: 5000, zoom: 1 });
+    c.menuOfSelection();
+    expect(events.menus.at(-1)?.target).toEqual({
+      kind: "node",
+      node: "nd_3",
+      at: { x: 5500, y: 5300 },
+    });
+  });
+
+  it("shows what the tree's focus is on, moving only where the canvas does not show it whole, at the zoom that it is at", () => {
+    const { c, time } = setUpBoard();
+    c.reducedMotion = true;
+    c.setViewport({ x: 0, y: 0, zoom: 0.5 });
+    time.tick();
+    // In view, with room around it: nothing moves.
+    c.reveal({ x: 480, y: 400, width: 240, height: 128 });
+    expect(c.viewport()).toEqual({ x: 0, y: 0, zoom: 0.5 });
+    // Out of view: its middle goes to the canvas's centre.
+    c.reveal({ x: 4000, y: 3000, width: 240, height: 128 });
+    expect(c.viewport().zoom).toBe(0.5);
+    expect(c.viewport().x).toBeCloseTo(4120 - 1000);
+    expect(c.viewport().y).toBeCloseTo(3064 - 600);
+    expect(
+      c.screenRectOf({ x: 4000, y: 3000, width: 240, height: 128 }),
+    ).toEqual({ x: 440, y: 268, width: 120, height: 64 });
+  });
+
+  it("tells what watches the board's content of each change of it, and of what its cards say, but not of the moves of a drag, whose end it tells of", () => {
+    const { c, nodes, connections } = setUpBoard();
+    let told = 0;
+    const stop = c.watch(() => {
+      told++;
+    });
+    c.sync(
+      docOf(
+        [...nodes.slice(0, 2), testNode("nd_3", 480, 400, { title: "Quay" })],
+        connections,
+      ),
+      false,
+    );
+    expect(told).toBe(1);
+    c.relabel();
+    expect(told).toBe(2);
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.moveTo({ x: 16, y: 0 });
+    c.moveTo({ x: 32, y: 0 });
+    expect(told).toBe(2);
+    c.moveEnd(false);
+    expect(told).toBe(3);
+    stop();
+    c.relabel();
+    expect(told).toBe(3);
+  });
+
+  it("tells at a drag's end of what changed in the middle of it, though the drag left the board as it was: of a link's, and of a move that moved nothing", () => {
+    const { c, nodes, connections } = setUpBoard();
+    let told = 0;
+    c.watch(() => {
+      told++;
+    });
+    const renamed = (title: string) =>
+      docOf(
+        [...nodes.slice(0, 2), testNode("nd_3", 480, 400, { title })],
+        connections,
+      );
+    // Another session renames a node while a link is dragged, and the
+    // link is let go for nothing.
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.sync(renamed("Quay"), false);
+    expect(told).toBe(0);
+    c.linkEnd(false);
+    expect(told).toBe(1);
+    // A link's drag during which nothing changed tells of nothing.
+    expect(c.linkStart({ kind: "new", node: "nd_1", port: "out" })).toBe(true);
+    c.linkEnd(false);
+    expect(told).toBe(1);
+    // And while a move that has yet to move its node is under way.
+    c.select(["nd_1"], "replace");
+    expect(c.moveStart("nd_1")).toBe(true);
+    c.sync(renamed("Pier"), false);
+    expect(told).toBe(1);
+    c.moveEnd(true);
+    expect(told).toBe(2);
+    // As of a resize that did not resize.
+    expect(c.resizeStart("nd_1")).toBe(true);
+    c.sync(renamed("Mole"), false);
+    expect(told).toBe(2);
+    c.resizeEnd(true);
+    expect(told).toBe(3);
   });
 });
