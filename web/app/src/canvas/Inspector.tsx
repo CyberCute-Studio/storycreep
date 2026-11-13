@@ -38,6 +38,8 @@ import {
 import { parseValue } from "../content/values";
 import { hundredths } from "../document/appliers/node";
 import { useDocumentState, useProjectDocument } from "../document/react";
+import { ExpressionEditor } from "../expr/ExpressionEditor";
+import { sourceOf, type TypedSource, typedExpression } from "../expr/fields";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
@@ -219,6 +221,9 @@ export function Inspector({
             // selected before beside the next one's.
             <Fragment key={single.id}>
               <NodeForm projectId={projectId} node={single} />
+              {single.type !== "jumper" && (
+                <NodeScripts projectId={projectId} node={single} />
+              )}
               {single.type === "element" && (
                 <section className="space-y-2">
                   <h3 className="text-lg font-semibold">
@@ -682,6 +687,116 @@ function NodeForm({ projectId, node }: { projectId: string; node: Node }) {
         </Button>
       </form>
     </div>
+  );
+}
+
+const scriptField = payloadField("on_enter", "on_exit");
+
+/**
+ * The scripts of an element or a branch (PRD §5.8.5): its on-enter script,
+ * which runs as the flow enters it, and its on-exit script, as the flow
+ * leaves it, in the expression editor, which Save sends as one node.update
+ * of those that changed, expecting the node's revision that the form shows.
+ * The empty source is none.
+ */
+function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
+  const { t } = useTranslation();
+  const form = useEntityForm(projectId, node, (view, id) => view.nodes.get(id));
+  const { commands, held, shown, against } = form;
+  const onEnter = useRef<TypedSource>(undefined);
+  const onExit = useRef<TypedSource>(undefined);
+  const headingId = useId();
+  const refusal = refusalOf(commands.error, t, scriptField);
+  useFocusRefusal(held.form, commands.error);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const typed = (ref: typeof onEnter, field: "on_enter" | "on_exit") =>
+      ref.current?.key === held.key
+        ? ref.current.source
+        : sourceOf(shown[field]);
+    const enter = typed(onEnter, "on_enter");
+    const exit = typed(onExit, "on_exit");
+    const update: Omit<NodeUpdatePayload, "id"> = {
+      ...(enter !== sourceOf(against.on_enter) ? { on_enter: enter } : {}),
+      ...(exit !== sourceOf(against.on_exit) ? { on_exit: exit } : {}),
+    };
+    const changes: Command[] =
+      Object.keys(update).length === 0
+        ? []
+        : [
+            {
+              type: "node.update",
+              payload: { id: shown.id, ...update },
+              expected_rev: { [against.id]: against.rev },
+            },
+          ];
+    form.save(changes, {
+      ...(update.on_enter === undefined
+        ? {}
+        : { on_enter: typedExpression(update.on_enter, true) }),
+      ...(update.on_exit === undefined
+        ? {}
+        : { on_exit: typedExpression(update.on_exit, true) }),
+    });
+  };
+  return (
+    <section aria-labelledby={headingId} className="space-y-2">
+      <h3 id={headingId} className="text-lg font-semibold">
+        {t("inspector.scripts")}
+      </h3>
+      <Alert
+        message={form.overlaps.length > 0 ? undefined : refusal?.message}
+      />
+      <ConflictNotice
+        form={form}
+        fieldName={(field) =>
+          field === "on_enter"
+            ? t("inspector.on_enter")
+            : t("inspector.on_exit")
+        }
+        shownValue={() => undefined}
+      />
+      <SaveStatus form={form} />
+      <form
+        key={held.key}
+        {...held.props}
+        className="space-y-4"
+        onSubmit={submit}
+        noValidate
+      >
+        <ExpressionEditor
+          projectId={projectId}
+          boardId={node.board_id}
+          context="script"
+          label={t("inspector.on_enter")}
+          hint={t("inspector.on_enter_hint")}
+          defaultValue={sourceOf(shown.on_enter)}
+          stored={shown.on_enter}
+          error={refusal?.fields.on_enter}
+          optional
+          onChange={(source) => {
+            onEnter.current = { key: held.key, source };
+          }}
+        />
+        <ExpressionEditor
+          projectId={projectId}
+          boardId={node.board_id}
+          context="script"
+          label={t("inspector.on_exit")}
+          hint={t("inspector.on_exit_hint")}
+          defaultValue={sourceOf(shown.on_exit)}
+          stored={shown.on_exit}
+          error={refusal?.fields.on_exit}
+          optional
+          onChange={(source) => {
+            onExit.current = { key: held.key, source };
+          }}
+        />
+        <Button type="submit" variant="primary" disabled={commands.isPending}>
+          {t("inspector.save_scripts")}
+        </Button>
+      </form>
+    </section>
   );
 }
 

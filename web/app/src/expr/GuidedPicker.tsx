@@ -1,0 +1,357 @@
+// The guided picker of a condition (PRD FR-EXPR-01 AC3, plan note N74):
+// what to test, of the values that the board reads, its variables, the
+// global ones, and the components' runtime attributes, each named as the
+// board's expressions name it; how to test it, by its type; and what to
+// test it against, a literal of its type, an enum's option, or a bool. It
+// shows the source that the text view shows (picker.ts), which it writes
+// anew only as one of its fields is changed, and says so of a source that
+// it cannot show, which the text view edits.
+
+import { useState } from "react";
+import { valueNamer } from "../content/textNames";
+import { Button } from "../ui/Button";
+import { SelectField, TextField } from "../ui/Field";
+import type { Analysis } from "./analyze";
+import { typeText, type Words } from "./messages";
+import {
+  defaultValue,
+  isNumber,
+  type Picked,
+  readPicked,
+  stringLiteral,
+  stringText,
+  type Target,
+  type TargetType,
+  type Test,
+  takesValue,
+  testsOf,
+  writePicked,
+} from "./picker";
+import type { Scope } from "./scope";
+
+/** A value that the picker offers to test, with what names it and its type. */
+interface Choice {
+  readonly target: Target;
+  readonly value: string;
+  readonly name: string;
+  readonly group: "board" | "global" | "attribute";
+  readonly type: TargetType;
+}
+
+/** Returns the value of the choice of target in the picker's list. */
+function targetValue(target: Target): string {
+  return `${target.ref} ${target.attribute ?? ""}`;
+}
+
+/** Returns the values that the board of scope reads, which the picker offers to test, in the order of their names. */
+function choicesOf(scope: Scope): Choice[] {
+  const { view, boardId } = scope;
+  const name = valueNamer(view, boardId);
+  const out: Choice[] = [];
+  for (const v of view.variables.values()) {
+    if (
+      v.deleted_at !== undefined ||
+      (v.scope === "board" && v.board_id !== boardId)
+    ) {
+      continue;
+    }
+    const target = { ref: v.id };
+    out.push({
+      target,
+      value: targetValue(target),
+      name: name(v.id, undefined) ?? v.key,
+      group: v.scope === "board" ? "board" : "global",
+      type: { kind: v.type },
+    });
+  }
+  for (const c of view.components.values()) {
+    if (c.deleted_at !== undefined) {
+      continue;
+    }
+    const type = view.componentTypes.get(c.component_type_id);
+    if (type === undefined || type.deleted_at !== undefined) {
+      continue;
+    }
+    for (const a of type.attributes) {
+      if (!a.runtime || a.deleted_at !== undefined || a.type === "text") {
+        continue;
+      }
+      const target = { ref: c.id, attribute: a.id };
+      out.push({
+        target,
+        value: targetValue(target),
+        name: name(c.id, a.id) ?? `${c.key}.${a.key}`,
+        group: "attribute",
+        type:
+          a.type === "enum"
+            ? { kind: "enum", options: a.options ?? [] }
+            : { kind: a.type },
+      });
+    }
+  }
+  const collator = new Intl.Collator();
+  return out.sort((a, b) => collator.compare(a.name, b.name));
+}
+
+/** Returns what names a test, of a value of type. */
+function testText(w: Words, test: Test): string {
+  const { t } = w;
+  switch (test) {
+    case "is_true":
+      return t("expr.picker.is_true");
+    case "is_false":
+      return t("expr.picker.is_false");
+    case "eq":
+      return t("expr.picker.eq");
+    case "ne":
+      return t("expr.picker.ne");
+    case "lt":
+      return t("expr.picker.lt");
+    case "lte":
+      return t("expr.picker.lte");
+    case "gt":
+      return t("expr.picker.gt");
+    case "gte":
+      return t("expr.picker.gte");
+  }
+}
+
+/** Reports whether a value of the type a may keep its test and value as one of the type b: of the same kind, and of an enum, of the same options. */
+function sameType(a: TargetType, b: TargetType): boolean {
+  if (a.kind === "enum" || b.kind === "enum") {
+    return (
+      a.kind === "enum" &&
+      b.kind === "enum" &&
+      a.options.length === b.options.length &&
+      a.options.every((o, i) => o === b.options[i])
+    );
+  }
+  const numeric = (k: string) => k === "int" || k === "float";
+  return a.kind === b.kind || (numeric(a.kind) && numeric(b.kind));
+}
+
+/**
+ * The guided picker of the condition that analysis is of, of the board of
+ * scope, which tells of a change of what it shows by onSource, with the
+ * source that it shows: a group of fields, which the editor's label names
+ * (labelledBy).
+ */
+export function GuidedPicker({
+  labelledBy,
+  analysis,
+  scope,
+  words,
+  describedBy,
+  onSource,
+}: {
+  labelledBy: string;
+  analysis: Analysis;
+  scope: Scope;
+  words: Words;
+  describedBy: string | undefined;
+  onSource: (source: string) => void;
+}) {
+  const { t } = words;
+  const picked = readPicked(analysis);
+  const choices = choicesOf(scope);
+  // What is typed of a number, which writes the source once it is one, and
+  // the field says what it lacks until then.
+  const [draft, setDraft] = useState<{ for: string; text: string }>();
+  if (picked === undefined) {
+    return (
+      <fieldset
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        className="space-y-2 rounded-md border border-border p-3"
+      >
+        <p>{t("expr.picker.unshown")}</p>
+        <Button onClick={() => onSource("")}>
+          {t("expr.picker.start_over")}
+        </Button>
+      </fieldset>
+    );
+  }
+  const name = valueNamer(scope.view, scope.boardId);
+  const nameOf = (target: Target) =>
+    name(target.ref, target.attribute) ?? target.ref;
+  const write = (next: Picked) => {
+    setDraft(undefined);
+    onSource(writePicked(next, nameOf));
+  };
+  const current =
+    picked.target === undefined
+      ? undefined
+      : choices.find((c) => c.value === targetValue(picked.target as Target));
+  const type = current?.type;
+  const draftKey = `${picked.target === undefined ? "" : targetValue(picked.target)} ${picked.test}`;
+  const numberText = draft?.for === draftKey ? draft.text : picked.value;
+  const numberProblem =
+    draft?.for === draftKey && !isNumber(draft.text.trim())
+      ? t("expr.picker.number_error")
+      : undefined;
+  const chooseTarget = (value: string) => {
+    const choice = choices.find((c) => c.value === value);
+    if (choice === undefined) {
+      write({ test: "eq", value: "" });
+      return;
+    }
+    const keep =
+      type !== undefined &&
+      sameType(type, choice.type) &&
+      testsOf(choice.type).includes(picked.test);
+    write(
+      keep
+        ? { ...picked, target: choice.target }
+        : {
+            target: choice.target,
+            test: choice.type.kind === "bool" ? "is_true" : "eq",
+            value: choice.type.kind === "bool" ? "" : defaultValue(choice.type),
+          },
+    );
+  };
+  const chooseTest = (test: Test) => {
+    if (type === undefined) {
+      return;
+    }
+    write({
+      ...picked,
+      test,
+      value: !takesValue(test)
+        ? ""
+        : takesValue(picked.test) && picked.value !== ""
+          ? picked.value
+          : defaultValue(type),
+    });
+  };
+  const valueField = () => {
+    if (type === undefined || !takesValue(picked.test)) {
+      return null;
+    }
+    const label = t("expr.picker.value");
+    switch (type.kind) {
+      case "bool":
+        return (
+          <SelectField
+            label={label}
+            value={picked.value}
+            onChange={(e) => write({ ...picked, value: e.currentTarget.value })}
+          >
+            {picked.value !== "true" && picked.value !== "false" && (
+              <option value={picked.value}>{picked.value}</option>
+            )}
+            <option value="true">{t("expr.plain.true")}</option>
+            <option value="false">{t("expr.plain.false")}</option>
+          </SelectField>
+        );
+      case "enum": {
+        const text = stringText(picked.value);
+        return (
+          <SelectField
+            label={label}
+            value={picked.value}
+            onChange={(e) => write({ ...picked, value: e.currentTarget.value })}
+          >
+            {(text === undefined || !type.options.includes(text)) && (
+              <option value={picked.value}>
+                {t("expr.picker.not_an_option", {
+                  value: text ?? picked.value,
+                })}
+              </option>
+            )}
+            {type.options.map((option) => (
+              <option key={option} value={stringLiteral(option)}>
+                {option}
+              </option>
+            ))}
+          </SelectField>
+        );
+      }
+      case "string":
+        return (
+          <TextField
+            label={label}
+            autoComplete="off"
+            spellCheck={false}
+            value={stringText(picked.value) ?? ""}
+            onChange={(e) =>
+              write({ ...picked, value: stringLiteral(e.currentTarget.value) })
+            }
+          />
+        );
+    }
+    return (
+      <TextField
+        label={label}
+        autoComplete="off"
+        spellCheck={false}
+        inputMode="decimal"
+        value={numberText}
+        error={numberProblem}
+        onChange={(e) => {
+          const text = e.currentTarget.value;
+          if (isNumber(text.trim())) {
+            onSource(writePicked({ ...picked, value: text.trim() }, nameOf));
+            setDraft({ for: draftKey, text });
+          } else {
+            setDraft({ for: draftKey, text });
+          }
+        }}
+      />
+    );
+  };
+  const groups: { group: Choice["group"]; label: string }[] = [
+    { group: "board", label: t("expr.picker.board_variables") },
+    { group: "global", label: t("expr.picker.global_variables") },
+    { group: "attribute", label: t("expr.picker.attributes") },
+  ];
+  return (
+    <fieldset
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      className="space-y-3 rounded-md border border-border p-3"
+      data-picker=""
+    >
+      <SelectField
+        label={t("expr.picker.target_label")}
+        value={picked.target === undefined ? "" : targetValue(picked.target)}
+        onChange={(e) => chooseTarget(e.currentTarget.value)}
+      >
+        <option value="">{t("expr.picker.choose")}</option>
+        {picked.target !== undefined && current === undefined && (
+          <option value={targetValue(picked.target)}>
+            {t("expr.picker.unread_target")}
+          </option>
+        )}
+        {groups.map(({ group, label }) => {
+          const of = choices.filter((c) => c.group === group);
+          return of.length === 0 ? null : (
+            <optgroup key={group} label={label}>
+              {of.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {t("expr.picker.target", {
+                    name: c.name,
+                    type: typeText(t, c.type.kind),
+                  })}
+                </option>
+              ))}
+            </optgroup>
+          );
+        })}
+      </SelectField>
+      {type !== undefined && (
+        <SelectField
+          label={t("expr.picker.test")}
+          value={picked.test}
+          onChange={(e) => chooseTest(e.currentTarget.value as Test)}
+        >
+          {testsOf(type).map((test) => (
+            <option key={test} value={test}>
+              {testText(words, test)}
+            </option>
+          ))}
+        </SelectField>
+      )}
+      {valueField()}
+    </fieldset>
+  );
+}

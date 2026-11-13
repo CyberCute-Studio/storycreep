@@ -189,8 +189,8 @@ export function UsageItem({
   );
 }
 
-/** One list of a thing's usages, read a page at a time once it is shown. */
-function UsageList({
+/** One list of a thing's usages, read a page at a time once it is shown, as a panel's and the expression editor's names show them. */
+export function UsageList({
   projectId,
   title,
   empty,

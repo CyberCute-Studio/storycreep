@@ -8,10 +8,16 @@
 // selected, its label, the port that it leaves and the node that it
 // enters, its place among its port's choices, and its deletion. Each does
 // without a drag what a drag of a link handle does on the canvas (WCAG
-// 2.5.7). The conditions of a connection and of an output, and a
-// connection's script, are the expression editor's (plan item 67).
+// 2.5.7). The conditions of a connection and of a branch's conditional
+// outputs, and a connection's on-traverse script, are edited with the
+// expression editor (web/app/src/expr, plan note N74).
 
-import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
+import type {
+  BranchOutput,
+  Connection,
+  ConnectionUpdatePayload,
+  Node,
+} from "@storycreep/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
@@ -33,6 +39,13 @@ import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
 import type { DocumentState, ProjectDocument } from "../document/store";
+import { ExpressionEditor } from "../expr/ExpressionEditor";
+import {
+  expressionShown,
+  sourceOf,
+  type TypedSource,
+  typedExpression,
+} from "../expr/fields";
 import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
@@ -684,6 +697,14 @@ export function Outputs({
                     {t("inspector.output_needed")}
                   </p>
                 )}
+                {output.kind !== "else" && (
+                  <OutputCondition
+                    projectId={projectId}
+                    node={node}
+                    output={output}
+                    named={named}
+                  />
+                )}
                 <PortChoices
                   projectId={projectId}
                   node={node}
@@ -738,6 +759,98 @@ export function Outputs({
         </Confirm>
       )}
     </section>
+  );
+}
+
+const outputField = payloadField("condition");
+
+/**
+ * The condition of a branch's conditional output (FR-EDIT-04), which picks
+ * it while it holds, the first of its branch's that does, in the expression
+ * editor, with its guided picker, which Save gives the output, as one
+ * branch_output.update, expecting the output's revision that the form
+ * shows. The empty source is kept, as a condition that does not compile,
+ * which the editor says.
+ */
+function OutputCondition({
+  projectId,
+  node,
+  output,
+  named,
+}: {
+  projectId: string;
+  node: Node;
+  output: BranchOutput;
+  /** What names the output by its place, which its field and its button are named by. */
+  named: { place: number; output: string };
+}) {
+  const { t } = useTranslation();
+  const nodeId = node.id;
+  const form = useEntityForm(projectId, output, (view, id) =>
+    view.nodes.get(nodeId)?.outputs?.find((o) => o.id === id),
+  );
+  const { commands, held, shown, against } = form;
+  const typed = useRef<TypedSource>(undefined);
+  const refusal = refusalOf(commands.error, t, outputField);
+  useFocusRefusal(held.form, commands.error);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const source =
+      typed.current?.key === held.key
+        ? typed.current.source
+        : sourceOf(shown.condition);
+    const changed = source !== sourceOf(against.condition);
+    const changes: Command[] = changed
+      ? [
+          {
+            type: "branch_output.update",
+            payload: { id: shown.id, condition: source },
+            expected_rev: { [against.id]: against.rev },
+          },
+        ]
+      : [];
+    form.save(
+      changes,
+      changed ? { condition: typedExpression(source, false) } : {},
+    );
+  };
+  return (
+    <div className="space-y-2">
+      <Alert
+        message={form.overlaps.length > 0 ? undefined : refusal?.message}
+      />
+      <ConflictNotice
+        form={form}
+        fieldName={() => t("inspector.output_condition", named)}
+        shownValue={(_, value) => expressionShown(value)}
+      />
+      <SaveStatus form={form} />
+      <form
+        key={held.key}
+        {...held.props}
+        className="space-y-2"
+        onSubmit={submit}
+        noValidate
+      >
+        <ExpressionEditor
+          projectId={projectId}
+          boardId={node.board_id}
+          context="condition"
+          label={t("inspector.output_condition", named)}
+          defaultValue={sourceOf(shown.condition)}
+          stored={shown.condition}
+          error={refusal?.fields.condition}
+          optional={false}
+          guided
+          onChange={(source) => {
+            typed.current = { key: held.key, source };
+          }}
+        />
+        <Button type="submit" disabled={commands.isPending}>
+          {t("inspector.save_output_condition", named)}
+        </Button>
+      </form>
+    </div>
   );
 }
 
@@ -1143,6 +1256,8 @@ export function ReferencedBy({
 
 const connectionField = payloadField(
   "label",
+  "condition",
+  "on_traverse",
   "from_node_id",
   "from_port",
   "to_node_id",
@@ -1155,11 +1270,13 @@ function portValue(nodeId: string, port: string): string {
 
 /**
  * The form of the connection selected (FR-EDIT-03): its label, the choice
- * that the player is offered, a rich text, the port that it leaves, of an
- * element or of a branch's output of its board, and the node of the board
- * that it enters, which Save sends in one batch, a connection.update of
- * the label and a connection.reconnect of the ends that changed, each
- * expecting the revision that the form shows.
+ * that the player is offered, a rich text, its condition, which makes it a
+ * choice while it holds, and its on-traverse script, in the expression
+ * editor, the port that it leaves, of an element or of a branch's output of
+ * its board, and the node of the board that it enters, which Save sends in
+ * one batch, a connection.update of the label and the expressions and a
+ * connection.reconnect of the ends that changed, each expecting the
+ * revision that the form shows.
  */
 function ConnectionForm({
   projectId,
@@ -1176,6 +1293,9 @@ function ConnectionForm({
   const { commands, held, shown, against } = form;
   // What the editor of the label gave last, of the form shown now.
   const label = useRef<{ key: string; value: RichTextValue }>(undefined);
+  // What the editors of the condition and the on-traverse script gave last.
+  const condition = useRef<TypedSource>(undefined);
+  const traverse = useRef<TypedSource>(undefined);
   const [invalid, setInvalid] = useState<{ fields: Record<string, string> }>();
   const refusal = refusalOf(commands.error, t, connectionField);
   useFocusRefusal(held.form, invalid ?? commands.error);
@@ -1231,10 +1351,25 @@ function ConnectionForm({
     const expected_rev = { [against.id]: against.rev };
     const changes: Command[] = [];
     const labelChanged = !equal(text, against.label);
-    if (labelChanged) {
+    const typedCondition =
+      condition.current?.key === held.key
+        ? condition.current.source
+        : sourceOf(shown.condition);
+    const typedTraverse =
+      traverse.current?.key === held.key
+        ? traverse.current.source
+        : sourceOf(shown.on_traverse);
+    const conditionChanged = typedCondition !== sourceOf(against.condition);
+    const traverseChanged = typedTraverse !== sourceOf(against.on_traverse);
+    const update: Omit<ConnectionUpdatePayload, "id"> = {
+      ...(labelChanged ? { label: text } : {}),
+      ...(conditionChanged ? { condition: typedCondition } : {}),
+      ...(traverseChanged ? { on_traverse: typedTraverse } : {}),
+    };
+    if (Object.keys(update).length > 0) {
       changes.push({
         type: "connection.update",
-        payload: { id: shown.id, label: text },
+        payload: { id: shown.id, ...update },
         expected_rev,
       });
     }
@@ -1255,6 +1390,12 @@ function ConnectionForm({
     }
     form.save(changes, {
       ...(labelChanged ? { label: text } : {}),
+      ...(conditionChanged
+        ? { condition: typedExpression(typedCondition, true) }
+        : {}),
+      ...(traverseChanged
+        ? { on_traverse: typedExpression(typedTraverse, true) }
+        : {}),
       ...(leaves ? { from_node_id: fromNode, from_port: fromPort } : {}),
       ...(enters ? { to_node_id: toNode } : {}),
     });
@@ -1262,11 +1403,15 @@ function ConnectionForm({
   const fieldName = (field: string) =>
     field === "label"
       ? t("inspector.label")
-      : field === "to_node_id"
-        ? t("inspector.enters")
-        : field === "order"
-          ? t("inspector.place")
-          : t("inspector.leaves");
+      : field === "condition"
+        ? t("inspector.condition")
+        : field === "on_traverse"
+          ? t("inspector.on_traverse")
+          : field === "to_node_id"
+            ? t("inspector.enters")
+            : field === "order"
+              ? t("inspector.place")
+              : t("inspector.leaves");
   return (
     <div className="space-y-4">
       <Alert
@@ -1275,7 +1420,9 @@ function ConnectionForm({
       <ConflictNotice
         form={form}
         fieldName={fieldName}
-        shownValue={() => undefined}
+        shownValue={(field, value) =>
+          field === "condition" ? expressionShown(value) : undefined
+        }
       />
       <SaveStatus form={form} />
       <form
@@ -1295,6 +1442,35 @@ function ConnectionForm({
           onChange={(value) => {
             label.current = { key: held.key, value };
             held.props.onChange();
+          }}
+        />
+        <ExpressionEditor
+          projectId={projectId}
+          boardId={connection.board_id}
+          context="condition"
+          label={t("inspector.condition")}
+          hint={t("inspector.condition_hint")}
+          defaultValue={sourceOf(shown.condition)}
+          stored={shown.condition}
+          error={refusal?.fields.condition}
+          optional
+          guided
+          onChange={(source) => {
+            condition.current = { key: held.key, source };
+          }}
+        />
+        <ExpressionEditor
+          projectId={projectId}
+          boardId={connection.board_id}
+          context="script"
+          label={t("inspector.on_traverse")}
+          hint={t("inspector.on_traverse_hint")}
+          defaultValue={sourceOf(shown.on_traverse)}
+          stored={shown.on_traverse}
+          error={refusal?.fields.on_traverse}
+          optional
+          onChange={(source) => {
+            traverse.current = { key: held.key, source };
           }}
         />
         <SelectField

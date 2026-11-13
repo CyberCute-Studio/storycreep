@@ -40,6 +40,14 @@
   /* What a dialog dims the page behind it with. */
   --color-backdrop: light-dark(#0b0d12, #000000);
 
+  /* What the expression editor colours of a source: its keywords and the
+     functions that it calls, its numbers and its true and false, and its
+     strings (web/app/src/expr). Its names are the accent, and its comments
+     secondary text. */
+  --color-code-keyword: light-dark(#8a2797, #e0a6ee);
+  --color-code-number: light-dark(#0d6b43, #6fd3a2);
+  --color-code-string: light-dark(#8f4600, #f1b26c);
+
   /* An error, and the text on a destructive action. */
   --color-danger: light-dark(#b3261e, #ff8b80);
   --color-danger-fg: light-dark(#ffffff, #2b0806);
