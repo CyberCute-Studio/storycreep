@@ -112,6 +112,14 @@ describe("an expression's analysis", () => {
     expect(
       placeText(words.t, source, a.error ?? { code: "", start: 0, end: 0 }),
     ).toBe("line 2, characters 9 to 12");
+    // One whose range runs across a line break, from a line's character to
+    // another's, as of a value in parentheses over two lines.
+    const across = 'gold = (keeper\n+ "!")';
+    const b = analyze(across, "script", scope);
+    expect(b.error?.code).toBe("type_mismatch");
+    expect(
+      placeText(words.t, across, b.error ?? { code: "", start: 0, end: 0 }),
+    ).toBe("line 1, character 9, to line 2, character 5");
   });
 
   it("checks a source against its board: a variable of another board is out of its scope", () => {

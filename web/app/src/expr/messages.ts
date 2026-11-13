@@ -143,8 +143,9 @@ function problemText(w: Words, e: SourceError): string {
 
 /**
  * Returns where in source an error is, as its range in code points says,
- * counted from 1: the characters that it covers, of the line that they
- * start on where the source has several, or the place between two
+ * counted from 1: the characters that it covers, of the line that they are
+ * on where the source has several, or from a line's to another's, of a
+ * range that runs across a line break, or the place between two
  * characters, or the end of the source, of one that covers none.
  */
 export function placeText(
@@ -153,36 +154,52 @@ export function placeText(
   e: SourceError,
 ): string {
   const chars = [...source];
-  const before = chars.slice(0, e.start);
-  // The line of the error's start, and where that line starts, in code
-  // points.
-  let line = 1;
-  let lineStart = 0;
-  before.forEach((c, i) => {
-    if (c === "\n" || (c === "\r" && chars[i + 1] !== "\n")) {
-      line++;
-      lineStart = i + 1;
+  // The line of the character at index, counted from 1, and its place on
+  // that line, of a CR LF the LF ending the line.
+  const at = (index: number) => {
+    let line = 1;
+    let lineStart = 0;
+    for (let i = 0; i < index && i < chars.length; i++) {
+      const c = chars[i];
+      if (c === "\n" || (c === "\r" && chars[i + 1] !== "\n")) {
+        line++;
+        lineStart = i + 1;
+      }
     }
-  });
+    return { line, char: index - lineStart + 1 };
+  };
   const several = chars.some((c) => c === "\n" || c === "\r");
-  const first = e.start - lineStart + 1;
-  const last = e.end - lineStart;
+  const start = at(e.start);
   if (e.end <= e.start) {
     if (e.start >= chars.length) {
       return t("expr.place.end");
     }
     return several
-      ? t("expr.place.line_before", { line, char: first })
-      : t("expr.place.before", { char: first });
+      ? t("expr.place.line_before", { line: start.line, char: start.char })
+      : t("expr.place.before", { char: start.char });
+  }
+  // The last character that it covers.
+  const end = at(e.end - 1);
+  if (end.line !== start.line) {
+    return t("expr.place.lines", {
+      line: start.line,
+      first: start.char,
+      end: end.line,
+      last: end.char,
+    });
   }
   if (several) {
-    return first === last
-      ? t("expr.place.line_char", { line, char: first })
-      : t("expr.place.line_chars", { line, first, last });
+    return start.char === end.char
+      ? t("expr.place.line_char", { line: start.line, char: start.char })
+      : t("expr.place.line_chars", {
+          line: start.line,
+          first: start.char,
+          last: end.char,
+        });
   }
-  return first === last
-    ? t("expr.place.char", { char: first })
-    : t("expr.place.chars", { first, last });
+  return start.char === end.char
+    ? t("expr.place.char", { char: start.char })
+    : t("expr.place.chars", { first: start.char, last: end.char });
 }
 
 /** Returns what an error of source says: what it is, where it is, and what might be meant, if anything near is. */

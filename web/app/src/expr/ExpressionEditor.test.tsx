@@ -100,7 +100,9 @@ const moodRead: Usage = {
  * condition given, as the server compiled it, valid unless stored says
  * otherwise, each connection.update of which takes it to its next
  * revision, once sending allows, and refuses each variable.create where
- * refuseCreate says so; and records what it is asked.
+ * refuseCreate says so, and the read of the components where
+ * refuseComponents does; and records what it is asked. Elara's reads are
+ * two pages: Dock's of elara.mood, and then Quay's of elara.trust.
  */
 function boardPage(
   condition?: string,
@@ -108,7 +110,12 @@ function boardPage(
   {
     sending,
     refuseCreate = false,
-  }: { sending?: Promise<void>; refuseCreate?: boolean } = {},
+    refuseComponents = false,
+  }: {
+    sending?: Promise<void>;
+    refuseCreate?: boolean;
+    refuseComponents?: boolean;
+  } = {},
 ) {
   let connection: Connection = testConnection(choice, ids.quay, dock, {
     board_id: ids.harbour,
@@ -138,6 +145,9 @@ function boardPage(
       case "listComponentTypes":
         return { items: [character], next_cursor: null };
       case "listComponents":
+        if (refuseComponents) {
+          throw refused(503, { code: "unavailable" });
+        }
         return { items: [elara], next_cursor: null };
       case "listBoards":
         return { items: [harbour], next_cursor: null };
@@ -154,11 +164,13 @@ function boardPage(
       case "getConnection":
         return connection;
       case "listComponentUsages": {
-        const { query } = input as { query: { use: string } };
-        return {
-          items: query.use === "read" ? [trustRead, moodRead] : [],
-          next_cursor: null,
-        };
+        const { query } = input as { query: { use: string; cursor?: string } };
+        if (query.use !== "read") {
+          return { items: [], next_cursor: null };
+        }
+        return query.cursor === undefined
+          ? { items: [moodRead], next_cursor: "trust" }
+          : { items: [trustRead], next_cursor: null };
       }
       case "listTags":
         return { items: [] };
@@ -312,7 +324,7 @@ describe("the expression editor", () => {
   // Verifies: FR-EXPR-01/AC2
   it("offers the names of the board as they are typed, with their types, what they are, and where a variable is changed, and writes the one chosen", async () => {
     const user = userEvent.setup();
-    boardPage();
+    const calls = boardPage();
     const { condition } = await openChoice(user);
     await user.type(condition, "go");
     const list = await screen.findByRole("listbox", { name: "Suggestions" });
@@ -322,6 +334,15 @@ describe("the expression editor", () => {
     await waitFor(() =>
       expect(gold.textContent).toContain("Changed in Harbour: Quay"),
     );
+    // Of a page of one more site than it tells of, rather than the list's
+    // hundred.
+    expect(
+      calls.mock.calls.some(
+        ([operation, input]) =>
+          operation === "listVariableUsages" &&
+          (input as { query: { limit?: number } }).query.limit === 4,
+      ),
+    ).toBe(true);
     expect(condition.getAttribute("aria-activedescendant")).toBe(gold.id);
     await user.keyboard("{Enter}");
     expect(fieldValue(condition)).toBe("gold");
@@ -355,6 +376,24 @@ describe("the expression editor", () => {
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
   });
 
+  it("scrolls the offer that the arrows highlight into view, as the list's height may hide it", async () => {
+    const user = userEvent.setup();
+    boardPage();
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const { condition } = await openChoice(user);
+      await user.type(condition, "tr");
+      const list = await screen.findByRole("listbox", { name: "Suggestions" });
+      await user.keyboard("{ArrowDown}");
+      const second = within(list).getAllByRole("option")[1];
+      expect(second.getAttribute("aria-selected")).toBe("true");
+      expect(scrolled.mock.contexts).toContain(second);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
+
   it("opens its list as a name is typed, rather than where the caret comes to one, and not of a name typed whole, so that Enter saves the condition", async () => {
     const user = userEvent.setup();
     const calls = boardPage();
@@ -364,7 +403,13 @@ describe("the expression editor", () => {
     // The one offer of the name typed whole is what it is already.
     await user.type(condition, "a");
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
-    await user.type(condition, " and trust > 1");
+    // As is the board's trust typed whole, of whose offers global.trust,
+    // which the list has first, is another, which its Enter would write.
+    await user.type(condition, " and trus");
+    await screen.findByRole("listbox", { name: "Suggestions" });
+    await user.type(condition, "t");
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
+    await user.type(condition, " > 1");
     // The arrows that bring the caret to a name open nothing, and leave
     // Enter to save the condition.
     await user.keyboard("{Home}{ArrowRight>16/}");
@@ -403,6 +448,19 @@ describe("the expression editor", () => {
     // What a second save would have sent, after the first.
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(batches(calls)).toHaveLength(1);
+  });
+
+  it("saves a condition, which is one line, of Enter with Shift too, rather than break its line", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage();
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "gold > 1");
+    await user.keyboard("{Shift>}{Enter}{/Shift}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      { type: "connection.update", payload: { condition: "gold > 1" } },
+    ]);
+    await within(form).findByText("Saved.");
   });
 
   it("reads a stored source's line breaks as its text area holds them", async () => {
@@ -544,6 +602,50 @@ describe("the expression editor", () => {
     ).toBe("angry");
   });
 
+  it("keeps the focus in the picker once a condition that it cannot show is cleared to build one", async () => {
+    const user = userEvent.setup();
+    boardPage("gold + 1 > 2");
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    within(picker).getByText(/^This condition is more than/);
+    await user.click(
+      within(picker).getByRole("button", {
+        name: "Clear it and build one here",
+      }),
+    );
+    within(picker).getByRole("combobox", { name: "Value to test" });
+    expect(document.activeElement).toBe(picker);
+  });
+
+  it("says that it shows a condition once the page has read the project's names, rather than offer to clear it, where the read failed", async () => {
+    const user = userEvent.setup();
+    boardPage("gold >= 3", {}, { refuseComponents: true });
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    within(picker).getByText(
+      /^The guided picker shows a condition once the project's variables and components are read/,
+    );
+    expect(within(picker).queryByRole("button")).toBeNull();
+  });
+
+  it("keeps showing what it wrote, of a source that does not compile then, as of a text longer than a string may be", async () => {
+    const user = userEvent.setup();
+    boardPage('keeper == "a"');
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const value = within(form).getByRole("textbox", { name: "Compared with" });
+    await user.clear(value);
+    await user.paste("x".repeat(4097));
+    expect(value.isConnected).toBe(true);
+    expect(fieldValue(value)).toHaveLength(4097);
+    await within(form).findByText(
+      /^The text in quotes is longer than 4,096 characters\./,
+    );
+    expect(document.activeElement).toBe(value);
+  });
+
   // Verifies: FR-VAR-02/AC1, FR-DEP-01/AC3
   it("shows what each name resolved to, the board's variable of a key that a global one has too, and its usages and its panel within two presses", async () => {
     const user = userEvent.setup();
@@ -594,9 +696,17 @@ describe("the expression editor", () => {
         name: "Show where elara.trust is used",
       }),
     );
-    await within(names).findByRole("link", {
+    // The first page of Elara's reads has none of elara.trust, which the
+    // list says, and reads on from.
+    const reads = await within(names).findByRole("region", {
+      name: "Read by",
+    });
+    await within(reads).findByText("None of those read so far.");
+    await user.click(within(reads).getByRole("button", { name: "Show more" }));
+    await within(reads).findByRole("link", {
       name: "The on-enter script of Quay",
     });
+    expect(within(reads).queryByText("None of those read so far.")).toBeNull();
     expect(
       within(names).queryByRole("link", { name: "The on-exit script of Dock" }),
     ).toBeNull();
@@ -670,10 +780,18 @@ describe("the expression editor", () => {
         name: "Create met_mira, a global true or false",
       }),
     );
-    // The offer goes while the page shows the variable created, and comes
-    // again once the creation is refused, with what the refusal says.
+    // The offer goes while the page shows the variable created, and the
+    // focus with it, and comes again once the creation is refused, with what
+    // the refusal says, and the focus on its Create.
     await waitFor(() =>
       expect(within(offerOf("met_mira")).getByRole("alert")).toBeDefined(),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(offerOf("met_mira")).getByRole("button", {
+          name: "Create met_mira, a global true or false",
+        }),
+      ),
     );
     await user.type(condition, "x");
     const next = await within(form).findByRole("region", {

@@ -39,7 +39,12 @@ import { parseValue } from "../content/values";
 import { hundredths } from "../document/appliers/node";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
-import { sourceOf, type TypedSource, typedExpression } from "../expr/fields";
+import {
+  sourceOf,
+  type TypedSource,
+  typedExpression,
+  typedSourceOf,
+} from "../expr/fields";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
@@ -710,12 +715,8 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
   useFocusRefusal(held.form, commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const typed = (ref: typeof onEnter, field: "on_enter" | "on_exit") =>
-      ref.current?.key === held.key
-        ? ref.current.source
-        : sourceOf(shown[field]);
-    const enter = typed(onEnter, "on_enter");
-    const exit = typed(onExit, "on_exit");
+    const enter = typedSourceOf(onEnter.current, held.key, shown.on_enter);
+    const exit = typedSourceOf(onExit.current, held.key, shown.on_exit);
     const update: Omit<NodeUpdatePayload, "id"> = {
       ...(enter !== sourceOf(against.on_enter) ? { on_enter: enter } : {}),
       ...(exit !== sourceOf(against.on_exit) ? { on_exit: exit } : {}),

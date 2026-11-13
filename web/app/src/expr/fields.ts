@@ -3,7 +3,8 @@
 // branch's output, and a node's scripts do (plan note N74): the source last
 // typed, of the form shown by its key, and whether the guided picker holds
 // what it cannot write yet, which the form's Save is refused for; the
-// owner's own source, of none the empty one; what the form holds of the
+// owner's own source, of none the empty one, which the form saves where
+// nothing was typed in the form shown; what the form holds of the
 // field over the owner as it is now, once a save is refused for a change
 // made elsewhere; and what a notice of such a refusal shows of it.
 
@@ -22,6 +23,15 @@ export function unfinishedOf(typed: TypedSource, key: string): boolean {
 /** Returns the source of the expression that an owner holds, or the empty one of none. */
 export function sourceOf(e: Expression | undefined): string {
   return e?.source ?? "";
+}
+
+/** Returns the source that a form of the key saves of an expression's field: what its editor gave last, of the form shown by that key, or else the source of shown, the expression that the form shows. */
+export function typedSourceOf(
+  typed: TypedSource,
+  key: string,
+  shown: Expression | undefined,
+): string {
+  return typed?.key === key ? typed.source : sourceOf(shown);
 }
 
 /**

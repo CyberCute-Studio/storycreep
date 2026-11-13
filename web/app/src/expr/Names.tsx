@@ -10,7 +10,7 @@
 import { walk } from "@storycreep/shared/expr/compile";
 import { newId } from "@storycreep/shared/ids";
 import { Link } from "@tanstack/react-router";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { valueNamer } from "../content/textNames";
@@ -21,6 +21,7 @@ import {
   variableUsagesQuery,
 } from "../content/usages";
 import { type Command, useCommands } from "../project/queries";
+import { focusIsNowhere } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
 import { textLink } from "../ui/Page";
@@ -320,9 +321,11 @@ export function Names({
  * a variable.create of its own, as the page's batches are, once Create is
  * pressed, after which the name names it, and the field has the focus
  * again, as the offer goes; a refusal of it is said under the offer of the
- * name that it was of alone. A change of its type or its scope is no
- * change of the expression's owner, whose form it does not tell of, so that
- * the form does not hold the owner as it was for it (useHeld).
+ * name that it was of alone, which has the focus on its Create again. Its
+ * type is what the name's place suggests, of the literals and the board's
+ * names there (unknownOf). A change of its type or its scope is no change
+ * of the expression's owner, whose form it does not tell of, so that the
+ * form does not hold the owner as it was for it (useHeld).
  */
 export function UnknownName({
   projectId,
@@ -336,7 +339,7 @@ export function UnknownName({
   onCreated: () => void;
 }) {
   const { t } = useTranslation();
-  const unknown = useMemo(() => unknownOf(analysis), [analysis]);
+  const unknown = useMemo(() => unknownOf(analysis, scope), [analysis, scope]);
   const commands = useCommands(projectId);
   // What the user chose of the name of key, which another name starts
   // anew from what its place suggests.
@@ -348,6 +351,22 @@ export function UnknownName({
   // The key of the name that Create was last pressed for.
   const [tried, setTried] = useState<string>();
   const headingId = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  // The key of the name whose creation was refused, whose offer, which went
+  // while the page showed the variable created, and the focus with it, to
+  // the page's content (focusContentIfLost), comes again: its Create has the
+  // focus then, unless the user has given it to a control meanwhile, and
+  // the alert above it says why (WCAG 2.4.3).
+  const [refocus, setRefocus] = useState<string>();
+  useEffect(() => {
+    if (refocus === undefined || refocus !== unknown?.key) {
+      return;
+    }
+    setRefocus(undefined);
+    if (focusIsNowhere(document)) {
+      button.current?.focus();
+    }
+  }, [refocus, unknown?.key]);
   if (unknown === undefined) {
     return null;
   }
@@ -367,12 +386,15 @@ export function UnknownName({
         ...(where === "board" ? { board_id: scope.boardId } : {}),
       },
     };
-    setTried(unknown.key);
+    const { key } = unknown;
+    setTried(key);
+    setRefocus(undefined);
     commands.mutate([command], {
       onSuccess: () => {
         setChosen(undefined);
         onCreated();
       },
+      onError: () => setRefocus(key),
     });
   };
   return (
@@ -425,7 +447,7 @@ export function UnknownName({
           {refusal.message}
         </p>
       )}
-      <Button disabled={commands.isPending} onClick={create}>
+      <Button ref={button} disabled={commands.isPending} onClick={create}>
         {where === "global"
           ? t("expr.create.create_global", {
               key: unknown.key,

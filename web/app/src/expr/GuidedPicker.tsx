@@ -149,13 +149,26 @@ export function GuidedPicker({
   onUnfinished: () => void;
 }) {
   const { t } = words;
-  const picked = readPicked(analysis);
+  // What the picker wrote last, which it shows still while the source is
+  // what it wrote, though that does not compile, as of a text longer than a
+  // string may be, or the page has not read the board's names yet to tell,
+  // rather than take the field that is being edited away.
+  const [written, setWritten] = useState<{ source: string; picked: Picked }>();
+  const picked =
+    readPicked(analysis) ??
+    (written?.source === analysis.source ? written.picked : undefined);
   const choices = choicesOf(scope);
   // What is typed of a number, which writes the source once it is one, and
   // the field says what it lacks until then, which the form's Save is
-  // refused for (onUnfinished), rather than save the number before it.
+  // refused for (onUnfinished), rather than save the number before it; or
+  // of a text, which writes the source as it is typed.
   const [draft, setDraft] = useState<{ for: string; text: string }>();
   if (picked === undefined) {
+    // A condition that parses, of a page that has not read the board's
+    // names, or whose read of them failed, may be one that the picker
+    // shows, once it can tell (Analysis' checked), which it says, rather
+    // than offer to clear it.
+    const unchecked = !analysis.checked && analysis.parsed !== undefined;
     return (
       <fieldset
         ref={group}
@@ -164,19 +177,35 @@ export function GuidedPicker({
         aria-describedby={describedBy}
         className="space-y-2 rounded-md border border-border p-3"
       >
-        <p>{t("expr.picker.unshown")}</p>
-        <Button onClick={() => onSource("")}>
-          {t("expr.picker.start_over")}
-        </Button>
+        <p>
+          {unchecked ? t("expr.picker.unchecked") : t("expr.picker.unshown")}
+        </p>
+        {!unchecked && (
+          <Button
+            onClick={() => {
+              onSource("");
+              // The group keeps the focus, of the button that goes, whose
+              // fields to build a condition with follow it.
+              group.current?.focus();
+            }}
+          >
+            {t("expr.picker.start_over")}
+          </Button>
+        )}
       </fieldset>
     );
   }
   const name = valueNamer(scope.view, scope.boardId);
   const nameOf = (target: Target) =>
     name(target.ref, target.attribute) ?? target.ref;
+  const writeSource = (next: Picked) => {
+    const source = writePicked(next, nameOf);
+    setWritten({ source, picked: next });
+    onSource(source);
+  };
   const write = (next: Picked) => {
     setDraft(undefined);
-    onSource(writePicked(next, nameOf));
+    writeSource(next);
   };
   const current =
     picked.target === undefined
@@ -270,15 +299,24 @@ export function GuidedPicker({
         );
       }
       case "string":
+        // What is typed, which the field shows as it is while the string
+        // that it writes is one that the lexer refuses, as one longer than
+        // a string may be, of which the editor says so.
         return (
           <TextField
             label={label}
             autoComplete="off"
             spellCheck={false}
-            value={stringText(picked.value) ?? ""}
-            onChange={(e) =>
-              write({ ...picked, value: stringLiteral(e.currentTarget.value) })
+            value={
+              draft?.for === draftKey
+                ? draft.text
+                : (stringText(picked.value) ?? "")
             }
+            onChange={(e) => {
+              const text = e.currentTarget.value;
+              writeSource({ ...picked, value: stringLiteral(text) });
+              setDraft({ for: draftKey, text });
+            }}
           />
         );
     }
@@ -296,7 +334,7 @@ export function GuidedPicker({
           const text = e.currentTarget.value;
           setDraft({ for: draftKey, text });
           if (isNumber(text.trim())) {
-            onSource(writePicked({ ...picked, value: text.trim() }, nameOf));
+            writeSource({ ...picked, value: text.trim() });
           } else {
             onUnfinished();
           }

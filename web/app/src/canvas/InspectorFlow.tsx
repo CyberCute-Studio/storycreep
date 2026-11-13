@@ -45,6 +45,7 @@ import {
   sourceOf,
   type TypedSource,
   typedExpression,
+  typedSourceOf,
   unfinishedOf,
 } from "../expr/fields";
 import { Confirm, payloadField } from "../project/dialogs";
@@ -808,10 +809,7 @@ function OutputCondition({
       return;
     }
     setInvalid(undefined);
-    const source =
-      typed.current?.key === held.key
-        ? typed.current.source
-        : sourceOf(shown.condition);
+    const source = typedSourceOf(typed.current, held.key, shown.condition);
     const changed = source !== sourceOf(against.condition);
     const changes: Command[] = changed
       ? [
@@ -1373,14 +1371,16 @@ function ConnectionForm({
     const expected_rev = { [against.id]: against.rev };
     const changes: Command[] = [];
     const labelChanged = !equal(text, against.label);
-    const typedCondition =
-      condition.current?.key === held.key
-        ? condition.current.source
-        : sourceOf(shown.condition);
-    const typedTraverse =
-      traverse.current?.key === held.key
-        ? traverse.current.source
-        : sourceOf(shown.on_traverse);
+    const typedCondition = typedSourceOf(
+      condition.current,
+      held.key,
+      shown.condition,
+    );
+    const typedTraverse = typedSourceOf(
+      traverse.current,
+      held.key,
+      shown.on_traverse,
+    );
     const conditionChanged = typedCondition !== sourceOf(against.condition);
     const traverseChanged = typedTraverse !== sourceOf(against.on_traverse);
     const update: Omit<ConnectionUpdatePayload, "id"> = {

@@ -12,7 +12,7 @@ const scope = harbourScope();
 
 /** Returns what the unknown name of source, of context, would be. */
 function unknown(source: string, context: Context = "condition") {
-  return unknownOf(analyze(source, context, scope));
+  return unknownOf(analyze(source, context, scope), scope);
 }
 
 describe("an unknown name's variable", () => {
@@ -39,5 +39,23 @@ describe("an unknown name's variable", () => {
     expect(unknown("drift * 1.5 > 2")?.type).toBe("float");
     expect(unknown("drift * 2 > 2")?.type).toBe("int");
     expect(unknown("drift > -1.5")?.type).toBe("float");
+  });
+
+  it("is of the type of a name of the board that it is assigned to, compared with, or added to, as the checker resolves the name", () => {
+    // keeper is a string; trust, a bare key, the board's whole number, and
+    // global.trust a float; elara.trust a whole number of the component.
+    expect(unknown("keeper = greeting", "script")?.type).toBe("string");
+    expect(unknown("keeper += greeting", "script")?.type).toBe("string");
+    expect(unknown("global.trust = drift", "script")?.type).toBe("float");
+    expect(unknown("trust *= drift", "script")?.type).toBe("int");
+    expect(unknown("greeting = keeper", "script")?.type).toBe("string");
+    expect(unknown("mood == keeper")?.type).toBe("string");
+    expect(unknown("met_elara or seen")?.type).toBe("bool");
+    expect(unknown("drift < global.trust")?.type).toBe("float");
+    expect(unknown("elara.trust > drift")?.type).toBe("int");
+    // Without the scope, a name says nothing of its type.
+    expect(unknownOf(analyze("keeper = greeting", "script", scope))?.type).toBe(
+      "int",
+    );
   });
 });

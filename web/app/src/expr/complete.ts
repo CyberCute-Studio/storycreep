@@ -75,7 +75,8 @@ const identifierPart = /[A-Za-z0-9_]/;
  * Returns whether the end of prefix is within a string literal, and where
  * that string's quote is, or within a comment, as the lexer reads them
  * (§5.8.1): a string runs from a " to the next " that no \ escapes, or to
- * the end of its line, and a comment from // to the end of its line.
+ * the end of its line, which a \ before it ends too, as unterminated, and a
+ * comment from // to the end of its line.
  */
 function stateAt(
   prefix: string,
@@ -90,7 +91,10 @@ function stateAt(
     }
     if (state === "string") {
       if (c === "\\") {
-        i++;
+        // What it escapes, but a line break, which ends the string.
+        if (prefix[i + 1] !== "\n" && prefix[i + 1] !== "\r") {
+          i++;
+        }
       } else if (c === '"') {
         state = "code";
       }

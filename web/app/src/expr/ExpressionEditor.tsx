@@ -24,8 +24,14 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { variableUsagesQuery } from "../content/usages";
+import {
+  boardNameOf,
+  nodeTitleOf,
+  siteText,
+  variableUsagesQuery,
+} from "../content/usages";
 import { pressedClass } from "../ui/Button";
+import { OfferFrame, OfferList, OfferOption } from "../ui/Offers";
 import {
   type Analysis,
   analyze,
@@ -235,16 +241,17 @@ const writesKept = 30_000;
 
 /**
  * Where the variable of id is written, as the first sites that its usage
- * list of its writes has, which the highlighted offer tells of: of the
- * list's own read, which the variable's usages under the field show too
- * (Names.tsx), kept for a while (writesKept), and which says nothing of a
- * refusal of its own, as the offer says that where it is written could not
- * be read.
+ * list of its writes has, which the highlighted offer tells of: of a read
+ * of a page of one more than it tells of, which says whether there are
+ * more, rather than of the list's hundred, kept for a while (writesKept),
+ * and which says nothing of a refusal of its own, as the offer says that
+ * where it is written could not be read. A site is named by its board and
+ * its node, as its usage list names them (UsageItem).
  */
 function Writes({ projectId, id }: { projectId: string; id: string }) {
   const { t } = useTranslation();
   const writes = useInfiniteQuery({
-    ...variableUsagesQuery(projectId, id, "write"),
+    ...variableUsagesQuery(projectId, id, "write", writesShown + 1),
     staleTime: writesKept,
   });
   if (writes.isPending) {
@@ -261,13 +268,10 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
   const items = first?.items ?? [];
   const sites = items.slice(0, writesShown).map((usage) =>
     usage.board_id === undefined
-      ? t("expr.offer.write_site_unboarded")
+      ? siteText(t, usage, undefined)
       : t("expr.offer.write_site", {
-          board: usage.board_name ?? t("boards.unknown_board"),
-          node:
-            usage.node_title === undefined || usage.node_title === ""
-              ? t("boards.untitled_node")
-              : usage.node_title,
+          board: boardNameOf(t, usage),
+          node: nodeTitleOf(t, usage),
         }),
   );
   return (
@@ -291,15 +295,16 @@ function spotKey(spot: Spot): string {
  * the list of what it offers to complete at the caret, below it, as a name
  * is typed, while the caret stays in it, and the field has the focus,
  * rather than wherever the caret comes to a name, as the arrows move it
- * through a script, and not of a name typed whole, whose one offer is what
- * it is already. The text area keeps the focus, as a combobox's pattern has
- * it: its arrows move through the list (aria-activedescendant), Enter and
- * Tab write what is highlighted, which closes the list until a key types
- * again, Escape closes the list until the caret leaves what it was of, and
- * a click or a tap on an offer writes it without taking the focus, so that
- * the on-screen keyboard stays. Enter elsewhere in a condition, which is
- * one line, saves its form, as Enter in a field of one line does, but not
- * while its Save is disabled (submitImplicitly).
+ * through a script, and not of a name typed whole, of which an offer is
+ * what it is already. The text area keeps the focus, as a combobox's
+ * pattern has it (OfferFrame): its arrows move through the list
+ * (aria-activedescendant), Enter and Tab write what is highlighted, which
+ * closes the list until a key types again, Escape closes the list until the
+ * caret leaves what it was of, and a click or a tap on an offer writes it
+ * without taking the focus, so that the on-screen keyboard stays. Enter
+ * elsewhere in a condition, which is one line, with Shift too, saves its
+ * form, as Enter in a field of one line does, but not while its Save is
+ * disabled (submitImplicitly).
  */
 function TextView({
   id,
@@ -354,13 +359,14 @@ function TextView({
         : offersAt(open, context, scope.view, scope.boardId, words),
     [open, context, scope, words],
   );
-  // A name typed whole, whose one offer is what it is already, has nothing
+  // A name typed whole, of which an offer is what it is already, has nothing
   // to complete, and its keys are the field's: Enter saves a condition, and
-  // Tab moves on.
+  // Tab moves on, rather than write another offer that the list has first,
+  // as global.trust, of a board's trust typed whole.
+  const typedName = open === undefined ? "" : source.slice(open.from, open.to);
   const whole =
     open !== undefined &&
-    offers.length === 1 &&
-    editOf(source, open, offers[0]).text === source.slice(open.from, open.to);
+    offers.some((offer) => editOf(source, open, offer).text === typedName);
   const shown = offers.length > 0 && !whole ? open : undefined;
   const at = shown === undefined ? "" : spotKey(shown);
   const index =
@@ -432,7 +438,15 @@ function TextView({
       }
       return;
     }
-    if (event.key === "Enter" && plainKey && context === "condition") {
+    // Enter, with Shift too, as a field of one line takes it, breaks no line
+    // of a condition, which is one.
+    if (
+      event.key === "Enter" &&
+      context === "condition" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
       event.preventDefault();
       submitImplicitly(event.currentTarget.form);
     }
@@ -498,35 +512,19 @@ function TextView({
         {shown === undefined ? "" : t("expr.complete.count", { count: total })}
       </p>
       {shown !== undefined && (
-        // The offers are 8 px from the field, and from each other, as a
-        // finger's targets are (PRD NFR-TOUCH-01). A press anywhere on the
-        // list, on an offer or between two, leaves the focus in the field,
-        // so that one that misses an offer closes neither the list nor the
-        // on-screen keyboard.
-        // biome-ignore lint/a11y/noStaticElementInteractions: a press on it does nothing but leave the focus in the field, whose keys work the list.
-        <div
-          className="space-y-1 rounded-md border border-border p-2"
-          onMouseDown={(event) => event.preventDefault()}
-        >
-          <div
+        // Below the field, as N73's list is (OfferFrame).
+        <OfferFrame className="space-y-1 rounded-md border border-border p-2">
+          <OfferList
             id={listId}
-            role="listbox"
-            aria-label={t("expr.complete.label")}
-            className="flex max-h-72 flex-col gap-2 overflow-y-auto"
+            label={t("expr.complete.label")}
+            maxHeight="max-h-72"
           >
             {offers.map((offer, i) => (
-              // The field's keys move through the offers and choose one
-              // (aria-activedescendant), which keeps the focus in the
-              // field, so an offer takes none itself.
-              // biome-ignore lint/a11y/useFocusableInteractive: as above.
-              // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
-              <div
+              <OfferOption
                 key={offer.id}
                 id={optionId(i)}
-                role="option"
-                aria-selected={i === index}
-                data-offer={offer.id}
-                onClick={() => {
+                selected={i === index}
+                onChoose={() => {
                   const el = area.current;
                   const now =
                     el === null
@@ -536,7 +534,7 @@ function TextView({
                     choose(offer, now);
                   }
                 }}
-                className="flex min-h-11 cursor-pointer flex-col justify-center rounded px-3 py-1 aria-selected:bg-surface-hover"
+                layout="flex-col justify-center py-1"
               >
                 <span className="flex flex-wrap items-baseline gap-x-3">
                   <code className="font-mono break-all">{offer.label}</code>
@@ -552,15 +550,15 @@ function TextView({
                     <Writes projectId={projectId} id={offer.variable} />
                   </span>
                 )}
-              </div>
+              </OfferOption>
             ))}
-          </div>
+          </OfferList>
           {total > offers.length && (
             <p className="px-3 text-fg-muted">
               {t("expr.complete.more", { count: total - offers.length })}
             </p>
           )}
-        </div>
+        </OfferFrame>
       )}
     </>
   );

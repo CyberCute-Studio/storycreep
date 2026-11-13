@@ -63,6 +63,14 @@ describe("where the editor offers to complete", () => {
     });
     // The name after the caret is replaced too.
     expect(spotAt("goXld > 1", 2)).toMatchObject({ from: 0, to: 5 });
+    // A \ before a line break escapes none: the string ends there, as the
+    // lexer reads it, and the next line's node("…") is one.
+    const script = 's = "a\\\ny = node("Qu';
+    expect(spotAt(script, script.length)).toMatchObject({
+      kind: "node",
+      query: "Qu",
+      from: 17,
+    });
   });
 
   it("offers nothing within a string, a comment, or a number, nor where nothing is typed", () => {
