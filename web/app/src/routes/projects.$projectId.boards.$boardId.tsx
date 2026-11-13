@@ -291,10 +291,15 @@ function BoardContent({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <h1 className="text-2xl font-semibold">{board.name}</h1>
         <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
+          {/* The router marks the link of the view shown current, as it
+          matches the page's search: the canvas's names no view, which its
+          link says it does not (explicitUndefined), as else every search
+          would match it, the script view's too. */}
           <Link
             to="/projects/$projectId/boards/$boardId"
             params={{ projectId, boardId: board.id }}
-            search={{}}
+            search={{ view: undefined }}
+            activeOptions={{ explicitUndefined: true }}
             aria-current={script ? undefined : "page"}
             className={`${buttonClass()} ${currentClass}`}
           >

@@ -35,9 +35,9 @@ import { useMutation } from "@tanstack/react-query";
 import { Link as RouterLink } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import {
-  type FormEvent,
   type KeyboardEvent,
   memo,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -48,11 +48,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import {
+  kindOf,
   namesDiffer,
   oneLine,
+  plainText,
   referenceNames,
   titleOf,
-  typeOf,
 } from "../canvas/labels";
 import { type JumperTarget, targetOf } from "../canvas/targets";
 import { ConflictNotice, useEntityForm } from "../content/form";
@@ -60,6 +61,7 @@ import { useTextChoices, useTextNames } from "../content/useTextNames";
 import { boardPart, type Part as DocPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
+import type { Overlap } from "../document/store";
 import type { Words } from "../expr/messages";
 import { Parts } from "../expr/Names";
 import { type Part, plainOf } from "../expr/plain";
@@ -68,13 +70,20 @@ import { payloadField } from "../project/dialogs";
 import { type Command, loadPart } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { showInPage } from "../shell/focus";
+import { followInPage, showInPage } from "../shell/focus";
 import { Button, buttonClass } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
+import type { Held } from "../ui/held";
 import { Alert, textLink } from "../ui/Page";
-import { addAfterBatch, addChoiceBatch, placeAfter } from "./batches";
-import { leavingInOrder, scriptOrder } from "./order";
+import {
+  addAfterBatch,
+  addChoiceBatch,
+  type NewIds,
+  placeAfter,
+} from "./batches";
+import { leavingByNode, scriptOrder } from "./order";
 import { isEmptyText, RichText, type TextNames } from "./RichText";
+import { nothingShown, placeShown, type Shown } from "./shown";
 
 /** The parts of the project that the view's names are read from: the speakers, and what value references and conditions name. */
 const nameParts: readonly DocPart[] = ["components", "variables"];
@@ -110,30 +119,19 @@ interface Shared {
   scope: ScopeSources;
   /** Opens the editor of what editing names, beside those open already. */
   onEdit: (editing: Editing) => void;
-  /** Closes the editor of the node or the connection of id, and gives the element of focus the focus, or else the entry of the node of entry. */
-  onClose: (id: string, focus: string, entry: string) => void;
+  /**
+   * Closes the editor of the node or the connection of id, and, where
+   * moveFocus says to, gives the element of focus the focus, or else the
+   * entry of the node of entry.
+   */
+  onClose: (
+    id: string,
+    focus: string,
+    entry: string,
+    moveFocus: boolean,
+  ) => void;
   onAddAfter: (node: Node) => void;
   onAddChoice: (node: Node) => void;
-}
-
-/** The two parts of the view: the nodes that the entry node reaches, and the others. */
-type Section = "reached" | "unreached";
-
-/** A choice as the view showed it: the connection, the node whose entry it was in, and its place among the node's. */
-interface ShownChoice {
-  connection: Connection;
-  nodeId: string;
-  index: number;
-}
-
-/** What the view showed last, of which it shows the entries of open editors that the board no longer has. */
-interface ShownLast {
-  /** The place of each entry: its part, and its place in it. */
-  places: ReadonlyMap<string, { section: Section; index: number }>;
-  /** The node of each open editor, of its node or of a choice of it. */
-  nodes: ReadonlyMap<string, Node>;
-  /** The choice of each open editor of a label. */
-  choices: ReadonlyMap<string, ShownChoice>;
 }
 
 /** What the view is given. */
@@ -153,21 +151,24 @@ export interface ScriptViewProps {
  * before for as long as no node's title, board, or trash changed, which is
  * what the view shows of a node beyond its own entry, as a choice's target
  * and a condition's node, so that an edit of a node's text shows one entry
- * anew rather than all.
+ * anew rather than all. The map kept is the one of the view as it last
+ * committed, rather than of a render that React may yet discard.
  */
 function useTitled(map: ReadonlyMap<string, Node>): ReadonlyMap<string, Node> {
   const kept = useRef(map);
-  if (
+  const titled =
     kept.current !== map &&
     namesDiffer(
       kept.current,
       map,
       (n) => `${n.title}\n${n.board_id}\n${n.deleted_at ?? ""}`,
     )
-  ) {
-    kept.current = map;
-  }
-  return kept.current;
+      ? map
+      : kept.current;
+  useLayoutEffect(() => {
+    kept.current = titled;
+  }, [titled]);
+  return titled;
 }
 
 /** The view of the board of the project of projectId. */
@@ -257,12 +258,7 @@ export function ScriptView({
   );
   const leavingOf = useLeaving(connections, boardNodes, boardId);
   const order = useMemo(
-    () =>
-      scriptOrder(
-        boardNodes,
-        [...leavingOf.values()].flat(),
-        board.entry_node_id,
-      ),
+    () => scriptOrder(boardNodes, leavingOf, board.entry_node_id),
     [boardNodes, leavingOf, board.entry_node_id],
   );
 
@@ -316,19 +312,33 @@ export function ScriptView({
     showInPage(document, entryId(focus));
   }, [content, focus]);
 
-  // The structural edits, each a batch, whose refusal the view says, in
-  // the entry of the node that it was of, and whose editor, of what the
-  // batch created, the view then closes, with the focus back on the button
-  // that asked for it.
+  // The structural edits, each a batch, of which an element has one under
+  // way at a time, whose buttons wait for it, so that a double click adds
+  // one node; each batch's refusal, whatever others are under way, the
+  // view says, in the entry of the node that it was of, and closes the
+  // editor of what the batch created, with the focus back on the button
+  // that asked for it. Each is a mutation of the page's, which the query
+  // client's cache hears of, as of a session that ended, whose promise
+  // settles of its own batch, as mutate's callbacks would of the latest
+  // alone.
   const structural = useMutation({
     mutationFn: (batch: Command[]) => doc.send(batch),
   });
-  const [refusedOf, setRefusedOf] = useState<string>();
-  const latest = useRef({ boardNodes, leavingOf, structural });
-  latest.current = { boardNodes, leavingOf, structural };
+  const [adding, setAdding] = useState<ReadonlyMap<string, NewIds>>(
+    () => new Map(),
+  );
+  const [refused, setRefused] = useState<{ nodeId: string; error: unknown }>();
+  // What the view committed last, which its callbacks read.
+  const latest = useRef({ boardNodes, leavingOf, adding, structural });
+  useLayoutEffect(() => {
+    latest.current = { boardNodes, leavingOf, adding, structural };
+  });
   const add = useCallback(
     (node: Node, what: "after" | "choice") => {
-      const { boardNodes, leavingOf, structural } = latest.current;
+      const { boardNodes, leavingOf, adding, structural } = latest.current;
+      if (adding.has(node.id)) {
+        return;
+      }
       const leaving = leavingOf.get(node.id) ?? [];
       const ids = { node: newId("node"), connection: newId("connection") };
       const batch =
@@ -343,23 +353,29 @@ export function ScriptView({
               ),
               ids,
             );
-      setRefusedOf(undefined);
-      structural.mutate(batch, {
-        onError: () => {
-          opened((o) => {
-            o.delete(ids.node);
-            o.delete(ids.connection);
-          });
-          setRefusedOf(node.id);
-          setFocusTo({ id: buttonId(node.id, what) });
-        },
-      });
+      const settled = () =>
+        setAdding((was) => {
+          const next = new Map(was);
+          next.delete(node.id);
+          return next;
+        });
+      setRefused(undefined);
+      setAdding((was) => new Map(was).set(node.id, ids));
       opened((o) => {
         if (what === "after") {
           o.set(ids.node, { kind: "node", id: ids.node, focusOn: "text" });
         } else {
           o.set(ids.connection, { kind: "choice", id: ids.connection });
         }
+      });
+      structural.mutateAsync(batch).then(settled, (error: unknown) => {
+        settled();
+        opened((o) => {
+          o.delete(ids.node);
+          o.delete(ids.connection);
+        });
+        setRefused({ nodeId: node.id, error });
+        setFocusTo({ id: buttonId(node.id, what) });
       });
     },
     [opened],
@@ -374,11 +390,13 @@ export function ScriptView({
     [opened],
   );
   const onClose = useCallback(
-    (id: string, focus: string, entry: string) => {
+    (id: string, focus: string, entry: string, moveFocus: boolean) => {
       opened((o) => {
         o.delete(id);
       });
-      setFocusTo({ id: focus, entry });
+      if (moveFocus) {
+        setFocusTo({ id: focus, entry });
+      }
     },
     [opened],
   );
@@ -423,102 +441,44 @@ export function ScriptView({
     ],
   );
 
-  // The entries as the view shows them: each node's at its place in the
-  // order, and, as a ghost at the place where the view showed it last, the
-  // entry of a node that an open editor edits, or whose choice's label one
-  // does, that the board no longer has, as once another session deleted it,
-  // with that choice where it was, so that the editor, the same as before,
-  // keeps what the user typed, saying that it can no longer be saved, until
-  // the user cancels it, or the node is back, as once its deletion is
-  // undone. An editor of what the view has not shown yet, as of a node that
-  // a batch under way adds, shows nothing until its entry does.
-  const shownLast = useRef<ShownLast>({
-    places: new Map(),
-    nodes: new Map(),
-    choices: new Map(),
+  // The entries as the view shows them (placeShown): each node's at its
+  // place in the order; but the entry of a node whose editor is open, or
+  // whose choice's label's is, in the part where the view showed it last,
+  // and that choice in the entry where it showed it, whatever moved them,
+  // so that the editor, the same as before, keeps what the user typed; and
+  // one that the board no longer has, as once another session deleted it,
+  // as a ghost where the view showed it last, saying that it can no longer
+  // be saved, until the user cancels it, or the node is back, as once its
+  // deletion is undone. An editor of what the view has not shown yet, as of
+  // a node that a batch under way adds, shows nothing until its entry does,
+  // and nothing again once that batch is refused. What the view showed is
+  // what it committed, rather than what a render that React may yet
+  // discard placed.
+  const shownLast = useRef<Shown>(nothingShown);
+  const creating = useMemo(
+    () =>
+      new Set(
+        [...adding.values()].flatMap((ids) => [ids.node, ids.connection]),
+      ),
+    [adding],
+  );
+  const placed = placeShown(
+    order,
+    leavingOf,
+    connections,
+    open,
+    shownLast.current,
+    creating,
+  );
+  useLayoutEffect(() => {
+    shownLast.current = placed.shown;
   });
-  const last = shownLast.current;
-  const sections: Record<Section, Node[]> = {
-    reached: [...order.reached],
-    unreached: [...order.unreached],
-  };
-  const shownIds = new Set(boardNodes.map((n) => n.id));
-  const ghosts = new Set<string>();
-  const leavingShown = new Map(leavingOf);
-  const ghostNode = (id: string): boolean => {
-    if (shownIds.has(id)) {
-      return true;
-    }
-    const node = last.nodes.get(id);
-    const place = last.places.get(id);
-    if (node === undefined || place === undefined) {
-      return false;
-    }
-    const list = sections[place.section];
-    list.splice(Math.min(place.index, list.length), 0, node);
-    shownIds.add(id);
-    ghosts.add(id);
-    return true;
-  };
-  for (const [id, e] of open) {
-    if (e.kind === "node") {
-      ghostNode(id);
-      continue;
-    }
-    const now = connections.get(id);
-    if (
-      now !== undefined &&
-      leavingOf.get(now.from_node_id)?.some((c) => c.id === id)
-    ) {
-      continue;
-    }
-    const choice = last.choices.get(id);
-    if (choice === undefined || !ghostNode(choice.nodeId)) {
-      continue;
-    }
-    const list = [...(leavingShown.get(choice.nodeId) ?? none)];
-    list.splice(Math.min(choice.index, list.length), 0, choice.connection);
-    leavingShown.set(choice.nodeId, list);
-    ghosts.add(id);
-  }
-  // What the view shows now, which the next render's ghosts are of: the
-  // place of each entry, and the node and the choice of each open editor.
-  const places = new Map<string, { section: Section; index: number }>();
-  const shownNodes = new Map<string, Node>();
-  for (const section of ["reached", "unreached"] as const) {
-    sections[section].forEach((n, index) => {
-      places.set(n.id, { section, index });
-      shownNodes.set(n.id, n);
-    });
-  }
-  const nextNodes = new Map<string, Node>();
-  const nextChoices = new Map<string, ShownChoice>();
-  for (const [id, e] of open) {
-    if (e.kind === "node") {
-      const n = shownNodes.get(id);
-      if (n !== undefined) {
-        nextNodes.set(id, n);
-      }
-      continue;
-    }
-    const nodeId =
-      ghosts.has(id) || connections.get(id) === undefined
-        ? last.choices.get(id)?.nodeId
-        : connections.get(id)?.from_node_id;
-    const list = nodeId === undefined ? undefined : leavingShown.get(nodeId);
-    const index = list?.findIndex((c) => c.id === id) ?? -1;
-    const n = nodeId === undefined ? undefined : shownNodes.get(nodeId);
-    if (list !== undefined && index >= 0 && n !== undefined) {
-      nextChoices.set(id, { connection: list[index], nodeId: n.id, index });
-      nextNodes.set(n.id, n);
-    }
-  }
-  shownLast.current = { places, nodes: nextNodes, choices: nextChoices };
+  const { sections, ghosts } = placed;
 
-  const refusal = refusalOf(structural.error, t);
+  const refusal = refusalOf(refused?.error, t);
   const entries = (list: readonly Node[]) =>
     list.map((node) => {
-      const leaving = leavingShown.get(node.id) ?? none;
+      const leaving = placed.leaving.get(node.id) ?? none;
       return (
         <Entry
           key={node.id}
@@ -526,7 +486,8 @@ export function ScriptView({
           leaving={leaving}
           editing={editingIn(open, node.id, leaving)}
           gone={goneIn(ghosts, node.id, leaving)}
-          refused={refusedOf === node.id ? refusal?.message : undefined}
+          adding={adding.has(node.id)}
+          refused={refused?.nodeId === node.id ? refusal?.message : undefined}
           shared={shared}
         />
       );
@@ -604,49 +565,41 @@ const none: readonly Connection[] = [];
 /**
  * Returns the connections of the board of boardId that leave each of its
  * nodes, by the node's ID, in the order that the flow offers them
- * (leavingInOrder), each list the same array as before for as long as its
- * connections are the same objects, so that the entry of a node whose
- * connections did not change is not shown anew.
+ * (leavingByNode), each list the same array as the view committed last for
+ * as long as its connections are the same objects, so that the entry of a
+ * node whose connections did not change is not shown anew.
  */
 function useLeaving(
   connections: ReadonlyMap<string, Connection>,
   boardNodes: readonly Node[],
   boardId: string,
 ): ReadonlyMap<string, readonly Connection[]> {
-  const kept = useRef(new Map<string, readonly Connection[]>());
-  return useMemo(() => {
-    const byNode = new Map<string, Connection[]>();
-    for (const c of connections.values()) {
-      if (c.board_id !== boardId || c.deleted_at !== undefined) {
-        continue;
-      }
-      const list = byNode.get(c.from_node_id);
-      if (list === undefined) {
-        byNode.set(c.from_node_id, [c]);
-      } else {
-        list.push(c);
-      }
-    }
+  const kept = useRef<ReadonlyMap<string, readonly Connection[]>>(new Map());
+  const leaving = useMemo(() => {
+    const ordered = leavingByNode(
+      boardNodes,
+      [...connections.values()].filter(
+        (c) => c.board_id === boardId && c.deleted_at === undefined,
+      ),
+    );
     const out = new Map<string, readonly Connection[]>();
-    for (const node of boardNodes) {
-      const list = byNode.get(node.id);
-      if (list === undefined) {
-        continue;
-      }
-      const ordered = leavingInOrder(node, list);
-      const was = kept.current.get(node.id);
+    for (const [id, list] of ordered) {
+      const was = kept.current.get(id);
       out.set(
-        node.id,
+        id,
         was !== undefined &&
-          was.length === ordered.length &&
-          was.every((c, i) => c === ordered[i])
+          was.length === list.length &&
+          was.every((c, i) => c === list[i])
           ? was
-          : ordered,
+          : list,
       );
     }
-    kept.current = out;
     return out;
   }, [connections, boardNodes, boardId]);
+  useLayoutEffect(() => {
+    kept.current = leaving;
+  }, [leaving]);
+  return leaving;
 }
 
 /**
@@ -699,23 +652,6 @@ function goneIn(
     }
   }
   return parts.join(" ");
-}
-
-/** Returns the line of the type of node, as its card says it: an element's kind, with its speaker, and whether it is an ending. */
-function kindLine(node: Node, shared: Shared): string {
-  const { t } = shared;
-  if (node.type !== "element") {
-    return typeOf(node, t);
-  }
-  const speaker =
-    node.speaker_component_id === undefined
-      ? undefined
-      : shared.names.componentName(node.speaker_component_id);
-  const kind =
-    node.kind === "narration" || speaker === undefined
-      ? typeOf(node, t)
-      : t("canvas.node.dialogue_by", { speaker });
-  return node.is_ending ? t("canvas.node.kind_ending", { kind }) : kind;
 }
 
 /** The ASTs of the conditions that the view has decoded, by their expression, which stays the same object until it changes. */
@@ -793,17 +729,9 @@ function NodeLink({
       search={{ view: "script", node: nodeId }}
       className={textLink}
       onClick={(e) => {
-        if (
-          boardId !== shared.boardId ||
-          e.ctrlKey ||
-          e.metaKey ||
-          e.shiftKey ||
-          e.altKey
-        ) {
-          return;
+        if (boardId === shared.boardId) {
+          followInPage(e, entryId(nodeId));
         }
-        e.preventDefault();
-        showInPage(e.currentTarget.ownerDocument, entryId(nodeId));
       }}
     >
       {label}
@@ -881,9 +809,9 @@ function JumpTarget({
   }
 }
 
-/** Returns what names a choice: its label, as plain words, or the node that it leads to, of one without. */
+/** Returns what names a choice: its label, as the plain words that a card writes of it, on one line, or the node that it leads to, of one without. */
 function choiceName(c: Connection, shared: Shared): string {
-  const label = oneLine(plainTextOf(c, shared));
+  const label = oneLine(plainText(c.label, shared.names));
   if (label !== "") {
     return label;
   }
@@ -891,31 +819,6 @@ function choiceName(c: Connection, shared: Shared): string {
   return shared.t("script.choice_to", {
     node: to === undefined ? c.to_node_id : titleOf(to, shared.t),
   });
-}
-
-/** Returns the plain text of a connection's label, its paragraphs one to a line. */
-function plainTextOf(c: Connection, shared: Shared): string {
-  const lines: string[] = [];
-  for (const block of c.label.content) {
-    if (block.type === "paragraph") {
-      lines.push(
-        (block.content ?? [])
-          .map((i) =>
-            i.type === "text"
-              ? i.text
-              : i.type === "hardBreak"
-                ? " "
-                : i.type === "mention"
-                  ? `@${shared.names.componentName(i.attrs.id) ?? "…"}`
-                  : i.type === "valueRef"
-                    ? `{${shared.names.valueName(i.attrs.ref, "attribute" in i.attrs ? i.attrs.attribute : undefined) ?? "…"}}`
-                    : "",
-          )
-          .join(""),
-      );
-    }
-  }
-  return lines.join("\n");
 }
 
 /** A choice of an element, or a connection of a branch's output, as an indented line of its node's entry. */
@@ -945,11 +848,12 @@ function Choice({
                 ? undefined
                 : t("script.read_only")
           }
-          onClose={() =>
+          onClose={(moveFocus) =>
             shared.onClose(
               connection.id,
               buttonId(connection.id, "label"),
               connection.from_node_id,
+              moveFocus,
             )
           }
         />
@@ -1049,6 +953,8 @@ interface EntryProps {
   editing: string;
   /** What of the entry the board no longer has (goneIn). */
   gone: string;
+  /** Whether an addition after the node, or to it, is under way, which its buttons of additions wait for. */
+  adding: boolean;
   /** Why the view's last addition after the node, or to it, was refused, if it was. */
   refused: string | undefined;
   shared: Shared;
@@ -1060,6 +966,7 @@ const Entry = memo(function Entry({
   leaving,
   editing,
   gone,
+  adding,
   refused,
   shared,
 }: EntryProps) {
@@ -1104,13 +1011,23 @@ const Entry = memo(function Entry({
                   ? undefined
                   : t("script.read_only")
             }
-            onClose={() =>
-              shared.onClose(node.id, buttonId(node.id, "edit"), node.id)
+            onClose={(moveFocus) =>
+              shared.onClose(
+                node.id,
+                buttonId(node.id, "edit"),
+                node.id,
+                moveFocus,
+              )
             }
           />
         ) : (
           <>
-            <p className="text-sm text-fg-muted">{kindLine(node, shared)}</p>
+            <p className="text-sm text-fg-muted">
+              {kindOf(node, {
+                t,
+                componentName: shared.names.componentName,
+              })}
+            </p>
             {element &&
               (node.text === undefined || isEmptyText(node.text) ? (
                 <p className="text-fg-muted">{t("script.no_text")}</p>
@@ -1196,6 +1113,7 @@ const Entry = memo(function Entry({
                 <Button
                   id={buttonId(node.id, "after")}
                   aria-label={t("script.add_after_named", { node: title })}
+                  disabled={adding}
                   onClick={() => shared.onAddAfter(node)}
                 >
                   {t("script.add_after")}
@@ -1203,16 +1121,21 @@ const Entry = memo(function Entry({
                 <Button
                   id={buttonId(node.id, "choice")}
                   aria-label={t("script.add_choice_named", { node: title })}
+                  disabled={adding}
                   onClick={() => shared.onAddChoice(node)}
                 >
                   {t("script.add_choice")}
                 </Button>
               </>
             )}
+            {/* The canvas names no view, which the link says it does not
+            (explicitUndefined), so that the router does not count it a
+            part of this page, of view=script, and mark it current. */}
             <RouterLink
               to="/projects/$projectId/boards/$boardId"
               params={{ projectId: shared.projectId, boardId: shared.boardId }}
-              search={{ node: node.id }}
+              search={{ view: undefined, node: node.id }}
+              activeOptions={{ explicitUndefined: true }}
               aria-label={t("script.show_on_canvas_named", { node: title })}
               className={buttonClass()}
             >
@@ -1225,13 +1148,14 @@ const Entry = memo(function Entry({
   );
 }, sameEntry);
 
-/** Reports whether an entry of a and one of b show the same: the same node, connections, editing, and names. */
+/** Reports whether an entry of a and one of b show the same: the same node, connections, editing, ghosts, additions, refusal, and names. */
 function sameEntry(a: EntryProps, b: EntryProps): boolean {
   return (
     a.node === b.node &&
     a.leaving === b.leaving &&
     a.editing === b.editing &&
     a.gone === b.gone &&
+    a.adding === b.adding &&
     a.refused === b.refused &&
     a.shared === b.shared
   );
@@ -1256,6 +1180,142 @@ function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
   );
 }
 
+/** What an editor's form is of its entity's form (useEntityForm), which its life and its frame read. */
+interface EditorForm {
+  held: Pick<Held<unknown>, "key" | "props" | "form">;
+  commands: { isPending: boolean; isSuccess: boolean };
+  overlaps: Overlap["fields"];
+  useTheirs: () => void;
+}
+
+/** What each editor of the view is given. */
+interface EditorProps {
+  projectId: string;
+  /** Why what the editor edits can no longer be saved, if it cannot. */
+  unsavable?: string;
+  /** Closes the editor, with the focus back on its button where moveFocus says to. */
+  onClose: (moveFocus: boolean) => void;
+}
+
+/**
+ * The life of an editor of the view, a node's or a choice's, of form, the
+ * focus in the field of focusOn, a selector, as it opens; closing once its
+ * save applies; closing, where it can no longer be saved, as unsavable
+ * says, of nothing that the user changed, as changed reads it, as the
+ * canvas's editor of a text closes, with the focus back on its button where
+ * the form had it, rather than taken from where the user is; and it returns
+ * what closes it on Escape, of one that holds no change (leavesBy).
+ */
+function useEditorLife(
+  form: EditorForm,
+  {
+    focusOn,
+    unsavable,
+    changed,
+    onClose,
+  }: Pick<EditorProps, "unsavable" | "onClose"> & {
+    focusOn: string;
+    changed: () => boolean;
+  },
+): (e: KeyboardEvent<HTMLFormElement>) => void {
+  const within = form.held.form;
+  const pending = form.commands.isPending;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the focus is given as the editor opens alone.
+  useEffect(() => {
+    within.current?.querySelector<HTMLElement>(focusOn)?.focus();
+  }, []);
+  const saved = form.commands.isSuccess;
+  useEffect(() => {
+    if (saved) {
+      onClose(true);
+    }
+  }, [saved, onClose]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: changed reads what the editor holds as it can no longer be saved, or the save that was under way settles.
+  useEffect(() => {
+    if (unsavable !== undefined && !pending && !changed()) {
+      const f = within.current;
+      onClose(f?.contains(f.ownerDocument.activeElement) ?? false);
+    }
+  }, [unsavable, pending, onClose]);
+  return (e) => {
+    if (leavesBy(e) && !pending && !changed()) {
+      e.preventDefault();
+      onClose(true);
+    }
+  };
+}
+
+/**
+ * The form of an editor of the view, named label, of form: why it can no
+ * longer be saved, as unsavable says, or why its save was refused, refusal,
+ * and the fields of a refusal for a change made elsewhere (ConflictNotice,
+ * of fieldName and shownValue); its fields, children; and its Save, which
+ * submit saves by, and Cancel, which wait while a save is under way, and
+ * Save while it can no longer be saved.
+ */
+function EditorFrame({
+  form,
+  label,
+  unsavable,
+  refusal,
+  fieldName,
+  shownValue,
+  submit,
+  onKeyDown,
+  onClose,
+  children,
+}: Pick<EditorProps, "unsavable" | "onClose"> & {
+  form: EditorForm;
+  label: string;
+  refusal: string | undefined;
+  fieldName: (field: string) => string;
+  shownValue: (field: string, value: unknown) => string | undefined;
+  submit: () => void;
+  onKeyDown: (e: KeyboardEvent<HTMLFormElement>) => void;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const { held } = form;
+  const pending = form.commands.isPending;
+  return (
+    <form
+      key={held.key}
+      {...held.props}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!pending && unsavable === undefined) {
+          submit();
+        }
+      }}
+      onKeyDown={onKeyDown}
+      noValidate
+      aria-label={label}
+      className="space-y-3"
+    >
+      <Alert message={unsavable} />
+      <Alert message={form.overlaps.length > 0 ? undefined : refusal} />
+      <ConflictNotice
+        form={form}
+        fieldName={fieldName}
+        shownValue={shownValue}
+      />
+      {children}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="submit"
+          variant="primary"
+          disabled={pending || unsavable !== undefined}
+        >
+          {t("script.save")}
+        </Button>
+        <Button disabled={pending} onClick={() => onClose(true)}>
+          {t("script.cancel")}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 const nodeField = payloadField("title", "text");
 
 /**
@@ -1265,7 +1325,7 @@ const nodeField = payloadField("title", "text");
  * it closes once the save applies, or nothing changed. Escape closes one
  * that holds nothing that the user changed. Where the node can no longer be
  * saved, as unsavable says, it keeps what the user typed, saying why, until
- * the user cancels it.
+ * the user cancels it, and closes of nothing typed (useEditorLife).
  */
 function NodeEditor({
   projectId,
@@ -1273,13 +1333,7 @@ function NodeEditor({
   focusOn,
   unsavable,
   onClose,
-}: {
-  projectId: string;
-  node: Node;
-  focusOn: "title" | "text";
-  unsavable?: string;
-  onClose: () => void;
-}) {
+}: EditorProps & { node: Node; focusOn: "title" | "text" }) {
   const { t } = useTranslation();
   const form = useEntityForm(projectId, node, (view, id) => view.nodes.get(id));
   const { commands, held, shown, against } = form;
@@ -1304,31 +1358,19 @@ function NodeEditor({
     typedTitle() !== against.title ||
     (element &&
       (typed()?.error !== undefined || !equal(currentText(), against.text)));
-
   // The field that the editor opens with the focus in: the title, or, of a
   // node that the view has just added, its text.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the focus is given as the editor opens alone.
-  useEffect(() => {
-    const within = held.form.current;
-    const field =
+  const keyDown = useEditorLife(form, {
+    focusOn:
       focusOn === "text" && element
-        ? within?.querySelector<HTMLElement>('[contenteditable="true"]')
-        : within?.querySelector<HTMLElement>('input[name="title"]');
-    field?.focus();
-  }, []);
+        ? '[contenteditable="true"]'
+        : 'input[name="title"]',
+    unsavable,
+    changed,
+    onClose,
+  });
 
-  const saved = commands.isSuccess;
-  useEffect(() => {
-    if (saved) {
-      onClose();
-    }
-  }, [saved, onClose]);
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (pending || unsavable !== undefined) {
-      return;
-    }
+  const submit = () => {
     if (element && typed()?.error !== undefined) {
       form.refused();
       setInvalid({ text: t("inspector.error.text") });
@@ -1345,7 +1387,7 @@ function NodeEditor({
       update.text = newText;
     }
     if (Object.keys(update).length === 0) {
-      onClose();
+      onClose(true);
       return;
     }
     form.save(
@@ -1359,35 +1401,22 @@ function NodeEditor({
       update,
     );
   };
-  const keyDown = (e: KeyboardEvent<HTMLFormElement>) => {
-    if (leavesBy(e) && !pending && !changed()) {
-      e.preventDefault();
-      onClose();
-    }
-  };
   return (
-    <form
-      key={held.key}
-      {...held.props}
-      onSubmit={submit}
+    <EditorFrame
+      form={form}
+      label={t("script.node_editor", { node: title })}
+      unsavable={unsavable}
+      refusal={refusal?.message}
+      fieldName={(field) =>
+        field === "title" ? t("inspector.node_title") : t("inspector.text")
+      }
+      shownValue={(field, value) =>
+        field === "title" ? String(value ?? "") : undefined
+      }
+      submit={submit}
       onKeyDown={keyDown}
-      noValidate
-      aria-label={t("script.node_editor", { node: title })}
-      className="space-y-3"
+      onClose={onClose}
     >
-      <Alert message={unsavable} />
-      <Alert
-        message={form.overlaps.length > 0 ? undefined : refusal?.message}
-      />
-      <ConflictNotice
-        form={form}
-        fieldName={(field) =>
-          field === "title" ? t("inspector.node_title") : t("inspector.text")
-        }
-        shownValue={(field, value) =>
-          field === "title" ? String(value ?? "") : undefined
-        }
-      />
       <TextField
         label={t("inspector.node_title")}
         name="title"
@@ -1414,19 +1443,7 @@ function NodeEditor({
           }}
         />
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={pending || unsavable !== undefined}
-        >
-          {t("script.save")}
-        </Button>
-        <Button disabled={pending} onClick={onClose}>
-          {t("script.cancel")}
-        </Button>
-      </div>
-    </form>
+    </EditorFrame>
   );
 }
 
@@ -1445,12 +1462,7 @@ function ChoiceEditor({
   connection,
   unsavable,
   onClose,
-}: {
-  projectId: string;
-  connection: Connection;
-  unsavable?: string;
-  onClose: () => void;
-}) {
+}: EditorProps & { connection: Connection }) {
   const { t } = useTranslation();
   const form = useEntityForm(projectId, connection, (view, id) =>
     view.connections.get(id),
@@ -1468,26 +1480,14 @@ function ChoiceEditor({
   const current = () => typed()?.doc ?? shown.label;
   const changed = () =>
     typed()?.error !== undefined || !equal(current(), against.label);
+  const keyDown = useEditorLife(form, {
+    focusOn: '[contenteditable="true"]',
+    unsavable,
+    changed,
+    onClose,
+  });
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the focus is given as the editor opens alone.
-  useEffect(() => {
-    held.form.current
-      ?.querySelector<HTMLElement>('[contenteditable="true"]')
-      ?.focus();
-  }, []);
-
-  const saved = commands.isSuccess;
-  useEffect(() => {
-    if (saved) {
-      onClose();
-    }
-  }, [saved, onClose]);
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (pending || unsavable !== undefined) {
-      return;
-    }
+  const submit = () => {
     if (typed()?.error !== undefined) {
       form.refused();
       setInvalid({ label: t("inspector.error.text") });
@@ -1496,7 +1496,7 @@ function ChoiceEditor({
     setInvalid(undefined);
     const value = current();
     if (equal(value, against.label)) {
-      onClose();
+      onClose(true);
       return;
     }
     form.save(
@@ -1511,29 +1511,17 @@ function ChoiceEditor({
     );
   };
   return (
-    <form
-      key={held.key}
-      {...held.props}
-      onSubmit={submit}
-      onKeyDown={(e) => {
-        if (leavesBy(e) && !pending && !changed()) {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-      noValidate
-      aria-label={t("script.choice_editor")}
-      className="space-y-3"
+    <EditorFrame
+      form={form}
+      label={t("script.choice_editor")}
+      unsavable={unsavable}
+      refusal={refusal?.message}
+      fieldName={() => t("inspector.label")}
+      shownValue={() => undefined}
+      submit={submit}
+      onKeyDown={keyDown}
+      onClose={onClose}
     >
-      <Alert message={unsavable} />
-      <Alert
-        message={form.overlaps.length > 0 ? undefined : refusal?.message}
-      />
-      <ConflictNotice
-        form={form}
-        fieldName={() => t("inspector.label")}
-        shownValue={() => undefined}
-      />
       <RichTextEditor
         label={t("inspector.label")}
         defaultValue={shown.label}
@@ -1546,18 +1534,6 @@ function ChoiceEditor({
           held.props.onChange();
         }}
       />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={pending || unsavable !== undefined}
-        >
-          {t("script.save")}
-        </Button>
-        <Button disabled={pending} onClick={onClose}>
-          {t("script.cancel")}
-        </Button>
-      </div>
-    </form>
+    </EditorFrame>
   );
 }

@@ -54,27 +54,47 @@ export function leavingInOrder(
 }
 
 /**
- * Returns the order of the script view of a board of nodes and connections,
- * those of the board that are not in the trash, of the entry node of
- * entryId, if it has one: the nodes that it reaches by connections,
- * breadth-first, and the rest by when they were created, and of one time,
- * by their IDs.
+ * Returns the connections that leave each of nodes, of connections, by the
+ * node's ID, in the order that the flow offers them (leavingInOrder), of
+ * each node that one leaves.
  */
-export function scriptOrder(
+export function leavingByNode(
   nodes: readonly Node[],
-  connections: readonly Connection[],
-  entryId: string | undefined,
-): ScriptOrder {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const leaving = new Map<string, Connection[]>();
+  connections: Iterable<Connection>,
+): Map<string, Connection[]> {
+  const byNode = new Map<string, Connection[]>();
   for (const c of connections) {
-    const list = leaving.get(c.from_node_id);
+    const list = byNode.get(c.from_node_id);
     if (list === undefined) {
-      leaving.set(c.from_node_id, [c]);
+      byNode.set(c.from_node_id, [c]);
     } else {
       list.push(c);
     }
   }
+  const out = new Map<string, Connection[]>();
+  for (const node of nodes) {
+    const list = byNode.get(node.id);
+    if (list !== undefined) {
+      out.set(node.id, leavingInOrder(node, list));
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns the order of the script view of a board of nodes, those of the
+ * board that are not in the trash, of which leaving gives the connections
+ * that leave each, in the order that the flow offers them (leavingByNode),
+ * of the entry node of entryId, if it has one: the nodes that it reaches by
+ * connections, breadth-first, and the rest by when they were created, and
+ * of one time, by their IDs.
+ */
+export function scriptOrder(
+  nodes: readonly Node[],
+  leaving: ReadonlyMap<string, readonly Connection[]>,
+  entryId: string | undefined,
+): ScriptOrder {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   const reached: Node[] = [];
   const seen = new Set<string>();
   const entry = entryId === undefined ? undefined : byId.get(entryId);
@@ -84,7 +104,7 @@ export function scriptOrder(
     // The list is the queue: each node is read once, in the order reached.
     for (let i = 0; i < reached.length; i++) {
       const node = reached[i];
-      for (const c of leavingInOrder(node, leaving.get(node.id) ?? [])) {
+      for (const c of leaving.get(node.id) ?? []) {
         const next = byId.get(c.to_node_id);
         if (next !== undefined && !seen.has(next.id)) {
           seen.add(next.id);

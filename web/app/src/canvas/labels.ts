@@ -178,25 +178,35 @@ export function typeOf(
   }
 }
 
+/**
+ * Returns the line of node's type, as its card writes it, and the script
+ * view: an element's kind, with its speaker, and whether it is an ending;
+ * and of another type its name (typeOf).
+ */
+export function kindOf(
+  node: Node,
+  c: Pick<LabelContext, "t" | "componentName">,
+): string {
+  if (node.type !== "element") {
+    return typeOf(node, c.t);
+  }
+  const speaker =
+    node.speaker_component_id === undefined
+      ? undefined
+      : c.componentName(node.speaker_component_id);
+  const kind =
+    node.kind === "narration" || speaker === undefined
+      ? typeOf(node, c.t)
+      : c.t("canvas.node.dialogue_by", { speaker });
+  return node.is_ending ? c.t("canvas.node.kind_ending", { kind }) : kind;
+}
+
 /** Returns what a card shows of node. */
 export function labelsOf(node: Node, c: LabelContext): NodeLabels {
   const title = titleOf(node, c.t);
   switch (node.type) {
-    case "element": {
-      const speaker =
-        node.speaker_component_id === undefined
-          ? undefined
-          : c.componentName(node.speaker_component_id);
-      const kind =
-        node.kind === "narration" || speaker === undefined
-          ? typeOf(node, c.t)
-          : c.t("canvas.node.dialogue_by", { speaker });
-      return {
-        title,
-        kind: node.is_ending ? c.t("canvas.node.kind_ending", { kind }) : kind,
-        body: plainText(node.text, c),
-      };
-    }
+    case "element":
+      return { title, kind: kindOf(node, c), body: plainText(node.text, c) };
     case "branch": {
       const outputs = node.outputs ?? [];
       return {

@@ -1,7 +1,7 @@
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { testConnection, testNode } from "../test/canvas";
-import { leavingInOrder, scriptOrder } from "./order";
+import { leavingByNode, leavingInOrder, scriptOrder } from "./order";
 
 // The order of a board's script view (PRD FR-TEXT-04 AC2): breadth-first
 // from the board's entry node, along the connections in the order of each
@@ -52,6 +52,15 @@ function ids(order: ReturnType<typeof scriptOrder>) {
   };
 }
 
+/** Returns the order of nodes and connections, as the view gives it them, each node's connections in their order (leavingByNode). */
+function orderOf(
+  nodes: readonly Node[],
+  connections: readonly Connection[],
+  entryId: string | undefined,
+) {
+  return scriptOrder(nodes, leavingByNode(nodes, connections), entryId);
+}
+
 describe("the script view's order", () => {
   // Verifies: FR-TEXT-04/AC2
   it("lists the nodes breadth-first from the entry node, each node's choices in their order, and the rest in the order of their creation", () => {
@@ -74,7 +83,7 @@ describe("the script view's order", () => {
       link("cn_5", "nd_d", "nd_entry"),
       link("cn_6", "nd_lost1", "nd_entry"),
     ];
-    expect(ids(scriptOrder(nodes, connections, "nd_entry"))).toEqual({
+    expect(ids(orderOf(nodes, connections, "nd_entry"))).toEqual({
       reached: ["nd_entry", "nd_a", "nd_b", "nd_d", "nd_c"],
       unreached: ["nd_lost1", "nd_lost2"],
     });
@@ -99,14 +108,10 @@ describe("the script view's order", () => {
       reached: ["nd_entry", "nd_x", "nd_y", "nd_z"],
       unreached: ["nd_q"],
     };
-    expect(ids(scriptOrder(nodes, connections, "nd_entry"))).toEqual(expected);
+    expect(ids(orderOf(nodes, connections, "nd_entry"))).toEqual(expected);
     expect(
       ids(
-        scriptOrder(
-          [...nodes].reverse(),
-          [...connections].reverse(),
-          "nd_entry",
-        ),
+        orderOf([...nodes].reverse(), [...connections].reverse(), "nd_entry"),
       ),
     ).toEqual(expected);
   });
@@ -136,7 +141,7 @@ describe("the script view's order", () => {
       link("cn_elseif", "nd_branch", "nd_elseif", "V", "bo_elseif"),
       link("cn_if", "nd_branch", "nd_if", "V", "bo_if"),
     ];
-    expect(ids(scriptOrder(nodes, connections, "nd_branch")).reached).toEqual([
+    expect(ids(orderOf(nodes, connections, "nd_branch")).reached).toEqual([
       "nd_branch",
       "nd_if",
       "nd_elseif",
@@ -164,9 +169,7 @@ describe("the script view's order", () => {
       node("nd_far", 2),
     ];
     expect(
-      ids(
-        scriptOrder(nodes, [link("cn_1", "nd_entry", "nd_jump")], "nd_entry"),
-      ),
+      ids(orderOf(nodes, [link("cn_1", "nd_entry", "nd_jump")], "nd_entry")),
     ).toEqual({ reached: ["nd_entry", "nd_jump"], unreached: ["nd_far"] });
   });
 
@@ -175,9 +178,7 @@ describe("the script view's order", () => {
     const nodes = [node("nd_b", 1), node("nd_c", 0), node("nd_a", 1)];
     const connections = [link("cn_1", "nd_c", "nd_b")];
     const expected = { reached: [], unreached: ["nd_c", "nd_a", "nd_b"] };
-    expect(ids(scriptOrder(nodes, connections, undefined))).toEqual(expected);
-    expect(ids(scriptOrder(nodes, connections, "nd_trashed"))).toEqual(
-      expected,
-    );
+    expect(ids(orderOf(nodes, connections, undefined))).toEqual(expected);
+    expect(ids(orderOf(nodes, connections, "nd_trashed"))).toEqual(expected);
   });
 });
