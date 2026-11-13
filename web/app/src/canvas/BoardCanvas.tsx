@@ -2559,7 +2559,12 @@ function BoardCanvasOf({
           />
         )}
       </div>
-      <div className="flex flex-wrap items-start gap-2">
+      {/* 8 px more above the row than between the canvas's rows, as the
+          docked inspector beside the canvas may end, with its last field,
+          where the canvas's row does, and fonts that round a line's height
+          down would leave the row's button closer to that field than a
+          finger's 8 px (NFR-TOUCH-01). */}
+      <div className="flex flex-wrap items-start gap-2 pt-2">
         <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
           {editable
             ? t("canvas.help_edit", helpKeys)
