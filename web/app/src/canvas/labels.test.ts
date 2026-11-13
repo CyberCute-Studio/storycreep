@@ -6,7 +6,9 @@ import { passOf, pathAt, statsOf } from "./bench";
 import { canvasKey } from "./keyboard";
 import {
   type LabelContext,
+  type LabelSources,
   labelsOf,
+  namesChanged,
   namesDiffer,
   plainText,
   sameLabels,
@@ -26,7 +28,12 @@ const context: LabelContext = {
   t: (key, args) =>
     args === undefined ? key : `${key}(${Object.values(args).join(",")})`,
   componentName: (id) => (id === "cmp_ada" ? "Ada" : undefined),
-  variableKey: (id) => (id === "var_gold" ? "gold" : undefined),
+  valueName: (ref, attribute) =>
+    ref === "var_gold" && attribute === undefined
+      ? "gold"
+      : ref === "cmp_ada" && attribute === "atr_trust"
+        ? "ada.trust"
+        : undefined,
   target: (node) =>
     targetOf(
       node,
@@ -215,6 +222,55 @@ describe("a card's labels", () => {
     ]);
     expect(namesDiffer(before, swapped, name)).toBe(true);
     expect(namesDiffer(before, new Map([["cmp_ada", ada]]), name)).toBe(true);
+  });
+
+  it("shows the value of a component's attribute by the component's key and the attribute's, without its format, and follows a change of either key", () => {
+    const text: RichTextDoc = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "valueRef",
+              attrs: { ref: "cmp_ada", attribute: "atr_trust", decimals: 2 },
+            },
+            { type: "text", text: " and " },
+            {
+              type: "valueRef",
+              attrs: { ref: "cmp_ada", attribute: "atr_gone" },
+            },
+          ],
+        },
+      ],
+    };
+    expect(plainText(text, context)).toBe("{ada.trust} and {…}");
+    // What the document holds of the component and its type, which a
+    // change copies anew.
+    const sources = (component: string, attribute: string, about = "") =>
+      ({
+        nodes: new Map(),
+        boards: new Map(),
+        variables: new Map(),
+        components: new Map([
+          [
+            "cmp_ada",
+            { id: "cmp_ada", name: "Ada", key: component, description: about },
+          ],
+        ]),
+        componentTypes: new Map([
+          [
+            "ct_a",
+            { id: "ct_a", attributes: [{ id: "atr_trust", key: attribute }] },
+          ],
+        ]),
+      }) as unknown as LabelSources;
+    const before = sources("ada", "trust");
+    expect(namesChanged(before, sources("ada", "trust", "The keeper"))).toBe(
+      false,
+    );
+    expect(namesChanged(before, sources("adah", "trust"))).toBe(true);
+    expect(namesChanged(before, sources("ada", "faith"))).toBe(true);
   });
 });
 

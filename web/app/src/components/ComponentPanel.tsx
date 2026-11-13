@@ -29,6 +29,7 @@ import { AssetImage } from "../content/AssetImage";
 import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
+import { useTextNames } from "../content/textNames";
 import { componentUsagesQuery, Usages } from "../content/usages";
 import {
   typeName,
@@ -168,11 +169,13 @@ function WholeComponent(props: ComponentPanelProps) {
 
 /** A component as a role that does not edit the project reads it, or as it is while the project is archived. */
 function ComponentView({
+  project,
   component,
   type,
   tree,
 }: Omit<ComponentPanelProps, "component"> & { component: Component }) {
   const { t } = useTranslation();
+  const { names } = useTextNames(project.id);
   return (
     <div className="space-y-4">
       {/* Shown anew once the component changes, as its description does
@@ -182,6 +185,7 @@ function ComponentView({
         label={t("component.description")}
         defaultValue={component.description}
         editable={false}
+        names={names}
       />
       <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-[max-content_1fr]">
         {definitionsOf(type).map((attribute) => (
@@ -291,6 +295,9 @@ function ComponentForm({
   tree,
 }: Omit<ComponentPanelProps, "component"> & { component: Component }) {
   const { t } = useTranslation();
+  // What the description's mentions and value references show, and what
+  // its { and @ offer, of no board.
+  const { names, choices } = useTextNames(project.id);
   // The component as the document has it now, once a save was refused for
   // a change made elsewhere; one that the document has without its values,
   // as once a read of the list took them away, is as the form last had it
@@ -474,6 +481,8 @@ function ComponentForm({
           label={t("component.description")}
           defaultValue={shown.description}
           error={errors.description}
+          names={names}
+          choices={choices}
           onChange={(value) => {
             description.current = { key: held.key, value };
             held.props.onChange();

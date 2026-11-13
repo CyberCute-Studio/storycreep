@@ -40,6 +40,7 @@ import {
   sinkFits,
   startOf,
 } from "./schema";
+import { type Suggestion, suggester } from "./suggest";
 
 /** What the editor shows of the value references and the mentions of a text, which name what the project holds. */
 export interface RichTextNames {
@@ -60,23 +61,44 @@ export interface ChipLabels {
 }
 
 /**
+ * Returns what a value reference shows of its name, the value's name in
+ * braces, with the digits after the point that a number is shown with, where
+ * it has them, after a colon, as {gold:2}, as the { of a text is typed to
+ * insert it so (plan note N73); decimals is shown only where it is one that
+ * a reference may have, as of a text that the editor cannot keep, which may
+ * hold any JSON there (readOf).
+ */
+export function valueChipText(name: string, decimals: unknown): string {
+  return typeof decimals === "number" &&
+    Number.isInteger(decimals) &&
+    decimals >= 0 &&
+    decimals <= MAX_DECIMALS
+    ? `{${name}:${decimals}}`
+    : `{${name}}`;
+}
+
+/**
  * Returns what a node of the editor shows as its text, if it is a mention or
  * a value reference: @ before the component's name, or the value's name in
- * braces. The labels are asked of the node's IDs only where they are strings,
- * as the schema has them, and of none otherwise, as of a text that the editor
- * cannot keep, which may hold any JSON there (readOf), so that a page's names
- * are given only the strings that they take.
+ * braces, with its format (valueChipText). The labels are asked of the
+ * node's IDs only where they are strings, as the schema has them, and of
+ * none otherwise, as of a text that the editor cannot keep, which may hold
+ * any JSON there (readOf), so that a page's names are given only the
+ * strings that they take.
  */
 function chipText(node: PMNode, labels: ChipLabels): string | undefined {
-  const { id, ref, attribute } = node.attrs;
+  const { id, ref, attribute, decimals } = node.attrs;
   switch (node.type.name) {
     case "mention":
       return `@${labels.mention(typeof id === "string" ? id : undefined)}`;
     case "valueRef":
-      return typeof ref === "string" &&
-        (attribute === null || typeof attribute === "string")
-        ? `{${labels.value(ref, attribute ?? undefined)}}`
-        : `{${labels.value(undefined, undefined)}}`;
+      return valueChipText(
+        typeof ref === "string" &&
+          (attribute === null || typeof attribute === "string")
+          ? labels.value(ref, attribute ?? undefined)
+          : labels.value(undefined, undefined),
+        decimals,
+      );
   }
   return undefined;
 }
@@ -501,6 +523,16 @@ export interface ExtensionOptions {
   placeholder?: () => string;
   /** Called when the user asks to edit a link with the keyboard (Mod-K). */
   onLinkShortcut?: () => void;
+  /**
+   * Called with each key that goes down while a suggestion of { or @ is
+   * open (suggest.ts), which reports whether the list that the page shows
+   * of it took the key; none takes one without it.
+   */
+  onSuggestionKey?: (
+    event: KeyboardEvent,
+    open: Suggestion,
+    view: EditorView,
+  ) => boolean;
 }
 
 /** The editor's extensions, which make the schema of schema/rich-text/README.md and keep the document within it. */
@@ -522,6 +554,18 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
     ...(placeholder === undefined
       ? []
       : [Placeholder.configure({ placeholder: () => placeholder() })]),
+    // The list of a suggestion takes its keys, as Enter, before a paragraph
+    // or a list item would split at it.
+    Extension.create({
+      name: "richTextSuggest",
+      priority: 1000,
+      addProseMirrorPlugins: () => [
+        suggester(
+          (event, open, view) =>
+            options.onSuggestionKey?.(event, open, view) ?? false,
+        ),
+      ],
+    }),
     Extension.create({
       name: "richTextRules",
       addProseMirrorPlugins: () => [normalizer(), relabeller(labels)],

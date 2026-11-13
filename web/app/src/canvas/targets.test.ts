@@ -128,7 +128,7 @@ describe("a jumper's target", () => {
     const context = (lookup?: TargetLookup): LabelContext => ({
       t,
       componentName: () => undefined,
-      variableKey: () => undefined,
+      valueName: () => undefined,
       target: (node) => targetOf(node, view, lookup),
       boardName: (id) => view.boards.get(id)?.name,
     });

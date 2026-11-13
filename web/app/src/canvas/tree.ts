@@ -10,7 +10,7 @@
 // what does.
 
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
-import type { Doc } from "../document/doc";
+import { type NameSources, valueName } from "../content/textNames";
 import { choicesOfPort } from "./flow";
 import {
   type LabelContext,
@@ -141,7 +141,7 @@ export function treeRows(): (
  */
 export function treeChoices(
   scene: Scene,
-  view: Pick<Doc, "components" | "variables">,
+  view: NameSources,
   ids: ReadonlySet<string>,
   t: TreeMessages,
 ): Map<string, TreeChoice[]> {
@@ -177,14 +177,15 @@ export function treeChoices(
 /** Returns the connections of leaving, which leave node, as the tree lists them under it (treeChoices). */
 function choicesOfNode(
   scene: Scene,
-  view: Pick<Doc, "components" | "variables">,
+  view: NameSources,
   node: Node,
   leaving: readonly Connection[],
   t: TreeMessages,
 ): TreeChoice[] {
   const names = {
     componentName: (component: string) => view.components.get(component)?.name,
-    variableKey: (variable: string) => view.variables.get(variable)?.key,
+    valueName: (ref: string, attribute: string | undefined) =>
+      valueName(view, ref, attribute),
   };
   const choices: TreeChoice[] = [];
   const list = (c: Connection, output: BranchOutput | undefined) => {

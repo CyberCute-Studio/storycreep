@@ -30,14 +30,13 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, useEntityForm } from "../content/form";
-import { useDocumentState, useProjectDocument } from "../document/react";
+import { useTextNames } from "../content/textNames";
 import { equal } from "../document/reconcile";
 import { payloadField } from "../project/dialogs";
 import type { RichTextValue } from "../richtext/convert";
@@ -149,7 +148,6 @@ export function TextEditor({
   ref,
 }: TextEditorProps) {
   const { t } = useTranslation();
-  const doc = useProjectDocument(projectId);
   const box = useRef<HTMLFormElement>(null);
   // Places the box where the canvas's last frame placed it, as the form is
   // shown anew, of another key, as another element, which has none of the
@@ -229,17 +227,8 @@ export function TextEditor({
   const refusal = refusalOf(commands.error, t, textField);
   const title = titleOf(shown, t);
   // The names that the text's mentions and value references show, as the
-  // cards show them.
-  const components = useDocumentState(doc, (s) => s.view.components);
-  const variables = useDocumentState(doc, (s) => s.view.variables);
-  const names = useMemo(
-    () => ({
-      mention: (id: string) => components.get(id)?.name,
-      value: (ref: string, attribute: string | undefined) =>
-        attribute === undefined ? variables.get(ref)?.key : undefined,
-    }),
-    [components, variables],
-  );
+  // cards show them, and what its { and @ offer, of the node's board.
+  const { names, choices } = useTextNames(projectId, node.board_id);
 
   // Where the box is: over the node, in each frame that the canvas draws,
   // within the part of the canvas that the window shows, and as it opens,
@@ -498,6 +487,7 @@ export function TextEditor({
         defaultValue={shown.text}
         error={invalid ?? refusal?.fields.text}
         names={names}
+        choices={choices}
         // What the user types while the save is under way would be lost as
         // the editor closes once it applies.
         editable={!pending}

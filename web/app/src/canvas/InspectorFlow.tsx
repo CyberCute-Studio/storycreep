@@ -28,6 +28,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
+import { useTextNames, valueName } from "../content/textNames";
 import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
@@ -381,6 +382,10 @@ function PortChoices({
   const ids = useMemo(() => choices.map((c) => c.id), [choices]);
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
   const components = useDocumentState(doc, (state) => state.view.components);
+  const componentTypes = useDocumentState(
+    doc,
+    (state) => state.view.componentTypes,
+  );
   const variables = useDocumentState(doc, (state) => state.view.variables);
   const options = useMemo(
     () =>
@@ -403,7 +408,8 @@ function PortChoices({
   );
   const names = {
     componentName: (id: string) => components.get(id)?.name,
-    variableKey: (id: string) => variables.get(id)?.key,
+    valueName: (ref: string, attribute: string | undefined) =>
+      valueName({ components, componentTypes, variables }, ref, attribute),
   };
   const connect = (event: FormEvent) => {
     event.preventDefault();
@@ -1166,16 +1172,9 @@ function ConnectionForm({
   const refusal = refusalOf(commands.error, t, connectionField);
   useFocusRefusal(held.form, invalid ?? commands.error);
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
-  const components = useDocumentState(doc, (state) => state.view.components);
-  const variables = useDocumentState(doc, (state) => state.view.variables);
-  const names = useMemo(
-    () => ({
-      mention: (id: string) => components.get(id)?.name,
-      value: (ref: string, attribute: string | undefined) =>
-        attribute === undefined ? variables.get(ref)?.key : undefined,
-    }),
-    [components, variables],
-  );
+  // What the label's mentions and value references show, and what its {
+  // and @ offer, of the connection's board.
+  const { names, choices } = useTextNames(projectId, connection.board_id);
   const named = useMemo(
     () => namedNodes(nodes, connection.board_id, t),
     [nodes, connection.board_id, t],
@@ -1283,6 +1282,7 @@ function ConnectionForm({
           defaultValue={shown.label}
           error={refusal?.fields.label}
           names={names}
+          choices={choices}
           onChange={(value) => {
             label.current = { key: held.key, value };
             held.props.onChange();

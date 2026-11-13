@@ -10,7 +10,6 @@
 // now follows the page while the palette is open, as an undo under way
 // ends.
 
-import { foldCase } from "@storycreep/shared/fold";
 import { Dialog } from "radix-ui";
 import {
   type KeyboardEvent,
@@ -24,6 +23,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { searchText } from "../search/query";
 import { DialogFrame, focusBackTo } from "../ui/Dialog";
+import { nameMatcher } from "../ui/match";
 import {
   type CommandId,
   commandName,
@@ -42,33 +42,6 @@ type Entry =
 /** Returns what tells entry apart from the palette's others: its command's ID, or that it is the search. */
 function entryKey(entry: Entry): string {
   return entry.kind === "command" ? entry.id : "search";
-}
-
-/** Returns text folded as the palette compares it: by case, as the server folds tags, and without diacritics. */
-export function foldWords(text: string): string[] {
-  return foldCase(text.normalize("NFD").replace(/\p{M}/gu, ""))
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w !== "");
-}
-
-/**
- * Returns what reports whether a name has a word that starts as each word
- * of query does, which query is folded for once, rather than for each name
- * that the palette lists: every name, of a query of nothing but spaces, as
- * of none; and none, of one that has no word, as + or ?, which no name's
- * words start as, so that the palette lists the search for it alone, which
- * Enter runs, rather than every command, as if nothing had been typed.
- */
-export function nameMatcher(query: string): (name: string) => boolean {
-  const asked = foldWords(query);
-  if (asked.length === 0) {
-    const all = query.trim() === "";
-    return () => all;
-  }
-  return (name) => {
-    const words = foldWords(name);
-    return asked.every((q) => words.some((w) => w.startsWith(q)));
-  };
 }
 
 /**

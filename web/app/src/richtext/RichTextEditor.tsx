@@ -7,7 +7,11 @@
 // canonical form, or says why the server would refuse it, as a text that is
 // too large (convert.ts). It is labelled as a field of the app's forms, has
 // a toolbar of its marks and lists, whose buttons are at least 44 pixels
-// square (PRD FR-EDIT-09), and edits a link's URL in a dialog.
+// square (PRD FR-EDIT-09), and edits a link's URL in a dialog. Where the
+// page gives it what its text may refer to, { offers the values that a
+// reference shows, and @ the components that a mention names (FR-TEXT-02,
+// FR-TEXT-03, Suggestions.tsx), and its toolbar sets the format of the value
+// reference selected.
 
 import type { RichTextDoc } from "@storycreep/shared/api";
 import {
@@ -17,6 +21,7 @@ import {
   tryParseRichText,
   tryParseRichTextOfAnySize,
 } from "@storycreep/shared/richtext";
+import { NodeSelection } from "@tiptap/pm/state";
 import {
   type Editor,
   EditorContent,
@@ -36,7 +41,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button, pressedClass } from "../ui/Button";
 import { DialogFrame, FormButtons } from "../ui/Dialog";
-import { FieldFrame, fieldDescription, TextField } from "../ui/Field";
+import {
+  FieldFrame,
+  fieldDescription,
+  SelectField,
+  TextField,
+} from "../ui/Field";
+import type { RichTextChoices } from "./choices";
 import { type RichTextValue, storedOf } from "./convert";
 import {
   pasteProps,
@@ -45,6 +56,7 @@ import {
   richTextExtensions,
 } from "./extensions";
 import { typedHref } from "./link";
+import { type SuggestionKeys, Suggestions } from "./Suggestions";
 
 export interface RichTextEditorProps {
   /** The field's label, which names the text for a screen reader too. */
@@ -82,6 +94,12 @@ export interface RichTextEditorProps {
    * useMemo keeps it.
    */
   names?: RichTextNames;
+  /**
+   * What the text may refer to, which { and @ offer as they are typed: the
+   * values that a value reference may show, and the components that a
+   * mention may name. Without it, they are text, as any other character.
+   */
+  choices?: RichTextChoices;
 }
 
 /**
@@ -157,11 +175,16 @@ export function RichTextEditor({
   editable = true,
   placeholder,
   names,
+  choices,
 }: RichTextEditorProps) {
   const { t } = useTranslation();
   const id = useId();
   const labelId = `${id}-label`;
   const [linking, setLinking] = useState(false);
+  const [formatting, setFormatting] = useState(false);
+  // What takes the keys of a suggestion that is open: its list, while it is
+  // shown.
+  const suggestKeys = useRef<SuggestionKeys>(undefined);
   // What the editor's callbacks, made once with it, read as the page renders.
   const unknownMention = t("richtext.unknown_mention");
   const unknownValue = t("richtext.unknown_value");
@@ -192,12 +215,16 @@ export function RichTextEditor({
       },
       placeholder: () => latest.current.placeholder ?? "",
       onLinkShortcut: () => setLinking(true),
+      onSuggestionKey: (event, open, view) =>
+        suggestKeys.current?.(event, open, view) ?? false,
     });
     return { content, extensions, ...readOf(content) };
   });
   // A document that the editor cannot keep as it is is shown, as its schema
   // reads it, but not changed.
   const changeable = editable && !initial.unreadable;
+  // Whether { and @ offer what the text may refer to.
+  const suggests = changeable && choices !== undefined;
   // Why the server would refuse what the editor holds, which the page's own
   // error goes before, of a text that the user may change, which they can
   // mend. A text that the editor cannot keep says so before the page's
@@ -228,10 +255,11 @@ export function RichTextEditor({
           : { "aria-describedby": describedBy }),
         ...(invalid === undefined ? {} : { "aria-invalid": "true" }),
         ...(changeable ? {} : { "aria-readonly": "true" }),
+        ...(suggests ? { "aria-autocomplete": "list" } : {}),
         class: "rich-text min-h-24 rounded-b-md px-3 py-2 text-fg break-words",
       },
     }),
-    [id, labelId, describedBy, invalid, changeable],
+    [id, labelId, describedBy, invalid, changeable, suggests],
   );
   const editor = useEditor({
     content: initial.content,
@@ -258,14 +286,15 @@ export function RichTextEditor({
     },
   });
   // Whether the user may change the text is no change of it. A text that
-  // may no longer be changed closes the link's dialog, which would change
-  // it.
+  // may no longer be changed closes the link's dialog and the format's,
+  // which would change it.
   useEffect(() => {
     if (editor !== null && editor.isEditable !== changeable) {
       editor.setEditable(changeable, false);
     }
     if (!changeable) {
       setLinking(false);
+      setFormatting(false);
     }
   }, [editor, changeable]);
   // The editor draws a mention, a value reference, and the placeholder once,
@@ -299,12 +328,26 @@ export function RichTextEditor({
                 editor={editor}
                 label={label}
                 onLink={() => setLinking(true)}
+                onFormat={() => setFormatting(true)}
               />
             )}
             <EditorContent editor={editor} />
+            {suggests && editor !== null && (
+              <Suggestions
+                editor={editor}
+                choices={choices}
+                keys={suggestKeys}
+              />
+            )}
           </div>
           {linking && changeable && editor !== null && (
             <LinkDialog editor={editor} onClose={() => setLinking(false)} />
+          )}
+          {formatting && changeable && editor !== null && (
+            <ValueFormatDialog
+              editor={editor}
+              onClose={() => setFormatting(false)}
+            />
           )}
         </>
       )}
@@ -322,8 +365,8 @@ function FormatButton({
   children,
 }: {
   label: string;
-  /** The keys that do the same, as aria-keyshortcuts writes them. */
-  shortcut: string;
+  /** The keys that do the same, as aria-keyshortcuts writes them, if any do. */
+  shortcut?: string;
   pressed?: boolean;
   disabled?: boolean;
   onPress: () => void;
@@ -365,15 +408,26 @@ function modifier(): string {
   return /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control";
 }
 
-/** The editor's toolbar: its marks, its link, and its lists, each pressed where the selection has it. */
+/** Reports whether the selection of editor is a value reference, selected as a whole, whose format the toolbar sets. */
+function valueSelected(editor: Editor): boolean {
+  const { selection } = editor.state;
+  return (
+    selection instanceof NodeSelection &&
+    selection.node.type.name === "valueRef"
+  );
+}
+
+/** The editor's toolbar: its marks, its link, its lists, each pressed where the selection has it, and the format of the value reference selected. */
 function FormatBar({
   editor,
   label,
   onLink,
+  onFormat,
 }: {
   editor: Editor;
   label: string;
   onLink: () => void;
+  onFormat: () => void;
 }) {
   const { t } = useTranslation();
   const mod = modifier();
@@ -391,6 +445,7 @@ function FormatBar({
       canItalic: e.can().toggleItalic(),
       canStrike: e.can().toggleStrike(),
       canCode: e.can().toggleCode(),
+      value: valueSelected(e),
     }),
   });
   const chain = () => editor.chain().focus();
@@ -461,7 +516,106 @@ function FormatBar({
       >
         <path d="M11 7h9M11 12h9M11 17h9M4 5h1.5v4M4 9h3M4 13.5a1.5 1.5 0 0 1 3 0c0 1.2-3 1.8-3 3.5h3" />
       </FormatButton>
+      <Toolbar.Separator className="mx-1 w-px self-stretch bg-border" />
+      <FormatButton
+        label={t("richtext.format")}
+        disabled={!state.value}
+        onPress={onFormat}
+      >
+        <path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" />
+      </FormatButton>
     </Toolbar.Root>
+  );
+}
+
+/** The formats of a value reference besides the value as it is: 0 to 6 digits after the point. */
+const decimalsOptions = [0, 1, 2, 3, 4, 5, 6];
+
+/**
+ * The dialog that sets the format of the value reference selected: the
+ * digits after the point that a number is shown with, from 0, as an
+ * integer, to 6, or none, as the value is (PRD FR-TEXT-02). Closed, it
+ * gives the focus back to the text, with the reference selected.
+ */
+function ValueFormatDialog({
+  editor,
+  onClose,
+}: {
+  editor: Editor;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  // The reference selected as the dialog opened, where it is, and its format.
+  const [current] = useState(() => {
+    const { selection } = editor.state;
+    return valueSelected(editor)
+      ? {
+          pos: selection.from,
+          decimals: (selection as NodeSelection).node.attrs.decimals,
+        }
+      : undefined;
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const chosen = String(new FormData(event.currentTarget).get("decimals"));
+    const decimals = chosen === "" ? null : Number(chosen);
+    if (current !== undefined && decimals !== current.decimals) {
+      // The reference stays selected, as ProseMirror would select the
+      // text after it once the node that it replaces has gone.
+      editor
+        .chain()
+        .focus()
+        .command(({ tr }) => {
+          const node = tr.doc.nodeAt(current.pos);
+          if (node?.type.name !== "valueRef") {
+            return false;
+          }
+          tr.setNodeMarkup(current.pos, undefined, { ...node.attrs, decimals });
+          tr.setSelection(NodeSelection.create(tr.doc, current.pos));
+          return true;
+        })
+        .run();
+    }
+    onClose();
+  };
+  return (
+    <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
+      <DialogFrame
+        title={t("richtext.format_title")}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (!editor.isDestroyed) {
+            editor.commands.focus();
+          }
+        }}
+      >
+        <form className="space-y-4" onSubmit={submit} noValidate>
+          <SelectField
+            label={t("richtext.format_digits")}
+            hint={t("richtext.format_hint")}
+            name="decimals"
+            defaultValue={
+              typeof current?.decimals === "number"
+                ? String(current.decimals)
+                : ""
+            }
+            autoFocus
+          >
+            <option value="">{t("richtext.format_as_is")}</option>
+            {decimalsOptions.map((d) => (
+              <option key={d} value={String(d)}>
+                {t("richtext.format_decimals", { count: d })}
+              </option>
+            ))}
+          </SelectField>
+          <FormButtons
+            cancel={t("richtext.format_cancel")}
+            submit={t("richtext.format_save")}
+            pending={false}
+          />
+        </form>
+      </DialogFrame>
+    </Dialog.Root>
   );
 }
 
