@@ -452,7 +452,11 @@ function FormatBar({
   return (
     <Toolbar.Root
       aria-label={t("richtext.toolbar", { field: label })}
-      className="flex flex-wrap gap-1 border-b border-border p-1"
+      // Its buttons are 8 px apart, and 8 px from the text below them, as
+      // a finger's targets are (PRD NFR-TOUCH-01): the toolbar takes the
+      // focus itself, as Radix's roving focus has it, so its own edge is a
+      // target's too.
+      className="mb-2 flex flex-wrap gap-2 border-b border-border p-2"
     >
       <FormatButton
         label={t("richtext.bold")}

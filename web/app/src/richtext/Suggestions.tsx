@@ -176,7 +176,9 @@ export function Suggestions({
         {status}
       </p>
       {open !== undefined && (
-        <div className="space-y-1 border-t border-border p-1">
+        // The offers are 8 px from the text, and from each other, as a
+        // finger's targets are (PRD NFR-TOUCH-01).
+        <div className="space-y-1 border-t border-border p-2">
           {offers.length > 0 ? (
             <div
               id={listId}
