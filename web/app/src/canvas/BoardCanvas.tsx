@@ -1964,6 +1964,23 @@ function BoardCanvasOf({
             {t("canvas.settings")}
           </a>
         )}
+        {/* The table of the shortcuts is the app's frame's, which shows it
+        over the page: outside the frame, which has no registry, there is
+        none for the button to open. A click gives the button the focus
+        first, which the table gives back to it as it closes (runFrom). It
+        is the toolbar's, 8 px from its neighbours, rather than below the
+        canvas, where the docked inspector's sticky column, and the context
+        menu that opens down from a node, reach (NFR-TOUCH-01). */}
+        {registry !== undefined && (
+          <Button
+            aria-haspopup="dialog"
+            onClick={(e) =>
+              runFrom(registry, "shortcuts.show", e.currentTarget)
+            }
+          >
+            {t("canvas.shortcuts")}
+          </Button>
+        )}
         {/* The page's clipboard (FR-EDIT-07, plan note N71): Copy, on any
         board, as a viewer may copy what they read, and Cut and Paste on a
         board that may be changed. While a copy, a paste, or a duplicate is
@@ -2559,31 +2576,11 @@ function BoardCanvasOf({
           />
         )}
       </div>
-      <div className="flex flex-wrap items-start gap-2">
-        {/* The table of the shortcuts is the app's frame's, which shows it
-        over the page: outside the frame, which has no registry, there is
-        none for the button to open. A click gives the button the focus
-        first, which the table gives back to it as it closes (runFrom). The
-        button is at the row's start, under the canvas: the docked
-        inspector beside the canvas is sticky, and scrolls within the
-        window's height, so a field that it clips may lie over the row's
-        end, closer to a button there than a finger's 8 px (NFR-TOUCH-01). */}
-        {registry !== undefined && (
-          <Button
-            aria-haspopup="dialog"
-            onClick={(e) =>
-              runFrom(registry, "shortcuts.show", e.currentTarget)
-            }
-          >
-            {t("canvas.shortcuts")}
-          </Button>
-        )}
-        <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
-          {editable
-            ? t("canvas.help_edit", helpKeys)
-            : t("canvas.help", helpKeys)}
-        </p>
-      </div>
+      <p id={helpId} className="text-sm text-fg-muted">
+        {editable
+          ? t("canvas.help_edit", helpKeys)
+          : t("canvas.help", helpKeys)}
+      </p>
       {options.bench !== undefined && (
         <Suspense>
           <Bench
