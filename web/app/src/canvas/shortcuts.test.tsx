@@ -329,6 +329,112 @@ describe("the canvas's shortcuts", () => {
     await waitFor(() => expect(document.activeElement).toBe(field));
   });
 
+  it("leave C to the page of a branch without an output, which has no Connect to, and connect from a branch's first output", async () => {
+    boardPage([
+      testNode("nd_b", 0, 0, { type: "branch", kind: undefined }),
+      testNode("nd_c", 0, 400, {
+        type: "branch",
+        kind: undefined,
+        outputs: [
+          {
+            id: "bo_1",
+            node_id: "nd_c",
+            kind: "if",
+            order: "V",
+            condition: { source: "", is_valid: false },
+            rev: 1,
+            created_at: harbour.created_at,
+            updated_at: harbour.created_at,
+          },
+        ],
+      }),
+    ]);
+    const canvas = await openBoard("?node=nd_b");
+    await screen.findByText(/Selected: /);
+    const inspector = screen.getByRole("button", { name: "Inspector" });
+    const wasOpen = inspector.getAttribute("aria-pressed");
+    canvas.focus();
+    expect(fireEvent.keyDown(canvas, { key: "c", code: "KeyC" })).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
+    expect(document.activeElement).toBe(canvas);
+    // The branch with an output, selected in the tree.
+    const item = document.querySelector<HTMLElement>(
+      '[role="treeitem"][data-node="nd_c"]',
+    );
+    expect(item).not.toBeNull();
+    item?.focus();
+    fireEvent.keyDown(item as HTMLElement, { key: " ", code: "Space" });
+    await screen.findByText(/Selected: .*nd_c/);
+    canvas.focus();
+    expect(fireEvent.keyDown(canvas, { key: "c", code: "KeyC" })).toBe(false);
+    const field = await screen.findByLabelText("Connect to");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+  });
+
+  it("in the tree, run once for a key held down, and nothing in the middle of a drag, nor the page's keys, which are the page's", async () => {
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { title: "Alpha" }),
+      testNode("nd_2", 0, 400, { title: "Echo" }),
+    ]);
+    const canvas = await openBoard();
+    const tree = await screen.findByRole("tree", {
+      name: "Nodes and connections of Harbour",
+    });
+    await waitFor(() =>
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(2),
+    );
+    const [first, second] = within(tree).getAllByRole("treeitem");
+    // A pan of the board, in the middle of which the focus went to the
+    // tree, as by Tab.
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    first.focus();
+    fireEvent.keyDown(first, { key: "Delete", code: "Delete" });
+    fireEvent.keyDown(first, { key: "Enter", code: "Enter" });
+    for (const [key, code] of [
+      ["k", "KeyK"],
+      ["/", "Slash"],
+    ] as const) {
+      expect(fireEvent.keyDown(first, { key, code, ctrlKey: true }), key).toBe(
+        false,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(canvas.dataset.selected).toBe("0");
+    expect(screen.getByRole("application", { name: "Nodes of Harbour" })).toBe(
+      canvas,
+    );
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    // Delete held down deletes once, though the focus goes on to the node
+    // in the place of the one that it deleted.
+    first.focus();
+    fireEvent.keyDown(first, { key: "Delete", code: "Delete" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    for (const item of [document.activeElement ?? second, second]) {
+      fireEvent.keyDown(item, { key: "Delete", code: "Delete", repeat: true });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(1);
+  });
+
   it("undo the last change by Ctrl+Z, and show the table of the shortcuts by ?", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard();

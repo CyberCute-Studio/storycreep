@@ -3,16 +3,19 @@
 // (useCommandHandlers), as the canvas its zoom, and the palette, the canvas's
 // keys, and the keys of the page run the command by its ID through the
 // registry, so that a command's key and its entry in the palette run the
-// same. The keys of the page act wherever the focus is (keysOfPage): not in
-// a dialog, whose keys are its own, as the palette's, nor while a modal one
-// is open, nor in a field that the user types in, for a command whose key
-// is the field's own there, as the undo's, nor once something of the page
-// has taken the key itself, nor, for a command that runs once for a key
-// held down, its repeats; and a key of a command that the page has is the
-// page's whether the command can run then or not, in a dialog too, where
-// it runs nothing, but in a field whose own key it is. What the palette
-// says of each command follows the page while it is open, as the registry
-// tells it of each change of what the page can run (subscribe).
+// same. A part of the page in the middle of a gesture keeps the commands
+// that would interrupt it from running, wherever they are asked from, as
+// the canvas in the middle of a drag (hold). The keys of the page act
+// wherever the focus is (keysOfPage): not while a dialog is open, whose
+// keys are its own, as the palette's, nor in a field that the user types
+// in, for a command whose key is the field's own there, as the undo's, nor
+// once something of the page has taken the key itself, nor, for a command
+// that runs once for a key held down, its repeats; and a key of a command
+// that the page has is the page's whether the command can run then or not,
+// while a dialog is open too, where it runs nothing, but in a field whose
+// own key it is. What the palette says of each command follows the page
+// while it is open, as the registry tells it of each change of what the
+// page can run (subscribe).
 
 import {
   createContext,
@@ -87,6 +90,7 @@ interface Layer {
 export class CommandRegistry {
   private layers: Layer[] = [];
   private added = 0;
+  private holds = new Set<(id: CommandId) => boolean>();
   private listeners = new Set<() => void>();
   private changes = 0;
   /** What the page could run as the listeners were told of it last (changed), or undefined before they were. */
@@ -100,6 +104,23 @@ export class CommandRegistry {
     return () => {
       this.layers = this.layers.filter((l) => l !== layer);
       this.changed();
+    };
+  }
+
+  /**
+   * Keeps each command that holds says it holds from running, while it
+   * says so, wherever it is asked from: by its key, on the part of the page
+   * that has the focus or elsewhere, or from the palette, or the header's
+   * Commands, which a second finger may tap; as the canvas holds all but
+   * those that run in the middle of a drag then, which would change the
+   * nodes under the drag, leave the board, or open over it (BoardCanvas's
+   * whileDragging). It is read as a command is asked to run, and as the
+   * palette lists it (can), and returns what takes it away.
+   */
+  hold(holds: (id: CommandId) => boolean): () => void {
+    this.holds.add(holds);
+    return () => {
+      this.holds.delete(holds);
     };
   }
 
@@ -170,14 +191,22 @@ export class CommandRegistry {
     return commandIds.filter((id) => this.handler(id) !== undefined);
   }
 
-  /** Reports whether the command of id can run now (canRun). */
+  /** Reports whether the command of id can run now (canRun), and nothing holds it (hold). */
   can(id: CommandId): boolean {
-    return canRun(this.handler(id));
+    if (!canRun(this.handler(id))) {
+      return false;
+    }
+    for (const holds of this.holds) {
+      if (holds(id)) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  /** Runs the command of id, and reports whether it did something: nothing where it cannot run now. */
+  /** Runs the command of id, and reports whether it did something: nothing where it cannot run now (can). */
   run(id: CommandId, query?: string): boolean {
-    return runHandler(this.handler(id), query);
+    return this.can(id) && runHandler(this.handler(id), query);
   }
 }
 
@@ -224,13 +253,16 @@ export function useCommandHandlers(level: Level, handlers: Handlers): void {
  * such a field. A key of a command that the page has is then the page's
  * whether the command runs or not, rather than the browser's, as Safari's
  * Cmd+Z, which reopens the tab that was closed last: as the undo's while a
- * step is under way, or one in a dialog, whose keys are its own, as the
- * palette's, or while a modal dialog is open, as a sheet, whose text a
- * click gives the focus to none of, which leaves it on the page's body,
- * which runs nothing; and so are the repeats of a key held down of a
- * command that runs once for it (CommandSpec's repeats), as the palette's
- * and the search's, which would open and close them by turns, but for the
- * undo's and the redo's, which go on.
+ * step is under way, or in the middle of a drag of the canvas (hold), or
+ * while a dialog is open, whose keys are its own, as the palette's, which
+ * runs nothing, wherever the focus is: in the dialog, or on the page's
+ * body, where a dialog leaves it, as a sheet whose text a click gave the
+ * focus to none of, or a confirmation whose button that had it is disabled
+ * while its request is answered, which Radix's dialogs, which say nothing
+ * of being modal (aria-modal), leave it on; and so are the repeats of a key
+ * held down of a command that runs once for it (CommandSpec's repeats), as
+ * the palette's and the search's, which would open and close them by turns,
+ * but for the undo's and the redo's, which go on.
  */
 export function keysOfPage(
   registry: CommandRegistry,
@@ -248,16 +280,16 @@ export function keysOfPage(
     if (commandOf(id).outsideText === true && isTextField(target)) {
       return;
     }
-    const handler = registry.handler(id);
-    if (handler === undefined) {
+    if (registry.handler(id) === undefined) {
       return;
     }
     e.preventDefault();
-    const inDialog =
-      target?.closest('[role="dialog"], [role="alertdialog"]') != null ||
-      document.querySelector('[aria-modal="true"]') !== null;
-    if (!inDialog && (!e.repeat || commandOf(id).repeats === true)) {
-      runHandler(handler);
+    const dialogOpen =
+      document.querySelector(
+        '[role="dialog"], [role="alertdialog"], [aria-modal="true"]',
+      ) !== null;
+    if (!dialogOpen && (!e.repeat || commandOf(id).repeats === true)) {
+      registry.run(id);
     }
   };
 }

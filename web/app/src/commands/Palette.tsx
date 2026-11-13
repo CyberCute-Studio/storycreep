@@ -158,7 +158,17 @@ function PaletteBody({
       : entries.findIndex((entry) => entryKey(entry) === active);
   const shown = entries.length === 0 ? -1 : moved;
   const optionId = (i: number) => `${listId}-${i}`;
+  // The entry highlighted is scrolled into view as the highlight moves, or
+  // as what was typed changes, rather than with each render, as of a change
+  // of what the page can run, which would take the list back from where the
+  // wheel scrolled it.
+  const scrolledTo = useRef<string | undefined>(undefined);
   useEffect(() => {
+    const now = `${shown} ${query}`;
+    if (now === scrolledTo.current) {
+      return;
+    }
+    scrolledTo.current = now;
     document
       .getElementById(optionId(shown))
       ?.scrollIntoView?.({ block: "nearest" });

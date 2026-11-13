@@ -199,6 +199,43 @@ function keyName(t: TFunction, key: string): string {
   return key.toUpperCase();
 }
 
+/** The names that the parts of a binding are written by: its modifiers', and its key's, by the key. */
+interface PartNames {
+  cmd: string;
+  ctrl: string;
+  shift: string;
+  key: (key: string) => string;
+}
+
+/**
+ * Returns the parts of binding on platform, by names, each a key, the
+ * modifiers first: Cmd, which is Ctrl but on macOS, Ctrl, Shift, and the
+ * key, or the digit of a key of a digit's place (bindingParts,
+ * ariaKeyShortcuts).
+ */
+function partsOf(
+  binding: Binding,
+  platform: Platform,
+  names: PartNames,
+): string[] {
+  const parts: string[] = [];
+  if (binding.mod === true) {
+    parts.push(platform === "mac" ? names.cmd : names.ctrl);
+  }
+  if (binding.ctrl === true) {
+    parts.push(names.ctrl);
+  }
+  if (binding.shift === true) {
+    parts.push(names.shift);
+  }
+  parts.push(
+    binding.code?.startsWith("Digit") === true
+      ? binding.code.slice(5)
+      : names.key(binding.key),
+  );
+  return parts;
+}
+
 /**
  * Returns the parts of binding as the shortcuts' table and the palette
  * write them on platform, each a key, the modifiers first: Cmd, or Ctrl,
@@ -209,22 +246,12 @@ export function bindingParts(
   binding: Binding,
   platform: Platform,
 ): string[] {
-  const parts: string[] = [];
-  if (binding.mod === true) {
-    parts.push(platform === "mac" ? t("keys.cmd") : t("keys.ctrl"));
-  }
-  if (binding.ctrl === true) {
-    parts.push(t("keys.ctrl"));
-  }
-  if (binding.shift === true) {
-    parts.push(t("keys.shift"));
-  }
-  parts.push(
-    binding.code?.startsWith("Digit") === true
-      ? binding.code.slice(5)
-      : keyName(t, binding.key),
-  );
-  return parts;
+  return partsOf(binding, platform, {
+    cmd: t("keys.cmd"),
+    ctrl: t("keys.ctrl"),
+    shift: t("keys.shift"),
+    key: (key) => keyName(t, key),
+  });
 }
 
 /** Returns binding as one string, its keys joined by +, as Ctrl+K, which a text says, as the canvas's help. */
@@ -249,25 +276,13 @@ export function ariaKeyShortcuts(
 ): string | undefined {
   const shortcuts = bindings
     .filter((binding) => bindingOn(binding, platform))
-    .map((binding) => {
-      const parts: string[] = [];
-      if (binding.mod === true) {
-        parts.push(platform === "mac" ? "Meta" : "Control");
-      }
-      if (binding.ctrl === true) {
-        parts.push("Control");
-      }
-      if (binding.shift === true) {
-        parts.push("Shift");
-      }
-      parts.push(
-        binding.code?.startsWith("Digit") === true
-          ? binding.code.slice(5)
-          : binding.key.length === 1
-            ? binding.key.toUpperCase()
-            : binding.key,
-      );
-      return parts.join("+");
-    });
+    .map((binding) =>
+      partsOf(binding, platform, {
+        cmd: "Meta",
+        ctrl: "Control",
+        shift: "Shift",
+        key: (key) => (key.length === 1 ? key.toUpperCase() : key),
+      }).join("+"),
+    );
   return shortcuts.length === 0 ? undefined : shortcuts.join(" ");
 }

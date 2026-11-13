@@ -543,8 +543,16 @@ export const CanvasTree = memo(function CanvasTree({
       case "Enter":
         // On a board that may be changed, as the canvas's own Enter is,
         // and as Delete is below: elsewhere the key selects nothing, as it
-        // opens nothing.
-        if (controller.movable() && select(item, "replace")) {
+        // opens nothing. Neither runs in the middle of a drag, as the menu
+        // does not, nor for the repeats of a key held down, as on the
+        // canvas, where Delete held down would else delete one node after
+        // another, as the focus goes on to each.
+        if (
+          !e.repeat &&
+          !controller.gestures.following() &&
+          controller.movable() &&
+          select(item, "replace")
+        ) {
           controller.command("canvas.open");
         }
         break;
@@ -555,6 +563,8 @@ export const CanvasTree = memo(function CanvasTree({
         // focus goes to what is in the place of what the key deleted, once
         // the board no longer has it.
         if (
+          !e.repeat &&
+          !controller.gestures.following() &&
           controller.movable() &&
           select(item, "keep") &&
           controller.command("canvas.delete")

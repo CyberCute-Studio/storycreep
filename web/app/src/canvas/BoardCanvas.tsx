@@ -52,11 +52,10 @@ import { useShallow } from "zustand/react/shallow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { api, notFoundBy, sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { type CommandId, commandOf, commandOfKey } from "../commands/catalog";
+import { type CommandId, commandOf } from "../commands/catalog";
 import { bindingText } from "../commands/keys";
 import {
   canRun,
-  type Handler,
   type Handlers,
   runHandler,
   useCommandHandlers,
@@ -178,17 +177,8 @@ const messageAlert =
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
 
-/**
- * The commands that run in the middle of a drag of the canvas, as its
- * wheel does then (plan note N72): those that pan, zoom, and fit the view,
- * which change no node, the minimap's, the drag's modes, which a drag that
- * started keeps, Escape, which ends the drag, cancelled, and the snap,
- * which the nodes of a move land by. No other command that the canvas
- * registers runs then, the undo among them, by its key or from the
- * palette, nor one of the page's by its key on the canvas, as the
- * palette's own (BoardCanvasOf's keyDown).
- */
-const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
+/** The commands of the view that the controller runs as they are, which pan, zoom, and fit it (CanvasController's command). */
+const views = [
   "canvas.pan_left",
   "canvas.pan_right",
   "canvas.pan_up",
@@ -201,6 +191,21 @@ const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
   "canvas.zoom_out",
   "canvas.zoom_reset",
   "canvas.fit",
+] as const satisfies readonly CommandId[];
+
+/**
+ * The commands that run in the middle of a drag of the canvas, as its
+ * wheel does then (plan note N72): those that pan, zoom, and fit the view,
+ * which change no node, the minimap's, the drag's modes, which a drag that
+ * started keeps, Escape, which ends the drag, cancelled, and the snap,
+ * which the nodes of a move land by. No other command runs then, wherever
+ * it is asked from, the undo among them, nor one of the page's, as the
+ * palette's own and the search's, by a key on the canvas, in its tree, or
+ * elsewhere on the page, or from the palette or the header's Commands (the
+ * registry's hold, which BoardCanvasOf sets).
+ */
+const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
+  ...views,
   "canvas.zoom_selection",
   "canvas.minimap",
   "canvas.mode_pan",
@@ -1641,9 +1646,10 @@ function BoardCanvasOf({
   // the palette run alike, each available where the toolbar's control of
   // it is: the controller's own, as the zoom and Delete, and the toolbar's,
   // as Add, Duplicate, and the inspector; C opens the inspector at its
-  // Connect to, of the one element or branch selected. In the middle of a
-  // drag, those of whileDragging alone run (canvasHandlers below, and
-  // keyDown), as the menu's keys do nothing then.
+  // Connect to, of the one element selected, or the one branch with an
+  // output, whose first output's it is: a branch without one has none. In
+  // the middle of a drag, those of whileDragging alone run (the registry's
+  // hold below, and keyDown), as the menu's keys do nothing then.
   const registry = useRegistry();
   const [connectAsked, setConnectAsked] = useState(0);
   useEffect(() => {
@@ -1663,19 +1669,8 @@ function BoardCanvasOf({
   // holds, are unavailable while a copy, a paste, or a duplicate is under
   // way, which would drop it (oneAtATime), as the toolbar's are.
   const copiable = selected > 0 && selected <= maxEdited && !actions.busy;
-  const ofCanvas: Handlers = {
-    "canvas.pan_left": ofController("canvas.pan_left"),
-    "canvas.pan_right": ofController("canvas.pan_right"),
-    "canvas.pan_up": ofController("canvas.pan_up"),
-    "canvas.pan_down": ofController("canvas.pan_down"),
-    "canvas.pan_far_left": ofController("canvas.pan_far_left"),
-    "canvas.pan_far_right": ofController("canvas.pan_far_right"),
-    "canvas.pan_far_up": ofController("canvas.pan_far_up"),
-    "canvas.pan_far_down": ofController("canvas.pan_far_down"),
-    "canvas.zoom_in": ofController("canvas.zoom_in"),
-    "canvas.zoom_out": ofController("canvas.zoom_out"),
-    "canvas.zoom_reset": ofController("canvas.zoom_reset"),
-    "canvas.fit": ofController("canvas.fit"),
+  const canvasHandlers: Handlers = {
+    ...Object.fromEntries(views.map((id) => [id, ofController(id)])),
     "canvas.zoom_selection": {
       ...ofController("canvas.zoom_selection"),
       enabled: selected > 0,
@@ -1727,7 +1722,9 @@ function BoardCanvasOf({
           },
           "canvas.connect": {
             enabled:
-              onlyNode?.type === "element" || onlyNode?.type === "branch",
+              onlyNode?.type === "element" ||
+              (onlyNode?.type === "branch" &&
+                (onlyNode.outputs?.length ?? 0) > 0),
             run: () => {
               setInspecting(true);
               setConnectAsked((n) => n + 1);
@@ -1746,29 +1743,24 @@ function BoardCanvasOf({
         }
       : {}),
   };
-  // Each command of the canvas's but those of whileDragging runs only while
-  // the canvas follows no pointer, which it reads as the command is asked
-  // to run (a getter), since the canvas renders nothing anew for a drag:
-  // those that change the board, the undo among them, and those that leave
-  // the board, open over it, or scroll the page under it, as Go to target,
-  // the inspector, which is a sheet over the canvas in a narrow window, and
-  // the board's settings, which would drop the drag, or leave it under what
-  // took its place.
-  const canvasHandlers: Handlers = {};
-  for (const [id, handler] of Object.entries(ofCanvas) as [
-    CommandId,
-    Handler,
-  ][]) {
-    canvasHandlers[id] = whileDragging.has(id)
-      ? handler
-      : {
-          get enabled() {
-            return canRun(handler) && still();
-          },
-          run: handler.run,
-        };
-  }
   useCommandHandlers("page", canvasHandlers);
+  // Each command of the page's but those of whileDragging runs only while
+  // the canvas follows no pointer, wherever it is asked from, which the
+  // registry reads as the command is asked to run, since the canvas renders
+  // nothing anew for a drag: those that change the board, the undo among
+  // them, and those that leave the board, open over it, or scroll the page
+  // under it, as Go to target, the inspector, which is a sheet over the
+  // canvas in a narrow window, the board's settings, the palette, and the
+  // search, which would drop the drag, or leave it under what took its
+  // place, by a key on the canvas, in its tree, or elsewhere on the page,
+  // as once Tab took the focus off the canvas in the middle of the drag.
+  useLayoutEffect(
+    () =>
+      registry?.hold(
+        (id) => !whileDragging.has(id) && controller.gestures.following(),
+      ),
+    [registry, controller],
+  );
   const platform = usePlatform();
   // The keys that the canvas's help names, as the page's platform has them,
   // as Cmd+C for the copy on macOS, and Ctrl+C elsewhere.
@@ -1796,16 +1788,11 @@ function BoardCanvasOf({
     // app's frame, which has the registry, the canvas's own handler. In the
     // middle of a drag, only one of whileDragging runs: not the table of
     // the shortcuts, which the app's frame registers and shows over the
-    // page, as the inspector does not open then; nor a key of the page's
-    // own, as Ctrl+K, which would open the palette over the board, and
-    // Ctrl+/, which would leave it for the search, which does nothing then,
-    // and is the canvas's, rather than the page's (keysOfPage) or the
-    // browser's.
+    // page, as the inspector does not open then. A key of the page's own,
+    // as Ctrl+K, is the page's (keysOfPage), which runs nothing then either
+    // (the registry's hold above).
     const id = canvasKey(e, platform);
     if (id === undefined) {
-      if (!still() && commandOfKey(e, "page", platform) !== undefined) {
-        e.preventDefault();
-      }
       return;
     }
     const handler =

@@ -213,7 +213,10 @@ describe("the command palette", () => {
     expect(document.activeElement).toBe(field);
   });
 
-  it("says whether each command can run as the page says it, while it is open", () => {
+  it("says whether each command can run as the page says it, while it is open, where the list stays scrolled", () => {
+    // jsdom scrolls nothing into view.
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
     let enable: (enabled: boolean) => void = () => {};
     function Trash() {
       const [enabled, setEnabled] = useState(false);
@@ -243,10 +246,17 @@ describe("the command palette", () => {
     );
     const option = () =>
       screen.getByRole("option", { name: /Go to the project's trash/ });
-    expect(option().getAttribute("aria-disabled")).toBe("true");
-    act(() => enable(true));
-    expect(option().getAttribute("aria-disabled")).toBeNull();
-    expect(option().textContent).not.toContain("(unavailable now)");
+    try {
+      expect(option().getAttribute("aria-disabled")).toBe("true");
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      act(() => enable(true));
+      expect(option().getAttribute("aria-disabled")).toBeNull();
+      expect(option().textContent).not.toContain("(unavailable now)");
+      // The highlight did not move: the list stays where the wheel left it.
+      expect(scrolled).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
   });
 
   it("keeps the entry moved to highlighted as the page's commands change, and none once it is gone, which Enter runs nothing of", () => {
@@ -475,7 +485,7 @@ describe("the keys of the page", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
-  it("are the page's but in a field whose own they are, and run nothing in a dialog, while a modal one is open, once the page took the key, nor for the repeats of a key that runs once", () => {
+  it("are the page's but in a field whose own they are, and run nothing while a dialog is open, while a part of the page holds them, once the page took the key, nor for the repeats of a key that runs once", () => {
     const registry = new CommandRegistry();
     const ran: string[] = [];
     let undoable = true;
@@ -521,7 +531,10 @@ describe("the keys of the page", () => {
     const sheet = document.createElement("section");
     sheet.setAttribute("role", "dialog");
     sheet.setAttribute("aria-modal", "true");
-    document.body.append(input, dialog);
+    // A confirmation of Radix's, which says nothing of being modal.
+    const confirmation = document.createElement("div");
+    confirmation.setAttribute("role", "alertdialog");
+    document.body.append(input);
     try {
       expect(press(document.body, "z")).toBe(true);
       expect(press(input, "z")).toBe(false);
@@ -529,9 +542,11 @@ describe("the keys of the page", () => {
       // In a dialog, a key of the page's runs nothing, but is the page's,
       // rather than the browser's, which Safari would reopen a closed tab
       // by, but in a field whose own key it is.
+      document.body.append(dialog);
       expect(press(inDialog, "k")).toBe(true);
       expect(press(inDialog, "z")).toBe(true);
       expect(press(fieldInDialog, "z")).toBe(false);
+      dialog.remove();
       expect(press(document.body, "k", true)).toBe(true);
       expect(ran).toEqual(["undo", "palette"]);
       // Held down, the undo's key undoes on, and the palette's is the
@@ -546,14 +561,29 @@ describe("the keys of the page", () => {
       expect(press(document.body, "z")).toBe(true);
       expect(press(document.body, "z", false, true)).toBe(true);
       expect(ran).toEqual(["undo", "palette", "undo"]);
-      // While a modal dialog is open, as a sheet whose text a click left
-      // the focus on the body by, the keys run nothing, and are the page's.
+      // While a dialog is open, as a sheet whose text a click left the
+      // focus on the body by, or a confirmation whose button that had it
+      // is disabled while its request is answered, the keys run nothing,
+      // and are the page's.
       undoable = true;
-      document.body.append(sheet);
-      expect(press(document.body, "z")).toBe(true);
-      expect(press(document.body, "k")).toBe(true);
-      sheet.remove();
+      for (const open of [sheet, confirmation]) {
+        document.body.append(open);
+        expect(press(document.body, "z")).toBe(true);
+        expect(press(document.body, "k")).toBe(true);
+        open.remove();
+      }
       expect(ran).toEqual(["undo", "palette", "undo"]);
+      // While a part of the page holds a command, as the canvas in the
+      // middle of a drag all but those that run then, its key runs nothing,
+      // and is the page's, and the others run.
+      const release = registry.hold((id) => id === "palette.open");
+      expect(press(document.body, "k")).toBe(true);
+      expect(registry.can("palette.open")).toBe(false);
+      expect(registry.run("palette.open")).toBe(false);
+      expect(press(document.body, "z")).toBe(true);
+      release();
+      expect(registry.can("palette.open")).toBe(true);
+      expect(ran).toEqual(["undo", "palette", "undo", "undo"]);
       // A command that the page has no handler of leaves the key to the
       // browser, and the repeats of its key too.
       remove();
@@ -563,6 +593,7 @@ describe("the keys of the page", () => {
       input.remove();
       dialog.remove();
       sheet.remove();
+      confirmation.remove();
     }
   });
 });
