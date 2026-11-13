@@ -284,7 +284,7 @@ describe("the command palette", () => {
     }
   });
 
-  it("keeps the focus in its field as an entry that cannot run now is pressed, whose keys go on moving through the entries and closing it", async () => {
+  it("keeps the focus in its field as an entry that cannot run now is pressed, or what is between its entries, or its title, whose keys go on moving through the entries and closing it", async () => {
     const user = userEvent.setup();
     projectPages();
     await openVariables();
@@ -295,9 +295,16 @@ describe("the command palette", () => {
     const [undo, search] = within(palette).getAllByRole("option");
     expect(undo.dataset.command).toBe("history.undo");
     expect(undo.getAttribute("aria-disabled")).toBe("true");
-    await user.click(undo);
-    expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
-    expect(document.activeElement).toBe(field);
+    for (const pressed of [
+      undo,
+      within(palette).getByRole("listbox"),
+      within(palette).getByRole("heading", { name: "Commands" }),
+      palette,
+    ]) {
+      await user.click(pressed);
+      expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
+      expect(document.activeElement).toBe(field);
+    }
     await user.keyboard("{ArrowDown}");
     expect(search.getAttribute("aria-selected")).toBe("true");
     await user.keyboard("{Control>}k{/Control}");
@@ -482,6 +489,36 @@ describe("the command palette", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Components" }),
     ).toBeDefined();
+  });
+
+  it("keeps the repeats of the Enter that ran an entry, held down, from what the focus goes back to", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    const button = screen.getByRole("button", { name: "Commands" });
+    await user.click(button);
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    const field = within(palette).getByRole("combobox");
+    await user.type(field, "go components");
+    fireEvent.keyDown(field, { key: "Enter", code: "Enter" });
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Components" }),
+    ).toBeDefined();
+    await waitFor(() => expect(document.activeElement).toBe(button));
+    // Its repeats come to the header's Commands, which has the focus back,
+    // and whose Enter would press it, opening the palette again.
+    const reached = vi.fn();
+    button.addEventListener("keydown", reached);
+    expect(
+      fireEvent.keyDown(button, { key: "Enter", code: "Enter", repeat: true }),
+    ).toBe(false);
+    expect(reached).not.toHaveBeenCalled();
+    // Once the key has gone up, Enter is the button's again.
+    fireEvent.keyUp(button, { key: "Enter", code: "Enter" });
+    expect(fireEvent.keyDown(button, { key: "Enter", code: "Enter" })).toBe(
+      true,
+    );
+    expect(reached).toHaveBeenCalledTimes(1);
   });
 
   it("searches the project for what was typed", async () => {

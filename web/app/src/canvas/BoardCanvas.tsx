@@ -97,6 +97,7 @@ import {
   type PortOf,
   renderedMark,
   type SavedView,
+  viewCommands,
 } from "./controller";
 import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
@@ -183,22 +184,6 @@ const messageAlert =
 /** How long the undo of a bulk move stays offered, in milliseconds (NFR-TOUCH-05). */
 const undoMoveTime = 10_000;
 
-/** The commands of the view that the controller runs as they are, which pan, zoom, and fit it (CanvasController's command). */
-const views = [
-  "canvas.pan_left",
-  "canvas.pan_right",
-  "canvas.pan_up",
-  "canvas.pan_down",
-  "canvas.pan_far_left",
-  "canvas.pan_far_right",
-  "canvas.pan_far_up",
-  "canvas.pan_far_down",
-  "canvas.zoom_in",
-  "canvas.zoom_out",
-  "canvas.zoom_reset",
-  "canvas.fit",
-] as const satisfies readonly CommandId[];
-
 /**
  * The commands that run in the middle of a drag of the canvas, as its
  * wheel does then (plan note N72): those that pan, zoom, and fit the view,
@@ -211,7 +196,7 @@ const views = [
  * registry's hold, which BoardCanvasOf sets).
  */
 const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
-  ...views,
+  ...viewCommands,
   "canvas.zoom_selection",
   "canvas.minimap",
   "canvas.mode_pan",
@@ -1691,7 +1676,7 @@ function BoardCanvasOf({
   const copiable = fits && !actions.busy;
   const deletable = selected > 0 || connection !== undefined;
   const canvasHandlers: Handlers = {
-    ...Object.fromEntries(views.map((id) => [id, ofController(id)])),
+    ...Object.fromEntries(viewCommands.map((id) => [id, ofController(id)])),
     "canvas.zoom_selection": {
       ...ofController("canvas.zoom_selection"),
       enabled: selected > 0,

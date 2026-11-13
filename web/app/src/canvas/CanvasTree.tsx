@@ -155,7 +155,13 @@ const Row = memo(function Row({
   );
 });
 
-/** The canvas's keys that its tree takes too, which zoom, and Escape, whose characters, as + or 0, are never a title's letter there. */
+/**
+ * The canvas's keys that its tree takes too, which zoom, and Escape, whose
+ * characters, as + or 0, are never a title's letter there; but for a key
+ * of theirs that types a letter, as the key of 0, which a binding of the
+ * digit is matched by the place of, types é on a Czech layout and à on a
+ * French one, which the tree's type-ahead takes (typesLetter).
+ */
 const treeKeys: ReadonlySet<CommandId> = new Set<CommandId>([
   "canvas.zoom_in",
   "canvas.zoom_out",
@@ -164,6 +170,17 @@ const treeKeys: ReadonlySet<CommandId> = new Set<CommandId>([
   "canvas.zoom_selection",
   "canvas.deselect",
 ]);
+
+/**
+ * Reports whether the key of e types a letter, of any script, with the
+ * marks that join it, as é, or Ą, which Shift and the key of 1 type on a
+ * Lithuanian layout: a title starts with it, as "À la plage", which the
+ * tree's type-ahead goes to, rather than the key of the canvas's that zooms
+ * whose place the key has (treeKeys).
+ */
+function typesLetter(e: { key: string }): boolean {
+  return /^\p{L}\p{M}*$/u.test(e.key);
+}
 
 /**
  * The accessibility tree of the canvas of controller, of the board named
@@ -590,13 +607,15 @@ export const CanvasTree = memo(function CanvasTree({
         // the next node whose title starts with it, of itself alone,
         // whatever was typed before it, so that the same letter again goes
         // on to the node after, and a character that is a key of the
-        // canvas's that zooms is always that key. A key held down runs its
-        // command once, as on the canvas, but for + and - that zoom on
-        // (CommandSpec's repeats), as Escape held down in the middle of a
-        // drag would else end the drag and then clear the selection that it
-        // left as it was: its repeats are the tree's where the command can
-        // run, as the key itself is then, and else the page's.
-        if (id !== undefined && treeKeys.has(id)) {
+        // canvas's that zooms is always that key, but a letter, as é, which
+        // the key of 0 types on a Czech layout (typesLetter). A key held
+        // down runs its command once, as on the canvas, but for + and -
+        // that zoom on (CommandSpec's repeats), as Escape held down in the
+        // middle of a drag would else end the drag and then clear the
+        // selection that it left as it was: its repeats are the tree's
+        // where the command can run, as the key itself is then, and else
+        // the page's.
+        if (id !== undefined && treeKeys.has(id) && !typesLetter(e)) {
           if (e.repeat && commandOf(id).repeats !== true) {
             if (registry !== undefined && !registry.can(id)) {
               return;

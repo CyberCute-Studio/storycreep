@@ -622,23 +622,28 @@ describe("the canvas's shortcuts", () => {
     await waitFor(() => expect(document.activeElement).toBe(canvas));
   });
 
-  it("leave the tree's letters to its type-ahead", async () => {
+  it("leave the tree's letters to its type-ahead, as one that the key of a zoom's digit types", async () => {
     const user = userEvent.setup();
     const calls = boardPage([
       testNode("nd_1", 0, 0, { title: "Alpha" }),
       testNode("nd_2", 0, 400, { title: "Echo" }),
+      testNode("nd_3", 0, 800, { title: "Écluse" }),
     ]);
     await openBoard();
     const tree = await screen.findByRole("tree", {
       name: "Nodes and connections of Harbour",
     });
     await waitFor(() =>
-      expect(within(tree).getAllByRole("treeitem")).toHaveLength(2),
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(3),
     );
-    const [first, second] = within(tree).getAllByRole("treeitem");
+    const [first, second, third] = within(tree).getAllByRole("treeitem");
     first.focus();
     await user.keyboard("e");
     expect(document.activeElement).toBe(second);
+    // The key of 0 types é on a Czech layout, which goes to the node
+    // whose title starts with it, rather than showing 100%.
+    fireEvent.keyDown(second, { key: "é", code: "Digit0" });
+    expect(document.activeElement).toBe(third);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(batches(calls)).toHaveLength(0);
   });

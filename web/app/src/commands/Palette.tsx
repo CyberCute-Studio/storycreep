@@ -31,6 +31,7 @@ import {
   commandOfKey,
 } from "./catalog";
 import { KeyCaps } from "./KeyCaps";
+import { isTextField } from "./keys";
 import { type CommandRegistry, usePlatform } from "./registry";
 
 /** An entry of the palette: a command, or the search of the project for what was typed, and whether it can run now. */
@@ -51,19 +52,54 @@ export function foldWords(text: string): string[] {
 }
 
 /**
- * Reports whether name has a word that starts as each word of query does:
- * every name, of a query of nothing but spaces, as of none; and none, of
- * one that has no word, as + or ?, which no name's words start as, so that
- * the palette lists the search for it alone, which Enter runs, rather than
- * every command, as if nothing had been typed.
+ * Returns what reports whether a name has a word that starts as each word
+ * of query does, which query is folded for once, rather than for each name
+ * that the palette lists: every name, of a query of nothing but spaces, as
+ * of none; and none, of one that has no word, as + or ?, which no name's
+ * words start as, so that the palette lists the search for it alone, which
+ * Enter runs, rather than every command, as if nothing had been typed.
  */
-export function nameMatches(name: string, query: string): boolean {
+export function nameMatcher(query: string): (name: string) => boolean {
   const asked = foldWords(query);
   if (asked.length === 0) {
-    return query.trim() === "";
+    const all = query.trim() === "";
+    return () => all;
   }
-  const words = foldWords(name);
-  return asked.every((q) => words.some((w) => w.startsWith(q)));
+  return (name) => {
+    const words = foldWords(name);
+    return asked.every((q) => words.some((w) => w.startsWith(q)));
+  };
+}
+
+/**
+ * Keeps the repeats of key, held down, from the page until it goes up, or
+ * another key goes down, which its repeats stop for: as of the Enter that
+ * chose an entry, held down a little long, once the palette has closed and
+ * given the focus back to what had it, as the header's Commands, or the
+ * toolbar's Delete, or to what the command gave it to, as a dialog's
+ * button, which its repeats would else press, as a button's Enter does,
+ * opening the palette again, or deleting what was selected.
+ */
+function swallowRepeats(key: string): void {
+  const down = (e: globalThis.KeyboardEvent) => {
+    if (e.key !== key || !e.repeat) {
+      stop();
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
+  const up = (e: globalThis.KeyboardEvent) => {
+    if (e.key === key) {
+      stop();
+    }
+  };
+  const stop = () => {
+    window.removeEventListener("keydown", down, true);
+    window.removeEventListener("keyup", up, true);
+  };
+  window.addEventListener("keydown", down, true);
+  window.addEventListener("keyup", up, true);
 }
 
 /**
@@ -91,6 +127,19 @@ export function Palette({
       {open && (
         <DialogFrame
           title={t("palette.title")}
+          // A press anywhere in the palette but in its field, as on an
+          // entry, between two, on its title, or on its edge, leaves the
+          // focus in the field, as a combobox's pattern has it, whose keys
+          // move through the entries, run one, and close the palette, rather
+          // than give it to the dialog itself, as an entry that cannot run
+          // now, which closes nothing, would, where those keys would reach
+          // none of them: Ctrl+K would be the page's then, which runs
+          // nothing while a dialog is open.
+          onMouseDown={(event) => {
+            if (!isTextField(event.target)) {
+              event.preventDefault();
+            }
+          }}
           // The palette has no Dialog.Trigger, which Radix would give the
           // focus back to, as a key opens it: the focus goes back to what
           // had it, without scrolling, or, where that has gone, to the
@@ -148,9 +197,10 @@ function PaletteBody({
   // undo under way has ended, whose Undo is available again, rather than
   // as they were as the palette opened, or as a letter was typed last.
   useSyncExternalStore(registry.subscribe, registry.revision);
+  const matches = nameMatcher(query);
   const commands: Entry[] = registry
     .available()
-    .filter((id) => nameMatches(commandName(t, id), query))
+    .filter((id) => matches(commandName(t, id)))
     .map((id) => ({ kind: "command", id, enabled: registry.can(id) }));
   // The search of what was typed, as the server takes it, of at most 200
   // characters, as a paste may make it longer (searchText), which can run
@@ -192,18 +242,21 @@ function PaletteBody({
       .getElementById(optionId(shown))
       ?.scrollIntoView?.({ block: "nearest" });
   });
-  const choose = (entry: Entry | undefined) => {
+  // Chooses entry, and reports whether the palette closes to run it: not
+  // for one that cannot run now, nor for the palette's own.
+  const choose = (entry: Entry | undefined): boolean => {
     if (entry === undefined || !entry.enabled) {
-      return;
+      return false;
     }
     // The palette's own command, chosen in it, shows it as its key would
     // anywhere else, anew, rather than closing it and opening it again.
     if (entry.kind === "command" && entry.id === "palette.open") {
       setQuery("");
       setActive(undefined);
-      return;
+      return false;
     }
     onChoose(entry);
+    return true;
   };
   // Moves the highlight to the next entry, or the one before (by), after
   // the one shown, or, where none is, to the first, or the last.
@@ -243,7 +296,11 @@ function PaletteBody({
         moveBy(-1);
         break;
       case "Enter":
-        choose(shown === -1 ? undefined : entries[shown]);
+        // The repeats of the Enter that closed the palette, held down, are
+        // nothing's, wherever the focus goes (swallowRepeats).
+        if (choose(shown === -1 ? undefined : entries[shown])) {
+          swallowRepeats(e.key);
+        }
         break;
       default:
         return;
@@ -286,9 +343,8 @@ function PaletteBody({
           // The input's keys move through the options and choose one
           // (aria-activedescendant), which keeps the focus in the input,
           // as a combobox's pattern has it, so an option takes none itself,
-          // nor gives it to the dialog as it is pressed, as one that cannot
-          // run now, which closes nothing, would else, whose keys would
-          // then reach neither the options nor the palette's own.
+          // nor gives it to the dialog as it is pressed (the palette's
+          // onMouseDown).
           // biome-ignore lint/a11y/useFocusableInteractive: as above.
           // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
           <div
@@ -298,7 +354,6 @@ function PaletteBody({
             aria-selected={i === shown}
             aria-disabled={entry.enabled ? undefined : true}
             data-command={entry.kind === "command" ? entry.id : undefined}
-            onMouseDown={(e) => e.preventDefault()}
             onClick={() => choose(entry)}
             className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded px-3 aria-disabled:cursor-not-allowed aria-disabled:text-fg-muted aria-selected:bg-surface-hover"
           >

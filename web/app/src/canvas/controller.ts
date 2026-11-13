@@ -267,6 +267,29 @@ const browserClock: Clock = {
 };
 
 /**
+ * The commands of the view that CanvasController's command runs as they
+ * are, whatever the board and its selection, which pan, zoom, and fit it,
+ * and which the page registers as they are (BoardCanvas): kept beside
+ * command, so that a command of the view that it runs is the page's too.
+ * Those that it runs of what is selected, as Delete, the page registers
+ * with what they need.
+ */
+export const viewCommands = [
+  "canvas.pan_left",
+  "canvas.pan_right",
+  "canvas.pan_up",
+  "canvas.pan_down",
+  "canvas.pan_far_left",
+  "canvas.pan_far_right",
+  "canvas.pan_far_up",
+  "canvas.pan_far_down",
+  "canvas.zoom_in",
+  "canvas.zoom_out",
+  "canvas.zoom_reset",
+  "canvas.fit",
+] as const satisfies readonly CommandId[];
+
+/**
  * Returns how far a command of the canvas's pans, in fractions of its width
  * and height, or undefined for one that does not pan: by a tenth, or by
  * half for the far pans, which Shift and an arrow ask for.

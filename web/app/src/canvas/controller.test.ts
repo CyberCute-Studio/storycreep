@@ -6,6 +6,7 @@ import {
   type CanvasView,
   type Clock,
   type PortOf,
+  viewCommands,
 } from "./controller";
 import type { Engine, Frame, FrameStats } from "./engine";
 import type { MenuTarget } from "./gestures";
@@ -392,6 +393,15 @@ describe("the canvas's controller", () => {
     expect(key("Escape")).toBe(true);
     expect(key("Escape")).toBe(false);
     expect(key("@", { code: "Digit2", shiftKey: true })).toBe(false);
+  });
+
+  it("runs each command of the view that the page registers as it is, whatever is selected", () => {
+    const { c } = setUp();
+    c.reducedMotion = true;
+    c.sync(docOf([testNode("nd_1", 0, 0)]), false);
+    for (const id of viewCommands) {
+      expect(c.command(id), id).toBe(true);
+    }
   });
 
   it("draws at once as the canvas is resized, rather than a frame of nothing first", () => {
