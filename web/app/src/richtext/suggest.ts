@@ -5,6 +5,7 @@
 // that the list takes, while it is open, to the editor's component, which
 // shows the list and inserts what is chosen (insertChosen).
 
+import { closeHistory } from "@tiptap/pm/history";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import {
   type EditorState,
@@ -34,13 +35,16 @@ export const MAX_QUERY = 200;
 /**
  * The pattern of a trigger and what was typed after it, at the end of the
  * text before the caret: { or @ at the start of the text, or after a
- * character that is not a letter, a digit, or _, so that the @ of an email
- * address, as keeper@example.com, offers nothing, then what was typed,
- * without white space, braces, @, or anything but text, which the object
- * replacement character stands for, as a mention, a value reference, or a
- * line break, so that a space ends the suggestion.
+ * character that is not a letter, a combining mark, a digit, or _, so that
+ * the @ of an email address, as keeper@example.com, offers nothing, nor
+ * does one after a letter whose accent is a mark of its own, as the \u00E9 of
+ * caf\u00E9 written as e and U+0301, or after a vowel sign of Devanagari, which
+ * ends a word; then what was typed, without white space, braces, @, or
+ * anything but text, which the object replacement character stands for, as
+ * a mention, a value reference, or a line break, so that a space ends the
+ * suggestion.
  */
-const triggered = /(^|[^\p{L}\p{N}_])([{@])([^\s{}@\uFFFC]*)$/u;
+const triggered = /(^|[^\p{L}\p{M}\p{N}_])([{@])([^\s{}@\uFFFC]*)$/u;
 
 /**
  * Returns what the user is typing after a trigger in state, or undefined
@@ -60,14 +64,18 @@ export function suggestionAt(state: EditorState): Suggestion | undefined {
     return undefined;
   }
   // Each leaf, as a mention or a line break, is one position, as is each
-  // character of text, so an index into what is before the caret is an
-  // offset in the paragraph. What is read is what a trigger, what may be
-  // typed after it, and the character before it fit in, rather than the
-  // whole paragraph before the caret, as of 100,000 characters, at each
-  // keystroke; a trigger at its start, but not the paragraph's, has a
-  // character before it that is not read, and is not one that triggered
-  // takes for the paragraph's start.
-  const start = Math.max(0, $caret.parentOffset - MAX_QUERY - 2);
+  // UTF-16 code unit of text, so an index into what is before the caret is
+  // an offset in the paragraph. What is read is what a trigger, what may be
+  // typed after it, and the character before it fit in, of two code units
+  // where it is beyond the Basic Multilingual Plane, as U+20000, rather
+  // than the whole paragraph before the caret, as of 100,000 characters, at
+  // each keystroke. Of a trigger that what is read does not hold whole with
+  // the character before it, as one at its start, but not the paragraph's,
+  // or after the second half of such a character whose first half is not
+  // read, what was typed after it is longer than MAX_QUERY, so neither is
+  // taken for one at the paragraph's start, nor after a character that is
+  // not a letter.
+  const start = Math.max(0, $caret.parentOffset - MAX_QUERY - 3);
   const before = $caret.parent.textBetween(
     start,
     $caret.parentOffset,
@@ -75,11 +83,7 @@ export function suggestionAt(state: EditorState): Suggestion | undefined {
     "\uFFFC",
   );
   const match = triggered.exec(before);
-  if (
-    match === null ||
-    match[3].length > MAX_QUERY ||
-    (start > 0 && match.index === 0 && match[1] === "")
-  ) {
+  if (match === null || match[3].length > MAX_QUERY) {
     return undefined;
   }
   const from = $caret.start() + start + match.index + match[1].length;
@@ -177,7 +181,10 @@ export function suggester(
 /**
  * Puts node, a value reference or a mention, in place of the trigger of
  * open and what was typed after it, with the marks of the trigger, as bold,
- * and the caret after it, as one step of the editor's undo.
+ * and the caret after it, as a step of the editor's undo that starts with
+ * it, so that an undo gives back the trigger and what was typed after it,
+ * rather than take them away with what was typed before them, which the
+ * undo's history joins to what is typed next to it within half a second.
  */
 export function insertChosen(
   view: EditorView,
@@ -186,7 +193,11 @@ export function insertChosen(
 ): void {
   const { state } = view;
   const marks = state.doc.nodeAt(open.from)?.marks ?? [];
-  const tr = state.tr.replaceWith(open.from, open.to, node.mark(marks));
+  const tr = closeHistory(state.tr).replaceWith(
+    open.from,
+    open.to,
+    node.mark(marks),
+  );
   tr.setSelection(TextSelection.create(tr.doc, open.from + node.nodeSize));
   view.dispatch(tr.scrollIntoView());
 }

@@ -28,7 +28,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
-import { useTextNames, valueName } from "../content/textNames";
+import { useTextChoices, useTextNames } from "../content/useTextNames";
 import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
@@ -51,7 +51,14 @@ import {
   reconnectCommand,
 } from "./flow";
 import type { FollowLink } from "./Links";
-import { outputLabel, plainText, targetLabel, titleOf, typeOf } from "./labels";
+import {
+  outputLabel,
+  plainText,
+  referenceNames,
+  targetLabel,
+  titleOf,
+  typeOf,
+} from "./labels";
 import { linkOf, type TargetLookup, targetOf } from "./targets";
 
 /** Returns what names node in a list of a board's nodes: its title, as its card shows it, and its type. */
@@ -406,11 +413,12 @@ function PortChoices({
     ids,
     (id, place) => void actions.moveChoice(id, place),
   );
-  const names = {
-    componentName: (id: string) => components.get(id)?.name,
-    valueName: (ref: string, attribute: string | undefined) =>
-      valueName({ components, componentTypes, variables }, ref, attribute),
-  };
+  // What the choices' labels name what they refer to by, as the cards do.
+  const names = useMemo(
+    () =>
+      referenceNames({ components, componentTypes, variables }, node.board_id),
+    [components, componentTypes, variables, node.board_id],
+  );
   const connect = (event: FormEvent) => {
     event.preventDefault();
     if (to !== "") {
@@ -1174,7 +1182,8 @@ function ConnectionForm({
   const nodes = useDocumentState(doc, (state) => state.view.nodes);
   // What the label's mentions and value references show, and what its {
   // and @ offer, of the connection's board.
-  const { names, choices } = useTextNames(projectId, connection.board_id);
+  const names = useTextNames(projectId, connection.board_id);
+  const choices = useTextChoices(projectId, connection.board_id);
   const named = useMemo(
     () => namedNodes(nodes, connection.board_id, t),
     [nodes, connection.board_id, t],

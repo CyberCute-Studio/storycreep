@@ -70,6 +70,21 @@ describe("what a text's { and @ offer", () => {
     expect(offered("@", "zz")).toEqual([]);
   });
 
+  test("puts first the names that start as what was typed, whatever their diacritics, as the words are matched", () => {
+    const zoes: RichTextChoices = {
+      values: [],
+      mentions: [
+        { id: "cmp_old_zoey", name: "Old Zoey", detail: "" },
+        { id: "cmp_zoe", name: "Zoë", detail: "" },
+      ],
+    };
+    expect(
+      offersOf(zoes, { trigger: "@", query: "zoe" }).offers.map(
+        (o) => o.choice.name,
+      ),
+    ).toEqual(["Zoë", "Old Zoey"]);
+  });
+
   test("offers at most MAX_OFFERS, and says how many match in all", () => {
     const many: RichTextChoices = {
       values: Array.from({ length: MAX_OFFERS + 5 }, (_, i) => ({

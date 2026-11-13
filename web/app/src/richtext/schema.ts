@@ -5,10 +5,21 @@
 import type { IdKind } from "@storycreep/shared/ids";
 import {
   idKindOf,
+  MAX_DECIMALS,
   MAX_LIST_DEPTH,
   MAX_START,
 } from "@storycreep/shared/richtext";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
+
+/** Reports whether decimals is what a value reference may show a number with: an integer of digits after the point from 0 to MAX_DECIMALS. */
+export function isDecimals(decimals: unknown): decimals is number {
+  return (
+    typeof decimals === "number" &&
+    Number.isInteger(decimals) &&
+    decimals >= 0 &&
+    decimals <= MAX_DECIMALS
+  );
+}
 
 /** Reports whether id is the public ID of an entity of one of the kinds. */
 function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {

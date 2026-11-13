@@ -5,9 +5,8 @@
 // (ui/match.ts), and a value's format, the digits after the point that a
 // number is shown with, typed after a colon, as {gold:2.
 
-import { foldCase } from "@storycreep/shared/fold";
-import { MAX_DECIMALS } from "@storycreep/shared/richtext";
-import { nameMatcher } from "../ui/match";
+import { foldName, foldWords, wordsMatcher } from "../ui/match";
+import { isDecimals } from "./schema";
 import type { Suggestion } from "./suggest";
 
 /** A value that { offers: a variable's, or a component's runtime attribute's (FR-COMP-03). */
@@ -70,27 +69,58 @@ export function valueQuery(query: string): {
     return { name };
   }
   const decimals = Number(format[1]);
-  return decimals <= MAX_DECIMALS ? { name, decimals } : { name: query };
+  return isDecimals(decimals) ? { name, decimals } : { name: query };
+}
+
+/** What the list compares of a choice: its name, folded whole, and the words of its name and of each of its terms, each folded as the palette folds them (ui/match.ts). */
+interface Folded {
+  name: string;
+  words: readonly (readonly string[])[];
+}
+
+/**
+ * The folds of each choice, made as it is first compared, and kept while
+ * the choice is, rather than made again at each key typed, which would
+ * take tens of milliseconds of a project of thousands of values; a page
+ * gives the same choices until what they are made of changes
+ * (useTextChoices).
+ */
+const folds = new WeakMap<object, Folded>();
+
+/** Returns what the list compares of choice, as folds keeps it. */
+function foldedOf(choice: { name: string; terms?: readonly string[] }): Folded {
+  let folded = folds.get(choice);
+  if (folded === undefined) {
+    folded = {
+      name: foldName(choice.name),
+      words: [choice.name, ...(choice.terms ?? [])].map(foldWords),
+    };
+    folds.set(choice, folded);
+  }
+  return folded;
 }
 
 /**
  * Returns the choices whose name, or one of their terms, matches name, as
- * the palette's words do (nameMatcher), those whose name starts as name
- * does first, each in the order of choices.
+ * the palette's words do (wordsMatcher), those whose name starts as name
+ * does first, whatever their case and diacritics, as the words are
+ * matched, each in the order of choices.
  */
 function matching<T extends { name: string; terms?: readonly string[] }>(
   choices: readonly T[],
   name: string,
 ): T[] {
-  const matches = nameMatcher(name);
-  const start = foldCase(name.trim());
-  const found = choices.filter(
-    (c) => matches(c.name) || (c.terms ?? []).some(matches),
-  );
-  const first = found.filter((c) => foldCase(c.name).startsWith(start));
-  return first.length === found.length || start === ""
+  const matches = wordsMatcher(name);
+  const start = foldName(name.trim());
+  const found = choices.filter((c) => foldedOf(c).words.some(matches));
+  if (start === "") {
+    return found;
+  }
+  const starts = (c: T) => foldedOf(c).name.startsWith(start);
+  const first = found.filter(starts);
+  return first.length === found.length
     ? found
-    : [...first, ...found.filter((c) => !foldCase(c.name).startsWith(start))];
+    : [...first, ...found.filter((c) => !starts(c))];
 }
 
 /**

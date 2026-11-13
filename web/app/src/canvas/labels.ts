@@ -11,7 +11,7 @@ import type {
   RichTextDoc,
   RichTextInline,
 } from "@storycreep/shared/api";
-import { valueName } from "../content/textNames";
+import { type NameSources, valueNamer } from "../content/textNames";
 import type { Doc } from "../document/doc";
 import { type JumperTarget, type TargetLookup, targetOf } from "./targets";
 import { excerpt, excerptLength } from "./text";
@@ -34,8 +34,9 @@ export interface LabelContext {
   componentName: (id: string) => string | undefined;
   /**
    * Returns the name of the value that a value reference of ref and
-   * attribute shows, as an expression names it, as gold or elara.trust
-   * (content/textNames.ts), if the project's document has it.
+   * attribute shows, as an expression of the board names it, as gold or
+   * elara.trust (valueNamer, in content/textNames.ts), if the project's
+   * document has it.
    */
   valueName: (ref: string, attribute: string | undefined) => string | undefined;
   /** Returns what the target of node, a jumper, is (targets.ts). */
@@ -51,22 +52,39 @@ export type LabelSources = Pick<
 >;
 
 /**
- * Returns what labels read of view, the project's document, as it is when
- * they are read, with the page's messages, t: every name that a card
- * shows, of what its node refers to, each of which namesChanged follows,
- * so that what cards read and what writes them again, once it changes, are
- * the same names, here; and a jumper's target, as view and targets tell of
- * it (targetOf), whose change the scene and the target's reads tell of.
+ * Returns the names that the plain text of a node's text or a connection's
+ * label, of the board of boardId, shows of what it refers to, as view, the
+ * project's document, has them: a mention's component's name, and a value
+ * reference's value's name, as an expression of the board names it.
+ */
+export function referenceNames(
+  view: NameSources,
+  boardId: string,
+): Pick<LabelContext, "componentName" | "valueName"> {
+  return {
+    componentName: (id) => view.components.get(id)?.name,
+    valueName: valueNamer(view, boardId),
+  };
+}
+
+/**
+ * Returns what labels of the board of boardId read of view, the project's
+ * document, as it is when they are read, with the page's messages, t:
+ * every name that a card shows, of what its node refers to, each of which
+ * namesChanged follows, so that what cards read and what writes them
+ * again, once it changes, are the same names, here; and a jumper's target,
+ * as view and targets tell of it (targetOf), whose change the scene and the
+ * target's reads tell of.
  */
 export function labelContext(
   view: LabelSources,
+  boardId: string,
   t: LabelContext["t"],
   targets?: TargetLookup,
 ): LabelContext {
   return {
     t,
-    componentName: (id) => view.components.get(id)?.name,
-    valueName: (ref, attribute) => valueName(view, ref, attribute),
+    ...referenceNames(view, boardId),
     target: (node) => targetOf(node, view, targets),
     boardName: (id) => view.boards.get(id)?.name,
   };
@@ -76,12 +94,13 @@ export function labelContext(
  * Reports whether a name that labelContext reads changed from before to
  * after, the project's document before and after a change, of a component,
  * its name or its key, which a value reference of its attribute shows, an
- * attribute definition's key, a variable, or a board, rather than anything
- * else of them, as a component's description, whose change would write
- * every card anew for nothing; but the titles of nodes, which the board's
- * jumpers alone show, and which the scene follows for them
- * (Scene.targetsVersion), rather than the title of every node of the
- * project, whose map changes with each change of any of them.
+ * attribute definition's key, a variable, its key, or its scope, board, or
+ * trash, which tell whether it shadows another's name (valueNamer), or a
+ * board, rather than anything else of them, as a component's description,
+ * whose change would write every card anew for nothing; but the titles of
+ * nodes, which the board's jumpers alone show, and which the scene follows
+ * for them (Scene.targetsVersion), rather than the title of every node of
+ * the project, whose map changes with each change of any of them.
  */
 export function namesChanged(
   before: LabelSources,
@@ -96,7 +115,11 @@ export function namesChanged(
     namesDiffer(before.componentTypes, after.componentTypes, (type) =>
       type.attributes.map((a) => `${a.id} ${a.key}`).join("\n"),
     ) ||
-    namesDiffer(before.variables, after.variables, (v) => v.key) ||
+    namesDiffer(
+      before.variables,
+      after.variables,
+      (v) => `${v.key}\n${v.scope}\n${v.board_id ?? ""}\n${v.deleted_at ?? ""}`,
+    ) ||
     namesDiffer(before.boards, after.boards, (b) => b.name)
   );
 }

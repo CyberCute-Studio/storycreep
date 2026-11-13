@@ -1,5 +1,12 @@
 import type { RichTextDoc } from "@storycreep/shared/api";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Editor } from "@tiptap/core";
 import { I18nextProvider } from "react-i18next";
@@ -16,6 +23,7 @@ const bigGoldId = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BV2";
 const elaraId = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BV3";
 const bramId = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BV4";
 const trustId = "atr_01HQ8Z3XK4F7NAWR5TCQ9M2BV5";
+const coinId = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BV6";
 
 const choices: RichTextChoices = {
   values: [
@@ -215,6 +223,58 @@ describe("the { and @ of the rich-text editor", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(textbox.hasAttribute("aria-autocomplete")).toBe(false);
     expect(last()?.doc).toEqual(paragraphOf({ text: "{go @el", type: "text" }));
+  });
+
+  test("leaves Shift and an arrow to the text, and keeps the focus in the text where a press on the list misses its offers", async () => {
+    const { textbox } = renderEditor();
+    textbox.focus();
+    await userEvent.keyboard("{{go");
+    const list = await valueList();
+    await userEvent.keyboard("{Shift>}{ArrowDown}{/Shift}");
+    expect(offersIn(list)).toEqual(["[{gold}]", "{big_gold}"]);
+    // A press between the offers, which is on the list, or on what the
+    // list says, takes no focus from the text.
+    expect(fireEvent.mouseDown(list)).toBe(false);
+    expect(
+      fireEvent.mouseDown(
+        screen.getByText("Type :2 after the name", { exact: false }),
+      ),
+    ).toBe(false);
+  });
+
+  test("keeps the offer moved to highlighted where the list has it once the choices change", async () => {
+    const i18n = createAppI18n(["en"], document.documentElement);
+    const editorOf = (offered: RichTextChoices) => (
+      <I18nextProvider i18n={i18n}>
+        <RichTextEditor
+          label="Body"
+          onChange={() => undefined}
+          names={names}
+          choices={offered}
+        />
+      </I18nextProvider>
+    );
+    const { rerender } = render(editorOf(choices));
+    const textbox = screen.getByRole("textbox", { name: "Body" });
+    textbox.focus();
+    await userEvent.keyboard("{{go{ArrowDown}");
+    const list = await valueList();
+    await waitFor(() =>
+      expect(offersIn(list)).toEqual(["{gold}", "[{big_gold}]"]),
+    );
+    // Another session creates a value that the list puts before it.
+    rerender(
+      editorOf({
+        ...choices,
+        values: [
+          ...choices.values,
+          { ref: coinId, name: "gold_coin", detail: "Global variable" },
+        ],
+      }),
+    );
+    await waitFor(() =>
+      expect(offersIn(list)).toEqual(["{gold}", "{gold_coin}", "[{big_gold}]"]),
+    );
   });
 
   test("closes the list while the text does not have the focus, and shows it again once it has", async () => {

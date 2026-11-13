@@ -35,6 +35,21 @@ function suggestionKey(open: Suggestion): string {
   return `${open.from} ${open.trigger}${open.query}`;
 }
 
+/** Returns what tells one offer from another, whichever place in the list it has: a value's component's or variable's ID and its attribute's, or a component's ID. */
+function offerKey(offer: Offer): string {
+  return offer.kind === "value"
+    ? `${offer.choice.ref} ${offer.choice.attribute ?? ""}`
+    : offer.choice.id;
+}
+
+/** The keys that the list takes while it is open: those that move through it, choose from it, and close it. */
+const listKeys: ReadonlySet<string> = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "Enter",
+  "Escape",
+]);
+
 /** Returns what an offer shows of what it inserts: a value as its reference shows it, with the format typed, and a component as its mention does. */
 function offerText(offer: Offer): string {
   return offer.kind === "value"
@@ -70,13 +85,17 @@ export function Suggestions({
       open === undefined ? { offers: [], total: 0 } : offersOf(choices, open),
     [choices, open],
   );
-  // The offer highlighted: the one moved to, of the suggestion as it is, or
-  // the first, as once more was typed.
-  const [moved, setMoved] = useState<{ at: string; index: number }>();
-  const indexOf = (at: string, count: number) =>
-    moved?.at === at ? Math.min(moved.index, count - 1) : 0;
-  const index =
-    open === undefined ? -1 : indexOf(suggestionKey(open), offers.length);
+  // The offer highlighted: the one moved to, of the suggestion as it is,
+  // wherever the list has it now, as once another session added a value
+  // that sorts before it, or the first, as once more was typed, or once the
+  // list no longer has it.
+  const [moved, setMoved] = useState<{ at: string; offer: string }>();
+  const indexOf = (at: string, now: readonly Offer[]) => {
+    const i =
+      moved?.at === at ? now.findIndex((o) => offerKey(o) === moved.offer) : 0;
+    return Math.max(i, 0);
+  };
+  const index = open === undefined ? -1 : indexOf(suggestionKey(open), offers);
   const optionId = (i: number) => `${listId}-${i}`;
   const activeId =
     open !== undefined && offers.length > 0 ? optionId(index) : undefined;
@@ -97,12 +116,20 @@ export function Suggestions({
   };
 
   // The keys of the suggestion, as the plugin gives it, which is as the
-  // text is as the key goes down, though the list has not rendered it yet.
-  // A key with Alt, Ctrl, or Cmd is the text's, and so is Shift and Enter,
-  // which breaks the line.
+  // text is as the key goes down, though the list has not rendered it yet:
+  // the list's own, of which one with Shift, Alt, Ctrl, or Cmd is the
+  // text's, as Shift and an arrow, which selects, or Shift and Enter, which
+  // breaks the line; what the list offers is found only for those, rather
+  // than for each key that types.
   useEffect(() => {
     keys.current = (event, at, view) => {
-      if (event.altKey || event.ctrlKey || event.metaKey) {
+      if (
+        !listKeys.has(event.key) ||
+        event.shiftKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      ) {
         return false;
       }
       if (event.key === "Escape") {
@@ -110,17 +137,19 @@ export function Suggestions({
         return true;
       }
       const now = offersOf(choices, at).offers;
-      if (now.length === 0 || (event.key === "Enter" && event.shiftKey)) {
+      if (now.length === 0) {
         return false;
       }
       const key = suggestionKey(at);
-      const i = indexOf(key, now.length);
+      const i = indexOf(key, now);
+      const moveTo = (next: number) =>
+        setMoved({ at: key, offer: offerKey(now[next]) });
       switch (event.key) {
         case "ArrowDown":
-          setMoved({ at: key, index: (i + 1) % now.length });
+          moveTo((i + 1) % now.length);
           return true;
         case "ArrowUp":
-          setMoved({ at: key, index: (i - 1 + now.length) % now.length });
+          moveTo((i - 1 + now.length) % now.length);
           return true;
         case "Enter":
           choose(now[i], at);
@@ -177,8 +206,15 @@ export function Suggestions({
       </p>
       {open !== undefined && (
         // The offers are 8 px from the text, and from each other, as a
-        // finger's targets are (PRD NFR-TOUCH-01).
-        <div className="space-y-1 border-t border-border p-2">
+        // finger's targets are (PRD NFR-TOUCH-01). A press anywhere on the
+        // list, on an offer or between two, or on what it says, leaves the
+        // focus in the text, so that one that misses an offer closes
+        // neither the list nor the on-screen keyboard.
+        // biome-ignore lint/a11y/noStaticElementInteractions: a press on it does nothing but leave the focus in the text, whose keys work the list.
+        <div
+          className="space-y-1 border-t border-border p-2"
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {offers.length > 0 ? (
             <div
               id={listId}
@@ -194,19 +230,14 @@ export function Suggestions({
                 // The text's keys move through the offers and choose one
                 // (aria-activedescendant), which keeps the focus in the
                 // text, so an offer takes none itself, nor as it is
-                // pressed.
+                // pressed, as the list has it.
                 // biome-ignore lint/a11y/useFocusableInteractive: as above.
                 // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
                 <div
-                  key={
-                    offer.kind === "value"
-                      ? `${offer.choice.ref} ${offer.choice.attribute ?? ""}`
-                      : offer.choice.id
-                  }
+                  key={offerKey(offer)}
                   id={optionId(i)}
                   role="option"
                   aria-selected={i === index}
-                  onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
                     const at = suggestionOf(editor.state);
                     if (at !== undefined) {

@@ -272,6 +272,34 @@ describe("a card's labels", () => {
     expect(namesChanged(before, sources("adah", "trust"))).toBe(true);
     expect(namesChanged(before, sources("ada", "faith"))).toBe(true);
   });
+
+  it("follows a change of a variable's key, scope, board, or trash, which tell whether it shadows the name of another, but not of its default", () => {
+    const gold = {
+      id: "var_gold",
+      key: "gold",
+      scope: "board",
+      board_id: "bd_a",
+      default: 0,
+    };
+    const sources = (variable: object) =>
+      ({
+        nodes: new Map(),
+        boards: new Map(),
+        components: new Map(),
+        componentTypes: new Map(),
+        variables: new Map([["var_gold", variable]]),
+      }) as unknown as LabelSources;
+    const before = sources(gold);
+    expect(namesChanged(before, sources({ ...gold, default: 3 }))).toBe(false);
+    for (const changed of [
+      { key: "coins" },
+      { scope: "global", board_id: undefined },
+      { board_id: "bd_b" },
+      { deleted_at: "2026-11-13T08:00:00Z" },
+    ]) {
+      expect(namesChanged(before, sources({ ...gold, ...changed }))).toBe(true);
+    }
+  });
 });
 
 describe("a card's text", () => {

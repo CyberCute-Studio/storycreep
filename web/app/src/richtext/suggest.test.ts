@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { testEditor } from "../test/editor";
 import {
   dismissSuggestion,
+  insertChosen,
   MAX_QUERY,
   suggestionAt,
   suggestionOf,
@@ -42,6 +43,49 @@ describe("what the user types after { or @", () => {
     expect(
       suggestionAt(editorOf(`{${"b".repeat(MAX_QUERY)}`).state)?.from,
     ).toBe(1);
+    // Nor after a letter of two code units, as U+20000, whose first half
+    // is just before what is read of the longest query.
+    expect(
+      suggestionAt(
+        editorOf(`${"x".repeat(300)}\u{20000}{${"b".repeat(MAX_QUERY)}`).state,
+      ),
+    ).toBeUndefined();
+    expect(
+      suggestionAt(
+        editorOf(`${"x ".repeat(150)}\u{20000} {${"b".repeat(MAX_QUERY)}`)
+          .state,
+      )?.query,
+    ).toHaveLength(MAX_QUERY);
+  });
+
+  test("offers nothing after a letter whose accent or vowel sign is a mark of its own, as in a word", () => {
+    // café written as e and U+0301, and नमस्ते, which ends in a vowel sign.
+    expect(suggestionAt(editorOf("cafe\u0301@ex").state)).toBeUndefined();
+    expect(
+      suggestionAt(editorOf("\u0928\u092e\u0938\u094d\u0924\u0947{go").state),
+    ).toBeUndefined();
+    expect(suggestionAt(editorOf("cafe\u0301 @ex").state)?.query).toBe("ex");
+  });
+
+  test("puts what is chosen in place of the trigger as an undo step of its own, which gives back what was typed", () => {
+    const editor = editorOf("Pay ");
+    // Typed just before it is chosen, which the undo's history would join
+    // to the choice.
+    editor.commands.insertContent("{go");
+    const open = suggestionOf(editor.state);
+    expect(open?.query).toBe("go");
+    if (open !== undefined) {
+      insertChosen(
+        editor.view,
+        open,
+        editor.schema.nodes.valueRef.create({ ref: "var_gold" }),
+      );
+    }
+    expect(editor.state.doc.firstChild?.lastChild?.type.name).toBe("valueRef");
+    editor.commands.undo();
+    expect(editor.getText()).toBe("Pay {go");
+    editor.commands.undo();
+    expect(editor.getText()).toBe("Pay ");
   });
 
   test("stays closed once dismissed while the caret stays after its trigger, and offers again once the trigger is typed anew", () => {

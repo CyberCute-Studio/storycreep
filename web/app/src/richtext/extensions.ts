@@ -3,7 +3,7 @@
 // so that the editor writes the documents that the server stores (PRD
 // FR-TEXT-01, ADR-020, plan note N40).
 
-import { checkHref, MAX_DECIMALS } from "@storycreep/shared/richtext";
+import { checkHref } from "@storycreep/shared/richtext";
 import {
   type AnyExtension,
   type Attributes,
@@ -34,6 +34,7 @@ import { typedHref } from "./link";
 import { normalizer } from "./normalize";
 import { cleanPastedHTML } from "./paste";
 import {
+  isDecimals,
   isMentionElement,
   isValueRefElement,
   liftKeepsList,
@@ -69,12 +70,7 @@ export interface ChipLabels {
  * hold any JSON there (readOf).
  */
 export function valueChipText(name: string, decimals: unknown): string {
-  return typeof decimals === "number" &&
-    Number.isInteger(decimals) &&
-    decimals >= 0 &&
-    decimals <= MAX_DECIMALS
-    ? `{${name}:${decimals}}`
-    : `{${name}}`;
+  return isDecimals(decimals) ? `{${name}:${decimals}}` : `{${name}}`;
 }
 
 /**
@@ -190,12 +186,10 @@ const ValueRef = chipNode("valueRef", "value-ref", isValueRefElement, {
   decimals: {
     default: null,
     parseHTML: (element) => {
-      const decimals = element.getAttribute("data-decimals");
-      return decimals !== null &&
-        /^\d$/.test(decimals) &&
-        Number(decimals) <= MAX_DECIMALS
-        ? Number(decimals)
-        : null;
+      const written = element.getAttribute("data-decimals");
+      const decimals =
+        written !== null && /^\d$/.test(written) ? Number(written) : undefined;
+      return isDecimals(decimals) ? decimals : null;
     },
     renderHTML: (attributes) =>
       attributes.decimals === null

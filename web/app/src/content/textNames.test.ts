@@ -6,7 +6,7 @@ import type {
 import type { TFunction } from "i18next";
 import { describe, expect, test } from "vitest";
 import type { ComponentEntry } from "../document/doc";
-import { type NameSources, textChoices, valueName } from "./textNames";
+import { type NameSources, textChoices, valueNamer } from "./textNames";
 
 const at = "2026-11-01T10:00:00Z";
 
@@ -111,13 +111,67 @@ describe("the names of a text's references", () => {
       [variable("var_gold", "gold")],
       [component("cmp_elara", "elara", "Elara")],
     );
-    expect(valueName(view, "var_gold", undefined)).toBe("gold");
-    expect(valueName(view, "cmp_elara", "atr_trust")).toBe("elara.trust");
+    const valueName = valueNamer(view, "bd_a");
+    expect(valueName("var_gold", undefined)).toBe("gold");
+    expect(valueName("cmp_elara", "atr_trust")).toBe("elara.trust");
     // What the document does not have, as an attribute that the type does
     // not define, has no name.
-    expect(valueName(view, "var_gone", undefined)).toBeUndefined();
-    expect(valueName(view, "cmp_elara", "atr_gone")).toBeUndefined();
-    expect(valueName(view, "cmp_gone", "atr_trust")).toBeUndefined();
+    expect(valueName("var_gone", undefined)).toBeUndefined();
+    expect(valueName("cmp_elara", "atr_gone")).toBeUndefined();
+    expect(valueName("cmp_gone", "atr_trust")).toBeUndefined();
+  });
+
+  test("name a global variable and a component that a variable of the text's board shadows as an expression of the board names them, by global. and cmp.", () => {
+    const view = sources(
+      [
+        variable("var_gold", "gold"),
+        variable("var_gold_a", "gold", { scope: "board", board_id: "bd_a" }),
+        variable("var_bram", "bram", { scope: "board", board_id: "bd_a" }),
+        variable("var_elara", "elara"),
+        variable("var_tide", "tide"),
+        variable("var_tide_a", "tide", {
+          scope: "board",
+          board_id: "bd_a",
+          deleted_at: at,
+        }),
+      ],
+      [
+        component("cmp_elara", "elara", "Elara"),
+        component("cmp_bram", "bram", "Bram"),
+      ],
+    );
+    const onBoard = valueNamer(view, "bd_a");
+    // The bare key names the board's variable there.
+    expect(onBoard("var_gold_a", undefined)).toBe("gold");
+    expect(onBoard("var_gold", undefined)).toBe("global.gold");
+    // A component whose key a variable that the board reads has, the
+    // board's or a global one.
+    expect(onBoard("cmp_bram", "atr_trust")).toBe("cmp.bram.trust");
+    expect(onBoard("cmp_elara", "atr_trust")).toBe("cmp.elara.trust");
+    // A variable in the trash shadows nothing.
+    expect(onBoard("var_tide", undefined)).toBe("tide");
+    // Of another board, or of none, as a component's description, the
+    // board's variables shadow nothing, but the global ones still do.
+    for (const elsewhere of [
+      valueNamer(view, "bd_b"),
+      valueNamer(view, undefined),
+    ]) {
+      expect(elsewhere("var_gold", undefined)).toBe("gold");
+      expect(elsewhere("cmp_bram", "atr_trust")).toBe("bram.trust");
+      expect(elsewhere("cmp_elara", "atr_trust")).toBe("cmp.elara.trust");
+    }
+    // What { offers is named as the references show it.
+    expect(
+      textChoices(view, "bd_a", t).values.map((v) => [v.name, v.ref]),
+    ).toEqual([
+      ["bram", "var_bram"],
+      ["cmp.bram.trust", "cmp_bram"],
+      ["cmp.elara.trust", "cmp_elara"],
+      ["elara", "var_elara"],
+      ["global.gold", "var_gold"],
+      ["gold", "var_gold_a"],
+      ["tide", "var_tide"],
+    ]);
   });
 
   test("{ offers the global variables, the board's own, and the components' runtime attributes, and @ every component, each in the order of the names", () => {

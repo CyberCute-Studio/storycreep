@@ -29,8 +29,8 @@ import { AssetImage } from "../content/AssetImage";
 import { DeleteContentDialog } from "../content/deletion";
 import { ConflictNotice, SaveStatus, useEntityForm } from "../content/form";
 import { RenameKeyDialog } from "../content/rename";
-import { useTextNames } from "../content/textNames";
 import { componentUsagesQuery, Usages } from "../content/usages";
+import { useTextChoices, useTextNames } from "../content/useTextNames";
 import {
   typeName,
   ValueField,
@@ -175,7 +175,7 @@ function ComponentView({
   tree,
 }: Omit<ComponentPanelProps, "component"> & { component: Component }) {
   const { t } = useTranslation();
-  const { names } = useTextNames(project.id);
+  const names = useTextNames(project.id);
   return (
     <div className="space-y-4">
       {/* Shown anew once the component changes, as its description does
@@ -297,7 +297,8 @@ function ComponentForm({
   const { t } = useTranslation();
   // What the description's mentions and value references show, and what
   // its { and @ offer, of no board.
-  const { names, choices } = useTextNames(project.id);
+  const names = useTextNames(project.id);
+  const choices = useTextChoices(project.id);
   // The component as the document has it now, once a save was refused for
   // a change made elsewhere; one that the document has without its values,
   // as once a read of the list took them away, is as the form last had it

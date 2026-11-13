@@ -17,6 +17,7 @@ import type { RichTextDoc } from "@storycreep/shared/api";
 import {
   emptyRichText,
   MAX_CHARS,
+  MAX_DECIMALS,
   type RichTextError,
   tryParseRichText,
   tryParseRichTextOfAnySize,
@@ -532,8 +533,8 @@ function FormatBar({
   );
 }
 
-/** The formats of a value reference besides the value as it is: 0 to 6 digits after the point. */
-const decimalsOptions = [0, 1, 2, 3, 4, 5, 6];
+/** The formats of a value reference besides the value as it is: 0 to MAX_DECIMALS digits after the point, as the schema has them. */
+const decimalsOptions = Array.from({ length: MAX_DECIMALS + 1 }, (_, d) => d);
 
 /**
  * The dialog that sets the format of the value reference selected: the

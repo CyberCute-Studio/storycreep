@@ -36,7 +36,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import { ConflictNotice, useEntityForm } from "../content/form";
-import { useTextNames } from "../content/textNames";
+import { useTextChoices, useTextNames } from "../content/useTextNames";
 import { equal } from "../document/reconcile";
 import { payloadField } from "../project/dialogs";
 import type { RichTextValue } from "../richtext/convert";
@@ -228,7 +228,8 @@ export function TextEditor({
   const title = titleOf(shown, t);
   // The names that the text's mentions and value references show, as the
   // cards show them, and what its { and @ offer, of the node's board.
-  const { names, choices } = useTextNames(projectId, node.board_id);
+  const names = useTextNames(projectId, node.board_id);
+  const choices = useTextChoices(projectId, node.board_id);
 
   // Where the box is: over the node, in each frame that the canvas draws,
   // within the part of the canvas that the window shows, and as it opens,
