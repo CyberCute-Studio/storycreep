@@ -218,13 +218,20 @@ export class CommandRegistry {
  * focus a button that is clicked or tapped, nor does Firefox on macOS,
  * which leave the focus on the page's body, which the dialog would give
  * the page's content the focus for instead (AppCommands), as the error
- * console's opener says too (ErrorConsole's show).
+ * console's opener says too (ErrorConsole's show). A press of a command
+ * that cannot run now runs nothing and leaves the focus where it is, as a
+ * second finger's tap in the middle of a drag of the canvas, which holds
+ * the command (hold), and keeps the focus that its keys, as Escape, which
+ * ends the drag, act with.
  */
 export function runFrom(
   registry: CommandRegistry,
   id: CommandId,
   button: HTMLElement,
 ): void {
+  if (!registry.can(id)) {
+    return;
+  }
   button.focus({ preventScroll: true });
   registry.run(id);
 }

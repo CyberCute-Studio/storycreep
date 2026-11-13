@@ -341,6 +341,30 @@ describe("a key", () => {
     ).toBeUndefined();
   });
 
+  it("takes a character that AltGr types on Windows for its binding alone, but not for Ctrl+/", () => {
+    // Brazil's ABNT2, of a laptop without its key of / and ?: AltGr and W
+    // types ?, and AltGr and Q types /, which Windows says as Ctrl and Alt.
+    const question = key({
+      key: "?",
+      code: "KeyW",
+      ctrlKey: true,
+      altKey: true,
+    });
+    expect(commandOfKey(question, "canvas", "windows")).toBe("shortcuts.show");
+    expect(
+      commandOfKey(
+        key({ key: "/", code: "KeyQ", ctrlKey: true, altKey: true }),
+        "page",
+        "windows",
+      ),
+    ).toBeUndefined();
+    // Alt alone, and Ctrl and Option on macOS, are no AltGr.
+    expect(
+      commandOfKey({ ...question, ctrlKey: false }, "canvas", "windows"),
+    ).toBeUndefined();
+    expect(commandOfKey(question, "canvas", "mac")).toBeUndefined();
+  });
+
   it("searches with Ctrl+/ on every platform, and leaves Cmd+/ to Safari on macOS", () => {
     const slash = key({ key: "/", code: "Slash", ctrlKey: true });
     for (const platform of ["windows", "chromeos", "linux", "mac"] as const) {

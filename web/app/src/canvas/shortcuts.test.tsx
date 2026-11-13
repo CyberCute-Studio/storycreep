@@ -360,8 +360,15 @@ describe("the canvas's shortcuts", () => {
         key,
       ).toBe(!ctrlKey);
     }
+    // The header's Commands and the canvas's Keyboard shortcuts, which a
+    // second finger may tap, open nothing either, and leave the focus on
+    // the canvas, whose Escape ends the drag (runFrom).
+    for (const name of ["Commands", "Keyboard shortcuts"]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(canvas);
     expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
     expect(screen.getByText(/Selected: Back to the dock/)).toBeDefined();
     expect(screen.getByRole("application", { name: "Nodes of Harbour" })).toBe(

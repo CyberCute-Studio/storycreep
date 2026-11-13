@@ -24,7 +24,9 @@ export interface KeyInput {
 /**
  * A key of a command's shortcut, with the modifiers held with it. None is
  * held with Alt, which types a character of its own on macOS, and is a
- * layout's AltGr, as Ctrl and Alt are on Windows.
+ * layout's AltGr, as Ctrl and Alt are on Windows, where a character that
+ * AltGr types is still the key of a binding of the character alone
+ * (matches).
  */
 export interface Binding {
   /**
@@ -122,21 +124,44 @@ export function matches(
   e: KeyInput,
   platform: Platform,
 ): boolean {
-  // A modifier that the event does not say of is not held.
-  if (!bindingOn(binding, platform) || e.altKey === true) {
+  if (!bindingOn(binding, platform)) {
     return false;
   }
   const mac = platform === "mac";
   const ctrl = binding.ctrl === true || (binding.mod === true && !mac);
   const meta = binding.mod === true && mac;
-  if ((e.ctrlKey === true) !== ctrl || (e.metaKey === true) !== meta) {
+  const key = binding.key;
+  // A character other than a letter or a digit that a layout types with
+  // AltGr, which Windows says as Ctrl and Alt held, as ? with AltGr and W
+  // on Brazil's ABNT2 of a laptop without its key of / and ?, is the key of
+  // a binding of the character alone still, as ? on the canvas; not of one
+  // with Ctrl, as the search's Ctrl and /, which AltGr and Q, that types /
+  // there, would else be, in a text field too.
+  if (
+    platform === "windows" &&
+    e.ctrlKey === true &&
+    e.altKey === true &&
+    e.metaKey !== true &&
+    !ctrl &&
+    binding.code === undefined &&
+    key.length === 1 &&
+    !isLetter(key) &&
+    !isDigit(key)
+  ) {
+    return e.key === key;
+  }
+  // A modifier that the event does not say of is not held.
+  if (
+    e.altKey === true ||
+    (e.ctrlKey === true) !== ctrl ||
+    (e.metaKey === true) !== meta
+  ) {
     return false;
   }
   const shift = (e.shiftKey === true) === (binding.shift === true);
   if (binding.code !== undefined) {
     return e.code === binding.code && shift;
   }
-  const key = binding.key;
   if (isLetter(key)) {
     return letterOf(e) === key && shift;
   }
