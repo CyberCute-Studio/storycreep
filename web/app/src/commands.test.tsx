@@ -792,10 +792,22 @@ describe("the project's search", () => {
     expect(searches(calls)[0]).not.toHaveProperty("type");
   });
 
-  it("searches for the query that the address spells, as 1e3, null, or true", async () => {
+  it("searches for the query that the address spells, as 1e3, null, [1], or true", async () => {
     expect({
-      ...parseSearch("?q=1e3&a=null&b=true&c=1.50&d=%22true%22&e=%5Bx"),
-    }).toEqual({ q: "1e3", a: "null", b: true, c: "1.50", d: "true", e: "[x" });
+      ...parseSearch(
+        "?q=1e3&a=null&b=true&c=1.50&d=%22true%22&e=%5Bx&f=%5B1%5D&g=%7B%7D&h=%22%5B1%5D%22",
+      ),
+    }).toEqual({
+      q: "1e3",
+      a: "null",
+      b: true,
+      c: "1.50",
+      d: "true",
+      e: "[x",
+      f: "[1]",
+      g: "{}",
+      h: "[1]",
+    });
     const calls = projectPages();
     renderApp(`/projects/${testProject.id}/search?q=true`, {
       session: testSession,

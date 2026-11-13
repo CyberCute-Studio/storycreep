@@ -30,15 +30,18 @@ export interface RouterContext {
 
 /**
  * Reads each value of a page's address as the text that it spells, as a
- * search's query of 1e3, 1.50, or null, which the router's own reading,
- * JSON's, would take for 1000, 1.5, or nothing: only a value that the
- * router's links write as JSON, a string quoted, as a query of 1e3 that a
- * link names, and an object or a list, is read as JSON. True and false,
- * and a number as String writes it, as 42, the router reads as a boolean
- * or a number before (qss), whose text String gives back.
+ * search's query of 1e3, 1.50, null, [1], or {}, which the router's own
+ * reading, JSON's, would take for 1000, 1.5, nothing, a list, or an
+ * object, which the search's page would drop: only a value that the
+ * router's links write as JSON for a string, quoted, as a query of 1e3 or
+ * [1] that a link names, is read as JSON. No route of the app takes an
+ * object or a list, which the router's links would write as JSON
+ * unquoted, and which would be read as its text. True and false, and a
+ * number as String writes it, as 42, the router reads as a boolean or a
+ * number before (qss), whose text String gives back.
  */
 export const parseSearch = parseSearchWith((value) =>
-  /^["[{]/.test(value) ? JSON.parse(value) : value,
+  value.startsWith('"') ? JSON.parse(value) : value,
 );
 
 /** Returns the app's router. */

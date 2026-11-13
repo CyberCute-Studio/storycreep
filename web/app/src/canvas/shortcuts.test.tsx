@@ -498,6 +498,55 @@ describe("the canvas's shortcuts", () => {
     expect(batches(calls)).toHaveLength(1);
   });
 
+  it("in the tree, run Escape once for a key held down, which ends a drag and leaves the selection as it was", async () => {
+    boardPage([testNode("nd_1", 0, 0, { title: "Alpha" })]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    const tree = await screen.findByRole("tree", {
+      name: "Nodes and connections of Harbour",
+    });
+    await waitFor(() =>
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(1),
+    );
+    const [first] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    fireEvent.keyDown(first, { key: " ", code: "Space" });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    // A rubber band that Shift adds to the selection, in the middle of
+    // which the focus went to the tree, as by Tab.
+    canvas.focus();
+    const shifted = { ...mouse, shiftKey: true };
+    fireEvent.pointerDown(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    first.focus();
+    // Escape ends the band, cancelled, and its repeats, as it is held
+    // down, are the tree's, which clear nothing of the selection.
+    expect(fireEvent.keyDown(first, { key: "Escape", code: "Escape" })).toBe(
+      false,
+    );
+    expect(
+      fireEvent.keyDown(first, { key: "Escape", code: "Escape", repeat: true }),
+    ).toBe(false);
+    fireEvent.pointerUp(canvas, {
+      ...shifted,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("1");
+  });
+
   it("undo the last change by Ctrl+Z, and show the table of the shortcuts by ?", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard();
@@ -513,6 +562,10 @@ describe("the canvas's shortcuts", () => {
     // The help names the keys of the page's platform, as Ctrl+C on Linux.
     expect(
       screen.getByText(/Ctrl\+C, Ctrl\+X, and Ctrl\+V copy it/),
+    ).toBeDefined();
+    // Beside it, in the app's frame, the button that opens the table too.
+    expect(
+      screen.getByRole("button", { name: "Keyboard shortcuts" }),
     ).toBeDefined();
     fireEvent.keyDown(canvas, { key: "?", code: "Slash", shiftKey: true });
     const table = await screen.findByRole("dialog", {

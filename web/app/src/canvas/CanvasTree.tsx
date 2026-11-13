@@ -39,7 +39,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { CommandId } from "../commands/catalog";
+import { type CommandId, commandOf } from "../commands/catalog";
 import { usePlatform, useRegistry } from "../commands/registry";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
@@ -590,8 +590,19 @@ export const CanvasTree = memo(function CanvasTree({
         // the next node whose title starts with it, of itself alone,
         // whatever was typed before it, so that the same letter again goes
         // on to the node after, and a character that is a key of the
-        // canvas's that zooms is always that key.
+        // canvas's that zooms is always that key. A key held down runs its
+        // command once, as on the canvas, but for + and - that zoom on
+        // (CommandSpec's repeats), as Escape held down in the middle of a
+        // drag would else end the drag and then clear the selection that it
+        // left as it was: its repeats are the tree's where the command can
+        // run, as the key itself is then, and else the page's.
         if (id !== undefined && treeKeys.has(id)) {
+          if (e.repeat && commandOf(id).repeats !== true) {
+            if (registry !== undefined && !registry.can(id)) {
+              return;
+            }
+            break;
+          }
           if (
             !(registry !== undefined
               ? registry.run(id)

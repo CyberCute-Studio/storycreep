@@ -220,6 +220,16 @@ const whileDragging: ReadonlySet<CommandId> = new Set<CommandId>([
 ]);
 
 /**
+ * Reports whether the canvas of controller holds the command of id now:
+ * in the middle of a drag, every command but those of whileDragging, as
+ * the registry's hold reads it, and the canvas's keys outside the app's
+ * frame, which has the registry, by the same rule.
+ */
+function heldBy(controller: CanvasController, id: CommandId): boolean {
+  return !whileDragging.has(id) && controller.gestures.following();
+}
+
+/**
  * Returns what the toolbar says of a refusal of of, for reason, the
  * server's: that the nodes could not be copied, or pasted, or else that the
  * change could not be saved (useCanvasActions' refused).
@@ -1672,8 +1682,13 @@ function BoardCanvasOf({
   });
   // Copy, Cut, and Duplicate, of at most as many nodes as a clipboard
   // holds, are unavailable while a copy, a paste, or a duplicate is under
-  // way, which would drop it (oneAtATime), as the toolbar's are.
-  const copiable = selected > 0 && selected <= maxEdited && !actions.busy;
+  // way, which would drop it (oneAtATime), as the toolbar's are, which say
+  // so (LastingButton's unavailable) and are disabled where they do not
+  // fit; Delete is of the nodes selected, or of the connection, as the
+  // toolbar's is, by the same conditions.
+  const fits = selected > 0 && selected <= maxEdited;
+  const copiable = fits && !actions.busy;
+  const deletable = selected > 0 || connection !== undefined;
   const canvasHandlers: Handlers = {
     ...Object.fromEntries(views.map((id) => [id, ofController(id)])),
     "canvas.zoom_selection": {
@@ -1741,7 +1756,7 @@ function BoardCanvasOf({
           },
           "canvas.delete": {
             ...ofController("canvas.delete"),
-            enabled: selected > 0 || connection !== undefined,
+            enabled: deletable,
           },
           "canvas.inspector": { run: () => setInspecting((open) => !open) },
           "canvas.snap": { run: toggleSnap },
@@ -1760,10 +1775,7 @@ function BoardCanvasOf({
   // place, by a key on the canvas, in its tree, or elsewhere on the page,
   // as once Tab took the focus off the canvas in the middle of the drag.
   useLayoutEffect(
-    () =>
-      registry?.hold(
-        (id) => !whileDragging.has(id) && controller.gestures.following(),
-      ),
+    () => registry?.hold((id) => heldBy(controller, id)),
     [registry, controller],
   );
   const platform = usePlatform();
@@ -1792,8 +1804,8 @@ function BoardCanvasOf({
     // what the canvas and the page registered for it, where the registry
     // says that it can run now, or, outside the app's frame, which has the
     // registry, the canvas's own handler, by the same rule. In the middle
-    // of a drag, only one of whileDragging runs (the registry's hold
-    // above): not the table of the shortcuts, which the app's frame
+    // of a drag, only one of whileDragging runs (heldBy, the registry's
+    // hold above): not the table of the shortcuts, which the app's frame
     // registers and shows over the page, as the inspector does not open
     // then. A key of the page's own, as Ctrl+K, is the page's (keysOfPage),
     // which runs nothing then either. Shift+Escape, which is the browser's,
@@ -1810,7 +1822,7 @@ function BoardCanvasOf({
     const can =
       registry !== undefined
         ? registry.can(id)
-        : canRun(handler) && (whileDragging.has(id) || still());
+        : canRun(handler) && !heldBy(controller, id);
     // The clipboard's keys are the canvas's whatever they do, rather than
     // the browser's copy that would follow them (clipboardKey), and so are
     // Shift+F10 and the menu key, which open the context menu of what is
@@ -1976,7 +1988,7 @@ function BoardCanvasOf({
         <fieldset className="flex min-w-0 flex-wrap gap-2">
           <legend className="sr-only">{t("canvas.clipboard")}</legend>
           <LastingButton
-            disabled={selected === 0 || selected > maxEdited}
+            disabled={!fits}
             unavailable={actions.busy}
             onClick={() => void actions.copy([...selection])}
           >
@@ -1985,7 +1997,7 @@ function BoardCanvasOf({
           {editable && (
             <>
               <LastingButton
-                disabled={selected === 0 || selected > maxEdited}
+                disabled={!fits}
                 unavailable={actions.busy}
                 onClick={() => void actions.cut([...selection])}
               >
@@ -2026,14 +2038,14 @@ function BoardCanvasOf({
               </MenuItem>
             </Menu>
             <LastingButton
-              disabled={selected === 0 || selected > maxEdited}
+              disabled={!fits}
               unavailable={actions.busy}
               onClick={() => void actions.duplicate([...selection])}
             >
               {t("canvas.duplicate")}
             </LastingButton>
             <Button
-              disabled={selected === 0 && connection === undefined}
+              disabled={!deletable}
               onClick={() =>
                 void (connection === undefined
                   ? actions.remove([...selection])
@@ -2567,12 +2579,17 @@ function BoardCanvasOf({
             ? t("canvas.help_edit", helpKeys)
             : t("canvas.help", helpKeys)}
         </p>
-        <Button
-          aria-haspopup="dialog"
-          onClick={() => registry?.run("shortcuts.show")}
-        >
-          {t("canvas.shortcuts")}
-        </Button>
+        {/* The table of the shortcuts is the app's frame's, which shows it
+        over the page: outside the frame, which has no registry, there is
+        none for the button to open. */}
+        {registry !== undefined && (
+          <Button
+            aria-haspopup="dialog"
+            onClick={() => registry.run("shortcuts.show")}
+          >
+            {t("canvas.shortcuts")}
+          </Button>
+        )}
       </div>
       {options.bench !== undefined && (
         <Suspense>
