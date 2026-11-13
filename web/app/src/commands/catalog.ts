@@ -260,6 +260,19 @@ export function commandOf(id: CommandId): CommandSpec {
   return commands[id];
 }
 
+/** Returns the commands that have keys, which act where on, in the catalog's order. */
+function keyedOn(on: CommandSpec["on"]): readonly CommandId[] {
+  return commandIds.filter(
+    (id) => commands[id].on === on && commands[id].keys.length > 0,
+  );
+}
+
+/** The commands that have keys on the page, and on the canvas, which each key that goes down is looked up in (commandOfKey). */
+const commandsOn: Readonly<Record<CommandSpec["on"], readonly CommandId[]>> = {
+  page: keyedOn(page),
+  canvas: keyedOn(canvas),
+};
+
 /**
  * Returns the command whose keys act where on, and that the key of e is,
  * on platform, or undefined for a key of none: the bindings by a key's
@@ -272,7 +285,7 @@ export function commandOfKey(
   on: CommandSpec["on"],
   platform: Platform,
 ): CommandId | undefined {
-  const ids = commandIds.filter((id) => commands[id].on === on);
+  const ids = commandsOn[on];
   const byPlace = ids.find((id) =>
     commands[id].keys.some(
       (b: Binding) => b.code !== undefined && matches(b, e, platform),

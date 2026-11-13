@@ -563,10 +563,6 @@ describe("the canvas's shortcuts", () => {
     expect(
       screen.getByText(/Ctrl\+C, Ctrl\+X, and Ctrl\+V copy it/),
     ).toBeDefined();
-    // Beside it, in the app's frame, the button that opens the table too.
-    expect(
-      screen.getByRole("button", { name: "Keyboard shortcuts" }),
-    ).toBeDefined();
     fireEvent.keyDown(canvas, { key: "?", code: "Slash", shiftKey: true });
     const table = await screen.findByRole("dialog", {
       name: "Keyboard shortcuts",
@@ -574,6 +570,27 @@ describe("the canvas's shortcuts", () => {
     expect(
       table.querySelector('[data-command="canvas.add_element"]')?.textContent,
     ).toContain("E");
+    fireEvent.keyDown(table, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+      ).toBeNull(),
+    );
+    // Beside it, in the app's frame, the button that opens the table too,
+    // which gets the focus back as the table closes, though a click gave it
+    // none, as Safari's.
+    const button = screen.getByRole("button", { name: "Keyboard shortcuts" });
+    fireEvent.click(button);
+    const again = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+    });
+    fireEvent.keyDown(again, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement).toBe(button);
   });
 
   it("run from the palette as from their keys, once the focus is back on the canvas", async () => {

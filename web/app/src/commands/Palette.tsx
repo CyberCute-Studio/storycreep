@@ -2,7 +2,8 @@
 // Cmd+K on macOS, or the header's Commands opens, of every command that the
 // page shown can run, by name, with its keys, which the words typed narrow
 // to those whose name has a word that starts as each of them does, whatever
-// their case and diacritics. The arrows move through them, and Enter, a
+// their case and diacritics, and what is typed of no word, as + alone, to
+// none of them. The arrows move through them, and Enter, a
 // click, or a tap runs one, once the dialog has closed and the focus is
 // back where it was, as if its key had been pressed there. In a project, a
 // last entry searches the project for what was typed. Whether each can run
@@ -49,10 +50,20 @@ export function foldWords(text: string): string[] {
     .filter((w) => w !== "");
 }
 
-/** Reports whether name has a word that starts as each word of query does. */
+/**
+ * Reports whether name has a word that starts as each word of query does:
+ * every name, of a query of nothing but spaces, as of none; and none, of
+ * one that has no word, as + or ?, which no name's words start as, so that
+ * the palette lists the search for it alone, which Enter runs, rather than
+ * every command, as if nothing had been typed.
+ */
 export function nameMatches(name: string, query: string): boolean {
+  const asked = foldWords(query);
+  if (asked.length === 0) {
+    return query.trim() === "";
+  }
   const words = foldWords(name);
-  return foldWords(query).every((q) => words.some((w) => w.startsWith(q)));
+  return asked.every((q) => words.some((w) => w.startsWith(q)));
 }
 
 /**

@@ -12,16 +12,22 @@ import { Button } from "../ui/Button";
 import { commandOf } from "./catalog";
 import { ariaKeyShortcuts } from "./keys";
 import { Palette } from "./Palette";
-import { useCommandHandlers, usePlatform, useRegistry } from "./registry";
+import {
+  runFrom,
+  useCommandHandlers,
+  usePlatform,
+  useRegistry,
+} from "./registry";
 import { Shortcuts } from "./Shortcuts";
 
 /**
  * The control that has the focus, which a dialog that opens gives it back
- * to, or null where none has it (focusIsNowhere), as where a click on a
- * button gives it none, as Safari's and Firefox's on macOS, which leaves
- * it on the document's body, which takes no focus back, so that the dialog
- * gives the page's content the focus as it closes (focusBackTo), rather
- * than leaving it on the body.
+ * to, or null where none has it (focusIsNowhere), as where a click on what
+ * is no control gives it to none, or on a button, as Safari's and Firefox's
+ * on macOS, which leaves it on the document's body, which takes no focus
+ * back, so that the dialog gives the page's content the focus as it closes
+ * (focusBackTo), rather than leaving it on the body. A button that opens
+ * the dialog gives itself the focus first (runFrom).
  */
 function focused(): HTMLElement | null {
   const element = document.activeElement;
@@ -93,7 +99,11 @@ export function CommandsButton() {
         commandOf("palette.open").keys,
         platform,
       )}
-      onClick={() => registry?.run("palette.open")}
+      onClick={(e) => {
+        if (registry !== undefined) {
+          runFrom(registry, "palette.open", e.currentTarget);
+        }
+      }}
     >
       {t("shell.commands")}
     </Button>

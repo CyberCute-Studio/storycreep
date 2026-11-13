@@ -275,6 +275,34 @@ describe("a key", () => {
     expect(
       commandOfKey(key({ key: "ь", code: "KeyM" }), "canvas", "windows"),
     ).toBe("canvas.minimap");
+    // A key that types a mark of its script, which joins a letter, or more
+    // than one letter, is its place's too: Hindi's InScript, whose key of X
+    // types the anusvara (U+0902), and of Z a vowel's sign (U+0946); Thai's
+    // Kedmanee, whose key of B types sara i (U+0E34); and Arabic's, whose
+    // key of B types lam and alef.
+    expect(
+      commandOfKey(
+        key({ key: String.fromCodePoint(0x902), code: "KeyX", ctrlKey: true }),
+        "canvas",
+        "windows",
+      ),
+    ).toBe("canvas.cut");
+    expect(
+      commandOfKey(
+        key({ key: String.fromCodePoint(0x946), code: "KeyZ", ctrlKey: true }),
+        "page",
+        "windows",
+      ),
+    ).toBe("history.undo");
+    for (const typed of [[0xe34], [0x644, 0x627]]) {
+      expect(
+        commandOfKey(
+          key({ key: String.fromCodePoint(...typed), code: "KeyB" }),
+          "canvas",
+          "windows",
+        ),
+      ).toBe("canvas.add_branch");
+    }
     // A key whose place is a letter's, but which types what is no letter,
     // is no letter's: the , of French AZERTY's key of M, the . of Dvorak's
     // key of E, and its ; of the key of Z, held with Ctrl.

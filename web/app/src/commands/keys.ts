@@ -88,18 +88,24 @@ function isDigit(key: string): boolean {
 
 /**
  * Returns the Latin letter that the key of e types, in lower case, or, of a
- * key that types a letter of another script, as Cyrillic's я, the letter of
- * its place, or undefined for a key that types none. A key that types what
- * is no letter is the key of no letter, whatever its place: the key of M
- * types , on a French layout, and the key of E types . on Dvorak, neither
- * of which is M or E there, as the browser's own shortcuts go by.
+ * key that types what is written in another script, the letter of its
+ * place: a letter of it, as Cyrillic's я; a mark that joins one, as the
+ * anusvara of Devanagari (U+0902) that the key of X types on Hindi's
+ * InScript, or Thai's sara i (U+0E34) of the key of B on Kedmanee; or more
+ * than one, as the lam and alef of the key of B on Arabic's layout; or
+ * undefined for a key that types none. A key that types what is no letter
+ * is the key of no letter, whatever its place: the key of M types , on a
+ * French layout, and the key of E types . on Dvorak, neither of which is M
+ * or E there, as the browser's own shortcuts go by.
  */
 export function letterOf(e: KeyInput): string | undefined {
   if (/^[a-z]$/i.test(e.key)) {
     return e.key.toLowerCase();
   }
-  return /^\p{L}$/u.test(e.key) &&
-    !/^\p{Script=Latin}$/u.test(e.key) &&
+  // A key's name, as Dead or Unidentified, is of Latin letters, and is no
+  // letter's.
+  return /^[\p{L}\p{M}]+$/u.test(e.key) &&
+    !/\p{Script=Latin}/u.test(e.key) &&
     /^Key[A-Z]$/.test(e.code)
     ? e.code.slice(3).toLowerCase()
     : undefined;

@@ -921,7 +921,7 @@
   "shortcuts.group.search": "Search",
   "shortcuts.group.view": "Moving around the canvas",
   "shortcuts.keys": "Keys",
-  "shortcuts.link": "In the editor of a text, {key} adds or edits a link instead.",
+  "shortcuts.link": "In the editor of a text, {key} adds or edits a link instead, but not inside code, which holds no link.",
   "shortcuts.on_canvas": "On the canvas",
   "shortcuts.or": "or",
   "shortcuts.outside_text": "Anywhere but in a dialog or a text field",

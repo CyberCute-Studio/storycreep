@@ -57,6 +57,7 @@ import { bindingText } from "../commands/keys";
 import {
   canRun,
   type Handlers,
+  runFrom,
   runHandler,
   useCommandHandlers,
   usePlatform,
@@ -2581,11 +2582,14 @@ function BoardCanvasOf({
         </p>
         {/* The table of the shortcuts is the app's frame's, which shows it
         over the page: outside the frame, which has no registry, there is
-        none for the button to open. */}
+        none for the button to open. A click gives the button the focus
+        first, which the table gives back to it as it closes (runFrom). */}
         {registry !== undefined && (
           <Button
             aria-haspopup="dialog"
-            onClick={() => registry.run("shortcuts.show")}
+            onClick={(e) =>
+              runFrom(registry, "shortcuts.show", e.currentTarget)
+            }
           >
             {t("canvas.shortcuts")}
           </Button>

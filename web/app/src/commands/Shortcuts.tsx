@@ -4,7 +4,8 @@
 // same IDs as the palette's, each with its keys on the page's platform and
 // where they act, anywhere on the page but in a dialog, outside the fields
 // that the user types in too, or on the canvas, and that the palette's key
-// is the editor's of a link in a text's editor, which takes it first.
+// is the editor's of a link in a text's editor, which takes it first, but
+// inside code, which holds no link, where the editor leaves it to the page.
 
 import { Dialog } from "radix-ui";
 import { type RefObject, useId } from "react";

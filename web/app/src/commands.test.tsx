@@ -140,16 +140,26 @@ describe("the command palette", () => {
     ).toBe("E");
   });
 
-  it("narrows to the commands whose names have words that start as those typed, whatever their case and accents, and runs one by a click", async () => {
+  it("narrows to the commands whose names have words that start as those typed, whatever their case and accents, to none for what is typed of no word, and runs one by a click", async () => {
     const user = userEvent.setup();
     projectPages();
     await openVariables();
     await user.click(screen.getByRole("button", { name: "Commands" }));
     const palette = await screen.findByRole("dialog", { name: "Commands" });
-    await user.type(
-      within(palette).getByRole("combobox"),
-      "GO PRÓJECT'S COMPO",
-    );
+    // What is typed of no word, as +, is no command's name's, and leaves
+    // the search for it alone; spaces alone narrow nothing.
+    const field = within(palette).getByRole("combobox");
+    await user.type(field, "+");
+    expect(
+      within(palette)
+        .getAllByRole("option")
+        .map((o) => o.dataset.command),
+    ).toEqual([undefined]);
+    await user.clear(field);
+    await user.type(field, "  ");
+    expect(within(palette).getAllByRole("option").length).toBeGreaterThan(1);
+    await user.clear(field);
+    await user.type(field, "GO PRÓJECT'S COMPO");
     const options = within(palette).getAllByRole("option");
     expect(options.map((o) => o.dataset.command)).toEqual([
       "go.components",
@@ -178,6 +188,21 @@ describe("the command palette", () => {
     await user.keyboard("{Control>}k{/Control}");
     await screen.findByRole("dialog", { name: "Commands" });
     await user.keyboard("{Control>}k{/Control}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("gives the focus back to the header's Commands as it closes, which a click on it gives none in Safari", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    const button = screen.getByRole("button", { name: "Commands" });
+    // A click that focuses nothing, as Safari's.
+    fireEvent.click(button);
+    await screen.findByRole("dialog", { name: "Commands" });
+    await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
     );

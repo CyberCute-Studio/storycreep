@@ -210,6 +210,25 @@ export class CommandRegistry {
   }
 }
 
+/**
+ * Runs the command of id of registry from button, as its click asks, which
+ * gives button the focus first, so that the dialog that the command opens,
+ * as the palette or the table of the shortcuts, gives it back to button as
+ * it closes, as Radix's dialogs do to their Dialog.Trigger: Safari does not
+ * focus a button that is clicked or tapped, nor does Firefox on macOS,
+ * which leave the focus on the page's body, which the dialog would give
+ * the page's content the focus for instead (AppCommands), as the error
+ * console's opener says too (ErrorConsole's show).
+ */
+export function runFrom(
+  registry: CommandRegistry,
+  id: CommandId,
+  button: HTMLElement,
+): void {
+  button.focus({ preventScroll: true });
+  registry.run(id);
+}
+
 const Registry = createContext<CommandRegistry | undefined>(undefined);
 const PlatformOf = createContext<Platform>("linux");
 
