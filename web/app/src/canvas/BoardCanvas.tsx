@@ -2559,21 +2559,15 @@ function BoardCanvasOf({
           />
         )}
       </div>
-      {/* 8 px more above the row than between the canvas's rows, as the
-          docked inspector beside the canvas may end, with its last field,
-          where the canvas's row does, and fonts that round a line's height
-          down would leave the row's button closer to that field than a
-          finger's 8 px (NFR-TOUCH-01). */}
-      <div className="flex flex-wrap items-start gap-2 pt-2">
-        <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
-          {editable
-            ? t("canvas.help_edit", helpKeys)
-            : t("canvas.help", helpKeys)}
-        </p>
+      <div className="flex flex-wrap items-start gap-2">
         {/* The table of the shortcuts is the app's frame's, which shows it
         over the page: outside the frame, which has no registry, there is
         none for the button to open. A click gives the button the focus
-        first, which the table gives back to it as it closes (runFrom). */}
+        first, which the table gives back to it as it closes (runFrom). The
+        button is at the row's start, under the canvas: the docked
+        inspector beside the canvas is sticky, and scrolls within the
+        window's height, so a field that it clips may lie over the row's
+        end, closer to a button there than a finger's 8 px (NFR-TOUCH-01). */}
         {registry !== undefined && (
           <Button
             aria-haspopup="dialog"
@@ -2584,6 +2578,11 @@ function BoardCanvasOf({
             {t("canvas.shortcuts")}
           </Button>
         )}
+        <p id={helpId} className="min-w-0 flex-1 text-sm text-fg-muted">
+          {editable
+            ? t("canvas.help_edit", helpKeys)
+            : t("canvas.help", helpKeys)}
+        </p>
       </div>
       {options.bench !== undefined && (
         <Suspense>
