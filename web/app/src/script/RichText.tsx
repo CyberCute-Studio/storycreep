@@ -6,7 +6,8 @@
 // the text's board names it, as the cards and the editor show them
 // (labels.ts's referenceNames). A block, an inline, or a mark of a type
 // that the page does not know, as a newer server's may send to a page
-// loaded before it, shows its text alone, or nothing, as a card does.
+// loaded before it, shows its text alone, or nothing, as a card does, but
+// a block or an inline of one is no sign of an empty text (isEmptyText).
 
 import type {
   RichTextBlock,
@@ -121,7 +122,12 @@ function blocksOf(blocks: readonly RichTextBlock[], names: TextNames) {
   });
 }
 
-/** Reports whether doc holds no text: no inline in any of its blocks. */
+/**
+ * Reports whether doc holds no text: no inline in any of its blocks, and no
+ * block of a type that the page does not know, which may hold text that it
+ * cannot show, as an inline of such a type may, rather than say that the
+ * text has none.
+ */
 export function isEmptyText(doc: RichTextDoc | undefined): boolean {
   const empty = (blocks: readonly RichTextBlock[]): boolean =>
     blocks.every((b) =>
@@ -129,7 +135,7 @@ export function isEmptyText(doc: RichTextDoc | undefined): boolean {
         ? (b.content ?? []).length === 0
         : b.type === "bulletList" || b.type === "orderedList"
           ? b.content.every((item) => empty(item.content ?? []))
-          : true,
+          : false,
     );
   return doc === undefined || empty(doc.content);
 }

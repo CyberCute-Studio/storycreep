@@ -278,6 +278,20 @@ describe("the last-opened state", () => {
     unmount();
   });
 
+  it("gives a canvas mounted again once the session is of another account what that account's device showed it, rather than what the page showed the account before", () => {
+    vi.useFakeTimers();
+    rememberView("usr_d", "prj_a", "bd_a", shown(30));
+    const { result, rerender, unmount } = renderHook(
+      ({ user }) => useLastOpened(user, "prj_a", "bd_a"),
+      { initialProps: { user: "usr_a" } },
+    );
+    act(() => result.current.onView(shown(11, 1, ["nd_1"])));
+    rerender({ user: "usr_d" });
+    expect(result.current.initial?.viewport.x).toBe(30);
+    expect(result.current.initial?.selection).toEqual([]);
+    unmount();
+  });
+
   it("forgets the board that its page deleted, and keeps nothing more of it as the page is left", () => {
     vi.useFakeTimers();
     rememberBoard("usr_b", "prj_b", "bd_b");

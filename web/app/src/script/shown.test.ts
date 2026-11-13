@@ -170,6 +170,55 @@ describe("the script view's places", () => {
     expect(place(nodes, [moved], {}).leaving.get("nd_a")?.[0]).toBe(moved);
   });
 
+  it("keeps the output of a branch that a choice whose label's form is open was under, as another session deletes the output, with the choice", () => {
+    const output = (id: string, kind: BranchOutput["kind"]): BranchOutput => ({
+      id,
+      node_id: "nd_a",
+      kind,
+      rev: 1,
+      created_at: "2026-11-01T10:00:00Z",
+      updated_at: "2026-11-01T10:00:00Z",
+    });
+    const ifOutput = output("bo_if", "if");
+    const elseOutput = output("bo_else", "else");
+    const branch = testNode("nd_a", 0, 0, {
+      type: "branch",
+      outputs: [ifOutput, elseOutput],
+    });
+    const nodes = [branch, node("nd_b", 1)];
+    const choice = testConnection("cn_1", "nd_a", "nd_b", {
+      from_port: "bo_if",
+    });
+    const before = place(nodes, [choice], { cn_1: "choice" });
+    // The output goes, and the connection that leaves it with it.
+    const without = { ...branch, outputs: [elseOutput], rev: 2 };
+    const after = place(
+      [without, node("nd_b", 1)],
+      [],
+      { cn_1: "choice" },
+      before.shown,
+    );
+    // The entry lists the output still, as the view showed it, with the
+    // choice, a ghost, under it, but the branch as the board has it now.
+    const shown = after.sections.reached[0];
+    expect(shown.outputs).toEqual([ifOutput, elseOutput]);
+    expect(shown.rev).toBe(2);
+    expect(after.leaving.get("nd_a")?.[0]).toBe(choice);
+    expect([...after.ghosts]).toEqual(["cn_1"]);
+    // And there still as it is shown anew.
+    const again = place(
+      [without, node("nd_b", 1)],
+      [],
+      { cn_1: "choice" },
+      after.shown,
+    );
+    expect(again.sections.reached[0].outputs).toEqual([ifOutput, elseOutput]);
+    // Once the form closes, the branch is as the board has it.
+    expect(place([without, node("nd_b", 1)], [], {}).sections.reached[0]).toBe(
+      without,
+    );
+  });
+
   it("shows a choice whose label's form is open, and whose connection went, as a ghost where it was", () => {
     const nodes = [node("nd_a", 0), node("nd_b", 1), node("nd_c", 2)];
     const first = testConnection("cn_1", "nd_a", "nd_b", { order: "U" });

@@ -323,9 +323,9 @@ const keepDelay = 500;
  * What a board's page reads and keeps of the last-opened state: what the
  * device last showed the account userId of the board, if it did, which its
  * canvas opens with (initial), read as the page shows the board, before it
- * records that it shows it, or, once the page's canvas has shown it, what
- * that canvas showed last, which a canvas mounted again on the page opens
- * with; onView, which keeps what the canvas shows, at
+ * records that it shows it, or, once the page's canvas has shown it to
+ * userId, what that canvas showed last, which a canvas mounted again on the
+ * page opens with; onView, which keeps what the canvas shows, at
  * most every keepDelay, and as the page is hidden or left, as a tablet's
  * browser may end a hidden page without a word; and forget, which forgets
  * the board, as once the page has deleted it, so that neither the start
@@ -349,10 +349,13 @@ export function useLastOpened(
     const last = lastOpened(userId);
     return last?.boardId === boardId ? last.view : undefined;
   }, [userId, boardId]);
-  // What the canvas of the board last showed on the page, which a canvas
-  // mounted again, as once the page showed the board's script view in its
-  // place, opens with, rather than with what the page read as it opened.
-  const shown = useRef<{ boardId: string; view: CanvasView }>(undefined);
+  // What the canvas of the board last showed the account on the page, which
+  // a canvas mounted again, as once the page showed the board's script view
+  // in its place, opens with, rather than with what the page read as it
+  // opened, but not once the session is of another account.
+  const shown = useRef<{ userId: string; boardId: string; view: CanvasView }>(
+    undefined,
+  );
   const keeper = useRef<((view: CanvasView) => void) | undefined>(undefined);
   const forgetter = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
@@ -372,7 +375,7 @@ export function useLastOpened(
     };
     keeper.current = (view) => {
       pending = view;
-      shown.current = { boardId, view };
+      shown.current = { userId, boardId, view };
       timer ??= setTimeout(flush, keepDelay);
     };
     forgetter.current = () => {
@@ -401,7 +404,10 @@ export function useLastOpened(
   const forget = useCallback(() => forgetter.current?.(), []);
   const last = shown.current;
   return {
-    initial: last?.boardId === boardId ? savedOf(last.view) : opened,
+    initial:
+      last?.boardId === boardId && last.userId === userId
+        ? savedOf(last.view)
+        : opened,
     onView,
     forget,
   };

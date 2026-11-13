@@ -254,18 +254,21 @@ function applied(
  * Answers the board's page, of nodes and connections, the first failReads
  * reads of its nodes failing, and applies each batch that the page sends
  * to them, but for those that refuse says to refuse, by their index among
- * those sent, each once gate, if it is given, lets it.
+ * those sent, with what refusal makes, each once gate, if it is given, lets
+ * it.
  */
 function boardPage(
   board: { nodes: Node[]; connections: Connection[] },
   {
     role = "owner",
     refuse = [],
+    refusal = () => refused(422, { code: "validation_failed" }),
     gate,
     failReads = 0,
   }: {
     role?: string;
     refuse?: number | readonly number[];
+    refusal?: () => Error;
     gate?: Promise<void>;
     failReads?: number;
   } = {},
@@ -332,7 +335,7 @@ function boardPage(
         const index = sent++;
         return (gate ?? Promise.resolve()).then(() => {
           if (refusing.has(index)) {
-            throw refused(422, { code: "validation_failed" });
+            throw refusal();
           }
           return answerBatch(input);
         });
@@ -543,6 +546,39 @@ describe("the script view", () => {
   });
 
   // Verifies: FR-TEXT-04/AC3
+  it("gives the focus to a label that the editor cannot change, as of a newer version, as its editor opens", async () => {
+    const user = userEvent.setup();
+    const board = harbourBoard();
+    // A mark that this version does not have, as a newer server's.
+    board.connections[2] = {
+      ...board.connections[2],
+      label: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Onward", marks: [{ type: "underline" }] },
+            ],
+          },
+        ],
+      } as unknown as RichTextDoc,
+    };
+    boardPage(board);
+    await openScript();
+    within(entryOf("Market"))
+      .getByRole("button", { name: "Edit label: Onward" })
+      .focus();
+    await user.keyboard("{Enter}");
+    const form = await screen.findByRole("form", {
+      name: "Edit the choice's label",
+    });
+    const label = within(form).getByRole("textbox", { name: "Label" });
+    expect(label.getAttribute("contenteditable")).toBe("false");
+    await waitFor(() => expect(document.activeElement).toBe(label));
+  });
+
+  // Verifies: FR-TEXT-04/AC3
   it("closes an editor that holds no change with Escape, and one that holds a change only with Cancel, the focus back on its button either way", async () => {
     const user = userEvent.setup();
     const calls = boardPage(harbourBoard());
@@ -722,6 +758,81 @@ describe("the script view", () => {
     );
   });
 
+  it("keeps a branch's choice's label open under its output, with what it holds, as another session deletes the output, with the choice", async () => {
+    const user = userEvent.setup();
+    const output = (id: string, kind: "if" | "else") => ({
+      id,
+      node_id: "nd_gate",
+      kind,
+      rev: 1,
+      created_at: at,
+      updated_at: at,
+    });
+    const board = harbourBoard();
+    board.nodes.push(
+      testNode("nd_gate", 0, 0, {
+        type: "branch",
+        kind: undefined,
+        title: "Gate",
+        outputs: [output("bo_if", "if"), output("bo_else", "else")],
+        created_at: "2026-11-01T10:05:00Z",
+      }),
+    );
+    board.connections.push(
+      testConnection("cn_toll", "nd_gate", "nd_market", {
+        from_port: "bo_if",
+        label: textOf("Pay the toll"),
+      }),
+      testConnection("cn_back", "nd_gate", "nd_pier", { from_port: "bo_else" }),
+    );
+    boardPage(board);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${testProject.id}/boards/bd_a?view=script`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { name: "Gate" });
+    await user.click(
+      within(entryOf("Gate")).getByRole("button", {
+        name: "Edit label: Pay the toll",
+      }),
+    );
+    const form = await screen.findByRole("form", {
+      name: "Edit the choice's label",
+    });
+    const label = within(form).getByRole("textbox", { name: "Label" });
+    await waitFor(() => expect(document.activeElement).toBe(label));
+    typeInto(label, "Pay up");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "branch_output.delete",
+            payload: { id: "bo_if", confirm: true },
+          },
+        ],
+        [
+          { id: "bo_if", rev: 2 },
+          { id: "nd_gate", rev: 2 },
+        ],
+      ),
+    );
+    // The same form, under the output where it was, with what was typed,
+    // saying that it cannot be saved.
+    expect(
+      await within(form).findByText(/^This is no longer on the board/),
+    ).toBeDefined();
+    const outputs = within(entryOf("Gate")).getByRole("list", {
+      name: "Outputs of Gate",
+    });
+    expect(
+      within(outputs).getByRole("form", { name: "Edit the choice's label" }),
+    ).toBe(form);
+    expect(label.textContent).toBe("Pay up");
+    expect(document.activeElement).toBe(label);
+  });
+
   it("keeps an editor open, with what it holds, in its part, as another session takes away what reached its node", async () => {
     const user = userEvent.setup();
     boardPage(harbourBoard());
@@ -750,8 +861,19 @@ describe("the script view", () => {
         ],
       ),
     );
-    const reached = await screen.findByRole("region", {
-      name: "Reached from the entry node (2 nodes)",
+    await waitFor(() =>
+      expect(
+        within(entryOf("Quay")).queryByText("Walk to the pier"),
+      ).toBeNull(),
+    );
+    // Each part counts the entries that it lists.
+    expect(
+      screen.getByRole("region", {
+        name: "Not reached from the entry node (1 node)",
+      }),
+    ).toBeDefined();
+    const reached = screen.getByRole("region", {
+      name: "Reached from the entry node (3 nodes)",
     });
     expect(within(reached).getByRole("form", { name: "Edit Pier" })).toBe(form);
     expect(title).toHaveProperty("value", "Pier end");
@@ -817,6 +939,45 @@ describe("the script view", () => {
       screen.getByRole("heading", { name: "Script" }),
     );
     expect(batches(calls)).toEqual([]);
+  });
+
+  it("names and counts its parts as it shows them while it keeps the ghost of the entry node that another session deleted", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard());
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${testProject.id}/boards/bd_a?view=script`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { name: "Quay" });
+    await user.click(
+      within(entryOf("Quay")).getByRole("button", { name: "Edit Quay" }),
+    );
+    const form = await screen.findByRole("form", { name: "Edit Quay" });
+    await user.type(within(form).getByRole("textbox", { name: "Title" }), "s");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.delete", payload: { id: "nd_quay" } }],
+        [{ id: "nd_quay", rev: 2 }],
+      ),
+    );
+    expect(
+      await within(form).findByText(/^This is no longer on the board/),
+    ).toBeDefined();
+    const region = screen.getByRole("region", { name: "Script" });
+    expect(
+      within(region).getByText(/^Nodes are listed breadth-first/),
+    ).toBeDefined();
+    const reached = within(region).getByRole("region", {
+      name: "Reached from the entry node (1 node)",
+    });
+    expect(within(reached).getByRole("form", { name: "Edit Quay" })).toBe(form);
+    expect(
+      within(region).getByRole("region", {
+        name: "Not reached from the entry node (3 nodes)",
+      }),
+    ).toBeDefined();
   });
 
   it("closes an editor that holds no change once another session deleted its node, as the canvas's editor of a text does", async () => {
@@ -960,6 +1121,57 @@ describe("the script view", () => {
     expect(document.activeElement).toBe(title);
   });
 
+  it("leaves the focus where the user went as an editor's save is refused for a field of it", async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = boardPage(harbourBoard(), {
+      gate,
+      refuse: 0,
+      refusal: () =>
+        refused(422, {
+          code: "validation_failed",
+          details: {
+            errors: [
+              {
+                location: "body.commands[0].payload.title",
+                message: "Not that title",
+              },
+            ],
+          },
+        }),
+    });
+    await openScript();
+    await user.click(
+      within(entryOf("Market")).getByRole("button", { name: "Edit Market" }),
+    );
+    const market = await screen.findByRole("form", { name: "Edit Market" });
+    await user.type(
+      within(market).getByRole("textbox", { name: "Title" }),
+      " square{Enter}",
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // While the save is under way, the user goes on to another node.
+    await user.click(
+      within(entryOf("Pier")).getByRole("button", { name: "Edit Pier" }),
+    );
+    const pier = await screen.findByRole("form", { name: "Edit Pier" });
+    const title = within(pier).getByRole("textbox", { name: "Title" });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    await act(async () => release());
+    // The refused field says so, and the focus stays where the user is.
+    await waitFor(() =>
+      expect(
+        within(market)
+          .getByRole("textbox", { name: "Title" })
+          .getAttribute("aria-invalid"),
+      ).toBe("true"),
+    );
+    expect(document.activeElement).toBe(title);
+  });
+
   it("takes the repeats of a key held as an editor opens for nothing typed, until the key goes up", async () => {
     const user = userEvent.setup();
     const calls = boardPage(harbourBoard());
@@ -974,6 +1186,26 @@ describe("the script view", () => {
     // A key held in the editor repeats as the user types.
     await user.keyboard("{s>3/}");
     expect((title as HTMLInputElement).value).toContain("sss");
+    expect(batches(calls)).toEqual([]);
+  });
+
+  it("takes the repeats of a key held as an editor closes, on the button that the focus goes back to, for nothing", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage(harbourBoard());
+    await openScript();
+    const edit = () =>
+      within(entryOf("Pier")).getByRole("button", { name: "Edit Pier" });
+    edit().focus();
+    await user.keyboard("{Enter}");
+    const form = await screen.findByRole("form", { name: "Edit Pier" });
+    expect(document.activeElement).toBe(
+      within(form).getByRole("textbox", { name: "Title" }),
+    );
+    // Enter held in the title of no change: the editor closes, with the
+    // focus back on Edit, where the key's repeats open nothing.
+    await user.keyboard("{Enter>3/}");
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(document.activeElement).toBe(edit());
     expect(batches(calls)).toEqual([]);
   });
 

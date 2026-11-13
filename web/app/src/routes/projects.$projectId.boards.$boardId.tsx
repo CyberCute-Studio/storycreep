@@ -22,6 +22,7 @@ import {
 } from "../content/form";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
+import type { ProjectDocument } from "../document/store";
 import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { useLastOpened } from "../project/lastOpened";
@@ -201,6 +202,7 @@ function BoardPage() {
   ) : (
     <BoardContent
       projectId={projectId}
+      doc={doc}
       board={shown}
       read={read}
       onDeleting={setDeleting}
@@ -223,11 +225,14 @@ function areaOf(area: string | undefined): Rect | undefined {
 
 function BoardContent({
   projectId,
+  doc,
   board,
   read,
   onDeleting,
 }: {
   projectId: string;
+  /** The project's document, which the page shows the board of. */
+  doc: ProjectDocument;
   board: Board;
   /** The read of the board's nodes and connections that the loader started. */
   read: Promise<void> | undefined;
@@ -274,7 +279,6 @@ function BoardContent({
   // loader's read failed, the view shown in place of it reads what the
   // document holds, rather than say again what the loader's read failed
   // with; while it holds that of the loader's own, a view's read is that.
-  const doc = useProjectDocument(projectId);
   const firstRead = doc.holds(boardPart(board.id)) ? undefined : read;
   const navigate = useNavigate();
   // The views are commands of the palette too (FR-EDIT-10), each of which

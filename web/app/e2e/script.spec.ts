@@ -341,17 +341,26 @@ test.describe("a board's script view", () => {
       shown.push(
         await page.evaluate(
           ({ count, name }) =>
-            new Promise<number>((resolve) => {
+            new Promise<number>((resolve, reject) => {
               const link = [
                 ...document.querySelectorAll<HTMLAnchorElement>("nav a"),
               ].find((a) => a.textContent === name);
+              if (link === undefined) {
+                reject(new Error(`no link ${name} to the script view`));
+                return;
+              }
               const start = performance.now();
-              link?.click();
+              link.click();
+              // Ten seconds, well past the second that the view has, so
+              // that a view that never shows the board fails as such.
               const check = () => {
-                if (document.querySelectorAll("article").length === count) {
+                const shown = document.querySelectorAll("article").length;
+                if (shown === count) {
                   requestAnimationFrame(() =>
                     resolve(performance.now() - start),
                   );
+                } else if (performance.now() - start > 10_000) {
+                  reject(new Error(`${shown} of ${count} entries shown`));
                 } else {
                   requestAnimationFrame(check);
                 }

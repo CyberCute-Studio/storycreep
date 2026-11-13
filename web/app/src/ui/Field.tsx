@@ -277,6 +277,9 @@ const refusedField =
 const enabledControl =
   "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)";
 
+/** Reports that the focus may go to a form's field from anywhere, as useFocusRefusal's default. */
+const anywhere = () => true;
+
 /**
  * Moves the focus to the first field of form that is marked invalid, once
  * for each refused attempt, as a form that the server refused shows its
@@ -292,11 +295,17 @@ const enabledControl =
  * went with the step that showed it, and form, the step that replaced it,
  * shows the refusal: the focus goes to form's first control then, rather
  * than to the page's content, or its top, where the next Tab would start
- * again. form need not be a form: a section of controls is one too.
+ * again. form need not be a form: a section of controls is one too. Of a
+ * page of several forms open at once, as the script view's, which the user
+ * may go on to another of while a save is under way, here says whether the
+ * focus may go to form's field, as where the focus is in form, or nowhere:
+ * elsewhere, it stays where the user took it, and the field shows its
+ * error; by default, it goes there from anywhere.
  */
 export function useFocusRefusal(
   form: RefObject<HTMLElement | null>,
   attempt: object | null | undefined,
+  here: (form: HTMLElement) => boolean = anywhere,
 ): void {
   const focused = useRef<WeakSet<object>>(null);
   useEffect(() => {
@@ -306,6 +315,9 @@ export function useFocusRefusal(
     }
     focused.current.add(attempt);
     const within = form.current;
+    if (within !== null && !here(within)) {
+      return;
+    }
     const field = within?.querySelector<HTMLElement>(refusedField);
     const doc = within?.ownerDocument;
     if (field) {
@@ -313,5 +325,5 @@ export function useFocusRefusal(
     } else if (doc && focusIsNowhere(doc)) {
       within?.querySelector<HTMLElement>(enabledControl)?.focus();
     }
-  }, [form, attempt]);
+  }, [form, attempt, here]);
 }

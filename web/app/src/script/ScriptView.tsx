@@ -19,8 +19,9 @@
 // document shows what any page or session changes as it commits, so the
 // canvas shows the view's changes, and the view the canvas's, without a
 // reload. A node's entry is shown anew only once its node, the connections
-// that leave it, or a name that it shows changes, so that an edit of one
-// node of a board of hundreds renders one entry (AC4).
+// that leave it, or what its names and conditions read of the project
+// changes, so that an edit of one node's text of a board of hundreds
+// renders one entry (AC4).
 
 import type {
   Board,
@@ -31,7 +32,6 @@ import type {
 } from "@storycreep/shared/api";
 import { type Node as Ast, decode } from "@storycreep/shared/expr/compile";
 import { newId } from "@storycreep/shared/ids";
-import { useMutation } from "@tanstack/react-query";
 import { createLink, Link as RouterLink } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import {
@@ -72,7 +72,7 @@ import { Parts } from "../expr/Names";
 import { type Part, plainOf } from "../expr/plain";
 import type { ScopeSources } from "../expr/scope";
 import { payloadField } from "../project/dialogs";
-import { type Command, loadPart } from "../project/queries";
+import { loadPart, useCommands } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { focusIsNowhere, followInPage, showInPage } from "../shell/focus";
@@ -111,7 +111,7 @@ type Editing =
   | { kind: "node"; id: string; focusOn: "title" | "text" }
   | { kind: "choice"; id: string };
 
-/** What the view gives each entry, which changes only once what it names changes, as a component's name or a node's title. */
+/** What the view gives each entry, which changes only once what its names and conditions read of the project changes: its variables, components, component types, or boards, or what went from it, each map of which changes with any of its entities, or a node's title. */
 interface Shared {
   t: TFunction;
   words: Words;
@@ -352,12 +352,10 @@ export function ScriptView({
   // created, with the focus back on the button that asked for it, where
   // nothing has the focus once that editor has closed, rather than take it
   // from another editor that the user went to meanwhile. Each is a
-  // mutation of the page's, which the query client's cache hears of, as of
-  // a session that ended, whose promise settles of its own batch, as
-  // mutate's callbacks would of the latest alone.
-  const structural = useMutation({
-    mutationFn: (batch: Command[]) => doc.send(batch),
-  });
+  // mutation of the page's batches (useCommands), which the query client's
+  // cache hears of, as of a session that ended, whose promise settles of
+  // its own batch, as mutate's callbacks would of the latest alone.
+  const structural = useCommands(projectId);
   const [adding, setAdding] = useState<ReadonlyMap<string, NewIds>>(
     () => new Map(),
   );
@@ -550,9 +548,14 @@ export function ScriptView({
       );
     });
 
-  // The view's order depends on its entry node being on the board, which
-  // one in the trash is not.
-  const entered = order.reached.length > 0;
+  // The view's rule depends on its entry node being on the board, which one
+  // in the trash is not, or on the view showing the part of what that node
+  // reaches, as of an open form's entry kept there, or the ghost of the
+  // entry node; the other part is named for what the entry node does not
+  // reach where the view shows that part, and for all the nodes where it
+  // does not; and each part counts the entries that it lists.
+  const reaching = sections.reached.length > 0;
+  const entered = order.reached.length > 0 || reaching;
   const shownCount = sections.reached.length + sections.unreached.length;
   return (
     <section aria-labelledby="script-heading" className="space-y-4">
@@ -588,10 +591,10 @@ export function ScriptView({
         <p role="status">{t("script.empty")}</p>
       ) : (
         <>
-          {sections.reached.length > 0 && (
+          {reaching && (
             <section aria-labelledby="script-reached" className="space-y-3">
               <h3 id="script-reached" className="font-semibold">
-                {t("script.reached", { count: order.reached.length })}
+                {t("script.reached", { count: sections.reached.length })}
               </h3>
               <ol className="max-w-3xl space-y-3">
                 {entries(sections.reached)}
@@ -601,9 +604,9 @@ export function ScriptView({
           {sections.unreached.length > 0 && (
             <section aria-labelledby="script-unreached" className="space-y-3">
               <h3 id="script-unreached" className="font-semibold">
-                {entered
-                  ? t("script.unreached", { count: order.unreached.length })
-                  : t("script.all", { count: order.unreached.length })}
+                {reaching
+                  ? t("script.unreached", { count: sections.unreached.length })
+                  : t("script.all", { count: sections.unreached.length })}
               </h3>
               <ol className="max-w-3xl space-y-3">
                 {entries(sections.unreached)}
@@ -965,6 +968,7 @@ function Choice({
       {shared.editable && (
         <Button
           id={buttonId(connection.id, "label")}
+          onKeyDown={onceHeld}
           aria-label={t("script.edit_label_named", {
             choice: choiceName(connection, shared),
           })}
@@ -1185,6 +1189,7 @@ const Entry = memo(function Entry({
             {shared.editable && nodeOpen === undefined && (
               <Button
                 id={buttonId(node.id, "edit")}
+                onKeyDown={onceHeld}
                 aria-label={t("script.edit_named", { node: title })}
                 onClick={() =>
                   shared.onEdit({ kind: "node", id: node.id, focusOn: "title" })
@@ -1197,6 +1202,7 @@ const Entry = memo(function Entry({
               <>
                 <Button
                   id={buttonId(node.id, "after")}
+                  onKeyDown={onceHeld}
                   aria-label={t("script.add_after_named", { node: title })}
                   disabled={adding}
                   onClick={() => shared.onAddAfter(node)}
@@ -1205,6 +1211,7 @@ const Entry = memo(function Entry({
                 </Button>
                 <Button
                   id={buttonId(node.id, "choice")}
+                  onKeyDown={onceHeld}
                   aria-label={t("script.add_choice_named", { node: title })}
                   disabled={adding}
                   onClick={() => shared.onAddChoice(node)}
@@ -1260,9 +1267,23 @@ function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
   return (
     e.key === "Escape" &&
     !e.nativeEvent.isComposing &&
-    e.target instanceof Node &&
+    // The DOM's Node, rather than the API's of the same name, a type alone.
+    e.target instanceof globalThis.Node &&
     e.currentTarget.contains(e.target)
   );
+}
+
+/**
+ * Takes the repeats of a key held on a button of an entry that opens a form,
+ * or adds, for nothing, as the canvas takes the repeats of a key whose
+ * command runs once: the focus comes back to such a button as its form
+ * closes, as of an Enter held in its title, or on its Save or its Cancel,
+ * whose repeats would else open the form again, or add again.
+ */
+function onceHeld(e: KeyboardEvent<HTMLButtonElement>): void {
+  if (e.repeat) {
+    e.preventDefault();
+  }
 }
 
 /** What an editor's form is of its entity's form (useEntityForm), which its life and its frame read. */
@@ -1286,16 +1307,26 @@ interface EditorProps {
  * Reports whether form, an editor's, has the focus, or nothing has
  * (focusIsNowhere), as once the Save that had it waits, disabled, for the
  * save under way, so that the editor that closes gives it to its button,
+ * and the editor whose save is refused to its field (useFocusRefusal),
  * rather than take it from where the user went meanwhile, as another
  * editor.
  */
-function focusHere(form: HTMLFormElement | null): boolean {
+function focusHere(form: HTMLElement | null): boolean {
   return (
     form !== null &&
     (form.contains(form.ownerDocument.activeElement) ||
       focusIsNowhere(form.ownerDocument))
   );
 }
+
+/**
+ * The selector of the box of a rich text of an editor's form: of one that
+ * may be changed, and of one that the editor cannot keep as it is, as of a
+ * newer version's (contenteditable="false"), which takes the focus too, to
+ * be read, as a read-only field does, rather than leave the focus on the
+ * page as the button that opened the form goes.
+ */
+const textBox = "[contenteditable]";
 
 /**
  * The life of an editor of the view, a node's or a choice's, of form, the
@@ -1460,7 +1491,7 @@ function NodeEditor({
   const text = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<{ text?: string }>();
   const refusal = refusalOf(commands.error, t, nodeField);
-  useFocusRefusal(held.form, invalid ?? commands.error);
+  useFocusRefusal(held.form, invalid ?? commands.error, focusHere);
   const names = useTextNames(projectId, node.board_id);
   const choices = useTextChoices(projectId, node.board_id);
   const element = shown.type === "element";
@@ -1481,10 +1512,7 @@ function NodeEditor({
   // The field that the editor opens with the focus in: the title, or, of a
   // node that the view has just added, its text.
   const keyDown = useEditorLife(form, {
-    focusOn:
-      focusOn === "text" && element
-        ? '[contenteditable="true"]'
-        : 'input[name="title"]',
+    focusOn: focusOn === "text" && element ? textBox : 'input[name="title"]',
     unsavable,
     changed,
     onClose,
@@ -1591,7 +1619,7 @@ function ChoiceEditor({
   const label = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<{ label: string }>();
   const refusal = refusalOf(commands.error, t, labelField);
-  useFocusRefusal(held.form, invalid ?? commands.error);
+  useFocusRefusal(held.form, invalid ?? commands.error, focusHere);
   const names = useTextNames(projectId, connection.board_id);
   const choices = useTextChoices(projectId, connection.board_id);
   const pending = commands.isPending;
@@ -1601,7 +1629,7 @@ function ChoiceEditor({
   const changed = () =>
     typed()?.error !== undefined || !equal(current(), against.label);
   const keyDown = useEditorLife(form, {
-    focusOn: '[contenteditable="true"]',
+    focusOn: textBox,
     unsavable,
     changed,
     onClose,

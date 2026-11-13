@@ -6,17 +6,18 @@
 // showed it, whatever moved them meanwhile, as another session's deletion
 // of the connections that reach the node, which moves it to the other
 // part, a node added after its own, which reconnects the choice to the new
-// node, or another session's reconnection of it to another output. React
-// keeps a form, and what the user typed in it, only while its entry stays
-// in its own list, and its choice in its node's, or its output's: one
-// moved to another list would be a new form, of what the board has. A
-// node or a choice that the board no longer has, as once another session
-// deleted it, is shown, as a ghost, where the view showed it last, but for
-// one that an addition under way created, which goes without a ghost once
-// its batch is refused, as the page shows the board without it before it
-// says so.
+// node, another session's reconnection of it to another output, or its
+// deletion of that output, with the connections that leave it, which the
+// entry then shows still, as the view showed it. React keeps a form, and
+// what the user typed in it, only while its entry stays in its own list,
+// and its choice in its node's, or its output's: one moved to another list
+// would be a new form, of what the board has. A node or a choice that the
+// board no longer has, as once another session deleted it, is shown, as a
+// ghost, where the view showed it last, but for one that an addition under
+// way created, which goes without a ghost once its batch is refused, as the
+// page shows the board without it before it says so.
 
-import type { Connection, Node } from "@storycreep/shared/api";
+import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import type { ScriptOrder } from "./order";
 
 /** The two parts of the view: the nodes that the entry node reaches, and the others. */
@@ -30,7 +31,7 @@ export interface Place {
   index: number;
 }
 
-/** A node as the view showed it, and where. */
+/** A node as the view showed it, with the outputs that it kept of a branch (placeShown), and where. */
 export interface ShownNode {
   node: Node;
   place: Place;
@@ -56,7 +57,7 @@ export const nothingShown: Shown = { nodes: new Map(), choices: new Map() };
 
 /** What the view shows. */
 export interface Placed {
-  /** The nodes of each part, in the order that their entries are shown. */
+  /** The nodes of each part, in the order that their entries are shown, a branch with the outputs that the view keeps of it. */
   sections: Readonly<Record<Section, readonly Node[]>>;
   /** The connections that leave each node, in the order that its entry shows them. */
   leaving: ReadonlyMap<string, readonly Connection[]>;
@@ -197,6 +198,49 @@ export function placeShown(
       lists.set(choice.nodeId, list);
     }
     shownLeaving = lists;
+  }
+
+  // The outputs of a branch that the view listed an open choice under, and
+  // lists it under still, which the entry shows, as the view showed them,
+  // where the branch no longer has them, as once another session deleted
+  // one, with the connections that leave it, of which the choice is then a
+  // ghost: React keeps the choice's form only in its own output's list.
+  const outputsKept = new Map<string, Map<BranchOutput, number>>();
+  for (const [id, e] of open) {
+    const was = e.kind === "choice" ? last.choices.get(id) : undefined;
+    if (was === undefined) {
+      continue;
+    }
+    const port = was.connection.from_port;
+    const outputs = last.nodes.get(was.nodeId)?.node.outputs ?? [];
+    const at = outputs.findIndex((o) => o.id === port);
+    const node = (kept.get(was.nodeId) ?? onBoard.get(was.nodeId))?.node;
+    if (
+      at >= 0 &&
+      node?.type === "branch" &&
+      !(node.outputs ?? []).some((o) => o.id === port) &&
+      shownLeaving.get(was.nodeId)?.some((c) => c.id === id)
+    ) {
+      const of = outputsKept.get(node.id) ?? new Map<BranchOutput, number>();
+      outputsKept.set(node.id, of.set(outputs[at], at));
+    }
+  }
+  if (outputsKept.size > 0) {
+    const withKept = (node: Node): Node => {
+      const of = outputsKept.get(node.id);
+      if (of === undefined) {
+        return node;
+      }
+      const outputs = [...(node.outputs ?? [])];
+      for (const [output, at] of byIndex([...of], ([, at]) => at)) {
+        outputs.splice(Math.min(at, outputs.length), 0, output);
+      }
+      return { ...node, outputs };
+    };
+    sections = {
+      reached: sections.reached.map(withKept),
+      unreached: sections.unreached.map(withKept),
+    };
   }
 
   // What the view shows now of its open forms, which it is placed by as it

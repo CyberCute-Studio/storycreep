@@ -86,5 +86,13 @@ describe("the script view's rich text", () => {
         ],
       }),
     ).toBe(false);
+    // A block of a type that the page does not know, as a newer server's,
+    // may hold text that the page cannot show.
+    expect(
+      isEmptyText({
+        type: "doc",
+        content: [{ type: "heading", content: [{ type: "text", text: "Hi" }] }],
+      } as unknown as RichTextDoc),
+    ).toBe(false);
   });
 });
