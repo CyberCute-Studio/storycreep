@@ -114,6 +114,9 @@ export const commands = {
     on: canvas,
     keys: [letter("g")],
   },
+  // The board's page's views, its canvas and its script view (plan item 68).
+  "board.show_canvas": { group: "view", on: page, keys: [] },
+  "board.show_script": { group: "view", on: page, keys: [] },
   "canvas.pan_left": {
     group: "view",
     on: canvas,
@@ -336,6 +339,10 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.canvas.settings");
     case "canvas.go_to_target":
       return t("command.canvas.go_to_target");
+    case "board.show_canvas":
+      return t("command.board.show_canvas");
+    case "board.show_script":
+      return t("command.board.show_script");
     case "canvas.pan_left":
       return t("command.canvas.pan_left");
     case "canvas.pan_right":

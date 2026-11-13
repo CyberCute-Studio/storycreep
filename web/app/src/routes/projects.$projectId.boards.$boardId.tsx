@@ -1,6 +1,11 @@
 import type { Board } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  notFound,
+  useNavigate,
+} from "@tanstack/react-router";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
@@ -8,6 +13,7 @@ import { refusalOf } from "../auth/refusal";
 import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
 import type { RendererKind } from "../canvas/engine";
 import type { Rect } from "../canvas/viewport";
+import { useCommandHandlers } from "../commands/registry";
 import {
   ConflictNotice,
   changedOf,
@@ -26,9 +32,10 @@ import {
   projectQuery,
   readBoard,
 } from "../project/queries";
+import { ScriptView } from "../script/ScriptView";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
-import { Button } from "../ui/Button";
+import { Button, buttonClass } from "../ui/Button";
 import {
   SelectField,
   TextAreaField,
@@ -39,13 +46,16 @@ import { Alert } from "../ui/Page";
 import { useDocumentTitle } from "../ui/title";
 
 /**
- * The search of the board's page: the node that a link opens the canvas on
- * (plan item 61), as a usage list's; and what the canvas's benchmark and the
- * reference tablet's checklist read (docs/canvas-checklist.md): the
- * renderer to use, whatever the browser's would be, and a scripted run of
- * the canvas, of how many seconds, across which rectangle of the board.
+ * The search of the board's page: the view that it shows of the board, its
+ * script view in place of its canvas (plan item 68); the node that a link
+ * opens the canvas on (plan item 61), as a usage list's, or whose entry the
+ * script view shows; and what the canvas's benchmark and the reference
+ * tablet's checklist read (docs/canvas-checklist.md): the renderer to use,
+ * whatever the browser's would be, and a scripted run of the canvas, of how
+ * many seconds, across which rectangle of the board.
  */
 export interface BoardSearch {
+  view?: "script";
   node?: string;
   renderer?: RendererKind;
   bench?: "pan" | "panzoom" | "load" | "edit";
@@ -82,6 +92,9 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   staticData: { wide: true },
   validateSearch: (search: Record<string, unknown>): BoardSearch => {
     const out: BoardSearch = {};
+    if (search.view === "script") {
+      out.view = "script";
+    }
     // A node's ID as the server writes it, however the link spells it, as
     // the canvas finds the node by it; one that the board does not have
     // opens the canvas as without it.
@@ -158,7 +171,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
 });
 
 // A board's page (PRD FR-PROJ-02, FR-EDIT-01): the canvas of its nodes and
-// connections, and under it its name, its slug, its description, and its
+// connections, or its script view (FR-TEXT-04), which its links switch
+// between, and under it its name, its slug, its description, and its
 // colour, which an editor changes, and its deletion to the project's trash.
 // It shows the board as the project's document has it, so a change that
 // another session makes shows as it commits (FR-RT-02), and the page of no
@@ -253,22 +267,73 @@ function BoardContent({
     }),
     [search.renderer, search.bench, search.seconds, search.area, search.warm],
   );
+  const script = search.view === "script";
+  const navigate = useNavigate();
+  // The views are commands of the palette too (FR-EDIT-10), each of which
+  // can run while the page shows the other.
+  const show = (view: "canvas" | "script") => ({
+    enabled: script !== (view === "script"),
+    run: () =>
+      void navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId, boardId: board.id },
+        search: view === "script" ? { view: "script" } : {},
+      }),
+  });
+  useCommandHandlers("page", {
+    "board.show_canvas": show("canvas"),
+    "board.show_script": show("script"),
+  });
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">{board.name}</h1>
-      <BoardCanvas
-        projectId={projectId}
-        boardId={board.id}
-        boardName={board.name}
-        settingsId="board-settings"
-        read={read}
-        options={options}
-        initial={last.initial}
-        onView={last.onView}
-        workspaceId={project.workspace_id}
-        editable={editable}
-        focus={search.node}
-      />
+      {/* The views' switch is beside the board's name, rather than under
+      it, as the canvas takes the window's height below where it starts. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h1 className="text-2xl font-semibold">{board.name}</h1>
+        <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
+          <Link
+            to="/projects/$projectId/boards/$boardId"
+            params={{ projectId, boardId: board.id }}
+            search={{}}
+            aria-current={script ? undefined : "page"}
+            className={`${buttonClass()} ${currentClass}`}
+          >
+            {t("board.view_canvas")}
+          </Link>
+          <Link
+            to="/projects/$projectId/boards/$boardId"
+            params={{ projectId, boardId: board.id }}
+            search={{ view: "script" }}
+            aria-current={script ? "page" : undefined}
+            className={`${buttonClass()} ${currentClass}`}
+          >
+            {t("board.view_script")}
+          </Link>
+        </nav>
+      </div>
+      {script ? (
+        <ScriptView
+          projectId={projectId}
+          board={board}
+          read={read}
+          editable={editable}
+          focus={search.node}
+        />
+      ) : (
+        <BoardCanvas
+          projectId={projectId}
+          boardId={board.id}
+          boardName={board.name}
+          settingsId="board-settings"
+          read={read}
+          options={options}
+          initial={last.initial}
+          onView={last.onView}
+          workspaceId={project.workspace_id}
+          editable={editable}
+          focus={search.node}
+        />
+      )}
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"
@@ -305,6 +370,15 @@ function BoardContent({
     </div>
   );
 }
+
+/**
+ * The classes of the link of the view that the page shows (aria-current),
+ * as a toggle button's that is pressed (pressedClass): filled with the
+ * accent, and, in a system's forced colours, with its colours of a
+ * selection.
+ */
+const currentClass =
+  "aria-[current=page]:border-accent aria-[current=page]:bg-accent aria-[current=page]:text-accent-fg aria-[current=page]:hover:bg-accent-hover forced-colors:aria-[current=page]:bg-[Highlight] forced-colors:aria-[current=page]:hover:bg-[Highlight] forced-colors:aria-[current=page]:text-[HighlightText]";
 
 const boardField = payloadField("name", "slug", "description", "color");
 
