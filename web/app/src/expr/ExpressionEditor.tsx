@@ -13,7 +13,7 @@
 
 import type { Expression } from "@storycreep/shared/api";
 import type { Context } from "@storycreep/shared/expr/compile";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -24,7 +24,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { api } from "../api";
+import { variableUsagesQuery } from "../content/usages";
 import { pressedClass } from "../ui/Button";
 import { type Analysis, analyze, type Run, runsOf, unitRange } from "./analyze";
 import { editOf, type Offer, offersAt, type Spot, spotAt } from "./complete";
@@ -45,7 +45,7 @@ export interface ExpressionEditorProps {
   hint?: string;
   /** The source that it shows first. */
   defaultValue: string;
-  /** The expression as its owner holds it, whose first error, as the server compiled it, the editor shows while it shows that source and finds none itself. */
+  /** The expression as its owner holds it, whose first error, as the server compiled it, the editor shows while it shows that source, where it finds none itself and could not check it whole. */
   stored?: Expression;
   /** What a refusal of the form's save says of the field. */
   error?: string;
@@ -53,8 +53,13 @@ export interface ExpressionEditorProps {
   optional: boolean;
   /** Whether the guided picker is offered, of a condition. */
   guided?: boolean;
-  /** Called with the source as it changes. */
-  onChange: (source: string) => void;
+  /**
+   * Called with the source as it changes, and with whether a field of the
+   * guided picker holds what it cannot write yet, as a number that is not
+   * one, which the form's Save is refused for, rather than save the source
+   * as it was before, as the field says (GuidedPicker).
+   */
+  onChange: (source: string, unfinished: boolean) => void;
 }
 
 /** The classes of each tint of what the editor colours (analyze.ts), each at 4.5:1 against the field (tokens.test.ts). */
@@ -172,27 +177,19 @@ function insertInto(
   area.setSelectionRange(edit.caret, edit.caret);
 }
 
-/** Where the variable of id is written, as the first sites that its usages list of its writes, which the highlighted offer tells of. */
+/** How many of the sites that write a variable the highlighted offer of it tells of. */
+const writesShown = 3;
+
+/**
+ * Where the variable of id is written, as the first sites that its usage
+ * list of its writes has, which the highlighted offer tells of: of the
+ * list's own read, which the variable's usages under the field show too
+ * (Names.tsx), and which says nothing of a refusal of its own, as the offer
+ * says that where it is written could not be read.
+ */
 function Writes({ projectId, id }: { projectId: string; id: string }) {
   const { t } = useTranslation();
-  const writes = useQuery({
-    queryKey: ["projects", projectId, "variables", id, "writes", "first"],
-    queryFn: async ({ signal }) =>
-      (
-        await api.call(
-          "listVariableUsages",
-          {
-            path: { project_id: projectId, variable_id: id },
-            query: { access: "write", limit: 3 },
-          },
-          { signal },
-        )
-      ).body,
-    // A refusal says nothing of its own here: the offer says that where it
-    // is written could not be read.
-    meta: { showsRefusals: true },
-    staleTime: 30_000,
-  });
+  const writes = useInfiniteQuery(variableUsagesQuery(projectId, id, "write"));
   if (writes.isPending) {
     return (
       <span className="text-fg-muted">{t("expr.offer.writes_loading")}</span>
@@ -203,7 +200,9 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
       <span className="text-fg-muted">{t("expr.offer.writes_failed")}</span>
     );
   }
-  const sites = writes.data.items.map((usage) =>
+  const first = writes.data.pages[0];
+  const items = first?.items ?? [];
+  const sites = items.slice(0, writesShown).map((usage) =>
     usage.board_id === undefined
       ? t("expr.offer.write_site_unboarded")
       : t("expr.offer.write_site", {
@@ -218,7 +217,7 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
     <span className="text-fg-muted">
       {sites.length === 0
         ? t("expr.offer.written_nowhere")
-        : writes.data.next_cursor === null
+        : items.length <= writesShown && (first?.next_cursor ?? null) === null
           ? t("expr.offer.written_in", { sites: sites.join("; ") })
           : t("expr.offer.written_in_more", { sites: sites.join("; ") })}
     </span>
@@ -232,8 +231,11 @@ function spotKey(spot: Spot): string {
 
 /**
  * The text view of an expression: the text area, the colours under it, and
- * the list of what it offers to complete at the caret, below it, while it
- * has the focus. The text area keeps the focus, as a combobox's pattern has
+ * the list of what it offers to complete at the caret, below it, as a name
+ * is typed, while the caret stays in it, and the field has the focus,
+ * rather than wherever the caret comes to a name, as the arrows move it
+ * through a script, and not of a name typed whole, whose one offer is what
+ * it is already. The text area keeps the focus, as a combobox's pattern has
  * it: its arrows move through the list (aria-activedescendant), Enter and
  * Tab write what is highlighted, Escape closes the list until the caret
  * leaves what it was of, and a click or a tap on an offer writes it without
@@ -249,6 +251,7 @@ function TextView({
   words,
   describedBy,
   err,
+  refused,
   onSource,
   area,
 }: {
@@ -260,6 +263,8 @@ function TextView({
   describedBy: string | undefined;
   /** The range of the error that the field shows, in UTF-16 code units, if it shows one. */
   err: { from: number; to: number } | undefined;
+  /** Whether a refusal of the form's save names the field. */
+  refused: boolean;
   onSource: (source: string) => void;
   area: RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -269,13 +274,19 @@ function TextView({
   const [caret, setCaret] = useState<number>();
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState<string>();
+  // The spot that is typed, of which alone the list opens, until the caret
+  // leaves it.
+  const [typing, setTyping] = useState<string>();
   const [moved, setMoved] = useState<{ at: string; offer: string }>();
   const spot = useMemo(
     () => (caret === undefined ? undefined : spotAt(source, caret)),
     [source, caret],
   );
   const open =
-    focused && spot !== undefined && dismissed !== spotKey(spot)
+    focused &&
+    spot !== undefined &&
+    typing === spotKey(spot) &&
+    dismissed !== spotKey(spot)
       ? spot
       : undefined;
   const { offers, total } = useMemo(
@@ -285,7 +296,14 @@ function TextView({
         : offersAt(open, context, scope.view, scope.boardId, words),
     [open, context, scope, words],
   );
-  const shown = offers.length > 0 ? open : undefined;
+  // A name typed whole, whose one offer is what it is already, has nothing
+  // to complete, and its keys are the field's: Enter saves a condition, and
+  // Tab moves on.
+  const whole =
+    open !== undefined &&
+    offers.length === 1 &&
+    editOf(source, open, offers[0]).text === source.slice(open.from, open.to);
+  const shown = offers.length > 0 && !whole ? open : undefined;
   const at = shown === undefined ? "" : spotKey(shown);
   const index =
     shown === undefined
@@ -295,17 +313,21 @@ function TextView({
           moved?.at === at ? offers.findIndex((o) => o.id === moved.offer) : 0,
         );
   const optionId = (i: number) => `${listId}-${i}`;
-  const readCaret = (el: HTMLTextAreaElement) => {
+  // Reads where the caret is, of what is typed there where typed says so.
+  const readCaret = (el: HTMLTextAreaElement, typed = false) => {
     const next =
       el.selectionStart === el.selectionEnd ? el.selectionStart : undefined;
     setCaret(next);
-    // An Escape closes the list of what the caret was in alone.
     const nextSpot = next === undefined ? undefined : spotAt(el.value, next);
-    if (
-      dismissed !== undefined &&
-      (nextSpot === undefined || spotKey(nextSpot) !== dismissed)
-    ) {
+    const nextKey = nextSpot === undefined ? undefined : spotKey(nextSpot);
+    // An Escape closes the list of what the caret was in alone.
+    if (dismissed !== undefined && nextKey !== dismissed) {
       setDismissed(undefined);
+    }
+    if (typed) {
+      setTyping(nextKey);
+    } else if (typing !== undefined && nextKey !== typing) {
+      setTyping(undefined);
     }
   };
   const choose = (offer: Offer, where: Spot) => {
@@ -319,8 +341,12 @@ function TextView({
     // leaves it; one that is to go on, as a component's key and its dot,
     // offers what follows.
     const next = spotAt(el.value, el.selectionStart);
-    if (next !== undefined && next.query !== "") {
-      setDismissed(spotKey(next));
+    if (next !== undefined) {
+      if (next.query === "") {
+        setTyping(spotKey(next));
+      } else {
+        setDismissed(spotKey(next));
+      }
     }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -354,11 +380,25 @@ function TextView({
       event.currentTarget.form?.requestSubmit();
     }
   };
+  // What the colours show changes with the source and its error alone, not
+  // with the caret, nor the offer highlighted.
+  const errFrom = err?.from;
+  const errTo = err?.to;
+  const colours = useMemo(
+    () =>
+      tinted(
+        analysis,
+        errFrom === undefined || errTo === undefined
+          ? undefined
+          : { from: errFrom, to: errTo },
+      ),
+    [analysis, errFrom, errTo],
+  );
   return (
     <>
       <div className="expr-field rounded-md border border-border bg-canvas">
         <pre aria-hidden="true">
-          {tinted(analysis, err)}
+          {colours}
           {"​"}
         </pre>
         <textarea
@@ -370,7 +410,11 @@ function TextView({
           autoCapitalize="off"
           autoCorrect="off"
           autoComplete="off"
-          aria-invalid={err !== undefined || undefined}
+          aria-invalid={err !== undefined || refused || undefined}
+          // An error that the field finds of its own source, which the
+          // server keeps as it is, rather than refuses: a refusal of
+          // another field leaves the focus to that one (useFocusRefusal).
+          data-own-error={err !== undefined && !refused ? "" : undefined}
           aria-describedby={describedBy}
           aria-autocomplete="list"
           aria-controls={shown === undefined ? undefined : listId}
@@ -379,14 +423,17 @@ function TextView({
           }
           onChange={(e) => {
             onSource(e.currentTarget.value);
-            readCaret(e.currentTarget);
+            readCaret(e.currentTarget, true);
           }}
           onSelect={(e) => readCaret(e.currentTarget)}
           onFocus={(e) => {
             setFocused(true);
             readCaret(e.currentTarget);
           }}
-          onBlur={() => setFocused(false)}
+          onBlur={() => {
+            setFocused(false);
+            setTyping(undefined);
+          }}
           onKeyDown={onKeyDown}
         />
       </div>
@@ -490,24 +537,43 @@ export function ExpressionEditor({
   const area = useRef<HTMLTextAreaElement>(null);
   const [source, setSource] = useState(defaultValue);
   const [view, setView] = useState<"text" | "guided">("text");
+  // What the owner's form is told last: the source, and whether the
+  // picker's number holds what it cannot write yet (onChange).
+  const told = useRef({ source: defaultValue, unfinished: false });
   const analysis = useMemo(
     () => analyze(source, context, scope),
     [source, context, scope],
   );
+  const tell = (next: Partial<typeof told.current>) => {
+    told.current = { ...told.current, ...next };
+    onChange(told.current.source, told.current.unfinished);
+  };
   const update = (next: string) => {
     setSource(next);
-    onChange(next);
+    tell({ source: next });
+  };
+  const showView = (next: "text" | "guided") => {
+    setView(next);
+    // The picker's number, which goes with it, holds nothing then.
+    if (next === "text" && told.current.unfinished) {
+      tell({ unfinished: false });
+    }
   };
   // The empty source of an optional expression is none, which says
   // nothing; any other's first error is the editor's, or, of the source
-  // that the owner holds, the server's, where the editor finds none, as of
-  // a node on a board that the page has not read.
+  // that the owner holds, the server's, where the editor could not tell:
+  // where it checked the syntax alone, as before the page has read the
+  // variables, or took a node of a board that the page has not read for one
+  // that is no jumper; not where it checked the source whole and found it
+  // valid, as once a variable that it names is created, which the server
+  // compiles it anew of, but the form shows as it held it.
   const none = optional && source === "";
   const serverError =
     stored !== undefined &&
     stored.source === source &&
     !stored.is_valid &&
-    stored.error !== undefined
+    stored.error !== undefined &&
+    (!analysis.checked || analysis.unread)
       ? (stored.error as SourceError)
       : undefined;
   const shownError: SourceError | undefined = none
@@ -546,7 +612,7 @@ export function ExpressionEditor({
             <button
               type="button"
               aria-pressed={view === "text"}
-              onClick={() => setView("text")}
+              onClick={() => showView("text")}
               className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface px-3 font-medium hover:bg-surface-hover ${pressedClass}`}
             >
               {t("expr.view.text")}
@@ -554,7 +620,7 @@ export function ExpressionEditor({
             <button
               type="button"
               aria-pressed={view === "guided"}
-              onClick={() => setView("guided")}
+              onClick={() => showView("guided")}
               className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface px-3 font-medium hover:bg-surface-hover ${pressedClass}`}
             >
               {t("expr.view.guided")}
@@ -576,6 +642,7 @@ export function ExpressionEditor({
           words={words}
           describedBy={describedBy}
           err={err}
+          refused={error !== undefined}
           onSource={update}
           area={area}
         />
@@ -587,6 +654,7 @@ export function ExpressionEditor({
           words={words}
           describedBy={describedBy}
           onSource={update}
+          onUnfinished={(unfinished) => tell({ unfinished })}
         />
       )}
       {shownError !== undefined && (

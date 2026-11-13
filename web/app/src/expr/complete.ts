@@ -21,7 +21,7 @@ import {
   typeText,
   type Words,
 } from "./messages";
-import type { ScopeSources } from "./scope";
+import { boardVariables, runtimeAttributes, type ScopeSources } from "./scope";
 
 /** What is typed at the caret that the editor offers to complete, its place in UTF-16 code units. */
 export interface Spot {
@@ -212,11 +212,7 @@ export function offersAt(
   const read = new Set<string>();
   const offers: Offer[] = [];
   const q = spot.query;
-  const variables = [...view.variables.values()].filter(
-    (v) =>
-      v.deleted_at === undefined &&
-      (v.scope === "global" || v.board_id === boardId),
-  );
+  const variables = boardVariables(view, boardId);
   for (const v of variables) {
     read.add(v.key);
   }
@@ -235,12 +231,8 @@ export function offersAt(
   const components = [...view.components.values()].filter(
     (c) => c.deleted_at === undefined,
   );
-  const attributesOf = (c: (typeof components)[number]) => {
-    const type = view.componentTypes.get(c.component_type_id);
-    return type === undefined || type.deleted_at !== undefined
-      ? []
-      : type.attributes.filter((a) => a.runtime && a.deleted_at === undefined);
-  };
+  const attributesOf = (c: (typeof components)[number]) =>
+    runtimeAttributes(view, c);
   const componentOffer = (
     c: (typeof components)[number],
     explicit: boolean,

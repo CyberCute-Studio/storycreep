@@ -8,6 +8,10 @@
 // are looked up in as it is checked (nodesOf). What reads them for a page
 // is useScope.ts.
 
+import type {
+  ComponentType,
+  Variable as VariableBody,
+} from "@storycreep/shared/api";
 import {
   type BoardNode,
   type Component,
@@ -15,7 +19,7 @@ import {
   UsageError,
   type Variable,
 } from "@storycreep/shared/expr/compile";
-import type { Doc } from "../document/doc";
+import type { ComponentEntry, Doc } from "../document/doc";
 
 /** What the names of a board's expressions are read from: the project's document's variables, components, component types, boards, and nodes. */
 export type ScopeSources = Pick<
@@ -30,7 +34,8 @@ export interface Scope {
   readonly view: ScopeSources;
   /**
    * The Project of the document's variables and components, of no node,
-   * or undefined where the document holds what no project has, as for a
+   * or undefined while the page has not read them, or its read of them
+   * failed, or where the document holds what no project has, as for a
    * moment two components of one key, one of which another session has
    * taken to the trash, or the key from, as the document has heard of one
    * change and not yet of the other: the editor then checks a source's
@@ -95,6 +100,66 @@ export function projectOf(view: ScopeSources): Project | undefined {
   }
 }
 
+/**
+ * The Project of each set of the document's variables, components, and
+ * component types, by those maps, as the document gives each anew once it
+ * changes, which every editor of a page shares, rather than each make its
+ * own of the same, as the editors of a branch's outputs would.
+ */
+const projects = new WeakMap<
+  ScopeSources["variables"],
+  WeakMap<
+    ScopeSources["components"],
+    WeakMap<ScopeSources["componentTypes"], { project: Project | undefined }>
+  >
+>();
+
+/** Returns the Project of what view holds of the variables and the components, as projectOf does, made once for each set of them. */
+export function sharedProjectOf(view: ScopeSources): Project | undefined {
+  let byComponents = projects.get(view.variables);
+  if (byComponents === undefined) {
+    byComponents = new WeakMap();
+    projects.set(view.variables, byComponents);
+  }
+  let byTypes = byComponents.get(view.components);
+  if (byTypes === undefined) {
+    byTypes = new WeakMap();
+    byComponents.set(view.components, byTypes);
+  }
+  let made = byTypes.get(view.componentTypes);
+  if (made === undefined) {
+    made = { project: projectOf(view) };
+    byTypes.set(view.componentTypes, made);
+  }
+  return made.project;
+}
+
+/** Returns the variables that the expressions of the board of boardId read, as view has them: the global ones and the board's own, none in the trash (§5.8.3). */
+export function boardVariables(
+  view: ScopeSources,
+  boardId: string,
+): VariableBody[] {
+  return [...view.variables.values()].filter(
+    (v) =>
+      v.deleted_at === undefined &&
+      (v.scope === "global" || v.board_id === boardId),
+  );
+}
+
+/** Returns the runtime attributes of component, as view has them, which expressions read: none of a component or a type in the trash, nor in the trash themselves. */
+export function runtimeAttributes(
+  view: ScopeSources,
+  component: ComponentEntry,
+): ComponentType["attributes"] {
+  if (component.deleted_at !== undefined) {
+    return [];
+  }
+  const type = view.componentTypes.get(component.component_type_id);
+  return type === undefined || type.deleted_at !== undefined
+    ? []
+    : type.attributes.filter((a) => a.runtime && a.deleted_at === undefined);
+}
+
 /** Returns the Scope of the board of boardId of view. */
 export function scopeOf(view: ScopeSources, boardId: string): Scope {
   return { boardId, view, project: projectOf(view) };
@@ -126,9 +191,14 @@ export function nodesOf(
       if (node.deleted_at === undefined) {
         out.push({ id, jumper: node.type === "jumper" });
       }
-    } else if (!view.gone.has(id)) {
+    } else if (unreadNode(view, id)) {
       out.push({ id });
     }
   }
   return out;
+}
+
+/** Reports whether the node of id is of a board that the page has not read: one that view neither holds nor knows went, which a check takes for a node that is no jumper (nodesOf). */
+export function unreadNode(view: ScopeSources, id: string): boolean {
+  return !view.nodes.has(id) && !view.gone.has(id);
 }

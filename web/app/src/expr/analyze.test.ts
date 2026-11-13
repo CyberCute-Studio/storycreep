@@ -115,16 +115,21 @@ describe("an expression's analysis", () => {
       "node_ref_jumper",
     );
     const unread = "nd_01HQ8Z3XK4F7NAWR5TCQ9M2BF9";
+    const taken = analyze(`visited(node("${unread}"))`, "condition", scope);
+    expect(taken.ast).toBeDefined();
+    // The editor says that it took the node on trust, of which the server's
+    // error then shows.
+    expect(taken.unread).toBe(true);
     expect(
-      analyze(`visited(node("${unread}"))`, "condition", scope).ast,
-    ).toBeDefined();
+      analyze(`visited(node("${ids.quay}"))`, "condition", scope).unread,
+    ).toBe(false);
     // One that the document knows went is unknown, as the server finds it.
     const gone = harbourScope(ids.harbour, {
       gone: new Map([[unread, { rev: 2, seq: 3 }]]),
     });
-    expect(
-      analyze(`visited(node("${unread}"))`, "condition", gone).error?.code,
-    ).toBe("unknown_node");
+    const went = analyze(`visited(node("${unread}"))`, "condition", gone);
+    expect(went.error?.code).toBe("unknown_node");
+    expect(went.unread).toBe(false);
   });
 
   it("checks the syntax alone where the document holds what no project has", () => {
@@ -178,6 +183,23 @@ describe("an expression's tints", () => {
       runs.find((r) => source.slice(r.from, r.to) === "nobody")?.tint,
     ).toBe("plain");
     expect(runs[runs.length - 1].tint).toBe("plain");
+  });
+
+  it("takes no // within a string that the lexer stops in, at a bad escape, for a comment, though one before it is", () => {
+    const source = 'url == // a note\n "http://x\\q"';
+    const a = analyze(source, "condition", scope);
+    expect(a.error?.code).toBe("invalid_escape");
+    const runs = runsOf(a);
+    expect(runs.map((r) => source.slice(r.from, r.to)).join("")).toBe(source);
+    expect(
+      runs
+        .filter((r) => r.tint === "comment")
+        .map((r) => source.slice(r.from, r.to)),
+    ).toEqual(["// a note"]);
+    const quote = source.indexOf('"');
+    expect(
+      runs.filter((r) => r.to > quote).every((r) => r.tint === "plain"),
+    ).toBe(true);
   });
 });
 

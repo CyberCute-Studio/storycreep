@@ -18,7 +18,7 @@ import {
   UsageError,
   walk,
 } from "@storycreep/shared/expr/compile";
-import { nodesOf, type Scope } from "./scope";
+import { nodesOf, type Scope, unreadNode } from "./scope";
 
 /** What the editor makes of a source. */
 export interface Analysis {
@@ -32,8 +32,10 @@ export interface Analysis {
   readonly ast?: Node;
   /** The source's first error, as the parser or the checker meets it, at its range in code points. */
   readonly error?: ExprError;
-  /** Whether the source was checked against its board's names, as it is not while the document holds what no project has (Scope's project). */
+  /** Whether the source was checked against its board's names, as it is not while the scope has no project (Scope's project). */
   readonly checked: boolean;
+  /** Whether the check took a node that the source refers to, of a board that the page has not read, for one that is no jumper, which the server tells of once the source is saved (nodesOf). */
+  readonly unread: boolean;
 }
 
 /**
@@ -92,37 +94,57 @@ export function analyze(
     parsed = parse(source, context);
   } catch (e) {
     if (e instanceof ExprError) {
-      return { source, context, units, error: e, checked: false };
+      return {
+        source,
+        context,
+        units,
+        error: e,
+        checked: false,
+        unread: false,
+      };
     }
     throw e;
   }
   if (scope.project === undefined) {
-    return { source, context, units, parsed, checked: false };
+    return { source, context, units, parsed, checked: false, unread: false };
   }
+  // The scope's Project is of no node: the nodes that the source refers to
+  // are added to it as the document holds them (nodesOf).
+  const refs = nodeRefsOf(parsed);
+  const unread = refs.some((id) => unreadNode(scope.view, id));
   try {
-    const refs = nodeRefsOf(parsed);
     const project =
       refs.length === 0
         ? scope.project
-        : scope.project.with(
-            scope.boardId,
-            [],
-            nodesOf(scope.view, refs).filter(
-              (n) => scope.project?.node(n.id) === undefined,
-            ),
-          );
+        : scope.project.with(scope.boardId, [], nodesOf(scope.view, refs));
     // The checker resolves the names of the AST that it is given, which it
     // leaves as it was where it throws.
     check(parsed, context, project, scope.boardId);
-    return { source, context, units, parsed, ast: parsed, checked: true };
+    return {
+      source,
+      context,
+      units,
+      parsed,
+      ast: parsed,
+      checked: true,
+      unread,
+    };
   } catch (e) {
     if (e instanceof ExprError) {
-      return { source, context, units, parsed, error: e, checked: true };
+      return {
+        source,
+        context,
+        units,
+        parsed,
+        error: e,
+        checked: true,
+        unread,
+      };
     }
     // A board's ID that is not one of a board, which no page holds, or a
     // project that the document holds no more of as a whole.
     if (e instanceof UsageError) {
-      return { source, context, units, parsed, checked: false };
+      return { source, context, units, parsed, checked: false, unread };
     }
     throw e;
   }
@@ -151,7 +173,8 @@ export interface Run {
  * the tint of what it is: a keyword, a literal, a number or a string, a
  * comment, a name that the source resolves, a function that it calls, or
  * plain, as an operator, white space, a name that resolves to nothing, and
- * whatever follows a token that the lexer cannot read, where it stops.
+ * the token that the lexer cannot read, from its start, as a string's
+ * opening quote, and whatever follows it, where it stops.
  */
 export function runsOf(analysis: Analysis): Run[] {
   const { source, context, units } = analysis;
@@ -209,14 +232,23 @@ export function runsOf(analysis: Analysis): Run[] {
   const total = units.length - 1;
   for (;;) {
     const tok = lexer.next();
+    if (tok.kind === "error") {
+      // The error of a string, as a bad escape within it, is at what the
+      // lexer stopped at, after the string's opening, which is no gap: what
+      // is white space and comments before the error is the gap, and what
+      // follows it, the token that the lexer could not read, plain.
+      const { from, to } = unitRange(units, { start: at, end: tok.start });
+      const lead =
+        /^(?:[ \t\n\r]|\/\/[^\n\r]*)*/.exec(source.slice(from, to))?.[0] ?? "";
+      const end = at + unitsOf(lead).length - 1;
+      gap(at, end);
+      push(end, total, "plain");
+      at = total;
+      break;
+    }
     gap(at, tok.start);
     at = tok.start;
     if (tok.kind === "eof") {
-      break;
-    }
-    if (tok.kind === "error") {
-      push(tok.start, total, "plain");
-      at = total;
       break;
     }
     if (tok.kind === "(" && ident !== undefined) {

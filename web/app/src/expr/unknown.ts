@@ -25,25 +25,35 @@ export interface Unknown {
   readonly type: VariableType;
 }
 
-/** Returns the type of a literal, or of what a node's place makes it, where the node says so alone. */
+/** Returns the type of a literal, or of what a node's place makes it, where the node says so alone: a not's a bool, and a minus's the number's that it is before, or an int. */
 function literalType(n: Node): VariableType | undefined {
   if (n.kind === "lit") {
     return n.type;
   }
   if (n.kind === "unary") {
-    return n.op === "not" ? "bool" : "int";
+    return n.op === "not"
+      ? "bool"
+      : literalType(n.operand) === "float"
+        ? "float"
+        : "int";
   }
   return undefined;
 }
 
+/** Returns the number that arithmetic with other is of: a float where other is a float, and else an int. */
+function numberWith(other: Node): VariableType {
+  return literalType(other) === "float" ? "float" : "int";
+}
+
 /**
  * Returns the type that the place of target, in n, suggests: of the target
- * of an assignment, its value's, where that is a literal, or a number for
- * one that updates it; of an operand of and, or, or not, and of a condition
- * alone, a bool; of one compared with, or added to, a literal, the
- * literal's; of an operand of arithmetic, an int; of an argument of a
- * function of strings, a string; and otherwise an int, of a script's, or a
- * bool, of a condition's.
+ * of an assignment, its value's, where that is a literal, or of one that
+ * updates it, a string that += adds to, or the number of its value; of an
+ * operand of and, or, or not, and of a condition alone, a bool; of one
+ * compared with, or added to, a literal, the literal's; of an operand of
+ * other arithmetic, a float with a float, and else an int; of an argument
+ * of a function of strings, a string; and otherwise an int, of a script's,
+ * or a bool, of a condition's.
  */
 function typeAt(root: Node, target: Var): VariableType {
   let found: VariableType | undefined;
@@ -99,7 +109,7 @@ function placeType(
           ? (literalType(parent.value) ?? "int")
           : parent.op === "+=" && literalType(parent.value) === "string"
             ? "string"
-            : "int";
+            : numberWith(parent.value);
       }
       return "int";
     case "unary":
@@ -119,7 +129,7 @@ function placeType(
         case "add":
           return literalType(other) ?? "int";
       }
-      return "int";
+      return numberWith(other);
     }
     case "call":
       switch (parent.function) {

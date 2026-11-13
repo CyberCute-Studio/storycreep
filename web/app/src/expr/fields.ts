@@ -1,15 +1,23 @@
 // What a form of an expression's owner keeps of the source that its editor
 // gives (ExpressionEditor.tsx), as the inspector's forms of a connection, a
 // branch's output, and a node's scripts do (plan note N74): the source last
-// typed, of the form shown by its key; the owner's own source, of none the
-// empty one; what the form holds of the field over the owner as it is now,
-// once a save is refused for a change made elsewhere; and what a notice of
-// such a refusal shows of it.
+// typed, of the form shown by its key, and whether the guided picker holds
+// what it cannot write yet, which the form's Save is refused for; the
+// owner's own source, of none the empty one; what the form holds of the
+// field over the owner as it is now, once a save is refused for a change
+// made elsewhere; and what a notice of such a refusal shows of it.
 
 import type { Expression } from "@storycreep/shared/api";
 
-/** What a form holds of an expression's source that its editor gave last, of the form shown by its key. */
-export type TypedSource = { key: string; source: string } | undefined;
+/** What a form holds of an expression's source that its editor gave last, of the form shown by its key, and whether the guided picker holds what it cannot write yet, as a number that is not one. */
+export type TypedSource =
+  | { key: string; source: string; unfinished: boolean }
+  | undefined;
+
+/** Reports whether typed, of the form shown by key, holds what the guided picker cannot write yet, which the form's Save is refused for, as the picker says under its field. */
+export function unfinishedOf(typed: TypedSource, key: string): boolean {
+  return typed?.key === key && typed.unfinished;
+}
 
 /** Returns the source of the expression that an owner holds, or the empty one of none. */
 export function sourceOf(e: Expression | undefined): string {

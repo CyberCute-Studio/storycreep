@@ -340,7 +340,9 @@ export function Names({
  * written in, global unless it says board., each of which may be changed:
  * a variable.create of its own, as the page's batches are, once Create is
  * pressed, after which the name names it, and the field has the focus
- * again, as the offer goes.
+ * again, as the offer goes. A change of its type or its scope is no change
+ * of the expression's owner, whose form it does not tell of, so that the
+ * form does not hold the owner as it was for it (useHeld).
  */
 export function UnknownName({
   projectId,
@@ -403,13 +405,14 @@ export function UnknownName({
           label={t("expr.create.scope")}
           value={where}
           disabled={unknown.scope !== undefined}
-          onChange={(e) =>
+          onChange={(e) => {
+            e.stopPropagation();
             setChosen({
               key: unknown.key,
               type: mine?.type,
               scope: e.currentTarget.value as "global" | "board",
-            })
-          }
+            });
+          }}
         >
           <option value="global">{t("expr.create.global")}</option>
           <option value="board">{t("expr.create.board")}</option>
@@ -417,13 +420,14 @@ export function UnknownName({
         <SelectField
           label={t("expr.create.type")}
           value={type}
-          onChange={(e) =>
+          onChange={(e) => {
+            e.stopPropagation();
             setChosen({
               key: unknown.key,
               scope: mine?.scope,
               type: e.currentTarget.value as VariableType,
-            })
-          }
+            });
+          }}
         >
           {(["bool", "int", "float", "string"] as const).map((option) => (
             <option key={option} value={option}>

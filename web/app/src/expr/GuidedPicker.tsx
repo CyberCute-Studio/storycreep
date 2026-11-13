@@ -27,7 +27,7 @@ import {
   testsOf,
   writePicked,
 } from "./picker";
-import type { Scope } from "./scope";
+import { boardVariables, runtimeAttributes, type Scope } from "./scope";
 
 /** A value that the picker offers to test, with what names it and its type. */
 interface Choice {
@@ -43,18 +43,15 @@ function targetValue(target: Target): string {
   return `${target.ref} ${target.attribute ?? ""}`;
 }
 
-/** Returns the values that the board of scope reads, which the picker offers to test, in the order of their names. */
+/** What orders the choices by their names, made once. */
+const collator = new Intl.Collator();
+
+/** Returns the values that the board of scope reads, which the picker offers to test, but text attributes, in the order of their names. */
 function choicesOf(scope: Scope): Choice[] {
   const { view, boardId } = scope;
   const name = valueNamer(view, boardId);
   const out: Choice[] = [];
-  for (const v of view.variables.values()) {
-    if (
-      v.deleted_at !== undefined ||
-      (v.scope === "board" && v.board_id !== boardId)
-    ) {
-      continue;
-    }
+  for (const v of boardVariables(view, boardId)) {
     const target = { ref: v.id };
     out.push({
       target,
@@ -65,15 +62,8 @@ function choicesOf(scope: Scope): Choice[] {
     });
   }
   for (const c of view.components.values()) {
-    if (c.deleted_at !== undefined) {
-      continue;
-    }
-    const type = view.componentTypes.get(c.component_type_id);
-    if (type === undefined || type.deleted_at !== undefined) {
-      continue;
-    }
-    for (const a of type.attributes) {
-      if (!a.runtime || a.deleted_at !== undefined || a.type === "text") {
+    for (const a of runtimeAttributes(view, c)) {
+      if (a.type === "text") {
         continue;
       }
       const target = { ref: c.id, attribute: a.id };
@@ -89,7 +79,6 @@ function choicesOf(scope: Scope): Choice[] {
       });
     }
   }
-  const collator = new Intl.Collator();
   return out.sort((a, b) => collator.compare(a.name, b.name));
 }
 
@@ -133,8 +122,9 @@ function sameType(a: TargetType, b: TargetType): boolean {
 /**
  * The guided picker of the condition that analysis is of, of the board of
  * scope, which tells of a change of what it shows by onSource, with the
- * source that it shows: a group of fields, which the editor's label names
- * (labelledBy).
+ * source that it shows, and by onUnfinished of whether its number's field
+ * holds what is not a number yet, which it cannot write: a group of fields,
+ * which the editor's label names (labelledBy).
  */
 export function GuidedPicker({
   labelledBy,
@@ -143,6 +133,7 @@ export function GuidedPicker({
   words,
   describedBy,
   onSource,
+  onUnfinished,
 }: {
   labelledBy: string;
   analysis: Analysis;
@@ -150,12 +141,14 @@ export function GuidedPicker({
   words: Words;
   describedBy: string | undefined;
   onSource: (source: string) => void;
+  onUnfinished: (unfinished: boolean) => void;
 }) {
   const { t } = words;
   const picked = readPicked(analysis);
   const choices = choicesOf(scope);
   // What is typed of a number, which writes the source once it is one, and
-  // the field says what it lacks until then.
+  // the field says what it lacks until then, which the form's Save is
+  // refused for (onUnfinished), rather than save the number before it.
   const [draft, setDraft] = useState<{ for: string; text: string }>();
   if (picked === undefined) {
     return (
@@ -176,6 +169,7 @@ export function GuidedPicker({
     name(target.ref, target.attribute) ?? target.ref;
   const write = (next: Picked) => {
     setDraft(undefined);
+    onUnfinished(false);
     onSource(writePicked(next, nameOf));
   };
   const current =
@@ -289,11 +283,12 @@ export function GuidedPicker({
         error={numberProblem}
         onChange={(e) => {
           const text = e.currentTarget.value;
+          setDraft({ for: draftKey, text });
           if (isNumber(text.trim())) {
             onSource(writePicked({ ...picked, value: text.trim() }, nameOf));
-            setDraft({ for: draftKey, text });
+            onUnfinished(false);
           } else {
-            setDraft({ for: draftKey, text });
+            onUnfinished(true);
           }
         }}
       />

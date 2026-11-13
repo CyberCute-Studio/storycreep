@@ -775,7 +775,8 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
           error={refusal?.fields.on_enter}
           optional
           onChange={(source) => {
-            onEnter.current = { key: held.key, source };
+            onEnter.current = { key: held.key, source, unfinished: false };
+            held.props.onChange();
           }}
         />
         <ExpressionEditor
@@ -789,7 +790,8 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
           error={refusal?.fields.on_exit}
           optional
           onChange={(source) => {
-            onExit.current = { key: held.key, source };
+            onExit.current = { key: held.key, source, unfinished: false };
+            held.props.onChange();
           }}
         />
         <Button type="submit" variant="primary" disabled={commands.isPending}>

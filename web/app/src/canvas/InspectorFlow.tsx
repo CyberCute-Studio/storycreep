@@ -45,6 +45,7 @@ import {
   sourceOf,
   type TypedSource,
   typedExpression,
+  unfinishedOf,
 } from "../expr/fields";
 import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
@@ -791,10 +792,20 @@ function OutputCondition({
   );
   const { commands, held, shown, against } = form;
   const typed = useRef<TypedSource>(undefined);
+  // A mark of a save that the form refused itself, as of a number that the
+  // picker cannot write yet, made anew for each (useFocusRefusal).
+  const [invalid, setInvalid] = useState<object>();
   const refusal = refusalOf(commands.error, t, outputField);
-  useFocusRefusal(held.form, commands.error);
+  useFocusRefusal(held.form, invalid ?? commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (unfinishedOf(typed.current, held.key)) {
+      // The picker says what its number lacks, under it.
+      form.refused();
+      setInvalid({});
+      return;
+    }
+    setInvalid(undefined);
     const source =
       typed.current?.key === held.key
         ? typed.current.source
@@ -842,8 +853,11 @@ function OutputCondition({
           error={refusal?.fields.condition}
           optional={false}
           guided
-          onChange={(source) => {
-            typed.current = { key: held.key, source };
+          onChange={(source, unfinished) => {
+            typed.current = { key: held.key, source, unfinished };
+            // A change that no field of the form tells of, as the picker's
+            // button that clears the condition, is a change of it too.
+            held.props.onChange();
           }}
         />
         <Button type="submit" disabled={commands.isPending}>
@@ -1338,8 +1352,12 @@ function ConnectionForm({
     event.preventDefault();
     const typedLabel =
       label.current?.key === held.key ? label.current.value : undefined;
-    if (typedLabel?.error !== undefined) {
-      // The editor says why the server would refuse the label, under it.
+    if (
+      typedLabel?.error !== undefined ||
+      unfinishedOf(condition.current, held.key)
+    ) {
+      // The editor says why the server would refuse the label, under it,
+      // and the condition's picker what its number lacks.
       form.refused();
       setInvalid({ fields: {} });
       return;
@@ -1455,8 +1473,11 @@ function ConnectionForm({
           error={refusal?.fields.condition}
           optional
           guided
-          onChange={(source) => {
-            condition.current = { key: held.key, source };
+          onChange={(source, unfinished) => {
+            condition.current = { key: held.key, source, unfinished };
+            // A change that no field of the form tells of, as the picker's
+            // button that clears the condition, is a change of it too.
+            held.props.onChange();
           }}
         />
         <ExpressionEditor
@@ -1470,7 +1491,8 @@ function ConnectionForm({
           error={refusal?.fields.on_traverse}
           optional
           onChange={(source) => {
-            traverse.current = { key: held.key, source };
+            traverse.current = { key: held.key, source, unfinished: false };
+            held.props.onChange();
           }}
         />
         <SelectField

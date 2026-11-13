@@ -1,4 +1,10 @@
-import type { Board, Connection, Usage } from "@storycreep/shared/api";
+import type {
+  Board,
+  Connection,
+  Expression,
+  Usage,
+  Variable,
+} from "@storycreep/shared/api";
 import { encode, parse } from "@storycreep/shared/expr/compile";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,7 +14,7 @@ import { renderApp, testSession } from "../test/app";
 import { testConnection } from "../test/canvas";
 import "../test/editor";
 import { fakeApi, startPage, testProject } from "../test/fake";
-import { character, elara, ids, node, variables } from "./testdata";
+import { character, elara, ids, node, variable, variables } from "./testdata";
 
 // The expression editor on a board's page (PRD FR-EXPR-01, FR-VAR-02 AC1,
 // FR-DEP-01 AC3, plan note N74): the condition of a connection, in its
@@ -76,14 +82,17 @@ const goldWrite: Usage = {
   node_title: "Quay",
 };
 
-/** Answers the board's page, of Quay and Dock, connected by a choice of the condition given, and records what it is asked. */
-function boardPage(condition?: string) {
+/** Answers the board's page, of Quay and Dock, connected by a choice of the condition given, as the server compiled it, valid unless stored says otherwise, and records what it is asked. */
+function boardPage(condition?: string, stored: Partial<Expression> = {}) {
   const connection: Connection = testConnection(choice, ids.quay, dock, {
     board_id: ids.harbour,
     ...(condition === undefined
       ? {}
-      : { condition: { source: condition, is_valid: true } }),
+      : { condition: { source: condition, is_valid: true, ...stored } }),
   });
+  // The variables that the page's batches created, which a read of the
+  // variables brings too.
+  const created: Variable[] = [];
   return fakeApi((operation, input) => {
     switch (operation) {
       case "getProject":
@@ -91,7 +100,15 @@ function boardPage(condition?: string) {
       case "listFolders":
         return { items: [], next_cursor: null };
       case "listVariables":
-        return { items: variables, next_cursor: null };
+        return { items: [...variables, ...created], next_cursor: null };
+      case "getVariable": {
+        const { path } = input as { path: { variable_id: string } };
+        const found = created.find((v) => v.id === path.variable_id);
+        if (found === undefined) {
+          throw new Error(`unexpected getVariable of ${path.variable_id}`);
+        }
+        return found;
+      }
       case "listComponentTypes":
         return { items: [character], next_cursor: null };
       case "listComponents":
@@ -125,14 +142,26 @@ function boardPage(condition?: string) {
           next_cursor: null,
         };
       }
-      case "applyCommands":
+      case "applyCommands": {
+        const { body } = input as {
+          body: { commands: { type: string; payload: Partial<Variable> }[] };
+        };
+        const made = body.commands
+          .filter((c) => c.type === "variable.create")
+          .map(({ payload: { id = "", key = "", ...more } }) =>
+            variable(id, key, more),
+          );
+        created.push(...made);
         return {
           status: "applied",
           seq: 2,
-          revisions: [],
+          // The revisions of the variables that a batch created, which the
+          // document keeps then.
+          revisions: made.map((v) => ({ id: v.id, rev: v.rev })),
           not_reconnected: [],
           undo: [],
         };
+      }
     }
     const answer = startPage(operation);
     if (answer === undefined) {
@@ -251,6 +280,34 @@ describe("the expression editor", () => {
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
   });
 
+  it("opens its list as a name is typed, rather than where the caret comes to one, and not of a name typed whole, so that Enter saves the condition", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage();
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "met_elar");
+    await screen.findByRole("listbox", { name: "Suggestions" });
+    // The one offer of the name typed whole is what it is already.
+    await user.type(condition, "a");
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
+    await user.type(condition, " and trust > 1");
+    // The arrows that bring the caret to a name open nothing, and leave
+    // Enter to save the condition.
+    await user.keyboard("{Home}{ArrowRight>16/}");
+    // In trust, of which tr is before the caret, as global.trust, trim, and
+    // trust start.
+    expect((condition as HTMLTextAreaElement).selectionStart).toBe(16);
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      {
+        type: "connection.update",
+        payload: { id: choice, condition: "met_elara and trust > 1" },
+      },
+    ]);
+    await within(form).findByText("Saved.");
+  });
+
   // Verifies: FR-EXPR-01/AC3, FR-EXPR-01/AC4
   it("shows the same condition in the guided picker, which a switch leaves as it is, and which writes one of the same AST", async () => {
     const user = userEvent.setup();
@@ -302,6 +359,36 @@ describe("the expression editor", () => {
       {
         type: "connection.update",
         payload: { id: choice, condition: "gold > -2" },
+      },
+    ]);
+  });
+
+  it("refuses to save a number that the picker cannot write yet, rather than save the one before it, and says what it lacks", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage("gold >= 3");
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const value = within(form).getByRole("textbox", { name: "Compared with" });
+    await user.clear(value);
+    await user.type(value, "4x");
+    expect(value.getAttribute("aria-invalid")).toBe("true");
+    within(form).getByText("Write a number, as 3, 2.5, or -1.");
+    await user.click(
+      within(form).getByRole("button", { name: "Save the connection" }),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(value));
+    expect(batches(calls)).toHaveLength(0);
+    expect(fieldValue(value)).toBe("4x");
+    // Once it is a number, Save sends it.
+    await user.type(value, "{Backspace}");
+    await user.click(
+      within(form).getByRole("button", { name: "Save the connection" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      {
+        type: "connection.update",
+        payload: { id: choice, condition: "gold >= 4" },
       },
     ]);
   });
@@ -369,5 +456,34 @@ describe("the expression editor", () => {
       },
     ]);
     expect(document.activeElement).toBe(condition);
+  });
+
+  it("shows the server's error of the saved source where it cannot check it whole, and not once it checks it whole and finds it valid, as once the variable that it names is created", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage("met_mira", {
+      is_valid: false,
+      error: { code: "unknown_identifier", start: 0, end: 8 },
+    });
+    const { form, condition } = await openChoice(user);
+    await within(form).findByText(
+      /^No variable or component has this name here\./,
+    );
+    await user.click(
+      within(form).getByRole("button", {
+        name: "Create met_mira, a global true or false",
+      }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // The form shows the connection as it held it, of the server's error,
+    // which the editor, which finds met_mira now, does not show.
+    await waitFor(() =>
+      expect(
+        within(form).queryByText(
+          /^No variable or component has this name here\./,
+        ),
+      ).toBeNull(),
+    );
+    expect(condition.getAttribute("aria-invalid")).toBeNull();
+    expect(fieldValue(condition)).toBe("met_mira");
   });
 });

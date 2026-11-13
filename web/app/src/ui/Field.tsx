@@ -263,10 +263,13 @@ export function GroupField({
 
 /**
  * The selector of what useFocusRefusal moves the focus to: a field marked
- * invalid, or a control of a group whose error is the whole group's
- * (GroupField).
+ * invalid, but for one whose error is its own (data-own-error), as an
+ * expression's that its editor finds as it is typed, which the server keeps
+ * rather than refuses, or a control of a group whose error is the whole
+ * group's (GroupField).
  */
-const refusedField = '[aria-invalid="true"], fieldset[data-invalid] input';
+const refusedField =
+  '[aria-invalid="true"]:not([data-own-error]), fieldset[data-invalid] input';
 
 /** The selector of a control that the focus can go to. */
 const enabledControl =
