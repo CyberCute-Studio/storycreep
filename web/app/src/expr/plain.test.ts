@@ -42,15 +42,21 @@ describe("the plain-language rendering of an expression", () => {
     expect(said("not met_elara or gold < -2")).toBe(
       "`met_elara` is false or `gold` is less than -2",
     );
-    expect(said("(met_elara or gold > 1) and keeper != \"Ada\"")).toBe(
+    expect(said('(met_elara or gold > 1) and keeper != "Ada"')).toBe(
       "(`met_elara` is true or `gold` is more than 1) and `keeper` is not “Ada”",
     );
-    expect(said(`visited(node("${ids.quay}")) and visits(node("${ids.tower}")) == 2`)).toBe(
+    expect(
+      said(
+        `visited(node("${ids.quay}")) and visits(node("${ids.tower}")) == 2`,
+      ),
+    ).toBe(
       "“Quay” has been visited and the number of visits to “Tower” on Lighthouse is 2",
     );
     // Names as the board's expressions write them: Harbour's trust bare,
     // the global one qualified.
-    expect(said("trust > global.trust")).toBe("`trust` is more than `global.trust`");
+    expect(said("trust > global.trust")).toBe(
+      "`trust` is more than `global.trust`",
+    );
   });
 
   it("says each statement of a script as a sentence", () => {

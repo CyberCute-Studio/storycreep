@@ -198,10 +198,7 @@ export function testSources(more: Partial<ScopeSources> = {}): ScopeSources {
     nodes: new Map([
       [ids.quay, node(ids.quay, ids.harbour, "Quay")],
       [ids.tower, node(ids.tower, ids.lighthouse, "Tower")],
-      [
-        ids.onward,
-        node(ids.onward, ids.harbour, "Onward", { type: "jumper" }),
-      ],
+      [ids.onward, node(ids.onward, ids.harbour, "Onward", { type: "jumper" })],
     ]),
     gone: new Map(),
     ...more,

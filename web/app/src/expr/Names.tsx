@@ -259,14 +259,11 @@ function NameItem({
         <Button
           aria-expanded={shown}
           aria-controls={regionId}
-          aria-label={
-            shown
-              ? t("expr.names.hide_usages", { name: written })
-              : t("expr.names.show_usages", { name: written })
-          }
           onClick={() => setShown((before) => !before)}
         >
-          {shown ? t("usage.hide") : t("usage.show")}
+          {shown
+            ? t("expr.names.hide_usages", { name: written })
+            : t("expr.names.show_usages", { name: written })}
         </Button>
         <Link
           to={panel.to}

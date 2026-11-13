@@ -48,8 +48,10 @@ describe("the guided picker's model of a condition", () => {
       "(elara.trust) > 0",
     ]) {
       const picked = readPicked(analyze(source, "condition", scope));
-      expect(picked, source).toBeDefined();
-      const written = writePicked(picked!, nameOf);
+      if (picked === undefined) {
+        throw new Error(`the picker does not show ${source}`);
+      }
+      const written = writePicked(picked, nameOf);
       expect(astOf(written), `${source} as ${written}`).toBe(astOf(source));
     }
   });
@@ -70,25 +72,40 @@ describe("the guided picker's model of a condition", () => {
       "gold > trust",
       "3 < gold",
       "gold + 1 > 2",
-      "visited(node(\"" + ids.quay + "\"))",
+      `visited(node("${ids.quay}"))`,
       "nobody > 1",
       "gold >",
     ]) {
-      expect(readPicked(analyze(source, "condition", scope)), source).toBeUndefined();
+      expect(
+        readPicked(analyze(source, "condition", scope)),
+        source,
+      ).toBeUndefined();
     }
   });
 
   it("writes the names as the board's expressions name them", () => {
     expect(
-      writePicked({ target: { ref: ids.trustGlobal }, test: "gt", value: "1" }, nameOf),
+      writePicked(
+        { target: { ref: ids.trustGlobal }, test: "gt", value: "1" },
+        nameOf,
+      ),
     ).toBe("global.trust > 1");
     expect(
-      writePicked({ target: { ref: ids.trustBoard }, test: "is_false", value: "" }, nameOf),
+      writePicked(
+        { target: { ref: ids.trustBoard }, test: "is_false", value: "" },
+        nameOf,
+      ),
     ).toBe("not trust");
   });
 
   it("writes a string literal that reads back as the text", () => {
-    for (const text of ['say "hi"', "a\\b", "two\nlines\tand\rmore", "😀", ""]) {
+    for (const text of [
+      'say "hi"',
+      "a\\b",
+      "two\nlines\tand\rmore",
+      "😀",
+      "",
+    ]) {
       expect(stringText(stringLiteral(text))).toBe(text);
     }
     expect(stringLiteral("a\0b")).toBe('"ab"');

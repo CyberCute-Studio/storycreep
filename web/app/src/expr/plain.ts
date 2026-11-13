@@ -266,7 +266,9 @@ class Renderer {
           return this.condition(n);
         }
         // A number with a minus before it is a negative number, as −2.
-        return n.operand.kind === "lit" && n.operand.type !== "bool" && n.operand.type !== "string"
+        return n.operand.kind === "lit" &&
+          n.operand.type !== "bool" &&
+          n.operand.type !== "string"
           ? numberText(locale, -n.operand.value)
           : t("expr.plain.neg", { value: this.grouped(n.operand, 3) });
       case "binary": {

@@ -86,7 +86,9 @@ function tinted(
       <span className="absolute inset-y-0 -start-px w-0.5 bg-danger" />
     </span>
   );
-  let markerShown = err === undefined;
+  // A range that covers characters is underlined; one that covers none is
+  // a bar of its own between two, or at the end.
+  let markerShown = err === undefined || err.from < err.to;
   for (const run of runsOf(analysis)) {
     const cuts = [run.from, run.to];
     if (err !== undefined) {
@@ -313,6 +315,13 @@ function TextView({
     }
     insertInto(el, editOf(el.value, where, offer));
     readCaret(el);
+    // The name written is whole, and the list of it closes, until the caret
+    // leaves it; one that is to go on, as a component's key and its dot,
+    // offers what follows.
+    const next = spotAt(el.value, el.selectionStart);
+    if (next !== undefined && next.query !== "") {
+      setDismissed(spotKey(next));
+    }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing =

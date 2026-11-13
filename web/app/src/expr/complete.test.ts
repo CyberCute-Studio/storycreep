@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editOf, offersAt, spotAt } from "./complete";
+import { editOf, offersAt, type Spot, spotAt } from "./complete";
 import { englishWords, harbourScope, ids } from "./testdata";
 
 // What the expression editor offers to complete at the caret (PRD
@@ -9,8 +9,20 @@ import { englishWords, harbourScope, ids } from "./testdata";
 const scope = harbourScope();
 const words = englishWords();
 
+/** Returns the spot at caret of source, which the test expects there. */
+function spotOf(source: string, caret: number): Spot {
+  const spot = spotAt(source, caret);
+  if (spot === undefined) {
+    throw new Error(`no spot at ${caret} of ${source}`);
+  }
+  return spot;
+}
+
 /** Returns the labels of what the editor offers at the end of source, of a source of context. */
-function offered(source: string, context: "condition" | "script" = "condition") {
+function offered(
+  source: string,
+  context: "condition" | "script" = "condition",
+) {
   const spot = spotAt(source, source.length);
   if (spot === undefined) {
     return undefined;
@@ -21,9 +33,18 @@ function offered(source: string, context: "condition" | "script" = "condition") 
 }
 
 describe("where the editor offers to complete", () => {
-  it("offers at a name, after global., board., cmp., and a component's key, and within node(\"…\")", () => {
-    expect(spotAt("go", 2)).toMatchObject({ kind: "name", query: "go", from: 0, to: 2 });
-    expect(spotAt("global.go", 9)).toMatchObject({ kind: "global", query: "go", from: 7 });
+  it('offers at a name, after global., board., cmp., and a component\'s key, and within node("…")', () => {
+    expect(spotAt("go", 2)).toMatchObject({
+      kind: "name",
+      query: "go",
+      from: 0,
+      to: 2,
+    });
+    expect(spotAt("global.go", 9)).toMatchObject({
+      kind: "global",
+      query: "go",
+      from: 7,
+    });
     expect(spotAt("board.", 6)).toMatchObject({ kind: "board", query: "" });
     expect(spotAt("cmp.el", 6)).toMatchObject({ kind: "cmp", query: "el" });
     expect(spotAt("elara.", 6)).toMatchObject({
@@ -64,9 +85,13 @@ describe("what the editor offers", () => {
     expect(offered("la")).toEqual([]);
     expect(offered("bi")).toEqual([]);
     expect(
-      offersAt(spotAt("la", 2)!, "condition", scope.view, ids.lighthouse, words).offers.map(
-        (o) => o.label,
-      ),
+      offersAt(
+        spotOf("la", 2),
+        "condition",
+        scope.view,
+        ids.lighthouse,
+        words,
+      ).offers.map((o) => o.label),
     ).toEqual(["lamp"]);
     // Elara's runtime attributes, but not her notes, which are not.
     expect(offered("elara.")).toEqual(["elara.mood", "elara.trust"]);
@@ -81,46 +106,84 @@ describe("what the editor offers", () => {
   });
 
   it("tells of each offer's type and what it is", () => {
-    const spot = spotAt("met", 3)!;
-    const [offer] = offersAt(spot, "condition", scope.view, scope.boardId, words).offers;
+    const spot = spotOf("met", 3);
+    const [offer] = offersAt(
+      spot,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers;
     expect(offer).toMatchObject({
       label: "met_elara",
       detail: "Global variable, true or false",
       description: "Whether the player has met Elara.",
       variable: ids.metElara,
     });
-    const [fn] = offersAt(spotAt("cla", 3)!, "condition", scope.view, scope.boardId, words).offers;
+    const [fn] = offersAt(
+      spotOf("cla", 3),
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers;
     expect(fn).toMatchObject({
       label: "clamp(x, lo, hi)",
       detail: "Function, gives number",
     });
   });
 
-  it("offers the nodes that the page has read within node(\"…\"), by their titles, but no jumper", () => {
+  it('offers the nodes that the page has read within node("…"), by their titles, but no jumper', () => {
     expect(offered('visited(node("')).toEqual(["Quay", "Tower"]);
     expect(offered('visited(node("tow')).toEqual(["Tower"]);
   });
 
   it("writes what is chosen in place of what was typed of it", () => {
     const source = "go > 1";
-    const spot = spotAt(source, 2)!;
-    const [gold] = offersAt(spot, "condition", scope.view, scope.boardId, words).offers;
-    expect(editOf(source, spot, gold)).toEqual({ from: 0, to: 2, text: "gold", caret: 4 });
+    const spot = spotOf(source, 2);
+    const [gold] = offersAt(
+      spot,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers;
+    expect(editOf(source, spot, gold)).toEqual({
+      from: 0,
+      to: 2,
+      text: "gold",
+      caret: 4,
+    });
     // A function, with its (, or after the ( that the source has already.
-    const call = spotAt("cla", 3)!;
-    const [clamp] = offersAt(call, "condition", scope.view, scope.boardId, words).offers;
-    expect(editOf("cla", call, clamp)).toMatchObject({ text: "clamp(", caret: 6 });
-    expect(editOf("cla(x)", spotAt("cla(x)", 3)!, clamp)).toMatchObject({
+    const call = spotOf("cla", 3);
+    const [clamp] = offersAt(
+      call,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers;
+    expect(editOf("cla", call, clamp)).toMatchObject({
+      text: "clamp(",
+      caret: 6,
+    });
+    expect(editOf("cla(x)", spotOf("cla(x)", 3), clamp)).toMatchObject({
       text: "clamp",
       caret: 6,
     });
     // A node, as its reference.
     const inNode = 'visited(node("Qu")) and gold';
-    const at = spotAt(inNode, 16)!;
-    const [quay] = offersAt(at, "condition", scope.view, scope.boardId, words).offers;
+    const at = spotOf(inNode, 16);
+    const [quay] = offersAt(
+      at,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers;
     const edit = editOf(inNode, at, quay);
-    expect(
-      inNode.slice(0, edit.from) + edit.text + inNode.slice(edit.to),
-    ).toBe(`visited(node("${ids.quay}")) and gold`);
+    expect(inNode.slice(0, edit.from) + edit.text + inNode.slice(edit.to)).toBe(
+      `visited(node("${ids.quay}")) and gold`,
+    );
   });
 });
