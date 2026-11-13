@@ -162,8 +162,11 @@ export function GuidedPicker({
   // string may be, or the page has not read the board's names yet to tell,
   // rather than take the field that is being edited away.
   const [written, setWritten] = useState<{ source: string; picked: Picked }>();
+  // Read once of each analysis, rather than lex its source again for its
+  // comments as each of the picker's fields is typed in.
+  const fromSource = useMemo(() => readPicked(analysis), [analysis]);
   const read =
-    readPicked(analysis) ??
+    fromSource ??
     (written?.source === analysis.source ? written.picked : undefined);
   const choices = useMemo(() => choicesOf(scope), [scope]);
   // What is typed of a number, which writes the source once it is one, and

@@ -39,12 +39,7 @@ import { parseValue } from "../content/values";
 import { hundredths } from "../document/appliers/node";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { ExpressionEditor } from "../expr/ExpressionEditor";
-import {
-  sourceOf,
-  type TypedSource,
-  typedExpression,
-  typedSourceOf,
-} from "../expr/fields";
+import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
@@ -708,15 +703,15 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
   const { t } = useTranslation();
   const form = useEntityForm(projectId, node, (view, id) => view.nodes.get(id));
   const { commands, held, shown, against } = form;
-  const onEnter = useRef<TypedSource>(undefined);
-  const onExit = useRef<TypedSource>(undefined);
+  const onEnter = useTypedSource(held);
+  const onExit = useTypedSource(held);
   const headingId = useId();
   const refusal = refusalOf(commands.error, t, scriptField);
   useFocusRefusal(held.form, commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const enter = typedSourceOf(onEnter.current, held.key, shown.on_enter);
-    const exit = typedSourceOf(onExit.current, held.key, shown.on_exit);
+    const enter = onEnter.source(shown.on_enter);
+    const exit = onExit.source(shown.on_exit);
     const update: Omit<NodeUpdatePayload, "id"> = {
       ...(enter !== sourceOf(against.on_enter) ? { on_enter: enter } : {}),
       ...(exit !== sourceOf(against.on_exit) ? { on_exit: exit } : {}),
@@ -775,10 +770,7 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
           stored={shown.on_enter}
           error={refusal?.fields.on_enter}
           optional
-          onChange={(source) => {
-            onEnter.current = { key: held.key, source, unfinished: false };
-            held.props.onChange();
-          }}
+          onChange={onEnter.onChange}
         />
         <ExpressionEditor
           projectId={projectId}
@@ -790,10 +782,7 @@ function NodeScripts({ projectId, node }: { projectId: string; node: Node }) {
           stored={shown.on_exit}
           error={refusal?.fields.on_exit}
           optional
-          onChange={(source) => {
-            onExit.current = { key: held.key, source, unfinished: false };
-            held.props.onChange();
-          }}
+          onChange={onExit.onChange}
         />
         <Button type="submit" variant="primary" disabled={commands.isPending}>
           {t("inspector.save_scripts")}

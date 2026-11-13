@@ -33,24 +33,24 @@ describe("the plain-language rendering of an expression", () => {
   // Verifies: FR-EXPR-01/AC4
   it("says a condition in words, from its AST, as the PRD's example has it", () => {
     expect(said("met_elara and elara.trust >= 3")).toBe(
-      "`met_elara` is true and (`elara.trust` is at least 3)",
+      "`met_elara` is true and `elara.trust` is at least 3",
     );
     // Another source of the same AST says the same.
     expect(said("met_elara&&(cmp.elara.trust)>=3 // first")).toBe(
       said("met_elara and elara.trust >= 3"),
     );
     expect(said("not met_elara or gold < -2")).toBe(
-      "(`met_elara` is false) or (`gold` is less than -2)",
+      "(`met_elara` is false) or `gold` is less than -2",
     );
     expect(said('(met_elara or gold > 1) and keeper != "Ada"')).toBe(
-      "(`met_elara` is true or (`gold` is more than 1)) and (`keeper` is not “Ada”)",
+      "(`met_elara` is true or `gold` is more than 1) and `keeper` is not “Ada”",
     );
     expect(
       said(
         `visited(node("${ids.quay}")) and visits(node("${ids.tower}")) == 2`,
       ),
     ).toBe(
-      "(“Quay” has been visited) and ((the number of visits to “Tower” on Lighthouse) is 2)",
+      "(“Quay” has been visited) and (the number of visits to “Tower” on Lighthouse) is 2",
     );
     // Names as the board's expressions write them: Harbour's trust bare,
     // the global one qualified.
@@ -92,11 +92,11 @@ describe("the plain-language rendering of an expression", () => {
   });
 
   // Verifies: FR-EXPR-01/AC4
-  it("groups each operand, argument, and condition of a not but a name, a literal, a negative number, or a node, so that no two ASTs of different meanings say the same", () => {
+  it("groups each operand, argument, and condition of a not but a name, a literal, a negative number, or a node, and a comparison within an and or an or, so that no two ASTs of different meanings say the same", () => {
     // What a not is of.
     const notOfOr = said("not (met_elara or gold > 1) and trust > 2");
     expect(notOfOr).toBe(
-      "(it is not so that (`met_elara` is true or (`gold` is more than 1))) and (`trust` is more than 2)",
+      "(it is not so that (`met_elara` is true or `gold` is more than 1)) and `trust` is more than 2",
     );
     expect(
       new Set([
@@ -109,12 +109,21 @@ describe("the plain-language rendering of an expression", () => {
       "(it is not so that (`gold` is more than 1)) and `met_elara` is true",
     );
     expect(said("not (gold > 1 and met_elara)")).toBe(
-      "it is not so that ((`gold` is more than 1) and `met_elara` is true)",
+      "it is not so that (`gold` is more than 1 and `met_elara` is true)",
     );
-    // An and of a comparison.
-    expect(said("met_elara == (gold > 1 and trust > 2) and trust < 5")).toBe(
-      "(`met_elara` is whether ((`gold` is more than 1) and (`trust` is more than 2))) and (`trust` is less than 5)",
+    // A comparison of an and, within an and, whose own operands are
+    // grouped, so that what follows it is of none of them.
+    const ofAnd = said("met_elara == (gold > 1 and trust > 2) and trust < 5");
+    expect(ofAnd).toBe(
+      "`met_elara` is whether (`gold` is more than 1 and `trust` is more than 2) and `trust` is less than 5",
     );
+    expect(
+      new Set([
+        ofAnd,
+        said("met_elara == ((gold > 1 and trust > 2) and trust < 5)"),
+        said("met_elara == (gold > 1 and (trust > 2 and trust < 5))"),
+      ]).size,
+    ).toBe(3);
     // The arguments of a call, and a call within arithmetic.
     expect(said("abs(gold - 3) > 1")).toBe(
       "((`gold` minus 3) without its sign) is more than 1",
@@ -143,10 +152,20 @@ describe("the plain-language rendering of an expression", () => {
     expect(said("gold / 2.0 > -1.0")).toBe(
       "(`gold` divided by 2.0) is more than -1.0",
     );
-    // An and of an and, of either order.
+    // An and of an and, of either order, and an or of an and of
+    // comparisons, or an and of an or of them.
     expect(said("met_elara and (gold > 1 and trust > 2)")).not.toBe(
       said("(met_elara and gold > 1) and trust > 2"),
     );
+    const orOfAnd = said("(gold == 1 and trust == 2) or met_elara");
+    const andOfOr = said("gold == 1 and (trust == 2 or met_elara)");
+    expect(orOfAnd).toBe(
+      "(`gold` is 1 and `trust` is 2) or `met_elara` is true",
+    );
+    expect(andOfOr).toBe(
+      "`gold` is 1 and (`trust` is 2 or `met_elara` is true)",
+    );
+    expect(orOfAnd).not.toBe(andOfOr);
   });
 
   // Verifies: FR-EXPR-01/AC4
@@ -163,7 +182,11 @@ describe("the plain-language rendering of an expression", () => {
     });
     const words: Words = { t: cs.t.bind(cs), locale: "cs" };
     expect(said("met_elara and elara.trust >= 2.5", "condition", words)).toBe(
-      "`met_elara` je pravda a (`elara.trust` je alespoň 2,5)",
+      "`met_elara` je pravda a `elara.trust` je alespoň 2,5",
+    );
+    // An int's digits as to_string writes them, ungrouped, as a float's.
+    expect(said("gold >= 12500 and gold >= 12500.5", "condition", words)).toBe(
+      "`gold` je alespoň 12500 a `gold` je alespoň 12500,5",
     );
   });
 

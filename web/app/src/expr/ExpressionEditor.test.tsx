@@ -940,7 +940,7 @@ describe("the expression editor", () => {
     );
   });
 
-  it("says a refusal of a variable's creation under the offer of the name that it was of alone", async () => {
+  it("says a refusal of a variable's creation under the offer of the name that it was of alone, until the source is edited", async () => {
     const user = userEvent.setup();
     boardPage(undefined, {}, { refuseCreate: true });
     const { form, condition } = await openChoice(user);
@@ -973,6 +973,12 @@ describe("the expression editor", () => {
       name: "No variable is called met_mirax. Create it?",
     });
     expect(within(next).queryByRole("alert")).toBeNull();
+    // Nor of the name typed again, until its Create is pressed again.
+    await user.type(condition, "{Backspace}");
+    const again = await within(form).findByRole("region", {
+      name: "No variable is called met_mira. Create it?",
+    });
+    expect(within(again).queryByRole("alert")).toBeNull();
   });
 
   it("shows the server's error of the saved source where it cannot check it whole, and not once it checks it whole and finds it valid, as once the variable that it names is created", async () => {

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { editOf, offersAt, type Spot, spotAt } from "./complete";
-import { elara, englishWords, harbourScope, ids } from "./testdata";
+import { editOf, offersAt, type Spot, spotAt, typedWhole } from "./complete";
+import {
+  elara,
+  englishWords,
+  harbourScope,
+  ids,
+  testSources,
+  variable,
+  variables,
+} from "./testdata";
 
 // What the expression editor offers to complete at the caret (PRD
 // FR-EXPR-01 AC2, plan note N74): only what is valid where the source is,
@@ -341,6 +349,32 @@ describe("what the editor offers", () => {
         toSpaced.text +
         spaced.slice(toSpaced.to),
     ).toBe(`visited(node("${ids.quay}")  `);
+  });
+
+  it("has nothing to complete of a name typed whole, or of a word of the language, whatever starts as it", () => {
+    // A variable whose key starts as true does.
+    const view = testSources({
+      variables: new Map(
+        [
+          ...variables,
+          variable("var_01HQ8Z3XK4F7NAWR5TCQ9M2CT1", "true_ending", {
+            type: "bool",
+          }),
+        ].map((v) => [v.id, v]),
+      ),
+    });
+    const whole = (source: string) => {
+      const spot = spotOf(source, source.length);
+      const { offers } = offersAt(spot, "condition", view, ids.harbour, words);
+      expect(offers.length).toBeGreaterThan(0);
+      return typedWhole(source, spot, offers);
+    };
+    expect(whole("met_elara == tru")).toBe(false);
+    expect(whole("met_elara == true")).toBe(true);
+    expect(whole("met_elara == true_ending")).toBe(true);
+    // A board's trust, whose global.trust the list has first.
+    expect(whole("trust")).toBe(true);
+    expect(whole("trus")).toBe(false);
   });
 
   it("offers a node by the start of its ID, in any case, as the parser reads it", () => {

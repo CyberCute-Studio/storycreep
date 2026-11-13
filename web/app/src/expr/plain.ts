@@ -1,14 +1,17 @@
 // The plain-language rendering of an expression (PRD FR-EXPR-01 AC4, plan
 // note N74): what a compiled AST says, in the user's language, from the
-// catalog's phrases, as "`met_elara` is true and (`elara.trust` is at least
-// 3)", generated from the AST, not from the source, so that two sources of
+// catalog's phrases, as "`met_elara` is true and `elara.trust` is at least
+// 3", generated from the AST, not from the source, so that two sources of
 // one AST say the same. A condition is one phrase, and a script a sentence
 // for each of its statements. A name is shown as the board's expressions
 // name it, and a node by its title. Each operand of an operator, each
 // argument of a call, the condition that a not is of, and the value that a
 // statement assigns is in parentheses, but a name, a literal, a negative
-// number, or a node, rather than grouped by a precedence, so that no two
-// ASTs of different meanings say the same, whatever their phrases' words.
+// number, or a node, and a comparison that is an operand of an and or an
+// or, rather than grouped by a precedence, so that no two ASTs of different
+// meanings say the same, whatever their phrases' words: a comparison's own
+// operands are each a name, a literal, a negative number, a node, or in
+// parentheses, so that "A is 1 and B is 2" is of one AST alone.
 
 import {
   type Binary,
@@ -41,9 +44,8 @@ function clean(text: string): string {
 /** The type of an expression, as the rendering words it: a number of either kind. */
 type Shape = "bool" | "number" | "string" | "node";
 
-/** How a locale writes numbers: an integer with its digits grouped, and its decimal separator and minus sign. */
+/** How a locale writes numbers: its decimal separator and its minus sign. */
 interface Writing {
-  readonly int: Intl.NumberFormat;
   readonly decimal: string;
   readonly minus: string;
 }
@@ -57,7 +59,6 @@ function writingOf(locale: string): Writing {
   if (w === undefined) {
     const parts = new Intl.NumberFormat(locale).formatToParts(-1.5);
     w = {
-      int: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }),
       decimal: parts.find((p) => p.type === "decimal")?.value ?? ".",
       minus: parts.find((p) => p.type === "minusSign")?.value ?? "-",
     };
@@ -66,18 +67,16 @@ function writingOf(locale: string): Writing {
   return w;
 }
 
-/** Returns the number value, of a literal of type, in locale's writing of numbers: an int with its digits grouped, and a float as to_string writes it, as 2.0 or 2.5 (formatFloat), with the locale's decimal separator and minus sign, so that a float that is whole, as of gold / 2.0, reads otherwise than the int, as of gold / 2, which divides otherwise. */
+/** Returns the number value, of a literal of type, as to_string writes it, an int as its digits and a float as 2.0 or 2.5 (formatInt, formatFloat), of Latin digits, ungrouped, with the locale's decimal separator and minus sign, so that a float that is whole, as of gold / 2.0, reads otherwise than the int, as of gold / 2, which divides otherwise, and an int's digits are written as a float's are, whatever the locale's own. */
 function numberText(
   locale: string,
   value: number,
   type: "int" | "float",
 ): string {
   const w = writingOf(locale);
-  if (type === "int") {
-    return w.int.format(value);
-  }
-  return semantics
-    .formatFloat(value)
+  return (
+    type === "int" ? semantics.formatInt(value) : semantics.formatFloat(value)
+  )
     .replace(".", w.decimal)
     .replace("-", w.minus);
 }
@@ -90,6 +89,19 @@ function atom(n: Node): boolean {
     n.kind === "lit" ||
     n.kind === "node_ref" ||
     (n.kind === "unary" && n.op === "neg" && n.operand.kind === "lit")
+  );
+}
+
+/** Reports whether n is a comparison, of ==, !=, <, <=, >, or >=. */
+function isComparison(n: Node): n is Binary {
+  return (
+    n.kind === "binary" &&
+    (n.op === "eq" ||
+      n.op === "ne" ||
+      n.op === "lt" ||
+      n.op === "lte" ||
+      n.op === "gt" ||
+      n.op === "gte")
   );
 }
 
@@ -211,8 +223,8 @@ class Renderer {
         break;
       case "binary":
         if (n.op === "and" || n.op === "or") {
-          const left = this.side(n.left);
-          const right = this.side(n.right);
+          const left = this.junct(n.left);
+          const right = this.junct(n.right);
           return n.op === "and"
             ? t("expr.plain.and", { left, right })
             : t("expr.plain.or", { left, right });
@@ -224,9 +236,14 @@ class Renderer {
     return this.value(n);
   }
 
-  /** Returns the phrase of n as a condition that a not, an and, or an or is of: grouped but of a name, or a literal, as "(`gold` is more than 1) and `met_elara` is true". */
+  /** Returns the phrase of n as the condition that a not is of: grouped but of a name, or a literal, as "it is not so that (`gold` is more than 1)". */
   private side(n: Node): string {
     return atom(n) ? this.condition(n) : this.group(this.condition(n));
+  }
+
+  /** Returns the phrase of n as an operand of an and or an or: a comparison as it is, whose own operands are each grouped but a name, a literal, a negative number, or a node, so that nothing after it is of them, as "`met_elara` is true and `elara.trust` is at least 3", and else as a not's condition, grouped but a name or a literal, as an and or an or within one, "(`a` is 1 and `b` is 2) or `c` is true". */
+  private junct(n: Node): string {
+    return isComparison(n) ? this.comparison(n) : this.side(n);
   }
 
   /** Returns the phrase of a comparison, or of arithmetic, which is no condition of its own. */

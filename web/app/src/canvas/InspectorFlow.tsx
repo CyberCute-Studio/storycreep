@@ -43,10 +43,8 @@ import { ExpressionEditor, useExpressionView } from "../expr/ExpressionEditor";
 import {
   expressionShown,
   sourceOf,
-  type TypedSource,
   typedExpression,
-  typedSourceOf,
-  unfinishedOf,
+  useTypedSource,
 } from "../expr/fields";
 import { Confirm, payloadField } from "../project/dialogs";
 import { type Command, loadPart, referrersShown } from "../project/queries";
@@ -792,7 +790,7 @@ function OutputCondition({
     view.nodes.get(nodeId)?.outputs?.find((o) => o.id === id),
   );
   const { commands, held, shown, against } = form;
-  const typed = useRef<TypedSource>(undefined);
+  const typed = useTypedSource(held);
   // The view of the condition, which the form shown anew keeps.
   const conditionView = useExpressionView();
   // A mark of a save that the form refused itself, as of a number that the
@@ -802,14 +800,14 @@ function OutputCondition({
   useFocusRefusal(held.form, invalid ?? commands.error);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (unfinishedOf(typed.current, held.key)) {
+    if (typed.unfinished()) {
       // The picker says what its number lacks, under it.
       form.refused();
       setInvalid({});
       return;
     }
     setInvalid(undefined);
-    const source = typedSourceOf(typed.current, held.key, shown.condition);
+    const source = typed.source(shown.condition);
     const changed = source !== sourceOf(against.condition);
     const changes: Command[] = changed
       ? [
@@ -853,12 +851,7 @@ function OutputCondition({
           error={refusal?.fields.condition}
           optional={false}
           guided={conditionView}
-          onChange={(source, unfinished) => {
-            typed.current = { key: held.key, source, unfinished };
-            // A change that no field of the form tells of, as the picker's
-            // button that clears the condition, is a change of it too.
-            held.props.onChange();
-          }}
+          onChange={typed.onChange}
         />
         <Button type="submit" disabled={commands.isPending}>
           {t("inspector.save_output_condition", named)}
@@ -1308,8 +1301,8 @@ function ConnectionForm({
   // What the editor of the label gave last, of the form shown now.
   const label = useRef<{ key: string; value: RichTextValue }>(undefined);
   // What the editors of the condition and the on-traverse script gave last.
-  const condition = useRef<TypedSource>(undefined);
-  const traverse = useRef<TypedSource>(undefined);
+  const condition = useTypedSource(held);
+  const traverse = useTypedSource(held);
   // The view of the condition, which the form shown anew keeps.
   const conditionView = useExpressionView();
   const [invalid, setInvalid] = useState<{ fields: Record<string, string> }>();
@@ -1354,10 +1347,7 @@ function ConnectionForm({
     event.preventDefault();
     const typedLabel =
       label.current?.key === held.key ? label.current.value : undefined;
-    if (
-      typedLabel?.error !== undefined ||
-      unfinishedOf(condition.current, held.key)
-    ) {
+    if (typedLabel?.error !== undefined || condition.unfinished()) {
       // The editor says why the server would refuse the label, under it,
       // and the condition's picker what its number lacks.
       form.refused();
@@ -1371,16 +1361,8 @@ function ConnectionForm({
     const expected_rev = { [against.id]: against.rev };
     const changes: Command[] = [];
     const labelChanged = !equal(text, against.label);
-    const typedCondition = typedSourceOf(
-      condition.current,
-      held.key,
-      shown.condition,
-    );
-    const typedTraverse = typedSourceOf(
-      traverse.current,
-      held.key,
-      shown.on_traverse,
-    );
+    const typedCondition = condition.source(shown.condition);
+    const typedTraverse = traverse.source(shown.on_traverse);
     const conditionChanged = typedCondition !== sourceOf(against.condition);
     const traverseChanged = typedTraverse !== sourceOf(against.on_traverse);
     const update: Omit<ConnectionUpdatePayload, "id"> = {
@@ -1477,12 +1459,7 @@ function ConnectionForm({
           error={refusal?.fields.condition}
           optional
           guided={conditionView}
-          onChange={(source, unfinished) => {
-            condition.current = { key: held.key, source, unfinished };
-            // A change that no field of the form tells of, as the picker's
-            // button that clears the condition, is a change of it too.
-            held.props.onChange();
-          }}
+          onChange={condition.onChange}
         />
         <ExpressionEditor
           projectId={projectId}
@@ -1494,10 +1471,7 @@ function ConnectionForm({
           stored={shown.on_traverse}
           error={refusal?.fields.on_traverse}
           optional
-          onChange={(source) => {
-            traverse.current = { key: held.key, source, unfinished: false };
-            held.props.onChange();
-          }}
+          onChange={traverse.onChange}
         />
         <SelectField
           label={t("inspector.leaves")}

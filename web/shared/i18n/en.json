@@ -549,7 +549,7 @@
   "expr.names.show_usages": "Show where {name} is used",
   "expr.offer.attribute": "{attribute} of {component}, {type}",
   "expr.offer.board_variable": "Variable of this board, {type}",
-  "expr.offer.component": "{component}, a {type}",
+  "expr.offer.component": "{component}, a component of the type {type}",
   "expr.offer.function": "Function, gives {type}",
   "expr.offer.global_variable": "Global variable, {type}",
   "expr.offer.node": "Node on {board}",

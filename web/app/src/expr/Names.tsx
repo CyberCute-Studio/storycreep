@@ -328,10 +328,11 @@ export function Names({
  * again, as the offer goes, unless the user has given it to a control
  * while the request was answered; a refusal of it is said under the offer
  * of the name that it was of alone, which has the focus on its Create
- * again. Its type is what the name's place suggests, of the literals and
- * the board's names there (unknownOf). A change of its type or its scope
- * is no change of the expression's owner, whose form it does not tell of,
- * so that the form does not hold the owner as it was for it (useHeld).
+ * again, until the source is edited. Its type is what the name's place
+ * suggests, of the literals and the board's names there (unknownOf). A
+ * change of its type or its scope is no change of the expression's owner,
+ * whose form it does not tell of, so that the form does not hold the owner
+ * as it was for it (useHeld).
  */
 export function UnknownName({
   projectId,
@@ -354,8 +355,16 @@ export function UnknownName({
     type?: VariableType;
     scope?: "global" | "board";
   }>();
-  // The key of the name that Create was last pressed for.
-  const [tried, setTried] = useState<string>();
+  // The key of the name that Create was last pressed for, and the source
+  // that it was pressed of, of which alone a refusal of it is said: an edit
+  // of the source drops it, so that the name typed again shows none until
+  // its Create is pressed again.
+  const [tried, setTried] = useState<{ key: string; source: string }>();
+  useEffect(() => {
+    if (tried !== undefined && tried.source !== analysis.source) {
+      setTried(undefined);
+    }
+  }, [tried, analysis.source]);
   const headingId = useId();
   const button = useRef<HTMLButtonElement>(null);
   // The key of the name whose creation was refused, whose offer, which went
@@ -380,7 +389,7 @@ export function UnknownName({
   const type = mine?.type ?? unknown.type;
   const where = unknown.scope ?? mine?.scope ?? "global";
   const refusal =
-    tried === unknown.key ? refusalOf(commands.error, t) : undefined;
+    tried?.key === unknown.key ? refusalOf(commands.error, t) : undefined;
   const create = () => {
     const command: Command = {
       type: "variable.create",
@@ -393,7 +402,7 @@ export function UnknownName({
       },
     };
     const { key } = unknown;
-    setTried(key);
+    setTried({ key, source: analysis.source });
     setRefocus(undefined);
     commands.mutate([command], {
       onSuccess: () => {

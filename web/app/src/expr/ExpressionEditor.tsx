@@ -37,7 +37,14 @@ import {
   typedRange,
   unitRange,
 } from "./analyze";
-import { editOf, type Offer, offersAt, type Spot, spotAt } from "./complete";
+import {
+  editOf,
+  type Offer,
+  offersAt,
+  type Spot,
+  spotAt,
+  typedWhole,
+} from "./complete";
 import { GuidedPicker } from "./GuidedPicker";
 import { errorText, type SourceError, type Words } from "./messages";
 import { Names, PlainText, UnknownName } from "./Names";
@@ -306,7 +313,8 @@ function spotKey(spot: Spot): string {
  * is typed, while the caret stays in it, and the field has the focus,
  * rather than wherever the caret comes to a name, as the arrows move it
  * through a script, and not of a name typed whole, of which an offer is
- * what it is already. The text area keeps the focus, as a combobox's
+ * what it is already, nor of a word of the language, as true, typed whole
+ * (typedWhole). The text area keeps the focus, as a combobox's
  * pattern has it (OfferFrame): its arrows move through the list
  * (aria-activedescendant), Enter and Tab write what is highlighted, which
  * closes the list until a key types again, Escape closes the list until the
@@ -369,14 +377,11 @@ function TextView({
         : offersAt(open, context, scope.view, scope.boardId, words),
     [open, context, scope, words],
   );
-  // A name typed whole, of which an offer is what it is already, has nothing
-  // to complete, and its keys are the field's: Enter saves a condition, and
-  // Tab moves on, rather than write another offer that the list has first,
-  // as global.trust, of a board's trust typed whole.
-  const typedName = open === undefined ? "" : source.slice(open.from, open.to);
-  const whole =
-    open !== undefined &&
-    offers.some((offer) => editOf(source, open, offer).text === typedName);
+  // A name typed whole, of which an offer is what it is already, or a word
+  // of the language, has nothing to complete, and its keys are the field's:
+  // Enter saves a condition, and Tab moves on, rather than write another
+  // offer that starts as it does (typedWhole).
+  const whole = open !== undefined && typedWhole(source, open, offers);
   const shown = offers.length > 0 && !whole ? open : undefined;
   const at = shown === undefined ? "" : spotKey(shown);
   const index =

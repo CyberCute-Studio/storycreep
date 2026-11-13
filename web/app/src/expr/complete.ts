@@ -11,6 +11,7 @@ import {
   BUILTINS,
   builtins,
   type Context,
+  RESERVED_WORDS,
 } from "@storycreep/shared/expr/compile";
 import { collator, nodeTitleText, valueNamer } from "../content/textNames";
 import { nameMatcher } from "../ui/match";
@@ -250,6 +251,8 @@ export function offersAt(
     explicit: boolean,
   ) => {
     const written = explicit || !read.has(c.key) ? c.key : `cmp.${c.key}`;
+    // Of a component offered, which has runtime attributes, and so a type
+    // that the document holds, out of the trash (runtimeAttributes).
     const type = view.componentTypes.get(c.component_type_id);
     return {
       id: c.id,
@@ -396,6 +399,27 @@ export function offersAt(
     (a, b) => collator.compare(a.label, b.label) || (a.id < b.id ? -1 : 1),
   );
   return { offers: offers.slice(0, MAX_OFFERS), total: offers.length };
+}
+
+/**
+ * Reports whether what is typed at spot of source, of which offers are
+ * what the editor offers there, is typed whole, which has nothing to
+ * complete: a word of the language, as true or or, which names nothing,
+ * whatever starts as it, as a variable true_ending, or a name of which an
+ * offer is what it is already, as a board's trust, whose global.trust the
+ * list has first, so that its Enter saves a condition, and its Tab moves
+ * on, rather than write another offer that starts as it does.
+ */
+export function typedWhole(
+  source: string,
+  spot: Spot,
+  offers: readonly Offer[],
+): boolean {
+  const typed = source.slice(spot.from, spot.to);
+  return (
+    (spot.kind === "name" && RESERVED_WORDS.includes(typed)) ||
+    offers.some((offer) => editOf(source, spot, offer).text === typed)
+  );
 }
 
 /**
