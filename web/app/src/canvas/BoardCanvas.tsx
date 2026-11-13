@@ -1351,7 +1351,7 @@ function BoardCanvasOf({
       return (item: { node: BoardNode }) => {
         const view = doc.store.getState().view;
         if (context?.view !== view) {
-          context = { view, c: labelContext(view, t, lookup) };
+          context = { view, c: labelContext(view, boardId, t, lookup) };
         }
         return labelsOf(item.node, context.c);
       };
@@ -1375,7 +1375,7 @@ function BoardCanvasOf({
     controller.relabel();
     sync();
     return doc.store.subscribe(sync);
-  }, [controller, doc, t, sceneTags, targets, targetReads]);
+  }, [controller, doc, boardId, t, sceneTags, targets, targetReads]);
 
   // The board's nodes and connections, read once, first by the read that
   // the page's loader started (read), whose failure the canvas says, rather

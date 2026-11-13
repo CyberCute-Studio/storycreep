@@ -10,7 +10,7 @@
 // what does.
 
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
-import type { Doc } from "../document/doc";
+import type { NameSources } from "../content/textNames";
 import { choicesOfPort } from "./flow";
 import {
   type LabelContext,
@@ -18,6 +18,7 @@ import {
   oneLine,
   outputLabel,
   plainText,
+  referenceNames,
   titleOf,
 } from "./labels";
 import { portsOf } from "./layout";
@@ -141,7 +142,7 @@ export function treeRows(): (
  */
 export function treeChoices(
   scene: Scene,
-  view: Pick<Doc, "components" | "variables">,
+  view: NameSources,
   ids: ReadonlySet<string>,
   t: TreeMessages,
 ): Map<string, TreeChoice[]> {
@@ -149,6 +150,7 @@ export function treeChoices(
   if (ids.size === 0) {
     return of;
   }
+  const names = referenceNames(view, scene.boardId);
   const leaving = new Map<string, Connection[]>();
   scene.connections.forEach((_, item) => {
     const from = item.connection.from_node_id;
@@ -166,7 +168,7 @@ export function treeChoices(
     const choices =
       node === undefined
         ? []
-        : choicesOfNode(scene, view, node, connections, t);
+        : choicesOfNode(scene, names, node, connections, t);
     if (choices.length > 0) {
       of.set(id, choices);
     }
@@ -174,18 +176,14 @@ export function treeChoices(
   return of;
 }
 
-/** Returns the connections of leaving, which leave node, as the tree lists them under it (treeChoices). */
+/** Returns the connections of leaving, which leave node, as the tree lists them under it (treeChoices), their labels naming what they refer to by names, of the board's. */
 function choicesOfNode(
   scene: Scene,
-  view: Pick<Doc, "components" | "variables">,
+  names: Pick<LabelContext, "componentName" | "valueName">,
   node: Node,
   leaving: readonly Connection[],
   t: TreeMessages,
 ): TreeChoice[] {
-  const names = {
-    componentName: (component: string) => view.components.get(component)?.name,
-    variableKey: (variable: string) => view.variables.get(variable)?.key,
-  };
   const choices: TreeChoice[] = [];
   const list = (c: Connection, output: BranchOutput | undefined) => {
     const to = scene.nodes.get(c.to_node_id)?.node;

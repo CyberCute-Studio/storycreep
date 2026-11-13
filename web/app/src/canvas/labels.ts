@@ -11,6 +11,7 @@ import type {
   RichTextDoc,
   RichTextInline,
 } from "@storycreep/shared/api";
+import { type NameSources, valueNamer } from "../content/textNames";
 import type { Doc } from "../document/doc";
 import { type JumperTarget, type TargetLookup, targetOf } from "./targets";
 import { excerpt, excerptLength } from "./text";
@@ -31,8 +32,13 @@ export interface LabelContext {
   t: (key: LabelKey, args?: Record<string, string>) => string;
   /** Returns the name of the component of id, if the project's document has it. */
   componentName: (id: string) => string | undefined;
-  /** Returns the key of the variable of id, if the project's document has it. */
-  variableKey: (id: string) => string | undefined;
+  /**
+   * Returns the name of the value that a value reference of ref and
+   * attribute shows, as an expression of the board names it, as gold or
+   * elara.trust (valueNamer, in content/textNames.ts), if the project's
+   * document has it.
+   */
+  valueName: (ref: string, attribute: string | undefined) => string | undefined;
   /** Returns what the target of node, a jumper, is (targets.ts). */
   target: (node: Node) => JumperTarget;
   /** Returns the name of the board of id, if the project's document has it. */
@@ -42,26 +48,43 @@ export interface LabelContext {
 /** What a card's labels read of the project's document, beyond its node: the names of what the node refers to. */
 export type LabelSources = Pick<
   Doc,
-  "nodes" | "components" | "variables" | "boards"
+  "nodes" | "components" | "componentTypes" | "variables" | "boards"
 >;
 
 /**
- * Returns what labels read of view, the project's document, as it is when
- * they are read, with the page's messages, t: every name that a card
- * shows, of what its node refers to, each of which namesChanged follows,
- * so that what cards read and what writes them again, once it changes, are
- * the same names, here; and a jumper's target, as view and targets tell of
- * it (targetOf), whose change the scene and the target's reads tell of.
+ * Returns the names that the plain text of a node's text or a connection's
+ * label, of the board of boardId, shows of what it refers to, as view, the
+ * project's document, has them: a mention's component's name, and a value
+ * reference's value's name, as an expression of the board names it.
+ */
+export function referenceNames(
+  view: NameSources,
+  boardId: string,
+): Pick<LabelContext, "componentName" | "valueName"> {
+  return {
+    componentName: (id) => view.components.get(id)?.name,
+    valueName: valueNamer(view, boardId),
+  };
+}
+
+/**
+ * Returns what labels of the board of boardId read of view, the project's
+ * document, as it is when they are read, with the page's messages, t:
+ * every name that a card shows, of what its node refers to, each of which
+ * namesChanged follows, so that what cards read and what writes them
+ * again, once it changes, are the same names, here; and a jumper's target,
+ * as view and targets tell of it (targetOf), whose change the scene and the
+ * target's reads tell of.
  */
 export function labelContext(
   view: LabelSources,
+  boardId: string,
   t: LabelContext["t"],
   targets?: TargetLookup,
 ): LabelContext {
   return {
     t,
-    componentName: (id) => view.components.get(id)?.name,
-    variableKey: (id) => view.variables.get(id)?.key,
+    ...referenceNames(view, boardId),
     target: (node) => targetOf(node, view, targets),
     boardName: (id) => view.boards.get(id)?.name,
   };
@@ -70,20 +93,33 @@ export function labelContext(
 /**
  * Reports whether a name that labelContext reads changed from before to
  * after, the project's document before and after a change, of a component,
- * a variable, or a board, rather than anything else of them, as a
- * component's description, whose change would write every card anew for
- * nothing; but the titles of nodes, which the board's jumpers alone show,
- * and which the scene follows for them (Scene.targetsVersion), rather than
- * the title of every node of the project, whose map changes with each
- * change of any of them.
+ * its name or its key, which a value reference of its attribute shows, an
+ * attribute definition's key, a variable, its key, or its scope, board, or
+ * trash, which tell whether it shadows another's name (valueNamer), or a
+ * board, rather than anything else of them, as a component's description,
+ * whose change would write every card anew for nothing; but the titles of
+ * nodes, which the board's jumpers alone show, and which the scene follows
+ * for them (Scene.targetsVersion), rather than the title of every node of
+ * the project, whose map changes with each change of any of them.
  */
 export function namesChanged(
   before: LabelSources,
   after: LabelSources,
 ): boolean {
   return (
-    namesDiffer(before.components, after.components, (c) => c.name) ||
-    namesDiffer(before.variables, after.variables, (v) => v.key) ||
+    namesDiffer(
+      before.components,
+      after.components,
+      (c) => `${c.name}\n${c.key}`,
+    ) ||
+    namesDiffer(before.componentTypes, after.componentTypes, (type) =>
+      type.attributes.map((a) => `${a.id} ${a.key}`).join("\n"),
+    ) ||
+    namesDiffer(
+      before.variables,
+      after.variables,
+      (v) => `${v.key}\n${v.scope}\n${v.board_id ?? ""}\n${v.deleted_at ?? ""}`,
+    ) ||
     namesDiffer(before.boards, after.boards, (b) => b.name)
   );
 }
@@ -299,12 +335,13 @@ export function oneLine(source: string, between = " "): string {
 
 /**
  * Returns the plain text of doc, its paragraphs one to a line, at most
- * excerptLength characters of it: a value's reference as its variable's key
- * in braces, and a mention as its component's name after an @.
+ * excerptLength characters of it: a value's reference as its value's name
+ * in braces, as the server's plain text writes it, without its format, and
+ * a mention as its component's name after an @.
  */
 export function plainText(
   doc: RichTextDoc | undefined,
-  c: Pick<LabelContext, "componentName" | "variableKey">,
+  c: Pick<LabelContext, "componentName" | "valueName">,
 ): string {
   if (doc === undefined) {
     return "";
@@ -342,7 +379,7 @@ export function plainText(
 
 function inline(
   i: RichTextInline,
-  c: Pick<LabelContext, "componentName" | "variableKey">,
+  c: Pick<LabelContext, "componentName" | "valueName">,
 ): string {
   switch (i.type) {
     case "text":
@@ -352,8 +389,6 @@ function inline(
     case "mention":
       return `@${c.componentName(i.attrs.id) ?? "…"}`;
     case "valueRef":
-      return "attribute" in i.attrs
-        ? `{${c.componentName(i.attrs.ref) ?? "…"}.…}`
-        : `{${c.variableKey(i.attrs.ref) ?? "…"}}`;
+      return `{${c.valueName(i.attrs.ref, "attribute" in i.attrs ? i.attrs.attribute : undefined) ?? "…"}}`;
   }
 }

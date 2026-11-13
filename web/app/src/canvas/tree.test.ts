@@ -70,7 +70,7 @@ function board() {
 
 /** Returns what a card shows of a node of doc, as the canvas's page tells its controller. */
 function describeOf(doc: ReturnType<typeof docOf>) {
-  const c = labelContext(doc, t);
+  const c = labelContext(doc, "bd_a", t);
   return (item: NodeItem) => labelsOf(item.node, c);
 }
 
