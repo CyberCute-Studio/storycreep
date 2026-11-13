@@ -140,13 +140,23 @@ export function suggestionTook(event: KeyboardEvent): boolean {
 }
 
 /**
+ * Reports whether an input method took event, a key that went down in a
+ * text, as one that it takes while it composes, as Enter, which ends what
+ * was typed in Japanese, or the Escape that cancels what it composed, which
+ * Safari tells of, once the composition has ended, by its keyCode alone,
+ * 229: the list of a suggestion, and a form that closes on Escape, as the
+ * script view's, leave such a key to the input method.
+ */
+export function inputMethodTook(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
+/**
  * Returns the plugin of suggestions, which hands each key that goes down
  * while one is open to onKey, which reports whether it took it, as an arrow
  * that moves through the list, Enter that chooses, or Escape, which closes
  * it (dismissSuggestion), and keeps each that it took (suggestionTook): a
- * key that an input method takes while it composes, as Enter, which ends
- * what was typed in Japanese, is the input method's, as Safari tells of it
- * by its keyCode alone, 229.
+ * key that an input method took is the input method's (inputMethodTook).
  */
 export function suggester(
   onKey: (event: KeyboardEvent, open: Suggestion, view: EditorView) => boolean,
@@ -179,12 +189,7 @@ export function suggester(
     props: {
       handleKeyDown: (view, event) => {
         const open = suggestionOf(view.state);
-        if (
-          open === undefined ||
-          !view.editable ||
-          event.isComposing ||
-          event.keyCode === 229
-        ) {
+        if (open === undefined || !view.editable || inputMethodTook(event)) {
           return false;
         }
         const took = onKey(event, open, view);

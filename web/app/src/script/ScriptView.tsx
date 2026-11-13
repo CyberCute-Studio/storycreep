@@ -20,7 +20,9 @@
 // canvas shows the view's changes, and the view the canvas's, without a
 // reload. A node's entry is shown anew only once its node, the connections
 // that leave it, or what its names and conditions read of the project
-// changes, so that an edit of one node's text of a board of hundreds
+// changes: its variables, components, component types, or boards, or what
+// went from it, each map of which changes with any of its entities, or a
+// node's title; so that an edit of one node's text of a board of hundreds
 // renders one entry (AC4).
 
 import type {
@@ -77,9 +79,9 @@ import { payloadField } from "../project/dialogs";
 import { loadPart, useCommands } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { suggestionTook } from "../richtext/suggest";
+import { inputMethodTook, suggestionTook } from "../richtext/suggest";
 import { focusIsNowhere, followInPage, showInPage } from "../shell/focus";
-import { Button, buttonClass } from "../ui/Button";
+import { Button, buttonClass, LastingButton } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import { type Held, useOwnKeys } from "../ui/held";
 import { Alert, textLink } from "../ui/Page";
@@ -201,16 +203,18 @@ export function ScriptView({
 
   // The board's nodes and connections, read once, first by the read that
   // the page's loader started, as the canvas reads them, whose failure the
-  // view says, with Try again.
-  const [content, setContent] = useState<"loading" | "ready" | "failed">(
-    "loading",
+  // view says, with Try again; of a board that the document has read, as
+  // the canvas shown before it read it, the view shows them as it opens,
+  // rather than say for a render that it loads them.
+  const [content, setContent] = useState<"loading" | "ready" | "failed">(() =>
+    doc.hasRead(boardPart(boardId)) ? "ready" : "loading",
   );
   const [attempt, setAttempt] = useState(0);
   const [loaderRead] = useState(() => ({ doc, read }));
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt reads the board's content again, as the user asks for it.
   useEffect(() => {
     let ended = false;
-    setContent("loading");
+    setContent(doc.hasRead(boardPart(boardId)) ? "ready" : "loading");
     const first =
       attempt === 0 && loaderRead.doc === doc ? loaderRead.read : undefined;
     (first ?? doc.load(boardPart(boardId))).then(
@@ -350,18 +354,22 @@ export function ScriptView({
 
   // The structural edits, each a batch, of which an element has one under
   // way at a time, whose buttons wait for it, so that a double click adds
-  // one node; each batch's refusal, whatever others are under way, the
-  // view says, in the entry of the node that it was of, until that node's
-  // next addition, and reads out, each in a line of its own, so that two
-  // of the same words are both heard. The editor of what a refused batch
-  // created is then a ghost (placeShown), which keeps what the user typed
-  // in it meanwhile, and closes of nothing typed, as a ghost does; the
-  // focus goes back to the button that asked for it, where nothing has the
-  // focus, or as that editor closes where it had it, rather than be taken
-  // from another editor that the user went to meanwhile. Each is a
-  // mutation of the page's batches (useCommands), which the query client's
-  // cache hears of, as of a session that ended, whose promise settles of
-  // its own batch, as mutate's callbacks would of the latest alone.
+  // one node, saying that they do (LastingButton), rather than be
+  // disabled, which no focus could be given to, as the focus that the form
+  // of what a refused addition created gives back to its button as it
+  // closes, while the element's next addition is under way; each batch's
+  // refusal, whatever others are under way, the view says, in the entry of
+  // the node that it was of, until that node's next addition, and reads
+  // out, each in a line of its own, so that two of the same words are both
+  // heard. The editor of what a refused batch created is then a ghost
+  // (placeShown), which keeps what the user typed in it meanwhile, and
+  // closes of nothing typed, as a ghost does; the focus goes back to the
+  // button that asked for it, where nothing has the focus, or as that
+  // editor closes where it had it, rather than be taken from another editor
+  // that the user went to meanwhile. Each is a mutation of the page's
+  // batches (useCommands), which the query client's cache hears of, as of
+  // a session that ended, whose promise settles of its own batch, as
+  // mutate's callbacks would of the latest alone.
   const structural = useCommands(projectId);
   const [adding, setAdding] = useState<ReadonlyMap<string, NewIds>>(
     () => new Map(),
@@ -1245,24 +1253,24 @@ const Entry = memo(function Entry({
             )}
             {shared.editable && element && (
               <>
-                <Button
+                <LastingButton
                   id={buttonId(node.id, "after")}
                   onKeyDown={onceHeld}
                   aria-label={t("script.add_after_named", { node: title })}
-                  disabled={adding}
+                  unavailable={adding}
                   onClick={() => shared.onAddAfter(node)}
                 >
                   {t("script.add_after")}
-                </Button>
-                <Button
+                </LastingButton>
+                <LastingButton
                   id={buttonId(node.id, "choice")}
                   onKeyDown={onceHeld}
                   aria-label={t("script.add_choice_named", { node: title })}
-                  disabled={adding}
+                  unavailable={adding}
                   onClick={() => shared.onAddChoice(node)}
                 >
                   {t("script.add_choice")}
-                </Button>
+                </LastingButton>
               </>
             )}
             {/* The canvas names no view, which the link says it does not
@@ -1304,9 +1312,8 @@ function sameEntry(a: EntryProps, b: EntryProps): boolean {
  * form's own fields, rather than of a dialog of its rich text, as the
  * link's, which is in a portal, whose keys React brings here too; not one
  * that an input method took, as one that composes, or the Escape that
- * cancels what it composed, which Safari tells of, once the composition
- * has ended, by its keyCode alone, 229; and not one that the list of a {
- * or an @ of its rich text took, which closes the list alone
+ * cancels what it composed (inputMethodTook); and not one that the list of
+ * a { or an @ of its rich text took, which closes the list alone
  * (suggestionTook), as the list that the caret opens, of no change, once
  * it is moved after a { or an @ that the text holds. It does not read
  * whether something else took the key: ProseMirror takes every Escape in
@@ -1315,8 +1322,7 @@ function sameEntry(a: EntryProps, b: EntryProps): boolean {
 function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
   return (
     e.key === "Escape" &&
-    !e.nativeEvent.isComposing &&
-    e.nativeEvent.keyCode !== 229 &&
+    !inputMethodTook(e.nativeEvent) &&
     !suggestionTook(e.nativeEvent) &&
     // The DOM's Node, rather than the API's of the same name, a type alone.
     e.target instanceof globalThis.Node &&
@@ -1384,10 +1390,14 @@ const textBox = "[contenteditable]";
  * focus in the field of focusOn, a selector, as it opens; closing once its
  * save applies; closing, where it can no longer be saved, as unsavable
  * says, of nothing that the user changed, as changed reads it, as the
- * canvas's editor of a text closes; either with the focus back on its
- * button where the form had it, or nothing had (focusHere), rather than
- * taken from where the user is; and it returns what closes it on Escape,
- * of one that holds no change (leavesBy).
+ * canvas's editor of a text closes, as it becomes so, or as a save that
+ * was under way settles, rather than each time that its entry renders
+ * anew, as of a change of the project that the entry's names read
+ * (Shared), which would close, under the user, a form whose typed text
+ * they took back meanwhile; either with the focus back on its button where
+ * the form had it, or nothing had (focusHere), rather than taken from
+ * where the user is; and it returns what closes it on Escape, of one that
+ * holds no change (leavesBy).
  */
 function useEditorLife(
   form: EditorForm,
@@ -1403,6 +1413,13 @@ function useEditorLife(
 ): (e: KeyboardEvent<HTMLFormElement>) => void {
   const within = form.held.form;
   const pending = form.commands.isPending;
+  // What closes the editor, as its entry gave it as the view committed
+  // last, which the effects below read as they run, rather than run anew
+  // for each.
+  const close = useRef(onClose);
+  useLayoutEffect(() => {
+    close.current = onClose;
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: the focus is given as the editor opens alone.
   useEffect(() => {
     within.current?.querySelector<HTMLElement>(focusOn)?.focus();
@@ -1411,15 +1428,15 @@ function useEditorLife(
   // biome-ignore lint/correctness/useExhaustiveDependencies: within is the form's ref, which is read where the focus is as the save applies.
   useEffect(() => {
     if (saved) {
-      onClose(focusHere(within.current));
+      close.current(focusHere(within.current));
     }
-  }, [saved, onClose]);
+  }, [saved]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: changed reads what the editor holds as it can no longer be saved, or the save that was under way settles.
   useEffect(() => {
     if (unsavable !== undefined && !pending && !changed()) {
-      onClose(focusHere(within.current));
+      close.current(focusHere(within.current));
     }
-  }, [unsavable, pending, onClose]);
+  }, [unsavable, pending]);
   return (e) => {
     if (leavesBy(e) && !pending && !changed()) {
       e.preventDefault();

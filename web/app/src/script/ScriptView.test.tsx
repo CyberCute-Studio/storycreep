@@ -255,7 +255,8 @@ function applied(
  * reads of its nodes failing, and applies each batch that the page sends
  * to them, but for those that refuse says to refuse, by their index among
  * those sent, with what refusal makes, each once gate, if it is given, lets
- * it.
+ * it: one gate for them all, or, of a function, the one that it gives of
+ * each one's index.
  */
 function boardPage(
   board: { nodes: Node[]; connections: Connection[] },
@@ -269,7 +270,7 @@ function boardPage(
     role?: string;
     refuse?: number | readonly number[];
     refusal?: () => Error;
-    gate?: Promise<void>;
+    gate?: Promise<void> | ((index: number) => Promise<void>);
     failReads?: number;
   } = {},
 ) {
@@ -333,7 +334,8 @@ function boardPage(
         return { items: [], next_cursor: null };
       case "applyCommands": {
         const index = sent++;
-        return (gate ?? Promise.resolve()).then(() => {
+        const wait = typeof gate === "function" ? gate(index) : gate;
+        return (wait ?? Promise.resolve()).then(() => {
           if (refusing.has(index)) {
             throw refusal();
           }
@@ -1063,6 +1065,54 @@ describe("the script view", () => {
     );
   });
 
+  it("keeps open the editor of a node that another session deleted, whose typed title the user took back, as another change of the project shows its entry anew", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard());
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${testProject.id}/boards/bd_a?view=script`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { name: "Quay" });
+    await user.click(
+      within(entryOf("Cellar")).getByRole("button", { name: "Edit Cellar" }),
+    );
+    const form = await screen.findByRole("form", { name: "Edit Cellar" });
+    const title = within(form).getByRole("textbox", { name: "Title" });
+    await user.type(title, " door");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.delete", payload: { id: "nd_cellar" } }],
+        [{ id: "nd_cellar", rev: 2 }],
+      ),
+    );
+    expect(
+      await within(form).findByText(/^This is not on the board/),
+    ).toBeDefined();
+    // The user takes back what they typed, and reads on in the form, while
+    // another session renames the speaker, whom the entries' names read.
+    await user.type(title, "{Backspace}".repeat(" door".length));
+    expect(title).toHaveProperty("value", "Cellar");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [
+          {
+            type: "component.rename",
+            payload: { id: elaraId, name: "Elara Vane" },
+          },
+        ],
+        [{ id: elaraId, rev: 2 }],
+      ),
+    );
+    expect(
+      await within(entryOf("Quay")).findByText("Dialogue · Elara Vane"),
+    ).toBeDefined();
+    expect(screen.getByRole("form", { name: "Edit Cellar" })).toBe(form);
+    expect(document.activeElement).toBe(title);
+  });
+
   it("adds one node at a time after an element, and says each refused addition, whatever else is under way", async () => {
     const user = userEvent.setup();
     let release = () => {};
@@ -1075,13 +1125,13 @@ describe("the script view", () => {
       name: "Add node after Market",
     });
     await user.dblClick(after);
-    // The element's additions wait for the batch under way.
-    expect(after).toHaveProperty("disabled", true);
+    // The element's additions wait for the batch under way, saying so.
+    expect(after.getAttribute("aria-disabled")).toBe("true");
     expect(
-      within(entryOf("Market")).getByRole("button", {
-        name: "Add choice to Market",
-      }),
-    ).toHaveProperty("disabled", true);
+      within(entryOf("Market"))
+        .getByRole("button", { name: "Add choice to Market" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
     await user.click(
       within(entryOf("Quay")).getByRole("button", {
         name: "Add choice to Quay",
@@ -1100,7 +1150,7 @@ describe("the script view", () => {
       expect(screen.queryByRole("form", { name: "Edit Untitled" })).toBeNull(),
     );
     expect(screen.queryByText(/^This is not on the board/)).toBeNull();
-    expect(after).toHaveProperty("disabled", false);
+    expect(after.getAttribute("aria-disabled")).toBeNull();
     // The second applied, of the other element: its choice's label is open,
     // and keeps the focus that the user took there, rather than give it to
     // the button of the refused addition.
@@ -1311,6 +1361,38 @@ describe("the script view", () => {
     expect(failed()).toBeNull();
   });
 
+  it("shows the nodes of a board that the canvas read as it opens, without saying for a render that it loads them", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard());
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    await screen.findByRole("treeitem", { name: /Quay/ });
+    // Whatever the page adds, as it shows the view, as each addition was
+    // as it was added.
+    const added: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const n of record.addedNodes) {
+          added.push(n.textContent ?? "");
+        }
+      }
+    });
+    observer.observe(document.body, { subtree: true, childList: true });
+    try {
+      await user.click(screen.getByRole("link", { name: "Script" }));
+      expect(
+        await screen.findByRole("heading", { name: "Quay" }),
+      ).toBeDefined();
+    } finally {
+      observer.disconnect();
+    }
+    expect(added.some((text) => text.includes("Script"))).toBe(true);
+    expect(added.some((text) => text.includes("Loading the board"))).toBe(
+      false,
+    );
+  });
+
   // Verifies: FR-TEXT-04/AC3
   it("marks the view shown, and it alone, as the page's current one", async () => {
     const user = userEvent.setup();
@@ -1456,6 +1538,57 @@ describe("the script view", () => {
       within(entryOf("Market")).getByRole("button", {
         name: "Add node after Market",
       }),
+    );
+    expect(batches(calls)).toHaveLength(2);
+  });
+
+  // Verifies: FR-TEXT-04/AC3
+  it("gives the focus back to the button of a refused addition as the editor of what it created is cancelled, while the element's next addition is under way", async () => {
+    const user = userEvent.setup();
+    let refuse = () => {};
+    const first = new Promise<void>((resolve) => {
+      refuse = resolve;
+    });
+    let release = () => {};
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = boardPage(harbourBoard(), {
+      refuse: 0,
+      gate: (index) => (index === 0 ? first : next),
+    });
+    await openScript();
+    const addAfter = () =>
+      within(entryOf("Market")).getByRole("button", {
+        name: "Add node after Market",
+      });
+    await user.click(addAfter());
+    const node = await screen.findByRole("form", { name: "Edit Untitled" });
+    const text = within(node).getByRole("textbox", {
+      name: "Text of Untitled",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(text));
+    typeInto(text, "The gulls cry.");
+    await act(async () => refuse());
+    expect(
+      await within(node).findByText(/^This is not on the board/),
+    ).toBeDefined();
+    // The element's next addition, under way, which its buttons wait for.
+    await user.click(
+      within(entryOf("Market")).getByRole("button", {
+        name: "Add choice to Market",
+      }),
+    );
+    await screen.findByRole("form", { name: "Edit label: Choice to Untitled" });
+    expect(addAfter().getAttribute("aria-disabled")).toBe("true");
+    await user.click(within(node).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("form", { name: "Edit Untitled" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(addAfter());
+    await act(async () => release());
+    await waitFor(() =>
+      expect(addAfter().getAttribute("aria-disabled")).toBeNull(),
     );
     expect(batches(calls)).toHaveLength(2);
   });
