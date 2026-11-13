@@ -717,7 +717,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone J — Writing surfaces
 
 ### 66. Value references and component mentions in text
-**Status:** todo · **Depends on:** 46, 61
+**Status:** done ([#79](https://github.com/CyberCute-Studio/storycreep/pull/79)) · **Depends on:** 46, 61
 **PRD:** FR-TEXT-02, FR-TEXT-03
 - `{` autocomplete inserts value-reference chips with format specifiers: typed at the start of a word, in a node's text, a connection's label, or a component's description, it offers the values that an expression of the text's board reads, its variables, the global ones, and the components' runtime attributes, narrowed as the palette narrows its commands, in a list below the text whose arrows, Enter, and Escape the text keeps, and which a tap chooses from, and `{gold:2` inserts the reference with 2 digits after the point, which its chip shows as `{gold:2}`, and which the toolbar's Number format sets on the reference selected (`richtext/suggest.ts`, `richtext/choices.ts`, `richtext/Suggestions.tsx`, N73).
 - `@` inserts component mentions, alike, of every component (N73).
