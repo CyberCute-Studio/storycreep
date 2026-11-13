@@ -2,17 +2,19 @@
 // N75): each node's at its place in the order of order.ts, and its choices
 // in the order of its ports; but the entry of a node whose form is open, or
 // whose choice's is, in the part of the view where it showed it last, and
-// such a choice in the entry where it showed it, whatever moved them
-// meanwhile, as another session's deletion of the connections that reach
-// the node, which moves it to the other part, or a node added after its
-// own, which reconnects the choice to the new node. React keeps a form,
-// and what the user typed in it, only while its entry stays in its own
-// list, and its choice in its node's: one moved to another list would be a
-// new form, of what the board has. A node or a choice that the board no
-// longer has, as once another session deleted it, is shown, as a ghost,
-// where the view showed it last, but for one that an addition under way
-// created, which goes without a ghost once its batch is refused, as the
-// page shows the board without it before it says so.
+// such a choice in the entry, and under the branch's output, where it
+// showed it, whatever moved them meanwhile, as another session's deletion
+// of the connections that reach the node, which moves it to the other
+// part, a node added after its own, which reconnects the choice to the new
+// node, or another session's reconnection of it to another output. React
+// keeps a form, and what the user typed in it, only while its entry stays
+// in its own list, and its choice in its node's, or its output's: one
+// moved to another list would be a new form, of what the board has. A
+// node or a choice that the board no longer has, as once another session
+// deleted it, is shown, as a ghost, where the view showed it last, but for
+// one that an addition under way created, which goes without a ghost once
+// its batch is refused, as the page shows the board without it before it
+// says so.
 
 import type { Connection, Node } from "@storycreep/shared/api";
 import type { ScriptOrder } from "./order";
@@ -34,7 +36,7 @@ export interface ShownNode {
   place: Place;
 }
 
-/** A choice as the view showed it: the connection, the node whose entry it was in, and its place among the node's. */
+/** A choice as the view showed it: the connection, of the port that it was listed under, the node whose entry it was in, and its place among the node's. */
 export interface ShownChoice {
   connection: Connection;
   nodeId: string;
@@ -139,7 +141,10 @@ export function placeShown(
       // A choice that the view has not shown yet is where the board has it.
       continue;
     }
-    if (now?.from_node_id === was.nodeId) {
+    if (
+      now?.from_node_id === was.nodeId &&
+      now.from_port === was.connection.from_port
+    ) {
       keep(was.nodeId);
       continue;
     }
@@ -149,7 +154,10 @@ export function placeShown(
     if (now === undefined) {
       ghosts.add(id);
     }
-    keptChoices.set(id, { ...was, connection: now ?? was.connection });
+    keptChoices.set(id, {
+      ...was,
+      connection: now === undefined ? was.connection : atPort(now, was),
+    });
   }
 
   // The parts, without the entries kept elsewhere, which then go back in,
@@ -230,6 +238,17 @@ export function placeShown(
     ghosts,
     shown: { nodes, choices },
   };
+}
+
+/**
+ * Returns now, the connection of a choice that the view showed as was, as
+ * it shows it still: of the port that it showed it under, as a branch's
+ * output, which its entry lists it under, though it leaves another now, so
+ * that it stays in its output's list, rather than go to another's.
+ */
+function atPort(now: Connection, was: ShownChoice): Connection {
+  const port = was.connection.from_port;
+  return now.from_port === port ? now : { ...now, from_port: port };
 }
 
 /** Returns items in the order of their places, of place. */

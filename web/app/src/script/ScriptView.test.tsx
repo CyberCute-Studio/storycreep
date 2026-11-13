@@ -251,23 +251,31 @@ function applied(
 }
 
 /**
- * Answers the board's page, of nodes and connections, and applies each
- * batch that the page sends to them, but for those that refuse says to
- * refuse, by their index among those sent, each once gate, if it is given,
- * lets it.
+ * Answers the board's page, of nodes and connections, the first failReads
+ * reads of its nodes failing, and applies each batch that the page sends
+ * to them, but for those that refuse says to refuse, by their index among
+ * those sent, each once gate, if it is given, lets it.
  */
 function boardPage(
   board: { nodes: Node[]; connections: Connection[] },
   {
     role = "owner",
-    refuse,
+    refuse = [],
     gate,
-  }: { role?: string; refuse?: number; gate?: Promise<void> } = {},
+    failReads = 0,
+  }: {
+    role?: string;
+    refuse?: number | readonly number[];
+    gate?: Promise<void>;
+    failReads?: number;
+  } = {},
 ) {
   const nodes = [...board.nodes];
   const connections = [...board.connections];
+  const refusing = new Set(typeof refuse === "number" ? [refuse] : refuse);
   let seq = testProject.seq;
   let sent = 0;
+  let reads = 0;
   const revs = new Map<string, number>([
     ...nodes.map((n) => [n.id, n.rev] as const),
     ...connections.map((c) => [c.id, c.rev] as const),
@@ -310,6 +318,9 @@ function boardPage(
       case "listBoards":
         return { items: [harbour], next_cursor: null };
       case "listBoardNodes":
+        if (reads++ < failReads) {
+          throw refused(500, { code: "internal" });
+        }
         return { items: [...nodes], next_cursor: null };
       case "listBoardConnections":
         return { items: [...connections], next_cursor: null };
@@ -320,7 +331,7 @@ function boardPage(
       case "applyCommands": {
         const index = sent++;
         return (gate ?? Promise.resolve()).then(() => {
-          if (index === refuse) {
+          if (refusing.has(index)) {
             throw refused(422, { code: "validation_failed" });
           }
           return answerBatch(input);
@@ -872,18 +883,138 @@ describe("the script view", () => {
     );
     expect(screen.queryByRole("form", { name: "Edit Untitled" })).toBeNull();
     expect(screen.queryByText(/^This is no longer on the board/)).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(after));
     expect(after).toHaveProperty("disabled", false);
-    // The second applied, of the other element: its choice's label is open.
-    expect(
-      within(entryOf("Quay")).getByRole("form", {
-        name: "Edit the choice's label",
-      }),
-    ).toBeDefined();
+    // The second applied, of the other element: its choice's label is open,
+    // and keeps the focus that the user took there, rather than give it to
+    // the button of the refused addition.
+    const label = within(entryOf("Quay")).getByRole("form", {
+      name: "Edit the choice's label",
+    });
+    expect(document.activeElement).toBe(
+      within(label).getByRole("textbox", { name: "Label" }),
+    );
     expect(batches(calls).map((b) => b.map((c) => c.type))).toEqual([
       ["node.create", "connection.reconnect", "connection.create"],
       ["node.create", "connection.create"],
     ]);
+  });
+
+  it("says each element's refused addition in its own entry, until that element's next addition", async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    boardPage(harbourBoard(), { refuse: [0, 1], gate });
+    await openScript();
+    const add = (title: string, what: "Add node after" | "Add choice to") =>
+      user.click(
+        within(entryOf(title)).getByRole("button", {
+          name: `${what} ${title}`,
+        }),
+      );
+    await add("Market", "Add node after");
+    await add("Quay", "Add choice to");
+    await act(async () => release());
+    const says = (title: string) =>
+      within(entryOf(title)).queryByText("validation_failed") !== null;
+    await waitFor(() => expect(says("Quay")).toBe(true));
+    expect(says("Market")).toBe(true);
+    // Another element's addition leaves both; the element's own its own.
+    await add("Pier", "Add choice to");
+    expect(says("Market")).toBe(true);
+    expect(says("Quay")).toBe(true);
+    await add("Market", "Add choice to");
+    expect(says("Market")).toBe(false);
+    expect(says("Quay")).toBe(true);
+  });
+
+  it("leaves the focus where the user went as an editor closes once its save applies", async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = boardPage(harbourBoard(), { gate });
+    await openScript();
+    await user.click(
+      within(entryOf("Market")).getByRole("button", { name: "Edit Market" }),
+    );
+    const market = await screen.findByRole("form", { name: "Edit Market" });
+    await user.type(
+      within(market).getByRole("textbox", { name: "Title" }),
+      " square{Enter}",
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // While the save is under way, the user goes on to another node.
+    await user.click(
+      within(entryOf("Pier")).getByRole("button", { name: "Edit Pier" }),
+    );
+    const pier = await screen.findByRole("form", { name: "Edit Pier" });
+    const title = within(pier).getByRole("textbox", { name: "Title" });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    await act(async () => release());
+    await waitFor(() =>
+      expect(within(entryOf("Market square")).queryByRole("form")).toBeNull(),
+    );
+    expect(document.activeElement).toBe(title);
+  });
+
+  it("takes the repeats of a key held as an editor opens for nothing typed, until the key goes up", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage(harbourBoard());
+    await openScript();
+    within(entryOf("Pier")).getByRole("button", { name: "Edit Pier" }).focus();
+    // Enter held on Edit: the editor opens, and the key's repeat, in its
+    // title, saves nothing, nor closes it.
+    await user.keyboard("{Enter>2/}");
+    const form = screen.getByRole("form", { name: "Edit Pier" });
+    const title = within(form).getByRole("textbox", { name: "Title" });
+    expect(document.activeElement).toBe(title);
+    // A key held in the editor repeats as the user types.
+    await user.keyboard("{s>3/}");
+    expect((title as HTMLInputElement).value).toContain("sss");
+    expect(batches(calls)).toEqual([]);
+  });
+
+  it("says that a jumper's target was deleted, of a board that the page has read, rather than link it", async () => {
+    const board = harbourBoard();
+    board.nodes.push(
+      testNode("nd_jump", 0, 0, {
+        type: "jumper",
+        kind: undefined,
+        title: "Back to the dock",
+        target: { board_id: "bd_a", node_id: "nd_gone" },
+        created_at: "2026-11-01T10:05:00Z",
+      }),
+    );
+    boardPage(board);
+    await openScript();
+    const jumper = entryOf("Back to the dock");
+    expect(within(jumper).getByText("Target deleted")).toBeDefined();
+    expect(within(jumper).queryByText(/^Continues at/)).toBeNull();
+  });
+
+  it("shows the board's nodes that the canvas read again, after the loader's read failed, rather than say again that they could not be loaded", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard(), { failReads: 1 });
+    renderApp(`/projects/${testProject.id}/boards/bd_a`, {
+      session: testSession,
+    });
+    const failed = () =>
+      screen.queryByText("The board's nodes could not be loaded.", {
+        exact: false,
+      });
+    await waitFor(() => expect(failed()).not.toBeNull());
+    await user.click(
+      within(failed() as HTMLElement).getByRole("button", {
+        name: "Try again",
+      }),
+    );
+    await waitFor(() => expect(failed()).toBeNull());
+    await user.click(screen.getByRole("link", { name: "Script" }));
+    expect(await screen.findByRole("heading", { name: "Quay" })).toBeDefined();
+    expect(failed()).toBeNull();
   });
 
   // Verifies: FR-TEXT-04/AC3
@@ -907,6 +1038,12 @@ describe("the script view", () => {
     expect(
       within(entryOf("Market"))
         .getByRole("link", { name: "Show on canvas: Market" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+    // Nor a link to the node's entry, which is no page of its own.
+    expect(
+      within(entryOf("Quay"))
+        .getByRole("link", { name: "Market" })
         .getAttribute("aria-current"),
     ).toBeNull();
     await user.click(canvas);

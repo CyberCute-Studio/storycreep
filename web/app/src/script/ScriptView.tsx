@@ -32,9 +32,10 @@ import type {
 import { type Node as Ast, decode } from "@storycreep/shared/expr/compile";
 import { newId } from "@storycreep/shared/ids";
 import { useMutation } from "@tanstack/react-query";
-import { Link as RouterLink } from "@tanstack/react-router";
+import { createLink, Link as RouterLink } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import {
+  type ComponentPropsWithRef,
   type KeyboardEvent,
   memo,
   type ReactNode,
@@ -55,7 +56,11 @@ import {
   referenceNames,
   titleOf,
 } from "../canvas/labels";
-import { type JumperTarget, targetOf } from "../canvas/targets";
+import {
+  type JumperTarget,
+  type TargetLookup,
+  targetOf,
+} from "../canvas/targets";
 import { ConflictNotice, useEntityForm } from "../content/form";
 import { useTextChoices, useTextNames } from "../content/useTextNames";
 import { boardPart, type Part as DocPart } from "../document/doc";
@@ -70,7 +75,7 @@ import { payloadField } from "../project/dialogs";
 import { type Command, loadPart } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { followInPage, showInPage } from "../shell/focus";
+import { focusIsNowhere, followInPage, showInPage } from "../shell/focus";
 import { Button, buttonClass } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
 import type { Held } from "../ui/held";
@@ -117,6 +122,13 @@ interface Shared {
   names: TextNames;
   /** What conditions name, and jumpers target, with the board's nodes' titles. */
   scope: ScopeSources;
+  /**
+   * What tells of a jumper's target that the document does not hold: that
+   * it was deleted, where the document has read the target's board, or
+   * holds no such board, as the canvas's card tells it, but without the
+   * reads of targets by themselves that the canvas makes.
+   */
+  targets: TargetLookup;
   /** Opens the editor of what editing names, beside those open already. */
   onEdit: (editing: Editing) => void;
   /**
@@ -249,14 +261,27 @@ export function ScriptView({
   const gone = useDocumentState(doc, (s) => s.view.gone);
   const titled = useTitled(nodes);
 
-  const boardNodes = useMemo(
+  // The board's nodes and connections, each the same array as the view
+  // committed last for as long as it holds the same objects, so that a
+  // change elsewhere in the project, as of another board's nodes, orders
+  // nothing anew.
+  const nodesNow = useMemo(
     () =>
       [...nodes.values()].filter(
         (n) => n.board_id === boardId && n.deleted_at === undefined,
       ),
     [nodes, boardId],
   );
-  const leavingOf = useLeaving(connections, boardNodes, boardId);
+  const boardNodes = useSame(nodesNow);
+  const connectionsNow = useMemo(
+    () =>
+      [...connections.values()].filter(
+        (c) => c.board_id === boardId && c.deleted_at === undefined,
+      ),
+    [connections, boardId],
+  );
+  const boardConnections = useSame(connectionsNow);
+  const leavingOf = useLeaving(boardConnections, boardNodes);
   const order = useMemo(
     () => scriptOrder(boardNodes, leavingOf, board.entry_node_id),
     [boardNodes, leavingOf, board.entry_node_id],
@@ -279,7 +304,12 @@ export function ScriptView({
       }),
     [],
   );
-  const [focusTo, setFocusTo] = useState<{ id: string; entry?: string }>();
+  const [focusTo, setFocusTo] = useState<{
+    id: string;
+    entry?: string;
+    /** Whether the focus goes there only where nothing has it (focusIsNowhere), as once the form that had it closed, rather than taken from where the user went meanwhile. */
+    unlessFocused?: boolean;
+  }>();
   useLayoutEffect(() => {
     if (focusTo === undefined) {
       return;
@@ -287,13 +317,15 @@ export function ScriptView({
     // The element named, or, where the view does not show it, as the
     // button of an entry that went, or that a viewer is not offered, the
     // entry, or else the view's heading, rather than nowhere.
-    (
-      document.getElementById(focusTo.id) ??
-      (focusTo.entry === undefined
-        ? null
-        : document.getElementById(entryId(focusTo.entry))) ??
-      document.getElementById("script-heading")
-    )?.focus();
+    if (!focusTo.unlessFocused || focusIsNowhere(document)) {
+      (
+        document.getElementById(focusTo.id) ??
+        (focusTo.entry === undefined
+          ? null
+          : document.getElementById(entryId(focusTo.entry))) ??
+        document.getElementById("script-heading")
+      )?.focus();
+    }
     setFocusTo(undefined);
   }, [focusTo]);
 
@@ -315,19 +347,26 @@ export function ScriptView({
   // The structural edits, each a batch, of which an element has one under
   // way at a time, whose buttons wait for it, so that a double click adds
   // one node; each batch's refusal, whatever others are under way, the
-  // view says, in the entry of the node that it was of, and closes the
-  // editor of what the batch created, with the focus back on the button
-  // that asked for it. Each is a mutation of the page's, which the query
-  // client's cache hears of, as of a session that ended, whose promise
-  // settles of its own batch, as mutate's callbacks would of the latest
-  // alone.
+  // view says, in the entry of the node that it was of, until that node's
+  // next addition, and reads out, and closes the editor of what the batch
+  // created, with the focus back on the button that asked for it, where
+  // nothing has the focus once that editor has closed, rather than take it
+  // from another editor that the user went to meanwhile. Each is a
+  // mutation of the page's, which the query client's cache hears of, as of
+  // a session that ended, whose promise settles of its own batch, as
+  // mutate's callbacks would of the latest alone.
   const structural = useMutation({
     mutationFn: (batch: Command[]) => doc.send(batch),
   });
   const [adding, setAdding] = useState<ReadonlyMap<string, NewIds>>(
     () => new Map(),
   );
-  const [refused, setRefused] = useState<{ nodeId: string; error: unknown }>();
+  // What each node's last addition was refused with, by the node's ID, and
+  // the refusal that the view read out last.
+  const [refused, setRefused] = useState<ReadonlyMap<string, unknown>>(
+    () => new Map(),
+  );
+  const [readOut, setReadOut] = useState<unknown>();
   // What the view committed last, which its callbacks read.
   const latest = useRef({ boardNodes, leavingOf, adding, structural });
   useLayoutEffect(() => {
@@ -359,7 +398,15 @@ export function ScriptView({
           next.delete(node.id);
           return next;
         });
-      setRefused(undefined);
+      setRefused((was) => {
+        if (!was.has(node.id)) {
+          return was;
+        }
+        const next = new Map(was);
+        next.delete(node.id);
+        return next;
+      });
+      setReadOut(undefined);
       setAdding((was) => new Map(was).set(node.id, ids));
       opened((o) => {
         if (what === "after") {
@@ -374,8 +421,9 @@ export function ScriptView({
           o.delete(ids.node);
           o.delete(ids.connection);
         });
-        setRefused({ nodeId: node.id, error });
-        setFocusTo({ id: buttonId(node.id, what) });
+        setRefused((was) => new Map(was).set(node.id, error));
+        setReadOut(error);
+        setFocusTo({ id: buttonId(node.id, what), unlessFocused: true });
       });
     },
     [opened],
@@ -401,6 +449,14 @@ export function ScriptView({
     [opened],
   );
 
+  const targets = useMemo<TargetLookup>(
+    () => ({
+      boardRead: (id) => doc.hasRead(boardPart(id)),
+      treeRead: () => doc.hasRead("tree"),
+      read: () => undefined,
+    }),
+    [doc],
+  );
   const shared = useMemo<Shared>(
     () => ({
       t,
@@ -417,6 +473,7 @@ export function ScriptView({
         nodes: titled,
         gone,
       },
+      targets,
       onEdit,
       onClose,
       onAddAfter,
@@ -434,6 +491,7 @@ export function ScriptView({
       boards,
       titled,
       gone,
+      targets,
       onEdit,
       onClose,
       onAddAfter,
@@ -475,7 +533,6 @@ export function ScriptView({
   });
   const { sections, ghosts } = placed;
 
-  const refusal = refusalOf(refused?.error, t);
   const entries = (list: readonly Node[]) =>
     list.map((node) => {
       const leaving = placed.leaving.get(node.id) ?? none;
@@ -487,7 +544,7 @@ export function ScriptView({
           editing={editingIn(open, node.id, leaving)}
           gone={goneIn(ghosts, node.id, leaving)}
           adding={adding.has(node.id)}
-          refused={refused?.nodeId === node.id ? refusal?.message : undefined}
+          refused={refusalOf(refused.get(node.id), t)?.message}
           shared={shared}
         />
       );
@@ -517,7 +574,7 @@ export function ScriptView({
       )}
       {/* A refused addition is read out here, and shown in its node's
       entry, where the focus goes back to. */}
-      <Alert message={refusal?.message} className="sr-only" />
+      <Alert message={refusalOf(readOut, t)?.message} className="sr-only" />
       {content === "failed" ? (
         <p role="alert" className="flex flex-wrap items-center gap-2">
           {t("script.load_failed")}
@@ -563,25 +620,40 @@ export function ScriptView({
 const none: readonly Connection[] = [];
 
 /**
- * Returns the connections of the board of boardId that leave each of its
- * nodes, by the node's ID, in the order that the flow offers them
- * (leavingByNode), each list the same array as the view committed last for
- * as long as its connections are the same objects, so that the entry of a
- * node whose connections did not change is not shown anew.
+ * Returns list, or the list that the view committed last, where that holds
+ * the same objects in the same order, so that what is computed of it is
+ * not computed anew.
+ */
+function useSame<T>(list: readonly T[]): readonly T[] {
+  const kept = useRef(list);
+  const was = kept.current;
+  const same =
+    was !== list &&
+    was.length === list.length &&
+    was.every((item, i) => item === list[i])
+      ? was
+      : list;
+  useLayoutEffect(() => {
+    kept.current = same;
+  }, [same]);
+  return same;
+}
+
+/**
+ * Returns the connections of the board, connections, that leave each of
+ * its nodes, boardNodes, by the node's ID, in the order that the flow
+ * offers them (leavingByNode), each list the same array as the view
+ * committed last for as long as its connections are the same objects, so
+ * that the entry of a node whose connections did not change is not shown
+ * anew.
  */
 function useLeaving(
-  connections: ReadonlyMap<string, Connection>,
+  connections: readonly Connection[],
   boardNodes: readonly Node[],
-  boardId: string,
 ): ReadonlyMap<string, readonly Connection[]> {
   const kept = useRef<ReadonlyMap<string, readonly Connection[]>>(new Map());
   const leaving = useMemo(() => {
-    const ordered = leavingByNode(
-      boardNodes,
-      [...connections.values()].filter(
-        (c) => c.board_id === boardId && c.deleted_at === undefined,
-      ),
-    );
+    const ordered = leavingByNode(boardNodes, connections);
     const out = new Map<string, readonly Connection[]>();
     for (const [id, list] of ordered) {
       const was = kept.current.get(id);
@@ -595,7 +667,7 @@ function useLeaving(
       );
     }
     return out;
-  }, [connections, boardNodes, boardId]);
+  }, [connections, boardNodes]);
   useLayoutEffect(() => {
     kept.current = leaving;
   }, [leaving]);
@@ -710,6 +782,19 @@ function Condition({
   );
 }
 
+/**
+ * A link of the router's that it never marks current (aria-current), as a
+ * link to an entry is no page of its own, though the address names the
+ * entry's node, as a link that opened the view at it did.
+ */
+const EntryLink = createLink(function EntryLink({
+  "aria-current": _current,
+  "data-status": _status,
+  ...props
+}: ComponentPropsWithRef<"a"> & { "data-status"?: string }) {
+  return <a {...props} />;
+});
+
 /** A link to the entry of the node of nodeId, of this board, which gives it the focus, or to the script view of its own board. */
 function NodeLink({
   nodeId,
@@ -723,7 +808,7 @@ function NodeLink({
   shared: Shared;
 }) {
   return (
-    <RouterLink
+    <EntryLink
       to="/projects/$projectId/boards/$boardId"
       params={{ projectId: shared.projectId, boardId }}
       search={{ view: "script", node: nodeId }}
@@ -735,7 +820,7 @@ function NodeLink({
       }}
     >
       {label}
-    </RouterLink>
+    </EntryLink>
   );
 }
 
@@ -1039,7 +1124,7 @@ const Entry = memo(function Entry({
             {node.type === "jumper" && (
               <p>
                 <JumpTarget
-                  target={targetOf(node, shared.scope)}
+                  target={targetOf(node, shared.scope, shared.targets)}
                   shared={shared}
                 />
               </p>
@@ -1198,13 +1283,29 @@ interface EditorProps {
 }
 
 /**
+ * Reports whether form, an editor's, has the focus, or nothing has
+ * (focusIsNowhere), as once the Save that had it waits, disabled, for the
+ * save under way, so that the editor that closes gives it to its button,
+ * rather than take it from where the user went meanwhile, as another
+ * editor.
+ */
+function focusHere(form: HTMLFormElement | null): boolean {
+  return (
+    form !== null &&
+    (form.contains(form.ownerDocument.activeElement) ||
+      focusIsNowhere(form.ownerDocument))
+  );
+}
+
+/**
  * The life of an editor of the view, a node's or a choice's, of form, the
  * focus in the field of focusOn, a selector, as it opens; closing once its
  * save applies; closing, where it can no longer be saved, as unsavable
  * says, of nothing that the user changed, as changed reads it, as the
- * canvas's editor of a text closes, with the focus back on its button where
- * the form had it, rather than taken from where the user is; and it returns
- * what closes it on Escape, of one that holds no change (leavesBy).
+ * canvas's editor of a text closes; either with the focus back on its
+ * button where the form had it, or nothing had (focusHere), rather than
+ * taken from where the user is; and it returns what closes it on Escape,
+ * of one that holds no change (leavesBy).
  */
 function useEditorLife(
   form: EditorForm,
@@ -1225,16 +1326,16 @@ function useEditorLife(
     within.current?.querySelector<HTMLElement>(focusOn)?.focus();
   }, []);
   const saved = form.commands.isSuccess;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: within is the form's ref, which is read where the focus is as the save applies.
   useEffect(() => {
     if (saved) {
-      onClose(true);
+      onClose(focusHere(within.current));
     }
   }, [saved, onClose]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: changed reads what the editor holds as it can no longer be saved, or the save that was under way settles.
   useEffect(() => {
     if (unsavable !== undefined && !pending && !changed()) {
-      const f = within.current;
-      onClose(f?.contains(f.ownerDocument.activeElement) ?? false);
+      onClose(focusHere(within.current));
     }
   }, [unsavable, pending, onClose]);
   return (e) => {
@@ -1277,6 +1378,14 @@ function EditorFrame({
   const { t } = useTranslation();
   const { held } = form;
   const pending = form.commands.isPending;
+  // The keys that went down in the form, by their places, whose repeats,
+  // as the user holds one, are the user's typing. A key held as the form
+  // opened, as the Enter on the button that opened it, goes on repeating
+  // into the field that the form gave the focus, where its repeats do
+  // nothing until it goes up, as in the canvas's editor of a text, rather
+  // than submit the form, or add a paragraph for each, which the user
+  // never typed.
+  const pressed = useRef(new Set<string>());
   return (
     <form
       key={held.key}
@@ -1286,6 +1395,17 @@ function EditorFrame({
         if (!pending && unsavable === undefined) {
           submit();
         }
+      }}
+      onKeyDownCapture={(e) => {
+        if (!e.repeat) {
+          pressed.current.add(e.code);
+        } else if (!pressed.current.has(e.code)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      onKeyUpCapture={(e) => {
+        pressed.current.delete(e.code);
       }}
       onKeyDown={onKeyDown}
       noValidate

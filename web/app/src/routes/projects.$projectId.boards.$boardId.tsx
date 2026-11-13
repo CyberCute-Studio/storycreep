@@ -35,7 +35,7 @@ import {
 import { ScriptView } from "../script/ScriptView";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
-import { Button, buttonClass } from "../ui/Button";
+import { Button, buttonClass, currentClass } from "../ui/Button";
 import {
   SelectField,
   TextAreaField,
@@ -268,6 +268,14 @@ function BoardContent({
     [search.renderer, search.bench, search.seconds, search.area, search.warm],
   );
   const script = search.view === "script";
+  // The loader's read, which the view that mounts takes as its first, as
+  // the canvas and the script view do, but once the document holds the
+  // board's content of a read since, as Try again's in one view after the
+  // loader's read failed, the view shown in place of it reads what the
+  // document holds, rather than say again what the loader's read failed
+  // with; while it holds that of the loader's own, a view's read is that.
+  const doc = useProjectDocument(projectId);
+  const firstRead = doc.holds(boardPart(board.id)) ? undefined : read;
   const navigate = useNavigate();
   // The views are commands of the palette too (FR-EDIT-10), each of which
   // can run while the page shows the other.
@@ -300,7 +308,6 @@ function BoardContent({
             params={{ projectId, boardId: board.id }}
             search={{ view: undefined }}
             activeOptions={{ explicitUndefined: true }}
-            aria-current={script ? undefined : "page"}
             className={`${buttonClass()} ${currentClass}`}
           >
             {t("board.view_canvas")}
@@ -309,7 +316,6 @@ function BoardContent({
             to="/projects/$projectId/boards/$boardId"
             params={{ projectId, boardId: board.id }}
             search={{ view: "script" }}
-            aria-current={script ? "page" : undefined}
             className={`${buttonClass()} ${currentClass}`}
           >
             {t("board.view_script")}
@@ -320,7 +326,7 @@ function BoardContent({
         <ScriptView
           projectId={projectId}
           board={board}
-          read={read}
+          read={firstRead}
           editable={editable}
           focus={search.node}
         />
@@ -330,7 +336,7 @@ function BoardContent({
           boardId={board.id}
           boardName={board.name}
           settingsId="board-settings"
-          read={read}
+          read={firstRead}
           options={options}
           initial={last.initial}
           onView={last.onView}
@@ -375,15 +381,6 @@ function BoardContent({
     </div>
   );
 }
-
-/**
- * The classes of the link of the view that the page shows (aria-current),
- * as a toggle button's that is pressed (pressedClass): filled with the
- * accent, and, in a system's forced colours, with its colours of a
- * selection.
- */
-const currentClass =
-  "aria-[current=page]:border-accent aria-[current=page]:bg-accent aria-[current=page]:text-accent-fg aria-[current=page]:hover:bg-accent-hover forced-colors:aria-[current=page]:bg-[Highlight] forced-colors:aria-[current=page]:hover:bg-[Highlight] forced-colors:aria-[current=page]:text-[HighlightText]";
 
 const boardField = payloadField("name", "slug", "description", "color");
 

@@ -258,6 +258,26 @@ describe("the last-opened state", () => {
     });
   });
 
+  it("gives a canvas mounted again on the page what the canvas before it showed last, rather than what the page read as it opened", () => {
+    vi.useFakeTimers();
+    rememberView("usr_a", "prj_a", "bd_a", shown(10, 2));
+    const { result, rerender, unmount } = renderHook(() =>
+      useLastOpened("usr_a", "prj_a", "bd_a"),
+    );
+    expect(result.current.initial?.viewport.x).toBe(10);
+    act(() => result.current.onView(shown(11, 1, ["nd_1"])));
+    // The page shown anew, as once it shows its script view in place of
+    // the canvas, before the view was kept.
+    rerender();
+    expect(result.current.initial).toEqual({
+      viewport: { x: 11, y: 20, zoom: 1 },
+      size: { width: 800, height: 600 },
+      selection: ["nd_1"],
+    });
+    expect(lastOpened("usr_a")?.view?.viewport.x).toBe(10);
+    unmount();
+  });
+
   it("forgets the board that its page deleted, and keeps nothing more of it as the page is left", () => {
     vi.useFakeTimers();
     rememberBoard("usr_b", "prj_b", "bd_b");

@@ -1,4 +1,4 @@
-import type { Connection, Node } from "@storycreep/shared/api";
+import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import { describe, expect, it } from "vitest";
 import { testConnection, testNode } from "../test/canvas";
 import { leavingByNode, scriptOrder } from "./order";
@@ -137,6 +137,37 @@ describe("the script view's places", () => {
     // The choice as the board has it now, which its form saves, no ghost.
     expect(after.leaving.get("nd_a")?.[0]).toBe(moved);
     expect(after.ghosts.size).toBe(0);
+  });
+
+  it("keeps a branch's choice whose label's form is open under the output where it was, as another session reconnects it to another", () => {
+    const output = (id: string, kind: BranchOutput["kind"]): BranchOutput => ({
+      id,
+      node_id: "nd_a",
+      kind,
+      rev: 1,
+      created_at: "2026-11-01T10:00:00Z",
+      updated_at: "2026-11-01T10:00:00Z",
+    });
+    const branch = testNode("nd_a", 0, 0, {
+      type: "branch",
+      outputs: [output("bo_if", "if"), output("bo_else", "else")],
+    });
+    const nodes = [branch, node("nd_b", 1)];
+    const choice = testConnection("cn_1", "nd_a", "nd_b", {
+      from_port: "bo_if",
+    });
+    const before = place(nodes, [choice], { cn_1: "choice" });
+    const moved = { ...choice, from_port: "bo_else", rev: 2 };
+    const after = place(nodes, [moved], { cn_1: "choice" }, before.shown);
+    // Under the if, as the view listed it, but as the board has it now.
+    const shown = after.leaving.get("nd_a")?.[0];
+    expect(shown).toEqual({ ...moved, from_port: "bo_if" });
+    expect(after.ghosts.size).toBe(0);
+    // And there still as it is shown anew.
+    const again = place(nodes, [moved], { cn_1: "choice" }, after.shown);
+    expect(again.leaving.get("nd_a")?.[0]?.from_port).toBe("bo_if");
+    // Once the form closes, it is under the output that it leaves.
+    expect(place(nodes, [moved], {}).leaving.get("nd_a")?.[0]).toBe(moved);
   });
 
   it("shows a choice whose label's form is open, and whose connection went, as a ghost where it was", () => {

@@ -172,6 +172,19 @@ export function rememberBoard(
   );
 }
 
+/** Returns what a canvas that shows view opens with again (SavedView). */
+function savedOf(view: CanvasView): SavedView {
+  return {
+    viewport: {
+      x: view.viewport.x,
+      y: view.viewport.y,
+      zoom: view.viewport.zoom,
+    },
+    size: { width: view.size.width, height: view.size.height },
+    selection: [...view.selection],
+  };
+}
+
 /** Records what the canvas of the board boardId of the project projectId shows the account userId. */
 export function rememberView(
   userId: string,
@@ -179,19 +192,7 @@ export function rememberView(
   boardId: string,
   view: CanvasView,
 ): void {
-  keep(userId, {
-    projectId,
-    boardId,
-    view: {
-      viewport: {
-        x: view.viewport.x,
-        y: view.viewport.y,
-        zoom: view.viewport.zoom,
-      },
-      size: { width: view.size.width, height: view.size.height },
-      selection: [...view.selection],
-    },
-  });
+  keep(userId, { projectId, boardId, view: savedOf(view) });
 }
 
 /**
@@ -322,7 +323,9 @@ const keepDelay = 500;
  * What a board's page reads and keeps of the last-opened state: what the
  * device last showed the account userId of the board, if it did, which its
  * canvas opens with (initial), read as the page shows the board, before it
- * records that it shows it; onView, which keeps what the canvas shows, at
+ * records that it shows it, or, once the page's canvas has shown it, what
+ * that canvas showed last, which a canvas mounted again on the page opens
+ * with; onView, which keeps what the canvas shows, at
  * most every keepDelay, and as the page is hidden or left, as a tablet's
  * browser may end a hidden page without a word; and forget, which forgets
  * the board, as once the page has deleted it, so that neither the start
@@ -339,13 +342,17 @@ export function useLastOpened(
   onView: (view: CanvasView) => void;
   forget: () => void;
 } {
-  const initial = useMemo(() => {
+  const opened = useMemo(() => {
     if (userId === undefined) {
       return undefined;
     }
     const last = lastOpened(userId);
     return last?.boardId === boardId ? last.view : undefined;
   }, [userId, boardId]);
+  // What the canvas of the board last showed on the page, which a canvas
+  // mounted again, as once the page showed the board's script view in its
+  // place, opens with, rather than with what the page read as it opened.
+  const shown = useRef<{ boardId: string; view: CanvasView }>(undefined);
   const keeper = useRef<((view: CanvasView) => void) | undefined>(undefined);
   const forgetter = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
@@ -365,6 +372,7 @@ export function useLastOpened(
     };
     keeper.current = (view) => {
       pending = view;
+      shown.current = { boardId, view };
       timer ??= setTimeout(flush, keepDelay);
     };
     forgetter.current = () => {
@@ -391,5 +399,10 @@ export function useLastOpened(
   }, [userId, projectId, boardId]);
   const onView = useCallback((view: CanvasView) => keeper.current?.(view), []);
   const forget = useCallback(() => forgetter.current?.(), []);
-  return { initial, onView, forget };
+  const last = shown.current;
+  return {
+    initial: last?.boardId === boardId ? savedOf(last.view) : opened,
+    onView,
+    forget,
+  };
 }
