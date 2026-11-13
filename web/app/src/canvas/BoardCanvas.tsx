@@ -57,7 +57,6 @@ import { bindingText } from "../commands/keys";
 import {
   canRun,
   type Handlers,
-  runFrom,
   runHandler,
   useCommandHandlers,
   usePlatform,
@@ -1963,23 +1962,6 @@ function BoardCanvasOf({
           >
             {t("canvas.settings")}
           </a>
-        )}
-        {/* The table of the shortcuts is the app's frame's, which shows it
-        over the page: outside the frame, which has no registry, there is
-        none for the button to open. A click gives the button the focus
-        first, which the table gives back to it as it closes (runFrom). It
-        is the toolbar's, 8 px from its neighbours, rather than below the
-        canvas, where the docked inspector's sticky column, and the context
-        menu that opens down from a node, reach (NFR-TOUCH-01). */}
-        {registry !== undefined && (
-          <Button
-            aria-haspopup="dialog"
-            onClick={(e) =>
-              runFrom(registry, "shortcuts.show", e.currentTarget)
-            }
-          >
-            {t("canvas.shortcuts")}
-          </Button>
         )}
         {/* The page's clipboard (FR-EDIT-07, plan note N71): Copy, on any
         board, as a viewer may copy what they read, and Cut and Paste on a

@@ -496,11 +496,6 @@ describe("a board's canvas", () => {
     expect(
       await screen.findByText("This board has no nodes yet."),
     ).toBeDefined();
-    // Outside the app's frame, which shows the table of the shortcuts,
-    // the canvas offers no button that would open none.
-    expect(
-      screen.queryByRole("button", { name: "Keyboard shortcuts" }),
-    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Show Lighthouse" }));
     expect(
       await screen.findByRole("application", { name: "Nodes of Lighthouse" }),

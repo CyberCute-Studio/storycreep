@@ -360,12 +360,10 @@ describe("the canvas's shortcuts", () => {
         key,
       ).toBe(!ctrlKey);
     }
-    // The header's Commands and the canvas's Keyboard shortcuts, which a
-    // second finger may tap, open nothing either, and leave the focus on
-    // the canvas, whose Escape ends the drag (runFrom).
-    for (const name of ["Commands", "Keyboard shortcuts"]) {
-      fireEvent.click(screen.getByRole("button", { name }));
-    }
+    // The header's Commands, which a second finger may tap, opens nothing
+    // either, and leaves the focus on the canvas, whose Escape ends the
+    // drag (runFrom).
+    fireEvent.click(screen.getByRole("button", { name: "Commands" }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(canvas);
@@ -583,21 +581,8 @@ describe("the canvas's shortcuts", () => {
         screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
       ).toBeNull(),
     );
-    // Beside it, in the app's frame, the button that opens the table too,
-    // which gets the focus back as the table closes, though a click gave it
-    // none, as Safari's.
-    const button = screen.getByRole("button", { name: "Keyboard shortcuts" });
-    fireEvent.click(button);
-    const again = await screen.findByRole("dialog", {
-      name: "Keyboard shortcuts",
-    });
-    fireEvent.keyDown(again, { key: "Escape" });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
-      ).toBeNull(),
-    );
-    expect(document.activeElement).toBe(button);
+    // The canvas, which the table opened from, has the focus back.
+    expect(document.activeElement).toBe(canvas);
   });
 
   it("run from the palette as from their keys, once the focus is back on the canvas", async () => {

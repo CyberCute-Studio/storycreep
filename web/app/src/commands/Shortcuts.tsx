@@ -1,5 +1,5 @@
 // The table of the shortcuts (PRD FR-EDIT-10, plan note N72), a dialog that
-// ? on the canvas, the palette, and the canvas's Keyboard shortcuts open:
+// ? on the canvas and the palette open, as the header's Commands does to a finger:
 // every command that has keys, in the groups that FR-EDIT-10 names, by the
 // same IDs as the palette's, each with its keys on the page's platform and
 // where they act, anywhere on the page but in a dialog, outside the fields

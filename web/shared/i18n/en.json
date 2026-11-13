@@ -251,7 +251,6 @@
   "canvas.selected_node": "Selected: {title}, {type}.",
   "canvas.selected_none": "Nothing is selected.",
   "canvas.settings": "Board settings",
-  "canvas.shortcuts": "Keyboard shortcuts",
   "canvas.snap": "Snap to grid",
   "canvas.starting": "Starting the canvas…",
   "canvas.tag_filter": "Dim nodes without the tag",
