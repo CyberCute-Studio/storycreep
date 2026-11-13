@@ -135,8 +135,8 @@ function reading<P, T>(
   };
 }
 
-/** Reports whether a and b list the same things, in the same order. */
-function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
+/** Reports whether a and b list the same things, in the same order, as the script view's lists of a board's entities that it keeps the same (useSame, useLeaving). */
+export function sameList<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((item, i) => item === b[i]);
 }
 

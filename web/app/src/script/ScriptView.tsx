@@ -48,6 +48,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { sameList } from "../canvas/InspectorFlow";
 import {
   kindOf,
   nameParts,
@@ -549,7 +550,12 @@ export function ScriptView({
   // board as the batch is refused, before the view hears of the refusal,
   // stays where the view showed it, with no ghost until then. What the view
   // showed is what it committed, rather than what a render that React may
-  // yet discard placed.
+  // yet discard placed. The entries are placed anew once what they are
+  // placed by changes, the order, the project's connections, the open
+  // editors, or the additions under way, rather than as the view renders
+  // anew of anything else, as the focus that it moves, or a refusal that it
+  // reads out, of which it would place them where it showed them, so that
+  // those that it keeps there are not shown anew with each.
   const creating = useMemo(
     () =>
       new Set(
@@ -557,13 +563,17 @@ export function ScriptView({
       ),
     [adding],
   );
-  const placed = placeShown(
-    order,
-    leavingOf,
-    connections,
-    open,
-    shownLast.current,
-    creating,
+  const placed = useMemo(
+    () =>
+      placeShown(
+        order,
+        leavingOf,
+        connections,
+        open,
+        shownLast.current,
+        creating,
+      ),
+    [order, leavingOf, connections, open, creating],
   );
   useLayoutEffect(() => {
     shownLast.current = placed.shown;
@@ -676,12 +686,7 @@ const none: readonly Connection[] = [];
 function useSame<T>(list: readonly T[]): readonly T[] {
   const kept = useRef(list);
   const was = kept.current;
-  const same =
-    was !== list &&
-    was.length === list.length &&
-    was.every((item, i) => item === list[i])
-      ? was
-      : list;
+  const same = was !== list && sameList(was, list) ? was : list;
   useLayoutEffect(() => {
     kept.current = same;
   }, [same]);
@@ -706,14 +711,7 @@ function useLeaving(
     const out = new Map<string, readonly Connection[]>();
     for (const [id, list] of ordered) {
       const was = kept.current.get(id);
-      out.set(
-        id,
-        was !== undefined &&
-          was.length === list.length &&
-          was.every((c, i) => c === list[i])
-          ? was
-          : list,
-      );
+      out.set(id, was !== undefined && sameList(was, list) ? was : list);
     }
     return out;
   }, [connections, boardNodes]);
@@ -975,6 +973,7 @@ function Choice({
         <ChoiceEditor
           projectId={shared.projectId}
           connection={connection}
+          nameOf={(c) => choiceName(c, shared)}
           unsavable={
             gone
               ? t("script.gone")
@@ -1304,16 +1303,20 @@ function sameEntry(a: EntryProps, b: EntryProps): boolean {
  * Escape that closes the editor, where it holds no change: one of the
  * form's own fields, rather than of a dialog of its rich text, as the
  * link's, which is in a portal, whose keys React brings here too; not one
- * that composes; and not one that the list of a { or an @ of its rich text
- * took, which closes the list alone (suggestionTook), as the list that the
- * caret opens, of no change, once it is moved after a { or an @ that the
- * text holds. It does not read whether something else took the key:
- * ProseMirror takes every Escape in its text (captureKeyDown).
+ * that an input method took, as one that composes, or the Escape that
+ * cancels what it composed, which Safari tells of, once the composition
+ * has ended, by its keyCode alone, 229; and not one that the list of a {
+ * or an @ of its rich text took, which closes the list alone
+ * (suggestionTook), as the list that the caret opens, of no change, once
+ * it is moved after a { or an @ that the text holds. It does not read
+ * whether something else took the key: ProseMirror takes every Escape in
+ * its text (captureKeyDown).
  */
 function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
   return (
     e.key === "Escape" &&
     !e.nativeEvent.isComposing &&
+    e.nativeEvent.keyCode !== 229 &&
     !suggestionTook(e.nativeEvent) &&
     // The DOM's Node, rather than the API's of the same name, a type alone.
     e.target instanceof globalThis.Node &&
@@ -1638,19 +1641,28 @@ const labelField = payloadField("label");
  * the revision that it shows; it closes once the save applies, or nothing
  * changed, and Escape closes one whose label is as it was. Where the
  * connection can no longer be saved, it keeps what the user typed, as the
- * node's editor does.
+ * node's editor does. It is named by its choice, as nameOf names it as the
+ * form opens, as its button is, so that a screen reader tells apart the
+ * forms of several choices that are open at once, and keeps that name
+ * while it is open, as of the ghost of a choice that a refused addition
+ * created, whose node the board no longer has either.
  */
 function ChoiceEditor({
   projectId,
   connection,
+  nameOf,
   unsavable,
   onClose,
-}: EditorProps & { connection: Connection }) {
+}: EditorProps & {
+  connection: Connection;
+  nameOf: (connection: Connection) => string;
+}) {
   const { t } = useTranslation();
   const form = useEntityForm(projectId, connection, (view, id) =>
     view.connections.get(id),
   );
   const { commands, held, shown, against } = form;
+  const [name] = useState(() => nameOf(connection));
   const label = useRef<{ key: string; value: RichTextValue }>(undefined);
   const [invalid, setInvalid] = useState<{ label: string }>();
   const refusal = refusalOf(commands.error, t, labelField);
@@ -1696,7 +1708,7 @@ function ChoiceEditor({
   return (
     <EditorFrame
       form={form}
-      label={t("script.choice_editor")}
+      label={t("script.choice_editor", { choice: name })}
       unsavable={unsavable}
       refusal={refusal?.message}
       fieldName={() => t("inspector.label")}

@@ -352,10 +352,16 @@ export function useLastOpened(
   // What the canvas of the board last showed the account on the page, which
   // a canvas mounted again, as once the page showed the board's script view
   // in its place, opens with, rather than with what the page read as it
-  // opened, but not once the session is of another account.
-  const shown = useRef<{ userId: string; boardId: string; view: CanvasView }>(
-    undefined,
-  );
+  // opened, but not once the session is of another account; and what a
+  // canvas opens with of it (savedOf), copied once for each view that the
+  // canvas tells of, so that the page's renders give the same object until
+  // the canvas shows another.
+  const shown = useRef<{
+    userId: string;
+    boardId: string;
+    view: CanvasView;
+    saved?: SavedView;
+  }>(undefined);
   const keeper = useRef<((view: CanvasView) => void) | undefined>(undefined);
   const forgetter = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
@@ -403,12 +409,10 @@ export function useLastOpened(
   const onView = useCallback((view: CanvasView) => keeper.current?.(view), []);
   const forget = useCallback(() => forgetter.current?.(), []);
   const last = shown.current;
-  return {
-    initial:
-      last?.boardId === boardId && last.userId === userId
-        ? savedOf(last.view)
-        : opened,
-    onView,
-    forget,
-  };
+  let initial = opened;
+  if (last?.boardId === boardId && last.userId === userId) {
+    last.saved ??= savedOf(last.view);
+    initial = last.saved;
+  }
+  return { initial, onView, forget };
 }

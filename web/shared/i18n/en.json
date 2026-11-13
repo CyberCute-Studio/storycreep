@@ -1054,7 +1054,7 @@
   "script.add_choice_named": "Add choice to {node}",
   "script.all": "All nodes ({count, plural, one {# node} other {# nodes}})",
   "script.cancel": "Cancel",
-  "script.choice_editor": "Edit the choice's label",
+  "script.choice_editor": "Edit label: {choice}",
   "script.choice_to": "Choice to {node}",
   "script.choices_of": "Choices of {node}",
   "script.condition_invalid": "(the condition has an error)",

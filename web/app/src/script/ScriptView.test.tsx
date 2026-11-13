@@ -533,7 +533,7 @@ describe("the script view", () => {
       }),
     );
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Walk to the pier",
     });
     const label = within(form).getByRole("textbox", { name: "Label" });
     await waitFor(() => expect(document.activeElement).toBe(label));
@@ -554,6 +554,30 @@ describe("the script view", () => {
         }),
       ),
     );
+  });
+
+  // Verifies: FR-TEXT-04/AC3
+  it("names the form of each choice's label by its choice, as its button, so that two open at once are told apart", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard());
+    await openScript();
+    const quay = entryOf("Quay");
+    await user.click(
+      within(quay).getByRole("button", { name: "Edit label: Buy a map" }),
+    );
+    await user.click(
+      within(quay).getByRole("button", {
+        name: "Edit label: Walk to the pier",
+      }),
+    );
+    await within(quay).findByRole("form", {
+      name: "Edit label: Walk to the pier",
+    });
+    expect(
+      within(quay)
+        .getAllByRole("form")
+        .map((f) => f.getAttribute("aria-label")),
+    ).toEqual(["Edit label: Buy a map", "Edit label: Walk to the pier"]);
   });
 
   // Verifies: FR-TEXT-04/AC3
@@ -582,7 +606,7 @@ describe("the script view", () => {
       .focus();
     await user.keyboard("{Enter}");
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Onward",
     });
     const label = within(form).getByRole("textbox", { name: "Label" });
     expect(label.getAttribute("contenteditable")).toBe("false");
@@ -611,6 +635,25 @@ describe("the script view", () => {
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
     expect(document.activeElement).toBe(edit());
     expect(batches(calls)).toEqual([]);
+  });
+
+  // Verifies: FR-TEXT-04/AC3
+  it("leaves an editor that holds no change open on the Escape that an input method took, and closes it on the next", async () => {
+    const user = userEvent.setup();
+    boardPage(harbourBoard());
+    await openScript();
+    await user.click(
+      within(entryOf("Pier")).getByRole("button", { name: "Edit Pier" }),
+    );
+    const form = await screen.findByRole("form", { name: "Edit Pier" });
+    const title = within(form).getByRole("textbox", { name: "Title" });
+    await waitFor(() => expect(document.activeElement).toBe(title));
+    // Safari's, of the composition that it cancelled, which comes once the
+    // composition has ended, of keyCode 229.
+    fireEvent.keyDown(title, { key: "Escape", code: "Escape", keyCode: 229 });
+    expect(screen.getByRole("form", { name: "Edit Pier" })).toBe(form);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
   });
 
   // Verifies: FR-TEXT-04/AC3
@@ -671,7 +714,7 @@ describe("the script view", () => {
       to_node_id: (batch[0].payload as { id: string }).id,
     });
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Choice to Untitled",
     });
     await waitFor(() =>
       expect(document.activeElement).toBe(
@@ -725,7 +768,7 @@ describe("the script view", () => {
       }),
     );
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Choice to Pier",
     });
     const label = within(form).getByRole("textbox", { name: "Label" });
     await waitFor(() => expect(document.activeElement).toBe(label));
@@ -746,7 +789,7 @@ describe("the script view", () => {
     // The same form, in the entry where it was, with what was typed.
     expect(
       within(entryOf("Market")).getByRole("form", {
-        name: "Edit the choice's label",
+        name: "Edit label: Choice to Pier",
       }),
     ).toBe(form);
     expect(label.textContent).toBe("Head on");
@@ -809,7 +852,7 @@ describe("the script view", () => {
       }),
     );
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Pay the toll",
     });
     const label = within(form).getByRole("textbox", { name: "Label" });
     await waitFor(() => expect(document.activeElement).toBe(label));
@@ -838,7 +881,7 @@ describe("the script view", () => {
       name: "Outputs of Gate",
     });
     expect(
-      within(outputs).getByRole("form", { name: "Edit the choice's label" }),
+      within(outputs).getByRole("form", { name: "Edit label: Pay the toll" }),
     ).toBe(form);
     expect(label.textContent).toBe("Pay up");
     expect(document.activeElement).toBe(label);
@@ -1062,7 +1105,7 @@ describe("the script view", () => {
     // and keeps the focus that the user took there, rather than give it to
     // the button of the refused addition.
     const label = within(entryOf("Quay")).getByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Choice to Untitled",
     });
     expect(document.activeElement).toBe(
       within(label).getByRole("textbox", { name: "Label" }),
@@ -1360,7 +1403,7 @@ describe("the script view", () => {
       }),
     );
     const choice = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Choice to Untitled",
     });
     const label = within(choice).getByRole("textbox", { name: "Label" });
     await waitFor(() => expect(document.activeElement).toBe(label));
@@ -1390,11 +1433,16 @@ describe("the script view", () => {
       );
     }
     expect(screen.getByRole("form", { name: "Edit Untitled" })).toBe(node);
+    // The choice's form keeps the name that it opened with, though the
+    // board no longer has the node that the choice led to either.
+    expect(
+      screen.getByRole("form", { name: "Edit label: Choice to Untitled" }),
+    ).toBe(choice);
     expect(document.activeElement).toBe(label);
     await user.click(within(choice).getByRole("button", { name: "Cancel" }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("form", { name: "Edit the choice's label" }),
+        screen.queryByRole("form", { name: "Edit label: Choice to Untitled" }),
       ).toBeNull(),
     );
     expect(document.activeElement).toBe(
@@ -1428,7 +1476,7 @@ describe("the script view", () => {
       }),
     );
     const form = await screen.findByRole("form", {
-      name: "Edit the choice's label",
+      name: "Edit label: Walk to the pier @ dawn",
     });
     const label = within(form).getByRole("textbox", { name: "Label" });
     await waitFor(() => expect(document.activeElement).toBe(label));
@@ -1442,9 +1490,9 @@ describe("the script view", () => {
     ).toBeDefined();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(within(form).queryByRole("listbox")).toBeNull());
-    expect(screen.getByRole("form", { name: "Edit the choice's label" })).toBe(
-      form,
-    );
+    expect(
+      screen.getByRole("form", { name: "Edit label: Walk to the pier @ dawn" }),
+    ).toBe(form);
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
   });

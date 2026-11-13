@@ -122,7 +122,9 @@ test.describe("a board's script view", () => {
       }),
     );
     const labelEditor = page.getByRole("form", {
-      name: en["script.choice_editor"],
+      name: message("script.choice_editor", {
+        choice: message("script.choice_to", { node: "Scene 1.2" }),
+      }),
     });
     await labelEditor
       .getByRole("textbox", { name: en["inspector.label"] })
@@ -280,7 +282,13 @@ test.describe("a board's script view", () => {
     await addChoice.focus();
     await page.keyboard.press("Enter");
     const label = page
-      .getByRole("form", { name: en["script.choice_editor"] })
+      .getByRole("form", {
+        name: message("script.choice_editor", {
+          choice: message("script.choice_to", {
+            node: en["canvas.node.untitled"],
+          }),
+        }),
+      })
       .getByRole("textbox", { name: en["inspector.label"] });
     await expect(label).toBeFocused();
     expect(await violations(page)).toEqual([]);

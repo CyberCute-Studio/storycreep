@@ -275,6 +275,11 @@ describe("the last-opened state", () => {
       selection: ["nd_1"],
     });
     expect(lastOpened("usr_a")?.view?.viewport.x).toBe(10);
+    // The same object, as the page is shown anew, until the canvas shows
+    // another view.
+    const kept = result.current.initial;
+    rerender();
+    expect(result.current.initial).toBe(kept);
     unmount();
   });
 
