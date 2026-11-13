@@ -224,6 +224,24 @@ describe("what the editor offers", () => {
     expect(
       open.slice(0, toQuay.from) + toQuay.text + open.slice(toQuay.to),
     ).toBe(`visited(node("${ids.quay}") and gold`);
+    // Of a string that no quote closes, as node(" chosen within visited()
+    // leaves it, what follows on its line stays.
+    const unquoted = 'visited(node("Qu) and gold';
+    const typed = spotOf(unquoted, 16);
+    const toTyped = editOf(unquoted, typed, quay);
+    expect(
+      unquoted.slice(0, toTyped.from) +
+        toTyped.text +
+        unquoted.slice(toTyped.to),
+    ).toBe(`visited(node("${ids.quay}")) and gold`);
+    // What is left of a node's ID after the caret is replaced with it.
+    const within = `visited(node("Qu${ids.quay}"))`;
+    const toWithin = editOf(within, spotOf(within, 16), quay);
+    expect(
+      within.slice(0, toWithin.from) +
+        toWithin.text +
+        within.slice(toWithin.to),
+    ).toBe(`visited(node("${ids.quay}"))`);
     // node("…"), of node typed anew where the source has its ( and its
     // string already, is node, of which nothing is written again.
     const retyped = `visited(node("${ids.quay}"))`;

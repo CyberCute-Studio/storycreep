@@ -7,7 +7,13 @@
 // anew only as one of its fields is changed, and says so of a source that
 // it cannot show, which the text view edits.
 
-import { type RefObject, useEffect, useMemo, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+} from "react";
 import { valueNamer } from "../content/textNames";
 import { Button } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
@@ -127,7 +133,9 @@ function sameType(a: TargetType, b: TargetType): boolean {
  * yet, which it cannot write, as that changes: a group of fields, which the
  * editor's label names (labelledBy), and which the editor gives the focus to
  * (group), as once a variable is created inline, the same element whether
- * the picker shows the condition or says that it cannot.
+ * the picker shows the condition or says that it cannot, and which a
+ * refusal of the form's save that names the condition marks (data-invalid),
+ * so that useFocusRefusal gives it the focus, as it does the text area.
  */
 export function GuidedPicker({
   group,
@@ -136,6 +144,7 @@ export function GuidedPicker({
   scope,
   words,
   describedBy,
+  refused,
   onSource,
   onUnfinished,
 }: {
@@ -145,6 +154,8 @@ export function GuidedPicker({
   scope: Scope;
   words: Words;
   describedBy: string | undefined;
+  /** Whether a refusal of the form's save names the condition. */
+  refused: boolean;
   onSource: (source: string) => void;
   onUnfinished: (unfinished: boolean) => void;
 }) {
@@ -154,7 +165,7 @@ export function GuidedPicker({
   // string may be, or the page has not read the board's names yet to tell,
   // rather than take the field that is being edited away.
   const [written, setWritten] = useState<{ source: string; picked: Picked }>();
-  const picked =
+  const read =
     readPicked(analysis) ??
     (written?.source === analysis.source ? written.picked : undefined);
   const choices = useMemo(() => choicesOf(scope), [scope]);
@@ -164,10 +175,19 @@ export function GuidedPicker({
   // of a text, which writes the source as it is typed.
   const [draft, setDraft] = useState<{ for: string; text: string }>();
   const current =
-    picked?.target === undefined
+    read?.target === undefined
       ? undefined
-      : choices.find((c) => c.value === targetValue(picked.target as Target));
+      : choices.find((c) => c.value === targetValue(read.target as Target));
   const type = current?.type;
+  // A test that the picker does not offer of its value's type, as an enum's
+  // <, which compiles, as the language reads an enum as a string, is one
+  // that it cannot show, rather than show another test in its place.
+  const picked =
+    read !== undefined &&
+    type !== undefined &&
+    !testsOf(type).includes(read.test)
+      ? undefined
+      : read;
   const draftKey =
     picked === undefined
       ? ""
@@ -185,7 +205,10 @@ export function GuidedPicker({
   // the condition, or its value to test, as once another session took that
   // to the trash, rather than refuse it with nothing to tell why.
   const unfinished = numberProblem !== undefined;
-  useEffect(() => onUnfinished(unfinished), [unfinished, onUnfinished]);
+  // Told as it changes alone, of whichever onUnfinished the editor gives.
+  const tellUnfinished = useEffectEvent(onUnfinished);
+  useEffect(() => tellUnfinished(unfinished), [unfinished]);
+  const invalid = refused ? "" : undefined;
   if (picked === undefined) {
     // A condition that parses, of a page that has not read the board's
     // names, or whose read of them failed, may be one that the picker
@@ -198,6 +221,7 @@ export function GuidedPicker({
         tabIndex={-1}
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
+        data-invalid={invalid}
         className="space-y-2 rounded-md border border-border p-3"
       >
         <p>
@@ -218,9 +242,10 @@ export function GuidedPicker({
       </fieldset>
     );
   }
-  const name = valueNamer(scope.view, scope.boardId);
+  // What the picker writes is of a value that it offers, named as its
+  // choice is.
   const nameOf = (target: Target) =>
-    name(target.ref, target.attribute) ?? target.ref;
+    choices.find((c) => c.value === targetValue(target))?.name ?? target.ref;
   const writeSource = (next: Picked) => {
     const source = writePicked(next, nameOf);
     setWritten({ source, picked: next });
@@ -364,6 +389,7 @@ export function GuidedPicker({
       tabIndex={-1}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
+      data-invalid={invalid}
       className="space-y-3 rounded-md border border-border p-3"
       data-picker=""
     >

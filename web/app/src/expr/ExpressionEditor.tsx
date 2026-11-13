@@ -18,6 +18,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -240,20 +241,30 @@ const writesShown = 3;
 /** How long what the highlighted offer read of where a variable is written holds, rather than be read again as the arrows come back to it. */
 const writesKept = 30_000;
 
+/** How long an offer of a variable is highlighted before where it is written is read, so that the arrows held down read nothing of the offers that they pass. */
+const writesWait = 200;
+
 /**
  * Where the variable of id is written, as the first sites that its usage
  * list of its writes has, which the highlighted offer tells of: of a read
  * of a page of one more than it tells of, which says whether there are
- * more, rather than of the list's hundred, kept for a while (writesKept),
- * and which says nothing of a refusal of its own, as the offer says that
- * where it is written could not be read. A site is named by its board and
- * its node, as its usage list names them (UsageItem).
+ * more, rather than of the list's hundred, once the offer has been
+ * highlighted a while (writesWait), kept for a while (writesKept), and
+ * which says nothing of a refusal of its own, as the offer says that where
+ * it is written could not be read. A site is named by its board and its
+ * node, as its usage list names them (UsageItem).
  */
 function Writes({ projectId, id }: { projectId: string; id: string }) {
   const { t } = useTranslation();
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setWaited(true), writesWait);
+    return () => window.clearTimeout(timer);
+  }, []);
   const writes = useInfiniteQuery({
     ...variableUsagesQuery(projectId, id, "write", writesShown + 1),
     staleTime: writesKept,
+    enabled: waited,
   });
   if (writes.isPending) {
     return (
@@ -404,8 +415,9 @@ function TextView({
     readCaret(el);
     // What is written ends what was typed, and the list closes until a key
     // types again, as one that shortens the name to choose another; one
-    // that is to go on, with nothing after it yet, offers what follows: a
-    // component's key and its dot its attributes, and node(" the nodes.
+    // that is to go on, with nothing after it yet that an offer would
+    // replace, offers what follows: a component's key and its dot its
+    // attributes, and node(" the nodes, as within visited(), whose ) stays.
     const next = spotAt(el.value, el.selectionStart);
     setTyping(
       next !== undefined && next.query === "" && next.to === el.selectionStart
@@ -720,6 +732,7 @@ export function ExpressionEditor({
           scope={scope}
           words={words}
           describedBy={describedBy}
+          refused={error !== undefined}
           onSource={update}
           onUnfinished={(unfinished) => {
             if (unfinished !== told.current.unfinished) {

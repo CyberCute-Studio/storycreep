@@ -2,20 +2,25 @@
 // FR-VAR-01, plan note N74): of a source whose first error is
 // unknown_identifier at a variable's name, its key, the scope that the name
 // is written in, if it says one, as global.met or board.met, and the type
-// that its place in the source suggests, of the literals and the names of
-// the board's scope that it is assigned, compared with, or added to, which
-// the editor offers to create it with inline, as "create global bool
-// met_elara".
+// that its place in the source suggests, of the literals, the names of the
+// board's scope, and what is made of them, that it is assigned, compared
+// with, or added to, which the editor offers to create it with inline, as
+// "create global bool met_elara".
 
 import {
   type Attr,
+  BUILTINS,
   isKey,
   type Node,
+  TY_BOOL,
+  TY_FLOAT,
+  TY_INT,
+  TY_STRING,
   type Var,
   walk,
 } from "@storycreep/shared/expr/compile";
 import type { Analysis } from "./analyze";
-import { boardVariables, runtimeAttributes, type Scope } from "./scope";
+import type { Scope } from "./scope";
 
 /** The type of a variable. */
 export type VariableType = "bool" | "int" | "float" | "string";
@@ -32,75 +37,110 @@ export interface Unknown {
 /** What tells the type of what a name of a source names, a variable or a component's attribute, of a type that a variable may have, or undefined of one that names none. */
 type Known = (n: Var | Attr) => VariableType | undefined;
 
-/** Returns what tells the types of the names of scope's board, as the checker resolves them (§5.8.3): a bare key the board's variable of it, or else the global one, and an attribute of a component's key that no variable has, or after cmp., its runtime attribute. */
+/** Returns what tells the types of the names of scope's board, of its Project's variables and components, as the checker resolves them (§5.8.3): a bare key the board's variable of it, or else the global one, and an attribute of a component's key that no variable has, or after cmp., its runtime attribute, of an enum a string, as an expression reads it. */
 function knownOf(scope: Scope | undefined): Known {
-  if (scope === undefined) {
+  const project = scope?.project;
+  if (scope === undefined || project === undefined) {
     return () => undefined;
   }
-  const { view, boardId } = scope;
-  const variables = boardVariables(view, boardId);
-  const asType = (type: string): VariableType | undefined =>
-    type === "bool" || type === "int" || type === "float" || type === "string"
-      ? type
-      : undefined;
+  const { boardId } = scope;
+  const variable = (key: string, where: Var["scope"]) =>
+    where === "global"
+      ? project.global(key)
+      : where === "board"
+        ? project.ofBoard(boardId, key)
+        : (project.ofBoard(boardId, key) ?? project.global(key));
   return (n) => {
     if (n.kind === "var") {
-      const of = (where: "global" | "board") =>
-        variables.find((v) => v.key === n.key && v.scope === where);
-      const v = n.scope === "" ? (of("board") ?? of("global")) : of(n.scope);
-      return v === undefined ? undefined : asType(v.type);
+      return variable(n.key, n.scope)?.type;
     }
-    if (!n.explicit && variables.some((v) => v.key === n.componentKey)) {
+    if (!n.explicit && variable(n.componentKey, "") !== undefined) {
       return undefined;
     }
-    const component = [...view.components.values()].find(
-      (c) => c.deleted_at === undefined && c.key === n.componentKey,
-    );
-    const attribute =
-      component === undefined
+    const a = project.component(n.componentKey)?.byKey.get(n.attributeKey);
+    if (a === undefined || a.runtime !== true) {
+      return undefined;
+    }
+    return a.type === "enum"
+      ? "string"
+      : a.type === "text"
         ? undefined
-        : runtimeAttributes(view, component).find(
-            (a) => a.key === n.attributeKey,
-          );
-    return attribute === undefined ? undefined : asType(attribute.type);
+        : a.type;
   };
 }
 
-/** Returns the type of a literal, or of what a node's place makes it, where the node says so alone: a not's a bool, and a minus's the number's that it is before, or an int; or of a name, what it names, as known tells. */
+/** Returns the number that arithmetic of the operands is of: a float where one is a float, and else an int. */
+function numberOf(operands: readonly Node[], known: Known): VariableType {
+  return operands.some((o) => valueType(o, known) === "float")
+    ? "float"
+    : "int";
+}
+
+/**
+ * Returns the type of a literal, or of what a node's place makes it, where
+ * the node says so alone: a not's, a comparison's, an and's, and an or's a
+ * bool; a minus's the number's that it is before; a + of a string a string;
+ * other arithmetic's a float of a float, or else an int; a function's its
+ * result's, or of one of numbers, as min's, the number of its arguments;
+ * or of a name, what it names, as known tells.
+ */
 function valueType(n: Node, known: Known): VariableType | undefined {
   switch (n.kind) {
     case "lit":
       return n.type;
     case "unary":
-      return n.op === "not"
-        ? "bool"
-        : valueType(n.operand, known) === "float"
-          ? "float"
-          : "int";
+      return n.op === "not" ? "bool" : numberOf([n.operand], known);
     case "var":
     case "attr":
       return known(n);
+    case "binary":
+      switch (n.op) {
+        case "add":
+          return valueType(n.left, known) === "string" ||
+            valueType(n.right, known) === "string"
+            ? "string"
+            : numberOf([n.left, n.right], known);
+        case "sub":
+        case "mul":
+        case "div":
+          return numberOf([n.left, n.right], known);
+        case "mod":
+          return "int";
+      }
+      return "bool";
+    case "call": {
+      const b = BUILTINS.get(n.function);
+      switch (b?.result) {
+        case TY_BOOL:
+          return "bool";
+        case TY_INT:
+          return "int";
+        case TY_FLOAT:
+          return "float";
+        case TY_STRING:
+          return "string";
+        case 0:
+          // The widened type of its arguments', but of signal, which has
+          // no value.
+          return b?.effect === false ? numberOf(n.args, known) : undefined;
+      }
+      return undefined;
+    }
   }
   return undefined;
 }
 
-/** Returns the number that arithmetic with other is of: a float where other is a float, and else an int. */
-function numberWith(other: Node, known: Known): VariableType {
-  return valueType(other, known) === "float" ? "float" : "int";
-}
-
 /**
  * Returns the type that the place of target, in n, suggests: of the target
- * of an assignment, its value's, where that is a literal or a name of a
- * known type, or of one that updates it, a string that += adds to, or the
- * number of its value; of the value of an assignment, its target's, as
- * known tells it, or of one that updates it, the string that += adds it to,
- * or the target's number; of an operand of and, or, or not, and of a
- * condition alone, a bool; of one compared with, or added to, a literal or
- * a name of a known type, its type; of an operand of other arithmetic, a
- * float with a float, and else an int; of an argument of a function of
- * strings, a string; and otherwise an int, of a script's, or a bool, of a
- * condition's.
+ * of an assignment, its value's, where that says its type (valueType), or
+ * of one that updates it, a string that += adds to, or the number of its
+ * value; of the value of an assignment, its target's, as known tells it, or
+ * of one that updates it, the string that += adds it to, or the target's
+ * number; of an operand of and, or, or not, and of a condition alone, a
+ * bool; of one compared with, or added to, what says its type, that type;
+ * of an operand of other arithmetic, a float with a float, and else an
+ * int; of an argument of a function of strings, a string; and otherwise an
+ * int, of a script's, or a bool, of a condition's.
  */
 function typeAt(root: Node, target: Var, known: Known): VariableType {
   let found: VariableType | undefined;
@@ -160,7 +200,7 @@ function placeType(
         ? (value ?? "int")
         : parent.op === "+=" && value === "string"
           ? "string"
-          : numberWith(other, known);
+          : numberOf([other], known);
     }
     case "unary":
       return parent.op === "not" ? "bool" : "int";
@@ -179,7 +219,7 @@ function placeType(
         case "add":
           return valueType(other, known) ?? "int";
       }
-      return numberWith(other, known);
+      return numberOf([other], known);
     }
     case "call":
       switch (parent.function) {

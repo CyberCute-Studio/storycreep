@@ -100,7 +100,8 @@ const moodRead: Usage = {
  * Answers the board's page, of Quay and Dock, connected by a choice of the
  * condition given, as the server compiled it, valid unless stored says
  * otherwise, each connection.update of which takes it to its next
- * revision, once sending allows, and refuses each variable.create where
+ * revision, once sending allows, or is refused for its condition where
+ * refuseUpdate says so, and refuses each variable.create where
  * refuseCreate says so, or answers it once creating allows, and the read
  * of the components where refuseComponents does; and records what it is
  * asked. Elara's reads are two pages: Dock's of elara.mood, and then
@@ -114,11 +115,13 @@ function boardPage(
     creating,
     refuseCreate = false,
     refuseComponents = false,
+    refuseUpdate = false,
   }: {
     sending?: Promise<void>;
     creating?: Promise<void>;
     refuseCreate?: boolean;
     refuseComponents?: boolean;
+    refuseUpdate?: boolean;
   } = {},
 ) {
   let connection: Connection = testConnection(choice, ids.quay, dock, {
@@ -201,6 +204,19 @@ function boardPage(
         };
         if (body.commands.some((c) => c.type === "connection.update")) {
           await sending;
+          if (refuseUpdate) {
+            throw refused(422, {
+              code: "validation_failed",
+              details: {
+                errors: [
+                  {
+                    location: "body.commands[0].payload.condition",
+                    message: "has more than 16384 characters",
+                  },
+                ],
+              },
+            });
+          }
         }
         if (body.commands.some((c) => c.type === "variable.create")) {
           await creating;
@@ -664,6 +680,33 @@ describe("the expression editor", () => {
     expect(
       shownOf(within(form).getByRole("combobox", { name: "Compared with" })),
     ).toBe("angry");
+  });
+
+  it("cannot show a test that it does not offer of the value's type, as an enum compared by <, rather than show another", async () => {
+    const user = userEvent.setup();
+    boardPage('elara.mood < "calm"');
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    within(picker).getByText(/^This condition is more than/);
+    expect(within(picker).queryByRole("combobox", { name: "Test" })).toBeNull();
+  });
+
+  it("gives the focus to the picker of a condition that a refusal of the save names", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage("gold >= 3", {}, { refuseUpdate: true });
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    await user.selectOptions(
+      within(form).getByRole("combobox", { name: "Test" }),
+      "is more than",
+    );
+    await user.click(
+      within(form).getByRole("button", { name: "Save the connection" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    await waitFor(() => expect(document.activeElement).toBe(picker));
   });
 
   it("keeps the focus in the picker once a condition that it cannot show is cleared to build one", async () => {

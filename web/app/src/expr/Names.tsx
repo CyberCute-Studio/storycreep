@@ -13,7 +13,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { valueNamer } from "../content/textNames";
+import { type ValueNamer, valueNamer } from "../content/textNames";
 import {
   componentUsagesQuery,
   type UsageListOf,
@@ -131,23 +131,24 @@ function resolvedOf(analysis: Analysis): Resolved[] {
   return out;
 }
 
-/** One name that the source resolves, with what it names, its usages, which its button shows, and the link to its panel. */
+/** One name that the source resolves, with what it names, as name writes it, its usages, which its button shows, and the link to its panel. */
 function NameItem({
   projectId,
   item,
   scope,
+  name,
   words,
 }: {
   projectId: string;
   item: Resolved;
   scope: Scope;
+  name: ValueNamer;
   words: Words;
 }) {
   const { t } = words;
   const [shown, setShown] = useState(false);
   const regionId = useId();
   const { view } = scope;
-  const name = valueNamer(view, scope.boardId);
   if (item.kind === "node") {
     const node = view.nodes.get(item.id);
     const title =
@@ -291,6 +292,8 @@ export function Names({
 }) {
   const headingId = useId();
   const items = useMemo(() => resolvedOf(analysis), [analysis]);
+  // One namer of the board's names for every item, made once of the scope.
+  const name = useMemo(() => valueNamer(scope.view, scope.boardId), [scope]);
   if (items.length === 0) {
     return null;
   }
@@ -306,6 +309,7 @@ export function Names({
             projectId={projectId}
             item={item}
             scope={scope}
+            name={name}
             words={words}
           />
         ))}

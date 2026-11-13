@@ -53,6 +53,16 @@ describe("an unknown name's variable", () => {
     expect(unknown("met_elara or seen")?.type).toBe("bool");
     expect(unknown("drift < global.trust")?.type).toBe("float");
     expect(unknown("elara.trust > drift")?.type).toBe("int");
+    // An enum, which an expression reads as a string.
+    expect(unknown("elara.mood == tone")?.type).toBe("string");
+    // What is made of them: a + of a string, arithmetic, a comparison, and
+    // a function's result.
+    expect(unknown('title = keeper + "!"', "script")?.type).toBe("string");
+    expect(unknown("ratio = trust * 1.5", "script")?.type).toBe("float");
+    expect(unknown("ratio = trust % 2", "script")?.type).toBe("int");
+    expect(unknown("calm = trust > 2", "script")?.type).toBe("bool");
+    expect(unknown("size = len(keeper)", "script")?.type).toBe("int");
+    expect(unknown("low = min(trust, 0.5)", "script")?.type).toBe("float");
     // Without the scope, a name says nothing of its type.
     expect(unknownOf(analyze("keeper = greeting", "script", scope))?.type).toBe(
       "int",

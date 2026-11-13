@@ -27,7 +27,7 @@ import { boardVariables, runtimeAttributes, type ScopeSources } from "./scope";
 export interface Spot {
   /** Where what the chosen offer replaces starts. */
   readonly from: number;
-  /** Where it ends: the end of the name that the caret is in, or of the node reference's string. */
+  /** Where it ends: the end of the name that the caret is in, or of the node reference's string, or the caret, where no quote follows what is left of an ID. */
   readonly to: number;
   /** What is typed of the name, or of the node's title, before the caret. */
   readonly query: string;
@@ -137,10 +137,12 @@ export function spotAt(source: string, caret: number): Spot | undefined {
     }
     // What the chosen node replaces: the string, to its closing quote and
     // the parenthesis after it, with the spaces between them, where the
-    // source has them, but not the spaces, nor a line break, after a quote
-    // that no parenthesis follows.
+    // source has them, but not the spaces after a quote that no parenthesis
+    // follows, where what is between the caret and that quote is what is
+    // left of a node's ID; and else, of a string that no such quote closes,
+    // what is typed of it alone, so that what follows on its line stays.
     const rest =
-      /^[^"\\\n\r]*(?:"(?:[ \t]*\))?)?/.exec(source.slice(caret))?.[0] ?? "";
+      /^[A-Za-z0-9_]*"(?:[ \t]*\))?/.exec(source.slice(caret))?.[0] ?? "";
     return {
       from: state.quote,
       to: caret + rest.length,
