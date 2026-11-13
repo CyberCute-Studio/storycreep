@@ -164,8 +164,11 @@ describe("the names of a text's references", () => {
     ]);
     // A text of no board, as a component's description, reads no board's
     // variables.
-    expect(textChoices(view, undefined, t).values.map((v) => v.name)).toEqual(
-      ["ale", "bram.trust", "elara.trust", "gold"],
-    );
+    expect(textChoices(view, undefined, t).values.map((v) => v.name)).toEqual([
+      "ale",
+      "bram.trust",
+      "elara.trust",
+      "gold",
+    ]);
   });
 });

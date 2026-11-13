@@ -1,7 +1,7 @@
 import type { RichTextDoc } from "@storycreep/shared/api";
-import type { Editor } from "@tiptap/core";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Editor } from "@tiptap/core";
 import { I18nextProvider } from "react-i18next";
 import { describe, expect, test, vi } from "vitest";
 import { createAppI18n } from "../i18n";
