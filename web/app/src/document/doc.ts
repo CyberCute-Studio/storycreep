@@ -62,6 +62,24 @@ export const kinds: readonly Kind[] = [
   "components",
 ];
 
+/** The fields of an owner of expressions, a node, a connection, or a branch output (ownsExpressions), that hold them. */
+export const expressionFields = [
+  "on_enter",
+  "on_exit",
+  "condition",
+  "on_traverse",
+] as const;
+
+/** Reports whether the entity of id is an owner of expressions, a node, a connection, or a branch output, whose expressionFields hold them. */
+export function ownsExpressions(id: string): boolean {
+  const place = placeOf(id);
+  return (
+    place?.of === "output" ||
+    (place?.of === "kind" &&
+      (place.kind === "nodes" || place.kind === "connections"))
+  );
+}
+
 /**
  * A part of the project that the document reads and keeps current: the tree
  * of its boards (its folders of boards and its boards), its variables (with

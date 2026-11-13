@@ -27,6 +27,11 @@ const text: readonly [string, string][] = [
   ["danger", "surface"],
   ["danger", "surface-hover"],
   ["danger-fg", "danger"],
+  // What the expression editor colours of a source, in its field, and
+  // where a name is code in what it says of the source.
+  ["code-keyword", "canvas"],
+  ["code-number", "canvas"],
+  ["code-string", "canvas"],
 ];
 const boundaries: readonly [string, string][] = [
   ["border", "canvas"],

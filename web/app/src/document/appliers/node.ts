@@ -35,7 +35,7 @@ import {
   type Ordered,
 } from "../../project/orderkey";
 import { type Appliers, canonical } from "../apply";
-import { type Draft, nodeOfOutput, placeOf } from "../doc";
+import { type Draft, expressionFields, nodeOfOutput, placeOf } from "../doc";
 
 type Types =
   | `node.${"create" | "update" | "move" | "duplicate" | "delete" | "delete_many" | "restore" | "restore_many"}`
@@ -168,14 +168,6 @@ export function scripted(
 
 /** An entity that owns expressions. */
 type Owner = Node | Connection | BranchOutput;
-
-/** The fields of an owner that hold its expressions. */
-const expressionFields = [
-  "on_enter",
-  "on_exit",
-  "condition",
-  "on_traverse",
-] as const;
 
 /**
  * What each batch, by its draft, changes of what expressions name, for

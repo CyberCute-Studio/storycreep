@@ -10,6 +10,7 @@
 import type { PageUsage, Usage } from "@storycreep/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import { type ReactNode, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
@@ -18,6 +19,7 @@ import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button, MoreButton } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
+import { nodeTitleText } from "./textNames";
 
 /** How a site uses a variable or a component, as its usage lists say. */
 export type Use = "read" | "write" | "speaker" | "mention";
@@ -41,14 +43,23 @@ export function usageKey(usage: Usage): string {
 /** A usage as a refusal of a deletion lists it, with how the site uses what it deletes. */
 export type FoundUsage = Usage & { use: Use };
 
-/** The reads or the writes of a variable, a page at a time. */
+/** The reads or the writes of a variable, a page at a time, of limit's items, where it says, as the first few that the expression editor's offer tells of, rather than the list's hundred. */
 export function variableUsagesQuery(
   projectId: string,
   variableId: string,
   access: "read" | "write",
+  limit?: number,
 ) {
   return pagedQuery(
-    ["projects", projectId, "variables", variableId, "usages", access],
+    [
+      "projects",
+      projectId,
+      "variables",
+      variableId,
+      "usages",
+      access,
+      ...(limit === undefined ? [] : [`limit ${limit}`]),
+    ],
     async (query, signal): Promise<PageUsage> =>
       (
         await api.call(
@@ -60,7 +71,10 @@ export function variableUsagesQuery(
           { signal },
         )
       ).body,
-    { meta: { showsRefusals: true } },
+    {
+      meta: { showsRefusals: true },
+      ...(limit === undefined ? {} : { limit }),
+    },
   );
 }
 
@@ -117,6 +131,29 @@ export function useComponentNames(
   return (id) => names[ids.indexOf(id)];
 }
 
+/** Returns the title of the node of usage's site, or what an untitled one is called (nodeTitleText). */
+function nodeTitleOf(t: TFunction, usage: Usage): string {
+  return nodeTitleText(t, usage.node_title ?? "");
+}
+
+/** Returns the name of the board of usage's site, or what one that the list does not name is called. */
+export function boardNameOf(t: TFunction, usage: Usage): string {
+  return usage.board_name ?? t("boards.unknown_board");
+}
+
+/** Returns what a site of usage is, of its node, or, of a component's description, of the component, by its name, where component gives it. */
+export function siteText(
+  t: TFunction,
+  usage: Usage,
+  component: string | undefined,
+): string {
+  return usage.site === "component_description"
+    ? t("usage.component_description", {
+        component: component ?? t("usage.a_component"),
+      })
+    : t("usage.site", { site: usage.site, node: nodeTitleOf(t, usage) });
+}
+
 /**
  * A site that uses a variable or a component: what it is, of its node, a
  * link that opens the node on its board's canvas, and the board that it is
@@ -137,20 +174,13 @@ export function UsageItem({
   componentName: (id: string) => string | undefined;
 }) {
   const { t } = useTranslation();
-  const component =
+  const site = siteText(
+    t,
+    usage,
     usage.component_id === undefined
       ? undefined
-      : componentName(usage.component_id);
-  const node =
-    usage.node_title === undefined || usage.node_title === ""
-      ? t("boards.untitled_node")
-      : usage.node_title;
-  const site =
-    usage.site === "component_description"
-      ? t("usage.component_description", {
-          component: component ?? t("usage.a_component"),
-        })
-      : t("usage.site", { site: usage.site, node });
+      : componentName(usage.component_id),
+  );
   return (
     <li className="break-words">
       {use !== undefined && (
@@ -167,7 +197,7 @@ export function UsageItem({
             {site}
           </Link>
           {" · "}
-          {usage.board_name ?? t("boards.unknown_board")}
+          {boardNameOf(t, usage)}
         </>
       ) : (
         site
@@ -189,22 +219,26 @@ export function UsageItem({
   );
 }
 
-/** One list of a thing's usages, read a page at a time once it is shown. */
+/**
+ * One list of a thing's usages, read a page at a time once it is shown, as
+ * a panel's and the expression editor's names show them: those of its
+ * pages that only keeps, where it says, as an attribute's of its
+ * component's, of which the list says that it has none only once it has
+ * read its last page, and, until then, that none of those read so far is
+ * one, which its button reads on from.
+ */
 function UsageList({
   projectId,
   title,
   empty,
   query,
-}: {
-  projectId: string;
-  title: string;
-  empty: string;
-  query: ReturnType<typeof variableUsagesQuery>;
-}) {
+  only,
+}: Omit<UsageListOf, "key"> & { projectId: string }) {
   const { t } = useTranslation();
   const list = useInfiniteQuery(query);
   const titleId = useId();
-  const items = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const read = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const items = only === undefined ? read : read.filter(only);
   const componentName = useComponentNames(projectId, items);
   return (
     <section aria-labelledby={titleId} className="space-y-1">
@@ -216,7 +250,12 @@ function UsageList({
       ) : list.isError ? (
         <Alert message={refusalOf(list.error, t)?.message} />
       ) : items.length === 0 ? (
-        <p className="text-fg-muted">{empty}</p>
+        // A list that keeps some of what it reads, as an attribute's, may
+        // have none of them among the pages read yet, which its button
+        // reads on from.
+        <p className="text-fg-muted">
+          {list.hasNextPage ? t("usage.none_yet") : empty}
+        </p>
       ) : (
         <ul className="list-disc space-y-1 ps-5" aria-labelledby={titleId}>
           {items.map((usage) => (
@@ -240,6 +279,37 @@ export interface UsageListOf {
   title: string;
   empty: string;
   query: ReturnType<typeof variableUsagesQuery>;
+  /** Which of the usages that the query reads the list shows, where it shows some, as an attribute's of its component's. */
+  only?: (usage: Usage) => boolean;
+}
+
+/**
+ * The region of a thing's usages that a button shows and hides, as its
+ * aria-controls names it (id): each of lists while shown says, read as
+ * they are shown, and again each time that they are shown anew, as Usages
+ * and the expression editor's names show them.
+ */
+export function UsageLists({
+  projectId,
+  id,
+  shown,
+  lists,
+  className = "",
+}: {
+  projectId: string;
+  id: string;
+  shown: boolean;
+  lists: UsageListOf[];
+  className?: string;
+}) {
+  return (
+    <div id={id} className={`space-y-3 ${className}`}>
+      {shown &&
+        lists.map(({ key, ...list }) => (
+          <UsageList key={key} projectId={projectId} {...list} />
+        ))}
+    </div>
+  );
 }
 
 /**
@@ -269,18 +339,12 @@ export function Usages({
       >
         {shown ? t("usage.hide") : t("usage.show")}
       </Button>
-      <div id={regionId} className="space-y-3">
-        {shown &&
-          lists.map((list) => (
-            <UsageList
-              key={list.key}
-              projectId={projectId}
-              title={list.title}
-              empty={list.empty}
-              query={list.query}
-            />
-          ))}
-      </div>
+      <UsageLists
+        projectId={projectId}
+        id={regionId}
+        shown={shown}
+        lists={lists}
+      />
     </section>
   );
 }

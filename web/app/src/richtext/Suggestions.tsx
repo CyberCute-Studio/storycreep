@@ -14,6 +14,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import { type Editor, useEditorState } from "@tiptap/react";
 import { type RefObject, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { OfferFrame, OfferList, OfferOption } from "../ui/Offers";
 import { type Offer, offersOf, type RichTextChoices } from "./choices";
 import { valueChipText } from "./extensions";
 import {
@@ -166,8 +167,9 @@ export function Suggestions({
   );
 
   // The text names the list and the offer highlighted while it is open, as
-  // a combobox does; ProseMirror leaves alone the attributes of its element
-  // that its props do not set.
+  // a combobox does, which the offer scrolls into view (OfferOption);
+  // ProseMirror leaves alone the attributes of its element that its props do
+  // not set.
   useEffect(() => {
     if (editor.isDestroyed) {
       return;
@@ -180,7 +182,6 @@ export function Suggestions({
     }
     dom.setAttribute("aria-controls", listId);
     dom.setAttribute("aria-activedescendant", activeId);
-    document.getElementById(activeId)?.scrollIntoView?.({ block: "nearest" });
   }, [editor, listId, activeId]);
   useEffect(
     () => () => {
@@ -205,46 +206,30 @@ export function Suggestions({
         {status}
       </p>
       {open !== undefined && (
-        // The offers are 8 px from the text, and from each other, as a
-        // finger's targets are (PRD NFR-TOUCH-01). A press anywhere on the
-        // list, on an offer or between two, or on what it says, leaves the
-        // focus in the text, so that one that misses an offer closes
-        // neither the list nor the on-screen keyboard.
-        // biome-ignore lint/a11y/noStaticElementInteractions: a press on it does nothing but leave the focus in the text, whose keys work the list.
-        <div
-          className="space-y-1 border-t border-border p-2"
-          onMouseDown={(event) => event.preventDefault()}
-        >
+        // Below the text, as a field's offers are (OfferFrame).
+        <OfferFrame className="space-y-1 border-t border-border p-2">
           {offers.length > 0 ? (
-            <div
+            <OfferList
               id={listId}
-              role="listbox"
-              aria-label={
+              label={
                 values
                   ? t("richtext.suggest.values")
                   : t("richtext.suggest.mentions")
               }
-              className="flex max-h-60 flex-col gap-2 overflow-y-auto"
+              maxHeight="max-h-60"
             >
               {offers.map((offer, i) => (
-                // The text's keys move through the offers and choose one
-                // (aria-activedescendant), which keeps the focus in the
-                // text, so an offer takes none itself, nor as it is
-                // pressed, as the list has it.
-                // biome-ignore lint/a11y/useFocusableInteractive: as above.
-                // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
-                <div
+                <OfferOption
                   key={offerKey(offer)}
                   id={optionId(i)}
-                  role="option"
-                  aria-selected={i === index}
-                  onClick={() => {
+                  selected={i === index}
+                  onChoose={() => {
                     const at = suggestionOf(editor.state);
                     if (at !== undefined) {
                       choose(offer, at);
                     }
                   }}
-                  className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 rounded px-3 aria-selected:bg-surface-hover"
+                  layout="flex-wrap items-center gap-x-3"
                 >
                   <span className="min-w-0 break-words">
                     {offerText(offer)}
@@ -252,9 +237,9 @@ export function Suggestions({
                   <span className="min-w-0 break-words text-fg-muted">
                     {offer.choice.detail}
                   </span>
-                </div>
+                </OfferOption>
               ))}
-            </div>
+            </OfferList>
           ) : (
             <p className="px-3 py-2 text-fg-muted">
               {values
@@ -272,7 +257,7 @@ export function Suggestions({
               {t("richtext.suggest.format_hint")}
             </p>
           )}
-        </div>
+        </OfferFrame>
       )}
     </>
   );

@@ -28,6 +28,75 @@
   }
 }
 
+/* The expression editor's field (web/app/src/expr): a text area, whose own
+   text is transparent, over what shows the same text coloured, of the same
+   font, size, padding, and wrapping, in one cell of a grid, which grows with
+   the text, so that the two keep each character in one place. In forced
+   colours, which would draw the text area's text over the coloured copy,
+   the text area shows its own, and the copy nothing. */
+@layer components {
+  .expr-field {
+    display: grid;
+  }
+
+  .expr-field > pre,
+  .expr-field > textarea {
+    grid-area: 1 / 1;
+    margin: 0;
+    border: 0;
+    padding: 0.5rem 0.75rem;
+    min-height: 2.75rem;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    line-height: 1.5rem;
+    letter-spacing: normal;
+    tab-size: 4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0;
+  }
+
+  .expr-field > pre {
+    pointer-events: none;
+    color: var(--color-fg);
+  }
+
+  .expr-field > textarea {
+    resize: none;
+    overflow: hidden;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--color-fg);
+  }
+
+  /* iOS's and iPadOS's WebKit, which every browser there is, pads the text
+     within a text area 3px more on each side than its padding says, which
+     the copy has not: the text area's own padding is 3px less there, so
+     that its text, its caret, and its selection stay over the copy's.
+     -webkit-touch-callout is that WebKit's alone. */
+  @supports (-webkit-touch-callout: none) {
+    .expr-field > textarea {
+      padding-inline: calc(0.75rem - 3px);
+    }
+  }
+
+  /* The selection, over the coloured copy, which it lets show through. */
+  .expr-field > textarea::selection {
+    background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+
+  @media (forced-colors: active) {
+    .expr-field > textarea {
+      color: CanvasText;
+    }
+
+    .expr-field > pre {
+      visibility: hidden;
+    }
+  }
+}
+
 /* The rich-text editor's text (web/app/src/richtext): ProseMirror's own
    rules, which TipTap would add in a style element of its own that the
    page's Content-Security-Policy refuses, and how the text shows what the

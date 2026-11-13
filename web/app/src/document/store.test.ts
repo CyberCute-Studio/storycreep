@@ -1473,6 +1473,133 @@ describe("a batch refused for a revision that changed elsewhere (§7.10)", () =>
     ]);
   });
 
+  // An expression is compared by its source alone, of which the server
+  // compiles the rest: one compiled anew elsewhere, as once a variable that
+  // it names is created, did not change elsewhere, and one that another
+  // session wrote as the batch writes it, though the page holds the batch's
+  // as not compiled yet, is no change over it.
+  it.each([
+    ["compiled anew elsewhere", "gold += 1"],
+    ["written elsewhere as the batch writes it", "gold += 2"],
+  ])(
+    "is sent again where a script that it changes was only %s",
+    async (_, theirs) => {
+      const compiled = {
+        source: theirs,
+        is_valid: true,
+        ast: { kind: "script", statements: [] },
+        ast_version: 1,
+      };
+      const server = serve({
+        ...tree([board("bd_a", "Harbour")]),
+        listBoardNodes: () =>
+          page([
+            {
+              ...node("nd_a", "bd_a"),
+              on_enter: {
+                source: "gold += 1",
+                is_valid: false,
+                error: { code: "unknown_identifier", start: 0, end: 4 },
+              },
+            },
+          ]),
+        listBoardConnections: () => page([]),
+        applyCommands: inTurn(
+          refused(409, {
+            code: "revision_conflict",
+            details: {
+              conflicts: [
+                {
+                  command: 0,
+                  command_id: "00000000-0000-7000-8000-000000000001",
+                  type: "node.update",
+                  id: "nd_a",
+                  expected_rev: 3,
+                  exists: true,
+                  current_rev: 4,
+                },
+              ],
+              states: {
+                nd_a: { ...node("nd_a", "bd_a", 4), on_enter: compiled },
+              },
+            },
+          }),
+          applied(2, [{ id: "nd_a", rev: 5 }]),
+        ),
+      });
+      const { doc } = await open();
+      await doc.load(boardPart("bd_a"));
+      await doc.send([
+        {
+          type: "node.update",
+          payload: { id: "nd_a", on_enter: "gold += 2" },
+          expected_rev: { nd_a: 3 },
+        },
+      ]);
+      expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+        { nd_a: 3 },
+        { nd_a: 4 },
+      ]);
+    },
+  );
+
+  it("is refused where a script that it changes was written elsewhere as another source", async () => {
+    const theirs = {
+      ...node("nd_a", "bd_a", 4),
+      on_enter: { source: "gold += 3", is_valid: false },
+    };
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      listBoardNodes: () =>
+        page([
+          {
+            ...node("nd_a", "bd_a"),
+            on_enter: { source: "gold += 1", is_valid: false },
+          },
+        ]),
+      listBoardConnections: () => page([]),
+      applyCommands: inTurn(
+        refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "node.update",
+                id: "nd_a",
+                expected_rev: 3,
+                exists: true,
+                current_rev: 4,
+              },
+            ],
+            states: { nd_a: theirs },
+          },
+        }),
+      ),
+    });
+    const { doc } = await open();
+    await doc.load(boardPart("bd_a"));
+    const error = await doc
+      .send([
+        {
+          type: "node.update",
+          payload: { id: "nd_a", on_enter: "gold += 2" },
+          expected_rev: { nd_a: 3 },
+        },
+      ])
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).overlaps[0].fields).toEqual([
+      {
+        field: "on_enter",
+        mine: { source: "gold += 2", is_valid: false },
+        theirs: theirs.on_enter,
+      },
+    ]);
+    expect(server.batches).toHaveLength(1);
+  });
+
   it("is refused for a field that changed elsewhere where it was made on top of a batch answered with already_applied, rather than moved to the revisions that the answer gives, which may be past that change", async () => {
     const first = Promise.withResolvers<CommandResultBody>();
     const server = serve({

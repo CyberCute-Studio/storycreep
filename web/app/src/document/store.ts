@@ -54,10 +54,12 @@ import {
   Draft,
   type Entities,
   emptyDoc,
+  expressionFields,
   type Gone,
   type Kind,
   kinds,
   nodeOfOutput,
+  ownsExpressions,
   type Part,
   type Project,
   partOf,
@@ -3012,6 +3014,7 @@ export class ProjectDocument {
       const mine = this.written(entry, id, base);
       const unread = unreadFields(id, base);
       const byValue = fieldsOfValues(id);
+      const owner = ownsExpressions(id);
       const fields = [];
       for (const field of new Set([
         ...Object.keys(base),
@@ -3026,7 +3029,12 @@ export class ProjectDocument {
           : undefined;
         const overlapping =
           values === undefined
-            ? overlapsAt(shown.exact, value, base[field], state[field])
+            ? overlapsAt(
+                shown.exact,
+                comparable(owner, field, value),
+                comparable(owner, field, base[field]),
+                comparable(owner, field, state[field]),
+              )
             : [
                 ...new Set([
                   ...Object.keys(values.mine),
@@ -3088,6 +3096,27 @@ function overlapsAt(
 ): boolean {
   const elsewhere = exact ? !equal(now, was) : !equal(now, value);
   return !equal(value, was) && elsewhere && !equal(value, now);
+}
+
+/**
+ * Returns what a conflict compares of value, of field of an entity, which
+ * owner says is an owner of expressions (ownsExpressions): of an
+ * expression, as a node's scripts and a connection's or an output's
+ * condition, its source alone, of which the server compiles the rest
+ * (§5.8.8), so that one compiled anew elsewhere, of the same source, as
+ * once a variable that it names is created, did not change elsewhere, and
+ * one that a batch writes, which the page holds as not compiled yet
+ * (scripted), is what it is elsewhere where that has its source; of any
+ * other field, or of another entity, the value itself.
+ */
+function comparable(owner: boolean, field: string, value: unknown): unknown {
+  return owner &&
+    (expressionFields as readonly string[]).includes(field) &&
+    typeof value === "object" &&
+    value !== null &&
+    "source" in value
+    ? value.source
+    : value;
 }
 
 /**

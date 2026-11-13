@@ -5,7 +5,9 @@
 // tables of Unicode that they alone read (unicode.ts,
 // schema/unicode/tables.json), and a bundle of what parses and checks a
 // source holds none of them, whatever its bundler makes of a module's
-// top-level reads of a JSON file.
+// top-level reads of a JSON file. It exports the lexer and the built-ins'
+// table too, of which the web app's expression editor reads a source's
+// tokens and the functions' signatures (plan item 67).
 
 export type {
   Assign,
@@ -39,7 +41,24 @@ export {
   NO_RANGE,
   RESERVED_WORDS,
 } from "./ast";
-export { AST_VERSION, builtins, versionOf } from "./builtins";
+export {
+  AST_VERSION,
+  BUILTINS,
+  type Builtin,
+  builtins,
+  TY_BOOL,
+  TY_FLOAT,
+  TY_INT,
+  TY_NODE,
+  TY_NUMBER,
+  TY_STRING,
+  TY_VALUE,
+  type TypeSet,
+  typeNamesOf,
+  typeOf,
+  versionOf,
+  widened,
+} from "./builtins";
 export { check, checkResolved, compile } from "./check";
 export { DecodeError, decode } from "./decode";
 export { encode } from "./encode";
@@ -64,6 +83,7 @@ export {
   readJSON,
   readJSONBytes,
 } from "./json";
+export { Lexer, type Token, type TokenKind } from "./lexer";
 export { parse } from "./parser";
 export {
   type Attribute,
