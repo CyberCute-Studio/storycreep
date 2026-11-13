@@ -725,14 +725,14 @@ describe("the expression editor", () => {
     expect(document.activeElement).toBe(picker);
   });
 
-  it("says that it shows a condition once the page has read the project's names, rather than offer to clear it, where the read failed", async () => {
+  it("says that it shows a condition once it can check it against the project's names, rather than offer to clear it, where the read failed", async () => {
     const user = userEvent.setup();
     boardPage("gold >= 3", {}, { refuseComponents: true });
     const { form } = await openChoice(user);
     await user.click(within(form).getByRole("button", { name: "Guided" }));
     const picker = within(form).getByRole("group", { name: "Condition" });
     within(picker).getByText(
-      /^The guided picker shows a condition once the project's variables and components are read/,
+      /^The guided picker shows a condition once it can check it against the project's variables and components/,
     );
     expect(within(picker).queryByRole("button")).toBeNull();
   });

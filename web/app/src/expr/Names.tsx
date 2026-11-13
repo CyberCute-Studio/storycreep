@@ -13,7 +13,11 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { type ValueNamer, valueNamer } from "../content/textNames";
+import {
+  nodeTitleText,
+  type ValueNamer,
+  valueNamer,
+} from "../content/textNames";
 import {
   componentUsagesQuery,
   type UsageListOf,
@@ -26,7 +30,7 @@ import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
 import { textLink } from "../ui/Page";
 import type { Analysis } from "./analyze";
-import { nodeTitleText, typeText, type Words } from "./messages";
+import { typeText, type Words } from "./messages";
 import { type Part, plainOf } from "./plain";
 import type { Scope } from "./scope";
 import { unknownOf, type VariableType } from "./unknown";

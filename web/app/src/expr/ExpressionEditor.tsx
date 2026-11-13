@@ -278,21 +278,26 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
   }
   const first = writes.data.pages[0];
   const items = first?.items ?? [];
-  const sites = items.slice(0, writesShown).map((usage) =>
-    usage.board_id === undefined
-      ? siteText(t, usage, undefined)
-      : t("expr.offer.write_site", {
-          board: boardNameOf(t, usage),
-          node: nodeTitleOf(t, usage),
-        }),
-  );
+  const listed = items.slice(0, writesShown);
+  // Joined by the catalog's separator, as a site's node title may hold the
+  // comma of a list.
+  const sites = listed
+    .map((usage) =>
+      usage.board_id === undefined
+        ? siteText(t, usage, undefined)
+        : t("expr.offer.write_site", {
+            board: boardNameOf(t, usage),
+            node: nodeTitleOf(t, usage),
+          }),
+    )
+    .join(t("expr.offer.site_separator"));
   return (
     <span className="text-fg-muted">
-      {sites.length === 0
+      {listed.length === 0
         ? t("expr.offer.written_nowhere")
         : items.length <= writesShown && (first?.next_cursor ?? null) === null
-          ? t("expr.offer.written_in", { sites: sites.join("; ") })
-          : t("expr.offer.written_in_more", { sites: sites.join("; ") })}
+          ? t("expr.offer.written_in", { sites })
+          : t("expr.offer.written_in_more", { sites })}
     </span>
   );
 }
@@ -618,6 +623,23 @@ export function ExpressionEditor({
     told.current = { ...told.current, ...next };
     onChange(told.current.source, told.current.unfinished);
   };
+  // The owner's source and the stored one as the field holds them, of LF
+  // line breaks, and the server's error of the stored one at its
+  // characters there, made once of each rather than at each key.
+  const typedDefault = useMemo(() => asTyped(defaultValue), [defaultValue]);
+  const typedStored = useMemo(
+    () =>
+      stored === undefined
+        ? undefined
+        : {
+            source: asTyped(stored.source),
+            error:
+              stored.is_valid || stored.error === undefined
+                ? undefined
+                : typedRange(stored.source, stored.error as SourceError),
+          },
+    [stored],
+  );
   // A source written anew, as typed or as the picker writes it, of which
   // no field of the picker holds what it cannot write then; of the owner's
   // own source, as the field holds its CR LF line breaks, the owner's,
@@ -625,7 +647,7 @@ export function ExpressionEditor({
   const update = (next: string) => {
     setSource(next);
     tell({
-      source: next === asTyped(defaultValue) ? defaultValue : next,
+      source: next === typedDefault ? defaultValue : next,
       unfinished: false,
     });
   };
@@ -646,12 +668,8 @@ export function ExpressionEditor({
   // compiles it anew of, but the form shows as it held it.
   const none = optional && source === "";
   const serverError =
-    stored !== undefined &&
-    asTyped(stored.source) === source &&
-    !stored.is_valid &&
-    stored.error !== undefined &&
-    (!analysis.checked || analysis.unread)
-      ? typedRange(stored.source, stored.error as SourceError)
+    typedStored?.source === source && (!analysis.checked || analysis.unread)
+      ? typedStored.error
       : undefined;
   const shownError: SourceError | undefined = none
     ? undefined

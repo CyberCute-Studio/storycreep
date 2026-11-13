@@ -14,7 +14,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { valueNamer } from "../content/textNames";
+import { byName, valueNamer } from "../content/textNames";
 import { Button } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
 import type { Analysis } from "./analyze";
@@ -49,9 +49,6 @@ function targetValue(target: Target): string {
   return `${target.ref} ${target.attribute ?? ""}`;
 }
 
-/** What orders the choices by their names, made once. */
-const collator = new Intl.Collator();
-
 /** Returns the values that the board of scope reads, which the picker offers to test, but text attributes, in the order of their names. */
 function choicesOf(scope: Scope): Choice[] {
   const { view, boardId } = scope;
@@ -85,7 +82,7 @@ function choicesOf(scope: Scope): Choice[] {
       });
     }
   }
-  return out.sort((a, b) => collator.compare(a.name, b.name));
+  return out.sort(byName);
 }
 
 /** Returns what names a test, of a value of type. */
@@ -211,9 +208,10 @@ export function GuidedPicker({
   const invalid = refused ? "" : undefined;
   if (picked === undefined) {
     // A condition that parses, of a page that has not read the board's
-    // names, or whose read of them failed, may be one that the picker
-    // shows, once it can tell (Analysis' checked), which it says, rather
-    // than offer to clear it.
+    // names, whose read of them failed, or whose document holds what no
+    // project has, as for a moment two components of one key, may be one
+    // that the picker shows, once it can check it (Analysis' checked),
+    // which it says, rather than offer to clear it.
     const unchecked = !analysis.checked && analysis.parsed !== undefined;
     return (
       <fieldset

@@ -162,7 +162,9 @@ describe("what the editor offers", () => {
       text: "gold",
       caret: 4,
     });
-    // A function, with its (, or after the ( that the source has already.
+    // A function, with its ( at the end of its line, and its name alone
+    // wherever anything follows it, as the ( that the source has already,
+    // after spaces too, which the language reads as the call's, or a ).
     const call = spotOf("cla", 3);
     const [clamp] = offersAt(
       call,
@@ -175,20 +177,28 @@ describe("what the editor offers", () => {
       text: "clamp(",
       caret: 6,
     });
-    expect(editOf("cla(x)", spotOf("cla(x)", 3), clamp)).toMatchObject({
-      text: "clamp",
+    expect(editOf("cla\nx", spotOf("cla\nx", 3), clamp)).toMatchObject({
+      text: "clamp(",
       caret: 6,
     });
-    // Or after spaces and the ( after them, which the language reads as the
-    // call's too.
+    expect(editOf("cla(x)", spotOf("cla(x)", 3), clamp)).toMatchObject({
+      text: "clamp",
+      caret: 5,
+    });
     expect(editOf("cla (x)", spotOf("cla (x)", 3), clamp)).toMatchObject({
       from: 0,
       to: 3,
       text: "clamp",
-      caret: 7,
+      caret: 5,
     });
-    // A component, with its dot, or after the dot that the source has
-    // already, of the attribute after it.
+    expect(editOf("abs(cla)", spotOf("abs(cla)", 7), clamp)).toMatchObject({
+      from: 4,
+      to: 7,
+      text: "clamp",
+      caret: 9,
+    });
+    // A component, with its dot at the end of its line, and its key alone
+    // wherever anything follows it, as the dot of the attribute after it.
     const member = spotOf("ela.trust", 3);
     const component = offersAt(
       member,
@@ -208,11 +218,11 @@ describe("what the editor offers", () => {
       from: 0,
       to: 3,
       text: "elara",
-      caret: 6,
+      caret: 5,
     });
     expect(
       editOf("ela .trust", spotOf("ela .trust", 3), component),
-    ).toMatchObject({ text: "elara", caret: 7 });
+    ).toMatchObject({ text: "elara", caret: 5 });
     // A node, as its reference.
     const inNode = 'visited(node("Qu")) and gold';
     const at = spotOf(inNode, 16);
@@ -257,8 +267,9 @@ describe("what the editor offers", () => {
         toWithin.text +
         within.slice(toWithin.to),
     ).toBe(`visited(node("${ids.quay}"))`);
-    // node("…"), of node typed anew where the source has its ( and its
-    // string already, is node, of which nothing is written again.
+    // node("…"), where anything follows the name, as the ( and the string
+    // that the source has already, or the ) of what it is within, is node
+    // alone, rather than a quote that no quote closes.
     const retyped = `visited(node("${ids.quay}"))`;
     const name = spotOf(retyped, 12);
     const nodeCall = offersAt(
@@ -275,7 +286,34 @@ describe("what the editor offers", () => {
       from: 8,
       to: 12,
       text: "node",
-      caret: 13,
+      caret: 12,
     });
+    expect(editOf("visited(no)", spotOf("visited(no)", 10), nodeCall)).toEqual({
+      from: 8,
+      to: 10,
+      text: "node",
+      caret: 12,
+    });
+    expect(
+      editOf("no and gold", spotOf("no and gold", 2), nodeCall),
+    ).toMatchObject({ text: "node", caret: 4 });
+    // And with its ( and quote at the end of its line, whose nodes the list
+    // offers then.
+    expect(editOf("visited(no", spotOf("visited(no", 10), nodeCall)).toEqual({
+      from: 8,
+      to: 10,
+      text: 'node("',
+      caret: 14,
+    });
+  });
+
+  it("offers a node by the start of its ID, in any case, as the parser reads it", () => {
+    const source = `node("${ids.quay.slice(0, 10).toLowerCase()}`;
+    const spot = spotOf(source, source.length);
+    expect(
+      offersAt(spot, "condition", scope.view, scope.boardId, words).offers.map(
+        (o) => o.id,
+      ),
+    ).toContain(ids.quay);
   });
 });

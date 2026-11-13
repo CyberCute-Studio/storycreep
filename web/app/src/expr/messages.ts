@@ -45,11 +45,6 @@ export function typeText(t: TFunction, type: string): string {
   return type;
 }
 
-/** Returns a node's title as what the editor says of the node shows it, of an offer, a name's line, and the rendering: what an untitled one is called, for one without. */
-export function nodeTitleText(t: TFunction, title: string): string {
-  return title === "" ? t("boards.untitled_node") : title;
-}
-
 /** Returns a list of alternatives, as either or, joined as the user's language joins one. */
 export function orList(locale: string, items: readonly string[]): string {
   return new Intl.ListFormat(locale, { type: "disjunction" }).format(items);

@@ -19,6 +19,7 @@ import { refusalOf } from "../auth/refusal";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button, MoreButton } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
+import { nodeTitleText } from "./textNames";
 
 /** How a site uses a variable or a component, as its usage lists say. */
 export type Use = "read" | "write" | "speaker" | "mention";
@@ -130,11 +131,9 @@ export function useComponentNames(
   return (id) => names[ids.indexOf(id)];
 }
 
-/** Returns the title of the node of usage's site, or what an untitled one is called. */
+/** Returns the title of the node of usage's site, or what an untitled one is called (nodeTitleText). */
 export function nodeTitleOf(t: TFunction, usage: Usage): string {
-  return usage.node_title === undefined || usage.node_title === ""
-    ? t("boards.untitled_node")
-    : usage.node_title;
+  return nodeTitleText(t, usage.node_title ?? "");
 }
 
 /** Returns the name of the board of usage's site, or what one that the list does not name is called. */

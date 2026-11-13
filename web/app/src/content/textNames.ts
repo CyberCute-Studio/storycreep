@@ -128,12 +128,17 @@ export function textNames(
   };
 }
 
-/** What orders the choices by their names, as the list does: one collator for all of them, rather than one for each comparison, as localeCompare makes. */
-const collator = new Intl.Collator();
+/** What orders the choices by their names, as the list does, and the expression editor's offers and its picker's choices: one collator for all of them, rather than one for each comparison, as localeCompare makes. */
+export const collator = new Intl.Collator();
 
 /** Compares two choices by their names, as the list orders them. */
-function byName(a: { name: string }, b: { name: string }): number {
+export function byName(a: { name: string }, b: { name: string }): number {
   return collator.compare(a.name, b.name);
+}
+
+/** Returns a node's title as what names the node shows it, as a usage's site and the expression editor's offers, names, and rendering do: what an untitled one is called, for one without. */
+export function nodeTitleText(t: TFunction, title: string): string {
+  return title === "" ? t("boards.untitled_node") : title;
 }
 
 /**

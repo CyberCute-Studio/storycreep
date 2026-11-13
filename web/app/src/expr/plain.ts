@@ -12,8 +12,8 @@ import type {
   Call,
   Node,
 } from "@storycreep/shared/expr/compile";
-import { valueNamer } from "../content/textNames";
-import { nodeTitleText, type Words } from "./messages";
+import { nodeTitleText, valueNamer } from "../content/textNames";
+import type { Words } from "./messages";
 import type { ScopeSources } from "./scope";
 
 /** A part of a rendering: words, or a name as the source writes it, which the editor shows as code. */

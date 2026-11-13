@@ -12,11 +12,10 @@ import {
   builtins,
   type Context,
 } from "@storycreep/shared/expr/compile";
-import { valueNamer } from "../content/textNames";
+import { collator, nodeTitleText, valueNamer } from "../content/textNames";
 import { nameMatcher } from "../ui/match";
 import {
   builtinText,
-  nodeTitleText,
   resultText,
   signatureOf,
   typeText,
@@ -203,9 +202,6 @@ function startsAs(name: string, query: string): boolean {
   return name.toLowerCase().startsWith(query.toLowerCase());
 }
 
-/** What orders the offers by what they show, made once. */
-const collator = new Intl.Collator();
-
 /**
  * Returns what the editor offers at spot, of a source of context, of the
  * board of boardId, as view has it: those that match what is typed, by
@@ -363,7 +359,8 @@ export function offersAt(
           n.deleted_at === undefined &&
           n.type !== "jumper" &&
           (matches(`${n.title} ${boards.get(n.board_id)?.name ?? ""}`) ||
-            (q.length >= 3 && n.id.startsWith(q))),
+            // By its ID too, in any case, as the parser reads it.
+            (q.length >= 3 && startsAs(n.id, q))),
       );
       for (const n of nodes) {
         offers.push({
@@ -398,11 +395,12 @@ export function offersAt(
 /**
  * Returns the edit that writes offer at spot of source: the range that it
  * replaces, in UTF-16 code units, the text that replaces it, and where the
- * caret goes then, after what it wrote, and after the ( of a function, as
- * of node("…"), or the dot of a component, whose name the source has a ( or
- * a dot after already, or after spaces on its line, as the language reads
- * visited (…) as a call too, which it does not write again, nor what the
- * offer writes after it, as node("…")'s quote.
+ * caret goes then, after what it wrote. A function's name is written with
+ * its (, as node("…")'s with its quote too, and a component's key with its
+ * dot, only at the end of its line, where nothing follows that they would
+ * make one too many of or leave unclosed; wherever anything follows, as a (
+ * or a dot that the source has already, or the ) of what it is within, the
+ * name alone, as typing it would.
  */
 export function editOf(
   source: string,
@@ -411,21 +409,16 @@ export function editOf(
 ): { from: number; to: number; text: string; caret: number } {
   const closer =
     offer.kind === "function" ? "(" : offer.kind === "component" ? "." : "";
-  const cut = closer === "" ? -1 : offer.insert.lastIndexOf(closer);
-  const gap = /^[ \t]*/.exec(source.slice(spot.to))?.[0].length ?? 0;
-  if (cut >= 0 && source[spot.to + gap] === closer) {
-    const text = offer.insert.slice(0, cut);
-    return {
-      from: spot.from,
-      to: spot.to,
-      text,
-      caret: spot.from + text.length + gap + 1,
-    };
-  }
+  const next = source[spot.to];
+  const atEnd = next === undefined || next === "\n" || next === "\r";
+  const text =
+    closer === "" || atEnd
+      ? offer.insert
+      : offer.insert.slice(0, offer.insert.lastIndexOf(closer));
   return {
     from: spot.from,
     to: spot.to,
-    text: offer.insert,
-    caret: spot.from + offer.insert.length,
+    text,
+    caret: spot.from + text.length,
   };
 }

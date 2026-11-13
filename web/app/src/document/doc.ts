@@ -62,6 +62,14 @@ export const kinds: readonly Kind[] = [
   "components",
 ];
 
+/** The fields of an owner of expressions, a node, a connection, or a branch output, that hold them. */
+export const expressionFields = [
+  "on_enter",
+  "on_exit",
+  "condition",
+  "on_traverse",
+] as const;
+
 /**
  * A part of the project that the document reads and keeps current: the tree
  * of its boards (its folders of boards and its boards), its variables (with
