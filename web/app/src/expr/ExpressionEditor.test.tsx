@@ -13,7 +13,7 @@ import type { Engine } from "../canvas/engine";
 import { renderApp, testSession } from "../test/app";
 import { testConnection } from "../test/canvas";
 import "../test/editor";
-import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import { character, elara, ids, node, variable, variables } from "./testdata";
 
 // The expression editor on a board's page (PRD FR-EXPR-01, FR-VAR-02 AC1,
@@ -82,9 +82,35 @@ const goldWrite: Usage = {
   node_title: "Quay",
 };
 
-/** Answers the board's page, of Quay and Dock, connected by a choice of the condition given, as the server compiled it, valid unless stored says otherwise, and records what it is asked. */
-function boardPage(condition?: string, stored: Partial<Expression> = {}) {
-  const connection: Connection = testConnection(choice, ids.quay, dock, {
+/** A site of Harbour's Quay that reads elara.trust. */
+const trustRead: Usage = { ...goldWrite, attribute_id: ids.trust };
+
+/** A site of Harbour's Dock that reads elara.mood. */
+const moodRead: Usage = {
+  site: "node_on_exit",
+  board_id: ids.harbour,
+  board_name: "Harbour",
+  node_id: dock,
+  node_title: "Dock",
+  attribute_id: ids.mood,
+};
+
+/**
+ * Answers the board's page, of Quay and Dock, connected by a choice of the
+ * condition given, as the server compiled it, valid unless stored says
+ * otherwise, each connection.update of which takes it to its next
+ * revision, once sending allows, and refuses each variable.create where
+ * refuseCreate says so; and records what it is asked.
+ */
+function boardPage(
+  condition?: string,
+  stored: Partial<Expression> = {},
+  {
+    sending,
+    refuseCreate = false,
+  }: { sending?: Promise<void>; refuseCreate?: boolean } = {},
+) {
+  let connection: Connection = testConnection(choice, ids.quay, dock, {
     board_id: ids.harbour,
     ...(condition === undefined
       ? {}
@@ -93,7 +119,7 @@ function boardPage(condition?: string, stored: Partial<Expression> = {}) {
   // The variables that the page's batches created, which a read of the
   // variables brings too.
   const created: Variable[] = [];
-  return fakeApi((operation, input) => {
+  return fakeApi(async (operation, input) => {
     switch (operation) {
       case "getProject":
         return testProject;
@@ -125,6 +151,15 @@ function boardPage(condition?: string, stored: Partial<Expression> = {}) {
         };
       case "listBoardConnections":
         return { items: [connection], next_cursor: null };
+      case "getConnection":
+        return connection;
+      case "listComponentUsages": {
+        const { query } = input as { query: { use: string } };
+        return {
+          items: query.use === "read" ? [trustRead, moodRead] : [],
+          next_cursor: null,
+        };
+      }
       case "listTags":
         return { items: [] };
       case "listNodeReferrers":
@@ -144,20 +179,55 @@ function boardPage(condition?: string, stored: Partial<Expression> = {}) {
       }
       case "applyCommands": {
         const { body } = input as {
-          body: { commands: { type: string; payload: Partial<Variable> }[] };
+          body: {
+            commands: { type: string; payload: Record<string, unknown> }[];
+          };
         };
+        if (body.commands.some((c) => c.type === "connection.update")) {
+          await sending;
+        }
+        if (
+          refuseCreate &&
+          body.commands.some((c) => c.type === "variable.create")
+        ) {
+          throw refused(422, { code: "validation_failed" });
+        }
         const made = body.commands
           .filter((c) => c.type === "variable.create")
-          .map(({ payload: { id = "", key = "", ...more } }) =>
-            variable(id, key, more),
-          );
+          .map(({ payload }) => {
+            const { id = "", key = "", ...more } = payload as Partial<Variable>;
+            return variable(id, key, more);
+          });
         created.push(...made);
+        // The connection of its next revision, of the condition that the
+        // batch gave it, as the server compiles it.
+        const updates = body.commands.filter(
+          (c) => c.type === "connection.update",
+        );
+        for (const { payload } of updates) {
+          const source = payload.condition;
+          connection = {
+            ...connection,
+            rev: connection.rev + 1,
+            ...(typeof source === "string"
+              ? {
+                  condition:
+                    source === "" ? undefined : { source, is_valid: true },
+                }
+              : {}),
+          };
+        }
         return {
           status: "applied",
           seq: 2,
-          // The revisions of the variables that a batch created, which the
+          // The revisions of what a batch created or changed, which the
           // document keeps then.
-          revisions: made.map((v) => ({ id: v.id, rev: v.rev })),
+          revisions: [
+            ...made.map((v) => ({ id: v.id, rev: v.rev })),
+            ...(updates.length === 0
+              ? []
+              : [{ id: connection.id, rev: connection.rev }]),
+          ],
           not_reconnected: [],
           undo: [],
         };
@@ -256,6 +326,11 @@ describe("the expression editor", () => {
     await user.keyboard("{Enter}");
     expect(fieldValue(condition)).toBe("gold");
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
+    // The name written, shortened, offers again, as it is typed.
+    await user.keyboard("{Backspace}");
+    await screen.findByRole("listbox", { name: "Suggestions" });
+    await user.keyboard("d");
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
     // A variable of the board and a global one of the same key, which the
     // bare key does not name, as global.trust; and a tap on an offer
     // writes it, leaving the focus in the field.
@@ -306,6 +381,43 @@ describe("the expression editor", () => {
       },
     ]);
     await within(form).findByText("Saved.");
+  });
+
+  it("sends no second save of an Enter while the first is under way, as Enter in a field of one line does not while Save is disabled", async () => {
+    const user = userEvent.setup();
+    let send = () => {};
+    const sending = new Promise<void>((resolve) => {
+      send = resolve;
+    });
+    const calls = boardPage(undefined, {}, { sending });
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "gold > 1");
+    await user.keyboard("{Enter}");
+    const save = within(form).getByRole("button", {
+      name: "Save the connection",
+    });
+    await waitFor(() => expect(save).toHaveProperty("disabled", true));
+    await user.keyboard("{Enter}");
+    send();
+    await within(form).findByText("Saved.");
+    // What a second save would have sent, after the first.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(batches(calls)).toHaveLength(1);
+  });
+
+  it("reads a stored source's line breaks as its text area holds them", async () => {
+    const user = userEvent.setup();
+    boardPage("gold\r\n>= 3");
+    const { form, condition } = await openChoice(user);
+    expect(fieldValue(condition)).toBe("gold\n>= 3");
+    expect(
+      within(form).getByText("In words").parentElement?.textContent,
+    ).toContain("gold is at least 3");
+    // The caret stays where the arrows put it, as React writes the text
+    // area's value anew at no render.
+    await user.click(condition);
+    await user.keyboard("{End}{ArrowLeft>3/}");
+    expect((condition as HTMLTextAreaElement).selectionStart).toBe(6);
   });
 
   // Verifies: FR-EXPR-01/AC3, FR-EXPR-01/AC4
@@ -369,6 +481,8 @@ describe("the expression editor", () => {
     const { form } = await openChoice(user);
     await user.click(within(form).getByRole("button", { name: "Guided" }));
     const value = within(form).getByRole("textbox", { name: "Compared with" });
+    // The on-screen keyboard of text, whose digits have the minus.
+    expect(value.getAttribute("inputmode")).toBeNull();
     await user.clear(value);
     await user.type(value, "4x");
     expect(value.getAttribute("aria-invalid")).toBe("true");
@@ -391,6 +505,43 @@ describe("the expression editor", () => {
         payload: { id: choice, condition: "gold >= 4" },
       },
     ]);
+  });
+
+  it("keeps the guided view, and the focus on Save, once a save from it ends and the form is shown anew", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage("gold >= 3");
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    await user.selectOptions(
+      within(form).getByRole("combobox", { name: "Test" }),
+      "is more than",
+    );
+    const save = within(form).getByRole("button", {
+      name: "Save the connection",
+    });
+    await user.click(save);
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // The form of the connection's next revision.
+    await waitFor(() => expect(save.isConnected).toBe(false));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    expect(
+      shownOf(within(picker).getByRole("combobox", { name: "Test" })),
+    ).toBe("is more than");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(form).getByRole("button", { name: "Save the connection" }),
+      ),
+    );
+  });
+
+  it("shows an option that the condition spells with an escape as the option that it tests", async () => {
+    const user = userEvent.setup();
+    boardPage('elara.mood == "an\\u0067ry"');
+    const { form } = await openChoice(user);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    expect(
+      shownOf(within(form).getByRole("combobox", { name: "Compared with" })),
+    ).toBe("angry");
   });
 
   // Verifies: FR-VAR-02/AC1, FR-DEP-01/AC3
@@ -431,6 +582,26 @@ describe("the expression editor", () => {
     ).toBe(`/app/projects/${testProject.id}/variables?variable=${ids.gold}`);
   });
 
+  it("shows where an attribute is used, of its component's usages those of the attribute alone", async () => {
+    const user = userEvent.setup();
+    boardPage("elara.trust >= 1");
+    const { form } = await openChoice(user);
+    const names = within(form).getByRole("list", {
+      name: "What the names refer to",
+    });
+    await user.click(
+      within(names).getByRole("button", {
+        name: "Show where elara.trust is used",
+      }),
+    );
+    await within(names).findByRole("link", {
+      name: "The on-enter script of Quay",
+    });
+    expect(
+      within(names).queryByRole("link", { name: "The on-exit script of Dock" }),
+    ).toBeNull();
+  });
+
   it("offers to create a variable of a name that names nothing, of the type that its place suggests, and checks the source against it once it is created", async () => {
     const user = userEvent.setup();
     const calls = boardPage();
@@ -456,6 +627,59 @@ describe("the expression editor", () => {
       },
     ]);
     expect(document.activeElement).toBe(condition);
+  });
+
+  it("gives the focus back to the picker once a variable is created from its view", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage();
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "met_mira");
+    await user.keyboard("{Escape}");
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const picker = within(form).getByRole("group", { name: "Condition" });
+    await user.click(
+      within(form).getByRole("button", {
+        name: "Create met_mira, a global true or false",
+      }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await waitFor(() => expect(document.activeElement).toBe(picker));
+    // Which shows the condition, of the variable created, now.
+    await waitFor(() =>
+      expect(
+        shownOf(
+          within(picker).getByRole("combobox", { name: "Value to test" }),
+        ),
+      ).toBe("met_mira (true or false)"),
+    );
+    expect(document.activeElement).toBe(picker);
+  });
+
+  it("says a refusal of a variable's creation under the offer of the name that it was of alone", async () => {
+    const user = userEvent.setup();
+    boardPage(undefined, {}, { refuseCreate: true });
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "met_mira");
+    await user.keyboard("{Escape}");
+    const offerOf = (key: string) =>
+      within(form).getByRole("region", {
+        name: `No variable is called ${key}. Create it?`,
+      });
+    await user.click(
+      within(offerOf("met_mira")).getByRole("button", {
+        name: "Create met_mira, a global true or false",
+      }),
+    );
+    // The offer goes while the page shows the variable created, and comes
+    // again once the creation is refused, with what the refusal says.
+    await waitFor(() =>
+      expect(within(offerOf("met_mira")).getByRole("alert")).toBeDefined(),
+    );
+    await user.type(condition, "x");
+    const next = await within(form).findByRole("region", {
+      name: "No variable is called met_mirax. Create it?",
+    });
+    expect(within(next).queryByRole("alert")).toBeNull();
   });
 
   it("shows the server's error of the saved source where it cannot check it whole, and not once it checks it whole and finds it valid, as once the variable that it names is created", async () => {

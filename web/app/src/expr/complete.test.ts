@@ -171,6 +171,29 @@ describe("what the editor offers", () => {
       text: "clamp",
       caret: 6,
     });
+    // A component, with its dot, or after the dot that the source has
+    // already, of the attribute after it.
+    const member = spotOf("ela.trust", 3);
+    const component = offersAt(
+      member,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers.find((o) => o.kind === "component");
+    if (component === undefined) {
+      throw new Error("no component offered of ela");
+    }
+    expect(editOf("ela", spotOf("ela", 3), component)).toMatchObject({
+      text: "elara.",
+      caret: 6,
+    });
+    expect(editOf("ela.trust", member, component)).toMatchObject({
+      from: 0,
+      to: 3,
+      text: "elara",
+      caret: 6,
+    });
     // A node, as its reference.
     const inNode = 'visited(node("Qu")) and gold';
     const at = spotOf(inNode, 16);

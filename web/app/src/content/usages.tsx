@@ -189,22 +189,25 @@ export function UsageItem({
   );
 }
 
-/** One list of a thing's usages, read a page at a time once it is shown, as a panel's and the expression editor's names show them. */
-export function UsageList({
+/**
+ * One list of a thing's usages, read a page at a time once it is shown, as
+ * a panel's and the expression editor's names show them: those of its
+ * pages that only keeps, where it says, as an attribute's of its
+ * component's, of which the list says that it has none only once it has
+ * read its last page.
+ */
+function UsageList({
   projectId,
   title,
   empty,
   query,
-}: {
-  projectId: string;
-  title: string;
-  empty: string;
-  query: ReturnType<typeof variableUsagesQuery>;
-}) {
+  only,
+}: Omit<UsageListOf, "key"> & { projectId: string }) {
   const { t } = useTranslation();
   const list = useInfiniteQuery(query);
   const titleId = useId();
-  const items = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const read = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const items = only === undefined ? read : read.filter(only);
   const componentName = useComponentNames(projectId, items);
   return (
     <section aria-labelledby={titleId} className="space-y-1">
@@ -216,7 +219,7 @@ export function UsageList({
       ) : list.isError ? (
         <Alert message={refusalOf(list.error, t)?.message} />
       ) : items.length === 0 ? (
-        <p className="text-fg-muted">{empty}</p>
+        !list.hasNextPage && <p className="text-fg-muted">{empty}</p>
       ) : (
         <ul className="list-disc space-y-1 ps-5" aria-labelledby={titleId}>
           {items.map((usage) => (
@@ -240,6 +243,37 @@ export interface UsageListOf {
   title: string;
   empty: string;
   query: ReturnType<typeof variableUsagesQuery>;
+  /** Which of the usages that the query reads the list shows, where it shows some, as an attribute's of its component's. */
+  only?: (usage: Usage) => boolean;
+}
+
+/**
+ * The region of a thing's usages that a button shows and hides, as its
+ * aria-controls names it (id): each of lists while shown says, read as
+ * they are shown, and again each time that they are shown anew, as Usages
+ * and the expression editor's names show them.
+ */
+export function UsageLists({
+  projectId,
+  id,
+  shown,
+  lists,
+  className = "",
+}: {
+  projectId: string;
+  id: string;
+  shown: boolean;
+  lists: UsageListOf[];
+  className?: string;
+}) {
+  return (
+    <div id={id} className={`space-y-3 ${className}`}>
+      {shown &&
+        lists.map(({ key, ...list }) => (
+          <UsageList key={key} projectId={projectId} {...list} />
+        ))}
+    </div>
+  );
 }
 
 /**
@@ -269,18 +303,12 @@ export function Usages({
       >
         {shown ? t("usage.hide") : t("usage.show")}
       </Button>
-      <div id={regionId} className="space-y-3">
-        {shown &&
-          lists.map((list) => (
-            <UsageList
-              key={list.key}
-              projectId={projectId}
-              title={list.title}
-              empty={list.empty}
-              query={list.query}
-            />
-          ))}
-      </div>
+      <UsageLists
+        projectId={projectId}
+        id={regionId}
+        shown={shown}
+        lists={lists}
+      />
     </section>
   );
 }

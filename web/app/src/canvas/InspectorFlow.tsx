@@ -39,7 +39,7 @@ import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
 import type { DocumentState, ProjectDocument } from "../document/store";
-import { ExpressionEditor } from "../expr/ExpressionEditor";
+import { ExpressionEditor, useExpressionView } from "../expr/ExpressionEditor";
 import {
   expressionShown,
   sourceOf,
@@ -792,6 +792,8 @@ function OutputCondition({
   );
   const { commands, held, shown, against } = form;
   const typed = useRef<TypedSource>(undefined);
+  // The view of the condition, which the form shown anew keeps.
+  const conditionView = useExpressionView();
   // A mark of a save that the form refused itself, as of a number that the
   // picker cannot write yet, made anew for each (useFocusRefusal).
   const [invalid, setInvalid] = useState<object>();
@@ -852,7 +854,7 @@ function OutputCondition({
           stored={shown.condition}
           error={refusal?.fields.condition}
           optional={false}
-          guided
+          guided={conditionView}
           onChange={(source, unfinished) => {
             typed.current = { key: held.key, source, unfinished };
             // A change that no field of the form tells of, as the picker's
@@ -1310,6 +1312,8 @@ function ConnectionForm({
   // What the editors of the condition and the on-traverse script gave last.
   const condition = useRef<TypedSource>(undefined);
   const traverse = useRef<TypedSource>(undefined);
+  // The view of the condition, which the form shown anew keeps.
+  const conditionView = useExpressionView();
   const [invalid, setInvalid] = useState<{ fields: Record<string, string> }>();
   const refusal = refusalOf(commands.error, t, connectionField);
   useFocusRefusal(held.form, invalid ?? commands.error);
@@ -1472,7 +1476,7 @@ function ConnectionForm({
           stored={shown.condition}
           error={refusal?.fields.condition}
           optional
-          guided
+          guided={conditionView}
           onChange={(source, unfinished) => {
             condition.current = { key: held.key, source, unfinished };
             // A change that no field of the form tells of, as the picker's

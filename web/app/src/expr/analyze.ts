@@ -65,6 +65,32 @@ export function unitRange(
   return { from: at(r.start), to: at(r.end) };
 }
 
+/**
+ * Returns source as a text area holds it: each of its line breaks, of CR LF
+ * or a CR alone, which the language reads as one (§5.8.1), an LF, as HTML
+ * gives a text area's value, so that what the editor analyses and colours
+ * is what its text area holds, which React then writes anew at no render,
+ * with the caret at its end.
+ */
+export function asTyped(source: string): string {
+  return source.replace(/\r\n?/g, "\n");
+}
+
+/** Returns r, a range of raw in code points, as a server's error has it, at the same characters of asTyped(raw), which has a code point fewer for each CR LF before each end. */
+export function typedRange<R extends Range>(raw: string, r: R): R {
+  const chars = [...raw];
+  const at = (end: number) => {
+    let pairs = 0;
+    for (let i = 0; i + 1 < end && i + 1 < chars.length; i++) {
+      if (chars[i] === "\r" && chars[i + 1] === "\n") {
+        pairs++;
+      }
+    }
+    return end - pairs;
+  };
+  return { ...r, start: at(r.start), end: at(r.end) };
+}
+
 /** Returns the IDs of the nodes that the node references of n name. */
 function nodeRefsOf(n: Node): string[] {
   const ids: string[] = [];

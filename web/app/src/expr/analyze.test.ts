@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { analyze, runsOf, unitRange, unitsOf } from "./analyze";
+import {
+  analyze,
+  asTyped,
+  runsOf,
+  typedRange,
+  unitRange,
+  unitsOf,
+} from "./analyze";
 import { errorText, placeText, signatureOf } from "./messages";
 import { elara, englishWords, harbourScope, ids } from "./testdata";
 
@@ -32,6 +39,32 @@ describe("an expression's analysis", () => {
     expect(unitRange(unitsOf("a😀b"), { start: 1, end: 2 })).toEqual({
       from: 1,
       to: 3,
+    });
+  });
+
+  it("reads a source's line breaks as a text area holds them, and a server's range of it at the same characters", () => {
+    expect(asTyped("a\r\nb\rc\nd")).toBe("a\nb\nc\nd");
+    // The server's range of x, of the source as it holds it, is of x in
+    // the source as the text area holds it too.
+    const raw = "gold >= 1\r\n and x\r\n";
+    const typed = asTyped(raw);
+    const r = typedRange(raw, {
+      code: "unknown_identifier",
+      start: 16,
+      end: 17,
+    });
+    expect(r).toEqual({ code: "unknown_identifier", start: 15, end: 16 });
+    const { from, to } = unitRange(unitsOf(typed), r);
+    expect(typed.slice(from, to)).toBe("x");
+    // A range at the end of the source, and one between a CR and its LF,
+    // which is after the line break.
+    expect(typedRange(raw, { start: 19, end: 19 })).toEqual({
+      start: 17,
+      end: 17,
+    });
+    expect(typedRange("a\r\nb", { start: 2, end: 3 })).toEqual({
+      start: 2,
+      end: 2,
     });
   });
 

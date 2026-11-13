@@ -7,6 +7,7 @@
 // title and board; and, of a name that names nothing, an offer to create
 // the variable that it would be (unknown.ts).
 
+import { walk } from "@storycreep/shared/expr/compile";
 import { newId } from "@storycreep/shared/ids";
 import { Link } from "@tanstack/react-router";
 import { useId, useMemo, useState } from "react";
@@ -15,7 +16,8 @@ import { refusalOf } from "../auth/refusal";
 import { valueNamer } from "../content/textNames";
 import {
   componentUsagesQuery,
-  UsageList,
+  type UsageListOf,
+  UsageLists,
   variableUsagesQuery,
 } from "../content/usages";
 import { type Command, useCommands } from "../project/queries";
@@ -105,11 +107,14 @@ function resolvedOf(analysis: Analysis): Resolved[] {
       out.push(r);
     }
   };
-  const visit = (n: NonNullable<Analysis["ast"]>): void => {
+  if (analysis.ast === undefined) {
+    return out;
+  }
+  walk(analysis.ast, (n) => {
     switch (n.kind) {
       case "var":
         add({ kind: "variable", key: n.ref, id: n.ref });
-        return;
+        break;
       case "attr":
         add({
           kind: "attribute",
@@ -117,31 +122,11 @@ function resolvedOf(analysis: Analysis): Resolved[] {
           component: n.ref,
           attribute: n.attribute,
         });
-        return;
+        break;
       case "node_ref":
         add({ kind: "node", key: n.ref, id: n.ref });
-        return;
-      case "unary":
-        visit(n.operand);
-        return;
-      case "binary":
-        visit(n.left);
-        visit(n.right);
-        return;
-      case "call":
-        n.args.forEach(visit);
-        return;
-      case "assign":
-        visit(n.target);
-        visit(n.value);
-        return;
-      case "script":
-        n.statements.forEach(visit);
     }
-  };
-  if (analysis.ast !== undefined) {
-    visit(analysis.ast);
-  }
+  });
   return out;
 }
 
@@ -184,12 +169,7 @@ function NameItem({
   }
   let written: string;
   let detail: string;
-  let lists: {
-    key: string;
-    title: string;
-    empty: string;
-    query: ReturnType<typeof variableUsagesQuery>;
-  }[];
+  let lists: UsageListOf[];
   let panel:
     | { to: "/projects/$projectId/variables"; search: { variable: string } }
     | { to: "/projects/$projectId/components"; search: { component: string } };
@@ -238,11 +218,15 @@ function NameItem({
       component: component?.name ?? "",
       type: typeText(t, attribute?.type ?? ""),
     });
+    // The component's usages of the attribute alone, as the server lists
+    // each site once for each attribute of it that the site reads or
+    // writes.
     lists = (["read", "write"] as const).map((use) => ({
       key: use,
-      title: t("component.usage_list", { use }),
-      empty: t("component.usage_empty", { use }),
+      title: t("expr.names.attribute_usages", { use }),
+      empty: t("expr.names.attribute_usages_empty", { use }),
       query: componentUsagesQuery(projectId, item.component, use),
+      only: (usage) => usage.attribute_id === item.attribute,
     }));
     panel = {
       to: "/projects/$projectId/components",
@@ -281,18 +265,13 @@ function NameItem({
             : t("expr.names.open_component_short")}
         </Link>
       </div>
-      <div id={regionId} className="space-y-3 ps-4">
-        {shown &&
-          lists.map((list) => (
-            <UsageList
-              key={list.key}
-              projectId={projectId}
-              title={list.title}
-              empty={list.empty}
-              query={list.query}
-            />
-          ))}
-      </div>
+      <UsageLists
+        projectId={projectId}
+        id={regionId}
+        shown={shown}
+        lists={lists}
+        className="ps-4"
+      />
     </li>
   );
 }
@@ -340,9 +319,10 @@ export function Names({
  * written in, global unless it says board., each of which may be changed:
  * a variable.create of its own, as the page's batches are, once Create is
  * pressed, after which the name names it, and the field has the focus
- * again, as the offer goes. A change of its type or its scope is no change
- * of the expression's owner, whose form it does not tell of, so that the
- * form does not hold the owner as it was for it (useHeld).
+ * again, as the offer goes; a refusal of it is said under the offer of the
+ * name that it was of alone. A change of its type or its scope is no
+ * change of the expression's owner, whose form it does not tell of, so that
+ * the form does not hold the owner as it was for it (useHeld).
  */
 export function UnknownName({
   projectId,
@@ -365,6 +345,8 @@ export function UnknownName({
     type?: VariableType;
     scope?: "global" | "board";
   }>();
+  // The key of the name that Create was last pressed for.
+  const [tried, setTried] = useState<string>();
   const headingId = useId();
   if (unknown === undefined) {
     return null;
@@ -372,7 +354,8 @@ export function UnknownName({
   const mine = chosen?.key === unknown.key ? chosen : undefined;
   const type = mine?.type ?? unknown.type;
   const where = unknown.scope ?? mine?.scope ?? "global";
-  const refusal = refusalOf(commands.error, t);
+  const refusal =
+    tried === unknown.key ? refusalOf(commands.error, t) : undefined;
   const create = () => {
     const command: Command = {
       type: "variable.create",
@@ -384,6 +367,7 @@ export function UnknownName({
         ...(where === "board" ? { board_id: scope.boardId } : {}),
       },
     };
+    setTried(unknown.key);
     commands.mutate([command], {
       onSuccess: () => {
         setChosen(undefined);

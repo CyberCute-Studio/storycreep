@@ -7,7 +7,7 @@
 // anew only as one of its fields is changed, and says so of a source that
 // it cannot show, which the text view edits.
 
-import { useState } from "react";
+import { type RefObject, useState } from "react";
 import { valueNamer } from "../content/textNames";
 import { Button } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
@@ -122,11 +122,15 @@ function sameType(a: TargetType, b: TargetType): boolean {
 /**
  * The guided picker of the condition that analysis is of, of the board of
  * scope, which tells of a change of what it shows by onSource, with the
- * source that it shows, and by onUnfinished of whether its number's field
- * holds what is not a number yet, which it cannot write: a group of fields,
- * which the editor's label names (labelledBy).
+ * source that it shows, of which no field holds what it cannot write then,
+ * and by onUnfinished that its number's field holds what is not a number
+ * yet, which it cannot write: a group of fields, which the editor's label
+ * names (labelledBy), and which the editor gives the focus to (group), as
+ * once a variable is created inline, the same element whether the picker
+ * shows the condition or says that it cannot.
  */
 export function GuidedPicker({
+  group,
   labelledBy,
   analysis,
   scope,
@@ -135,13 +139,14 @@ export function GuidedPicker({
   onSource,
   onUnfinished,
 }: {
+  group: RefObject<HTMLFieldSetElement | null>;
   labelledBy: string;
   analysis: Analysis;
   scope: Scope;
   words: Words;
   describedBy: string | undefined;
   onSource: (source: string) => void;
-  onUnfinished: (unfinished: boolean) => void;
+  onUnfinished: () => void;
 }) {
   const { t } = words;
   const picked = readPicked(analysis);
@@ -153,6 +158,8 @@ export function GuidedPicker({
   if (picked === undefined) {
     return (
       <fieldset
+        ref={group}
+        tabIndex={-1}
         aria-labelledby={labelledBy}
         aria-describedby={describedBy}
         className="space-y-2 rounded-md border border-border p-3"
@@ -169,7 +176,6 @@ export function GuidedPicker({
     name(target.ref, target.attribute) ?? target.ref;
   const write = (next: Picked) => {
     setDraft(undefined);
-    onUnfinished(false);
     onSource(writePicked(next, nameOf));
   };
   const current =
@@ -239,13 +245,16 @@ export function GuidedPicker({
         );
       case "enum": {
         const text = stringText(picked.value);
+        const option = text !== undefined && type.options.includes(text);
         return (
           <SelectField
             label={label}
-            value={picked.value}
+            // An option that the source spells otherwise, as with an
+            // escape, is the option still, which the list shows chosen.
+            value={option ? stringLiteral(text) : picked.value}
             onChange={(e) => write({ ...picked, value: e.currentTarget.value })}
           >
-            {(text === undefined || !type.options.includes(text)) && (
+            {!option && (
               <option value={picked.value}>
                 {t("expr.picker.not_an_option", {
                   value: text ?? picked.value,
@@ -273,12 +282,14 @@ export function GuidedPicker({
           />
         );
     }
+    // The on-screen keyboard is the one of text, whose digits have the minus
+    // too: a keyboard of digits alone, as inputmode's numeric and decimal
+    // give a phone or iPadOS, may have none (ValueField).
     return (
       <TextField
         label={label}
         autoComplete="off"
         spellCheck={false}
-        inputMode="decimal"
         value={numberText}
         error={numberProblem}
         onChange={(e) => {
@@ -286,9 +297,8 @@ export function GuidedPicker({
           setDraft({ for: draftKey, text });
           if (isNumber(text.trim())) {
             onSource(writePicked({ ...picked, value: text.trim() }, nameOf));
-            onUnfinished(false);
           } else {
-            onUnfinished(true);
+            onUnfinished();
           }
         }}
       />
@@ -301,6 +311,8 @@ export function GuidedPicker({
   ];
   return (
     <fieldset
+      ref={group}
+      tabIndex={-1}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       className="space-y-3 rounded-md border border-border p-3"

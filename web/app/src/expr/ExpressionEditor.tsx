@@ -26,7 +26,15 @@ import {
 import { useTranslation } from "react-i18next";
 import { variableUsagesQuery } from "../content/usages";
 import { pressedClass } from "../ui/Button";
-import { type Analysis, analyze, type Run, runsOf, unitRange } from "./analyze";
+import {
+  type Analysis,
+  analyze,
+  asTyped,
+  type Run,
+  runsOf,
+  typedRange,
+  unitRange,
+} from "./analyze";
 import { editOf, type Offer, offersAt, type Spot, spotAt } from "./complete";
 import { GuidedPicker } from "./GuidedPicker";
 import { errorText, type SourceError, type Words } from "./messages";
@@ -51,8 +59,8 @@ export interface ExpressionEditorProps {
   error?: string;
   /** Whether the empty source is no expression, as a connection's condition and a script are, rather than one that does not compile, as a branch output's condition. */
   optional: boolean;
-  /** Whether the guided picker is offered, of a condition. */
-  guided?: boolean;
+  /** The view of a condition that offers the guided picker, which its owner keeps (useExpressionView), or none, of one that offers none. */
+  guided?: ExpressionView;
   /**
    * Called with the source as it changes, and with whether a field of the
    * guided picker holds what it cannot write yet, as a number that is not
@@ -60,6 +68,26 @@ export interface ExpressionEditorProps {
    * as it was before, as the field says (GuidedPicker).
    */
   onChange: (source: string, unfinished: boolean) => void;
+}
+
+/** Which view of a condition its editor shows: its text, or its guided picker. */
+export type View = "text" | "guided";
+
+/**
+ * The view of a condition's editor, which its owner keeps outside the form
+ * that holds the editor, so that the form shown anew, as once a save ends
+ * (useHeld), shows the view that it showed, whose controls are where they
+ * were, as the focus that goes back to its place among them needs.
+ */
+export interface ExpressionView {
+  readonly view: View;
+  readonly onView: (view: View) => void;
+}
+
+/** Returns the view of a condition's editor, its text first, which its owner keeps (ExpressionView). */
+export function useExpressionView(): ExpressionView {
+  const [view, setView] = useState<View>("text");
+  return { view, onView: setView };
 }
 
 /** The classes of each tint of what the editor colours (analyze.ts), each at 4.5:1 against the field (tokens.test.ts). */
@@ -177,19 +205,48 @@ function insertInto(
   area.setSelectionRange(edit.caret, edit.caret);
 }
 
+/**
+ * Submits form as Enter in a field of one line does (HTML's implicit
+ * submission): by its default button, its first submit button, unless that
+ * is disabled, as while a save is under way, so that a second Enter sends
+ * no second save, or by itself where it has none.
+ */
+function submitImplicitly(form: HTMLFormElement | null): void {
+  if (form === null) {
+    return;
+  }
+  const button = [...form.elements].find(
+    (e): e is HTMLButtonElement | HTMLInputElement =>
+      (e instanceof HTMLButtonElement || e instanceof HTMLInputElement) &&
+      e.type === "submit",
+  );
+  if (button === undefined) {
+    form.requestSubmit();
+  } else if (!button.matches(":disabled")) {
+    form.requestSubmit(button);
+  }
+}
+
 /** How many of the sites that write a variable the highlighted offer of it tells of. */
 const writesShown = 3;
+
+/** How long what the highlighted offer read of where a variable is written holds, rather than be read again as the arrows come back to it. */
+const writesKept = 30_000;
 
 /**
  * Where the variable of id is written, as the first sites that its usage
  * list of its writes has, which the highlighted offer tells of: of the
  * list's own read, which the variable's usages under the field show too
- * (Names.tsx), and which says nothing of a refusal of its own, as the offer
- * says that where it is written could not be read.
+ * (Names.tsx), kept for a while (writesKept), and which says nothing of a
+ * refusal of its own, as the offer says that where it is written could not
+ * be read.
  */
 function Writes({ projectId, id }: { projectId: string; id: string }) {
   const { t } = useTranslation();
-  const writes = useInfiniteQuery(variableUsagesQuery(projectId, id, "write"));
+  const writes = useInfiniteQuery({
+    ...variableUsagesQuery(projectId, id, "write"),
+    staleTime: writesKept,
+  });
   if (writes.isPending) {
     return (
       <span className="text-fg-muted">{t("expr.offer.writes_loading")}</span>
@@ -237,11 +294,12 @@ function spotKey(spot: Spot): string {
  * through a script, and not of a name typed whole, whose one offer is what
  * it is already. The text area keeps the focus, as a combobox's pattern has
  * it: its arrows move through the list (aria-activedescendant), Enter and
- * Tab write what is highlighted, Escape closes the list until the caret
- * leaves what it was of, and a click or a tap on an offer writes it without
- * taking the focus, so that the on-screen keyboard stays. Enter elsewhere
- * in a condition, which is one line, saves its form, as Enter in a field of
- * one line does.
+ * Tab write what is highlighted, which closes the list until a key types
+ * again, Escape closes the list until the caret leaves what it was of, and
+ * a click or a tap on an offer writes it without taking the focus, so that
+ * the on-screen keyboard stays. Enter elsewhere in a condition, which is
+ * one line, saves its form, as Enter in a field of one line does, but not
+ * while its Save is disabled (submitImplicitly).
  */
 function TextView({
   id,
@@ -337,17 +395,16 @@ function TextView({
     }
     insertInto(el, editOf(el.value, where, offer));
     readCaret(el);
-    // The name written is whole, and the list of it closes, until the caret
-    // leaves it; one that is to go on, as a component's key and its dot,
-    // offers what follows.
+    // What is written ends what was typed, and the list closes until a key
+    // types again, as one that shortens the name to choose another; one
+    // that is to go on, as a component's key and its dot with nothing after
+    // it yet, offers what follows.
     const next = spotAt(el.value, el.selectionStart);
-    if (next !== undefined) {
-      if (next.query === "") {
-        setTyping(spotKey(next));
-      } else {
-        setDismissed(spotKey(next));
-      }
-    }
+    setTyping(
+      next !== undefined && next.query === "" && next.from === next.to
+        ? spotKey(next)
+        : undefined,
+    );
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const composing =
@@ -377,7 +434,7 @@ function TextView({
     }
     if (event.key === "Enter" && plainKey && context === "condition") {
       event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
+      submitImplicitly(event.currentTarget.form);
     }
   };
   // What the colours show changes with the source and its error alone, not
@@ -520,7 +577,7 @@ export function ExpressionEditor({
   stored,
   error,
   optional,
-  guided = false,
+  guided,
   onChange,
 }: ExpressionEditorProps) {
   const { t, i18n } = useTranslation();
@@ -535,10 +592,12 @@ export function ExpressionEditor({
   const errorId = `${id}-error`;
   const refusalId = `${id}-refusal`;
   const area = useRef<HTMLTextAreaElement>(null);
-  const [source, setSource] = useState(defaultValue);
-  const [view, setView] = useState<"text" | "guided">("text");
+  const picker = useRef<HTMLFieldSetElement>(null);
+  const [source, setSource] = useState(() => asTyped(defaultValue));
+  const view = guided?.view ?? "text";
   // What the owner's form is told last: the source, and whether the
-  // picker's number holds what it cannot write yet (onChange).
+  // picker's number holds what it cannot write yet (onChange), of the
+  // source as the owner holds it until either changes.
   const told = useRef({ source: defaultValue, unfinished: false });
   const analysis = useMemo(
     () => analyze(source, context, scope),
@@ -548,12 +607,14 @@ export function ExpressionEditor({
     told.current = { ...told.current, ...next };
     onChange(told.current.source, told.current.unfinished);
   };
+  // A source written anew, as typed or as the picker writes it, of which
+  // no field of the picker holds what it cannot write then.
   const update = (next: string) => {
     setSource(next);
-    tell({ source: next });
+    tell({ source: next, unfinished: false });
   };
-  const showView = (next: "text" | "guided") => {
-    setView(next);
+  const showView = (next: View) => {
+    guided?.onView(next);
     // The picker's number, which goes with it, holds nothing then.
     if (next === "text" && told.current.unfinished) {
       tell({ unfinished: false });
@@ -570,11 +631,11 @@ export function ExpressionEditor({
   const none = optional && source === "";
   const serverError =
     stored !== undefined &&
-    stored.source === source &&
+    asTyped(stored.source) === source &&
     !stored.is_valid &&
     stored.error !== undefined &&
     (!analysis.checked || analysis.unread)
-      ? (stored.error as SourceError)
+      ? typedRange(stored.source, stored.error as SourceError)
       : undefined;
   const shownError: SourceError | undefined = none
     ? undefined
@@ -591,7 +652,10 @@ export function ExpressionEditor({
     ]
       .filter((s) => s !== undefined)
       .join(" ") || undefined;
-  const focusField = () => area.current?.focus();
+  // The field has the focus again, as once a variable is created inline:
+  // the text area, or the picker's group, which the button pressed in it
+  // goes with, and whose fields follow it.
+  const focusField = () => (area.current ?? picker.current)?.focus();
   return (
     <div className="flex flex-col gap-2" data-expression={context}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -604,7 +668,7 @@ export function ExpressionEditor({
             {label}
           </span>
         )}
-        {guided && (
+        {guided !== undefined && (
           <fieldset className="flex gap-2">
             <legend className="sr-only">
               {t("expr.view.legend", { field: label })}
@@ -648,13 +712,14 @@ export function ExpressionEditor({
         />
       ) : (
         <GuidedPicker
+          group={picker}
           labelledBy={labelId}
           analysis={analysis}
           scope={scope}
           words={words}
           describedBy={describedBy}
           onSource={update}
-          onUnfinished={(unfinished) => tell({ unfinished })}
+          onUnfinished={() => tell({ unfinished: true })}
         />
       )}
       {shownError !== undefined && (

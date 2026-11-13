@@ -534,6 +534,8 @@
   "expr.error.variable_not_component": "This name is a variable’s, not a component’s. Write cmp. before the component’s name.",
   "expr.error.wrong_argument_count": "The function takes more or fewer values than this.",
   "expr.names.attribute": "{attribute} of {component}, {type}",
+  "expr.names.attribute_usages": "{use, select, read {Read by} write {Changed by} other {Used by}}",
+  "expr.names.attribute_usages_empty": "{use, select, read {Nothing reads it.} write {Nothing changes it.} other {Nothing uses it.}}",
   "expr.names.board_variable": "variable of this board, {board}, {type}",
   "expr.names.global_variable": "global variable, {type}",
   "expr.names.heading": "What the names refer to",

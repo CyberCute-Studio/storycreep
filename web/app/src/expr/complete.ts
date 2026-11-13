@@ -383,18 +383,21 @@ export function offersAt(
 /**
  * Returns the edit that writes offer at spot of source: the range that it
  * replaces, in UTF-16 code units, the text that replaces it, and where the
- * caret goes then, after what it wrote, and after the ( of a function whose
- * name the source has a ( after already, which it does not write again.
+ * caret goes then, after what it wrote, and after the ( of a function, or
+ * the dot of a component, whose name the source has a ( or a dot after
+ * already, which it does not write again.
  */
 export function editOf(
   source: string,
   spot: Spot,
   offer: Offer,
 ): { from: number; to: number; text: string; caret: number } {
+  const closer =
+    offer.kind === "function" ? "(" : offer.kind === "component" ? "." : "";
   if (
-    offer.kind === "function" &&
-    offer.insert.endsWith("(") &&
-    source[spot.to] === "("
+    closer !== "" &&
+    offer.insert.endsWith(closer) &&
+    source[spot.to] === closer
   ) {
     const text = offer.insert.slice(0, -1);
     return {
