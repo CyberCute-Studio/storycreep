@@ -12,10 +12,12 @@
 // what the user typed in it, only while its entry stays in its own list,
 // and its choice in its node's, or its output's: one moved to another list
 // would be a new form, of what the board has. A node or a choice that the
-// board no longer has, as once another session deleted it, is shown, as a
-// ghost, where the view showed it last, but for one that an addition under
-// way created, which goes without a ghost once its batch is refused, as the
-// page shows the board without it before it says so.
+// board no longer has, as once another session deleted it, or once the
+// batch of the addition that created it was refused, is shown, as a ghost,
+// where the view showed it last; but what an addition under way created,
+// which the page takes from the board as its batch is refused, before the
+// view hears of the refusal, is kept there with no ghost until then, so
+// that its form, the same one, keeps what the user typed meanwhile.
 
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import type { ScriptOrder } from "./order";
@@ -75,7 +77,7 @@ const noGhosts: ReadonlySet<string> = new Set();
  * the project's, with the forms of open, by the ID of the node or the
  * connection that each edits, open, of which last says what the view
  * showed last, and of which those that an addition under way created,
- * creating, show nothing once the board has them no longer.
+ * creating, are no ghosts, though the board has them no longer.
  */
 export function placeShown(
   order: ScriptOrder,
@@ -124,11 +126,13 @@ export function placeShown(
       }
       return true;
     }
-    if (was === undefined || creating.has(id)) {
+    if (was === undefined) {
       return false;
     }
     kept.set(id, was);
-    ghosts.add(id);
+    if (!creating.has(id)) {
+      ghosts.add(id);
+    }
     return true;
   };
   for (const [id, e] of open) {
@@ -149,10 +153,10 @@ export function placeShown(
       keep(was.nodeId);
       continue;
     }
-    if ((now === undefined && creating.has(id)) || !keep(was.nodeId)) {
+    if (!keep(was.nodeId)) {
       continue;
     }
-    if (now === undefined) {
+    if (now === undefined && !creating.has(id)) {
       ghosts.add(id);
     }
     keptChoices.set(id, {

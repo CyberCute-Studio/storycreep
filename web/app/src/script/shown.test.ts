@@ -230,27 +230,26 @@ describe("the script view's places", () => {
     expect([...after.ghosts]).toEqual(["cn_1"]);
   });
 
-  it("shows no ghost of what an addition under way created, as its refused batch takes it from the board", () => {
+  it("keeps what an addition under way created where it was, as its refused batch takes it from the board, a ghost only once the view hears of the refusal", () => {
     const nodes = [node("nd_a", 0)];
     const added = node("nd_n", 1);
     const choice = testConnection("cn_n", "nd_a", "nd_n");
-    const before = place(
-      [...nodes, added],
-      [choice],
-      { nd_n: "node", cn_n: "choice" },
-      nothingShown,
-      ["nd_n", "cn_n"],
-    );
+    const open = { nd_n: "node", cn_n: "choice" } as const;
+    const before = place([...nodes, added], [choice], open, nothingShown, [
+      "nd_n",
+      "cn_n",
+    ]);
     expect(parts(before).reached).toEqual(["nd_a", "nd_n"]);
-    const after = place(
-      nodes,
-      [],
-      { nd_n: "node", cn_n: "choice" },
-      before.shown,
-      ["nd_n", "cn_n"],
-    );
-    expect(parts(after).reached).toEqual(["nd_a"]);
-    expect(choicesIn(after, "nd_a")).toEqual([]);
-    expect(after.ghosts.size).toBe(0);
+    // The page takes them from the board before the view hears of the
+    // refusal: they stay, with no ghost.
+    const refusing = place(nodes, [], open, before.shown, ["nd_n", "cn_n"]);
+    expect(parts(refusing).reached).toEqual(["nd_a", "nd_n"]);
+    expect(choicesIn(refusing, "nd_a")).toEqual(["cn_n"]);
+    expect(refusing.ghosts.size).toBe(0);
+    // Once it has, they are ghosts, where they were.
+    const refused = place(nodes, [], open, refusing.shown);
+    expect(parts(refused).reached).toEqual(["nd_a", "nd_n"]);
+    expect(choicesIn(refused, "nd_a")).toEqual(["cn_n"]);
+    expect([...refused.ghosts].sort()).toEqual(["cn_n", "nd_n"]);
   });
 });

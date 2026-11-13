@@ -1065,7 +1065,7 @@
   "script.edit_label_named": "Edit label: {choice}",
   "script.edit_named": "Edit {node}",
   "script.empty": "This board has no nodes yet. Add its first node on the canvas.",
-  "script.gone": "This is no longer on the board, so it cannot be saved: undo its deletion to save it, or cancel it.",
+  "script.gone": "This is not on the board, so it cannot be saved unless it comes back: copy what you need of it, or cancel it.",
   "script.heading": "Script",
   "script.leads_to": "Leads to",
   "script.load_failed": "The board's nodes could not be loaded.",

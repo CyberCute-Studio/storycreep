@@ -398,6 +398,17 @@ function typeInto(textbox: HTMLElement, words: string) {
   });
 }
 
+/** Puts the caret of the rich-text box at at, a place of its document, as the user does with the arrows, which changes nothing. */
+function caretAt(textbox: HTMLElement, at: number) {
+  act(() => {
+    (
+      textbox as unknown as {
+        editor: { commands: { setTextSelection: (at: number) => void } };
+      }
+    ).editor.commands.setTextSelection(at);
+  });
+}
+
 describe("the script view", () => {
   // Verifies: FR-TEXT-04/AC2
   it("says its rule, and lists the nodes breadth-first from the entry node, then the rest in the order they were created", async () => {
@@ -821,7 +832,7 @@ describe("the script view", () => {
     // The same form, under the output where it was, with what was typed,
     // saying that it cannot be saved.
     expect(
-      await within(form).findByText(/^This is no longer on the board/),
+      await within(form).findByText(/^This is not on the board/),
     ).toBeDefined();
     const outputs = within(entryOf("Gate")).getByRole("list", {
       name: "Outputs of Gate",
@@ -918,7 +929,7 @@ describe("the script view", () => {
     // cannot be saved, and offering nothing else.
     const kept = screen.getByRole("form", { name: "Edit Cellar" });
     expect(
-      await within(kept).findByText(/^This is no longer on the board/),
+      await within(kept).findByText(/^This is not on the board/),
     ).toBeDefined();
     expect(
       within(entryOf("Cellar")).queryByRole("link", {
@@ -963,7 +974,7 @@ describe("the script view", () => {
       ),
     );
     expect(
-      await within(form).findByText(/^This is no longer on the board/),
+      await within(form).findByText(/^This is not on the board/),
     ).toBeDefined();
     const region = screen.getByRole("region", { name: "Script" });
     expect(
@@ -1035,15 +1046,17 @@ describe("the script view", () => {
     );
     await act(async () => release());
     await waitFor(() => expect(batches(calls)).toHaveLength(2));
-    // The first, refused, says so in its element's entry, and its new node
-    // goes without a ghost.
+    // The first, refused, says so in its element's entry, and its new
+    // node's editor, of nothing typed, closes.
     await waitFor(() =>
       expect(
         within(entryOf("Market")).getByText("validation_failed"),
       ).toBeDefined(),
     );
-    expect(screen.queryByRole("form", { name: "Edit Untitled" })).toBeNull();
-    expect(screen.queryByText(/^This is no longer on the board/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("form", { name: "Edit Untitled" })).toBeNull(),
+    );
+    expect(screen.queryByText(/^This is not on the board/)).toBeNull();
     expect(after).toHaveProperty("disabled", false);
     // The second applied, of the other element: its choice's label is open,
     // and keeps the focus that the user took there, rather than give it to
@@ -1060,7 +1073,7 @@ describe("the script view", () => {
     ]);
   });
 
-  it("says each element's refused addition in its own entry, until that element's next addition", async () => {
+  it("says each element's refused addition in its own entry, until that element's next addition, and reads out each", async () => {
     const user = userEvent.setup();
     let release = () => {};
     const gate = new Promise<void>((resolve) => {
@@ -1081,6 +1094,12 @@ describe("the script view", () => {
       within(entryOf(title)).queryByText("validation_failed") !== null;
     await waitFor(() => expect(says("Quay")).toBe(true));
     expect(says("Market")).toBe(true);
+    // Each is read out, though their words are the same.
+    expect(
+      screen
+        .getAllByText("validation_failed")
+        .filter((m) => m.closest('[role="alert"]') !== null),
+    ).toHaveLength(2);
     // Another element's addition leaves both; the element's own its own.
     await add("Pier", "Add choice to");
     expect(says("Market")).toBe(true);
@@ -1314,6 +1333,120 @@ describe("the script view", () => {
         }),
       ),
     );
+  });
+
+  it("keeps the editors of what refused additions created, with what the user typed in them meanwhile, until they are cancelled, the focus then back on the buttons that asked for them", async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls = boardPage(harbourBoard(), { refuse: [0, 1], gate });
+    await openScript();
+    await user.click(
+      within(entryOf("Market")).getByRole("button", {
+        name: "Add node after Market",
+      }),
+    );
+    const node = await screen.findByRole("form", { name: "Edit Untitled" });
+    const text = within(node).getByRole("textbox", {
+      name: "Text of Untitled",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(text));
+    typeInto(text, "The gulls cry.");
+    await user.click(
+      within(entryOf("Quay")).getByRole("button", {
+        name: "Add choice to Quay",
+      }),
+    );
+    const choice = await screen.findByRole("form", {
+      name: "Edit the choice's label",
+    });
+    const label = within(choice).getByRole("textbox", { name: "Label" });
+    await waitFor(() => expect(document.activeElement).toBe(label));
+    typeInto(label, "Hail the ferry");
+    await act(async () => release());
+    await waitFor(() =>
+      expect(
+        within(entryOf("Quay")).getByText("validation_failed"),
+      ).toBeDefined(),
+    );
+    expect(
+      within(entryOf("Market")).getByText("validation_failed"),
+    ).toBeDefined();
+    // The same editors, of what was typed, each saying that it cannot be
+    // saved, the focus where the user is.
+    for (const [form, typed] of [
+      [node, "The gulls cry."],
+      [choice, "Hail the ferry"],
+    ] as const) {
+      expect(
+        await within(form).findByText(/^This is not on the board/),
+      ).toBeDefined();
+      expect(within(form).getByText(typed)).toBeDefined();
+      expect(within(form).getByRole("button", { name: "Save" })).toHaveProperty(
+        "disabled",
+        true,
+      );
+    }
+    expect(screen.getByRole("form", { name: "Edit Untitled" })).toBe(node);
+    expect(document.activeElement).toBe(label);
+    await user.click(within(choice).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "Edit the choice's label" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement).toBe(
+      within(entryOf("Quay")).getByRole("button", {
+        name: "Add choice to Quay",
+      }),
+    );
+    await user.click(within(node).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(document.activeElement).toBe(
+      within(entryOf("Market")).getByRole("button", {
+        name: "Add node after Market",
+      }),
+    );
+    expect(batches(calls)).toHaveLength(2);
+  });
+
+  // Verifies: FR-TEXT-04/AC3
+  it("closes with Escape the list of an @ that the caret is moved after, and the editor of no change only with the next", async () => {
+    const user = userEvent.setup();
+    const board = harbourBoard();
+    board.connections[0] = {
+      ...board.connections[0],
+      label: textOf("Walk to the pier @ dawn"),
+    };
+    boardPage(board);
+    await openScript();
+    await user.click(
+      within(entryOf("Quay")).getByRole("button", {
+        name: "Edit label: Walk to the pier @ dawn",
+      }),
+    );
+    const form = await screen.findByRole("form", {
+      name: "Edit the choice's label",
+    });
+    const label = within(form).getByRole("textbox", { name: "Label" });
+    await waitFor(() => expect(document.activeElement).toBe(label));
+    // After the @, of the paragraph that starts at 1: the list of the
+    // components, of nothing changed.
+    caretAt(label, 1 + "Walk to the pier @".length);
+    expect(
+      await within(form).findByRole("listbox", {
+        name: "Components to mention",
+      }),
+    ).toBeDefined();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(within(form).queryByRole("listbox")).toBeNull());
+    expect(screen.getByRole("form", { name: "Edit the choice's label" })).toBe(
+      form,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
   });
 
   it("offers a viewer no edits, but each node on the canvas", async () => {

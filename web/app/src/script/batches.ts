@@ -9,10 +9,11 @@
 
 import type { Connection, Node } from "@storycreep/shared/api";
 import { createCommand } from "../canvas/commands";
-import { freePlace, offset } from "../canvas/edit";
+import { cornerTakenOf, freePlace, offset } from "../canvas/edit";
 import {
   choicesOfPort,
   connectCommand,
+  connectNewBatch,
   reconnectCommand,
 } from "../canvas/flow";
 import { newNodeSize, nodeRect } from "../canvas/layout";
@@ -41,17 +42,13 @@ export function placeAfter(
 ): Point {
   const size = newNodeSize("element");
   const rect = nodeRect(node);
-  const corners = new Set<string>();
-  for (const n of others) {
-    corners.add(`${n.position.x},${n.position.y}`);
-  }
   return freePlace(
     {
       x: rect.x + rect.width + across + size.width / 2,
       y: rect.y + rect.height / 2 + place * (size.height + offset),
     },
     size,
-    (p) => corners.has(`${p.x},${p.y}`),
+    cornerTakenOf(others),
     true,
   );
 }
@@ -80,15 +77,19 @@ export function addAfterBatch(
 
 /**
  * Returns the batch that gives node, an element, a new choice, of ids: a
- * connection after its port's others, to a new element at position.
+ * connection after its port's others, to a new element at position, as the
+ * canvas connects a port to a node that it creates (connectNewBatch).
  */
 export function addChoiceBatch(
   node: Node,
   position: Point,
   ids: NewIds,
 ): Command[] {
-  return [
-    createCommand(node.board_id, "element", position, ids.node),
-    connectCommand({ node: node.id, port: "out" }, ids.node, ids.connection),
-  ];
+  return connectNewBatch(
+    node.board_id,
+    { node: node.id, port: "out" },
+    "element",
+    position,
+    ids,
+  );
 }

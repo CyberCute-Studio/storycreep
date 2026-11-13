@@ -125,13 +125,28 @@ export function dismissSuggestion(view: EditorView): void {
   );
 }
 
+/** The keys that the list of a suggestion took (suggester), which suggestionTook tells of. */
+const taken = new WeakSet<KeyboardEvent>();
+
+/**
+ * Reports whether the list of a suggestion that was open took event, a key
+ * that went down in its text, as the Escape that closed it, which is the
+ * list's alone: ProseMirror takes every Escape in a text as its own
+ * (defaultPrevented), so what holds the text, as a form that closes on
+ * Escape, tells the list's by this.
+ */
+export function suggestionTook(event: KeyboardEvent): boolean {
+  return taken.has(event);
+}
+
 /**
  * Returns the plugin of suggestions, which hands each key that goes down
  * while one is open to onKey, which reports whether it took it, as an arrow
  * that moves through the list, Enter that chooses, or Escape, which closes
- * it (dismissSuggestion): a key that an input method takes while it
- * composes, as Enter, which ends what was typed in Japanese, is the input
- * method's, as Safari tells of it by its keyCode alone, 229.
+ * it (dismissSuggestion), and keeps each that it took (suggestionTook): a
+ * key that an input method takes while it composes, as Enter, which ends
+ * what was typed in Japanese, is the input method's, as Safari tells of it
+ * by its keyCode alone, 229.
  */
 export function suggester(
   onKey: (event: KeyboardEvent, open: Suggestion, view: EditorView) => boolean,
@@ -172,7 +187,11 @@ export function suggester(
         ) {
           return false;
         }
-        return onKey(event, open, view);
+        const took = onKey(event, open, view);
+        if (took) {
+          taken.add(event);
+        }
+        return took;
       },
     },
   });

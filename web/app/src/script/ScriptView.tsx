@@ -50,6 +50,7 @@ import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
 import {
   kindOf,
+  nameParts,
   namesDiffer,
   oneLine,
   plainText,
@@ -63,7 +64,7 @@ import {
 } from "../canvas/targets";
 import { ConflictNotice, useEntityForm } from "../content/form";
 import { useTextChoices, useTextNames } from "../content/useTextNames";
-import { boardPart, type Part as DocPart } from "../document/doc";
+import { boardPart } from "../document/doc";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { equal } from "../document/reconcile";
 import type { Overlap } from "../document/store";
@@ -75,10 +76,11 @@ import { payloadField } from "../project/dialogs";
 import { loadPart, useCommands } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
+import { suggestionTook } from "../richtext/suggest";
 import { focusIsNowhere, followInPage, showInPage } from "../shell/focus";
 import { Button, buttonClass } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
-import type { Held } from "../ui/held";
+import { type Held, useOwnKeys } from "../ui/held";
 import { Alert, textLink } from "../ui/Page";
 import {
   addAfterBatch,
@@ -89,9 +91,6 @@ import {
 import { leavingByNode, scriptOrder } from "./order";
 import { isEmptyText, RichText, type TextNames } from "./RichText";
 import { nothingShown, placeShown, type Shown } from "./shown";
-
-/** The parts of the project that the view's names are read from: the speakers, and what value references and conditions name. */
-const nameParts: readonly DocPart[] = ["components", "variables"];
 
 /** Returns the ID of the entry of the node of nodeId, which a link to it gives the focus. */
 export function entryId(nodeId: string): string {
@@ -304,6 +303,10 @@ export function ScriptView({
       }),
     [],
   );
+  // What the view showed of its open forms, and which of them were ghosts,
+  // as it committed last (placeShown).
+  const shownLast = useRef<Shown>(nothingShown);
+  const ghostsLast = useRef<ReadonlySet<string>>(new Set());
   const [focusTo, setFocusTo] = useState<{
     id: string;
     entry?: string;
@@ -348,9 +351,12 @@ export function ScriptView({
   // way at a time, whose buttons wait for it, so that a double click adds
   // one node; each batch's refusal, whatever others are under way, the
   // view says, in the entry of the node that it was of, until that node's
-  // next addition, and reads out, and closes the editor of what the batch
-  // created, with the focus back on the button that asked for it, where
-  // nothing has the focus once that editor has closed, rather than take it
+  // next addition, and reads out, each in a line of its own, so that two
+  // of the same words are both heard. The editor of what a refused batch
+  // created is then a ghost (placeShown), which keeps what the user typed
+  // in it meanwhile, and closes of nothing typed, as a ghost does; the
+  // focus goes back to the button that asked for it, where nothing has the
+  // focus, or as that editor closes where it had it, rather than be taken
   // from another editor that the user went to meanwhile. Each is a
   // mutation of the page's batches (useCommands), which the query client's
   // cache hears of, as of a session that ended, whose promise settles of
@@ -360,15 +366,24 @@ export function ScriptView({
     () => new Map(),
   );
   // What each node's last addition was refused with, by the node's ID, and
-  // the refusal that the view read out last.
+  // the refusals that the view read out since the last addition began, by
+  // the ID of what each created.
   const [refused, setRefused] = useState<ReadonlyMap<string, unknown>>(
     () => new Map(),
   );
-  const [readOut, setReadOut] = useState<unknown>();
+  const [readOut, setReadOut] = useState<
+    readonly { key: string; error: unknown }[]
+  >([]);
+  // The element and the button of the addition that created what each
+  // open ghost of a refused addition edits, by its ID, which the focus
+  // goes back to as its editor closes.
+  const notAdded = useRef(
+    new Map<string, { node: string; what: "after" | "choice" }>(),
+  );
   // What the view committed last, which its callbacks read.
-  const latest = useRef({ boardNodes, leavingOf, adding, structural });
+  const latest = useRef({ boardNodes, leavingOf, adding, structural, open });
   useLayoutEffect(() => {
-    latest.current = { boardNodes, leavingOf, adding, structural };
+    latest.current = { boardNodes, leavingOf, adding, structural, open };
   });
   const add = useCallback(
     (node: Node, what: "after" | "choice") => {
@@ -404,23 +419,35 @@ export function ScriptView({
         next.delete(node.id);
         return next;
       });
-      setReadOut(undefined);
+      setReadOut((was) => (was.length === 0 ? was : []));
       setAdding((was) => new Map(was).set(node.id, ids));
+      // The editor of what the batch creates: the new node's text, or the
+      // new choice's label.
+      const made = what === "after" ? ids.node : ids.connection;
       opened((o) => {
-        if (what === "after") {
-          o.set(ids.node, { kind: "node", id: ids.node, focusOn: "text" });
-        } else {
-          o.set(ids.connection, { kind: "choice", id: ids.connection });
-        }
+        o.set(
+          made,
+          what === "after"
+            ? { kind: "node", id: made, focusOn: "text" }
+            : { kind: "choice", id: made },
+        );
       });
       structural.mutateAsync(batch).then(settled, (error: unknown) => {
         settled();
-        opened((o) => {
-          o.delete(ids.node);
-          o.delete(ids.connection);
-        });
+        // The editor that the view showed stays, a ghost, and one that it
+        // never showed goes.
+        const shown = shownLast.current;
+        if (latest.current.open.has(made)) {
+          if (shown.nodes.has(made) || shown.choices.has(made)) {
+            notAdded.current.set(made, { node: node.id, what });
+          } else {
+            opened((o) => {
+              o.delete(made);
+            });
+          }
+        }
         setRefused((was) => new Map(was).set(node.id, error));
-        setReadOut(error);
+        setReadOut((was) => [...was, { key: made, error }]);
         setFocusTo({ id: buttonId(node.id, what), unlessFocused: true });
       });
     },
@@ -440,8 +467,18 @@ export function ScriptView({
       opened((o) => {
         o.delete(id);
       });
+      // The ghost of what a refused addition created gives the focus back
+      // to the button that asked for the addition, as its refusal does.
+      const by = ghostsLast.current.has(id)
+        ? notAdded.current.get(id)
+        : undefined;
+      notAdded.current.delete(id);
       if (moveFocus) {
-        setFocusTo({ id: focus, entry });
+        setFocusTo(
+          by === undefined
+            ? { id: focus, entry }
+            : { id: buttonId(by.node, by.what), entry: by.node },
+        );
       }
     },
     [opened],
@@ -505,12 +542,14 @@ export function ScriptView({
   // one that the board no longer has, as once another session deleted it,
   // as a ghost where the view showed it last, saying that it can no longer
   // be saved, until the user cancels it, or the node is back, as once its
-  // deletion is undone. An editor of what the view has not shown yet, as of
-  // a node that a batch under way adds, shows nothing until its entry does,
-  // and nothing again once that batch is refused. What the view showed is
-  // what it committed, rather than what a render that React may yet
-  // discard placed.
-  const shownLast = useRef<Shown>(nothingShown);
+  // deletion is undone, or once a batch refused for want of an answer
+  // applied all the same. An editor of what the view has not shown yet, as
+  // of a node that a batch under way adds, shows nothing until its entry
+  // does; and what a batch under way created, which the page takes from the
+  // board as the batch is refused, before the view hears of the refusal,
+  // stays where the view showed it, with no ghost until then. What the view
+  // showed is what it committed, rather than what a render that React may
+  // yet discard placed.
   const creating = useMemo(
     () =>
       new Set(
@@ -528,6 +567,7 @@ export function ScriptView({
   );
   useLayoutEffect(() => {
     shownLast.current = placed.shown;
+    ghostsLast.current = placed.ghosts;
   });
   const { sections, ghosts } = placed;
 
@@ -575,9 +615,15 @@ export function ScriptView({
           </Button>
         </p>
       )}
-      {/* A refused addition is read out here, and shown in its node's
-      entry, where the focus goes back to. */}
-      <Alert message={refusalOf(readOut, t)?.message} className="sr-only" />
+      {/* Each refused addition is read out here, in a line of its own,
+      and shown in its node's entry, where the focus goes back to. */}
+      <div role="alert">
+        {readOut.map((r) => (
+          <p key={r.key} className="sr-only">
+            {refusalOf(r.error, t)?.message}
+          </p>
+        ))}
+      </div>
       {content === "failed" ? (
         <p role="alert" className="flex flex-wrap items-center gap-2">
           {t("script.load_failed")}
@@ -1257,16 +1303,18 @@ function sameEntry(a: EntryProps, b: EntryProps): boolean {
  * Reports whether e, a key that went down in an editor's form, is the
  * Escape that closes the editor, where it holds no change: one of the
  * form's own fields, rather than of a dialog of its rich text, as the
- * link's, which is in a portal, whose keys React brings here too, and not
- * one that composes. It does not read whether something took the key
- * already: ProseMirror takes every Escape in its text (captureKeyDown),
- * and its list of offers, which takes one too, is of a { or an @ typed,
- * which is a change.
+ * link's, which is in a portal, whose keys React brings here too; not one
+ * that composes; and not one that the list of a { or an @ of its rich text
+ * took, which closes the list alone (suggestionTook), as the list that the
+ * caret opens, of no change, once it is moved after a { or an @ that the
+ * text holds. It does not read whether something else took the key:
+ * ProseMirror takes every Escape in its text (captureKeyDown).
  */
 function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
   return (
     e.key === "Escape" &&
     !e.nativeEvent.isComposing &&
+    !suggestionTook(e.nativeEvent) &&
     // The DOM's Node, rather than the API's of the same name, a type alone.
     e.target instanceof globalThis.Node &&
     e.currentTarget.contains(e.target)
@@ -1409,14 +1457,11 @@ function EditorFrame({
   const { t } = useTranslation();
   const { held } = form;
   const pending = form.commands.isPending;
-  // The keys that went down in the form, by their places, whose repeats,
-  // as the user holds one, are the user's typing. A key held as the form
-  // opened, as the Enter on the button that opened it, goes on repeating
-  // into the field that the form gave the focus, where its repeats do
-  // nothing until it goes up, as in the canvas's editor of a text, rather
-  // than submit the form, or add a paragraph for each, which the user
-  // never typed.
-  const pressed = useRef(new Set<string>());
+  // A key held as the form opened, as the Enter on the button that opened
+  // it, repeats into nothing until it goes up, as in the canvas's editor of
+  // a text, rather than submit the form, or add a paragraph for each, which
+  // the user never typed (useOwnKeys).
+  const ownKeys = useOwnKeys();
   return (
     <form
       key={held.key}
@@ -1427,17 +1472,7 @@ function EditorFrame({
           submit();
         }
       }}
-      onKeyDownCapture={(e) => {
-        if (!e.repeat) {
-          pressed.current.add(e.code);
-        } else if (!pressed.current.has(e.code)) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
-      onKeyUpCapture={(e) => {
-        pressed.current.delete(e.code);
-      }}
+      {...ownKeys}
       onKeyDown={onKeyDown}
       noValidate
       aria-label={label}
