@@ -5,7 +5,8 @@
 // that its place in the source suggests, of the literals, the names of the
 // board's scope, and what is made of them, that it is assigned, compared
 // with, or added to, which the editor offers to create it with inline, as
-// "create global bool met_elara".
+// "create global bool met_elara", but at a place where no variable may be,
+// as visited's argument, where no variable that it creates would compile.
 
 import {
   type Attr,
@@ -34,10 +35,10 @@ export interface Unknown {
   readonly type: VariableType;
 }
 
-/** What tells the type of what a name of a source names, a variable or a component's attribute, of a type that a variable may have, or undefined of one that names none. */
-type Known = (n: Var | Attr) => VariableType | undefined;
+/** What tells the type of what a name of a source names, a variable or a component's attribute, of a type that a variable may have, or an enum, or undefined of one that names none. */
+type Known = (n: Var | Attr) => VariableType | "enum" | undefined;
 
-/** Returns what tells the types of the names of scope's board, of its Project's variables and components, as the checker resolves them (§5.8.3): a bare key the board's variable of it, or else the global one, and an attribute of a component's key that no variable has, or after cmp., its runtime attribute, of an enum a string, as an expression reads it. */
+/** Returns what tells the types of the names of scope's board, of its Project's variables and components, as the checker resolves them (§5.8.3): a bare key the board's variable of it, or else the global one, and an attribute of a component's key that no variable has, or after cmp., its runtime attribute. */
 function knownOf(scope: Scope | undefined): Known {
   const project = scope?.project;
   if (scope === undefined || project === undefined) {
@@ -61,11 +62,7 @@ function knownOf(scope: Scope | undefined): Known {
     if (a === undefined || a.runtime !== true) {
       return undefined;
     }
-    return a.type === "enum"
-      ? "string"
-      : a.type === "text"
-        ? undefined
-        : a.type;
+    return a.type === "text" ? undefined : a.type;
   };
 }
 
@@ -82,7 +79,8 @@ function numberOf(operands: readonly Node[], known: Known): VariableType {
  * bool; a minus's the number's that it is before; a + of a string a string;
  * other arithmetic's a float of a float, or else an int; a function's its
  * result's, or of one of numbers, as min's, the number of its arguments;
- * or of a name, what it names, as known tells.
+ * or of a name, what it names, as known tells, of an enum a string, as an
+ * expression reads it.
  */
 function valueType(n: Node, known: Known): VariableType | undefined {
   switch (n.kind) {
@@ -91,8 +89,10 @@ function valueType(n: Node, known: Known): VariableType | undefined {
     case "unary":
       return n.op === "not" ? "bool" : numberOf([n.operand], known);
     case "var":
-    case "attr":
-      return known(n);
+    case "attr": {
+      const type = known(n);
+      return type === "enum" ? "string" : type;
+    }
     case "binary":
       switch (n.op) {
         case "add":
@@ -137,16 +137,21 @@ function valueType(n: Node, known: Known): VariableType | undefined {
  * value; of the value of an assignment, its target's, as known tells it, or
  * of one that updates it, the string that += adds it to, or the target's
  * number; of an operand of and, or, or not, and of a condition alone, a
- * bool; of one compared with, or added to, what says its type, that type;
- * of an operand of other arithmetic, a float with a float, and else an
- * int; of an operand of a minus, or an argument of min, max, abs, or
- * clamp, a float with a float among the others, and else the number that
- * the place of what it is within suggests, as of -x > 2.5 a float; of an
+ * bool; of one compared with, or added to a string, what says its type,
+ * that type; of an operand of %, an int; of an operand of other
+ * arithmetic, or of a minus, or an argument of min, max, abs, or clamp, a
+ * float with a float among the others, and else the number that the place
+ * of what it is within suggests, as of -x > 2.5 or x * 2 == 3.5 a float; of
+ * an argument of floor, ceil, or round, a float, which they round; of an
  * argument of a function of strings, a string; and otherwise an int, of a
- * script's, or a bool, of a condition's.
+ * script's, or a bool, of a condition's. It is null of a place that no
+ * variable may be at, whatever its type: an argument of visited or visits,
+ * which takes a node, the value that an enum attribute is assigned, which
+ * is one of its options, written as a string, and an operand of what a
+ * node is the other of.
  */
-function typeAt(root: Node, target: Var, known: Known): VariableType {
-  let found: VariableType | undefined;
+function typeAt(root: Node, target: Var, known: Known): VariableType | null {
+  let found: VariableType | null | undefined;
   const visit = (n: Node, parents: readonly Node[]) => {
     if (found !== undefined) {
       return;
@@ -181,28 +186,43 @@ function typeAt(root: Node, target: Var, known: Known): VariableType {
     }
   };
   visit(root, []);
-  return found ?? (root.kind === "script" ? "int" : "bool");
+  return found === undefined
+    ? root.kind === "script"
+      ? "int"
+      : "bool"
+    : found;
 }
 
-/** Returns the type of n's place, of its parents, the last its own, in root, the types of whose names known tells. */
+/** Returns the type of n's place, of its parents, the last its own, in root, the types of whose names known tells, or null of one that no variable may be at (typeAt). */
 function placeType(
   n: Node,
   parents: readonly Node[],
   root: Node,
   known: Known,
-): VariableType {
+): VariableType | null {
   const parent = parents[parents.length - 1];
   if (parent === undefined) {
     return root.kind === "script" ? "int" : "bool";
   }
-  // The number that the place of the parent suggests, of a minus's
-  // operand, or an argument of a function of the widened type of its own.
+  // The number that the place of the parent suggests, of arithmetic's
+  // operand, a minus's, or an argument of a function of the widened type of
+  // its own.
   const outer = (): VariableType =>
     placeType(parent, parents.slice(0, -1), root, known) === "float"
       ? "float"
       : "int";
+  // A float with a float among the others, and else the number of outer.
+  const widenedWith = (others: readonly Node[]): VariableType =>
+    numberOf(others, known) === "float" ? "float" : outer();
   switch (parent.kind) {
     case "assign": {
+      if (
+        parent.value === n &&
+        parent.target.kind === "attr" &&
+        known(parent.target) === "enum"
+      ) {
+        return null;
+      }
       const [other, value] =
         parent.target === n
           ? [parent.value, valueType(parent.value, known)]
@@ -217,6 +237,9 @@ function placeType(
       return parent.op === "not" ? "bool" : outer();
     case "binary": {
       const other = parent.left === n ? parent.right : parent.left;
+      if (other.kind === "node_ref") {
+        return null;
+      }
       switch (parent.op) {
         case "and":
         case "or":
@@ -227,13 +250,21 @@ function placeType(
         case "lte":
         case "gt":
         case "gte":
-        case "add":
           return valueType(other, known) ?? "int";
+        case "mod":
+          return "int";
+        case "add":
+          if (valueType(other, known) === "string") {
+            return "string";
+          }
       }
-      return numberOf([other], known);
+      return widenedWith([other]);
     }
     case "call":
       switch (parent.function) {
+        case "visited":
+        case "visits":
+          return null;
         case "len":
         case "contains":
         case "starts_with":
@@ -242,23 +273,22 @@ function placeType(
         case "upper":
         case "trim":
           return "string";
+        case "floor":
+        case "ceil":
+        case "round":
+          return "float";
         case "min":
         case "max":
         case "abs":
         case "clamp":
-          return numberOf(
-            parent.args.filter((a) => a !== n),
-            known,
-          ) === "float"
-            ? "float"
-            : outer();
+          return widenedWith(parent.args.filter((a) => a !== n));
       }
       return "int";
   }
   return "int";
 }
 
-/** Returns the variable that analysis's unknown name would be, of the board of scope, whose names' types its place's type may be of, or undefined unless its first error is an unknown name of a variable whose key may be a variable's. */
+/** Returns the variable that analysis's unknown name would be, of the board of scope, whose names' types its place's type may be of, or undefined unless its first error is an unknown name of a variable whose key may be a variable's, at a place that a variable may be at (typeAt). */
 export function unknownOf(
   analysis: Analysis,
   scope?: Scope,
@@ -282,9 +312,13 @@ export function unknownOf(
   if (target === undefined || !isKey(target.key)) {
     return undefined;
   }
+  const type = typeAt(root, target, knownOf(scope));
+  if (type === null) {
+    return undefined;
+  }
   return {
     key: target.key,
     ...(target.scope === "" ? {} : { scope: target.scope }),
-    type: typeAt(root, target, knownOf(scope)),
+    type,
   };
 }

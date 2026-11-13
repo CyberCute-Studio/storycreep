@@ -33,24 +33,24 @@ describe("the plain-language rendering of an expression", () => {
   // Verifies: FR-EXPR-01/AC4
   it("says a condition in words, from its AST, as the PRD's example has it", () => {
     expect(said("met_elara and elara.trust >= 3")).toBe(
-      "`met_elara` is true and `elara.trust` is at least 3",
+      "`met_elara` is true and (`elara.trust` is at least 3)",
     );
     // Another source of the same AST says the same.
     expect(said("met_elara&&(cmp.elara.trust)>=3 // first")).toBe(
       said("met_elara and elara.trust >= 3"),
     );
     expect(said("not met_elara or gold < -2")).toBe(
-      "`met_elara` is false or `gold` is less than -2",
+      "(`met_elara` is false) or (`gold` is less than -2)",
     );
     expect(said('(met_elara or gold > 1) and keeper != "Ada"')).toBe(
-      "(`met_elara` is true or `gold` is more than 1) and `keeper` is not “Ada”",
+      "(`met_elara` is true or (`gold` is more than 1)) and (`keeper` is not “Ada”)",
     );
     expect(
       said(
         `visited(node("${ids.quay}")) and visits(node("${ids.tower}")) == 2`,
       ),
     ).toBe(
-      "“Quay” has been visited and the number of visits to “Tower” on Lighthouse is 2",
+      "(“Quay” has been visited) and ((the number of visits to “Tower” on Lighthouse) is 2)",
     );
     // Names as the board's expressions write them: Harbour's trust bare,
     // the global one qualified.
@@ -69,24 +69,34 @@ describe("the plain-language rendering of an expression", () => {
       [
         "Add 5 to `gold`.",
         "Add “!” to the end of `keeper`.",
-        "Set `trust` to (the smaller of `trust` and 3) times 2.",
+        "Set `trust` to ((the smaller of `trust` and 3) times 2).",
         "Send the signal “met” with 1.",
       ].join("\n"),
     );
     expect(said("gold = (gold - 1) - 2", "script")).toBe(
-      "Set `gold` to `gold` minus 1 minus 2.",
+      "Set `gold` to ((`gold` minus 1) minus 2).",
     );
     expect(said("gold = gold - (1 - 2)", "script")).toBe(
-      "Set `gold` to `gold` minus (1 minus 2).",
+      "Set `gold` to (`gold` minus (1 minus 2)).",
+    );
+    // A condition assigned, as a comparison's operand is said.
+    expect(said("met_elara = gold > 3\nmet_elara = true", "script")).toBe(
+      [
+        "Set `met_elara` to whether (`gold` is more than 3).",
+        "Set `met_elara` to true.",
+      ].join("\n"),
+    );
+    expect(said("gold += trust * 2", "script")).toBe(
+      "Add (`trust` times 2) to `gold`.",
     );
   });
 
   // Verifies: FR-EXPR-01/AC4
-  it("groups what a not, a comparison, an arithmetic operator, or a call is of where its words would run on into what follows, so that no two ASTs say the same", () => {
+  it("groups each operand, argument, and condition of a not but a name, a literal, a negative number, or a node, so that no two ASTs of different meanings say the same", () => {
     // What a not is of.
     const notOfOr = said("not (met_elara or gold > 1) and trust > 2");
     expect(notOfOr).toBe(
-      "it is not so that (`met_elara` is true or `gold` is more than 1) and `trust` is more than 2",
+      "(it is not so that (`met_elara` is true or (`gold` is more than 1))) and (`trust` is more than 2)",
     );
     expect(
       new Set([
@@ -96,30 +106,46 @@ describe("the plain-language rendering of an expression", () => {
       ]).size,
     ).toBe(3);
     expect(said("not (gold > 1) and met_elara")).toBe(
-      "it is not so that (`gold` is more than 1) and `met_elara` is true",
+      "(it is not so that (`gold` is more than 1)) and `met_elara` is true",
     );
     expect(said("not (gold > 1 and met_elara)")).toBe(
-      "it is not so that (`gold` is more than 1 and `met_elara` is true)",
+      "it is not so that ((`gold` is more than 1) and `met_elara` is true)",
     );
     // An and of a comparison.
     expect(said("met_elara == (gold > 1 and trust > 2) and trust < 5")).toBe(
-      "`met_elara` is whether (`gold` is more than 1 and `trust` is more than 2) and `trust` is less than 5",
+      "(`met_elara` is whether ((`gold` is more than 1) and (`trust` is more than 2))) and (`trust` is less than 5)",
     );
     // The arguments of a call, and a call within arithmetic.
     expect(said("abs(gold - 3) > 1")).toBe(
-      "(`gold` minus 3) without its sign is more than 1",
+      "((`gold` minus 3) without its sign) is more than 1",
     );
     expect(said("gold - abs(3) > 1")).toBe(
-      "`gold` minus (3 without its sign) is more than 1",
+      "(`gold` minus (3 without its sign)) is more than 1",
     );
     expect(said("abs(min(gold, trust)) > min(gold, abs(trust))")).toBe(
-      "(the smaller of `gold` and `trust`) without its sign is more than the smaller of `gold` and (`trust` without its sign)",
+      "((the smaller of `gold` and `trust`) without its sign) is more than (the smaller of `gold` and (`trust` without its sign))",
     );
     expect(said("-abs(gold) < abs(-gold)")).toBe(
-      "minus (`gold` without its sign) is less than (minus `gold`) without its sign",
+      "(minus (`gold` without its sign)) is less than ((minus `gold`) without its sign)",
     );
     expect(said("abs(-2) == clamp(gold + 1, 0, 5)")).toBe(
-      "-2 without its sign is (`gold` plus 1) kept between 0 and 5",
+      "(-2 without its sign) is ((`gold` plus 1) kept between 0 and 5)",
+    );
+    // Arithmetic of one precedence, of either order, and a float that is
+    // whole, which divides otherwise than an int.
+    expect(said("(gold % 3) / 2 > 0")).toBe(
+      "((the remainder of `gold` divided by 3) divided by 2) is more than 0",
+    );
+    expect(said("(gold / 3) % 2 > 0")).toBe(
+      "(the remainder of (`gold` divided by 3) divided by 2) is more than 0",
+    );
+    expect(said("gold / 2 > 0")).toBe("(`gold` divided by 2) is more than 0");
+    expect(said("gold / 2.0 > -1.0")).toBe(
+      "(`gold` divided by 2.0) is more than -1.0",
+    );
+    // An and of an and, of either order.
+    expect(said("met_elara and (gold > 1 and trust > 2)")).not.toBe(
+      said("(met_elara and gold > 1) and trust > 2"),
     );
   });
 
@@ -137,7 +163,7 @@ describe("the plain-language rendering of an expression", () => {
     });
     const words: Words = { t: cs.t.bind(cs), locale: "cs" };
     expect(said("met_elara and elara.trust >= 2.5", "condition", words)).toBe(
-      "`met_elara` je pravda a `elara.trust` je alespoň 2,5",
+      "`met_elara` je pravda a (`elara.trust` je alespoň 2,5)",
     );
   });
 

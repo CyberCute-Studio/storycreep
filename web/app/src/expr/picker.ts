@@ -7,7 +7,7 @@
 // only as the user changes what it shows.
 
 import { Lexer, type Node, type Range } from "@storycreep/shared/expr/compile";
-import { type Analysis, unitRange } from "./analyze";
+import { type Analysis, runsOf, unitRange } from "./analyze";
 
 /** The tests that the picker offers: of a bool, whether it is true or false, and of any value, how it compares with another. */
 export type Test =
@@ -143,18 +143,22 @@ function sourceOf(analysis: Analysis, r: Range): string {
 
 /**
  * Returns what the picker shows of analysis, a condition's: nothing yet
- * tested of one whose source is empty, or only white space and comments, as
- * no condition; a test of a name of a bool, as met_elara, of its negation,
- * as not met_elara, or of a comparison of a name with a literal, as
+ * tested of one whose source is empty, or only white space, as no
+ * condition; a test of a name of a bool, as met_elara, of its negation, as
+ * not met_elara, or of a comparison of a name with a literal, as
  * elara.trust >= 3, of one that compiles; and undefined of any other, which
- * the picker cannot show, and which the text editor edits.
+ * the picker cannot show, and which the text editor edits, as of one that
+ * holds a comment, which the source that the picker writes anew would not.
  */
 export function readPicked(analysis: Analysis): Picked | undefined {
+  if (runsOf(analysis).some((r) => r.tint === "comment")) {
+    return undefined;
+  }
   if (
     analysis.error?.code === "unexpected_end" &&
     analysis.parsed === undefined
   ) {
-    // Nothing but white space and comments, which name nothing.
+    // Nothing but white space, which names nothing.
     const lexer = new Lexer(analysis.source, "condition");
     if (lexer.next().kind === "eof") {
       return { test: "eq", value: "" };

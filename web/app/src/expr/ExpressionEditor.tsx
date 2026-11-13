@@ -233,9 +233,6 @@ function submitImplicitly(form: HTMLFormElement | null): void {
 /** How many of the sites that write a variable the highlighted offer of it tells of. */
 const writesShown = 3;
 
-/** How long what the highlighted offer read of where a variable is written holds, rather than be read again as the arrows come back to it. */
-const writesKept = 30_000;
-
 /** How long an offer of a variable is highlighted before where it is written is read, so that the arrows held down read nothing of the offers that they pass. */
 const writesWait = 200;
 
@@ -244,7 +241,8 @@ const writesWait = 200;
  * list of its writes has, which the highlighted offer tells of: of a read
  * of a page of one more than it tells of, which says whether there are
  * more, rather than of the list's hundred, once the offer has been
- * highlighted a while (writesWait), kept for a while (writesKept), and
+ * highlighted a while (writesWait), each time, as a save of the page's own
+ * may have written it since, showing what it read last meanwhile, and
  * which says nothing of a refusal of its own, as the offer says that where
  * it is written could not be read. A site is named as its usage list
  * names it, what it is of its node, and its board (UsageItem).
@@ -258,7 +256,6 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
   }, []);
   const writes = useInfiniteQuery({
     ...variableUsagesQuery(projectId, id, "write", writesShown + 1),
-    staleTime: writesKept,
     enabled: waited,
   });
   if (writes.isPending) {

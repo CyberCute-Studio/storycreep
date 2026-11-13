@@ -44,7 +44,7 @@ describe("the guided picker's model of a condition", () => {
       "trust <= 1.5e2",
       'keeper == "Ada \\"the\\" keeper"',
       'elara.mood != "angry"',
-      'cmp.elara.mood == "calm" // the default',
+      'cmp.elara.mood == "calm"',
       "(elara.trust) > 0",
     ]) {
       const picked = readPicked(analyze(source, "condition", scope));
@@ -57,7 +57,7 @@ describe("the guided picker's model of a condition", () => {
   });
 
   it("reads an empty condition as nothing tested yet, which it writes as the empty source", () => {
-    for (const source of ["", "  ", "// nothing yet"]) {
+    for (const source of ["", "  ", " \n "]) {
       expect(readPicked(analyze(source, "condition", scope))).toEqual({
         test: "eq",
         value: "",
@@ -66,7 +66,7 @@ describe("the guided picker's model of a condition", () => {
     expect(writePicked({ test: "eq", value: "" }, nameOf)).toBe("");
   });
 
-  it("reads no condition of another shape, nor one that does not compile", () => {
+  it("reads no condition of another shape, nor one that does not compile, nor one that holds a comment", () => {
     for (const source of [
       "met_elara and gold > 1",
       "gold > trust",
@@ -75,6 +75,10 @@ describe("the guided picker's model of a condition", () => {
       `visited(node("${ids.quay}"))`,
       "nobody > 1",
       "gold >",
+      // A comment, which the source that it writes anew would lose.
+      "// nothing yet",
+      'cmp.elara.mood == "calm" // the default',
+      "gold > // the least\n 3",
     ]) {
       expect(
         readPicked(analyze(source, "condition", scope)),

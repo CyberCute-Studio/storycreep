@@ -1,16 +1,23 @@
 // The plain-language rendering of an expression (PRD FR-EXPR-01 AC4, plan
 // note N74): what a compiled AST says, in the user's language, from the
-// catalog's phrases, as "`met_elara` is true and `elara.trust` is at least
-// 3", generated from the AST, not from the source, so that two sources of
+// catalog's phrases, as "`met_elara` is true and (`elara.trust` is at least
+// 3)", generated from the AST, not from the source, so that two sources of
 // one AST say the same. A condition is one phrase, and a script a sentence
 // for each of its statements. A name is shown as the board's expressions
-// name it, and a node by its title.
+// name it, and a node by its title. Each operand of an operator, each
+// argument of a call, the condition that a not is of, and the value that a
+// statement assigns is in parentheses, but a name, a literal, a negative
+// number, or a node, rather than grouped by a precedence, so that no two
+// ASTs of different meanings say the same, whatever their phrases' words.
 
-import type {
-  Binary,
-  BinaryOp,
-  Call,
-  Node,
+import {
+  type Binary,
+  BUILTINS,
+  type Call,
+  type Node,
+  semantics,
+  TY_BOOL,
+  TY_STRING,
 } from "@storycreep/shared/expr/compile";
 import { nodeTitleText, valueNamer } from "../content/textNames";
 import type { Words } from "./messages";
@@ -34,26 +41,56 @@ function clean(text: string): string {
 /** The type of an expression, as the rendering words it: a number of either kind. */
 type Shape = "bool" | "number" | "string" | "node";
 
-/** The precedence of an arithmetic operator, which says where a part of a rendering is grouped. */
-const precedence: Partial<Record<BinaryOp, number>> = {
-  add: 1,
-  sub: 1,
-  mul: 2,
-  div: 2,
-  mod: 2,
-};
+/** How a locale writes numbers: an integer with its digits grouped, and its decimal separator and minus sign. */
+interface Writing {
+  readonly int: Intl.NumberFormat;
+  readonly decimal: string;
+  readonly minus: string;
+}
 
-/** Returns the number value in locale's writing of numbers: an integer with its digits grouped, and a float as its shortest decimal, with the locale's decimal separator and minus sign. */
-function numberText(locale: string, value: number): string {
-  if (Number.isInteger(value) && Math.abs(value) < 1e21) {
-    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(
-      value,
-    );
+/** The writing of each locale that a rendering was of, made once. */
+const writings = new Map<string, Writing>();
+
+/** Returns how locale writes numbers. */
+function writingOf(locale: string): Writing {
+  let w = writings.get(locale);
+  if (w === undefined) {
+    const parts = new Intl.NumberFormat(locale).formatToParts(-1.5);
+    w = {
+      int: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }),
+      decimal: parts.find((p) => p.type === "decimal")?.value ?? ".",
+      minus: parts.find((p) => p.type === "minusSign")?.value ?? "-",
+    };
+    writings.set(locale, w);
   }
-  const parts = new Intl.NumberFormat(locale).formatToParts(-1.5);
-  const decimal = parts.find((p) => p.type === "decimal")?.value ?? ".";
-  const minus = parts.find((p) => p.type === "minusSign")?.value ?? "-";
-  return String(value).replace(".", decimal).replace("-", minus);
+  return w;
+}
+
+/** Returns the number value, of a literal of type, in locale's writing of numbers: an int with its digits grouped, and a float as to_string writes it, as 2.0 or 2.5 (formatFloat), with the locale's decimal separator and minus sign, so that a float that is whole, as of gold / 2.0, reads otherwise than the int, as of gold / 2, which divides otherwise. */
+function numberText(
+  locale: string,
+  value: number,
+  type: "int" | "float",
+): string {
+  const w = writingOf(locale);
+  if (type === "int") {
+    return w.int.format(value);
+  }
+  return semantics
+    .formatFloat(value)
+    .replace(".", w.decimal)
+    .replace("-", w.minus);
+}
+
+/** Reports whether n is said as it is wherever it is, of no words that what is around it could run on into: a name, a literal, a negative number, or a node, which no part of a rendering groups. */
+function atom(n: Node): boolean {
+  return (
+    n.kind === "var" ||
+    n.kind === "attr" ||
+    n.kind === "lit" ||
+    n.kind === "node_ref" ||
+    (n.kind === "unary" && n.op === "neg" && n.operand.kind === "lit")
+  );
 }
 
 /** What renders the expressions of a board. */
@@ -138,22 +175,23 @@ class Renderer {
             return "number";
         }
         return "bool";
-      case "call":
-        switch (n.function) {
-          case "to_string":
-          case "lower":
-          case "upper":
-          case "trim":
-            return "string";
-          case "contains":
-          case "starts_with":
-          case "ends_with":
-          case "visited":
-            return "bool";
-        }
-        return "number";
+      case "call": {
+        // Of the result that the built-ins' table gives it, a number of
+        // either kind, or of the widened type of its arguments, as min's.
+        const result = BUILTINS.get(n.function)?.result;
+        return result === TY_BOOL
+          ? "bool"
+          : result === TY_STRING
+            ? "string"
+            : "number";
+      }
     }
     return "bool";
+  }
+
+  /** Returns phrase in parentheses. */
+  private group(phrase: string): string {
+    return this.w.t("expr.plain.group", { inner: phrase });
   }
 
   /** Returns the phrase of n where a condition is read, as the operand of and, or, or not. */
@@ -165,35 +203,30 @@ class Renderer {
         return t("expr.plain.is_true", { value: this.value(n) });
       case "unary":
         if (n.op === "not") {
-          // The condition that a not is of, but a name's, is grouped, as
-          // its words would otherwise run on into what follows it: not (a >
-          // 3) and b is "it is not so that (a is more than 3) and b is
-          // true", which not (a > 3 and b) is not.
           const o = n.operand;
           return o.kind === "var" || o.kind === "attr"
             ? t("expr.plain.is_false", { value: this.value(o) })
-            : t("expr.plain.not", {
-                condition: t("expr.plain.group", { inner: this.condition(o) }),
-              });
+            : t("expr.plain.not", { condition: this.side(o) });
         }
         break;
       case "binary":
         if (n.op === "and" || n.op === "or") {
-          const side = (s: Node) =>
-            s.kind === "binary" &&
-            (s.op === "and" || s.op === "or") &&
-            s.op !== n.op
-              ? t("expr.plain.group", { inner: this.condition(s) })
-              : this.condition(s);
+          const left = this.side(n.left);
+          const right = this.side(n.right);
           return n.op === "and"
-            ? t("expr.plain.and", { left: side(n.left), right: side(n.right) })
-            : t("expr.plain.or", { left: side(n.left), right: side(n.right) });
+            ? t("expr.plain.and", { left, right })
+            : t("expr.plain.or", { left, right });
         }
         return this.comparison(n);
       case "call":
         return this.call(n);
     }
     return this.value(n);
+  }
+
+  /** Returns the phrase of n as a condition that a not, an and, or an or is of: grouped but of a name, or a literal, as "(`gold` is more than 1) and `met_elara` is true". */
+  private side(n: Node): string {
+    return atom(n) ? this.condition(n) : this.group(this.condition(n));
   }
 
   /** Returns the phrase of a comparison, or of arithmetic, which is no condition of its own. */
@@ -218,24 +251,21 @@ class Renderer {
     return this.value(n);
   }
 
-  /** Returns the phrase of an operand of a comparison: a value, or whether a condition holds, grouped where it is an and or an or, whose words would otherwise run on into the comparison's. */
+  /** Returns the phrase of an operand of a comparison, or the value of an assignment: a name, a literal, a negative number, or a node as it is, whether a condition holds, grouped, as "whether (`gold` is more than 3)", or else a value, grouped. */
   private operand(n: Node): string {
-    const { t } = this.w;
-    const plainValue =
-      n.kind === "lit" ||
-      n.kind === "var" ||
-      n.kind === "attr" ||
-      this.shape(n) !== "bool";
-    if (plainValue) {
+    if (atom(n)) {
       return this.value(n);
     }
-    const condition = this.condition(n);
-    return t("expr.plain.whether", {
-      condition:
-        n.kind === "binary" && (n.op === "and" || n.op === "or")
-          ? t("expr.plain.group", { inner: condition })
-          : condition,
-    });
+    return this.shape(n) === "bool"
+      ? this.w.t("expr.plain.whether", {
+          condition: this.group(this.condition(n)),
+        })
+      : this.group(this.value(n));
+  }
+
+  /** Returns the phrase of n as an operand of arithmetic, of a minus, or an argument of a call: grouped but of a name, a literal, a negative number, or a node, as "(`gold` minus 3) without its sign". */
+  private grouped(n: Node): string {
+    return atom(n) ? this.value(n) : this.group(this.value(n));
   }
 
   /** Returns the phrase of n where a value is read. */
@@ -249,7 +279,7 @@ class Renderer {
           case "string":
             return t("expr.plain.string", { value: clean(n.value) });
         }
-        return numberText(locale, n.value);
+        return numberText(locale, n.value, n.type);
       case "var":
         return this.code(this.name(n.ref, undefined) ?? n.key);
       case "attr":
@@ -277,21 +307,24 @@ class Renderer {
         if (n.op !== "neg") {
           return this.condition(n);
         }
-        // A number with a minus before it is a negative number, as −2.
+        // A number with a minus before it is a negative number, as -2.
         return n.operand.kind === "lit" &&
           n.operand.type !== "bool" &&
           n.operand.type !== "string"
-          ? numberText(locale, -n.operand.value)
-          : t("expr.plain.neg", { value: this.grouped(n.operand, 3) });
+          ? numberText(locale, -n.operand.value, n.operand.type)
+          : t("expr.plain.neg", { value: this.grouped(n.operand) });
       case "binary": {
-        const p = precedence[n.op];
-        if (p === undefined) {
+        if (
+          n.op !== "add" &&
+          n.op !== "sub" &&
+          n.op !== "mul" &&
+          n.op !== "div" &&
+          n.op !== "mod"
+        ) {
           return this.condition(n);
         }
-        const left = this.grouped(n.left, p);
-        // The right operand of the same precedence is grouped, as a - (b -
-        // c) is not a - b - c.
-        const right = this.grouped(n.right, p + 1);
+        const left = this.grouped(n.left);
+        const right = this.grouped(n.right);
         switch (n.op) {
           case "add":
             return this.shape(n) === "string"
@@ -312,37 +345,10 @@ class Renderer {
     return "";
   }
 
-  /**
-   * Returns the phrase of n as an operand of an arithmetic operator of the
-   * precedence least, or, of 4, as an argument of a call, grouped where its
-   * own is lower: an arithmetic operator's is its precedence, a minus's 3,
-   * a negative number's, a name's, a literal's, and a node's 4, and a
-   * call's, as a condition's, 0, as the words of a call run on into what is
-   * around them, as min(a, b) * 2 is "(the smaller of a and b) times 2",
-   * which min(a, b * 2) is not, and abs(a - 3) "(a minus 3) without its
-   * sign", which a - abs(3) is not.
-   */
-  private grouped(n: Node, least: number): string {
-    const p =
-      n.kind === "binary"
-        ? (precedence[n.op] ?? 0)
-        : n.kind === "unary"
-          ? n.op === "not"
-            ? 0
-            : n.operand.kind === "lit"
-              ? 4
-              : 3
-          : n.kind === "call"
-            ? 0
-            : 4;
-    const phrase = this.value(n);
-    return p < least ? this.w.t("expr.plain.group", { inner: phrase }) : phrase;
-  }
-
   /** Returns the phrase of a call of a built-in function, each argument grouped but a name, a literal, a negative number, and a node (grouped). */
   private call(n: Call): string {
     const { t } = this.w;
-    const [a, b, c] = n.args.map((arg) => this.grouped(arg, 4));
+    const [a, b, c] = n.args.map((arg) => this.grouped(arg));
     switch (n.function) {
       case "min":
         return t("expr.plain.call.min", { a, b });
@@ -400,7 +406,11 @@ class Renderer {
       return this.value(n);
     }
     const target = this.value(n.target);
-    const value = this.value(n.value);
+    // As an operand of a comparison is: met_elara = gold > 3 is "Set
+    // `met_elara` to whether (`gold` is more than 3).", and gold += trust * 2
+    // "Add (`trust` times 2) to `gold`.", whose words no update's run on
+    // into.
+    const value = this.operand(n.value);
     switch (n.op) {
       case "+=":
         return this.shape(n.target) === "string"

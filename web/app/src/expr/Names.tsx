@@ -397,7 +397,9 @@ export function UnknownName({
     setRefocus(undefined);
     commands.mutate([command], {
       onSuccess: () => {
-        setChosen(undefined);
+        // What was chosen of the name created alone, not of another that
+        // the offer shows by now, as once more was typed meanwhile.
+        setChosen((c) => (c?.key === key ? undefined : c));
         // The field has the focus again, of the Create that had it, unless
         // the user has given it to a control meanwhile (WCAG 2.4.3).
         if (

@@ -365,20 +365,26 @@ describe("the expression editor", () => {
     );
     // Of a page of one more site than it tells of, rather than the list's
     // hundred.
-    expect(
-      calls.mock.calls.some(
+    const goldWrites = () =>
+      calls.mock.calls.filter(
         ([operation, input]) =>
           operation === "listVariableUsages" &&
+          (input as { path: { variable_id: string } }).path.variable_id ===
+            ids.gold &&
           (input as { query: { limit?: number } }).query.limit === 4,
-      ),
-    ).toBe(true);
+      ).length;
+    const read = goldWrites();
+    expect(read).toBeGreaterThan(0);
     expect(condition.getAttribute("aria-activedescendant")).toBe(gold.id);
     await user.keyboard("{Enter}");
     expect(fieldValue(condition)).toBe("gold");
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
-    // The name written, shortened, offers again, as it is typed.
+    // The name written, shortened, offers again, as it is typed, and the
+    // offer highlighted again reads where it is changed anew, as a save of
+    // the page's own may have written it since.
     await user.keyboard("{Backspace}");
     await screen.findByRole("listbox", { name: "Suggestions" });
+    await waitFor(() => expect(goldWrites()).toBeGreaterThan(read));
     await user.keyboard("d");
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
     // A variable of the board and a global one of the same key, which the
@@ -898,6 +904,40 @@ describe("the expression editor", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     });
     expect(document.activeElement).toBe(traverse);
+  });
+
+  it("keeps what was chosen of another name that the offer shows once a creation is answered", async () => {
+    const user = userEvent.setup();
+    let create = () => {};
+    const creating = new Promise<void>((resolve) => {
+      create = resolve;
+    });
+    const calls = boardPage(undefined, {}, { creating });
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "met_mira");
+    await user.keyboard("{Escape}");
+    await user.click(
+      within(form).getByRole("button", {
+        name: "Create met_mira (global, true or false)",
+      }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    // While it is answered, another name, whose type is chosen.
+    await user.type(condition, "x");
+    const offer = await within(form).findByRole("region", {
+      name: "No variable is called met_mirax. Create it?",
+    });
+    await user.selectOptions(
+      within(offer).getByRole("combobox", { name: "Type" }),
+      "int",
+    );
+    await act(async () => {
+      create();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(shownOf(within(offer).getByRole("combobox", { name: "Type" }))).toBe(
+      "whole number",
+    );
   });
 
   it("says a refusal of a variable's creation under the offer of the name that it was of alone", async () => {

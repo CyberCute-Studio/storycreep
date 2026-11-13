@@ -1,7 +1,7 @@
 import type { Context } from "@storycreep/shared/expr/compile";
 import { describe, expect, it } from "vitest";
 import { analyze } from "./analyze";
-import { harbourScope } from "./testdata";
+import { harbourScope, ids } from "./testdata";
 import { unknownOf } from "./unknown";
 
 // The variable that an unknown name of a source would be (PRD FR-EXPR-01,
@@ -49,6 +49,20 @@ describe("an unknown name's variable", () => {
     expect(unknown("global.trust = -abs(drift)", "script")?.type).toBe("float");
     expect(unknown("trust = abs(drift)", "script")?.type).toBe("int");
     expect(unknown("global.trust = abs(drift)", "script")?.type).toBe("float");
+    // Of arithmetic, as of a minus, and of a function that rounds.
+    expect(unknown("drift * 2 == 3.5")?.type).toBe("float");
+    expect(unknown("drift + 1 > 2.5")?.type).toBe("float");
+    expect(unknown("drift % 2 > 2.5")?.type).toBe("int");
+    expect(unknown("round(drift) > 1")?.type).toBe("float");
+  });
+
+  it("is none where no variable may be, of a node's place or an enum's value", () => {
+    expect(unknown("visited(drift)")).toBeUndefined();
+    expect(unknown("visits(drift) > 1")).toBeUndefined();
+    expect(unknown("elara.mood = tone", "script")).toBeUndefined();
+    expect(unknown(`drift == node("${ids.quay}")`)).toBeUndefined();
+    // An enum compared, which a string may be.
+    expect(unknown("elara.mood == tone")?.type).toBe("string");
   });
 
   it("is of the type of a name of the board that it is assigned to, compared with, or added to, as the checker resolves the name", () => {

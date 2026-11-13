@@ -46,8 +46,11 @@ export function typedExpression(
   return optional && source === "" ? undefined : { source, is_valid: false };
 }
 
-/** Returns what a notice of a conflict shows of an expression's value: its source, of one line, or undefined of several, which does not read as a line of text. */
+/** Returns what a notice of a conflict shows of an expression's value: its source, of one line, or undefined of several, which does not read as a line of text, or of none, as of a condition removed, which no quotes would say is gone. */
 export function expressionShown(value: unknown): string | undefined {
-  const source = sourceOf(value as Expression | undefined);
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const source = sourceOf(value as Expression);
   return /[\n\r]/.test(source) ? undefined : source;
 }
