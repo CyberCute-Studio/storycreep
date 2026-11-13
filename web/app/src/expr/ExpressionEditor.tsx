@@ -417,7 +417,7 @@ function TextView({
     // types again, as one that shortens the name to choose another; one
     // that is to go on, with nothing after it yet that an offer would
     // replace, offers what follows: a component's key and its dot its
-    // attributes, and node(" the nodes, as within visited(), whose ) stays.
+    // attributes, and node(" the nodes, at the end of its line (spotAt).
     const next = spotAt(el.value, el.selectionStart);
     setTyping(
       next !== undefined && next.query === "" && next.to === el.selectionStart

@@ -98,7 +98,7 @@ export function isNumber(text: string): boolean {
   );
 }
 
-/** Returns the default literal of a value of type, which the picker starts a test of it with: false, 0, the empty string, or an enum's first option. */
+/** Returns the default literal of a value of type, which the picker starts a test of it with: true, so that a bool's "is true" changed to "is" tests what it did, 0, the empty string, or an enum's first option. */
 export function defaultValue(type: TargetType): string {
   switch (type.kind) {
     case "bool":

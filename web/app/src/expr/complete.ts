@@ -16,6 +16,7 @@ import { valueNamer } from "../content/textNames";
 import { nameMatcher } from "../ui/match";
 import {
   builtinText,
+  nodeTitleText,
   resultText,
   signatureOf,
   typeText,
@@ -27,7 +28,7 @@ import { boardVariables, runtimeAttributes, type ScopeSources } from "./scope";
 export interface Spot {
   /** Where what the chosen offer replaces starts. */
   readonly from: number;
-  /** Where it ends: the end of the name that the caret is in, or of the node reference's string, or the caret, where no quote follows what is left of an ID. */
+  /** Where it ends: the end of the name that the caret is in, or of the node reference's string, to its closing quote and a ) after it, or to the end of its line. */
   readonly to: number;
   /** What is typed of the name, or of the node's title, before the caret. */
   readonly query: string;
@@ -120,8 +121,10 @@ function stateAt(
  * of a letter or an underscore and more, which may follow global., board.,
  * cmp., a component's key and a dot, or cmp., a component's key, and a dot;
  * the nothing yet typed after such a dot; or what is typed within the
- * string of node("…"). It offers nothing within another string, a comment,
- * or a number, nor where nothing is typed but after a dot.
+ * string of node("…"), of a node ID's characters, which those after the
+ * caret are too, to its quote or the end of its line. It offers nothing
+ * within another string, a comment, or a number, nor where nothing is typed
+ * but after a dot.
  */
 export function spotAt(source: string, caret: number): Spot | undefined {
   const prefix = source.slice(0, caret);
@@ -132,21 +135,25 @@ export function spotAt(source: string, caret: number): Spot | undefined {
   if (state.in === "string") {
     const before = prefix.slice(0, state.quote);
     const call = /(?:^|[^A-Za-z0-9_.])node\s*\(\s*$/.exec(before);
-    if (call === null) {
+    const query = prefix.slice(state.quote + 1);
+    // What the chosen node replaces: the string, of a node ID's characters
+    // alone, to its closing quote and the parenthesis after it, with the
+    // spaces between them, where the source has them, but not the spaces
+    // after a quote that no parenthesis follows, or to the end of its line,
+    // of a string that no quote closes; and of a string that holds anything
+    // else, as a space, or a ) that no quote is before, which could be
+    // node's or what node( is within, it offers nothing, rather than write
+    // what leaves a quote or a parenthesis too many or too few.
+    const rest = /^[A-Za-z0-9_]*(?:"(?:[ \t]*\))?|(?=[\n\r]|$))/.exec(
+      source.slice(caret),
+    )?.[0];
+    if (call === null || !/^[A-Za-z0-9_]*$/.test(query) || rest === undefined) {
       return undefined;
     }
-    // What the chosen node replaces: the string, to its closing quote and
-    // the parenthesis after it, with the spaces between them, where the
-    // source has them, but not the spaces after a quote that no parenthesis
-    // follows, where what is between the caret and that quote is what is
-    // left of a node's ID; and else, of a string that no such quote closes,
-    // what is typed of it alone, so that what follows on its line stays.
-    const rest =
-      /^[A-Za-z0-9_]*"(?:[ \t]*\))?/.exec(source.slice(caret))?.[0] ?? "";
     return {
       from: state.quote,
       to: caret + rest.length,
-      query: prefix.slice(state.quote + 1),
+      query,
       kind: "node",
     };
   }
@@ -362,7 +369,7 @@ export function offersAt(
         offers.push({
           id: n.id,
           kind: "node",
-          label: n.title === "" ? t("boards.untitled_node") : n.title,
+          label: nodeTitleText(t, n.title),
           insert: `"${n.id}")`,
           detail: t("expr.offer.node", {
             board: boards.get(n.board_id)?.name ?? t("boards.unknown_board"),
@@ -393,8 +400,9 @@ export function offersAt(
  * replaces, in UTF-16 code units, the text that replaces it, and where the
  * caret goes then, after what it wrote, and after the ( of a function, as
  * of node("…"), or the dot of a component, whose name the source has a ( or
- * a dot after already, which it does not write again, nor what the offer
- * writes after it, as node("…")'s quote.
+ * a dot after already, or after spaces on its line, as the language reads
+ * visited (…) as a call too, which it does not write again, nor what the
+ * offer writes after it, as node("…")'s quote.
  */
 export function editOf(
   source: string,
@@ -404,13 +412,14 @@ export function editOf(
   const closer =
     offer.kind === "function" ? "(" : offer.kind === "component" ? "." : "";
   const cut = closer === "" ? -1 : offer.insert.lastIndexOf(closer);
-  if (cut >= 0 && source[spot.to] === closer) {
+  const gap = /^[ \t]*/.exec(source.slice(spot.to))?.[0].length ?? 0;
+  if (cut >= 0 && source[spot.to + gap] === closer) {
     const text = offer.insert.slice(0, cut);
     return {
       from: spot.from,
       to: spot.to,
       text,
-      caret: spot.from + text.length + 1,
+      caret: spot.from + text.length + gap + 1,
     };
   }
   return {

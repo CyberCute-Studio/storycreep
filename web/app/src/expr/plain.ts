@@ -13,7 +13,7 @@ import type {
   Node,
 } from "@storycreep/shared/expr/compile";
 import { valueNamer } from "../content/textNames";
-import type { Words } from "./messages";
+import { nodeTitleText, type Words } from "./messages";
 import type { ScopeSources } from "./scope";
 
 /** A part of a rendering: words, or a name as the source writes it, which the editor shows as code. */
@@ -248,9 +248,7 @@ class Renderer {
         if (node === undefined) {
           return t("expr.plain.node_unread");
         }
-        const title = clean(
-          node.title === "" ? t("boards.untitled_node") : node.title,
-        );
+        const title = clean(nodeTitleText(t, node.title));
         return node.board_id === this.boardId
           ? t("expr.plain.node", { title })
           : t("expr.plain.node_on", {

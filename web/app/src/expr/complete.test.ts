@@ -179,6 +179,14 @@ describe("what the editor offers", () => {
       text: "clamp",
       caret: 6,
     });
+    // Or after spaces and the ( after them, which the language reads as the
+    // call's too.
+    expect(editOf("cla (x)", spotOf("cla (x)", 3), clamp)).toMatchObject({
+      from: 0,
+      to: 3,
+      text: "clamp",
+      caret: 7,
+    });
     // A component, with its dot, or after the dot that the source has
     // already, of the attribute after it.
     const member = spotOf("ela.trust", 3);
@@ -202,6 +210,9 @@ describe("what the editor offers", () => {
       text: "elara",
       caret: 6,
     });
+    expect(
+      editOf("ela .trust", spotOf("ela .trust", 3), component),
+    ).toMatchObject({ text: "elara", caret: 7 });
     // A node, as its reference.
     const inNode = 'visited(node("Qu")) and gold';
     const at = spotOf(inNode, 16);
@@ -224,16 +235,20 @@ describe("what the editor offers", () => {
     expect(
       open.slice(0, toQuay.from) + toQuay.text + open.slice(toQuay.to),
     ).toBe(`visited(node("${ids.quay}") and gold`);
-    // Of a string that no quote closes, as node(" chosen within visited()
-    // leaves it, what follows on its line stays.
-    const unquoted = 'visited(node("Qu) and gold';
-    const typed = spotOf(unquoted, 16);
-    const toTyped = editOf(unquoted, typed, quay);
+    // Of a string that no quote closes, to the end of its line, where
+    // nothing follows it; and of one that holds anything but a node ID's
+    // characters, nothing, as the ) after node(" chosen within visited()
+    // could be node's too, and the rest of a title after the caret is no
+    // node's ID.
+    const ended = 'visited(node("Qu';
+    const toEnd = editOf(ended, spotOf(ended, 16), quay);
     expect(
-      unquoted.slice(0, toTyped.from) +
-        toTyped.text +
-        unquoted.slice(toTyped.to),
-    ).toBe(`visited(node("${ids.quay}")) and gold`);
+      ended.slice(0, toEnd.from) + toEnd.text + ended.slice(toEnd.to),
+    ).toBe(`visited(node("${ids.quay}")`);
+    expect(spotAt('visited(node("Qu) and gold', 16)).toBeUndefined();
+    expect(spotAt('node("Qu)', 8)).toBeUndefined();
+    expect(spotAt('visited(node("Quay Inn"))', 18)).toBeUndefined();
+    expect(spotAt('visited(node("Quay Inn"))', 23)).toBeUndefined();
     // What is left of a node's ID after the caret is replaced with it.
     const within = `visited(node("Qu${ids.quay}"))`;
     const toWithin = editOf(within, spotOf(within, 16), quay);

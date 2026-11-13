@@ -45,16 +45,26 @@ export function typeText(t: TFunction, type: string): string {
   return type;
 }
 
+/** Returns a node's title as what the editor says of the node shows it, of an offer, a name's line, and the rendering: what an untitled one is called, for one without. */
+export function nodeTitleText(t: TFunction, title: string): string {
+  return title === "" ? t("boards.untitled_node") : title;
+}
+
 /** Returns a list of alternatives, as either or, joined as the user's language joins one. */
 export function orList(locale: string, items: readonly string[]): string {
   return new Intl.ListFormat(locale, { type: "disjunction" }).format(items);
 }
 
-/** Returns a list of the types, joined as the user's language joins a list of alternatives. */
+/** Returns a list of the types, joined as the user's language joins a list of alternatives, of which a whole number and a number are a number. */
 function typesText(w: Words, types: readonly string[]): string {
+  const numbers = types.includes("int") && types.includes("float");
   return orList(
     w.locale,
-    types.map((type) => typeText(w.t, type)),
+    types
+      .filter((type) => !numbers || type !== "float")
+      .map((type) =>
+        typeText(w.t, numbers && type === "int" ? "number" : type),
+      ),
   );
 }
 

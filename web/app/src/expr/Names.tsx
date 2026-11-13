@@ -26,7 +26,7 @@ import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
 import { textLink } from "../ui/Page";
 import type { Analysis } from "./analyze";
-import { typeText, type Words } from "./messages";
+import { nodeTitleText, typeText, type Words } from "./messages";
 import { type Part, plainOf } from "./plain";
 import type { Scope } from "./scope";
 import { unknownOf, type VariableType } from "./unknown";
@@ -150,22 +150,19 @@ function NameItem({
   const regionId = useId();
   const { view } = scope;
   if (item.kind === "node") {
+    // A node of a board that the page has not read is said to be one, as
+    // it has no title to show.
     const node = view.nodes.get(item.id);
-    const title =
-      node === undefined
-        ? t("expr.names.node_unread")
-        : node.title === ""
-          ? t("boards.untitled_node")
-          : node.title;
-    const board =
-      node === undefined
-        ? undefined
-        : (view.boards.get(node.board_id)?.name ?? t("boards.unknown_board"));
     return (
       <li className="break-words">
-        {board === undefined
-          ? t("expr.names.node_unknown_board", { node: title })
-          : t("expr.names.node", { node: title, board })}
+        {node === undefined
+          ? t("expr.names.node_unread")
+          : t("expr.names.node", {
+              node: nodeTitleText(t, node.title),
+              board:
+                view.boards.get(node.board_id)?.name ??
+                t("boards.unknown_board"),
+            })}
       </li>
     );
   }

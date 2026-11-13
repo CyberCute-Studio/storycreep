@@ -833,7 +833,7 @@ describe("the expression editor", () => {
     );
     await user.click(
       within(offer).getByRole("button", {
-        name: "Create met_mira, a global true or false",
+        name: "Create met_mira (global, true or false)",
       }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
@@ -856,7 +856,7 @@ describe("the expression editor", () => {
     const picker = within(form).getByRole("group", { name: "Condition" });
     await user.click(
       within(form).getByRole("button", {
-        name: "Create met_mira, a global true or false",
+        name: "Create met_mira (global, true or false)",
       }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
@@ -884,7 +884,7 @@ describe("the expression editor", () => {
     await user.keyboard("{Escape}");
     await user.click(
       within(form).getByRole("button", {
-        name: "Create met_mira, a global true or false",
+        name: "Create met_mira (global, true or false)",
       }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
@@ -910,7 +910,7 @@ describe("the expression editor", () => {
       });
     await user.click(
       within(offerOf("met_mira")).getByRole("button", {
-        name: "Create met_mira, a global true or false",
+        name: "Create met_mira (global, true or false)",
       }),
     );
     // The offer goes while the page shows the variable created, and the
@@ -922,7 +922,7 @@ describe("the expression editor", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(
         within(offerOf("met_mira")).getByRole("button", {
-          name: "Create met_mira, a global true or false",
+          name: "Create met_mira (global, true or false)",
         }),
       ),
     );
@@ -945,7 +945,7 @@ describe("the expression editor", () => {
     );
     await user.click(
       within(form).getByRole("button", {
-        name: "Create met_mira, a global true or false",
+        name: "Create met_mira (global, true or false)",
       }),
     );
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
