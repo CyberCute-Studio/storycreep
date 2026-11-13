@@ -4,7 +4,7 @@
 
 import { Fragment } from "react";
 import { useTranslation } from "react-i18next";
-import { type Binding, bindingOn, bindingParts } from "./keys";
+import { type Binding, bindingOn, bindingText } from "./keys";
 import { usePlatform } from "./registry";
 
 /** The bindings of a command, on the page's platform, or the first of them alone, as the palette shows it. */
@@ -18,17 +18,20 @@ export function KeyCaps({
   const { t } = useTranslation();
   const platform = usePlatform();
   const on = bindings.filter((b) => bindingOn(b, platform));
-  const shown = first ? on.slice(0, 1) : on;
+  // Each as it is written, which tells it apart from the others too.
+  const shown = (first ? on.slice(0, 1) : on).map((b) =>
+    bindingText(t, b, platform),
+  );
   if (shown.length === 0) {
     return null;
   }
   return (
     <span className="flex shrink-0 flex-wrap items-center gap-1 text-sm text-fg-muted">
-      {shown.map((binding, i) => (
-        <Fragment key={bindingParts(t, binding, platform).join("+")}>
+      {shown.map((text, i) => (
+        <Fragment key={text}>
           {i > 0 && <span>{t("shortcuts.or")}</span>}
           <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 font-sans">
-            {bindingParts(t, binding, platform).join("+")}
+            {text}
           </kbd>
         </Fragment>
       ))}

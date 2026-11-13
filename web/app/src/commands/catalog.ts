@@ -229,7 +229,9 @@ export const commands = {
       { key: "Backspace", shift: "any" },
     ],
   },
-  // Without Shift: Shift+Escape is Chrome's task manager, and Firefox's.
+  // Without Shift: Shift+Escape is Chrome's task manager, and Firefox's,
+  // which ends a drag of the canvas still, leaving the key to the browser
+  // (canvas/keyboard.ts's escapeWithShift).
   "canvas.deselect": {
     group: "editing",
     on: canvas,

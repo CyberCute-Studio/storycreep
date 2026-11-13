@@ -32,10 +32,10 @@ import {
 import { KeyCaps } from "./KeyCaps";
 import { type CommandRegistry, usePlatform } from "./registry";
 
-/** An entry of the palette: a command, or the search of the project for what was typed. */
+/** An entry of the palette: a command, or the search of the project for what was typed, and whether it can run now. */
 type Entry =
   | { kind: "command"; id: CommandId; enabled: boolean }
-  | { kind: "search"; query: string };
+  | { kind: "search"; query: string; enabled: boolean };
 
 /** Returns what tells entry apart from the palette's others: its command's ID, or that it is the search. */
 function entryKey(entry: Entry): string {
@@ -142,11 +142,19 @@ function PaletteBody({
     .filter((id) => nameMatches(commandName(t, id), query))
     .map((id) => ({ kind: "command", id, enabled: registry.can(id) }));
   // The search of what was typed, as the server takes it, of at most 200
-  // characters, as a paste may make it longer (searchText).
+  // characters, as a paste may make it longer (searchText), which can run
+  // where the search's command can, as the entry of that command says.
   const searched = searchText(query);
   const entries: Entry[] =
     searched !== "" && registry.handler("project.search") !== undefined
-      ? [...commands, { kind: "search", query: searched }]
+      ? [
+          ...commands,
+          {
+            kind: "search",
+            query: searched,
+            enabled: registry.can("project.search"),
+          },
+        ]
       : commands;
   // The entry highlighted: the one moved to, or the first where none was;
   // and none where the one moved to is no longer listed, as once the page
@@ -174,7 +182,7 @@ function PaletteBody({
       ?.scrollIntoView?.({ block: "nearest" });
   });
   const choose = (entry: Entry | undefined) => {
-    if (entry === undefined || (entry.kind === "command" && !entry.enabled)) {
+    if (entry === undefined || !entry.enabled) {
       return;
     }
     // The palette's own command, chosen in it, shows it as its key would
@@ -266,7 +274,10 @@ function PaletteBody({
         {entries.map((entry, i) => (
           // The input's keys move through the options and choose one
           // (aria-activedescendant), which keeps the focus in the input,
-          // as a combobox's pattern has it, so an option takes none itself.
+          // as a combobox's pattern has it, so an option takes none itself,
+          // nor gives it to the dialog as it is pressed, as one that cannot
+          // run now, which closes nothing, would else, whose keys would
+          // then reach neither the options nor the palette's own.
           // biome-ignore lint/a11y/useFocusableInteractive: as above.
           // biome-ignore lint/a11y/useKeyWithClickEvents: as above.
           <div
@@ -274,10 +285,9 @@ function PaletteBody({
             id={optionId(i)}
             role="option"
             aria-selected={i === shown}
-            aria-disabled={
-              entry.kind === "command" && !entry.enabled ? true : undefined
-            }
+            aria-disabled={entry.enabled ? undefined : true}
             data-command={entry.kind === "command" ? entry.id : undefined}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => choose(entry)}
             className="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded px-3 aria-disabled:cursor-not-allowed aria-disabled:text-fg-muted aria-selected:bg-surface-hover"
           >
@@ -297,6 +307,12 @@ function PaletteBody({
             ) : (
               <span className="min-w-0 break-words">
                 {t("palette.search_for", { query: entry.query })}
+                {!entry.enabled && (
+                  <span className="text-fg-muted">
+                    {" "}
+                    {t("palette.unavailable")}
+                  </span>
+                )}
               </span>
             )}
           </div>

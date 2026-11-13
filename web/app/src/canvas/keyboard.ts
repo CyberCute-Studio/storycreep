@@ -4,7 +4,9 @@
 // canvas, or half of it with Shift; + and - zoom in and out by a step, and
 // 0 shows 100%, about the canvas's centre; Shift+1 fits the board's content
 // and Shift+2 zooms to the selection; Escape ends a drag under way,
-// cancelled, or else clears the selection (CanvasController's command);
+// cancelled, as it does with Shift, which is the browser's otherwise
+// (escapeWithShift), or else clears the selection (CanvasController's
+// command);
 // and, on a board that may be changed, Delete and Backspace delete the
 // selected nodes and Enter opens the text of the one selected (plan note
 // N68). Letters do the toolbar's actions (N72), as E adds an element. None
@@ -27,6 +29,21 @@ export type { KeyInput };
  */
 export function canvasKey(e: KeyInput, on: Platform): CommandId | undefined {
   return commandOfKey(e, "canvas", on);
+}
+
+/**
+ * Reports whether the key of e is Escape with Shift, without Ctrl, Cmd, or
+ * Alt, which is no command of the canvas's, as Shift+Escape is Chrome's task
+ * manager (the catalog's canvas.deselect), but which ends a drag under way,
+ * cancelled, as Escape does, on the canvas and in its tree, rather than
+ * leave it to land as Shift is held down through it: a rubber band that
+ * Shift adds to the selection, or a move of the nodes that a press with
+ * Shift added one to. The key stays the browser's.
+ */
+export function escapeWithShift(e: KeyInput): boolean {
+  return (
+    e.key === "Escape" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+  );
 }
 
 /** What a key asks of the page's clipboard (clipboardKey). */

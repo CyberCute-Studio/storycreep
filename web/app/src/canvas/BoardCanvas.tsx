@@ -101,7 +101,12 @@ import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
 import { Inspector } from "./Inspector";
-import { type ClipboardAsk, canvasKey, clipboardKey } from "./keyboard";
+import {
+  type ClipboardAsk,
+  canvasKey,
+  clipboardKey,
+  escapeWithShift,
+} from "./keyboard";
 import {
   ConnectOffer,
   endPlace,
@@ -1784,20 +1789,28 @@ function BoardCanvasOf({
     }
     // The command of the canvas's, or of the page's, that the key is, on
     // the page's platform, as ? that shows the shortcuts, which runs with
-    // what the canvas and the page registered for it, or, outside the
-    // app's frame, which has the registry, the canvas's own handler. In the
-    // middle of a drag, only one of whileDragging runs: not the table of
-    // the shortcuts, which the app's frame registers and shows over the
-    // page, as the inspector does not open then. A key of the page's own,
-    // as Ctrl+K, is the page's (keysOfPage), which runs nothing then either
-    // (the registry's hold above).
+    // what the canvas and the page registered for it, where the registry
+    // says that it can run now, or, outside the app's frame, which has the
+    // registry, the canvas's own handler, by the same rule. In the middle
+    // of a drag, only one of whileDragging runs (the registry's hold
+    // above): not the table of the shortcuts, which the app's frame
+    // registers and shows over the page, as the inspector does not open
+    // then. A key of the page's own, as Ctrl+K, is the page's (keysOfPage),
+    // which runs nothing then either. Shift+Escape, which is the browser's,
+    // ends the drag still (escapeWithShift).
     const id = canvasKey(e, platform);
     if (id === undefined) {
+      if (escapeWithShift(e)) {
+        controller.gestures.cancelDrag();
+      }
       return;
     }
     const handler =
       registry !== undefined ? registry.handler(id) : canvasHandlers[id];
-    const can = canRun(handler) && (whileDragging.has(id) || still());
+    const can =
+      registry !== undefined
+        ? registry.can(id)
+        : canRun(handler) && (whileDragging.has(id) || still());
     // The clipboard's keys are the canvas's whatever they do, rather than
     // the browser's copy that would follow them (clipboardKey), and so are
     // Shift+F10 and the menu key, which open the context menu of what is

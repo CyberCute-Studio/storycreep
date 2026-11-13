@@ -40,11 +40,16 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { CommandId } from "../commands/catalog";
-import { usePlatform } from "../commands/registry";
+import { usePlatform, useRegistry } from "../commands/registry";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
-import { type ClipboardAsk, canvasKey, clipboardKey } from "./keyboard";
+import {
+  type ClipboardAsk,
+  canvasKey,
+  clipboardKey,
+  escapeWithShift,
+} from "./keyboard";
 import {
   type TreeChoice,
   type TreeRow,
@@ -190,6 +195,7 @@ export const CanvasTree = memo(function CanvasTree({
 }) {
   const { t } = useTranslation();
   const platform = usePlatform();
+  const registry = useRegistry();
   const doc = useProjectDocument(projectId);
   const treeId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -575,16 +581,29 @@ export const CanvasTree = memo(function CanvasTree({
       default: {
         // The canvas's other keys, which zoom, and Escape, but not those
         // that pan, which are the tree's arrows here, nor its letters, as
-        // E, which adds an element on the canvas (plan note N72); and else
-        // a letter typed, which goes to the next node whose title starts
-        // with it, of itself alone, whatever was typed before it, so that
-        // the same letter again goes on to the node after, and a character
-        // that is a key of the canvas's that zooms is always that key.
+        // E, which adds an element on the canvas (plan note N72), each run
+        // as the canvas's key runs it, where the registry says that it can
+        // run now, as in the middle of a drag (BoardCanvas's whileDragging),
+        // or, outside the app's frame, which has the registry, by the
+        // controller; Shift+Escape, which is the browser's, ends a drag
+        // still (escapeWithShift); and else a letter typed, which goes to
+        // the next node whose title starts with it, of itself alone,
+        // whatever was typed before it, so that the same letter again goes
+        // on to the node after, and a character that is a key of the
+        // canvas's that zooms is always that key.
         if (id !== undefined && treeKeys.has(id)) {
-          if (!controller.command(id)) {
+          if (
+            !(registry !== undefined
+              ? registry.run(id)
+              : controller.command(id))
+          ) {
             return;
           }
           break;
+        }
+        if (escapeWithShift(e)) {
+          controller.gestures.cancelDrag();
+          return;
         }
         if (e.key.length !== 1) {
           return;

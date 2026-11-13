@@ -259,6 +259,70 @@ describe("the command palette", () => {
     }
   });
 
+  it("keeps the focus in its field as an entry that cannot run now is pressed, whose keys go on moving through the entries and closing it", async () => {
+    const user = userEvent.setup();
+    projectPages();
+    await openVariables();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    const field = within(palette).getByRole("combobox");
+    await user.type(field, "undo");
+    const [undo, search] = within(palette).getAllByRole("option");
+    expect(undo.dataset.command).toBe("history.undo");
+    expect(undo.getAttribute("aria-disabled")).toBe("true");
+    await user.click(undo);
+    expect(screen.getByRole("dialog", { name: "Commands" })).toBe(palette);
+    expect(document.activeElement).toBe(field);
+    await user.keyboard("{ArrowDown}");
+    expect(search.getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("{Control>}k{/Control}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
+    );
+  });
+
+  it("says that its search cannot run where the page's search cannot, and runs nothing of it then", async () => {
+    const user = userEvent.setup();
+    const searched = vi.fn();
+    function Search() {
+      useCommandHandlers("page", {
+        "project.search": { enabled: false, run: searched },
+      });
+      return null;
+    }
+    const closed = vi.fn();
+    function Host() {
+      const registry = useRegistry();
+      const opener = useRef<HTMLElement | null>(null);
+      return registry === undefined ? null : (
+        <Palette
+          registry={registry}
+          open
+          opener={opener}
+          onOpenChange={closed}
+        />
+      );
+    }
+    render(
+      <I18nextProvider i18n={createI18n("en")}>
+        <CommandsProvider>
+          <Search />
+          <Host />
+        </CommandsProvider>
+      </I18nextProvider>,
+    );
+    await user.type(screen.getByRole("combobox"), "harbour");
+    const entry = screen.getByRole("option", {
+      name: /Search the project for “harbour”/,
+    });
+    expect(entry.getAttribute("aria-disabled")).toBe("true");
+    expect(entry.textContent).toContain("(unavailable now)");
+    await user.click(entry);
+    await user.keyboard("{Enter}");
+    expect(closed).not.toHaveBeenCalled();
+    expect(searched).not.toHaveBeenCalled();
+  });
+
   it("keeps the entry moved to highlighted as the page's commands change, and none once it is gone, which Enter runs nothing of", () => {
     let show: (ids: ("go.projects" | "go.trash")[]) => void = () => {};
     function Commands() {

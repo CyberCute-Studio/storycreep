@@ -216,6 +216,69 @@ describe("the canvas's shortcuts", () => {
     expect(canvas.dataset.selected).toBe("0");
   });
 
+  it("cancel a rubber band that Shift adds to the selection by Escape with Shift still held, which is the browser's still", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    canvas.focus();
+    const shifted = { ...mouse, shiftKey: true };
+    fireEvent.pointerDown(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    // Shift+Escape is Chrome's task manager, which the canvas leaves it to.
+    expect(
+      fireEvent.keyDown(canvas, {
+        key: "Escape",
+        code: "Escape",
+        shiftKey: true,
+      }),
+    ).toBe(true);
+    fireEvent.pointerUp(canvas, {
+      ...shifted,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("0");
+    // Without a drag, it clears no selection, as Escape alone does.
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    fireEvent.keyDown(canvas, {
+      key: "Escape",
+      code: "Escape",
+      shiftKey: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("1");
+  });
+
   it("change nothing of the board in the middle of a drag, and do once it has ended", async () => {
     const calls = boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard("?node=nd_1");
