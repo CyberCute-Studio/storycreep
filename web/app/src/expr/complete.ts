@@ -136,9 +136,11 @@ export function spotAt(source: string, caret: number): Spot | undefined {
       return undefined;
     }
     // What the chosen node replaces: the string, to its closing quote and
-    // the parenthesis after it, where the source has them.
+    // the parenthesis after it, with the spaces between them, where the
+    // source has them, but not the spaces, nor a line break, after a quote
+    // that no parenthesis follows.
     const rest =
-      /^[^"\\\n\r]*(?:"\s*\)?)?/.exec(source.slice(caret))?.[0] ?? "";
+      /^[^"\\\n\r]*(?:"(?:[ \t]*\))?)?/.exec(source.slice(caret))?.[0] ?? "";
     return {
       from: state.quote,
       to: caret + rest.length,
@@ -387,9 +389,10 @@ export function offersAt(
 /**
  * Returns the edit that writes offer at spot of source: the range that it
  * replaces, in UTF-16 code units, the text that replaces it, and where the
- * caret goes then, after what it wrote, and after the ( of a function, or
- * the dot of a component, whose name the source has a ( or a dot after
- * already, which it does not write again.
+ * caret goes then, after what it wrote, and after the ( of a function, as
+ * of node("…"), or the dot of a component, whose name the source has a ( or
+ * a dot after already, which it does not write again, nor what the offer
+ * writes after it, as node("…")'s quote.
  */
 export function editOf(
   source: string,
@@ -398,12 +401,9 @@ export function editOf(
 ): { from: number; to: number; text: string; caret: number } {
   const closer =
     offer.kind === "function" ? "(" : offer.kind === "component" ? "." : "";
-  if (
-    closer !== "" &&
-    offer.insert.endsWith(closer) &&
-    source[spot.to] === closer
-  ) {
-    const text = offer.insert.slice(0, -1);
+  const cut = closer === "" ? -1 : offer.insert.lastIndexOf(closer);
+  if (cut >= 0 && source[spot.to] === closer) {
+    const text = offer.insert.slice(0, cut);
     return {
       from: spot.from,
       to: spot.to,

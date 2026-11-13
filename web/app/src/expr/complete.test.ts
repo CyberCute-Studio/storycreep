@@ -216,5 +216,33 @@ describe("what the editor offers", () => {
     expect(inNode.slice(0, edit.from) + edit.text + inNode.slice(edit.to)).toBe(
       `visited(node("${ids.quay}")) and gold`,
     );
+    // Of a string that no parenthesis closes, the spaces after its quote
+    // stay.
+    const open = 'visited(node("Qu" and gold';
+    const unclosed = spotOf(open, 16);
+    const toQuay = editOf(open, unclosed, quay);
+    expect(
+      open.slice(0, toQuay.from) + toQuay.text + open.slice(toQuay.to),
+    ).toBe(`visited(node("${ids.quay}") and gold`);
+    // node("…"), of node typed anew where the source has its ( and its
+    // string already, is node, of which nothing is written again.
+    const retyped = `visited(node("${ids.quay}"))`;
+    const name = spotOf(retyped, 12);
+    const nodeCall = offersAt(
+      name,
+      "condition",
+      scope.view,
+      scope.boardId,
+      words,
+    ).offers.find((o) => o.id === "fn:node");
+    if (nodeCall === undefined) {
+      throw new Error("no node offered of node");
+    }
+    expect(editOf(retyped, name, nodeCall)).toEqual({
+      from: 8,
+      to: 12,
+      text: "node",
+      caret: 13,
+    });
   });
 });

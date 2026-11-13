@@ -6,7 +6,7 @@ import type {
   Variable,
 } from "@storycreep/shared/api";
 import { encode, parse } from "@storycreep/shared/expr/compile";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Engine } from "../canvas/engine";
@@ -14,6 +14,7 @@ import { renderApp, testSession } from "../test/app";
 import { testConnection } from "../test/canvas";
 import "../test/editor";
 import { fakeApi, refused, startPage, testProject } from "../test/fake";
+import { type FakeRealtime, fakeRealtime } from "../test/realtime";
 import { character, elara, ids, node, variable, variables } from "./testdata";
 
 // The expression editor on a board's page (PRD FR-EXPR-01, FR-VAR-02 AC1,
@@ -100,19 +101,22 @@ const moodRead: Usage = {
  * condition given, as the server compiled it, valid unless stored says
  * otherwise, each connection.update of which takes it to its next
  * revision, once sending allows, and refuses each variable.create where
- * refuseCreate says so, and the read of the components where
- * refuseComponents does; and records what it is asked. Elara's reads are
- * two pages: Dock's of elara.mood, and then Quay's of elara.trust.
+ * refuseCreate says so, or answers it once creating allows, and the read
+ * of the components where refuseComponents does; and records what it is
+ * asked. Elara's reads are two pages: Dock's of elara.mood, and then
+ * Quay's of elara.trust.
  */
 function boardPage(
   condition?: string,
   stored: Partial<Expression> = {},
   {
     sending,
+    creating,
     refuseCreate = false,
     refuseComponents = false,
   }: {
     sending?: Promise<void>;
+    creating?: Promise<void>;
     refuseCreate?: boolean;
     refuseComponents?: boolean;
   } = {},
@@ -198,6 +202,9 @@ function boardPage(
         if (body.commands.some((c) => c.type === "connection.update")) {
           await sending;
         }
+        if (body.commands.some((c) => c.type === "variable.create")) {
+          await creating;
+        }
         if (
           refuseCreate &&
           body.commands.some((c) => c.type === "variable.create")
@@ -279,12 +286,16 @@ function batches(calls: ReturnType<typeof fakeApi>) {
     );
 }
 
-/** Opens Harbour's page, with Quay's choice's inspector, and returns its form. */
-async function openChoice(user: ReturnType<typeof userEvent.setup>) {
+/** Opens Harbour's page, with Quay's choice's inspector, of the real-time channel given, and returns its form. */
+async function openChoice(
+  user: ReturnType<typeof userEvent.setup>,
+  realtime?: FakeRealtime,
+) {
   renderApp(
     `/projects/${testProject.id}/boards/${ids.harbour}?node=${ids.quay}`,
     {
       session: testSession,
+      ...(realtime === undefined ? {} : { realtime }),
     },
   );
   const inspector = await screen.findByRole("region", { name: "Quay" });
@@ -376,6 +387,23 @@ describe("the expression editor", () => {
     expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
   });
 
+  it('offers the nodes as node("…") is chosen, as a component\'s attributes once its key is', async () => {
+    const user = userEvent.setup();
+    boardPage();
+    const { condition } = await openChoice(user);
+    await user.type(condition, "visited(no");
+    const list = await screen.findByRole("listbox", { name: "Suggestions" });
+    await user.click(within(list).getByRole("option", { name: /^node\(/ }));
+    expect(fieldValue(condition)).toBe('visited(node("');
+    const nodes = await screen.findByRole("listbox", { name: "Suggestions" });
+    expect(
+      within(nodes)
+        .getAllByRole("option")
+        .map((o) => o.querySelector("code")?.textContent),
+    ).toEqual(["Dock", "Quay"]);
+    expect(document.activeElement).toBe(condition);
+  });
+
   it("scrolls the offer that the arrows highlight into view, as the list's height may hide it", async () => {
     const user = userEvent.setup();
     boardPage();
@@ -465,7 +493,7 @@ describe("the expression editor", () => {
 
   it("reads a stored source's line breaks as its text area holds them", async () => {
     const user = userEvent.setup();
-    boardPage("gold\r\n>= 3");
+    const calls = boardPage("gold\r\n>= 3");
     const { form, condition } = await openChoice(user);
     expect(fieldValue(condition)).toBe("gold\n>= 3");
     expect(
@@ -476,6 +504,14 @@ describe("the expression editor", () => {
     await user.click(condition);
     await user.keyboard("{End}{ArrowLeft>3/}");
     expect((condition as HTMLTextAreaElement).selectionStart).toBe(6);
+    // What is typed and taken back again is the source as it was, of which
+    // Save saves nothing, rather than its line breaks anew.
+    await user.keyboard("{End}0{Backspace}");
+    await user.click(
+      within(form).getByRole("button", { name: "Save the connection" }),
+    );
+    await within(form).findByText("Nothing has changed, so nothing was saved.");
+    expect(batches(calls)).toHaveLength(0);
   });
 
   // Verifies: FR-EXPR-01/AC3, FR-EXPR-01/AC4
@@ -562,6 +598,34 @@ describe("the expression editor", () => {
         type: "connection.update",
         payload: { id: choice, condition: "gold >= 4" },
       },
+    ]);
+  });
+
+  it("saves what the picker wrote, rather than refuse the number that it no longer shows, as once another session took the value that it tests to the trash, with nothing to say why", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    const calls = boardPage("gold >= 3");
+    const { form } = await openChoice(user, realtime);
+    await user.click(within(form).getByRole("button", { name: "Guided" }));
+    const value = within(form).getByRole("textbox", { name: "Compared with" });
+    await user.clear(value);
+    // Of 4, which writes gold >= 4, and then of 4x, which writes nothing.
+    await user.type(value, "4x");
+    expect(value.getAttribute("aria-invalid")).toBe("true");
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "variable.delete", payload: { id: ids.gold } }],
+        [{ id: ids.gold, rev: 2 }],
+      ),
+    );
+    await waitFor(() => expect(value.isConnected).toBe(false));
+    await user.click(
+      within(form).getByRole("button", { name: "Save the connection" }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0]).toMatchObject([
+      { type: "connection.update", payload: { condition: "gold >= 4" } },
     ]);
   });
 
@@ -763,6 +827,32 @@ describe("the expression editor", () => {
       ).toBe("met_mira (true or false)"),
     );
     expect(document.activeElement).toBe(picker);
+  });
+
+  it("leaves the focus where the user put it while the creation of a variable was answered", async () => {
+    const user = userEvent.setup();
+    let create = () => {};
+    const creating = new Promise<void>((resolve) => {
+      create = resolve;
+    });
+    const calls = boardPage(undefined, {}, { creating });
+    const { form, condition } = await openChoice(user);
+    await user.type(condition, "met_mira");
+    await user.keyboard("{Escape}");
+    await user.click(
+      within(form).getByRole("button", {
+        name: "Create met_mira, a global true or false",
+      }),
+    );
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const traverse = within(form).getByRole("textbox", { name: "On traverse" });
+    await user.click(traverse);
+    await act(async () => {
+      create();
+      // What the answer's focus would be, after it.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    expect(document.activeElement).toBe(traverse);
   });
 
   it("says a refusal of a variable's creation under the offer of the name that it was of alone", async () => {

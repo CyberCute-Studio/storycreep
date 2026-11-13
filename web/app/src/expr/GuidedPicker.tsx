@@ -7,7 +7,7 @@
 // anew only as one of its fields is changed, and says so of a source that
 // it cannot show, which the text view edits.
 
-import { type RefObject, useState } from "react";
+import { type RefObject, useEffect, useMemo, useState } from "react";
 import { valueNamer } from "../content/textNames";
 import { Button } from "../ui/Button";
 import { SelectField, TextField } from "../ui/Field";
@@ -123,11 +123,11 @@ function sameType(a: TargetType, b: TargetType): boolean {
  * The guided picker of the condition that analysis is of, of the board of
  * scope, which tells of a change of what it shows by onSource, with the
  * source that it shows, of which no field holds what it cannot write then,
- * and by onUnfinished that its number's field holds what is not a number
- * yet, which it cannot write: a group of fields, which the editor's label
- * names (labelledBy), and which the editor gives the focus to (group), as
- * once a variable is created inline, the same element whether the picker
- * shows the condition or says that it cannot.
+ * and by onUnfinished whether its number's field shows what is not a number
+ * yet, which it cannot write, as that changes: a group of fields, which the
+ * editor's label names (labelledBy), and which the editor gives the focus to
+ * (group), as once a variable is created inline, the same element whether
+ * the picker shows the condition or says that it cannot.
  */
 export function GuidedPicker({
   group,
@@ -146,7 +146,7 @@ export function GuidedPicker({
   words: Words;
   describedBy: string | undefined;
   onSource: (source: string) => void;
-  onUnfinished: () => void;
+  onUnfinished: (unfinished: boolean) => void;
 }) {
   const { t } = words;
   // What the picker wrote last, which it shows still while the source is
@@ -157,12 +157,35 @@ export function GuidedPicker({
   const picked =
     readPicked(analysis) ??
     (written?.source === analysis.source ? written.picked : undefined);
-  const choices = choicesOf(scope);
+  const choices = useMemo(() => choicesOf(scope), [scope]);
   // What is typed of a number, which writes the source once it is one, and
   // the field says what it lacks until then, which the form's Save is
   // refused for (onUnfinished), rather than save the number before it; or
   // of a text, which writes the source as it is typed.
   const [draft, setDraft] = useState<{ for: string; text: string }>();
+  const current =
+    picked?.target === undefined
+      ? undefined
+      : choices.find((c) => c.value === targetValue(picked.target as Target));
+  const type = current?.type;
+  const draftKey =
+    picked === undefined
+      ? ""
+      : `${picked.target === undefined ? "" : targetValue(picked.target)} ${picked.test}`;
+  const numberProblem =
+    picked !== undefined &&
+    takesValue(picked.test) &&
+    (type?.kind === "int" || type?.kind === "float") &&
+    draft?.for === draftKey &&
+    !isNumber(draft.text.trim())
+      ? t("expr.picker.number_error")
+      : undefined;
+  // The form's Save is refused while the number's field says what it lacks,
+  // and only while it is there to say it: not once the picker cannot show
+  // the condition, or its value to test, as once another session took that
+  // to the trash, rather than refuse it with nothing to tell why.
+  const unfinished = numberProblem !== undefined;
+  useEffect(() => onUnfinished(unfinished), [unfinished, onUnfinished]);
   if (picked === undefined) {
     // A condition that parses, of a page that has not read the board's
     // names, or whose read of them failed, may be one that the picker
@@ -207,17 +230,7 @@ export function GuidedPicker({
     setDraft(undefined);
     writeSource(next);
   };
-  const current =
-    picked.target === undefined
-      ? undefined
-      : choices.find((c) => c.value === targetValue(picked.target as Target));
-  const type = current?.type;
-  const draftKey = `${picked.target === undefined ? "" : targetValue(picked.target)} ${picked.test}`;
   const numberText = draft?.for === draftKey ? draft.text : picked.value;
-  const numberProblem =
-    draft?.for === draftKey && !isNumber(draft.text.trim())
-      ? t("expr.picker.number_error")
-      : undefined;
   const chooseTarget = (value: string) => {
     const choice = choices.find((c) => c.value === value);
     if (choice === undefined) {
@@ -335,8 +348,6 @@ export function GuidedPicker({
           setDraft({ for: draftKey, text });
           if (isNumber(text.trim())) {
             writeSource({ ...picked, value: text.trim() });
-          } else {
-            onUnfinished();
           }
         }}
       />

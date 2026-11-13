@@ -30,7 +30,7 @@ import {
   siteText,
   variableUsagesQuery,
 } from "../content/usages";
-import { pressedClass } from "../ui/Button";
+import { Button, pressedClass } from "../ui/Button";
 import { OfferFrame, OfferList, OfferOption } from "../ui/Offers";
 import {
   type Analysis,
@@ -68,8 +68,9 @@ export interface ExpressionEditorProps {
   /** The view of a condition that offers the guided picker, which its owner keeps (useExpressionView), or none, of one that offers none. */
   guided?: ExpressionView;
   /**
-   * Called with the source as it changes, and with whether a field of the
-   * guided picker holds what it cannot write yet, as a number that is not
+   * Called with the source as it changes, defaultValue itself where it is
+   * that but for its line breaks (asTyped), and with whether a field of the
+   * guided picker shows what it cannot write yet, as a number that is not
    * one, which the form's Save is refused for, rather than save the source
    * as it was before, as the field says (GuidedPicker).
    */
@@ -403,11 +404,11 @@ function TextView({
     readCaret(el);
     // What is written ends what was typed, and the list closes until a key
     // types again, as one that shortens the name to choose another; one
-    // that is to go on, as a component's key and its dot with nothing after
-    // it yet, offers what follows.
+    // that is to go on, with nothing after it yet, offers what follows: a
+    // component's key and its dot its attributes, and node(" the nodes.
     const next = spotAt(el.value, el.selectionStart);
     setTyping(
-      next !== undefined && next.query === "" && next.from === next.to
+      next !== undefined && next.query === "" && next.to === el.selectionStart
         ? spotKey(next)
         : undefined,
     );
@@ -606,10 +607,15 @@ export function ExpressionEditor({
     onChange(told.current.source, told.current.unfinished);
   };
   // A source written anew, as typed or as the picker writes it, of which
-  // no field of the picker holds what it cannot write then.
+  // no field of the picker holds what it cannot write then; of the owner's
+  // own source, as the field holds its CR LF line breaks, the owner's,
+  // which the form finds unchanged, rather than save its line breaks anew.
   const update = (next: string) => {
     setSource(next);
-    tell({ source: next, unfinished: false });
+    tell({
+      source: next === asTyped(defaultValue) ? defaultValue : next,
+      unfinished: false,
+    });
   };
   const showView = (next: View) => {
     guided?.onView(next);
@@ -671,22 +677,20 @@ export function ExpressionEditor({
             <legend className="sr-only">
               {t("expr.view.legend", { field: label })}
             </legend>
-            <button
-              type="button"
+            <Button
               aria-pressed={view === "text"}
               onClick={() => showView("text")}
-              className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface px-3 font-medium hover:bg-surface-hover ${pressedClass}`}
+              className={pressedClass}
             >
               {t("expr.view.text")}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
               aria-pressed={view === "guided"}
               onClick={() => showView("guided")}
-              className={`inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-md border border-border bg-surface px-3 font-medium hover:bg-surface-hover ${pressedClass}`}
+              className={pressedClass}
             >
               {t("expr.view.guided")}
-            </button>
+            </Button>
           </fieldset>
         )}
       </div>
@@ -717,7 +721,11 @@ export function ExpressionEditor({
           words={words}
           describedBy={describedBy}
           onSource={update}
-          onUnfinished={() => tell({ unfinished: true })}
+          onUnfinished={(unfinished) => {
+            if (unfinished !== told.current.unfinished) {
+              tell({ unfinished });
+            }
+          }}
         />
       )}
       {shownError !== undefined && (

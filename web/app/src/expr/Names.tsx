@@ -320,12 +320,13 @@ export function Names({
  * written in, global unless it says board., each of which may be changed:
  * a variable.create of its own, as the page's batches are, once Create is
  * pressed, after which the name names it, and the field has the focus
- * again, as the offer goes; a refusal of it is said under the offer of the
- * name that it was of alone, which has the focus on its Create again. Its
- * type is what the name's place suggests, of the literals and the board's
- * names there (unknownOf). A change of its type or its scope is no change
- * of the expression's owner, whose form it does not tell of, so that the
- * form does not hold the owner as it was for it (useHeld).
+ * again, as the offer goes, unless the user has given it to a control
+ * while the request was answered; a refusal of it is said under the offer
+ * of the name that it was of alone, which has the focus on its Create
+ * again. Its type is what the name's place suggests, of the literals and
+ * the board's names there (unknownOf). A change of its type or its scope
+ * is no change of the expression's owner, whose form it does not tell of,
+ * so that the form does not hold the owner as it was for it (useHeld).
  */
 export function UnknownName({
   projectId,
@@ -392,7 +393,14 @@ export function UnknownName({
     commands.mutate([command], {
       onSuccess: () => {
         setChosen(undefined);
-        onCreated();
+        // The field has the focus again, of the Create that had it, unless
+        // the user has given it to a control meanwhile (WCAG 2.4.3).
+        if (
+          focusIsNowhere(document) ||
+          document.activeElement === button.current
+        ) {
+          onCreated();
+        }
       },
       onError: () => setRefocus(key),
     });
