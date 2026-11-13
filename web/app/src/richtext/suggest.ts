@@ -40,7 +40,7 @@ export const MAX_QUERY = 200;
  * replacement character stands for, as a mention, a value reference, or a
  * line break, so that a space ends the suggestion.
  */
-const triggered = /(^|[^\p{L}\p{N}_])([{@])([^\s{}@￼]*)$/u;
+const triggered = /(^|[^\p{L}\p{N}_])([{@])([^\s{}@\uFFFC]*)$/u;
 
 /**
  * Returns what the user is typing after a trigger in state, or undefined
@@ -60,19 +60,29 @@ export function suggestionAt(state: EditorState): Suggestion | undefined {
     return undefined;
   }
   // Each leaf, as a mention or a line break, is one position, as is each
-  // character of text, so an index into what is before the caret is its
-  // offset in the paragraph.
+  // character of text, so an index into what is before the caret is an
+  // offset in the paragraph. What is read is what a trigger, what may be
+  // typed after it, and the character before it fit in, rather than the
+  // whole paragraph before the caret, as of 100,000 characters, at each
+  // keystroke; a trigger at its start, but not the paragraph's, has a
+  // character before it that is not read, and is not one that triggered
+  // takes for the paragraph's start.
+  const start = Math.max(0, $caret.parentOffset - MAX_QUERY - 2);
   const before = $caret.parent.textBetween(
-    0,
+    start,
     $caret.parentOffset,
     undefined,
-    "￼",
+    "\uFFFC",
   );
   const match = triggered.exec(before);
-  if (match === null || match[3].length > MAX_QUERY) {
+  if (
+    match === null ||
+    match[3].length > MAX_QUERY ||
+    (start > 0 && match.index === 0 && match[1] === "")
+  ) {
     return undefined;
   }
-  const from = $caret.start() + match.index + match[1].length;
+  const from = $caret.start() + start + match.index + match[1].length;
   const to = $caret.pos;
   const code = schema.marks.code;
   if (
