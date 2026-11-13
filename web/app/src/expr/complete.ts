@@ -27,7 +27,7 @@ import { boardVariables, runtimeAttributes, type ScopeSources } from "./scope";
 export interface Spot {
   /** Where what the chosen offer replaces starts. */
   readonly from: number;
-  /** Where it ends: the end of the name that the caret is in, or of the node reference's string, to its closing quote and a ) after it, or to the end of its line. */
+  /** Where it ends: the end of the name that the caret is in, or of the node reference's string, to its closing quote and a ) after it, or to the end of its line, or the spaces alone before it. */
   readonly to: number;
   /** What is typed of the name, or of the node's title, before the caret. */
   readonly query: string;
@@ -121,9 +121,9 @@ function stateAt(
  * cmp., a component's key and a dot, or cmp., a component's key, and a dot;
  * the nothing yet typed after such a dot; or what is typed within the
  * string of node("…"), of a node ID's characters, which those after the
- * caret are too, to its quote or the end of its line. It offers nothing
- * within another string, a comment, or a number, nor where nothing is typed
- * but after a dot.
+ * caret are too, to its quote or the end of its line, or the spaces alone
+ * before it. It offers nothing within another string, a comment, or a
+ * number, nor where nothing is typed but after a dot.
  */
 export function spotAt(source: string, caret: number): Spot | undefined {
   const prefix = source.slice(0, caret);
@@ -139,11 +139,12 @@ export function spotAt(source: string, caret: number): Spot | undefined {
     // alone, to its closing quote and the parenthesis after it, with the
     // spaces between them, where the source has them, but not the spaces
     // after a quote that no parenthesis follows, or to the end of its line,
-    // of a string that no quote closes; and of a string that holds anything
-    // else, as a space, or a ) that no quote is before, which could be
-    // node's or what node( is within, it offers nothing, rather than write
-    // what leaves a quote or a parenthesis too many or too few.
-    const rest = /^[A-Za-z0-9_]*(?:"(?:[ \t]*\))?|(?=[\n\r]|$))/.exec(
+    // or the spaces alone before it, of a string that no quote closes; and
+    // of a string that holds anything else, as a space before more, or a )
+    // that no quote is before, which could be node's or what node( is
+    // within, it offers nothing, rather than write what leaves a quote or a
+    // parenthesis too many or too few.
+    const rest = /^[A-Za-z0-9_]*(?:"(?:[ \t]*\))?|(?=[ \t]*(?:[\n\r]|$)))/.exec(
       source.slice(caret),
     )?.[0];
     if (call === null || !/^[A-Za-z0-9_]*$/.test(query) || rest === undefined) {
@@ -268,8 +269,13 @@ export function offersAt(
           offers.push(variableOffer(v, name(v.id, undefined) ?? v.key));
         }
       }
+      // A component by its name too, as after cmp.
+      const byName = nameMatcher(q);
       for (const c of components) {
-        if (startsAs(c.key, q) && attributesOf(c).length > 0) {
+        if (
+          (startsAs(c.key, q) || byName(c.name)) &&
+          attributesOf(c).length > 0
+        ) {
           offers.push(componentOffer(c, false));
         }
       }
@@ -397,10 +403,11 @@ export function offersAt(
  * replaces, in UTF-16 code units, the text that replaces it, and where the
  * caret goes then, after what it wrote. A function's name is written with
  * its (, as node("…")'s with its quote too, and a component's key with its
- * dot, only at the end of its line, where nothing follows that they would
- * make one too many of or leave unclosed; wherever anything follows, as a (
- * or a dot that the source has already, or the ) of what it is within, the
- * name alone, as typing it would.
+ * dot, only at the end of its line, or before spaces alone there, where
+ * nothing follows that they would make one too many of or leave unclosed;
+ * wherever anything else follows, as a ( or a dot that the source has
+ * already, or the ) of what it is within, the name alone, as typing it
+ * would.
  */
 export function editOf(
   source: string,
@@ -409,8 +416,7 @@ export function editOf(
 ): { from: number; to: number; text: string; caret: number } {
   const closer =
     offer.kind === "function" ? "(" : offer.kind === "component" ? "." : "";
-  const next = source[spot.to];
-  const atEnd = next === undefined || next === "\n" || next === "\r";
+  const atEnd = /^[ \t]*(?:[\n\r]|$)/.test(source.slice(spot.to));
   const text =
     closer === "" || atEnd
       ? offer.insert

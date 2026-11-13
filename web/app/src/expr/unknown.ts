@@ -139,57 +139,68 @@ function valueType(n: Node, known: Known): VariableType | undefined {
  * number; of an operand of and, or, or not, and of a condition alone, a
  * bool; of one compared with, or added to, what says its type, that type;
  * of an operand of other arithmetic, a float with a float, and else an
- * int; of an argument of a function of strings, a string; and otherwise an
- * int, of a script's, or a bool, of a condition's.
+ * int; of an operand of a minus, or an argument of min, max, abs, or
+ * clamp, a float with a float among the others, and else the number that
+ * the place of what it is within suggests, as of -x > 2.5 a float; of an
+ * argument of a function of strings, a string; and otherwise an int, of a
+ * script's, or a bool, of a condition's.
  */
 function typeAt(root: Node, target: Var, known: Known): VariableType {
   let found: VariableType | undefined;
-  const visit = (n: Node, parent: Node | undefined) => {
+  const visit = (n: Node, parents: readonly Node[]) => {
     if (found !== undefined) {
       return;
     }
     if (n === target) {
-      found = placeType(n, parent, root, known);
+      found = placeType(n, parents, root, known);
       return;
     }
+    const within = [...parents, n];
     switch (n.kind) {
       case "unary":
-        visit(n.operand, n);
+        visit(n.operand, within);
         break;
       case "binary":
-        visit(n.left, n);
-        visit(n.right, n);
+        visit(n.left, within);
+        visit(n.right, within);
         break;
       case "call":
         for (const a of n.args) {
-          visit(a, n);
+          visit(a, within);
         }
         break;
       case "assign":
-        visit(n.target, n);
-        visit(n.value, n);
+        visit(n.target, within);
+        visit(n.value, within);
         break;
       case "script":
         for (const s of n.statements) {
-          visit(s, n);
+          visit(s, within);
         }
         break;
     }
   };
-  visit(root, undefined);
+  visit(root, []);
   return found ?? (root.kind === "script" ? "int" : "bool");
 }
 
-/** Returns the type of n's place, of its parent, in root, the types of whose names known tells. */
+/** Returns the type of n's place, of its parents, the last its own, in root, the types of whose names known tells. */
 function placeType(
   n: Node,
-  parent: Node | undefined,
+  parents: readonly Node[],
   root: Node,
   known: Known,
 ): VariableType {
+  const parent = parents[parents.length - 1];
   if (parent === undefined) {
     return root.kind === "script" ? "int" : "bool";
   }
+  // The number that the place of the parent suggests, of a minus's
+  // operand, or an argument of a function of the widened type of its own.
+  const outer = (): VariableType =>
+    placeType(parent, parents.slice(0, -1), root, known) === "float"
+      ? "float"
+      : "int";
   switch (parent.kind) {
     case "assign": {
       const [other, value] =
@@ -203,7 +214,7 @@ function placeType(
           : numberOf([other], known);
     }
     case "unary":
-      return parent.op === "not" ? "bool" : "int";
+      return parent.op === "not" ? "bool" : outer();
     case "binary": {
       const other = parent.left === n ? parent.right : parent.left;
       switch (parent.op) {
@@ -231,6 +242,16 @@ function placeType(
         case "upper":
         case "trim":
           return "string";
+        case "min":
+        case "max":
+        case "abs":
+        case "clamp":
+          return numberOf(
+            parent.args.filter((a) => a !== n),
+            known,
+          ) === "float"
+            ? "float"
+            : outer();
       }
       return "int";
   }

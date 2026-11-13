@@ -39,6 +39,16 @@ describe("an unknown name's variable", () => {
     expect(unknown("drift * 1.5 > 2")?.type).toBe("float");
     expect(unknown("drift * 2 > 2")?.type).toBe("int");
     expect(unknown("drift > -1.5")?.type).toBe("float");
+    // Of a minus before it, or an argument of a function of numbers, the
+    // number of the place of what it is within, or of the others.
+    expect(unknown("-drift > 2.5")?.type).toBe("float");
+    expect(unknown("-drift > 2")?.type).toBe("int");
+    expect(unknown("abs(drift) > 1.5")?.type).toBe("float");
+    expect(unknown("min(drift, 2.5) > 1")?.type).toBe("float");
+    expect(unknown("clamp(drift, 0, 5) > 1")?.type).toBe("int");
+    expect(unknown("global.trust = -abs(drift)", "script")?.type).toBe("float");
+    expect(unknown("trust = abs(drift)", "script")?.type).toBe("int");
+    expect(unknown("global.trust = abs(drift)", "script")?.type).toBe("float");
   });
 
   it("is of the type of a name of the board that it is assigned to, compared with, or added to, as the checker resolves the name", () => {

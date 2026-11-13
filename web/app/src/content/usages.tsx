@@ -132,7 +132,7 @@ export function useComponentNames(
 }
 
 /** Returns the title of the node of usage's site, or what an untitled one is called (nodeTitleText). */
-export function nodeTitleOf(t: TFunction, usage: Usage): string {
+function nodeTitleOf(t: TFunction, usage: Usage): string {
   return nodeTitleText(t, usage.node_title ?? "");
 }
 

@@ -69,7 +69,7 @@ describe("the plain-language rendering of an expression", () => {
       [
         "Add 5 to `gold`.",
         "Add “!” to the end of `keeper`.",
-        "Set `trust` to the smaller of `trust` and 3 times 2.",
+        "Set `trust` to (the smaller of `trust` and 3) times 2.",
         "Send the signal “met” with 1.",
       ].join("\n"),
     );
@@ -78,6 +78,48 @@ describe("the plain-language rendering of an expression", () => {
     );
     expect(said("gold = gold - (1 - 2)", "script")).toBe(
       "Set `gold` to `gold` minus (1 minus 2).",
+    );
+  });
+
+  // Verifies: FR-EXPR-01/AC4
+  it("groups what a not, a comparison, an arithmetic operator, or a call is of where its words would run on into what follows, so that no two ASTs say the same", () => {
+    // What a not is of.
+    const notOfOr = said("not (met_elara or gold > 1) and trust > 2");
+    expect(notOfOr).toBe(
+      "it is not so that (`met_elara` is true or `gold` is more than 1) and `trust` is more than 2",
+    );
+    expect(
+      new Set([
+        notOfOr,
+        said("not (met_elara or (gold > 1 and trust > 2))"),
+        said("not ((met_elara or gold > 1) and trust > 2)"),
+      ]).size,
+    ).toBe(3);
+    expect(said("not (gold > 1) and met_elara")).toBe(
+      "it is not so that (`gold` is more than 1) and `met_elara` is true",
+    );
+    expect(said("not (gold > 1 and met_elara)")).toBe(
+      "it is not so that (`gold` is more than 1 and `met_elara` is true)",
+    );
+    // An and of a comparison.
+    expect(said("met_elara == (gold > 1 and trust > 2) and trust < 5")).toBe(
+      "`met_elara` is whether (`gold` is more than 1 and `trust` is more than 2) and `trust` is less than 5",
+    );
+    // The arguments of a call, and a call within arithmetic.
+    expect(said("abs(gold - 3) > 1")).toBe(
+      "(`gold` minus 3) without its sign is more than 1",
+    );
+    expect(said("gold - abs(3) > 1")).toBe(
+      "`gold` minus (3 without its sign) is more than 1",
+    );
+    expect(said("abs(min(gold, trust)) > min(gold, abs(trust))")).toBe(
+      "(the smaller of `gold` and `trust`) without its sign is more than the smaller of `gold` and (`trust` without its sign)",
+    );
+    expect(said("-abs(gold) < abs(-gold)")).toBe(
+      "minus (`gold` without its sign) is less than (minus `gold`) without its sign",
+    );
+    expect(said("abs(-2) == clamp(gold + 1, 0, 5)")).toBe(
+      "-2 without its sign is (`gold` plus 1) kept between 0 and 5",
     );
   });
 

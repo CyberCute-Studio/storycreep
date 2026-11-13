@@ -25,12 +25,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  boardNameOf,
-  nodeTitleOf,
-  siteText,
-  variableUsagesQuery,
-} from "../content/usages";
+import { boardNameOf, siteText, variableUsagesQuery } from "../content/usages";
 import { Button, pressedClass } from "../ui/Button";
 import { OfferFrame, OfferList, OfferOption } from "../ui/Offers";
 import {
@@ -251,8 +246,8 @@ const writesWait = 200;
  * more, rather than of the list's hundred, once the offer has been
  * highlighted a while (writesWait), kept for a while (writesKept), and
  * which says nothing of a refusal of its own, as the offer says that where
- * it is written could not be read. A site is named by its board and its
- * node, as its usage list names them (UsageItem).
+ * it is written could not be read. A site is named as its usage list
+ * names it, what it is of its node, and its board (UsageItem).
  */
 function Writes({ projectId, id }: { projectId: string; id: string }) {
   const { t } = useTranslation();
@@ -279,15 +274,16 @@ function Writes({ projectId, id }: { projectId: string; id: string }) {
   const first = writes.data.pages[0];
   const items = first?.items ?? [];
   const listed = items.slice(0, writesShown);
-  // Joined by the catalog's separator, as a site's node title may hold the
+  // Each as its usage list names it, what it is of its node and its board,
+  // joined by the catalog's separator, as a site's node title may hold the
   // comma of a list.
   const sites = listed
     .map((usage) =>
       usage.board_id === undefined
         ? siteText(t, usage, undefined)
         : t("expr.offer.write_site", {
+            site: siteText(t, usage, undefined),
             board: boardNameOf(t, usage),
-            node: nodeTitleOf(t, usage),
           }),
     )
     .join(t("expr.offer.site_separator"));

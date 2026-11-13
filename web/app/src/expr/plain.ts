@@ -165,10 +165,16 @@ class Renderer {
         return t("expr.plain.is_true", { value: this.value(n) });
       case "unary":
         if (n.op === "not") {
+          // The condition that a not is of, but a name's, is grouped, as
+          // its words would otherwise run on into what follows it: not (a >
+          // 3) and b is "it is not so that (a is more than 3) and b is
+          // true", which not (a > 3 and b) is not.
           const o = n.operand;
           return o.kind === "var" || o.kind === "attr"
             ? t("expr.plain.is_false", { value: this.value(o) })
-            : t("expr.plain.not", { condition: this.condition(o) });
+            : t("expr.plain.not", {
+                condition: t("expr.plain.group", { inner: this.condition(o) }),
+              });
         }
         break;
       case "binary":
@@ -212,16 +218,24 @@ class Renderer {
     return this.value(n);
   }
 
-  /** Returns the phrase of an operand of a comparison: a value, or whether a condition holds. */
+  /** Returns the phrase of an operand of a comparison: a value, or whether a condition holds, grouped where it is an and or an or, whose words would otherwise run on into the comparison's. */
   private operand(n: Node): string {
+    const { t } = this.w;
     const plainValue =
       n.kind === "lit" ||
       n.kind === "var" ||
       n.kind === "attr" ||
       this.shape(n) !== "bool";
-    return plainValue
-      ? this.value(n)
-      : this.w.t("expr.plain.whether", { condition: this.condition(n) });
+    if (plainValue) {
+      return this.value(n);
+    }
+    const condition = this.condition(n);
+    return t("expr.plain.whether", {
+      condition:
+        n.kind === "binary" && (n.op === "and" || n.op === "or")
+          ? t("expr.plain.group", { inner: condition })
+          : condition,
+    });
   }
 
   /** Returns the phrase of n where a value is read. */
@@ -298,22 +312,37 @@ class Renderer {
     return "";
   }
 
-  /** Returns the phrase of n as an operand of an arithmetic operator of the precedence least, grouped where its own is lower. */
+  /**
+   * Returns the phrase of n as an operand of an arithmetic operator of the
+   * precedence least, or, of 4, as an argument of a call, grouped where its
+   * own is lower: an arithmetic operator's is its precedence, a minus's 3,
+   * a negative number's, a name's, a literal's, and a node's 4, and a
+   * call's, as a condition's, 0, as the words of a call run on into what is
+   * around them, as min(a, b) * 2 is "(the smaller of a and b) times 2",
+   * which min(a, b * 2) is not, and abs(a - 3) "(a minus 3) without its
+   * sign", which a - abs(3) is not.
+   */
   private grouped(n: Node, least: number): string {
     const p =
       n.kind === "binary"
         ? (precedence[n.op] ?? 0)
-        : n.kind === "unary" && n.op === "neg"
-          ? 3
-          : 4;
+        : n.kind === "unary"
+          ? n.op === "not"
+            ? 0
+            : n.operand.kind === "lit"
+              ? 4
+              : 3
+          : n.kind === "call"
+            ? 0
+            : 4;
     const phrase = this.value(n);
     return p < least ? this.w.t("expr.plain.group", { inner: phrase }) : phrase;
   }
 
-  /** Returns the phrase of a call of a built-in function. */
+  /** Returns the phrase of a call of a built-in function, each argument grouped but a name, a literal, a negative number, and a node (grouped). */
   private call(n: Call): string {
     const { t } = this.w;
-    const [a, b, c] = n.args.map((arg) => this.value(arg));
+    const [a, b, c] = n.args.map((arg) => this.grouped(arg, 4));
     switch (n.function) {
       case "min":
         return t("expr.plain.call.min", { a, b });

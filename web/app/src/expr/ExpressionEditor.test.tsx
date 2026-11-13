@@ -359,7 +359,9 @@ describe("the expression editor", () => {
     expect(gold.getAttribute("aria-selected")).toBe("true");
     expect(gold.textContent).toContain("Global variable, whole number");
     await waitFor(() =>
-      expect(gold.textContent).toContain("Changed in Harbour: Quay"),
+      expect(gold.textContent).toContain(
+        "Changed in: The on-enter script of Quay · Harbour",
+      ),
     );
     // Of a page of one more site than it tells of, rather than the list's
     // hundred.

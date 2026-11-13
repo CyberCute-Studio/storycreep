@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { editOf, offersAt, type Spot, spotAt } from "./complete";
-import { englishWords, harbourScope, ids } from "./testdata";
+import { elara, englishWords, harbourScope, ids } from "./testdata";
 
 // What the expression editor offers to complete at the caret (PRD
 // FR-EXPR-01 AC2, plan note N74): only what is valid where the source is,
@@ -107,6 +107,23 @@ describe("what the editor offers", () => {
     expect(offered("global.t")).toEqual(["global.trust"]);
   });
 
+  it("offers a component by its name too, bare as after cmp.", () => {
+    const npc = harbourScope(ids.harbour, {
+      components: new Map([[ids.elara, { ...elara, key: "npc_1" }]]),
+    });
+    for (const source of ["ela", "cmp.ela"]) {
+      expect(
+        offersAt(
+          spotOf(source, source.length),
+          "condition",
+          npc.view,
+          npc.boardId,
+          words,
+        ).offers.map((o) => o.label),
+      ).toEqual([source === "ela" ? "npc_1." : "cmp.npc_1."]);
+    }
+  });
+
   it("offers the functions that a condition may call, and signal only in a script", () => {
     expect(offered("si")).toEqual([]);
     expect(offered("si", "script")).toEqual(["signal(name[, value])"]);
@@ -178,6 +195,11 @@ describe("what the editor offers", () => {
       caret: 6,
     });
     expect(editOf("cla\nx", spotOf("cla\nx", 3), clamp)).toMatchObject({
+      text: "clamp(",
+      caret: 6,
+    });
+    // Before spaces alone at the end of its line, as at its end.
+    expect(editOf("cla \t\nx", spotOf("cla \t\nx", 3), clamp)).toMatchObject({
       text: "clamp(",
       caret: 6,
     });
@@ -305,6 +327,20 @@ describe("what the editor offers", () => {
       text: 'node("',
       caret: 14,
     });
+    // Before spaces alone at the end of its line too, after which the
+    // nodes are offered, and the chosen one written before the spaces.
+    expect(
+      editOf("visited(no  ", spotOf("visited(no  ", 10), nodeCall),
+    ).toMatchObject({ text: 'node("', caret: 14 });
+    const spaced = 'visited(node("  ';
+    const before = spotOf(spaced, 14);
+    expect(before).toMatchObject({ kind: "node", from: 13, to: 14 });
+    const toSpaced = editOf(spaced, before, quay);
+    expect(
+      spaced.slice(0, toSpaced.from) +
+        toSpaced.text +
+        spaced.slice(toSpaced.to),
+    ).toBe(`visited(node("${ids.quay}")  `);
   });
 
   it("offers a node by the start of its ID, in any case, as the parser reads it", () => {
