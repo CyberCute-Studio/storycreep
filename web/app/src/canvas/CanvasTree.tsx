@@ -39,14 +39,16 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { type CommandId, commandOf } from "../commands/catalog";
+import { usePlatform, useRegistry } from "../commands/registry";
 import { useProjectDocument } from "../document/react";
 import { focusIsNowhere } from "../shell/focus";
 import type { CanvasController } from "./controller";
 import {
   type ClipboardAsk,
+  canvasKey,
   clipboardKey,
-  keyAction,
-  menuKey,
+  escapeWithShift,
 } from "./keyboard";
 import {
   type TreeChoice,
@@ -154,6 +156,33 @@ const Row = memo(function Row({
 });
 
 /**
+ * The canvas's keys that its tree takes too, which zoom, and Escape, whose
+ * characters, as + or 0, are never a title's letter there; but for a key
+ * of theirs that types a letter, as the key of 0, which a binding of the
+ * digit is matched by the place of, types é on a Czech layout and à on a
+ * French one, which the tree's type-ahead takes (typesLetter).
+ */
+const treeKeys: ReadonlySet<CommandId> = new Set<CommandId>([
+  "canvas.zoom_in",
+  "canvas.zoom_out",
+  "canvas.zoom_reset",
+  "canvas.fit",
+  "canvas.zoom_selection",
+  "canvas.deselect",
+]);
+
+/**
+ * Reports whether the key of e types a letter, of any script, with the
+ * marks that join it, as é, or Ą, which Shift and the key of 1 type on a
+ * Lithuanian layout: a title starts with it, as "À la plage", which the
+ * tree's type-ahead goes to, rather than the key of the canvas's that zooms
+ * whose place the key has (treeKeys).
+ */
+function typesLetter(e: { key: string }): boolean {
+  return /^\p{L}\p{M}*$/u.test(e.key);
+}
+
+/**
  * The accessibility tree of the canvas of controller, of the board named
  * boardName. It is rendered again for what it shows alone, the board's
  * content, the selection, and its own focus, rather than with the page
@@ -182,6 +211,8 @@ export const CanvasTree = memo(function CanvasTree({
   onClipboard: (asked: ClipboardAsk) => void;
 }) {
   const { t } = useTranslation();
+  const platform = usePlatform();
+  const registry = useRegistry();
   const doc = useProjectDocument(projectId);
   const treeId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -444,7 +475,10 @@ export const CanvasTree = memo(function CanvasTree({
     deleting.current = undefined;
     const item = itemOf(e.target) ?? on;
     const modified = e.ctrlKey || e.metaKey || e.altKey;
-    if (menuKey(e)) {
+    // The command of the canvas that the key is, on the page's platform,
+    // which the keys of the menu and of the clipboard are of too.
+    const id = canvasKey(e, platform);
+    if (id === "canvas.menu") {
       const r = rectOf(controller, item);
       // As on the canvas, not while the canvas follows a pointer, as in the
       // middle of a drag, which the menu's items would change the nodes of.
@@ -469,7 +503,7 @@ export const CanvasTree = memo(function CanvasTree({
     // on a board that may be changed alone: elsewhere it selects nothing;
     // Paste pastes, wherever the focus is. None acts in the middle of a
     // drag, as the menu does not, nor for the repeats of a key held down.
-    const asked = clipboardKey(e);
+    const asked = clipboardKey(id);
     if (asked !== undefined) {
       if (
         !e.repeat &&
@@ -532,9 +566,17 @@ export const CanvasTree = memo(function CanvasTree({
       case "Enter":
         // On a board that may be changed, as the canvas's own Enter is,
         // and as Delete is below: elsewhere the key selects nothing, as it
-        // opens nothing.
-        if (controller.movable() && select(item, "replace")) {
-          controller.key(e);
+        // opens nothing. Neither runs in the middle of a drag, as the menu
+        // does not, nor for the repeats of a key held down, as on the
+        // canvas, where Delete held down would else delete one node after
+        // another, as the focus goes on to each.
+        if (
+          !e.repeat &&
+          !controller.gestures.following() &&
+          controller.movable() &&
+          select(item, "replace")
+        ) {
+          controller.command("canvas.open");
         }
         break;
       case "Delete":
@@ -543,23 +585,55 @@ export const CanvasTree = memo(function CanvasTree({
         // elsewhere the key selects nothing, as it deletes nothing. The
         // focus goes to what is in the place of what the key deleted, once
         // the board no longer has it.
-        if (controller.movable() && select(item, "keep") && controller.key(e)) {
+        if (
+          !e.repeat &&
+          !controller.gestures.following() &&
+          controller.movable() &&
+          select(item, "keep") &&
+          controller.command("canvas.delete")
+        ) {
           deleting.current = item;
         }
         break;
       default: {
         // The canvas's other keys, which zoom, and Escape, but not those
-        // that pan, which are the tree's arrows here; and else a letter
-        // typed, which goes to the next node whose title starts with it,
-        // of itself alone, whatever was typed before it, so that the same
-        // letter again goes on to the node after, and a character that is
-        // a key of the canvas's is always that key.
-        const action = keyAction(e);
-        if (action !== undefined && action.kind !== "pan") {
-          if (!controller.key(e)) {
+        // that pan, which are the tree's arrows here, nor its letters, as
+        // E, which adds an element on the canvas (plan note N72), each run
+        // as the canvas's key runs it, where the registry says that it can
+        // run now, as in the middle of a drag (BoardCanvas's whileDragging),
+        // or, outside the app's frame, which has the registry, by the
+        // controller; Shift+Escape, which is the browser's, ends a drag
+        // still (escapeWithShift); and else a letter typed, which goes to
+        // the next node whose title starts with it, of itself alone,
+        // whatever was typed before it, so that the same letter again goes
+        // on to the node after, and a character that is a key of the
+        // canvas's that zooms is always that key, but a letter, as é, which
+        // the key of 0 types on a Czech layout (typesLetter). A key held
+        // down runs its command once, as on the canvas, but for + and -
+        // that zoom on (CommandSpec's repeats), as Escape held down in the
+        // middle of a drag would else end the drag and then clear the
+        // selection that it left as it was: its repeats are the tree's
+        // where the command can run, as the key itself is then, and else
+        // the page's.
+        if (id !== undefined && treeKeys.has(id) && !typesLetter(e)) {
+          if (e.repeat && commandOf(id).repeats !== true) {
+            if (registry !== undefined && !registry.can(id)) {
+              return;
+            }
+            break;
+          }
+          if (
+            !(registry !== undefined
+              ? registry.run(id)
+              : controller.command(id))
+          ) {
             return;
           }
           break;
+        }
+        if (escapeWithShift(e)) {
+          controller.gestures.cancelDrag();
+          return;
         }
         if (e.key.length !== 1) {
           return;

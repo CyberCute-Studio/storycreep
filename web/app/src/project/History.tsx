@@ -6,7 +6,10 @@
 // toolbar (plan item 61), which says so to the project's layout while it is
 // shown (useOwnHistory), and the layout shows them above the page whenever
 // none does, as above a board's page that shows no canvas, as once the
-// board went; the shortcuts come later (plan item 65).
+// board went. Whichever shows them registers the commands of the undo and
+// the redo, whose keys, Ctrl+Z and Ctrl+Y, or Cmd+Z and Cmd+Shift+Z on
+// macOS, act outside the fields that the user types in, so that what they
+// say is what the buttons would (historyHandlers, plan note N72).
 
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -19,6 +22,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { type Handlers, useCommandHandlers } from "../commands/registry";
 import { useDocumentState, useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { Alert, Status } from "../ui/Page";
@@ -98,20 +102,52 @@ export function useHistory(projectId: string) {
   return { undoable, redoable, version, stepping, done, step };
 }
 
+/**
+ * Reports whether history can step which way now: it has a step to undo,
+ * or to redo, and none is under way, as its buttons, its keys, and the
+ * palette's entries say alike.
+ */
+function canStep(history: HistoryOf, which: "undo" | "redo"): boolean {
+  return (
+    (which === "undo" ? history.undoable : history.redoable) > 0 &&
+    !history.stepping
+  );
+}
+
+/**
+ * Returns the commands of the undo and the redo, of history, which the
+ * buttons that a part of the page shows send too, so that a key and the
+ * palette say what became of them where the buttons do: as the canvas
+ * registers them among its own, which run only outside a drag
+ * (BoardCanvas's whileDragging), and the project's layout above its pages.
+ */
+export function historyHandlers(history: HistoryOf): Handlers {
+  return {
+    "history.undo": {
+      enabled: canStep(history, "undo"),
+      run: () => history.step.mutate("undo"),
+    },
+    "history.redo": {
+      enabled: canStep(history, "redo"),
+      run: () => history.step.mutate("redo"),
+    },
+  };
+}
+
 /** The buttons of the undo and the redo. */
 export function HistoryButtons({ history }: { history: HistoryOf }) {
   const { t } = useTranslation();
-  const { undoable, redoable, stepping, step } = history;
+  const { step } = history;
   return (
     <>
       <Button
-        disabled={undoable === 0 || stepping}
+        disabled={!canStep(history, "undo")}
         onClick={() => step.mutate("undo")}
       >
         {t("history.undo")}
       </Button>
       <Button
-        disabled={redoable === 0 || stepping}
+        disabled={!canStep(history, "redo")}
         onClick={() => step.mutate("redo")}
       >
         {t("history.redo")}
@@ -160,6 +196,7 @@ export function HistoryStatus({
 /** The undo and the redo, with what became of them, as the project's layout shows them. */
 export function History({ projectId }: { projectId: string }) {
   const history = useHistory(projectId);
+  useCommandHandlers("project", historyHandlers(history));
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">

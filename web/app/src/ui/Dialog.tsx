@@ -3,7 +3,7 @@
 // control that opened it when it closes, over the page, which it dims.
 
 import { AlertDialog, Dialog } from "radix-ui";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, MouseEvent, ReactNode } from "react";
 import { focusContentIfLost } from "../shell/focus";
 import { Button } from "./Button";
 
@@ -43,6 +43,13 @@ export interface DialogFrameProps {
    * outlives the control, has to give it itself (event.preventDefault).
    */
   onCloseAutoFocus?: (event: Event) => void;
+  /**
+   * Called as a mouse's button, or a finger, goes down in the dialog, which
+   * may keep the focus where it is (event.preventDefault), as the palette
+   * keeps it in its field, rather than letting it go to the dialog itself,
+   * as a press of what takes no focus there gives it to.
+   */
+  onMouseDown?: (event: MouseEvent<HTMLDivElement>) => void;
   children: ReactNode;
 }
 
@@ -52,6 +59,7 @@ export function DialogFrame({
   description,
   closesOutside = true,
   onCloseAutoFocus,
+  onMouseDown,
   children,
 }: DialogFrameProps) {
   return (
@@ -60,6 +68,7 @@ export function DialogFrame({
       <Dialog.Content
         className={content}
         onCloseAutoFocus={onCloseAutoFocus}
+        onMouseDown={onMouseDown}
         onSubmit={keepWithin}
         onChange={keepWithin}
         onInteractOutside={
@@ -248,14 +257,16 @@ export type Opener =
  * that a menu's item opens, or one that outlives the control that opened
  * it: the focus goes back to opener, the control that opened the dialog, or
  * to the page's content once opener has gone, as with its list's item,
- * rather than to the document's body.
+ * rather than to the document's body. The focus is given with options, as
+ * without scrolling, for an opener that a key opened the dialog from, as
+ * the canvas the palette, wherever it is in the window.
  */
-export function focusBackTo(opener: Opener) {
+export function focusBackTo(opener: Opener, options?: FocusOptions) {
   return (event: Event) => {
     event.preventDefault();
     const control = typeof opener === "function" ? opener() : opener;
     if (control?.isConnected) {
-      control.focus();
+      control.focus(options);
     } else {
       focusContentIfLost(document);
     }

@@ -1,0 +1,635 @@
+import type { Board, Node } from "@storycreep/shared/api";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderApp, testSession } from "../test/app";
+import { testNode } from "../test/canvas";
+import "../test/editor";
+import { fakeApi, startPage, testProject } from "../test/fake";
+import type { Engine } from "./engine";
+
+// The canvas's shortcuts (PRD FR-EDIT-10, plan note N72): its letters, which
+// do what the toolbar does, the undo's keys, the palette's runs of the
+// canvas's commands, and the tree's letters, which stay its type-ahead.
+
+vi.mock("./engine", () => ({
+  createEngine: async (): Promise<Engine> => ({
+    kind: "canvas",
+    resize: () => {},
+    render: (f) => ({
+      lod: "detail",
+      nodes: f.scene.nodes.size,
+      visible: f.scene.nodes.size,
+      texts: 0,
+      connections: f.scene.connections.size,
+    }),
+    textures: () => undefined,
+    onRestore: () => () => {},
+    destroy: () => {},
+  }),
+}));
+
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return this.getAttribute("role") === "application"
+        ? new DOMRect(0, 0, 800, 600)
+        : new DOMRect();
+    },
+  );
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+const harbour: Board = {
+  id: "bd_a",
+  project_id: testProject.id,
+  name: "Harbour",
+  slug: "harbour",
+  description: "",
+  color: "none",
+  order: "V",
+  rev: 3,
+  created_at: "2026-11-01T10:00:00Z",
+  updated_at: "2026-11-01T10:00:00Z",
+};
+
+type Sent = { type: string; payload: unknown; expected_rev?: unknown }[];
+
+/**
+ * Answers the board's page, of a board of nodes, and applies each batch
+ * that the page sends, whose undo is the batch itself, as the history
+ * keeps it.
+ */
+function boardPage(nodes: Node[]) {
+  let seq = testProject.seq;
+  return fakeApi((operation, input) => {
+    switch (operation) {
+      case "getProject":
+        return { ...testProject, seq };
+      case "listFolders":
+      case "listBoardConnections":
+      case "listComponentTypes":
+      case "listComponents":
+      case "listVariables":
+        return { items: [], next_cursor: null };
+      case "listBoards":
+        return { items: [harbour], next_cursor: null };
+      case "listBoardNodes":
+        return { items: nodes, next_cursor: null };
+      case "listTags":
+        return { items: [] };
+      case "listNodeReferrers":
+        return { items: [], next_cursor: null };
+      case "applyCommands": {
+        const { commands } = (input as { body: { commands: Sent } }).body;
+        seq++;
+        return {
+          status: "applied",
+          seq,
+          revisions: [],
+          not_reconnected: [],
+          undo: commands.map(({ type, payload }) => ({
+            type,
+            payload,
+            expected_rev: {},
+          })),
+        };
+      }
+    }
+    const answer = startPage(operation);
+    if (answer === undefined) {
+      throw new Error(`unexpected ${operation}`);
+    }
+    return answer;
+  });
+}
+
+function batches(calls: ReturnType<typeof fakeApi>): Sent[] {
+  return calls.mock.calls
+    .filter(([operation]) => operation === "applyCommands")
+    .map(([, input]) =>
+      (
+        input as {
+          body: { commands: (Sent[number] & { command_id: string })[] };
+        }
+      ).body.commands.map(({ command_id: _, ...command }) => command),
+    );
+}
+
+const mouse = { pointerId: 1, pointerType: "mouse", button: 0 };
+
+async function openBoard(search = "") {
+  renderApp(`/projects/${testProject.id}/boards/bd_a${search}`, {
+    session: testSession,
+  });
+  const canvas = await screen.findByRole("application", {
+    name: "Nodes of Harbour",
+  });
+  await waitFor(() => expect(canvas.dataset.ready).toBe("true"));
+  return canvas;
+}
+
+describe("the canvas's shortcuts", () => {
+  it("add an element, a branch, and a jumper by E, B, and J, as the toolbar's Add does", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    fireEvent.keyDown(canvas, { key: "b", code: "KeyB" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    fireEvent.keyDown(canvas, { key: "j", code: "KeyJ" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(3));
+    expect(
+      batches(calls).map(([c]) => [
+        c.type,
+        (c.payload as { type: string }).type,
+      ]),
+    ).toEqual([
+      ["node.create", "element"],
+      ["node.create", "branch"],
+      ["node.create", "jumper"],
+    ]);
+    // Shift and E is no shortcut.
+    fireEvent.keyDown(canvas, { key: "E", code: "KeyE", shiftKey: true });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(3);
+  });
+
+  it("run once for a key held down, but for those that pan and zoom on", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    // The repeats of E held down add nothing more, and are the canvas's.
+    expect(
+      fireEvent.keyDown(canvas, { key: "e", code: "KeyE", repeat: true }),
+    ).toBe(false);
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(1);
+    // The repeats of a key whose command cannot run, as G with no jumper
+    // selected, are the page's, as the key itself is.
+    expect(
+      fireEvent.keyDown(canvas, { key: "g", code: "KeyG", repeat: true }),
+    ).toBe(true);
+    // The repeats of an arrow pan on.
+    const x = canvas.dataset.x;
+    fireEvent.keyDown(canvas, {
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      repeat: true,
+    });
+    await waitFor(() => expect(canvas.dataset.x).not.toBe(x));
+  });
+
+  it("cancel a rubber band drawn with nothing selected by Escape, which selects nothing then", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    expect(fireEvent.keyDown(canvas, { key: "Escape", code: "Escape" })).toBe(
+      false,
+    );
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("0");
+  });
+
+  it("cancel a rubber band that Shift adds to the selection by Escape with Shift still held, which is the browser's still", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    canvas.focus();
+    const shifted = { ...mouse, shiftKey: true };
+    fireEvent.pointerDown(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    // Shift+Escape is Chrome's task manager, which the canvas leaves it to.
+    expect(
+      fireEvent.keyDown(canvas, {
+        key: "Escape",
+        code: "Escape",
+        shiftKey: true,
+      }),
+    ).toBe(true);
+    fireEvent.pointerUp(canvas, {
+      ...shifted,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("0");
+    // Without a drag, it clears no selection, as Escape alone does.
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    fireEvent.keyDown(canvas, {
+      key: "Escape",
+      code: "Escape",
+      shiftKey: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("1");
+  });
+
+  it("change nothing of the board in the middle of a drag, and do once it has ended", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    await screen.findByText(/Selected: /);
+    canvas.focus();
+    // A change, which the undo's key would undo.
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await waitFor(() => expect(undo).toHaveProperty("disabled", false));
+    // A pan of the board, in the pan mode, from its empty corner.
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.keyDown(canvas, { key: "Delete", code: "Delete" });
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    fireEvent.keyDown(canvas, { key: "d", code: "KeyD" });
+    fireEvent.keyDown(canvas, { key: "z", code: "KeyZ", ctrlKey: true });
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(1);
+    fireEvent.keyDown(canvas, { key: "z", code: "KeyZ", ctrlKey: true });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+  });
+
+  it("leave the board, and open nothing over it, in the middle of a drag no more, and do once it has ended", async () => {
+    boardPage([
+      testNode("nd_j", 0, 0, {
+        type: "jumper",
+        kind: undefined,
+        title: "Back to the dock",
+        target: { board_id: "bd_a", node_id: "nd_dock" },
+      }),
+      testNode("nd_dock", 4000, 3000, { title: "The dock" }),
+    ]);
+    const canvas = await openBoard("?node=nd_j");
+    await screen.findByText(/Selected: Back to the dock/);
+    const inspector = screen.getByRole("button", { name: "Inspector" });
+    const wasOpen = inspector.getAttribute("aria-pressed");
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    // The page's keys too, as Ctrl+K, which opens the palette, and Ctrl+/,
+    // which leaves the board for the search, which the canvas takes then,
+    // rather than the page or the browser: they alone are cancelled.
+    for (const [key, code, shiftKey, ctrlKey] of [
+      ["g", "KeyG", false, false],
+      ["i", "KeyI", false, false],
+      ["?", "Slash", true, false],
+      ["k", "KeyK", false, true],
+      ["/", "Slash", false, true],
+    ] as const) {
+      expect(
+        fireEvent.keyDown(canvas, { key, code, shiftKey, ctrlKey }),
+        key,
+      ).toBe(!ctrlKey);
+    }
+    // The header's Commands, which a second finger may tap, opens nothing
+    // either, and leaves the focus on the canvas, whose Escape ends the
+    // drag (runFrom).
+    fireEvent.click(screen.getByRole("button", { name: "Commands" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(canvas);
+    expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
+    expect(screen.getByText(/Selected: Back to the dock/)).toBeDefined();
+    expect(screen.getByRole("application", { name: "Nodes of Harbour" })).toBe(
+      canvas,
+    );
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    fireEvent.keyDown(canvas, { key: "i", code: "KeyI" });
+    await waitFor(() =>
+      expect(inspector.getAttribute("aria-pressed")).not.toBe(wasOpen),
+    );
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "g", code: "KeyG" });
+    expect(await screen.findByText(/Selected: The dock/)).toBeDefined();
+  });
+
+  it("open the inspector at its Connect to by C, of the one element selected", async () => {
+    boardPage([testNode("nd_1", 0, 0), testNode("nd_2", 400, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    await screen.findByText(/Selected: /);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "c", code: "KeyC" });
+    const field = await screen.findByLabelText("Connect to");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+  });
+
+  it("leave C to the page of a branch without an output, which has no Connect to, and connect from a branch's first output", async () => {
+    boardPage([
+      testNode("nd_b", 0, 0, { type: "branch", kind: undefined }),
+      testNode("nd_c", 0, 400, {
+        type: "branch",
+        kind: undefined,
+        outputs: [
+          {
+            id: "bo_1",
+            node_id: "nd_c",
+            kind: "if",
+            order: "V",
+            condition: { source: "", is_valid: false },
+            rev: 1,
+            created_at: harbour.created_at,
+            updated_at: harbour.created_at,
+          },
+        ],
+      }),
+    ]);
+    const canvas = await openBoard("?node=nd_b");
+    await screen.findByText(/Selected: /);
+    const inspector = screen.getByRole("button", { name: "Inspector" });
+    const wasOpen = inspector.getAttribute("aria-pressed");
+    canvas.focus();
+    expect(fireEvent.keyDown(canvas, { key: "c", code: "KeyC" })).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(inspector.getAttribute("aria-pressed")).toBe(wasOpen);
+    expect(document.activeElement).toBe(canvas);
+    // The branch with an output, selected in the tree.
+    const item = document.querySelector<HTMLElement>(
+      '[role="treeitem"][data-node="nd_c"]',
+    );
+    expect(item).not.toBeNull();
+    item?.focus();
+    fireEvent.keyDown(item as HTMLElement, { key: " ", code: "Space" });
+    await screen.findByText(/Selected: .*nd_c/);
+    canvas.focus();
+    expect(fireEvent.keyDown(canvas, { key: "c", code: "KeyC" })).toBe(false);
+    const field = await screen.findByLabelText("Connect to");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+  });
+
+  it("in the tree, run once for a key held down, and nothing in the middle of a drag, nor the page's keys, which are the page's", async () => {
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { title: "Alpha" }),
+      testNode("nd_2", 0, 400, { title: "Echo" }),
+    ]);
+    const canvas = await openBoard();
+    const tree = await screen.findByRole("tree", {
+      name: "Nodes and connections of Harbour",
+    });
+    await waitFor(() =>
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(2),
+    );
+    const [first, second] = within(tree).getAllByRole("treeitem");
+    // A pan of the board, in the middle of which the focus went to the
+    // tree, as by Tab.
+    canvas.focus();
+    fireEvent.pointerDown(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...mouse,
+      buttons: 1,
+      clientX: 100,
+      clientY: 100,
+    });
+    first.focus();
+    fireEvent.keyDown(first, { key: "Delete", code: "Delete" });
+    fireEvent.keyDown(first, { key: "Enter", code: "Enter" });
+    for (const [key, code] of [
+      ["k", "KeyK"],
+      ["/", "Slash"],
+    ] as const) {
+      expect(fireEvent.keyDown(first, { key, code, ctrlKey: true }), key).toBe(
+        false,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(canvas.dataset.selected).toBe("0");
+    expect(screen.getByRole("application", { name: "Nodes of Harbour" })).toBe(
+      canvas,
+    );
+    fireEvent.pointerUp(canvas, {
+      ...mouse,
+      buttons: 0,
+      clientX: 100,
+      clientY: 100,
+    });
+    // Delete held down deletes once, though the focus goes on to the node
+    // in the place of the one that it deleted.
+    first.focus();
+    fireEvent.keyDown(first, { key: "Delete", code: "Delete" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    for (const item of [document.activeElement ?? second, second]) {
+      fireEvent.keyDown(item, { key: "Delete", code: "Delete", repeat: true });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(1);
+  });
+
+  it("in the tree, run Escape once for a key held down, which ends a drag and leaves the selection as it was", async () => {
+    boardPage([testNode("nd_1", 0, 0, { title: "Alpha" })]);
+    const canvas = await openBoard();
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    const tree = await screen.findByRole("tree", {
+      name: "Nodes and connections of Harbour",
+    });
+    await waitFor(() =>
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(1),
+    );
+    const [first] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    fireEvent.keyDown(first, { key: " ", code: "Space" });
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    // A rubber band that Shift adds to the selection, in the middle of
+    // which the focus went to the tree, as by Tab.
+    canvas.focus();
+    const shifted = { ...mouse, shiftKey: true };
+    fireEvent.pointerDown(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 2,
+      clientY: 2,
+    });
+    fireEvent.pointerMove(canvas, {
+      ...shifted,
+      buttons: 1,
+      clientX: 798,
+      clientY: 598,
+    });
+    first.focus();
+    // Escape ends the band, cancelled, and its repeats, as it is held
+    // down, are the tree's, which clear nothing of the selection.
+    expect(fireEvent.keyDown(first, { key: "Escape", code: "Escape" })).toBe(
+      false,
+    );
+    expect(
+      fireEvent.keyDown(first, { key: "Escape", code: "Escape", repeat: true }),
+    ).toBe(false);
+    fireEvent.pointerUp(canvas, {
+      ...shifted,
+      buttons: 0,
+      clientX: 798,
+      clientY: 598,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(canvas.dataset.selected).toBe("1");
+  });
+
+  it("undo the last change by Ctrl+Z, and show the table of the shortcuts by ?", async () => {
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "e", code: "KeyE" });
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    const undo = await screen.findByRole("button", { name: "Undo" });
+    await waitFor(() => expect(undo).toHaveProperty("disabled", false));
+    fireEvent.keyDown(canvas, { key: "z", code: "KeyZ", ctrlKey: true });
+    await waitFor(() => expect(batches(calls)).toHaveLength(2));
+    expect(await screen.findByText("Undone.")).toBeDefined();
+
+    // The help names the keys of the page's platform, as Ctrl+C on Linux.
+    expect(
+      screen.getByText(/Ctrl\+C, Ctrl\+X, and Ctrl\+V copy it/),
+    ).toBeDefined();
+    fireEvent.keyDown(canvas, { key: "?", code: "Slash", shiftKey: true });
+    const table = await screen.findByRole("dialog", {
+      name: "Keyboard shortcuts",
+    });
+    expect(
+      table.querySelector('[data-command="canvas.add_element"]')?.textContent,
+    ).toContain("E");
+    fireEvent.keyDown(table, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+      ).toBeNull(),
+    );
+    // The canvas, which the table opened from, has the focus back.
+    expect(document.activeElement).toBe(canvas);
+  });
+
+  it("run from the palette as from their keys, once the focus is back on the canvas", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard();
+    canvas.focus();
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    await user.type(within(palette).getByRole("combobox"), "add elem");
+    // The command, and, in a project, the search for what was typed.
+    const options = within(palette).getAllByRole("option");
+    expect(options.map((o) => o.dataset.command)).toEqual([
+      "canvas.add_element",
+      undefined,
+    ]);
+    expect(options[1].textContent).toBe("Search the project for “add elem”");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(batches(calls)).toHaveLength(1));
+    expect(batches(calls)[0][0].type).toBe("node.create");
+    expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(canvas));
+  });
+
+  it("leave the tree's letters to its type-ahead, as one that the key of a zoom's digit types", async () => {
+    const user = userEvent.setup();
+    const calls = boardPage([
+      testNode("nd_1", 0, 0, { title: "Alpha" }),
+      testNode("nd_2", 0, 400, { title: "Echo" }),
+      testNode("nd_3", 0, 800, { title: "Écluse" }),
+    ]);
+    await openBoard();
+    const tree = await screen.findByRole("tree", {
+      name: "Nodes and connections of Harbour",
+    });
+    await waitFor(() =>
+      expect(within(tree).getAllByRole("treeitem")).toHaveLength(3),
+    );
+    const [first, second, third] = within(tree).getAllByRole("treeitem");
+    first.focus();
+    await user.keyboard("e");
+    expect(document.activeElement).toBe(second);
+    // The key of 0 types é on a Czech layout, which goes to the node
+    // whose title starts with it, rather than showing 100%.
+    fireEvent.keyDown(second, { key: "é", code: "Digit0" });
+    expect(document.activeElement).toBe(third);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(batches(calls)).toHaveLength(0);
+  });
+});

@@ -28,6 +28,7 @@ import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects.$p
 import { Route as ProjectsProjectIdAccessRouteImport } from './routes/projects.$projectId.access'
 import { Route as ProjectsProjectIdComponentTypesRouteImport } from './routes/projects.$projectId.component-types'
 import { Route as ProjectsProjectIdComponentsRouteImport } from './routes/projects.$projectId.components'
+import { Route as ProjectsProjectIdSearchRouteImport } from './routes/projects.$projectId.search'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects.$projectId.settings'
 import { Route as ProjectsProjectIdTrashRouteImport } from './routes/projects.$projectId.trash'
 import { Route as ProjectsProjectIdVariablesRouteImport } from './routes/projects.$projectId.variables'
@@ -134,6 +135,11 @@ const ProjectsProjectIdComponentsRoute =
     path: '/components',
     getParentRoute: () => ProjectsProjectIdRoute,
   } as any)
+const ProjectsProjectIdSearchRoute = ProjectsProjectIdSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => ProjectsProjectIdRoute,
+} as any)
 const ProjectsProjectIdSettingsRoute =
   ProjectsProjectIdSettingsRouteImport.update({
     id: '/settings',
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
@@ -227,6 +234,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
@@ -257,6 +265,7 @@ export interface FileRoutesById {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
@@ -288,6 +297,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
     | '/projects/$projectId/variables'
@@ -314,6 +324,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
     | '/projects/$projectId/variables'
@@ -343,6 +354,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/trash'
     | '/projects/$projectId/variables'
@@ -504,6 +516,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdComponentsRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/search': {
+      id: '/projects/$projectId/search'
+      path: '/search'
+      fullPath: '/projects/$projectId/search'
+      preLoaderRoute: typeof ProjectsProjectIdSearchRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
     '/projects/$projectId/settings': {
       id: '/projects/$projectId/settings'
       path: '/settings'
@@ -582,6 +601,7 @@ interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdAccessRoute: typeof ProjectsProjectIdAccessRoute
   ProjectsProjectIdComponentTypesRoute: typeof ProjectsProjectIdComponentTypesRoute
   ProjectsProjectIdComponentsRoute: typeof ProjectsProjectIdComponentsRoute
+  ProjectsProjectIdSearchRoute: typeof ProjectsProjectIdSearchRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdTrashRoute: typeof ProjectsProjectIdTrashRoute
   ProjectsProjectIdVariablesRoute: typeof ProjectsProjectIdVariablesRoute
@@ -593,6 +613,7 @@ const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdAccessRoute: ProjectsProjectIdAccessRoute,
   ProjectsProjectIdComponentTypesRoute: ProjectsProjectIdComponentTypesRoute,
   ProjectsProjectIdComponentsRoute: ProjectsProjectIdComponentsRoute,
+  ProjectsProjectIdSearchRoute: ProjectsProjectIdSearchRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
   ProjectsProjectIdTrashRoute: ProjectsProjectIdTrashRoute,
   ProjectsProjectIdVariablesRoute: ProjectsProjectIdVariablesRoute,

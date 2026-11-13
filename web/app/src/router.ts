@@ -3,7 +3,7 @@
 // routeTree.gen.ts, under /app, where the server serves the app.
 
 import type { QueryClient } from "@tanstack/react-query";
-import { createRouter } from "@tanstack/react-router";
+import { createRouter, parseSearchWith } from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import type { Documents } from "./document/documents";
 import { routeTree } from "./routeTree.gen";
@@ -28,12 +28,29 @@ export interface RouterContext {
   documents: Documents;
 }
 
+/**
+ * Reads each value of a page's address as the text that it spells, as a
+ * search's query of 1e3, 1.50, null, [1], or {}, which the router's own
+ * reading, JSON's, would take for 1000, 1.5, nothing, a list, or an
+ * object, which the search's page would drop: only a value that the
+ * router's links write as JSON for a string, quoted, as a query of 1e3 or
+ * [1] that a link names, is read as JSON. No route of the app takes an
+ * object or a list, which the router's links would write as JSON
+ * unquoted, and which would be read as its text. True and false, and a
+ * number as String writes it, as 42, the router reads as a boolean or a
+ * number before (qss), whose text String gives back.
+ */
+export const parseSearch = parseSearchWith((value) =>
+  value.startsWith('"') ? JSON.parse(value) : value,
+);
+
 /** Returns the app's router. */
 export function createAppRouter(context: RouterContext) {
   const router = createRouter({
     routeTree,
     basepath: "/app",
     context,
+    parseSearch,
     scrollRestoration: true,
     // An error that the root route's error page could not show, as one of
     // that page itself, reaches the app's CrashBoundary, which shows the
