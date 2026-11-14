@@ -352,6 +352,35 @@ var Tables = []Table{
 		return Statement{row, "INSERT INTO search_state (id, workspace_id, project_id, version) VALUES ($1, $2, $3, 1)",
 			[]any{row, w.ID, id}}, nil
 	}},
+	{Name: "text_statistic", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A text has one row of the statistics, so each is of the
+		// workspace's node or connection that has none yet, as a document of
+		// search is.
+		var kind string
+		var entity ids.UUID
+		if err := admin.QueryRow(ctx, `SELECT f.kind, f.id FROM (VALUES
+				(1, 'node', $1::uuid), (2, 'connection', $2)) f (n, kind, id)
+			WHERE NOT EXISTS (SELECT 1 FROM text_statistic s WHERE s.kind = f.kind AND s.entity_id = f.id)
+			ORDER BY f.n LIMIT 1`, w.Rows["node"], w.Rows["connection"]).Scan(&kind, &entity); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO text_statistic (id, workspace_id, project_id, kind, entity_id, words, " +
+			"characters, version) VALUES ($1, $2, $3, $4, $5, 5, 27, 1)",
+			[]any{row, w.ID, w.Rows["project"], kind, entity}}, nil
+	}},
+	{Name: "text_statistic_state", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A project has one state, so each is of a project of its own, which
+		// it adds first.
+		id := ids.New()
+		if _, err := admin.Exec(ctx, "INSERT INTO project (id, workspace_id, name) VALUES ($1, $2, 'Harbour')", id,
+			w.ID); err != nil {
+			return Statement{}, err
+		}
+		row := ids.New()
+		return Statement{row, "INSERT INTO text_statistic_state (id, workspace_id, project_id, version) " +
+			"VALUES ($1, $2, $3, 1)", []any{row, w.ID, id}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

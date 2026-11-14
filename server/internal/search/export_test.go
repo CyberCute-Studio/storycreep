@@ -10,13 +10,13 @@ import (
 )
 
 // Work runs the job of the index once, as its worker does, for as long as
-// more reports that the run has time left, warning in log (work), or
-// nowhere for nil.
+// more reports that the run has time left, warning in log
+// (sweep.Fill.Work), or nowhere for nil.
 func Work(ctx context.Context, db sweep.DB, more func() bool, log *slog.Logger) error {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return work(ctx, db, more, log)
+	return fill().Work(ctx, db, more, log)
 }
 
 // SetReindexRows sets how many documents the job of the index writes in a

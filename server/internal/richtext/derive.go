@@ -156,6 +156,8 @@ type Derived struct {
 	Preview string
 	// Words is the number of its words (WordCount).
 	Words int
+	// Characters is the number of its characters (CharacterCount).
+	Characters int
 	// Hash is the hash of its plain text (Hash).
 	Hash string
 }
@@ -180,7 +182,8 @@ type Derived struct {
 func (d *Doc) Derive(names Names) Derived {
 	segs := d.Segments(names)
 	text := PlainText(segs)
-	return Derived{Segments: segs, Text: text, Preview: Preview(text), Words: WordCount(segs), Hash: Hash(text)}
+	return Derived{Segments: segs, Text: text, Preview: Preview(text), Words: WordCount(segs),
+		Characters: CharacterCount(segs), Hash: Hash(text)}
 }
 
 // Segments returns the document's segments, with the names of what it
@@ -358,6 +361,27 @@ func WordCount(segs []Segment) int {
 		}
 	}
 	return w.n
+}
+
+// CharacterCount returns the number of characters of a document's segments,
+// as the writing statistics count them (PRD FR-TEXT-06): the code points of
+// its texts, its mentions' names, and its values' names in braces, which
+// WordCount reads, white space among them, but not the line feeds, the
+// indentation, and the bullets and numbers that PlainText writes for its
+// paragraphs, list items, and line breaks, which its author did not type.
+// So "Hello, Elara." is 13 characters, whether Elara is typed or a mention
+// of her, and a value reference of gold is 6, as {gold}.
+func CharacterCount(segs []Segment) int {
+	n := 0
+	for _, s := range segs {
+		switch s.Kind {
+		case SegmentText, SegmentMention:
+			n += utf8.RuneCountInString(s.Value)
+		case SegmentValue:
+			n += utf8.RuneCountInString(s.Name) + 2
+		}
+	}
+	return n
 }
 
 // CountWords returns the number of words of s. A word is a run of characters

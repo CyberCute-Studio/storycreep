@@ -1592,6 +1592,64 @@
         ],
         "type": "object"
       },
+      "BoardStatistics": {
+        "additionalProperties": false,
+        "properties": {
+          "characters": {
+            "description": "How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "description": "How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "complete": {
+            "description": "Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it.",
+            "type": "boolean"
+          },
+          "conditions": {
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "The board's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The board's name",
+            "type": "string"
+          },
+          "nodes": {
+            "description": "How many nodes it has, of every type",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "words": {
+            "description": "How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "nodes",
+          "words",
+          "characters",
+          "choices",
+          "conditions",
+          "complete"
+        ],
+        "type": "object"
+      },
       "BranchOutput": {
         "additionalProperties": false,
         "properties": {
@@ -6665,6 +6723,58 @@
         },
         "type": "object"
       },
+      "NodeStatistics": {
+        "additionalProperties": false,
+        "properties": {
+          "characters": {
+            "description": "How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "description": "How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "complete": {
+            "description": "Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it.",
+            "type": "boolean"
+          },
+          "conditions": {
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "description": "The node's ID",
+            "type": "string"
+          },
+          "seq": {
+            "description": "The project's operation sequence as of the draft that the statistics were read of, the seq of the last batch that they hold",
+            "format": "int64",
+            "type": "integer"
+          },
+          "words": {
+            "description": "How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "words",
+          "characters",
+          "choices",
+          "conditions",
+          "complete"
+        ],
+        "type": "object"
+      },
       "NodeTarget": {
         "additionalProperties": false,
         "properties": {
@@ -7797,6 +7907,68 @@
         },
         "required": [
           "slug"
+        ],
+        "type": "object"
+      },
+      "ProjectStatistics": {
+        "additionalProperties": false,
+        "properties": {
+          "boards": {
+            "description": "The project's boards that are not in its trash, each with its statistics, which add up to the project's, in the order of their IDs",
+            "items": {
+              "$ref": "#/components/schemas/BoardStatistics"
+            },
+            "type": "array"
+          },
+          "characters": {
+            "description": "How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "description": "How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5).",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "complete": {
+            "description": "Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it.",
+            "type": "boolean"
+          },
+          "conditions": {
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nodes": {
+            "description": "How many nodes it has, of every type",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seq": {
+            "description": "The project's operation sequence as of the draft that the statistics were read of, the seq of the last batch that they hold",
+            "format": "int64",
+            "type": "integer"
+          },
+          "words": {
+            "description": "How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "nodes",
+          "boards",
+          "words",
+          "characters",
+          "choices",
+          "conditions",
+          "complete"
         ],
         "type": "object"
       },
@@ -17228,6 +17400,121 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/nodes/{node_id}/statistics": {
+      "get": {
+        "description": "Returns the writing statistics of the node: how many words and characters its text and the labels of the connections that leave it have, and how many of those connections are choices, and how many conditions they and the node's outputs have, which add up, over a board's nodes, to the board's statistics (GET /api/v1/projects/{project_id}/statistics). A text is an element's text or the label of a connection, whose words and characters are counted as PRD FR-TEXT-05 and FR-TEXT-06 define them, a mention as its component's name and a value reference as its keys in braces, without the global. or cmp. that an expression writes where one key shadows another, once, as it changes, rather than at each read, so that the statistics hold an edit as soon as its batch is answered (FR-TEXT-06 AC1). They are of what is not in the project's trash, and of the project's draft as of one moment, its seq, so that a batch that commits meanwhile is in them whole or not at all. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or that is in its trash, itself or with its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getNodeStatistics",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The node's ID",
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "description": "The node's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeStatistics"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a node's writing statistics",
+        "tags": [
+          "Statistics"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/restore": {
       "post": {
         "description": "Restores a project from its workspace's trash, as it was when it was deleted, within 30 days of its deletion; after that, it is answered with 404 not_found. A project that is not in the trash stays as it is. A restored project that is not archived counts towards the workspace's projects again: a workspace that has as many projects as its plan allows is answered with 409 limit_exceeded. Only an owner or an admin of the workspace may, and anyone else with a role on the project is answered with 403 insufficient_role. A project that does not exist, or on which the signed-in user's role is none, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
@@ -17499,6 +17786,111 @@
         "summary": "Search a project",
         "tags": [
           "Search"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/statistics": {
+      "get": {
+        "description": "Returns the writing statistics of the project and of each of its boards: how many words and characters their texts have, and how many nodes, choices, and conditions they have, the boards' adding up to the project's. A text is an element's text or the label of a connection, whose words and characters are counted as PRD FR-TEXT-05 and FR-TEXT-06 define them, a mention as its component's name and a value reference as its keys in braces, without the global. or cmp. that an expression writes where one key shadows another, once, as it changes, rather than at each read, so that the statistics hold an edit as soon as its batch is answered (FR-TEXT-06 AC1). They are of what is not in the project's trash, and of the project's draft as of one moment, its seq, so that a batch that commits meanwhile is in them whole or not at all. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getProjectStatistics",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStatistics"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a project's writing statistics",
+        "tags": [
+          "Statistics"
         ]
       }
     },

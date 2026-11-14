@@ -47,6 +47,7 @@ export const Route = createFileRoute("/projects/$projectId")({
 // (FR-VAR-01, FR-COMP-01, FR-COMP-02), its trash, the members' grants on
 // it, which its workspace's owners and admins manage, and its settings,
 // under a link back to its workspace's projects, its search (FR-PROJ-03),
+// its writing statistics (FR-TEXT-06),
 // the undo and redo of the user's changes (FR-EDIT-08), and the note that an
 // archived project is read-only. The palette goes to each of its pages, and
 // Ctrl+/, on macOS too, to its search, with the focus in the search's
@@ -77,6 +78,7 @@ const pages = [
   "/projects/$projectId/variables",
   "/projects/$projectId/components",
   "/projects/$projectId/component-types",
+  "/projects/$projectId/statistics",
   "/projects/$projectId/trash",
   "/projects/$projectId/access",
   "/projects/$projectId/settings",
@@ -138,6 +140,7 @@ function ProjectPages({ projectId }: { projectId: string }) {
     "go.variables": go("/projects/$projectId/variables"),
     "go.components": go("/projects/$projectId/components"),
     "go.component_types": go("/projects/$projectId/component-types"),
+    "go.statistics": go("/projects/$projectId/statistics"),
     "go.trash": go("/projects/$projectId/trash"),
     ...(managesWorkspace(workspace.role)
       ? { "go.access": go("/projects/$projectId/access") }
@@ -202,6 +205,15 @@ function ProjectPages({ projectId }: { projectId: string }) {
                 className={navLink}
               >
                 {t("project.nav.search")}
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/projects/$projectId/statistics"
+                params={params}
+                className={navLink}
+              >
+                {t("project.nav.statistics")}
               </Link>
             </li>
             <li>

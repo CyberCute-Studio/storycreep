@@ -105,6 +105,7 @@ export const commands = {
   "go.variables": { group: "navigation", on: page, keys: [] },
   "go.components": { group: "navigation", on: page, keys: [] },
   "go.component_types": { group: "navigation", on: page, keys: [] },
+  "go.statistics": { group: "navigation", on: page, keys: [] },
   "go.trash": { group: "navigation", on: page, keys: [] },
   "go.access": { group: "navigation", on: page, keys: [] },
   "go.settings": { group: "navigation", on: page, keys: [] },
@@ -329,6 +330,8 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.go.components");
     case "go.component_types":
       return t("command.go.component_types");
+    case "go.statistics":
+      return t("command.go.statistics");
     case "go.trash":
       return t("command.go.trash");
     case "go.access":

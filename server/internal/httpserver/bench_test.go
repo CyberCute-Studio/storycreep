@@ -297,6 +297,45 @@ func BenchmarkSearch(b *testing.B) {
 	}
 }
 
+// statisticsTarget is the p95 of a read of the writing statistics, server
+// side, on large, that BenchmarkStatistics holds them under: half of the
+// second within which FR-TEXT-06 AC1 has the counts follow an edit, the rest
+// left to the batch, the real-time channel, and the page.
+const statisticsTarget = 500 * time.Millisecond
+
+// BenchmarkStatistics times the reads of the writing statistics of the large
+// fixture's project, the project's and each board's, which add up the
+// counts of its 10,000 nodes and their connections, and a node's, and checks
+// the p95 of each against statisticsTarget: a read adds up stored counts,
+// rather than counting any text.
+//
+// Verifies: FR-TEXT-06/AC1
+func BenchmarkStatistics(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	for _, c := range []struct{ name, path string }{
+		{"project", projectPath(bs.project) + "/statistics"},
+		{"node", projectPath(bs.project) + "/nodes/" + bs.model.elements[0].id + "/statistics"},
+	} {
+		b.Run(c.name, func(b *testing.B) {
+			var took []time.Duration
+			for b.Loop() {
+				start := time.Now()
+				res := send(bs.s.main, http.MethodGet, c.path, nil, "", bs.header)
+				took = append(took, time.Since(start))
+				if res.status != http.StatusOK {
+					b.Fatalf("%s: %d %s", c.path, res.status, res.body)
+				}
+			}
+			p95 := percentile(took, 95)
+			b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+			if p95 >= statisticsTarget {
+				b.Errorf("the p95 of the read of the %s's statistics is %v, want under %v", c.name, p95,
+					statisticsTarget)
+			}
+		})
+	}
+}
+
 // benchServer is a server with a project of a fixture, which its owner,
 // signed in, edits.
 type benchServer struct {

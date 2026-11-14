@@ -27,14 +27,15 @@ type vectors struct {
 		} `json:"values"`
 	} `json:"names"`
 	Valid []struct {
-		Note      string          `json:"note"`
-		Doc       json.RawMessage `json:"doc"`
-		Canonical json.RawMessage `json:"canonical"`
-		Segments  json.RawMessage `json:"segments"`
-		Text      string          `json:"text"`
-		Preview   string          `json:"preview"`
-		Words     int             `json:"words"`
-		Hash      string          `json:"hash"`
+		Note       string          `json:"note"`
+		Doc        json.RawMessage `json:"doc"`
+		Canonical  json.RawMessage `json:"canonical"`
+		Segments   json.RawMessage `json:"segments"`
+		Text       string          `json:"text"`
+		Preview    string          `json:"preview"`
+		Words      int             `json:"words"`
+		Characters int             `json:"characters"`
+		Hash       string          `json:"hash"`
 	} `json:"valid"`
 	Invalid []struct {
 		Note          string          `json:"note"`
@@ -111,7 +112,8 @@ func compact(t *testing.T, data []byte) []byte {
 
 // TestValidVectors checks that every valid document of the vectors is
 // accepted, written in its canonical form, and derives the segments, plain
-// text, preview, word count, and hash that the vectors give. The canonical
+// text, preview, word count, character count, and hash that the vectors
+// give. The canonical
 // form and the segments are compared byte for byte with the vectors', which
 // write them as the server does, with sorted keys and HTML not escaped, once
 // the white space between their tokens is taken out.
@@ -153,6 +155,9 @@ func TestValidVectors(t *testing.T) {
 			}
 			if d.Words != vec.Words {
 				t.Errorf("words %d, want %d", d.Words, vec.Words)
+			}
+			if d.Characters != vec.Characters {
+				t.Errorf("characters %d, want %d", d.Characters, vec.Characters)
 			}
 			if d.Hash != vec.Hash {
 				t.Errorf("hash %s, want %s", d.Hash, vec.Hash)

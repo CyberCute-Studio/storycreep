@@ -35,6 +35,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
+	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
@@ -93,6 +94,9 @@ type server struct {
 	// search searches the projects' content, from the index that their
 	// commands keep (package search).
 	search *search.Service
+	// statistics reads the projects' writing statistics, which their
+	// commands keep (package statistics).
+	statistics *statistics.Service
 	// clipboard copies nodes as a clipboard, and reports what of one a paste
 	// would resolve to nothing.
 	clipboard *clipboard.Service
@@ -132,6 +136,7 @@ func newCommandRegistry() *commands.Registry {
 	dependency.Register(registry)
 	validation.Register(registry)
 	search.Register(registry)
+	statistics.Register(registry)
 	return registry
 }
 
@@ -178,6 +183,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.dependencies = dependency.New(readyDB{s.ready}, dependency.Options{Projects: s.projects})
 	s.validation = validation.New(readyDB{s.ready}, validation.Options{Projects: s.projects})
 	s.search = search.New(readyDB{s.ready}, search.Options{Projects: s.projects})
+	s.statistics = statistics.New(readyDB{s.ready}, statistics.Options{Projects: s.projects})
 	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
@@ -270,6 +276,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerDependencies(s.main, s.dependencies)
 	registerValidation(s.main, s.validation)
 	registerSearch(s.main, s.search)
+	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)

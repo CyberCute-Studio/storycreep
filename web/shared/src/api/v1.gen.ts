@@ -508,6 +508,25 @@ export interface BoardSetSlugPayload {
   slug: string;
 }
 
+export interface BoardStatistics {
+  /** How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items. */
+  characters: number;
+  /** How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5). */
+  choices: number;
+  /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
+  complete: boolean;
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
+  conditions: number;
+  /** The board's ID */
+  id: string;
+  /** The board's name */
+  name: string;
+  /** How many nodes it has, of every type */
+  nodes: number;
+  /** How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another. */
+  words: number;
+}
+
 export interface BranchOutput {
   /** A conditional output's condition, which picks it, the first of its branch's whose condition holds (PRD §5.8.5). An else has none. */
   condition?: Expression;
@@ -2109,6 +2128,23 @@ export interface NodeSize {
   width?: number;
 }
 
+export interface NodeStatistics {
+  /** How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items. */
+  characters: number;
+  /** How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5). */
+  choices: number;
+  /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
+  complete: boolean;
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
+  conditions: number;
+  /** The node's ID */
+  id: string;
+  /** The project's operation sequence as of the draft that the statistics were read of, the seq of the last batch that they hold */
+  seq: number;
+  /** How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another. */
+  words: number;
+}
+
 export interface NodeTarget {
   /** The ID of the board of the node that the jumper targets, which may be the jumper's own. With node_id, or neither of them, for none. */
   board_id?: string;
@@ -2461,6 +2497,25 @@ export interface ProjectSetSlugCommand {
 export interface ProjectSetSlugPayload {
   /** The project's new slug: groups of lowercase ASCII letters and digits joined by single hyphens, as harbour, of at most 64 characters, that is not a name that Windows reserves for a device, such as con or com1. A slug that is not one is answered with 422 slug_invalid. */
   slug: string;
+}
+
+export interface ProjectStatistics {
+  /** The project's boards that are not in its trash, each with its statistics, which add up to the project's, in the order of their IDs */
+  boards: Array<BoardStatistics>;
+  /** How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items. */
+  characters: number;
+  /** How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5). */
+  choices: number;
+  /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
+  complete: boolean;
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
+  conditions: number;
+  /** How many nodes it has, of every type */
+  nodes: number;
+  /** The project's operation sequence as of the draft that the statistics were read of, the seq of the last batch that they hold */
+  seq: number;
+  /** How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another. */
+  words: number;
 }
 
 /** A command of the type project.unarchive. */
@@ -3788,6 +3843,24 @@ export interface Operations {
     };
   };
   /**
+   * Get a node's writing statistics
+   *
+   * Returns the writing statistics of the node: how many words and characters its text and the labels of the connections that leave it have, and how many of those connections are choices, and how many conditions they and the node's outputs have, which add up, over a board's nodes, to the board's statistics (GET /api/v1/projects/{project_id}/statistics). A text is an element's text or the label of a connection, whose words and characters are counted as PRD FR-TEXT-05 and FR-TEXT-06 define them, a mention as its component's name and a value reference as its keys in braces, without the global. or cmp. that an expression writes where one key shadows another, once, as it changes, rather than at each read, so that the statistics hold an edit as soon as its batch is answered (FR-TEXT-06 AC1). They are of what is not in the project's trash, and of the project's draft as of one moment, its seq, so that a batch that commits meanwhile is in them whole or not at all. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or that is in its trash, itself or with its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getNodeStatistics: {
+    input: {
+      path: {
+        /** The node's ID */
+        node_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: NodeStatistics;
+    };
+  };
+  /**
    * Get the API's OpenAPI document
    *
    * The OpenAPI 3.1 document of the server's operations, this one included. It is the same for every server of a release, and is committed to the repository as schema/api/v1/openapi.json. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -3818,6 +3891,22 @@ export interface Operations {
     };
     responses: {
       200: ProjectBody;
+    };
+  };
+  /**
+   * Get a project's writing statistics
+   *
+   * Returns the writing statistics of the project and of each of its boards: how many words and characters their texts have, and how many nodes, choices, and conditions they have, the boards' adding up to the project's. A text is an element's text or the label of a connection, whose words and characters are counted as PRD FR-TEXT-05 and FR-TEXT-06 define them, a mention as its component's name and a value reference as its keys in braces, without the global. or cmp. that an expression writes where one key shadows another, once, as it changes, rather than at each read, so that the statistics hold an edit as soon as its batch is answered (FR-TEXT-06 AC1). They are of what is not in the project's trash, and of the project's draft as of one moment, its seq, so that a batch that commits meanwhile is in them whole or not at all. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getProjectStatistics: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: ProjectStatistics;
     };
   };
   /**
@@ -5125,8 +5214,10 @@ export const routes = {
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
+  getNodeStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/statistics" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
   getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
+  getProjectStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/statistics" },
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getSetup: { method: "GET", path: "/api/v1/setup" },

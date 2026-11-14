@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/jobs"
+	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
 	"github.com/CyberCute-Studio/storycreep/server/internal/sweep"
 )
 
@@ -150,6 +151,7 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			Retention: retention, MaxRows: purgeRows}); err != nil {
 			return fmt.Errorf("purge the boards: %w", err)
 		}
+		boards := n
 		nodes, err := q.PurgeNodes(ctx, queries.PurgeNodesParams{WorkspaceID: ws, ProjectID: project,
 			Retention: retention, MaxRows: int32(purgeRows - n)})
 		if err != nil {
@@ -192,6 +194,18 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the component types: %w", err)
 		}
 		n += types
+		// A text counts the names of what it mentions and shows, so the texts
+		// that named what the purge deleted, by its own statements or by the
+		// cascades of their foreign keys, as a board's variables go with it
+		// and a type's definitions with the type, are counted again, without
+		// the names that they lost (package statistics), once it has deleted
+		// what a text may name, or what holds it: a node, an output, or a
+		// connection is named by none.
+		if boards+variables+components+attributes+types > 0 {
+			if _, err := statistics.Recount(ctx, q, workspaceID, project.Bytes); err != nil {
+				return fmt.Errorf("count again the texts that named what it purged: %w", err)
+			}
+		}
 		// Each statement deletes the folders that hold nothing as it starts,
 		// so a folder whose last child it deletes is deleted by the next.
 		for n < purgeRows {
