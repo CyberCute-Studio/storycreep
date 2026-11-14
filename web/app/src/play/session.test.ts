@@ -393,6 +393,22 @@ describe("a play session", () => {
     expect(s.state).toMatchObject({ status: "failed", reading: true });
   });
 
+  // A component that the document does not hold whole once play has read
+  // it, as one whose values a read of the components' list took again, is
+  // no draft that play runs with its type's defaults for its values, but a
+  // read that failed, which Try again makes anew.
+  test("fails to start as a read where a component is not held whole, rather than play its defaults", async () => {
+    const partial: ComponentEntry = { ...elaraComponent };
+    delete partial.attributes;
+    const { doc } = documentOf({
+      ...draft,
+      components: new Map([[partial.id, partial]]),
+    });
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(s.state).toMatchObject({ status: "failed", reading: true });
+  });
+
   test("fails to run a draft that holds what no project does, saying it is no failed read", async () => {
     const twin = { ...elaraComponent, id: id("cmp", "2") };
     const { doc } = documentOf({
@@ -509,7 +525,7 @@ describe("a play session", () => {
     await s.start({ board: harbour.id, node: "" });
     s.choose(id("cn", "1"));
     const { flow } = playing(s);
-    expect(flow.path).toEqual([id("nd", "A"), branch, id("nd", "C")]);
+    expect([...flow.visited]).toEqual([id("nd", "A"), branch, id("nd", "C")]);
     expect([...flow.traversed]).toEqual([id("cn", "1"), id("cn", "3")]);
   });
 
@@ -563,6 +579,21 @@ describe("a play session", () => {
     await s.start({ board: harbour.id, node: "" });
     expect(reads.filter((r) => r.startsWith("cmp_"))).toHaveLength(20);
     expect(most).toBe(parallelReads);
+  });
+
+  // Each turn is shown once of each kind, by the board's page that shows
+  // it first, and not again by a page that the user opens later.
+  test("tells that a turn is shown first once of each kind", async () => {
+    const { doc } = documentOf(draft);
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    const { turn } = playing(s);
+    expect(s.firstShown("canvas", turn)).toBe(true);
+    expect(s.firstShown("canvas", turn)).toBe(false);
+    expect(s.firstShown("panel", turn)).toBe(true);
+    s.choose(id("cn", "3"));
+    expect(s.firstShown("canvas", turn)).toBe(false);
+    expect(s.firstShown("canvas", playing(s).turn)).toBe(true);
   });
 
   test("stops, and does nothing more of a start that a stop overtook", async () => {

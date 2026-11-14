@@ -1501,13 +1501,18 @@ export class CanvasController implements GestureHost {
    * Highlights where play mode is on the board, or nothing (FR-PLAY-01,
    * plan note N78): the canvas draws the current node, the nodes that the
    * flow passed, and the connections that it took, in the play colour, and
-   * changes nothing of the board.
+   * changes nothing of the board. Marks that differ from the last only
+   * elsewhere, as of a step on another board, draw nothing anew.
    */
   setPlay(marks: PlayMarks | undefined): void {
     if (marks === this.play) {
       return;
     }
+    const same = sameMarksOn(this.scene, this.play, marks);
     this.play = marks;
+    if (same) {
+      return;
+    }
     this.playVersion++;
     this.invalidate();
   }
@@ -2173,4 +2178,27 @@ export class CanvasController implements GestureHost {
     }
     this.gestures.cancelAll();
   }
+}
+
+/**
+ * Reports whether play marks a and b mark scene's nodes and connections
+ * alike: the same current node, and the same of them passed and taken.
+ */
+function sameMarksOn(
+  scene: Scene,
+  a: PlayMarks | undefined,
+  b: PlayMarks | undefined,
+): boolean {
+  if ((a?.current ?? "") !== (b?.current ?? "")) {
+    return false;
+  }
+  let same = true;
+  scene.nodes.forEach((id) => {
+    same &&= (a?.visited.has(id) ?? false) === (b?.visited.has(id) ?? false);
+  });
+  scene.connections.forEach((id) => {
+    same &&=
+      (a?.traversed.has(id) ?? false) === (b?.traversed.has(id) ?? false);
+  });
+  return same;
 }

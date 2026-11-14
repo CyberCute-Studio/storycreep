@@ -108,11 +108,17 @@ export function standInMessage(
     case "speaker":
       return t("play.stand_in.speaker", { where });
     case "target":
-      return t("play.stand_in.target", { where });
+      return s.reason === "gone"
+        ? t("play.stand_in.target", { where })
+        : s.reason === "jumper"
+          ? t("play.stand_in.target_jumper", { where })
+          : t("play.stand_in.target_board", { where });
     case "board_entry":
       return t("play.stand_in.board_entry", { where });
     case "entry":
-      return t("play.stand_in.entry");
+      return s.reason === "gone"
+        ? t("play.stand_in.entry")
+        : t("play.stand_in.entry_board");
     case "connection":
       return s.reason === "port"
         ? t("play.stand_in.connection", { where })

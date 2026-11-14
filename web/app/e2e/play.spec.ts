@@ -135,6 +135,9 @@ test.describe("play mode", () => {
     const there = playOf(page);
     await expect(there.getByText("You bring 1 gold.")).toBeVisible();
     await expect(there.getByText(en["play.ended.ending"])).toBeVisible();
+    // The page that the flow went to gives the node's heading the focus,
+    // which the choice pressed had, as it went with the page that it was on.
+    await expect(there.getByRole("heading", { name: "Meeting" })).toBeFocused();
     expect(await violations(page)).toEqual([]);
 
     await press(there.getByRole("button", { name: en["play.stop"] }));

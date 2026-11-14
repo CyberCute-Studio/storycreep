@@ -1552,7 +1552,8 @@ function BoardCanvasOf({
   // Where play is on the board, which the canvas highlights, and its tree
   // says of the current node; the canvas shows the current node once the
   // flow comes to it, as after each choice and once the board's page
-  // followed the flow here.
+  // followed the flow here, once for each turn, rather than again as the
+  // user comes back to the board, whose canvas shows it where it was.
   const playNode =
     playFlow !== undefined && playFlow.board === boardId ? playFlow.node : "";
   const marks = useMemo(
@@ -1574,10 +1575,10 @@ function BoardCanvasOf({
       return;
     }
     const r = controller.scene.boundsOf([playNode]);
-    if (r !== undefined) {
+    if (r !== undefined && session.firstShown("canvas", playTurn)) {
       controller.reveal(r);
     }
-  }, [controller, content, playNode, playTurn]);
+  }, [controller, session, content, playNode, playTurn]);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -2676,6 +2677,7 @@ function BoardCanvasOf({
         {playing && !(inspecting && editable) && (
           <PlayPanel
             projectId={projectId}
+            boardId={boardId}
             doc={doc}
             session={session}
             returnFocus={() => hostRef.current}

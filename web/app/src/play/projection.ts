@@ -11,14 +11,15 @@
 //
 // A draft may hold what no snapshot does: an expression that does not
 // compile, a text's reference to what is in the trash, a speaker in the
-// trash, a jumper whose target is in the trash or is a jumper, a board's or
-// the project's entry that is gone, a connection that leaves a port that
-// its node no longer has. The projection stands in for each, as the
-// maintainer chose (N78), and lists it: a condition that does not compile
-// never holds, a script that does not compile does nothing, a reference or
-// a speaker is left out, a jumper has no target, which play mode's runtime
-// reports as jumper_broken once the flow reaches it (§5.8.5), an entry is
-// left out, and so is the connection.
+// trash, a jumper whose target is in the trash, is a jumper, or is not on
+// the board that it names, a board's or the project's entry that is gone,
+// a connection that leaves a port that its node no longer has. The
+// projection stands in for each, as the maintainer chose (N78), and lists
+// it: a condition that does not compile never holds, a script that does
+// not compile does nothing, a reference or a speaker is left out, a jumper
+// has no target, which play mode's runtime reports as jumper_broken once
+// the flow reaches it (§5.8.5), an entry is left out, and so is the
+// connection.
 
 import type {
   Connection as ConnectionBody,
@@ -164,10 +165,12 @@ export type StandIn = {
       readonly ref: string;
     }
   | {
-      /** A jumper's target that the snapshot does not hold, or that is a jumper: the jumper has none. */
+      /** A jumper's target that the snapshot does not hold, that is a jumper, or that is not on the board that the target names: the jumper has none. */
       readonly kind: "target";
       readonly entity: string;
       readonly ref: string;
+      /** Why: the node is not in the snapshot, as in the trash ("gone"), is a jumper ("jumper"), or is on another board than the target names ("board"). */
+      readonly reason: "gone" | "jumper" | "board";
     }
   | {
       /** A board's entry node that the snapshot does not hold, left out. */
@@ -176,10 +179,12 @@ export type StandIn = {
       readonly ref: string;
     }
   | {
-      /** The project's entry, of a board or a node that the snapshot does not hold, left out. */
+      /** The project's entry, of a board or a node that the snapshot does not hold, or of a node that is not on the board that it names, left out. */
       readonly kind: "entry";
       readonly entity: string;
       readonly ref: string;
+      /** Why: what it names is not in the snapshot, as in the trash ("gone"), or its node is on another board than it names ("board"). */
+      readonly reason: "gone" | "board";
     }
   | {
       /** A connection that leaves a port that its node does not have, or a jumper, or enters a node that its board does not hold, left out. */
@@ -205,7 +210,12 @@ export interface Projection {
 /** projectDraft's error for a document that it cannot project at all. */
 export class ProjectionError extends Error {
   constructor(
-    /** Why: the project not read yet, or the document holding what no project has, as two components of one key for a moment. */
+    /**
+     * Why: the project, or a component of the snapshot whole, not read yet
+     * ("unread"), or the document holding what no project has, as two
+     * components of one key, or two boards of one slug, for a moment
+     * ("inconsistent").
+     */
     readonly reason: "unread" | "inconsistent",
     message: string,
   ) {
@@ -233,12 +243,13 @@ const literalFalse: ASTExpression = { kind: "lit", type: "bool", value: false };
  * compiles it, against what the snapshot holds, and each text's segments
  * derived, with what it stands in for listed (StandIn). It reads the
  * entities that view holds: a board whose content the page has not read
- * has no nodes, and a component that it has not read whole no values of
- * its own, which play mode reads first (session.ts). It reads view at once,
- * and resolves once it has hashed the files that it wrote, as load does,
- * by the platform's SHA-256, or by its own, which lets the page run, where
- * it has none. It rejects with a ProjectionError where view has not read
- * the project, or holds what no project has.
+ * has no nodes, which play mode reads first (session.ts), as it reads each
+ * component whole. It reads view at once, and resolves once it has hashed
+ * the files that it wrote, as load does, by the platform's SHA-256, or by
+ * its own, which lets the page run, where it has none. It rejects with a
+ * ProjectionError where view has not read the project, or a component of
+ * the snapshot whole, whose values its type's defaults would else stand in
+ * for unsaid, or holds what no project has.
  */
 export async function projectDraft(
   view: ProjectionSources,
@@ -318,6 +329,13 @@ export async function projectDraft(
   const components = live(view.components)
     .filter((c) => typeById.has(c.component_type_id))
     .sort(byId);
+  const partial = components.find((c) => c.attributes === undefined);
+  if (partial !== undefined) {
+    throw new ProjectionError(
+      "unread",
+      `the component ${partial.id} has not been read whole`,
+    );
+  }
   const componentById = new Map(components.map((c) => [c.id, c]));
 
   // What the snapshot's expressions can name, as the server compiles them.
@@ -514,7 +532,16 @@ export async function projectDraft(
   const boardFiles = new Map<string, BoardFile>();
   const index: ManifestBoard[] = [];
   let connectionCount = 0;
+  // The boards' slugs, which name their files.
+  const slugs = new Set<string>();
   for (const b of boards) {
+    if (slugs.has(b.slug)) {
+      throw new ProjectionError(
+        "inconsistent",
+        `two boards have the slug ${b.slug}`,
+      );
+    }
+    slugs.add(b.slug);
     const own = nodesOf.get(b.id) ?? [];
     const ports = new Map<string, Set<string>>();
     const fileNodes: Node[] = [];
@@ -623,6 +650,12 @@ export async function projectDraft(
               node: n.id,
               entity: n.id,
               ref: t.node_id,
+              reason:
+                to === undefined
+                  ? "gone"
+                  : to.type === "jumper"
+                    ? "jumper"
+                    : "board",
             });
           } else {
             target = { boardId: to.board_id, nodeId: to.id };
@@ -739,6 +772,7 @@ export async function projectDraft(
         kind: "entry",
         entity: project.id,
         ref: e.node_id,
+        reason: n === undefined ? "gone" : "board",
         ...(e.board_id === undefined ? {} : { board: e.board_id }),
       });
     } else {
@@ -747,7 +781,12 @@ export async function projectDraft(
   } else if (e.board_id !== undefined) {
     const at = boardFiles.get(e.board_id)?.board.entryNodeId;
     if (!boardIds.has(e.board_id)) {
-      standIns.push({ kind: "entry", entity: project.id, ref: e.board_id });
+      standIns.push({
+        kind: "entry",
+        entity: project.id,
+        ref: e.board_id,
+        reason: "gone",
+      });
     } else if (at !== undefined) {
       entry = { boardId: e.board_id, nodeId: at };
     }

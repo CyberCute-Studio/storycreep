@@ -271,7 +271,15 @@ describe("play mode", () => {
       expect(within(panel).getByText("Trust 1.")).toBeDefined(),
     );
     expect(within(panel).getByText("Speaker: Elara")).toBeDefined();
-    expect(within(panel).getByRole("heading", { name: "Quay" })).toBeDefined();
+    // The current node's heading has the focus, which says its speaker and
+    // its text as its description.
+    const quay = within(panel).getByRole("heading", { name: "Quay" });
+    await waitFor(() => expect(document.activeElement).toBe(quay));
+    expect(
+      (quay.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((d) => document.getElementById(d)?.textContent),
+    ).toEqual(["Speaker: Elara", "Trust 1."]);
     // The choices in their author's order.
     expect(
       within(within(panel).getByRole("region", { name: "Choices" }))
@@ -304,6 +312,12 @@ describe("play mode", () => {
       expect(lastMarks()).toMatchObject({ current: id("nd", "E") }),
     );
     expect(lastMarks()?.visited.has(id("nd", "A"))).toBe(true);
+    // The page that the flow went to gives its node's heading the focus.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(there).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
     expect(
       within(there).getByText(
         "The flow ended here, at a dead end: no connection leads on.",
@@ -333,6 +347,11 @@ describe("play mode", () => {
       expect(within(panel).getByText("You wait.")).toBeDefined(),
     );
     expect(calls.mock.calls.slice(before)).toEqual([]);
+    // The choice pressed went with the node that it left; the focus is on
+    // the node that it took the flow to.
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("heading", { name: "Wait" }),
+    );
   });
 
   it("plays from a node from its context menu, and stops by Shift and P, giving the canvas the focus back", async () => {
@@ -443,11 +462,15 @@ describe("play mode", () => {
         ),
       ).toBeDefined(),
     );
-    await user.click(
-      within(panel).getAllByRole("button", { name: "Restart" })[0],
-    );
+    await user.click(within(panel).getByRole("button", { name: "Restart" }));
     await waitFor(() =>
       expect(within(panel).getByText("Changed.")).toBeDefined(),
+    );
+    // Restart kept the focus in the panel, on the node that play started at.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Quay" }),
+      ),
     );
   });
 });

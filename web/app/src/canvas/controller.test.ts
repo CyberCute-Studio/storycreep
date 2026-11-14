@@ -292,6 +292,34 @@ describe("the canvas's controller", () => {
     expect(frames.length).toBe(drawn + 1);
   });
 
+  // A step of play mode on another board, which changes the marks only
+  // there, draws nothing of this board anew.
+  it("draws play's marks anew only once they change on the board", () => {
+    const { c, time, frames } = setUp();
+    placed(c, time);
+    const marks = (
+      current: string,
+      visited: string[],
+      traversed: string[],
+    ) => ({
+      current,
+      visited: new Set(visited),
+      traversed: new Set(traversed),
+    });
+    c.setPlay(marks("", ["nd_1"], []));
+    time.tick();
+    const drawn = frames.length;
+    const version = frames.at(-1)?.playVersion;
+    c.setPlay(marks("", ["nd_1", "nd_elsewhere"], ["cn_elsewhere"]));
+    time.tick();
+    expect(frames.length).toBe(drawn);
+    c.setPlay(marks("nd_1", ["nd_1", "nd_elsewhere"], ["cn_elsewhere"]));
+    time.tick();
+    expect(frames.length).toBe(drawn + 1);
+    expect(frames.at(-1)?.playVersion).toBe((version ?? 0) + 1);
+    expect(frames.at(-1)?.play?.current).toBe("nd_1");
+  });
+
   it("tells the benchmark which frames the browser's frame drew, and which the page's own work did, as once the canvas's size changed", () => {
     const { c, time } = setUp();
     placed(c, time);

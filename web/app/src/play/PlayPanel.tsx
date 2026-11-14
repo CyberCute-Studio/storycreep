@@ -6,12 +6,21 @@
 // for. Closing it stops play.
 
 import { Link } from "@tanstack/react-router";
-import type { ReactNode, RefObject } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import { titleOf } from "../canvas/labels";
 import { useDocumentState } from "../document/react";
 import type { ProjectDocument } from "../document/store";
+import { focusIsNowhere } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
 import { Panel } from "../ui/Panel";
@@ -21,40 +30,88 @@ import {
   fieldName,
   standInMessage,
 } from "./messages";
-import type { PlayError, PlaySession } from "./session";
+import type { PlayError, PlaySession, PlayState } from "./session";
 
 export function PlayPanel({
   projectId,
+  boardId,
   doc,
   session,
   returnFocus,
-  headingRef,
 }: {
   projectId: string;
+  /** The board whose page shows the panel. */
+  boardId: string;
   doc: ProjectDocument;
   session: PlaySession;
   /** What gets the focus once the panel has gone, as the canvas. */
   returnFocus: () => HTMLElement | null;
-  headingRef?: RefObject<HTMLHeadingElement | null>;
 }) {
   const { t } = useTranslation();
   const state = useStore(session.store);
-  const nodes = useDocumentState(doc, (s) => s.view.nodes);
-  const boards = useDocumentState(doc, (s) => s.view.boards);
+  // The names of what the panel says where it is, the boards' and the
+  // nodes' titles, read alone, so that a change of another node, as one
+  // that a collaborator moves, draws nothing here.
+  const named = useMemo(() => namedBy(state), [state]);
+  const names = useDocumentState(
+    doc,
+    useShallow((s) => [
+      ...named.boards.map((id) => s.view.boards.get(id)?.name),
+      ...named.nodes.map((id) => s.view.nodes.get(id)?.title),
+    ]),
+  );
+  const heading = useRef<HTMLHeadingElement>(null);
+  const current = useRef<HTMLElement>(null);
+  // The current node's heading gets the focus once a turn has left the
+  // flow on the board, as after a choice, a start, or a restart, where the
+  // panel had the focus, or nothing had, as once the button pressed went
+  // with what the turn showed anew, and on the page of another board that
+  // the board's page followed the flow to: so that a keyboard and a screen
+  // reader are where the flow is, which the heading names and describes.
+  // The page of another board leaves the turn to that board's.
+  const turn = state.status === "playing" ? state.turn : 0;
+  const flowBoard = state.status === "playing" ? state.flow.board : "";
+  useEffect(() => {
+    if (
+      turn === 0 ||
+      (flowBoard !== "" && flowBoard !== boardId) ||
+      !session.firstShown("panel", turn)
+    ) {
+      return;
+    }
+    // The panel's own element, which its heading is in.
+    const frame = heading.current?.closest("section");
+    if (
+      focusIsNowhere(document) ||
+      (frame?.contains(document.activeElement) ?? false)
+    ) {
+      current.current?.focus();
+    }
+  }, [session, turn, flowBoard, boardId]);
   if (state.status === "idle") {
     return null;
   }
+  const boardNames = new Map(named.boards.map((id, i) => [id, names[i]]));
+  const nodeTitles = new Map(
+    named.nodes.map((id, i) => [id, names[named.boards.length + i]]),
+  );
   // Where an entity is, by its node's title and its board's name, as the
   // page has them, linked to the node on its board's canvas, as a finding
   // of the validation is (FR-DEP-03 AC3).
   const where = (board: string | undefined, node: string | undefined) => {
-    const b = board === undefined ? undefined : boards.get(board);
-    const n = node === undefined ? undefined : nodes.get(node);
-    const boardName = b?.name ?? board ?? "";
-    if (n === undefined) {
+    const boardName =
+      (board === undefined ? undefined : boardNames.get(board)) ?? board ?? "";
+    const title = node === undefined ? undefined : nodeTitles.get(node);
+    if (title === undefined) {
       return boardName;
     }
-    return t("play.where", { node: titleOf(n, t), board: boardName });
+    return t("play.where", { node: titleOf({ title }, t), board: boardName });
+  };
+  // Restart and Try again go as play reads the project anew; the panel's
+  // heading has the focus meanwhile, until the current node's has it.
+  const restart = () => {
+    heading.current?.focus();
+    void session.restart();
   };
   const link = (
     board: string | undefined,
@@ -78,7 +135,7 @@ export function PlayPanel({
       title={t("play.title")}
       onClose={() => session.stop()}
       returnFocus={returnFocus}
-      headingRef={headingRef}
+      headingRef={heading}
     >
       {state.status === "loading" ? (
         <p role="status">
@@ -99,23 +156,20 @@ export function PlayPanel({
               {state.error.message}
             </code>
           )}
-          <Button onClick={() => void session.restart()}>
-            {t("play.try_again")}
-          </Button>
+          <Button onClick={restart}>{t("play.try_again")}</Button>
         </div>
       ) : (
         <PlayFlowView
           state={state}
           session={session}
+          currentRef={current}
           where={where}
           link={link}
         />
       )}
       <div className="flex flex-wrap gap-2">
         {state.status === "playing" && (
-          <Button onClick={() => void session.restart()}>
-            {t("play.restart")}
-          </Button>
+          <Button onClick={restart}>{t("play.restart")}</Button>
         )}
         <Button onClick={() => session.stop()}>{t("play.stop")}</Button>
       </div>
@@ -126,11 +180,14 @@ export function PlayPanel({
 function PlayFlowView({
   state,
   session,
+  currentRef,
   where,
   link,
 }: {
-  state: Extract<PlaySession["state"], { status: "playing" }>;
+  state: Extract<PlayState, { status: "playing" }>;
   session: PlaySession;
+  /** What gets the focus after a turn: the current node's heading, or what says that the flow is at none. */
+  currentRef: RefObject<HTMLElement | null>;
   where: (board: string | undefined, node: string | undefined) => string;
   link: (
     board: string | undefined,
@@ -141,46 +198,61 @@ function PlayFlowView({
   const { t } = useTranslation();
   const { flow, projection } = state;
   const standIns = projection.standIns;
+  const speakerId = useId();
+  const textId = useId();
+  const endedId = useId();
+  // The current node's heading, which gets the focus after a turn, says
+  // what follows it as its description, so that a screen reader says the
+  // node whole as the focus comes to it.
+  const described = [
+    ...(flow.speaker === "" ? [] : [speakerId]),
+    textId,
+    ...(flow.ended === undefined ? [] : [endedId]),
+  ].join(" ");
   return (
     <div className="space-y-4">
       {state.changed && (
-        <div
-          role="status"
-          className="space-y-2 rounded-md border border-border p-3"
-        >
-          <p>{t("play.changed")}</p>
-          <Button onClick={() => void session.restart()}>
-            {t("play.restart")}
-          </Button>
-        </div>
+        // The panel's Restart, under the flow, plays the draft as it is.
+        <p role="status" className="rounded-md border border-border p-3">
+          {t("play.changed")}
+        </p>
       )}
-      {/* Where the flow is, said as it changes, whole each time. */}
-      <section
-        aria-label={t("play.current")}
-        aria-live="polite"
-        aria-atomic="true"
-        className="space-y-2"
-      >
+      <section aria-label={t("play.current")} className="space-y-2">
         {flow.node === "" ? (
-          <p className="text-fg-muted">{t("play.nowhere")}</p>
+          <p
+            ref={currentRef as RefObject<HTMLParagraphElement | null>}
+            tabIndex={-1}
+            className="text-fg-muted"
+          >
+            {t("play.nowhere")}
+          </p>
         ) : (
           <>
             <p className="text-sm text-fg-muted">
               {where(flow.board, undefined)}
             </p>
-            <h3 className="font-semibold break-words">
+            <h3
+              ref={currentRef as RefObject<HTMLHeadingElement | null>}
+              tabIndex={-1}
+              aria-describedby={described}
+              className="font-semibold break-words"
+            >
               {flow.title === "" ? t("canvas.node.untitled") : flow.title}
             </h3>
             {flow.speaker !== "" && (
-              <p className="font-medium break-words">
+              <p id={speakerId} className="font-medium break-words">
                 {t("play.speaker", { speaker: flow.speaker })}
               </p>
             )}
-            <p className="break-words whitespace-pre-line">{flow.text}</p>
+            <p id={textId} className="break-words whitespace-pre-line">
+              {flow.text}
+            </p>
           </>
         )}
         {flow.ended !== undefined && (
-          <p className="font-medium">{endedMessage(t, flow.ended)}</p>
+          <p id={endedId} className="font-medium">
+            {endedMessage(t, flow.ended)}
+          </p>
         )}
       </section>
       {flow.phase === "awaiting_choice" && flow.choices.length > 0 && (
@@ -289,4 +361,30 @@ function ErrorItem({
       )}
     </li>
   );
+}
+
+// namedBy returns the boards and the nodes whose names the panel says, of
+// state: the flow's board, and where its errors and the stand-ins are.
+function namedBy(state: PlayState): {
+  boards: readonly string[];
+  nodes: readonly string[];
+} {
+  const boards = new Set<string>();
+  const nodes = new Set<string>();
+  if (state.status === "playing") {
+    const add = (at: { board?: string; node?: string }) => {
+      if (at.board !== undefined) {
+        boards.add(at.board);
+      }
+      if (at.node !== undefined) {
+        nodes.add(at.node);
+      }
+    };
+    if (state.flow.board !== "") {
+      boards.add(state.flow.board);
+    }
+    state.flow.errors.forEach(add);
+    state.projection.standIns.forEach(add);
+  }
+  return { boards: [...boards], nodes: [...nodes] };
 }

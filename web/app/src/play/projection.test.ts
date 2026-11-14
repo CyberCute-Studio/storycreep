@@ -40,7 +40,7 @@ import {
   testVariable,
   text,
 } from "../test/play";
-import { encoded, projectDraft } from "./projection";
+import { encoded, ProjectionError, projectDraft } from "./projection";
 
 const now = new Date("2026-11-14T12:00:00.250Z");
 
@@ -295,6 +295,7 @@ describe("a draft with what no snapshot holds", () => {
         node: "nd_00000000000000000000000009",
         entity: "nd_00000000000000000000000009",
         ref: "nd_00000000000000000000000010",
+        reason: "gone",
       },
       {
         kind: "target",
@@ -302,6 +303,7 @@ describe("a draft with what no snapshot holds", () => {
         node: "nd_00000000000000000000000011",
         entity: "nd_00000000000000000000000011",
         ref: "nd_00000000000000000000000009",
+        reason: "jumper",
       },
       {
         kind: "connection",
@@ -330,6 +332,7 @@ describe("a draft with what no snapshot holds", () => {
         board: other.id,
         entity: testProjectId,
         ref: "nd_00000000000000000000000010",
+        reason: "gone",
       },
     ]);
   });
@@ -520,4 +523,71 @@ test("a stand-in says why a reference or a connection is left out, and whose an 
       field: "on_traverse",
     }),
   ]);
+});
+
+// A jumper's target and the project's entry that name a node of another
+// board than they name are stood in for as such, rather than as gone.
+test("a target or an entry of a node on another board than it names says so", async () => {
+  const jumper = {
+    ...testNode("nd_00000000000000000000000040", 0, 0, onReasons),
+    type: "jumper",
+    target: { board_id: other.id, node_id: "nd_00000000000000000000000023" },
+  } as Node;
+  const draft = {
+    ...reasonsDraft,
+    boards: new Map(reasonsDraft.boards).set(other.id, other),
+    nodes: new Map(reasonsDraft.nodes).set(jumper.id, jumper),
+    project: {
+      ...(reasonsDraft.project as NonNullable<typeof reasonsDraft.project>),
+      entry: { board_id: other.id, node_id: "nd_00000000000000000000000023" },
+    },
+  };
+  const { standIns } = await projectDraft(draft, { now });
+  expect(standIns).toContainEqual({
+    kind: "target",
+    board: reasons.id,
+    node: jumper.id,
+    entity: jumper.id,
+    ref: "nd_00000000000000000000000023",
+    reason: "board",
+  });
+  expect(standIns).toContainEqual({
+    kind: "entry",
+    board: other.id,
+    entity: testProjectId,
+    ref: "nd_00000000000000000000000023",
+    reason: "board",
+  });
+});
+
+// What the projection cannot write at all: a component whose values the
+// document does not hold, which its type's defaults would stand in for
+// unsaid, and two boards of one slug, whose files would be one.
+describe("a document that the projection cannot write", () => {
+  test("is refused where it does not hold a component whole", async () => {
+    const keeper = reasonsDraft.components.get(
+      "cmp_00000000000000000000000031",
+    );
+    const partial = { ...keeper } as NonNullable<typeof keeper>;
+    delete partial.attributes;
+    const refused = projectDraft(
+      { ...reasonsDraft, components: new Map([[partial.id, partial]]) },
+      { now },
+    );
+    await expect(refused).rejects.toBeInstanceOf(ProjectionError);
+    await expect(refused).rejects.toMatchObject({ reason: "unread" });
+  });
+
+  test("is refused where two boards have one slug", async () => {
+    const twin = { ...other, slug: reasons.slug };
+    await expect(
+      projectDraft(
+        {
+          ...reasonsDraft,
+          boards: new Map(reasonsDraft.boards).set(twin.id, twin),
+        },
+        { now },
+      ),
+    ).rejects.toMatchObject({ reason: "inconsistent" });
+  });
 });

@@ -76,9 +76,7 @@ export interface PlayFlow {
   readonly ended: Reason | undefined;
   /** Whether strict mode halted the flow at a runtime error. */
   readonly halted: boolean;
-  /** The nodes that the flow entered, in order. */
-  readonly path: readonly string[];
-  /** The nodes of path, and the connections that the flow took, which the canvas highlights. */
+  /** The nodes that the flow entered, in the order that it first entered them, and the connections that it took, which the canvas highlights. */
   readonly visited: ReadonlySet<string>;
   readonly traversed: ReadonlySet<string>;
   /** The runtime errors of every step, in order. */
@@ -86,6 +84,15 @@ export interface PlayFlow {
   /** How many steps the flow has taken: the start's, and one for each choice. */
   readonly steps: number;
 }
+
+/**
+ * What a session keeps of the projection that it runs: all of it but its
+ * files, whose bytes the loader has read into the snapshot once.
+ */
+export type PlayedProjection = Omit<Projection, "files">;
+
+/** What of a turn a board's page shows once (PlaySession's firstShown). */
+export type TurnShown = "canvas" | "panel";
 
 /** A project's play session, as its store holds it. */
 export type PlayState =
@@ -112,7 +119,7 @@ export type PlayState =
   | {
       readonly status: "playing";
       readonly start: PlayStart;
-      readonly projection: Projection;
+      readonly projection: PlayedProjection;
       readonly flow: PlayFlow;
       /** Whether the draft has changed since play projected it (N78). */
       readonly changed: boolean;
@@ -140,6 +147,8 @@ export class PlaySession {
   private snapshot: Snapshot | undefined;
   private unwatch: (() => void) | undefined;
   private turns = 0;
+  // The last turn that a board's page showed, by what of it (firstShown).
+  private readonly shown = new Map<TurnShown, number>();
 
   constructor(doc: ProjectDocument) {
     this.doc = doc;
@@ -148,6 +157,22 @@ export class PlaySession {
   /** The session's state. */
   get state(): PlayState {
     return this.store.getState();
+  }
+
+  /**
+   * Reports whether no board's page has shown turn as what says yet, as
+   * the canvas that reveals the current node, or the panel that gives it
+   * the focus, and records that the caller shows it: the page of the board
+   * that the turn leaves the flow on shows it once, the page that the board's
+   * page follows the flow to among them, and a page that the user opens
+   * later, as by going back to that board, does not show it anew.
+   */
+  firstShown(what: TurnShown, turn: number): boolean {
+    if (turn <= (this.shown.get(what) ?? 0)) {
+      return false;
+    }
+    this.shown.set(what, turn);
+    return true;
   }
 
   /**
@@ -161,20 +186,29 @@ export class PlaySession {
     const current = () => generation === this.generation;
     let reading = true;
     try {
-      const [[{ projectDraft }, { load, Runtime }]] = await Promise.all([
-        engine(),
-        this.readAll(current),
-      ]);
+      const [[{ projectDraft, ProjectionError }, { load, Runtime }]] =
+        await Promise.all([engine(), this.readAll(current)]);
       if (!current()) {
         return;
+      }
+      const view = this.doc.store.getState().view;
+      let projection: Projection;
+      try {
+        projection = await projectDraft(view);
+      } catch (error) {
+        // A component that the document does not hold whole, as one whose
+        // values a read of the components' list took again after play read
+        // it, is a read that failed, which Try again makes anew, rather than
+        // a draft that play cannot run.
+        reading = error instanceof ProjectionError && error.reason === "unread";
+        throw error;
       }
       reading = false;
-      const view = this.doc.store.getState().view;
-      const projection = await projectDraft(view);
       if (!current()) {
         return;
       }
-      const snapshot = await load(projection.files);
+      const { files, ...played } = projection;
+      const snapshot = await load(files);
       if (!current()) {
         return;
       }
@@ -182,7 +216,7 @@ export class PlaySession {
       this.runtime = new Runtime(snapshot, true);
       const flow = this.flowAfter(
         emptyFlow(),
-        projection,
+        played,
         this.runtime.start(start.board, start.node),
         undefined,
       );
@@ -190,7 +224,7 @@ export class PlaySession {
         {
           status: "playing",
           start,
-          projection,
+          projection: played,
           flow,
           changed: false,
           turn: ++this.turns,
@@ -200,6 +234,10 @@ export class PlaySession {
       this.watch(view);
     } catch (error) {
       if (current()) {
+        // The start is over, so that the reads that it still has to make,
+        // as once importing what plays the draft failed while they went on,
+        // are not made.
+        this.begin();
         this.store.setState({ status: "failed", start, error, reading }, true);
       }
     }
@@ -348,7 +386,7 @@ export class PlaySession {
   // start's, or a choice of the connection chosen.
   private flowAfter(
     flow: PlayFlow,
-    projection: Projection,
+    projection: PlayedProjection,
     events: readonly Event[],
     chosen: string | undefined,
   ): PlayFlow {
@@ -358,7 +396,6 @@ export class PlaySession {
       return flow;
     }
     const step = chosen === undefined ? 0 : flow.steps;
-    const path = [...flow.path];
     const visited = new Set(flow.visited);
     const traversed = new Set(flow.traversed);
     const errors = [...flow.errors];
@@ -371,7 +408,6 @@ export class PlaySession {
     for (const e of events) {
       switch (e.kind) {
         case "enter":
-          path.push(e.node);
           visited.add(e.node);
           break;
         case "end":
@@ -408,7 +444,6 @@ export class PlaySession {
       choices: r.choices(),
       ended: phase === "ended" ? (ended ?? flow.ended) : undefined,
       halted: r.halted(),
-      path,
       visited,
       traversed,
       errors,
@@ -429,7 +464,6 @@ function emptyFlow(): PlayFlow {
     choices: [],
     ended: undefined,
     halted: false,
-    path: [],
     visited: new Set(),
     traversed: new Set(),
     errors: [],
@@ -442,7 +476,7 @@ function emptyFlow(): PlayFlow {
 // them: a node's, a connection's by the node that it leaves, and a branch
 // output's by its branch.
 function placeOf(
-  projection: Projection,
+  projection: PlayedProjection,
   s: Snapshot,
   at: string,
   field: ExpressionField | "",
@@ -499,8 +533,8 @@ function placeOf(
 }
 
 // The fields of an entity, and of what it holds, as a branch's outputs and
-// a type's attribute definitions, that the projection does not read, which
-// a change of alone changes nothing that play shows.
+// a type's attribute definitions, that every change of it changes, as the
+// server answers the page's own, rather than what it is.
 const unread = new Set(["rev", "updated_at", "created_at"]);
 
 // The fields that hold an expression, of which the projection reads the
@@ -519,12 +553,17 @@ const projected = [
 ] as const;
 
 // draftChanged reports whether after, the document as the page shows it
-// now, holds otherwise than before what the projection reads: an entity of
-// the project's content, in the trash or not, added, gone, or changed but
-// for what the projection does not read, as its revision and its times, and
+// now, holds otherwise than before an entity of the kinds that the
+// projection reads: one of the project's content, in the trash or not,
+// added, gone, or changed in any field but its revision and its times, and
 // those of what it holds, an expression's but its source, a board's or a
 // component's description, or a component's values where a read of the
-// components' list left them out.
+// components' list left them out. Those are what the server's answers and
+// the reads of lists rewrite of a draft that did not change, which would
+// else say that it did; a change of a field that the projection does not
+// write, as a node's colour, says that it did, which Restart takes as no
+// change, rather than a list of such fields to keep as the projection's
+// own, which a field that the projection came to write would be missed by.
 export function draftChanged(before: Doc, after: Doc): boolean {
   if (before === after) {
     return false;
@@ -552,8 +591,8 @@ export function draftChanged(before: Doc, after: Doc): boolean {
   return false;
 }
 
-// sameEntity reports whether a and b, entities of kind, are the same as the
-// projection reads them.
+// sameEntity reports whether a and b, entities of kind, are the same as
+// draftChanged compares them.
 function sameEntity(
   a: unknown,
   b: unknown,
@@ -576,7 +615,7 @@ function sameEntity(
   return stable(x, ignored) === stable(y, ignored);
 }
 
-// stable returns the JSON of v, as the projection reads it, its keys
+// stable returns the JSON of v, as draftChanged compares it, its keys
 // sorted, without the top-level keys that ignored tells.
 function stable(
   v: Record<string, unknown>,
@@ -597,8 +636,8 @@ function stable(
     }
     return u;
   };
-  // field returns the value u of the key k as the projection reads it: an
-  // expression's source alone.
+  // field returns the value u of the key k as draftChanged compares it: an
+  // expression's source alone, which is what the projection reads of it.
   const field = (k: string, u: unknown): unknown =>
     expressions.has(k) &&
     typeof u === "object" &&

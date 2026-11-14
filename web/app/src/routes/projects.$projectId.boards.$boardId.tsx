@@ -311,7 +311,9 @@ function BoardContent({
   // that board's canvas, where the session goes on, its state kept. A step
   // that leaves the flow on the board shown, and the session's turn that
   // the page was shown at, which a page that the user opened while playing
-  // shows, moves nothing.
+  // shows, moves nothing; a page that the user opened while play read the
+  // project is shown before the start's turn, which moves it, as it moves
+  // the page that started play.
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,

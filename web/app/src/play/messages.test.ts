@@ -143,6 +143,26 @@ test.each<[StandIn, string]>([
     { kind: "connection", entity: "cn_1", reason: "target" },
     "play.stand_in.connection_target",
   ],
+  [
+    { kind: "target", entity: "nd_1", ref: "nd_2", reason: "gone" },
+    "play.stand_in.target",
+  ],
+  [
+    { kind: "target", entity: "nd_1", ref: "nd_2", reason: "jumper" },
+    "play.stand_in.target_jumper",
+  ],
+  [
+    { kind: "target", entity: "nd_1", ref: "nd_2", reason: "board" },
+    "play.stand_in.target_board",
+  ],
+  [
+    { kind: "entry", entity: "prj_1", ref: "nd_2", reason: "gone" },
+    "play.stand_in.entry",
+  ],
+  [
+    { kind: "entry", entity: "prj_1", ref: "nd_2", reason: "board" },
+    "play.stand_in.entry_board",
+  ],
 ])("%j says %s", (s, key) => {
   expect(standInMessage(t, s, "where")).toBe(key);
 });
