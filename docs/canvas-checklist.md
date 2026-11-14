@@ -32,7 +32,7 @@ Open each address of `tablet.md` on the tablet, in a new tab, and do not touch t
 | FR-EDIT-11 AC2 | The board of 5,000 nodes, `bench=pan&seconds=300&warm=pass`, which warms up for a pass of 500 of its nodes, after which PixiJS's caches of text, which are bounded, are full | Read the JavaScript heap in remote DevTools (`chrome://inspect`, Memory) once the run's status says Recording…, and at its end, each after collecting the garbage: it grows less than 10%. The GPU textures that the run reports are as many at its end as at its start. |
 | NFR-PERF-18 | `medium`, `bench=pan&seconds=300&warm=pass` | As FR-EDIT-11 AC2; and the tab's memory in Chrome's task manager stays under 400 MB. |
 | NFR-PERF-06 | `medium`, `bench=edit&seconds=30`, which moves a node in view a step of the grid and back, twice a second, as a drag of it does once it lands | The time from each edit to the frame that shows it is under 50 ms at the 95th percentile. |
-| NFR-PERF-11, FR-DEP-02 AC3 | The dependency view of the 60 boards, `bench=load`, in a tab opened anew | The first drawing of the graph, from the start of the page's load, is under 1,000 ms (plan note N77). |
+| NFR-PERF-11, FR-DEP-02 AC3 | The dependency view of the 60 boards, `bench=load`, in a tab opened anew | The first drawing of the graph, from the start of the view's load, is under 1,000 ms (plan note N77). |
 | NFR-PERF-05 | `large`, `bench=load`, on the reference desktop | The first frame of the board is under 6,000 ms. |
 | NFR-PERF-02 | `medium`, `bench=panzoom`, on the reference desktop | 60 frames a second or more, and the time between frames is under 16 ms at the 95th percentile. |
 

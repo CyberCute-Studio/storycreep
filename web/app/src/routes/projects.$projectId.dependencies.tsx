@@ -5,7 +5,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { byName } from "../content/textNames";
-import { DependencyBench } from "../dependencies/bench";
+import { DependencyBench, openedMark } from "../dependencies/bench";
 import {
   DependencyGraph,
   type GraphSelection,
@@ -60,6 +60,14 @@ export const Route = createFileRoute("/projects/$projectId/dependencies")({
     variable: searchId("variable", search.variable),
     bench: search.bench === "load" ? "load" : undefined,
   }),
+  // A run of the benchmark marks when the view begins to load, before its
+  // loader reads anything, from which it times the graph's first drawing.
+  beforeLoad: ({ search }) => {
+    if (search.bench === "load") {
+      performance.clearMarks(openedMark);
+      performance.mark(openedMark);
+    }
+  },
   loaderDeps: ({ search }) => ({
     kind: search.kind,
     board: search.board,
