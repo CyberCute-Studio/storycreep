@@ -65,7 +65,7 @@ var ErrNotFound = errors.New("statistics: no such node")
 // Counts are the writing statistics of a part of a project's content: a
 // node, a board, or the project, of what of it is not in the trash.
 type Counts struct {
-	Words      int64 `json:"words" minimum:"0" doc:"How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as the text export counts them (PRD FR-TEXT-05, FR-TEXT-06)."`
+	Words      int64 `json:"words" minimum:"0" doc:"How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them."`
 	Characters int64 `json:"characters" minimum:"0" doc:"How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items."`
 	Choices    int64 `json:"choices" minimum:"0" doc:"How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5)."`
 	Conditions int64 `json:"conditions" minimum:"0" doc:"How many conditions it has: of the connections that leave its nodes, and of its branches' outputs."`

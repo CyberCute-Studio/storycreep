@@ -33,8 +33,8 @@ type nodeStatisticsOutput struct {
 // statisticsDoc says, in the descriptions of the statistics' operations,
 // what they count, and of which content.
 const statisticsDoc = " A text is an element's text or the label of a connection, whose words and characters are " +
-	"counted as the text export counts them, a mention as its component's name and a value reference as its " +
-	"name in braces (PRD FR-TEXT-05), once, as it changes, rather than at each read, so that the statistics hold " +
+	"counted as PRD FR-TEXT-05 and FR-TEXT-06 define them, a mention as its component's name and a value " +
+	"reference as its name in braces, once, as it changes, rather than at each read, so that the statistics hold " +
 	"an edit as soon as its batch is answered (FR-TEXT-06 AC1). They are of what is not in the project's trash, " +
 	"and of the project's draft as of one moment, its seq, so that a batch that commits meanwhile is in them " +
 	"whole or not at all."
