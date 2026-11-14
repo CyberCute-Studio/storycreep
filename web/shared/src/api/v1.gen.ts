@@ -1588,6 +1588,8 @@ export interface Expression {
 export interface Finding {
   /** The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none. */
   board_id?: string;
+  /** The name of the board of the entity, which a finding has exactly when it has board_id */
+  board_name?: string;
   /** The code of the rule that found it (PRD FR-DEP-03) */
   code: "expr_invalid" | "ref_dangling" | "jumper_broken" | "jumper_invalid" | "branch_no_outputs" | "port_unconnected" | "var_read_never_written" | "var_written_never_read" | "node_unreachable" | "node_empty" | "choice_duplicate_label" | "dead_end" | "speaker_missing" | "board_entry_missing" | "connection_self" | "connection_parallel";
   /** The ID of the entity that the finding is about, by which a client opens its editor, and which a mute names */
@@ -1602,6 +1604,8 @@ export interface Finding {
   mute?: Mute;
   /** The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch */
   node_id?: string;
+  /** The title of the node of the entity, which may be empty, and which a finding has exactly when it has node_id */
+  node_title?: string;
   /** The rule's severity: an error blocks publishing, a warning needs an acknowledgement to publish, and an info neither */
   severity: "error" | "warning" | "info";
   /** What else the finding names: what a dangling reference refers to, a jumper's target, or the earlier connection that a choice or a connection repeats */

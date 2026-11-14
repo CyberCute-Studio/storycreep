@@ -428,6 +428,13 @@ interface BoardCanvasProps {
    * item 61), or, once it changes, shows at once.
    */
   focus?: string;
+  /**
+   * The connection, leaving the node of focus, that the canvas selects once
+   * it has opened on that node, as a link to a finding of a connection asks
+   * (plan item 70), on a board that may be changed, whose inspector then
+   * shows the connection's form; on another, the node stays selected.
+   */
+  focusConnection?: string;
 }
 
 /**
@@ -457,6 +464,7 @@ function BoardCanvasOf({
   workspaceId,
   editable = false,
   focus,
+  focusConnection,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -892,8 +900,11 @@ function BoardCanvasOf({
     opensInspector.current = editable && docked;
   });
   const openNode = useCallback(
-    (id: string) =>
+    (id: string, connection?: string) =>
       controller.focus(id, () => {
+        if (connection !== undefined) {
+          controller.selectConnection(connection);
+        }
         if (opensInspector.current) {
           setInspecting(true);
         }
@@ -902,9 +913,9 @@ function BoardCanvasOf({
   );
   useEffect(() => {
     if (focus !== undefined) {
-      openNode(focus);
+      openNode(focus, focusConnection);
     }
-  }, [openNode, focus]);
+  }, [openNode, focus, focusConnection]);
   // A link on the page to a node of this board that the address names
   // already, as a jumper's to its target on its own board, followed a
   // second time, or on a board that a link to that target opened, changes

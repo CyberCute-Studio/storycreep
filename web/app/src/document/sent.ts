@@ -5,6 +5,17 @@
 import type { ProjectDocument } from "./store";
 
 /**
+ * How long, in milliseconds, a read that the project's document has read
+ * again as its operations apply (Follower), as of the writing statistics,
+ * waits for the page's batches at most, which the server answers in far
+ * less, so that one that waits for long, as one queued while the page is
+ * offline, keeps neither the page from opening nor what it shows loading:
+ * the read goes on without it, and the document has it read again once it
+ * applies.
+ */
+export const sentWait = 3_000;
+
+/**
  * Resolves once doc sends none of the page's batches, at once where it
  * sends none, or once signal ends the wait, or, given wait, once that many
  * milliseconds have passed: what the page shows of them before the server

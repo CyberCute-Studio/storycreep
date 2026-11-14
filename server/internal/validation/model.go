@@ -49,17 +49,19 @@ const (
 	jumper  = "jumper"
 )
 
-// board is a board: its ID and its entry node, which may be in the trash, or
-// zero for none.
+// board is a board: its ID, its entry node, which may be in the trash, or
+// zero for none, and its name, which a finding names it by.
 type board struct {
 	id, entry ids.UUID
+	name      string
 }
 
 // node is a node: its type, an element's kind, speaker, whether it is an
-// ending, and whether its text is empty, and a jumper's target, zero for
-// none.
+// ending, and whether its text is empty, a jumper's target, zero for none,
+// and its title, which a finding names it by.
 type node struct {
 	id, board  ids.UUID
+	title      string
 	typ, kind  string
 	speaker    ids.UUID
 	ending     bool

@@ -10,7 +10,7 @@
 import type { NodeStatistics, ProjectStatistics } from "@storycreep/shared/api";
 import { queryOptions } from "@tanstack/react-query";
 import { api, notFoundBy } from "../api";
-import { whenSent } from "../document/sent";
+import { sentWait, whenSent } from "../document/sent";
 import type { ProjectDocument } from "../document/store";
 
 /** The key of every read of the statistics of projectId, which each operation of it has read again. */
@@ -19,21 +19,12 @@ export function statisticsKey(projectId: string) {
 }
 
 /**
- * How long, in milliseconds, a read of the statistics waits for the page's
- * batches at most, which the server answers in far less, so that one that
- * waits for long, as one queued while the page is offline, keeps neither
- * the page from opening nor the inspector's counts loading: the read goes
- * on without it, and the document has it read again once it applies. A
- * node's that the server answers with not_found, sent while the page's
- * batches were unanswered, waits for them for as long as they take, and
- * reads again (nodeStatisticsQuery).
- */
-const sentWait = 3_000;
-
-/**
  * The writing statistics of the project of doc and of each of its boards,
  * read once the page's batches have been answered, or after sentWait, so
- * that they hold what the page shows of them.
+ * that they hold what the page shows of them. A node's that the server
+ * answers with not_found, sent while the page's batches were unanswered,
+ * waits for them for as long as they take, and reads again
+ * (nodeStatisticsQuery).
  */
 export function projectStatisticsQuery(doc: ProjectDocument) {
   return queryOptions({

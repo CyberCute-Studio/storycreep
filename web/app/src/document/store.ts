@@ -46,9 +46,11 @@ import {
   signedOutBy,
 } from "../api";
 import { csrfHeaders } from "../auth/session";
+import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
 import { conflictOf, projectQuery } from "../project/queries";
 import { statisticsKey } from "../statistics/queries";
+import { validationKey } from "../validation/queries";
 import { type AnyCommand, applyCommands, canonical } from "./apply";
 import {
   type Doc,
@@ -67,6 +69,7 @@ import {
   placeOf,
   typeOfAttribute,
 } from "./doc";
+import { Follower } from "./follow";
 import { backoff, type Realtime } from "./realtime";
 import {
   applyOperation,
@@ -417,12 +420,22 @@ const earlierKept = 1_000;
 /**
  * How long, in milliseconds, the document waits after it has had the
  * writing statistics read again before it has them read again for the
- * operations that applied meanwhile (followStatistics), so that a run of
+ * operations that applied meanwhile (Follower), so that a run of
  * operations, as another session's typing, has them read twice a second at
  * most, rather than once for each, while they follow each edit within a
  * second (PRD FR-TEXT-06 AC1).
  */
 const statisticsPause = 500;
+
+/**
+ * How long, in milliseconds, the document waits after it has had the
+ * validation report and the dependency graph read again before it has them
+ * read again for the operations that applied meanwhile (Follower): once a
+ * second at most, as the server validates the whole draft anew for each
+ * read of the report, which takes up to seconds of a project of 5,000 nodes
+ * (PRD FR-DEP-03 AC2), and a read under way is let finish first.
+ */
+const derivedPause = 1_000;
 
 /** The fields of an entity that no command writes, which a conflict does not compare. */
 const meta = new Set(["rev", "created_at", "updated_at"]);
@@ -702,16 +715,27 @@ export class ProjectDocument {
    * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The wait after the writing statistics were read again, while it lasts, whether an operation applied during it, which its end has them read again for, and whether the document waits for the answers of reads of them that were under way as an operation applied, which have them read again (followStatistics). */
-  private statisticsTimer: ReturnType<typeof setTimeout> | undefined;
-  private statisticsAgain = false;
-  private statisticsAwaited = false;
+  /** What has the reads that the server derives of the whole project read again as operations apply: the writing statistics, the validation report, and the dependency graph (followed). */
+  private readonly followers: readonly Follower[];
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
   constructor(projectId: string, options: DocumentOptions) {
     this.projectId = projectId;
     this.options = options;
+    this.followers = [
+      new Follower(
+        options.queryClient,
+        statisticsKey(projectId),
+        statisticsPause,
+      ),
+      new Follower(options.queryClient, validationKey(projectId), derivedPause),
+      new Follower(
+        options.queryClient,
+        dependenciesKey(projectId),
+        derivedPause,
+      ),
+    ];
     this.now = options.now ?? (() => new Date().toISOString());
     const userId = options.queryClient.getQueryData(
       sessionQuery.queryKey,
@@ -909,7 +933,9 @@ export class ProjectDocument {
     this.disposed = true;
     clearTimeout(this.resyncTimer);
     clearTimeout(this.lostTimer);
-    clearTimeout(this.statisticsTimer);
+    for (const follower of this.followers) {
+      follower.dispose();
+    }
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.history.close();
@@ -1401,7 +1427,9 @@ export class ProjectDocument {
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
    * it, as an unarchive's archived_at, the trash, which a deletion or a
-   * restoration changes, and the writing statistics, which any change may.
+   * restoration changes, and the reads that the server derives of the whole
+   * project, which any change may: the writing statistics, the validation
+   * report, and the dependency graph (Follower).
    */
   private followed(
     op: Operation | undefined,
@@ -1419,64 +1447,13 @@ export class ProjectDocument {
       });
     }
     // The writing statistics, which nearly every command changes, as the
-    // server counts each text as a batch changes it (statistics/queries.ts).
-    this.followStatistics();
-  }
-
-  /**
-   * Has the reads of the writing statistics that a page shows read again,
-   * as an operation applies: at once, unless they were read again less than
-   * statisticsPause ago, and then once more at the end of that wait, for
-   * the operations that applied during it, so that they follow each edit
-   * within a second (PRD FR-TEXT-06 AC1), however many operations apply.
-   * A read that is under way is let finish rather than begun anew
-   * (cancelRefetch), since one begun anew as each operation applies, which
-   * waits again for the page's batches (whenSent) and for the server, would
-   * never be answered while the operations come faster than that, as on a
-   * slow connection; and as it may have read the server before the
-   * operation applied, they are read again once it is answered, as they
-   * are once one that a page's loader reads is, which no page shows yet,
-   * and whose answer would otherwise be taken for one of after the
-   * operation. The document waits for the answers of the reads under way,
-   * rather than look again at the end of each wait while they are, so that
-   * one that waits for long, as a node's that waits for the page's batches
-   * while the page is offline (nodeStatisticsQuery), keeps no timer going
-   * meanwhile. Those that no page shows are marked alone, so that a page
-   * that shows them later reads them again, and a document of whose
-   * statistics no page shows any, and reads none, keeps no timer, which
-   * would hold it once it is dropped.
-   */
-  private followStatistics(): void {
-    if (this.statisticsTimer !== undefined) {
-      this.statisticsAgain = true;
-      return;
+    // server counts each text as a batch changes it (statistics/queries.ts),
+    // and the validation report and the dependency graph, which the server
+    // derives of the draft as each is read (validation/queries.ts,
+    // dependencies/queries.ts).
+    for (const follower of this.followers) {
+      follower.follow();
     }
-    const client = this.options.queryClient;
-    const queryKey = statisticsKey(this.projectId);
-    const cache = client.getQueryCache();
-    const reading = cache
-      .findAll({ queryKey, fetchStatus: "fetching" })
-      .flatMap((query) => query.promise ?? []);
-    void client.invalidateQueries({ queryKey }, { cancelRefetch: false });
-    if (reading.length > 0 && !this.statisticsAwaited) {
-      this.statisticsAwaited = true;
-      void Promise.allSettled(reading).then(() => {
-        this.statisticsAwaited = false;
-        if (!this.disposed) {
-          this.followStatistics();
-        }
-      });
-    }
-    if (cache.findAll({ queryKey, type: "active" }).length === 0) {
-      return;
-    }
-    this.statisticsTimer = setTimeout(() => {
-      this.statisticsTimer = undefined;
-      if (this.statisticsAgain && !this.disposed) {
-        this.statisticsAgain = false;
-        this.followStatistics();
-      }
-    }, statisticsPause);
   }
 
   /**

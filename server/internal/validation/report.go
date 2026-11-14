@@ -42,13 +42,19 @@ type Finding struct {
 	Message  string   `json:"message" doc:"What is wrong, in the request's locale"`
 	// EntityType and EntityID are the entity that the finding is about,
 	// whose editor a client opens (FR-DEP-03 AC3).
-	EntityType string  `json:"entity_type" enum:"project,board,node,branch_output,connection,variable,component" doc:"The type of the entity that the finding is about: an expression's or a text's owner, what holds a dangling reference, or what the rule is about"`
-	EntityID   string  `json:"entity_id" doc:"The ID of the entity that the finding is about, by which a client opens its editor, and which a mute names"`
-	Field      string  `json:"field,omitempty" enum:"on_enter,on_exit,condition,on_traverse,text,label,description,speaker_component_id,entry_node_id,entry,target" doc:"The field of the entity that the finding is about, if it is about one: the expression of expr_invalid; the text, the speaker, the board's entry node, or the project's entry of ref_dangling; or a jumper's target"`
-	BoardID    string  `json:"board_id,omitempty" doc:"The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none."`
-	NodeID     string  `json:"node_id,omitempty" doc:"The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch"`
-	Target     *Target `json:"target,omitempty" doc:"What else the finding names: what a dangling reference refers to, a jumper's target, or the earlier connection that a choice or a connection repeats"`
-	Mute       *Mute   `json:"mute,omitempty" doc:"The finding's mute, which a muted finding has, and no other"`
+	EntityType string `json:"entity_type" enum:"project,board,node,branch_output,connection,variable,component" doc:"The type of the entity that the finding is about: an expression's or a text's owner, what holds a dangling reference, or what the rule is about"`
+	EntityID   string `json:"entity_id" doc:"The ID of the entity that the finding is about, by which a client opens its editor, and which a mute names"`
+	Field      string `json:"field,omitempty" enum:"on_enter,on_exit,condition,on_traverse,text,label,description,speaker_component_id,entry_node_id,entry,target" doc:"The field of the entity that the finding is about, if it is about one: the expression of expr_invalid; the text, the speaker, the board's entry node, or the project's entry of ref_dangling; or a jumper's target"`
+	BoardID    string `json:"board_id,omitempty" doc:"The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none."`
+	// BoardName and NodeTitle name the board and the node that a client
+	// opens the entity by, as a usage's site names them (package
+	// dependency), so that a client names what a finding is about without
+	// reading the project's nodes.
+	BoardName *string `json:"board_name,omitempty" doc:"The name of the board of the entity, which a finding has exactly when it has board_id"`
+	NodeID    string  `json:"node_id,omitempty" doc:"The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch"`
+	NodeTitle *string `json:"node_title,omitempty" doc:"The title of the node of the entity, which may be empty, and which a finding has exactly when it has node_id"`
+	Target    *Target `json:"target,omitempty" doc:"What else the finding names: what a dangling reference refers to, a jumper's target, or the earlier connection that a choice or a connection repeats"`
+	Mute      *Mute   `json:"mute,omitempty" doc:"The finding's mute, which a muted finding has, and no other"`
 }
 
 // Target is what else a finding names.
@@ -71,6 +77,9 @@ type Result struct {
 	seq      int64
 	findings []finding
 	mutes    map[muteKey]mute
+	// boards and nodes are the names of the boards and the titles of the
+	// nodes of the draft, by their IDs, which the findings are named by.
+	boards, nodes map[ids.UUID]string
 }
 
 // Run validates the project projectID of the workspace ws in tx, a
@@ -85,7 +94,15 @@ func Run(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Result, error
 	}
 	found := check(d.model)
 	slices.SortFunc(found, compare)
-	return &Result{seq: d.seq, findings: found, mutes: d.mutes}, nil
+	r := &Result{seq: d.seq, findings: found, mutes: d.mutes, boards: make(map[ids.UUID]string, len(d.model.boards)),
+		nodes: make(map[ids.UUID]string, len(d.model.nodes))}
+	for _, b := range d.model.boards {
+		r.boards[b.id] = b.name
+	}
+	for _, n := range d.model.nodes {
+		r.nodes[n.id] = n.title
+	}
+	return r, nil
 }
 
 // compare orders findings as a report lists them: by their severities and
@@ -125,7 +142,7 @@ func (r *Result) Report(l *i18n.Localizer) (Report, string) {
 		}
 		api := Finding{Code: f.code, Severity: rule.Severity, Message: message, EntityType: f.entity.kind.String(),
 			EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
-			NodeID: encode(ids.Node, f.node)}
+			BoardName: nameOf(r.boards, f.board), NodeID: encode(ids.Node, f.node), NodeTitle: nameOf(r.nodes, f.node)}
 		if f.target != (ref{}) {
 			api.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
 			if f.attribute != (ids.UUID{}) {
@@ -152,6 +169,18 @@ func (r *Result) Report(l *i18n.Localizer) (Report, string) {
 		languages = []string{l.Locale().String()}
 	}
 	return out, strings.Join(languages, ", ")
+}
+
+// nameOf returns the name that names holds of id, or nil for the zero UUID.
+// A finding's board and node are of the draft that it was found in, so names
+// holds them; one that it lacks is named "", rather than not at all, as its
+// ID is given.
+func nameOf(names map[ids.UUID]string, id ids.UUID) *string {
+	if id == (ids.UUID{}) {
+		return nil
+	}
+	name := names[id]
+	return &name
 }
 
 // encode returns the public ID of the kind of id, or "" for the zero UUID.

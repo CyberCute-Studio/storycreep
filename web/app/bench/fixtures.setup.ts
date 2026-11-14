@@ -1,9 +1,11 @@
 // What the canvas's benchmark measures (PRD §9.1, NFR-Q-06): the medium,
 // dense, and large fixtures, which cmd/fixturegen loads through the API,
 // with an API token, as it loads them for manual testing (plan note N52),
-// and boards of 200, 2,000, and 5,000 nodes, whose nodes follow their
-// places in their grids, so that the boards of 200 and of 2,000 show the
-// same nodes across the grid that they share (FR-EDIT-11 AC1). It runs once,
+// boards of 200, 2,000, and 5,000 nodes, whose nodes follow their places in
+// their grids, so that the boards of 200 and of 2,000 show the same nodes
+// across the grid that they share (FR-EDIT-11 AC1), and a project of 60
+// boards that depend on one another, whose dependency view a run draws
+// (NFR-PERF-11, plan note N77). It runs once,
 // before the runs, which start signed in as its account and read what it
 // made from a file. Against an instance of the reference tablet's checklist
 // (STORYCREEP_BENCH_BASE_URL, docs/canvas-checklist.md), it signs in as the
@@ -14,10 +16,18 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { APIRequestContext } from "@playwright/test";
+import { newId } from "@storycreep/shared/ids";
 import { makeBoard, makeProject } from "../e2e/boards.ts";
-import { firstWorkspace } from "../e2e/content.ts";
+import { apply, type Command, firstWorkspace } from "../e2e/content.ts";
 import { binaries, binary, serverModule } from "../e2e/environment.ts";
-import { apiSignIn, expect, registerAccount, test } from "../e2e/fixtures.ts";
+import {
+  type ApiSession,
+  apiSignIn,
+  expect,
+  registerAccount,
+  test,
+} from "../e2e/fixtures.ts";
 import {
   type BenchBoard,
   type BenchBoards,
@@ -137,7 +147,16 @@ test("loads the fixtures and the boards that the runs measure", async ({
     // filled PixiJS's caches of text, which are bounded, a heap that grows
     // is a leak's.
     const b5000 = { ...(await of(5000)), area: "0,0,7920,3928" };
-    const boards: BenchBoards = { medium, dense, large, b200, b2000, b5000 };
+    const deps = await dependencyProject(request, session);
+    const boards: BenchBoards = {
+      medium,
+      dense,
+      large,
+      b200,
+      b2000,
+      b5000,
+      deps,
+    };
     mkdirSync(binaries, { recursive: true });
     writeFileSync(boardsFile, JSON.stringify(boards));
     await request.storageState({ path: signedInState });
@@ -173,6 +192,7 @@ test("loads the fixtures and the boards that the runs measure", async ({
         `- NFR-PERF-18, medium: ${url(medium, "bench=pan&seconds=300&warm=pass")}`,
         `- NFR-PERF-06, medium: ${url(medium, "bench=edit&seconds=30")}`,
         `- NFR-PERF-05, large, on the reference desktop: ${url(large, "bench=load")}`,
+        `- NFR-PERF-11, 60 boards: ${benchBase}/app/projects/${deps.projectId}/dependencies?bench=load`,
         "",
       ].join("\n"),
     );
@@ -185,3 +205,120 @@ test("loads the fixtures and the boards that the runs measure", async ({
     );
   }
 });
+
+/** How many boards the project of the dependency view's run has (NFR-PERF-11). */
+const dependencyBoards = 60;
+
+/**
+ * Makes a project of dependencyBoards boards that depend on one another, as
+ * the dependency view's run draws it (NFR-PERF-11), and returns it with its
+ * first board. Board i has a scene that assigns the variable v_i, whose
+ * choice reads v of the board before it, in a ring of every board, a
+ * cycle, and v of another board; every third board has a jumper to the
+ * scene of the board 13 after it, and every fifth a choice that reads
+ * whether the scene of the board 29 after it was visited: some 150
+ * dependencies, of every kind, between pairs of boards.
+ */
+async function dependencyProject(
+  request: APIRequestContext,
+  session: ApiSession,
+): Promise<BenchBoard> {
+  const projectId = await makeProject(
+    request,
+    session,
+    "Dependencies of NFR-PERF-11",
+  );
+  const n = dependencyBoards;
+  const boards = Array.from({ length: n }, () => newId("board"));
+  const scenes = Array.from({ length: n }, () => newId("node"));
+  const commands: Command[] = [];
+  for (let i = 0; i < n; i++) {
+    commands.push(
+      {
+        type: "board.create",
+        payload: { id: boards[i], name: `Chapter ${i + 1}` },
+      },
+      {
+        type: "variable.create",
+        payload: {
+          id: newId("variable"),
+          key: `v_${i}`,
+          type: "bool",
+          scope: "global",
+        },
+      },
+    );
+  }
+  for (let i = 0; i < n; i++) {
+    const end = newId("node");
+    const reads = [
+      `v_${(i + n - 1) % n}`,
+      `v_${(i * 7 + 3) % n}`,
+      ...(i % 5 === 0 ? [`visited(node("${scenes[(i + 29) % n]}"))`] : []),
+    ];
+    commands.push(
+      {
+        type: "node.create",
+        payload: {
+          id: scenes[i],
+          board_id: boards[i],
+          type: "element",
+          kind: "narration",
+          title: `Scene ${i + 1}`,
+          position: { x: 0, y: 0 },
+          on_exit: `v_${i} = true`,
+        },
+      },
+      {
+        type: "node.create",
+        payload: {
+          id: end,
+          board_id: boards[i],
+          type: "element",
+          kind: "narration",
+          title: `End ${i + 1}`,
+          position: { x: 400, y: 0 },
+          is_ending: true,
+        },
+      },
+      {
+        type: "connection.create",
+        payload: {
+          id: newId("connection"),
+          from_node_id: scenes[i],
+          to_node_id: end,
+          condition: reads.join(" && "),
+        },
+      },
+      {
+        type: "board.set_entry_node",
+        payload: { id: boards[i], node_id: scenes[i] },
+      },
+    );
+    if (i % 3 === 0) {
+      const jumper = newId("node");
+      const j = (i + 13) % n;
+      commands.push(
+        {
+          type: "node.create",
+          payload: {
+            id: jumper,
+            board_id: boards[i],
+            type: "jumper",
+            title: `On to ${j + 1}`,
+            position: { x: 0, y: 300 },
+          },
+        },
+        {
+          type: "node.update",
+          payload: {
+            id: jumper,
+            target: { board_id: boards[j], node_id: scenes[j] },
+          },
+        },
+      );
+    }
+  }
+  await apply(request, session, projectId, commands);
+  return { projectId, boardId: boards[0] };
+}

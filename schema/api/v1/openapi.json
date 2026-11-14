@@ -5082,6 +5082,10 @@
             "description": "The ID of the board of the entity, by which a client opens it: a node's, a connection's, an output's, a board's own, and a board's variable's. A global variable, a component, and the project have none.",
             "type": "string"
           },
+          "board_name": {
+            "description": "The name of the board of the entity, which a finding has exactly when it has board_id",
+            "type": "string"
+          },
           "code": {
             "description": "The code of the rule that found it (PRD FR-DEP-03)",
             "enum": [
@@ -5148,6 +5152,10 @@
           },
           "node_id": {
             "description": "The ID of the node of the entity, by which a client opens it: a node's own, the node that a connection leaves, and an output's branch",
+            "type": "string"
+          },
+          "node_title": {
+            "description": "The title of the node of the entity, which may be empty, and which a finding has exactly when it has node_id",
             "type": "string"
           },
           "severity": {
