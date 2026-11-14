@@ -95,13 +95,23 @@ export function PlayPanel({
   const nodeTitles = new Map(
     named.nodes.map((id, i) => [id, names[named.boards.length + i]]),
   );
+  const played = state.status === "playing" ? state.projection : undefined;
   // Where an entity is, by its node's title and its board's name, as the
-  // page has them, linked to the node on its board's canvas, as a finding
-  // of the validation is (FR-DEP-03 AC3).
+  // page has them, or, of what the page no longer has, as a board that a
+  // collaborator deleted for good while playing, as the snapshot that play
+  // runs has them, linked to the node on its board's canvas, as a finding
+  // of the validation is (FR-DEP-03 AC3), while the page has the board.
   const where = (board: string | undefined, node: string | undefined) => {
     const boardName =
-      (board === undefined ? undefined : boardNames.get(board)) ?? board ?? "";
-    const title = node === undefined ? undefined : nodeTitles.get(node);
+      (board === undefined
+        ? undefined
+        : (boardNames.get(board) ?? played?.boards.get(board))) ??
+      board ??
+      "";
+    const title =
+      node === undefined
+        ? undefined
+        : (nodeTitles.get(node) ?? played?.nodes.get(node)?.title);
     if (title === undefined) {
       return boardName;
     }
@@ -118,7 +128,7 @@ export function PlayPanel({
     node: string | undefined,
     text: string,
   ) =>
-    board === undefined ? (
+    board === undefined || boardNames.get(board) === undefined ? (
       <span>{text}</span>
     ) : (
       <Link
@@ -201,6 +211,7 @@ function PlayFlowView({
   const speakerId = useId();
   const textId = useId();
   const endedId = useId();
+  const errorsId = useId();
   // The current node's heading, which gets the focus after a turn, says
   // what follows it as its description, so that a screen reader says the
   // node whole as the focus comes to it.
@@ -274,8 +285,8 @@ function PlayFlowView({
       )}
       {flow.halted && <Alert message={t("play.halted")} />}
       {flow.errors.length > 0 && (
-        <section aria-labelledby="play-errors" className="space-y-2">
-          <h3 id="play-errors" className="font-semibold">
+        <section aria-labelledby={errorsId} className="space-y-2">
+          <h3 id={errorsId} className="font-semibold">
             {t("play.errors", { count: flow.errors.length })}
           </h3>
           <ol className="space-y-2">

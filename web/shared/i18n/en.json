@@ -992,7 +992,7 @@
   "play.error.flow_loop": "The flow passed through 100 branches in one step and ended, as a cycle of branches would never stop.",
   "play.error.integer_overflow": "An integer went beyond the largest that the language holds. The expression gave its type's zero value.",
   "play.error.invalid_choice": "That is not one of the current node's choices.",
-  "play.error.jumper_broken": "The flow reached a jumper without a target, and ended at the node before it.",
+  "play.error.jumper_broken": "The flow came to a jumper without a target, which it cannot go to: it ended at the node that leads to the jumper, or, where play started at the jumper, did not move.",
   "play.error.step_budget_exceeded": "An expression took more steps than an evaluation may: a condition was false, and a script stopped there.",
   "play.error.string_too_long": "A string became longer than the language allows.",
   "play.error.unknown_node": "Play cannot start there: the board has no entry node, or the node is not on it.",

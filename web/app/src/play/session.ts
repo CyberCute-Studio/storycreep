@@ -21,12 +21,7 @@ import type {
   Snapshot,
 } from "@storycreep/shared/flow";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import {
-  boardPart,
-  type ComponentEntry,
-  type Doc,
-  expressionFields,
-} from "../document/doc";
+import { boardPart, type Doc, expressionFields } from "../document/doc";
 import type { ProjectDocument } from "../document/store";
 import type { Projection } from "./projection";
 
@@ -86,10 +81,30 @@ export interface PlayFlow {
 }
 
 /**
- * What a session keeps of the projection that it runs: all of it but its
- * files, whose bytes the loader has read into the snapshot once.
+ * What a session keeps of the projection that it runs (playedOf): what it
+ * stood in for, and, by ID, what play shows that the snapshot, which the
+ * loader read the files into once, does not hold, rather than the boards'
+ * files whole: each node's title and its speaker's name, each board's name,
+ * where each connection and each branch output is, and each expression's
+ * source.
  */
-export type PlayedProjection = Omit<Projection, "files">;
+export interface PlayedProjection {
+  readonly standIns: Projection["standIns"];
+  /** Each node's title and its speaker's name, "" for none, by the node's ID. */
+  readonly nodes: ReadonlyMap<
+    string,
+    { readonly title: string; readonly speaker: string }
+  >;
+  /** Each board's name, as the snapshot holds it, by the board's ID. */
+  readonly boards: ReadonlyMap<string, string>;
+  /** The board of each connection and each branch output, and the node that a link opens it by: the node that it leaves, or its branch. */
+  readonly places: ReadonlyMap<
+    string,
+    { readonly board: string; readonly node: string }
+  >;
+  /** Each expression's source, by its entity's ID and its field, as `${id} ${field}`. */
+  readonly sources: ReadonlyMap<string, string>;
+}
 
 /** What of a turn a board's page shows once (PlaySession's firstShown). */
 export type TurnShown = "canvas" | "panel";
@@ -194,12 +209,25 @@ export class PlaySession {
       const view = this.doc.store.getState().view;
       let projection: Projection;
       try {
+        // A board whose content the document has not read, as one that came
+        // back from the trash once play had read the boards, would be
+        // projected without its nodes.
+        const unread = [...view.boards.values()].find(
+          (b) =>
+            b.deleted_at === undefined && !this.doc.hasRead(boardPart(b.id)),
+        );
+        if (unread !== undefined) {
+          throw new ProjectionError(
+            "unread",
+            `the board ${unread.id} has not been read`,
+          );
+        }
         projection = await projectDraft(view);
       } catch (error) {
-        // A component that the document does not hold whole, as one whose
-        // values a read of the components' list took again after play read
-        // it, is a read that failed, which Try again makes anew, rather than
-        // a draft that play cannot run.
+        // A board, or a component that the document does not hold whole, as
+        // one whose values a read of the components' list took again after
+        // play read it, is a read that failed, which Try again makes anew,
+        // rather than a draft that play cannot run.
         reading = error instanceof ProjectionError && error.reason === "unread";
         throw error;
       }
@@ -207,8 +235,8 @@ export class PlaySession {
       if (!current()) {
         return;
       }
-      const { files, ...played } = projection;
-      const snapshot = await load(files);
+      const played = playedOf(projection);
+      const snapshot = await load(projection.files);
       if (!current()) {
         return;
       }
@@ -280,9 +308,10 @@ export class PlaySession {
 
   // readAll reads what the document does not hold of the project yet: the
   // tree, the variables, and the components, then every board's content
-  // and every component whole, parallelReads at a time, telling the store
-  // how many it has read, while current reports that the start is still
-  // the session's, and no more once a read has failed.
+  // and every component whole, of a type, neither in the trash, that the
+  // projection reads, parallelReads at a time, telling the store how many
+  // it has read, while current reports that the start is still the
+  // session's, and no more once a read has failed.
   private async readAll(current: () => boolean): Promise<void> {
     const doc = this.doc;
     await Promise.all([
@@ -293,21 +322,29 @@ export class PlaySession {
     if (!current()) {
       return;
     }
-    const view = doc.store.getState().view;
     const reads: (() => Promise<void>)[] = [];
-    for (const b of view.boards.values()) {
-      if (b.deleted_at === undefined && !doc.hasRead(boardPart(b.id))) {
-        reads.push(() => doc.load(boardPart(b.id)));
+    // unread adds the reads of what the document holds now and has not
+    // read: each board's content, and each component whole.
+    const unread = () => {
+      const view = doc.store.getState().view;
+      for (const b of view.boards.values()) {
+        if (b.deleted_at === undefined && !doc.hasRead(boardPart(b.id))) {
+          reads.push(() => doc.load(boardPart(b.id)));
+        }
       }
-    }
-    const wholes = (components: Iterable<ComponentEntry>) => {
-      for (const c of components) {
-        if (c.deleted_at === undefined && c.attributes === undefined) {
+      for (const c of view.components.values()) {
+        const type = view.componentTypes.get(c.component_type_id);
+        if (
+          c.deleted_at === undefined &&
+          c.attributes === undefined &&
+          type !== undefined &&
+          type.deleted_at === undefined
+        ) {
           reads.push(() => doc.readComponent(c.id));
         }
       }
     };
-    wholes(view.components.values());
+    unread();
     let done = 0;
     let failed = false;
     const progress = () => {
@@ -343,10 +380,11 @@ export class PlaySession {
     await inTurn();
     // A component that a read of the components' list took the values of
     // since, as it answers them without them, is read whole again, as the
-    // others are.
+    // others are, and a board that came back from the trash since, whose
+    // content the document took out with it, is read too.
     if (current()) {
       const before = reads.length;
-      wholes(doc.store.getState().view.components.values());
+      unread();
       if (reads.length > before) {
         await inTurn();
       }
@@ -430,17 +468,14 @@ export class PlaySession {
     }
     const { node, phase } = r.current();
     const board = node === "" ? "" : (s.nodes.get(node)?.board ?? "");
-    const file = projection.boards.get(board)?.nodes.find((n) => n.id === node);
+    const shown = projection.nodes.get(node);
     return {
       board,
       node,
       phase,
       text: node === "" ? "" : r.text(),
-      speaker:
-        file?.type === "element" && file.speaker !== undefined
-          ? (projection.componentNames.get(file.speaker) ?? "")
-          : "",
-      title: file?.title ?? "",
+      speaker: shown?.speaker ?? "",
+      title: shown?.title ?? "",
       choices: r.choices(),
       ended: phase === "ended" ? (ended ?? flow.ended) : undefined,
       halted: r.halted(),
@@ -471,6 +506,54 @@ function emptyFlow(): PlayFlow {
   };
 }
 
+// playedOf returns what a session keeps of projection (PlayedProjection).
+function playedOf(projection: Projection): PlayedProjection {
+  const nodes = new Map<string, { title: string; speaker: string }>();
+  const boards = new Map<string, string>();
+  const places = new Map<string, { board: string; node: string }>();
+  const sources = new Map<string, string>();
+  const source = (
+    id: string,
+    field: ExpressionField,
+    expression: { readonly source: string } | undefined,
+  ) => {
+    if (expression !== undefined) {
+      sources.set(`${id} ${field}`, expression.source);
+    }
+  };
+  for (const [board, f] of projection.boards) {
+    boards.set(board, f.board.name);
+    for (const n of f.nodes) {
+      nodes.set(n.id, {
+        title: n.title ?? "",
+        speaker:
+          n.type === "element" && n.speaker !== undefined
+            ? (projection.componentNames.get(n.speaker) ?? "")
+            : "",
+      });
+      if (n.type === "jumper") {
+        continue;
+      }
+      source(n.id, "onEnter", n.onEnter);
+      source(n.id, "onExit", n.onExit);
+      if (n.type === "branch") {
+        for (const o of n.outputs) {
+          places.set(o.id, { board, node: n.id });
+          if (o.kind !== "else") {
+            source(o.id, "condition", o.condition);
+          }
+        }
+      }
+    }
+    for (const c of f.connections) {
+      places.set(c.id, { board, node: c.from });
+      source(c.id, "condition", c.condition);
+      source(c.id, "onTraverse", c.onTraverse);
+    }
+  }
+  return { standIns: projection.standIns, nodes, boards, places, sources };
+}
+
 // placeOf returns where the entity at of a runtime error is, as a link opens
 // it, and the source of its expression of field, as the snapshot holds
 // them: a node's, a connection's by the node that it leaves, and a branch
@@ -485,51 +568,16 @@ function placeOf(
     return {};
   }
   const node = s.nodes.get(at);
-  if (node !== undefined) {
-    const file = projection.boards
-      .get(node.board)
-      ?.nodes.find((n) => n.id === at);
-    const expr =
-      file !== undefined && field !== "" && field in file
-        ? (file as unknown as Record<string, { source: string } | undefined>)[
-            field
-          ]
-        : undefined;
-    return {
-      board: node.board,
-      node: at,
-      ...(expr === undefined ? {} : { source: expr.source }),
-    };
+  const place =
+    node === undefined
+      ? projection.places.get(at)
+      : { board: node.board, node: at };
+  if (place === undefined) {
+    return {};
   }
-  for (const [board, f] of projection.boards) {
-    const c = f.connections.find((x) => x.id === at);
-    if (c !== undefined) {
-      const expr =
-        field === "condition"
-          ? c.condition
-          : field === "onTraverse"
-            ? c.onTraverse
-            : undefined;
-      return {
-        board,
-        node: c.from,
-        ...(expr === undefined ? {} : { source: expr.source }),
-      };
-    }
-    for (const n of f.nodes) {
-      if (n.type === "branch") {
-        const o = n.outputs.find((x) => x.id === at);
-        if (o !== undefined) {
-          return {
-            board,
-            node: n.id,
-            ...(o.kind === "else" ? {} : { source: o.condition.source }),
-          };
-        }
-      }
-    }
-  }
-  return {};
+  const source =
+    field === "" ? undefined : projection.sources.get(`${at} ${field}`);
+  return { ...place, ...(source === undefined ? {} : { source }) };
 }
 
 // The fields of an entity, and of what it holds, as a branch's outputs and

@@ -1,5 +1,6 @@
 import type {
   Attribute,
+  Board,
   ComponentType,
   Connection,
   Node,
@@ -201,13 +202,14 @@ const draft = testDraft({
 });
 
 // A project's document of view, which counts the reads that play asks of
-// it, of parts and of components whole.
+// it, of parts and of components whole, and has read the parts that it was
+// asked for.
 function documentOf(view: Doc) {
   const store = createStore(() => ({ view }));
   const reads: string[] = [];
   const doc = {
     store,
-    hasRead: (_: Part) => false,
+    hasRead: (part: Part) => reads.includes(part),
     load: async (part: Part) => {
       reads.push(part);
     },
@@ -579,6 +581,94 @@ describe("a play session", () => {
     await s.start({ board: harbour.id, node: "" });
     expect(reads.filter((r) => r.startsWith("cmp_"))).toHaveLength(20);
     expect(most).toBe(parallelReads);
+  });
+
+  // A board that comes back from the trash while play reads the others,
+  // whose content the document took out with it, is read before play
+  // projects the draft, rather than projected without its nodes; and one
+  // that comes back once play has read the boards is a read that failed,
+  // which Try again makes anew.
+  test("reads a board that came back from the trash while play read, and fails as a read where one came back after", async () => {
+    const cove = testBoard(id("bd", "3"), "Cove");
+    const trashed = { deleted_at: at };
+    // A document whose boards but the harbour are in the trash, and whose
+    // read of a board's content brings back the board that back names.
+    const documentBringing = (back: Record<string, Board>) => {
+      const d = documentOf({
+        ...draft,
+        boards: new Map([
+          [harbour.id, harbour],
+          [elara.id, { ...elara, ...trashed }],
+          [cove.id, { ...cove, ...trashed }],
+        ]),
+      });
+      (d.doc as { load: unknown }).load = async (part: Part) => {
+        d.reads.push(part);
+        const board = back[part];
+        if (board !== undefined) {
+          const view = d.store.getState().view;
+          d.store.setState({
+            view: {
+              ...view,
+              boards: new Map(view.boards).set(board.id, board),
+            },
+          });
+        }
+      };
+      return d;
+    };
+    // Elara's board comes back as play reads the harbour's.
+    const first = documentBringing({ [`board:${harbour.id}`]: elara });
+    const s = new PlaySession(first.doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(first.reads).toContain(`board:${elara.id}`);
+    expect(playing(s).projection.boards.get(elara.id)).toBe("Elara");
+    // And the cove's as play reads Elara's, once it has looked for the
+    // boards that came back.
+    const second = documentBringing({
+      [`board:${harbour.id}`]: elara,
+      [`board:${elara.id}`]: cove,
+    });
+    const t = new PlaySession(second.doc);
+    await t.start({ board: harbour.id, node: "" });
+    expect(second.reads).not.toContain(`board:${cove.id}`);
+    expect(t.state).toMatchObject({ status: "failed", reading: true });
+    await t.restart();
+    expect(second.reads).toContain(`board:${cove.id}`);
+    expect(playing(t).flow.node).toBe(id("nd", "A"));
+  });
+
+  // A component of a type in the trash, which the projection leaves out, is
+  // not read whole.
+  test("reads no component whole of a type in the trash", async () => {
+    const trashedType = {
+      ...character,
+      id: id("ct", "2"),
+      key: "prop",
+      deleted_at: at,
+    };
+    const prop: ComponentEntry = {
+      ...elaraComponent,
+      id: id("cmp", "2"),
+      key: "lamp",
+      component_type_id: trashedType.id,
+    };
+    delete prop.attributes;
+    const { doc, reads } = documentOf({
+      ...draft,
+      componentTypes: new Map([
+        [character.id, character],
+        [trashedType.id, trashedType],
+      ]),
+      components: new Map([
+        [elaraComponent.id, elaraComponent],
+        [prop.id, prop],
+      ]),
+    });
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(reads).not.toContain(prop.id);
+    expect(playing(s).flow.text).toBe("Trust 1.");
   });
 
   // Each turn is shown once of each kind, by the board's page that shows

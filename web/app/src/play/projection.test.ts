@@ -286,7 +286,7 @@ describe("a draft with what no snapshot holds", () => {
         node: "nd_00000000000000000000000006",
         entity: "nd_00000000000000000000000006",
         owner: "node",
-        field: "on_enter",
+        field: "onEnter",
         source: "gold +=",
       }),
       {
@@ -520,7 +520,7 @@ test("a stand-in says why a reference or a connection is left out, and whose an 
       node: "nd_00000000000000000000000022",
       entity: "cn_00000000000000000000000026",
       owner: "connection",
-      field: "on_traverse",
+      field: "onTraverse",
     }),
   ]);
 });

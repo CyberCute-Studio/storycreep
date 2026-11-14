@@ -505,6 +505,8 @@ export class CanvasController implements GestureHost {
   private untold = false;
   /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
   private focusing: { id: string; found?: () => void } | undefined;
+  /** What the canvas shows once it is placed, of a reveal asked for before (reveal). */
+  private revealing: Rect | undefined;
   private labelsVersion = 0;
   private theme: Theme | undefined;
   private modeValue: Mode = "pan";
@@ -962,10 +964,30 @@ export class CanvasController implements GestureHost {
    * line, that the accessibility tree's focus is on, so that what marks it
    * on the canvas is in view: where the canvas does not show it whole, with
    * 24 px around it, it moves to have r's middle at its centre, at the zoom
-   * that it is at, animated as a move that a key asks for is.
+   * that it is at, animated as a move that a key asks for is. On a canvas
+   * not yet placed on the board's content, whose placing would take the
+   * place of the move, as of the board's page that play mode followed the
+   * flow to (plan note N78), it shows r once the canvas is placed, from the
+   * fit or the view that it restores, at once.
    */
   reveal(r: Rect): void {
+    if (!this.placed) {
+      this.revealing = r;
+      this.invalidate();
+      return;
+    }
     const v = this.target();
+    const to = this.revealed(v, r);
+    if (to !== undefined) {
+      this.animateTo(to);
+    }
+  }
+
+  /**
+   * Returns where the canvas moves from v to show r of the board whole, with
+   * 24 px around it, at v's zoom, or undefined where v shows it so (reveal).
+   */
+  private revealed(v: Viewport, r: Rect): Viewport | undefined {
     const around = 24 / v.zoom;
     if (
       contains(visibleRect(v, this.sz), {
@@ -975,9 +997,9 @@ export class CanvasController implements GestureHost {
         height: r.height + 2 * around,
       })
     ) {
-      return;
+      return undefined;
     }
-    this.animateTo(anchorAt(middleOf(r), this.centre(), v.zoom));
+    return anchorAt(middleOf(r), this.centre(), v.zoom);
   }
 
   /** Returns where r of the board is on the canvas, in its CSS pixels. */
@@ -1994,6 +2016,10 @@ export class CanvasController implements GestureHost {
       this.focusing = undefined;
       const focus =
         focusing === undefined ? undefined : this.scene.nodes.rect(focusing.id);
+      // What a reveal asked to show meanwhile, as play mode's current node,
+      // is shown from there, but for a link's node, which the canvas opens on.
+      const revealing = this.revealing;
+      this.revealing = undefined;
       this.v =
         focus !== undefined
           ? fitTo(focus, this.sz, 48, fitZoom)
@@ -2004,6 +2030,9 @@ export class CanvasController implements GestureHost {
                 this.centre(),
                 saved.viewport.zoom,
               );
+      if (focus === undefined && revealing !== undefined) {
+        this.v = this.revealed(this.v, revealing) ?? this.v;
+      }
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);

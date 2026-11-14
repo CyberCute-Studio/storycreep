@@ -1,5 +1,7 @@
+import { MAX_PASSES } from "@storycreep/shared/flow";
 import type { TFunction } from "i18next";
 import { expect, test } from "vitest";
+import en from "../../../shared/i18n/en.json";
 import { standInMessage } from "./messages";
 import type { StandIn } from "./projection";
 
@@ -58,7 +60,7 @@ test.each<[StandIn, string]>([
       kind: "expression",
       entity: "cn_1",
       owner: "choice",
-      field: "on_traverse",
+      field: "onTraverse",
       source: "x +=",
       code: "unexpected_end",
     },
@@ -69,7 +71,7 @@ test.each<[StandIn, string]>([
       kind: "expression",
       entity: "cn_1",
       owner: "connection",
-      field: "on_traverse",
+      field: "onTraverse",
       source: "x +=",
       code: "unexpected_end",
     },
@@ -165,4 +167,34 @@ test.each<[StandIn, string]>([
   ],
 ])("%j says %s", (s, key) => {
   expect(standInMessage(t, s, "where")).toBe(key);
+});
+
+// A script's stand-in names the field that it is of.
+test("a script's stand-in names its field", () => {
+  const asked: unknown[] = [];
+  const recording = ((key: string, options?: unknown) => {
+    asked.push(options);
+    return key;
+  }) as unknown as TFunction;
+  expect(
+    standInMessage(
+      recording,
+      {
+        kind: "expression",
+        entity: "nd_1",
+        owner: "node",
+        field: "onExit",
+        source: "x +=",
+        code: "unexpected_end",
+      },
+      "where",
+    ),
+  ).toBe("play.stand_in.script");
+  expect(asked.at(-1)).toEqual({ where: "where", field: "play.field.on_exit" });
+});
+
+// The message of flow_loop says the runtime's own limit of branches in one
+// call (PRD §5.8.5), which the catalog writes out.
+test("flow_loop's message says the runtime's limit of branches", () => {
+  expect(en["play.error.flow_loop"]).toContain(` ${MAX_PASSES} branches `);
 });

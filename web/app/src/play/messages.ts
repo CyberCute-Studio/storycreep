@@ -2,7 +2,11 @@
 // why it ended, each runtime error, and what the projection stood in for,
 // each a message of the catalog, by a key that extraction reads.
 
-import type { Reason, RuntimeError } from "@storycreep/shared/flow";
+import type {
+  ExpressionField,
+  Reason,
+  RuntimeError,
+} from "@storycreep/shared/flow";
 import type { TFunction } from "i18next";
 import type { StandIn } from "./projection";
 
@@ -49,10 +53,7 @@ export function errorMessage(t: TFunction, code: RuntimeError): string {
 }
 
 /** Returns the name of an expression's field, as play mode names where an error or a stand-in is. */
-export function fieldName(
-  t: TFunction,
-  field: "onEnter" | "onExit" | "onTraverse" | "condition",
-): string {
+export function fieldName(t: TFunction, field: ExpressionField): string {
   switch (field) {
     case "onEnter":
       return t("play.field.on_enter");
@@ -90,14 +91,14 @@ export function standInMessage(
             return t("play.stand_in.output_condition", { where });
         }
       }
-      if (s.field === "on_traverse") {
+      if (s.field === "onTraverse") {
         return s.owner === "choice"
           ? t("play.stand_in.traverse", { where })
           : t("play.stand_in.connection_traverse", { where });
       }
       return t("play.stand_in.script", {
         where,
-        field: fieldName(t, s.field === "on_enter" ? "onEnter" : "onExit"),
+        field: fieldName(t, s.field),
       });
     case "reference":
       return referenceMessage(t, s, where);

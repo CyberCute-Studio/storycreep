@@ -39,7 +39,12 @@ import {
   versionOf,
   walk,
 } from "@storycreep/shared/expr/compile";
-import { fileHash, OUT, type Pace } from "@storycreep/shared/flow";
+import {
+  type ExpressionField,
+  fileHash,
+  OUT,
+  type Pace,
+} from "@storycreep/shared/flow";
 import type {
   ASTExpression,
   ASTScript,
@@ -82,13 +87,6 @@ export type ProjectionSources = Pick<
   | "componentTypes"
   | "components"
 >;
-
-/** The fields of an expression's owner, as a stand-in names them. */
-export type ExpressionField =
-  | "on_enter"
-  | "on_exit"
-  | "condition"
-  | "on_traverse";
 
 // Where an expression is, as its stand-in says: its owner, which kind of
 // entity it is, its field, and the node that a link opens it by.
@@ -211,10 +209,10 @@ export interface Projection {
 export class ProjectionError extends Error {
   constructor(
     /**
-     * Why: the project, or a component of the snapshot whole, not read yet
-     * ("unread"), or the document holding what no project has, as two
-     * components of one key, or two boards of one slug, for a moment
-     * ("inconsistent").
+     * Why: the project, a component of the snapshot whole, or, as the play
+     * session refuses it, a board's content, not read yet ("unread"), or
+     * the document holding what no project has, as two components of one
+     * key, or two boards of one slug, for a moment ("inconsistent").
      */
     readonly reason: "unread" | "inconsistent",
     message: string,
@@ -575,8 +573,8 @@ export async function projectDraft(
           field: "text",
           node: n.id,
         });
-        const onEnter = script(n.on_enter, b.id, at("on_enter"));
-        const onExit = script(n.on_exit, b.id, at("on_exit"));
+        const onEnter = script(n.on_enter, b.id, at("onEnter"));
+        const onExit = script(n.on_exit, b.id, at("onExit"));
         fileNodes.push({
           ...(n.cover_asset_id === undefined
             ? {}
@@ -600,8 +598,8 @@ export async function projectDraft(
       } else if (n.type === "branch") {
         const outputs = branchOutputs(n);
         ports.set(n.id, new Set(outputs.map((o) => o.id)));
-        const onEnter = script(n.on_enter, b.id, at("on_enter"));
-        const onExit = script(n.on_exit, b.id, at("on_exit"));
+        const onEnter = script(n.on_enter, b.id, at("onEnter"));
+        const onExit = script(n.on_exit, b.id, at("onExit"));
         fileNodes.push({
           id: n.id,
           ...(onEnter === undefined ? {} : { onEnter }),
@@ -715,7 +713,7 @@ export async function projectDraft(
           node: c.from_node_id,
         });
         const cond = condition(c.condition, b.id, at("condition"));
-        const onTraverse = script(c.on_traverse, b.id, at("on_traverse"));
+        const onTraverse = script(c.on_traverse, b.id, at("onTraverse"));
         fileConnections.push({
           ...(cond === undefined ? {} : { condition: cond }),
           from: c.from_node_id,
@@ -850,19 +848,22 @@ export async function projectDraft(
     files.set(boardPath(f.board.slug), encoded(f));
   }
   const pulledAt = timestampOf(options.now ?? new Date());
-  // The files' hashes, one after another, as load hashes them, at one pace,
-  // of bytes that are the projection's own.
+  // The files' hashes, as load hashes each, at one pace, of bytes that are
+  // the projection's own, asked for all at once, rather than each once the
+  // one before is done.
   const pace: Pace = { hashed: 0 };
+  const paths = [...files.keys()].sort(byCodePoints);
+  const sums = await Promise.all(
+    paths.map((path) =>
+      fileHash(files.get(path) as Uint8Array<ArrayBuffer>, pace, true),
+    ),
+  );
   const hashes: Record<string, string> = {};
   let all = "";
-  for (const path of [...files.keys()].sort(byCodePoints)) {
-    hashes[path] = await fileHash(
-      files.get(path) as Uint8Array<ArrayBuffer>,
-      pace,
-      true,
-    );
-    all += `${path} ${hashes[path]}\n`;
-  }
+  paths.forEach((path, i) => {
+    hashes[path] = sums[i];
+    all += `${path} ${sums[i]}\n`;
+  });
   const manifest: Manifest = {
     astVersion: versionOf(asts),
     // In the order of the boards' IDs, as the boards are.
