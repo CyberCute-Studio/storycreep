@@ -309,10 +309,17 @@ function BoardContent({
       {/* The views' switch is beside the board's name, rather than under
       it, as the canvas takes the window's height below where it starts. */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        {/* The board's badge of its dependencies is beside its name, as
-        the canvas takes the window's height below where it starts. */}
-        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <h1 className="text-2xl font-semibold">{board.name}</h1>
+        {/* The board's badge of its dependencies is beside its name, in
+        the room that the views' switch leaves on the row, where it is cut
+        short rather than wrap: the canvas takes the window's height below
+        where it starts, which a row more would shrink, as on a tablet held
+        upright, whose minimap it took out of the window. The name and the
+        badge take no room of the row by themselves (basis-0), so that the
+        switch stays beside them as it did beside the name alone. */}
+        <div className="flex min-w-0 flex-1 basis-0 items-baseline gap-x-4">
+          <h1 className="min-w-0 text-2xl font-semibold break-words">
+            {board.name}
+          </h1>
           <BoardBadge projectId={projectId} boardId={board.id} />
         </div>
         <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">

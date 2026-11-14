@@ -33,7 +33,7 @@ export function BoardBadge({
     return null;
   }
   return (
-    <p className="text-fg-muted">
+    <p className="min-w-0 flex-1 truncate text-fg-muted">
       <Link
         to="/projects/$projectId/dependencies"
         params={{ projectId }}
