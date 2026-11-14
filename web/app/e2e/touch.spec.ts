@@ -190,6 +190,7 @@ test.describe("the canvas's touch model", () => {
     await expect(menu.getByRole("menuitem")).toHaveText([
       en["canvas.menu.edit_text"],
       en["canvas.menu.inspect"],
+      en["canvas.menu.play_here"],
       en["canvas.zoom_selection"],
       en["canvas.copy"],
       en["canvas.cut"],
