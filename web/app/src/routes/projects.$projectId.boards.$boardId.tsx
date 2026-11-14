@@ -1,6 +1,11 @@
 import type { Board } from "@storycreep/shared/api";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  notFound,
+  useNavigate,
+} from "@tanstack/react-router";
 import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
@@ -8,6 +13,7 @@ import { refusalOf } from "../auth/refusal";
 import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
 import type { RendererKind } from "../canvas/engine";
 import type { Rect } from "../canvas/viewport";
+import { useCommandHandlers } from "../commands/registry";
 import {
   ConflictNotice,
   changedOf,
@@ -16,6 +22,7 @@ import {
 } from "../content/form";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
+import type { ProjectDocument } from "../document/store";
 import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { useLastOpened } from "../project/lastOpened";
@@ -26,9 +33,10 @@ import {
   projectQuery,
   readBoard,
 } from "../project/queries";
+import { ScriptView } from "../script/ScriptView";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
-import { Button } from "../ui/Button";
+import { Button, buttonClass, currentClass } from "../ui/Button";
 import {
   SelectField,
   TextAreaField,
@@ -39,13 +47,16 @@ import { Alert } from "../ui/Page";
 import { useDocumentTitle } from "../ui/title";
 
 /**
- * The search of the board's page: the node that a link opens the canvas on
- * (plan item 61), as a usage list's; and what the canvas's benchmark and the
- * reference tablet's checklist read (docs/canvas-checklist.md): the
- * renderer to use, whatever the browser's would be, and a scripted run of
- * the canvas, of how many seconds, across which rectangle of the board.
+ * The search of the board's page: the view that it shows of the board, its
+ * script view in place of its canvas (plan item 68); the node that a link
+ * opens the canvas on (plan item 61), as a usage list's, or whose entry the
+ * script view shows; and what the canvas's benchmark and the reference
+ * tablet's checklist read (docs/canvas-checklist.md): the renderer to use,
+ * whatever the browser's would be, and a scripted run of the canvas, of how
+ * many seconds, across which rectangle of the board.
  */
 export interface BoardSearch {
+  view?: "script";
   node?: string;
   renderer?: RendererKind;
   bench?: "pan" | "panzoom" | "load" | "edit";
@@ -82,6 +93,9 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
   staticData: { wide: true },
   validateSearch: (search: Record<string, unknown>): BoardSearch => {
     const out: BoardSearch = {};
+    if (search.view === "script") {
+      out.view = "script";
+    }
     // A node's ID as the server writes it, however the link spells it, as
     // the canvas finds the node by it; one that the board does not have
     // opens the canvas as without it.
@@ -158,7 +172,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
 });
 
 // A board's page (PRD FR-PROJ-02, FR-EDIT-01): the canvas of its nodes and
-// connections, and under it its name, its slug, its description, and its
+// connections, or its script view (FR-TEXT-04), which its links switch
+// between, and under it its name, its slug, its description, and its
 // colour, which an editor changes, and its deletion to the project's trash.
 // It shows the board as the project's document has it, so a change that
 // another session makes shows as it commits (FR-RT-02), and the page of no
@@ -187,6 +202,7 @@ function BoardPage() {
   ) : (
     <BoardContent
       projectId={projectId}
+      doc={doc}
       board={shown}
       read={read}
       onDeleting={setDeleting}
@@ -209,11 +225,14 @@ function areaOf(area: string | undefined): Rect | undefined {
 
 function BoardContent({
   projectId,
+  doc,
   board,
   read,
   onDeleting,
 }: {
   projectId: string;
+  /** The project's document, which the page shows the board of. */
+  doc: ProjectDocument;
   board: Board;
   /** The read of the board's nodes and connections that the loader started. */
   read: Promise<void> | undefined;
@@ -253,22 +272,83 @@ function BoardContent({
     }),
     [search.renderer, search.bench, search.seconds, search.area, search.warm],
   );
+  const script = search.view === "script";
+  // The loader's read, which the view that mounts takes as its first, as
+  // the canvas and the script view do, but once the document holds the
+  // board's content of a read since, as Try again's in one view after the
+  // loader's read failed, the view shown in place of it reads what the
+  // document holds, rather than say again what the loader's read failed
+  // with; while it holds that of the loader's own, a view's read is that.
+  const firstRead = doc.holds(boardPart(board.id)) ? undefined : read;
+  const navigate = useNavigate();
+  // The views are commands of the palette too (FR-EDIT-10), each of which
+  // can run while the page shows the other.
+  const show = (view: "canvas" | "script") => ({
+    enabled: script !== (view === "script"),
+    run: () =>
+      void navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId, boardId: board.id },
+        search: view === "script" ? { view: "script" } : {},
+      }),
+  });
+  useCommandHandlers("page", {
+    "board.show_canvas": show("canvas"),
+    "board.show_script": show("script"),
+  });
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">{board.name}</h1>
-      <BoardCanvas
-        projectId={projectId}
-        boardId={board.id}
-        boardName={board.name}
-        settingsId="board-settings"
-        read={read}
-        options={options}
-        initial={last.initial}
-        onView={last.onView}
-        workspaceId={project.workspace_id}
-        editable={editable}
-        focus={search.node}
-      />
+      {/* The views' switch is beside the board's name, rather than under
+      it, as the canvas takes the window's height below where it starts. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h1 className="text-2xl font-semibold">{board.name}</h1>
+        <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
+          {/* The router marks the link of the view shown current, as it
+          matches the page's search: the canvas's names no view, which its
+          link says it does not (explicitUndefined), as else every search
+          would match it, the script view's too. */}
+          <Link
+            to="/projects/$projectId/boards/$boardId"
+            params={{ projectId, boardId: board.id }}
+            search={{ view: undefined }}
+            activeOptions={{ explicitUndefined: true }}
+            className={`${buttonClass()} ${currentClass}`}
+          >
+            {t("board.view_canvas")}
+          </Link>
+          <Link
+            to="/projects/$projectId/boards/$boardId"
+            params={{ projectId, boardId: board.id }}
+            search={{ view: "script" }}
+            className={`${buttonClass()} ${currentClass}`}
+          >
+            {t("board.view_script")}
+          </Link>
+        </nav>
+      </div>
+      {script ? (
+        <ScriptView
+          projectId={projectId}
+          board={board}
+          read={firstRead}
+          editable={editable}
+          focus={search.node}
+        />
+      ) : (
+        <BoardCanvas
+          projectId={projectId}
+          boardId={board.id}
+          boardName={board.name}
+          settingsId="board-settings"
+          read={firstRead}
+          options={options}
+          initial={last.initial}
+          onView={last.onView}
+          workspaceId={project.workspace_id}
+          editable={editable}
+          focus={search.node}
+        />
+      )}
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"

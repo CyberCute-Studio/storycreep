@@ -62,7 +62,7 @@ import {
   usePlatform,
   useRegistry,
 } from "../commands/registry";
-import { boardPart, type Part } from "../document/doc";
+import { boardPart } from "../document/doc";
 import {
   useDocumentState,
   useDocuments,
@@ -122,6 +122,7 @@ import {
   type LabelSources,
   labelContext,
   labelsOf,
+  nameParts,
   namesChanged,
   titleOf,
   typeOf,
@@ -148,9 +149,6 @@ export interface CanvasOptions {
 const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
 const darkQuery = "(prefers-color-scheme: dark)";
 const forcedColorsQuery = "(forced-colors: active)";
-
-/** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show. */
-const nameParts: readonly Part[] = ["components", "variables"];
 
 /** The zoom that the toolbar shows, as the canvas tells it, in a store of its own. */
 type ZoomShown = StoreApi<number>;

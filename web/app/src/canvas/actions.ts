@@ -52,6 +52,7 @@ import type { CanvasController, PortOf } from "./controller";
 import {
   type Alignment,
   aligned,
+  cornerTakenOf,
   distributed,
   freePlace,
   hasTagOf,
@@ -268,16 +269,14 @@ export function useCanvasActions(
     };
     /**
      * Returns what tells whether a node of the board, as the scene has it
-     * now, has its corner at a point, as a node that the canvas adds, or
-     * pastes, is placed beside it rather than over it (freePlace,
-     * pasteOffset).
+     * now, has its corner at a point (cornerTakenOf).
      */
     const cornerTaken = (): ((corner: Point) => boolean) => {
-      const corners = new Set<string>();
+      const nodes: Node[] = [];
       controller.scene.nodes.forEach((_, item) => {
-        corners.add(`${item.node.position.x},${item.node.position.y}`);
+        nodes.push(item.node);
       });
-      return (p) => corners.has(`${p.x},${p.y}`);
+      return cornerTakenOf(nodes);
     };
     /**
      * Sends the batches that paste clipboard onto the board, moved by

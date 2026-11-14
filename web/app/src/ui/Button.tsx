@@ -31,10 +31,20 @@ export function buttonClass(variant: keyof typeof variants = "secondary") {
  * the button pressed (NFR-A11Y-04); and, in a system's forced colours,
  * which replace the page's own and drop the fill, filled with the system's
  * colours of a selection. The rich-text editor's toolbar and the canvas's
- * share them.
+ * share them, and a link of the page shown has the same of aria-current
+ * (currentClass), which a change of these changes too.
  */
 export const pressedClass =
   "aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-accent-fg aria-pressed:hover:bg-accent-hover forced-colors:aria-pressed:bg-[Highlight] forced-colors:aria-pressed:hover:bg-[Highlight] forced-colors:aria-pressed:text-[HighlightText]";
+
+/**
+ * The classes of a link, as a button, of the page that is shown, which the
+ * router marks aria-current, as the board's page's links of its views:
+ * those of a toggle button that is pressed (pressedClass), of aria-current
+ * in place of aria-pressed.
+ */
+export const currentClass =
+  "aria-[current=page]:border-accent aria-[current=page]:bg-accent aria-[current=page]:text-accent-fg aria-[current=page]:hover:bg-accent-hover forced-colors:aria-[current=page]:bg-[Highlight] forced-colors:aria-[current=page]:hover:bg-[Highlight] forced-colors:aria-[current=page]:text-[HighlightText]";
 
 /** A button, which does not submit a form unless its type says so. */
 export function Button({

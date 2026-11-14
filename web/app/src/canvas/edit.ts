@@ -229,6 +229,21 @@ export function freePlace(
   return p;
 }
 
+/**
+ * Returns what tells whether one of nodes has its corner at a point, as a
+ * node that the canvas adds, or pastes, or that the script view adds, is
+ * placed beside it rather than over it (freePlace, pasteOffset).
+ */
+export function cornerTakenOf(
+  nodes: Iterable<Pick<Node, "position">>,
+): (corner: Point) => boolean {
+  const corners = new Set<string>();
+  for (const n of nodes) {
+    corners.add(`${n.position.x},${n.position.y}`);
+  }
+  return (p) => corners.has(`${p.x},${p.y}`);
+}
+
 /** Returns the rectangles of nodes, as the canvas lays them out. */
 export function placedOf(nodes: Iterable<Node>): Placed[] {
   return [...nodes].map((node) => ({ id: node.id, rect: nodeRect(node) }));

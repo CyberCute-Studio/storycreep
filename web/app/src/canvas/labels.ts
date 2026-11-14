@@ -12,7 +12,7 @@ import type {
   RichTextInline,
 } from "@storycreep/shared/api";
 import { type NameSources, valueNamer } from "../content/textNames";
-import type { Doc } from "../document/doc";
+import type { Doc, Part } from "../document/doc";
 import { type JumperTarget, type TargetLookup, targetOf } from "./targets";
 import { excerpt, excerptLength } from "./text";
 
@@ -44,6 +44,9 @@ export interface LabelContext {
   /** Returns the name of the board of id, if the project's document has it. */
   boardName: (id: string) => string | undefined;
 }
+
+/** The parts of the project's document that the names that cards show are of: its speakers, and the variables that their texts show, and that the script view's conditions name, which the canvas and the script view read as they open. */
+export const nameParts: readonly Part[] = ["components", "variables"];
 
 /** What a card's labels read of the project's document, beyond its node: the names of what the node refers to. */
 export type LabelSources = Pick<
@@ -178,25 +181,35 @@ export function typeOf(
   }
 }
 
+/**
+ * Returns the line of node's type, as its card writes it, and the script
+ * view: an element's kind, with its speaker, and whether it is an ending;
+ * and of another type its name (typeOf).
+ */
+export function kindOf(
+  node: Node,
+  c: Pick<LabelContext, "t" | "componentName">,
+): string {
+  if (node.type !== "element") {
+    return typeOf(node, c.t);
+  }
+  const speaker =
+    node.speaker_component_id === undefined
+      ? undefined
+      : c.componentName(node.speaker_component_id);
+  const kind =
+    node.kind === "narration" || speaker === undefined
+      ? typeOf(node, c.t)
+      : c.t("canvas.node.dialogue_by", { speaker });
+  return node.is_ending ? c.t("canvas.node.kind_ending", { kind }) : kind;
+}
+
 /** Returns what a card shows of node. */
 export function labelsOf(node: Node, c: LabelContext): NodeLabels {
   const title = titleOf(node, c.t);
   switch (node.type) {
-    case "element": {
-      const speaker =
-        node.speaker_component_id === undefined
-          ? undefined
-          : c.componentName(node.speaker_component_id);
-      const kind =
-        node.kind === "narration" || speaker === undefined
-          ? typeOf(node, c.t)
-          : c.t("canvas.node.dialogue_by", { speaker });
-      return {
-        title,
-        kind: node.is_ending ? c.t("canvas.node.kind_ending", { kind }) : kind,
-        body: plainText(node.text, c),
-      };
-    }
+    case "element":
+      return { title, kind: kindOf(node, c), body: plainText(node.text, c) };
     case "branch": {
       const outputs = node.outputs ?? [];
       return {

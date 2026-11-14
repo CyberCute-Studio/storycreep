@@ -36,7 +36,7 @@ import type { Scope } from "./scope";
 import { unknownOf, type VariableType } from "./unknown";
 
 /** Shows the parts of a rendering: words as they are, and names as code. */
-function Parts({ parts }: { parts: readonly Part[] }) {
+export function Parts({ parts }: { parts: readonly Part[] }) {
   return (
     <>
       {parts.map((part, i) =>

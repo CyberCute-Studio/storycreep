@@ -14,6 +14,7 @@
 
 import {
   type FocusEvent,
+  type KeyboardEvent,
   type RefObject,
   useCallback,
   useRef,
@@ -73,6 +74,38 @@ function controlsOf(form: HTMLFormElement): Element[] {
     ),
     ...controls.filter(inToolbar),
   ];
+}
+
+/** The props of an editor's form that tell the keys that went down in it from one held as it opened (useOwnKeys). */
+export interface OwnKeys {
+  onKeyDownCapture: (event: KeyboardEvent) => void;
+  onKeyUpCapture: (event: KeyboardEvent) => void;
+}
+
+/**
+ * Returns the props of an editor's form that keep the keys that went down
+ * in it, by their places, whose repeats, as the user holds one, are the
+ * user's typing: a key held as the form opened, as the Enter on what opened
+ * it, goes on repeating into what the form gave the focus, where its
+ * repeats do nothing until it goes up, rather than submit the form, or add
+ * a paragraph for each, which the user never typed. The canvas's editor of
+ * a text and the script view's forms share it.
+ */
+export function useOwnKeys(): OwnKeys {
+  const pressed = useRef(new Set<string>());
+  return {
+    onKeyDownCapture: (event) => {
+      if (!event.repeat) {
+        pressed.current.add(event.code);
+      } else if (!pressed.current.has(event.code)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    onKeyUpCapture: (event) => {
+      pressed.current.delete(event.code);
+    },
+  };
 }
 
 /** Returns what a form of entity shows, and how it holds it. */
