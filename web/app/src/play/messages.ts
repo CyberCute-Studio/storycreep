@@ -8,7 +8,7 @@ import type {
   RuntimeError,
 } from "@storycreep/shared/flow";
 import type { TFunction } from "i18next";
-import type { StandIn } from "./projection";
+import type { ExpressionOwner, StandIn } from "./projection";
 
 /** Returns why the flow ended, as play mode says it (§5.8.5). */
 export function endedMessage(t: TFunction, reason: Reason): string {
@@ -63,6 +63,32 @@ export function fieldName(t: TFunction, field: ExpressionField): string {
       return t("play.field.on_traverse");
     case "condition":
       return t("play.field.condition");
+  }
+}
+
+/**
+ * Returns where an expression of field is, as the error panel says where a
+ * runtime error is, of where, the name of the node whose it is, of the node
+ * that its connection leaves, or of its output's branch, by owner, what it
+ * is of: so that a choice's condition does not read as its node's.
+ */
+export function expressionPlace(
+  t: TFunction,
+  owner: ExpressionOwner | undefined,
+  where: string,
+  field: ExpressionField,
+): string {
+  const named = { where, field: fieldName(t, field) };
+  switch (owner) {
+    case "choice":
+      return t("play.where_choice_field", named);
+    case "connection":
+      return t("play.where_connection_field", named);
+    case "output":
+      return t("play.where_output_field", named);
+    case "node":
+    case undefined:
+      return t("play.where_field", named);
   }
 }
 

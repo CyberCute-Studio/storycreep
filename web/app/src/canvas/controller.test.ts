@@ -1316,7 +1316,7 @@ describe("the canvas's controller of a board that may be changed", () => {
     });
     c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]), false);
     c.setReady();
-    c.reveal({ x: 4000, y: 0, width: 240, height: 128 });
+    c.revealWhenPlaced({ x: 4000, y: 0, width: 240, height: 128 });
     time.tick();
     // At the restored view's zoom, the node's middle at the canvas's centre.
     expect(c.viewport()).toEqual({
@@ -1333,9 +1333,25 @@ describe("the canvas's controller of a board that may be changed", () => {
     });
     again.c.sync(docOf([testNode("nd_1", 100, 100)]), false);
     again.c.setReady();
-    again.c.reveal({ x: 100, y: 100, width: 240, height: 128 });
+    again.c.revealWhenPlaced({ x: 100, y: 100, width: 240, height: 128 });
     again.time.tick();
     expect(again.c.viewport()).toEqual({ x: 0, y: 0, zoom: 1 });
+    // The reveal of an item of the tree that the focus came to before the
+    // canvas was placed gives way to the view that it restores.
+    const tree = setUp();
+    tree.c.restore({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    tree.c.sync(
+      docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]),
+      false,
+    );
+    tree.c.setReady();
+    tree.c.reveal({ x: 4000, y: 0, width: 240, height: 128 });
+    tree.time.tick();
+    expect(tree.c.viewport()).toEqual({ x: 0, y: 0, zoom: 1 });
   });
 
   it("opens as without a link to a node that the board does not have, which it tells nothing of", () => {

@@ -505,7 +505,7 @@ export class CanvasController implements GestureHost {
   private untold = false;
   /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
   private focusing: { id: string; found?: () => void } | undefined;
-  /** What the canvas shows once it is placed, of a reveal asked for before (reveal). */
+  /** What the canvas shows once it is placed, of a reveal asked for before (revealWhenPlaced). */
   private revealing: Rect | undefined;
   private labelsVersion = 0;
   private theme: Theme | undefined;
@@ -965,22 +965,32 @@ export class CanvasController implements GestureHost {
    * on the canvas is in view: where the canvas does not show it whole, with
    * 24 px around it, it moves to have r's middle at its centre, at the zoom
    * that it is at, animated as a move that a key asks for is. On a canvas
-   * not yet placed on the board's content, whose placing would take the
-   * place of the move, as of the board's page that play mode followed the
-   * flow to (plan note N78), it shows r once the canvas is placed, from the
-   * fit or the view that it restores, at once.
+   * not yet placed on the board's content, the fit or the view that it
+   * restores takes the place of the move, as of an item of the tree that
+   * the focus came to while the content was read.
    */
   reveal(r: Rect): void {
-    if (!this.placed) {
-      this.revealing = r;
-      this.invalidate();
-      return;
-    }
     const v = this.target();
     const to = this.revealed(v, r);
     if (to !== undefined) {
       this.animateTo(to);
     }
+  }
+
+  /**
+   * Shows r of the board as reveal does, but on a canvas not yet placed on
+   * the board's content, whose placing would take the place of the move, as
+   * of the board's page that play mode followed the flow to, where it shows
+   * play's current node (plan note N78): there it shows r once the canvas
+   * is placed, from the fit or the view that it restores, at once.
+   */
+  revealWhenPlaced(r: Rect): void {
+    if (!this.placed) {
+      this.revealing = r;
+      this.invalidate();
+      return;
+    }
+    this.reveal(r);
   }
 
   /**

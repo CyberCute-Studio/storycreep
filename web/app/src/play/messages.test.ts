@@ -2,8 +2,8 @@ import { MAX_PASSES } from "@storycreep/shared/flow";
 import type { TFunction } from "i18next";
 import { expect, test } from "vitest";
 import en from "../../../shared/i18n/en.json";
-import { standInMessage } from "./messages";
-import type { StandIn } from "./projection";
+import { expressionPlace, standInMessage } from "./messages";
+import type { ExpressionOwner, StandIn } from "./projection";
 
 // A t that returns the key of the message that it is asked for.
 const t = ((key: string) => key) as unknown as TFunction;
@@ -191,6 +191,27 @@ test("a script's stand-in names its field", () => {
     ),
   ).toBe("play.stand_in.script");
   expect(asked.at(-1)).toEqual({ where: "where", field: "play.field.on_exit" });
+});
+
+// Where a runtime error's expression is says what it is of, so that a
+// choice's condition does not read as the node's that it leaves.
+test.each<[ExpressionOwner | undefined, string]>([
+  ["node", "play.where_field"],
+  [undefined, "play.where_field"],
+  ["choice", "play.where_choice_field"],
+  ["connection", "play.where_connection_field"],
+  ["output", "play.where_output_field"],
+])("an expression of %s is where %s says", (owner, key) => {
+  const asked: unknown[] = [];
+  const recording = ((key: string, options?: unknown) => {
+    asked.push(options);
+    return key;
+  }) as unknown as TFunction;
+  expect(expressionPlace(recording, owner, "where", "condition")).toBe(key);
+  expect(asked.at(-1)).toEqual({
+    where: "where",
+    field: "play.field.condition",
+  });
 });
 
 // The message of flow_loop says the runtime's own limit of branches in one

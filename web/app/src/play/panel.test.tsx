@@ -19,7 +19,7 @@ import type { ComponentEntry } from "../document/doc";
 import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
 import "../test/editor";
-import { fakeApi, startPage, testProject } from "../test/fake";
+import { fakeApi, refused, startPage, testProject } from "../test/fake";
 import {
   expression,
   richText,
@@ -193,10 +193,15 @@ const connections: Connection[] = [
 
 /**
  * Answers the board's pages of the project, its boards those that boards
- * returns as they are read, and records what they ask.
+ * returns as they are read, and records what they ask; refuse throws the
+ * refusal of an operation, if any, before it is answered.
  */
-function playProject(boards: () => Board[] = () => [harbour, elara]) {
+function playProject(
+  boards: () => Board[] = () => [harbour, elara],
+  refuse: (operation: string) => void = () => {},
+) {
   return fakeApi((operation, input) => {
+    refuse(operation);
     const path = (input as { path?: Record<string, string> } | undefined)?.path;
     switch (operation) {
       case "getProject":
@@ -466,6 +471,120 @@ describe("play mode", () => {
     await user.click(within(editor).getByRole("button", { name: "Cancel" }));
     const play = await screen.findByRole("dialog", { name: "Play" });
     expect(within(play).getByText("You wait.")).toBeDefined();
+  });
+
+  // The editor of a text holds what the user typed, which the board's page
+  // does not take away unsaved as it follows the flow to another board's
+  // page: it waits for the editor to close, while the panel gives the
+  // current node's heading the focus, and then follows the flow.
+  it("waits for the editor of a text to close before it follows the flow to another board's page", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const { router } = renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "A")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Quay" });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of Quay",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of Quay",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => {
+      (
+        textbox as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Typed. ");
+    });
+    await user.click(
+      within(panel).getByRole("button", { name: "Visit Elara" }),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+    expect(router.state.location.pathname).toBe(
+      `/projects/${project.id}/boards/${harbour.id}`,
+    );
+    expect(editor.isConnected).toBe(true);
+    expect(textbox.textContent).toContain("Typed.");
+    await user.click(within(editor).getByRole("button", { name: "Cancel" }));
+    await openBoard(elara);
+    const there = await screen.findByRole("region", { name: "Play" });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(there).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+  });
+
+  // A tablet's turn that makes room for the panel beside the canvas, while
+  // its sheet waits for the editor of a text, leaves the focus in the text.
+  it("leaves the focus in the editor of a text as the window grows wide enough for the panel beside the canvas", async () => {
+    const size = windowOf(800);
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "B")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    const editor = await screen.findByRole("form", {
+      name: "The text of Wait",
+    });
+    const textbox = within(editor).getByRole("textbox", {
+      name: "Text of Wait",
+    });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    await waitFor(() =>
+      expect(lastMarks()).toMatchObject({ current: id("nd", "B") }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull();
+    fireEvent.keyDown(canvas, { key: "Enter" });
+    await waitFor(() => expect(document.activeElement).toBe(textbox));
+    act(() => size.resize(1200));
+    const panel = await screen.findByRole("region", { name: "Play" });
+    expect(within(panel).getByText("You wait.")).toBeDefined();
+    expect(document.activeElement).toBe(textbox);
+  });
+
+  // A read that the server refused says why, as that the account made too
+  // many reads in a minute, and when Try again can read on.
+  it("says why a read of the project failed, and reads on with Try again", async () => {
+    const user = userEvent.setup();
+    let limited = true;
+    playProject(undefined, (operation) => {
+      if (operation === "getComponent" && limited) {
+        throw refused(429, { code: "rate_limited" }, { "Retry-After": "30" });
+      }
+    });
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    expect((await within(panel).findByRole("alert")).textContent).toBe(
+      "Play mode could not read the project's draft. Too many requests. Try again in 30 seconds.",
+    );
+    limited = false;
+    await user.click(within(panel).getByRole("button", { name: "Try again" }));
+    await within(panel).findByText("Trust 1.");
   });
 
   // Play reads the project's content as it starts, and nothing for a step.

@@ -439,6 +439,13 @@ interface BoardCanvasProps {
    * leave that node, the node stays selected.
    */
   focusConnection?: string;
+  /**
+   * Tells whether the canvas has open what the user types in, which a page
+   * change would take away unsaved: the inspector, or the editor of a text,
+   * as it opens and closes, which the board's page waits for to close before
+   * it follows play mode's flow to another board's page (plan note N78).
+   */
+  onHolding?: (holding: boolean) => void;
 }
 
 /**
@@ -469,6 +476,7 @@ function BoardCanvasOf({
   editable = false,
   focus,
   focusConnection,
+  onHolding,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -1579,9 +1587,17 @@ function BoardCanvasOf({
     }
     const r = controller.scene.boundsOf([playNode]);
     if (r !== undefined && session.firstShown("canvas", playTurn)) {
-      controller.reveal(r);
+      controller.revealWhenPlaced(r);
     }
   }, [controller, session, content, playNode, playTurn]);
+  // What the user types in on the canvas, the inspector or the editor of a
+  // text, open, which the board's page does not take away unsaved as it
+  // follows play's flow to another board's page, but waits for to close
+  // (onHolding), while the panel keeps the focus where the flow is.
+  const holding = (inspecting && editable) || editing !== undefined;
+  useEffect(() => {
+    onHolding?.(holding);
+  }, [onHolding, holding]);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -2679,7 +2695,10 @@ function BoardCanvasOf({
         to the canvas once play stops. A sheet over the canvas waits while
         the editor of a text is open, which it would else hold inert under
         it, as the inspector's sheet closes to show the editor; it shows
-        again once the editor closes. */}
+        again once the editor closes. Beside the canvas, the panel opens
+        without taking the focus while the editor is open, as once a
+        tablet's turn makes room for it, which leaves the focus in the
+        editor's text. */}
         {playing &&
           !(inspecting && editable) &&
           (docked || editing === undefined) && (
@@ -2689,6 +2708,8 @@ function BoardCanvasOf({
               doc={doc}
               session={session}
               returnFocus={() => hostRef.current}
+              focusOnOpen={editing === undefined}
+              holding={holding}
             />
           )}
       </div>

@@ -23,8 +23,8 @@ import type {
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart, type Doc, expressionFields } from "../document/doc";
 import { equal } from "../document/reconcile";
-import type { ProjectDocument } from "../document/store";
-import type { Projection } from "./projection";
+import { inTurns, type ProjectDocument } from "../document/store";
+import type { ExpressionOwner, Projection } from "./projection";
 
 // What play runs a draft with, the projection, the shared flow's loader,
 // and its runtime, with the JSON Schemas that the loader checks a snapshot
@@ -48,6 +48,8 @@ export interface PlayError {
   /** The board and the node that a link opens it by, absent for a call's own. */
   readonly board?: string;
   readonly node?: string;
+  /** What at is, as the panel says where an expression is: a node, a choice, a connection that leaves a branch, or a branch's output; absent for a call's own. */
+  readonly owner?: ExpressionOwner;
   /** The expression's source, as the snapshot holds it. */
   readonly source?: string;
   /** The step that reported it, from 0, the start's. */
@@ -98,10 +100,14 @@ export interface PlayedProjection {
   >;
   /** Each board's name, as the snapshot holds it, by the board's ID. */
   readonly boards: ReadonlyMap<string, string>;
-  /** The board of each connection and each branch output, and the node that a link opens it by: the node that it leaves, or its branch. */
+  /** The board of each connection and each branch output, the node that a link opens it by, the node that it leaves, or its branch, and what it is. */
   readonly places: ReadonlyMap<
     string,
-    { readonly board: string; readonly node: string }
+    {
+      readonly board: string;
+      readonly node: string;
+      readonly owner: Exclude<ExpressionOwner, "node">;
+    }
   >;
   /** Each expression's source, by its entity's ID and its field, as `${id} ${field}`. */
   readonly sources: ReadonlyMap<string, string>;
@@ -157,8 +163,11 @@ export class PlaySession {
   }));
   private readonly doc: ProjectDocument;
   // generation counts the starts and stops, so that a start that one after
-  // it replaced does nothing more once its reads are answered.
+  // it replaced does nothing more once its reads are answered; aborting
+  // stops the hashing and the loading of the start that it was of, which a
+  // start after it, or a stop, replaced, rather than let it go on to its end.
   private generation = 0;
+  private aborting = new AbortController();
   private runtime: Runtime | undefined;
   private snapshot: Snapshot | undefined;
   private unwatch: (() => void) | undefined;
@@ -198,6 +207,7 @@ export class PlaySession {
    */
   async start(start: PlayStart): Promise<void> {
     const generation = this.begin();
+    const { signal } = this.aborting;
     this.store.setState({ status: "loading", start, done: 0, total: 0 }, true);
     const current = () => generation === this.generation;
     let reading = true;
@@ -222,7 +232,7 @@ export class PlaySession {
             `the board ${missing.id} has not been read`,
           );
         }
-        projection = await projectDraft(view);
+        projection = await projectDraft(view, { signal });
       } catch (error) {
         // A board, or a component that the document does not hold whole, as
         // one whose values a read of the components' list took again after
@@ -236,7 +246,7 @@ export class PlaySession {
         return;
       }
       const played = playedOf(projection);
-      const snapshot = await load(projection.files);
+      const snapshot = await load(projection.files, { signal });
       if (!current()) {
         return;
       }
@@ -297,12 +307,15 @@ export class PlaySession {
     this.store.setState({ status: "idle" }, true);
   }
 
-  // begin ends what the session ran, and returns the next generation.
+  // begin ends what the session ran, the hashing and the loading of a start
+  // under way among it, and returns the next generation.
   private begin(): number {
     this.unwatch?.();
     this.unwatch = undefined;
     this.runtime = undefined;
     this.snapshot = undefined;
+    this.aborting.abort();
+    this.aborting = new AbortController();
     return ++this.generation;
   }
 
@@ -346,38 +359,30 @@ export class PlaySession {
     };
     addUnread();
     let done = 0;
-    let failed = false;
     const progress = () => {
       const s = this.state;
       if (current() && s.status === "loading") {
         this.store.setState({ ...s, done, total: reads.length });
       }
     };
-    // inTurn makes the reads from the next on, parallelReads at a time.
-    let next = 0;
-    const inTurn = async () => {
+    // inTurn makes the reads from the first of from on, parallelReads at a
+    // time, as the document makes its own (inTurns), and none once the
+    // start is no longer the session's.
+    const inTurn = (from: number) => {
       progress();
-      const worker = async () => {
-        while (next < reads.length && current() && !failed) {
-          const read = reads[next++];
-          try {
-            await read();
-          } catch (error) {
-            failed = true;
-            throw error;
+      return inTurns(
+        reads.slice(from).map((read) => async () => {
+          if (!current()) {
+            return;
           }
+          await read();
           done++;
           progress();
-        }
-      };
-      await Promise.all(
-        Array.from(
-          { length: Math.min(parallelReads, reads.length - next) },
-          worker,
-        ),
+        }),
+        parallelReads,
       );
     };
-    await inTurn();
+    await inTurn(0);
     // A component that a read of the components' list took the values of
     // since, as it answers them without them, is read whole again, as the
     // others are, and a board that came back from the trash since, whose
@@ -386,7 +391,7 @@ export class PlaySession {
       const before = reads.length;
       addUnread();
       if (reads.length > before) {
-        await inTurn();
+        await inTurn(before);
       }
     }
   }
@@ -396,6 +401,10 @@ export class PlaySession {
   // changes what the projection reads, since play projected it: while play
   // loaded the projection too, before the watch began.
   private watch(projected: Doc): void {
+    // The view that the watch compared last, which the document's state
+    // keeps as it changes something else, as whether it is connected, and
+    // which the watch does not compare again.
+    let compared: Doc | undefined;
     // done marks the session changed where view is not the draft that it
     // projected, and reports whether the watch is over.
     const done = (view: Doc): boolean => {
@@ -403,6 +412,10 @@ export class PlaySession {
       if (s.status !== "playing" || s.changed) {
         return true;
       }
+      if (view === compared) {
+        return false;
+      }
+      compared = view;
       if (draftChanged(projected, view)) {
         this.store.setState({ ...s, changed: true });
         return true;
@@ -510,7 +523,10 @@ function emptyFlow(): PlayFlow {
 function playedOf(projection: Projection): PlayedProjection {
   const nodes = new Map<string, { title: string; speaker: string }>();
   const boards = new Map<string, string>();
-  const places = new Map<string, { board: string; node: string }>();
+  const places = new Map<
+    string,
+    { board: string; node: string; owner: Exclude<ExpressionOwner, "node"> }
+  >();
   const sources = new Map<string, string>();
   const source = (
     id: string,
@@ -523,6 +539,7 @@ function playedOf(projection: Projection): PlayedProjection {
   };
   for (const [board, f] of projection.boards) {
     boards.set(board, f.board.name);
+    const branches = new Set<string>();
     for (const n of f.nodes) {
       nodes.set(n.id, {
         title: n.title ?? "",
@@ -537,8 +554,9 @@ function playedOf(projection: Projection): PlayedProjection {
       source(n.id, "onEnter", n.onEnter);
       source(n.id, "onExit", n.onExit);
       if (n.type === "branch") {
+        branches.add(n.id);
         for (const o of n.outputs) {
-          places.set(o.id, { board, node: n.id });
+          places.set(o.id, { board, node: n.id, owner: "output" });
           if (o.kind !== "else") {
             source(o.id, "condition", o.condition);
           }
@@ -546,7 +564,11 @@ function playedOf(projection: Projection): PlayedProjection {
       }
     }
     for (const c of f.connections) {
-      places.set(c.id, { board, node: c.from });
+      places.set(c.id, {
+        board,
+        node: c.from,
+        owner: branches.has(c.from) ? "connection" : "choice",
+      });
       source(c.id, "condition", c.condition);
       source(c.id, "onTraverse", c.onTraverse);
     }
@@ -555,15 +577,15 @@ function playedOf(projection: Projection): PlayedProjection {
 }
 
 // placeOf returns where the entity at of a runtime error is, as a link opens
-// it, and the source of its expression of field, as the snapshot holds
-// them: a node's, a connection's by the node that it leaves, and a branch
-// output's by its branch.
+// it, what it is, and the source of its expression of field, as the
+// snapshot holds them: a node's, a connection's by the node that it leaves,
+// and a branch output's by its branch.
 function placeOf(
   projection: PlayedProjection,
   s: Snapshot,
   at: string,
   field: ExpressionField | "",
-): { board?: string; node?: string; source?: string } {
+): { board?: string; node?: string; owner?: ExpressionOwner; source?: string } {
   if (at === "") {
     return {};
   }
@@ -571,7 +593,7 @@ function placeOf(
   const place =
     node === undefined
       ? projection.places.get(at)
-      : { board: node.board, node: at };
+      : { board: node.board, node: at, owner: "node" as const };
   if (place === undefined) {
     return {};
   }

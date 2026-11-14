@@ -5,7 +5,9 @@
 // each is and its expression's source, and what the projection stood in
 // for. Closing it stops play.
 
+import { ApiError, NetworkError } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import {
   type ReactNode,
   type RefObject,
@@ -17,6 +19,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import { refusalOf } from "../auth/refusal";
 import { titleOf } from "../canvas/labels";
 import { useDocumentState } from "../document/react";
 import type { ProjectDocument } from "../document/store";
@@ -27,7 +30,7 @@ import { Panel } from "../ui/Panel";
 import {
   endedMessage,
   errorMessage,
-  fieldName,
+  expressionPlace,
   standInMessage,
 } from "./messages";
 import {
@@ -43,6 +46,8 @@ export function PlayPanel({
   doc,
   session,
   returnFocus,
+  focusOnOpen = true,
+  holding = false,
 }: {
   projectId: string;
   /** The board whose page shows the panel. */
@@ -51,6 +56,15 @@ export function PlayPanel({
   session: PlaySession;
   /** What gets the focus once the panel has gone, as the canvas. */
   returnFocus: () => HTMLElement | null;
+  /** Whether the panel's heading takes the focus as it opens (Panel's focusOnOpen). */
+  focusOnOpen?: boolean;
+  /**
+   * Whether the canvas has open what the user types in, the inspector or
+   * the editor of a text, which the board's page waits for to close before
+   * it follows the flow to another board's page, so that the panel keeps the
+   * focus where the flow is meanwhile.
+   */
+  holding?: boolean;
 }) {
   const { t } = useTranslation();
   const state = useStore(session.store);
@@ -74,15 +88,19 @@ export function PlayPanel({
   // the board's page followed the flow to: so that a keyboard and a screen
   // reader are where the flow is, which the heading names and describes.
   // The page of another board leaves the turn to that board's, which it
-  // opens, but for a board that the page no longer holds (followsFlow).
+  // opens, but for a board that the page no longer holds (followsFlow);
+  // while it waits to open it, as the canvas holds what the user types in
+  // (holding), the panel gives the current node's heading the focus all the
+  // same, as once the choice pressed went with its node, and leaves the turn
+  // to that board's page, which takes it once the page opens it.
   const turn = state.status === "playing" ? state.turn : 0;
   const flowBoard = state.status === "playing" ? state.flow.board : "";
   useEffect(() => {
-    if (
-      turn === 0 ||
-      followsFlow(doc, flowBoard, boardId) ||
-      !session.firstShown("panel", turn)
-    ) {
+    if (turn === 0) {
+      return;
+    }
+    const follows = followsFlow(doc, flowBoard, boardId);
+    if (follows ? !holding : !session.firstShown("panel", turn)) {
       return;
     }
     // The panel's own element, which its heading is in.
@@ -93,7 +111,7 @@ export function PlayPanel({
     ) {
       current.current?.focus();
     }
-  }, [doc, session, turn, flowBoard, boardId]);
+  }, [doc, session, turn, flowBoard, boardId, holding]);
   if (state.status === "idle") {
     return null;
   }
@@ -161,6 +179,7 @@ export function PlayPanel({
       onClose={() => session.stop()}
       returnFocus={returnFocus}
       headingRef={heading}
+      focusOnOpen={focusOnOpen}
     >
       {state.status === "loading" ? (
         <p role="status">
@@ -174,7 +193,13 @@ export function PlayPanel({
       ) : state.status === "failed" ? (
         <div className="space-y-2">
           <Alert
-            message={state.reading ? t("play.failed") : t("play.unplayable")}
+            message={
+              state.reading
+                ? [t("play.failed"), readRefusal(state.error, t)]
+                    .filter((m) => m !== undefined)
+                    .join(" ")
+                : t("play.unplayable")
+            }
           />
           {!state.reading && state.error instanceof Error && (
             <code className="block break-words whitespace-pre-wrap text-sm">
@@ -377,10 +402,12 @@ function ErrorItem({
             error.node,
             error.expression === ""
               ? where(error.board, error.node)
-              : t("play.where_field", {
-                  where: where(error.board, error.node),
-                  field: fieldName(t, error.expression),
-                }),
+              : expressionPlace(
+                  t,
+                  error.owner,
+                  where(error.board, error.node),
+                  error.expression,
+                ),
           )}
         </p>
       )}
@@ -391,6 +418,17 @@ function ErrorItem({
       )}
     </li>
   );
+}
+
+// readRefusal returns why a read of the project that play waits for failed,
+// as a list's read says it, of a request that the server refused or did
+// not answer: as too many reads in a minute, which says when Try again
+// reads on, from what play has not read yet; or undefined for none, as a
+// board that came back from the trash and was not read meanwhile.
+function readRefusal(error: unknown, t: TFunction): string | undefined {
+  return error instanceof ApiError || error instanceof NetworkError
+    ? refusalOf(error, t).message
+    : undefined;
 }
 
 // namedBy returns the boards and the nodes whose names the panel says, of

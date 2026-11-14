@@ -318,7 +318,11 @@ function BoardContent({
   // checklist, rather than with the browser's. A board that the page no
   // longer holds, as one that a collaborator deleted while playing, which
   // the snapshot still holds, is not opened, as its page is none: the page
-  // shown stays, and its panel takes the turn (followsFlow).
+  // shown stays, and its panel takes the turn (followsFlow). While the
+  // canvas has open what the user types in, the inspector or the editor of
+  // a text, which the page change would take away unsaved, the page waits
+  // for it to close, and then follows the flow to where it is by then
+  // (BoardCanvas's onHolding).
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -326,9 +330,10 @@ function BoardContent({
   const playBoard = useStore(session.store, (s) =>
     s.status === "playing" ? s.flow.board : "",
   );
+  const [holding, setHolding] = useState(false);
   const seenTurn = useRef(playTurn);
   useEffect(() => {
-    if (playTurn === seenTurn.current) {
+    if (playTurn === seenTurn.current || holding) {
       return;
     }
     seenTurn.current = playTurn;
@@ -340,7 +345,7 @@ function BoardContent({
           prev.renderer === undefined ? {} : { renderer: prev.renderer },
       });
     }
-  }, [playTurn, playBoard, board.id, navigate, projectId, doc]);
+  }, [playTurn, playBoard, board.id, navigate, projectId, doc, holding]);
   return (
     <div className="space-y-6">
       {/* The views' switch is beside the board's name, rather than under
@@ -408,6 +413,7 @@ function BoardContent({
           editable={editable}
           focus={search.node}
           focusConnection={search.connection}
+          onHolding={setHolding}
         />
       )}
       <section

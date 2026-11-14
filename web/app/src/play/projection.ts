@@ -88,11 +88,19 @@ export type ProjectionSources = Pick<
   | "components"
 >;
 
+/**
+ * What an expression is of, as a stand-in and a runtime error name where
+ * it is: a node, a connection that leaves an element, which is a choice,
+ * one that leaves a branch, which the flow passes on by alone, or a
+ * branch's output.
+ */
+export type ExpressionOwner = "node" | "choice" | "connection" | "output";
+
 // Where an expression is, as its stand-in says: its owner, which kind of
 // entity it is, its field, and the node that a link opens it by.
 type ExpressionAt = {
   entity: string;
-  owner: "node" | "choice" | "connection" | "output";
+  owner: ExpressionOwner;
   field: ExpressionField;
   node: string;
 };
@@ -124,12 +132,8 @@ export type StandIn = {
       readonly kind: "expression";
       /** The node, the connection, or the branch output whose it is. */
       readonly entity: string;
-      /**
-       * What entity is: a node, a connection that leaves an element, which
-       * is a choice, one that leaves a branch, which the flow passes on by
-       * alone, or a branch's output.
-       */
-      readonly owner: "node" | "choice" | "connection" | "output";
+      /** What entity is (ExpressionOwner). */
+      readonly owner: ExpressionOwner;
       readonly field: ExpressionField;
       readonly source: string;
       /** The compiler's error, or "" for an output without a condition. */
@@ -229,6 +233,8 @@ export const GENERATOR = { name: "storycreep-web", version: "play" } as const;
 export interface ProjectOptions {
   /** When the draft is projected, as its manifest's pulledAt says, to the second: now, unless given. */
   readonly now?: Date;
+  /** The signal that stops the hashing of the files once it is aborted, as of a start that a stop replaced, as load's does. */
+  readonly signal?: AbortSignal;
 }
 
 const literalFalse: ASTExpression = { kind: "lit", type: "bool", value: false };
@@ -244,7 +250,8 @@ const literalFalse: ASTExpression = { kind: "lit", type: "bool", value: false };
  * has no nodes, which play mode reads first (session.ts), as it reads each
  * component whole. It reads view at once, and resolves once it has hashed
  * the files that it wrote, as load does, by the platform's SHA-256, or by
- * its own, which lets the page run, where it has none. It rejects with a
+ * its own, which lets the page run, where it has none, and stops once the
+ * options' signal is aborted, with its reason, as load does. It rejects with a
  * ProjectionError where view has not read the project, or a component of
  * the snapshot whole, whose values its type's defaults would else stand in
  * for unsaid, or holds what no project has.
@@ -854,11 +861,13 @@ export async function projectDraft(
   // all the same, where the page has no WebCrypto.
   const pace: Pace = { hashed: 0 };
   const paths = [...files.keys()].sort(byCodePoints);
+  const { signal } = options;
   const sums = await Promise.all(
     paths.map((path) =>
-      fileHash(files.get(path) as Uint8Array<ArrayBuffer>, pace, true),
+      fileHash(files.get(path) as Uint8Array<ArrayBuffer>, pace, true, signal),
     ),
   );
+  signal?.throwIfAborted();
   const hashes: Record<string, string> = {};
   let all = "";
   paths.forEach((path, i) => {
@@ -885,7 +894,12 @@ export async function projectDraft(
       channel: "draft",
       // As the conformance suite's fixtures have it: the hash of the files'
       // paths and hashes, which no runtime checks (plan item 78).
-      contentHash: await fileHash(new TextEncoder().encode(all), pace, true),
+      contentHash: await fileHash(
+        new TextEncoder().encode(all),
+        pace,
+        true,
+        signal,
+      ),
       pulledAt,
     },
   };

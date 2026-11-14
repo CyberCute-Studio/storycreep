@@ -21,16 +21,16 @@ import {
 import { draftChanged, PlaySession, parallelReads } from "./session";
 
 // What a test has the shared flow's load do as play loads the projection,
-// before it loads it.
+// before it loads it, with the signal that it is given.
 const hooks = vi.hoisted(() => ({
-  loading: undefined as (() => void) | undefined,
+  loading: undefined as ((signal?: AbortSignal) => void) | undefined,
 }));
 vi.mock("@storycreep/shared/flow", async (importOriginal) => {
   const flow = await importOriginal<typeof import("@storycreep/shared/flow")>();
   return {
     ...flow,
     load: (...args: Parameters<typeof flow.load>) => {
-      hooks.loading?.();
+      hooks.loading?.(args[1]?.signal);
       return flow.load(...args);
     },
   };
@@ -363,11 +363,75 @@ describe("a play session", () => {
         expression: "onEnter",
         board: harbour.id,
         node: id("nd", "A"),
+        owner: "node",
         source: "gold = gold / 0",
         step: 0,
       },
     ]);
     expect(flow.halted).toBe(true);
+  });
+
+  // A runtime error of a choice's condition, or of a branch output's, is
+  // linked by the node that the choice leaves, or by the branch, and says
+  // what it is of, so that the panel does not name it as the node's own.
+  test("says what a runtime error's expression is of: a choice's, or a branch output's", async () => {
+    const choice = testConnection(id("cn", "1"), id("nd", "A"), id("nd", "B"), {
+      ...on(harbour),
+      condition: expression("gold / 0 > 1"),
+    });
+    const branch = {
+      ...testNode(id("nd", "C"), 0, 0, on(harbour)),
+      type: "branch",
+      outputs: [
+        {
+          id: id("bo", "1"),
+          node_id: id("nd", "C"),
+          kind: "if",
+          order: "a",
+          condition: expression("gold / 0 > 1"),
+          rev: 1,
+          created_at: at,
+          updated_at: at,
+        },
+      ],
+    } as Node;
+    const { doc } = documentOf(
+      testDraft({
+        boards: [harbour],
+        variables: [gold],
+        nodes: [
+          testNode(id("nd", "A"), 0, 0, on(harbour)),
+          testNode(id("nd", "B"), 0, 0, on(harbour)),
+          branch,
+        ],
+        connections: [choice],
+      }),
+    );
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: id("nd", "A") });
+    expect(playing(s).flow.errors).toMatchObject([
+      {
+        code: "division_by_zero",
+        at: choice.id,
+        expression: "condition",
+        board: harbour.id,
+        node: id("nd", "A"),
+        owner: "choice",
+        source: "gold / 0 > 1",
+      },
+    ]);
+    await s.start({ board: harbour.id, node: id("nd", "C") });
+    expect(playing(s).flow.errors).toMatchObject([
+      {
+        code: "division_by_zero",
+        at: id("bo", "1"),
+        expression: "condition",
+        board: harbour.id,
+        node: id("nd", "C"),
+        owner: "output",
+        source: "gold / 0 > 1",
+      },
+    ]);
   });
 
   test("reads the boards and the components whole that the document does not hold, and fails to start where a read fails", async () => {
@@ -692,6 +756,26 @@ describe("a play session", () => {
     const started = s.start({ board: harbour.id, node: "" });
     s.stop();
     await started;
+    expect(s.state.status).toBe("idle");
+  });
+
+  // A stop, or a start after it, while play loads the projection stops the
+  // loading, and its hashing, rather than let them go on to their end.
+  test("aborts the loading of a start that a stop overtook", async () => {
+    const { doc } = documentOf(draft);
+    const s = new PlaySession(doc);
+    let signal: AbortSignal | undefined;
+    hooks.loading = (given) => {
+      hooks.loading = undefined;
+      signal = given;
+      s.stop();
+    };
+    try {
+      await s.start({ board: harbour.id, node: "" });
+    } finally {
+      hooks.loading = undefined;
+    }
+    expect(signal?.aborted).toBe(true);
     expect(s.state.status).toBe("idle");
   });
 });

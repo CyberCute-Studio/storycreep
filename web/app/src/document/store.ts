@@ -3317,9 +3317,10 @@ function operationOf(message: OperationMessage): Operation {
 
 /**
  * Runs tasks, at most n at a time, and rejects as the first that fails
- * does, after which it starts none of those left, whose caller has failed.
+ * does, after which it starts none of those left, whose caller has failed,
+ * as play mode's reads of what the document does not hold (play/session.ts).
  */
-async function inTurns(
+export async function inTurns(
   tasks: readonly (() => Promise<void>)[],
   n: number,
 ): Promise<void> {
