@@ -745,7 +745,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-TEXT-04 AC1–AC4 pass.
 
 ### 69. Writing statistics
-**Status:** todo · **Depends on:** 66
+**Status:** done ([#83](https://github.com/CyberCute-Studio/storycreep/pull/83)) · **Depends on:** 66
 **PRD:** FR-TEXT-06
 - Word and character counts per node, board, and project, plus counts of nodes, choices, and conditions. Updated incrementally, without rescanning the project: the words and the characters of each element's text and each connection's label, counted by the server's one implementation, which the text export of item 82 counts with (`richtext.WordCount`, `richtext.CharacterCount`, with the project's names of what a text mentions and shows), into `text_statistic` (migration 00030), by the pipeline's derivation, of the texts that a batch changes and of those that name what it renames, and by a job of the texts that predate it, and counted again by the trash's purge where they named what it deleted (`server/internal/statistics`, N76).
 - `GET /api/v1/projects/{id}/statistics`, of the project and of each board, and `GET /api/v1/projects/{id}/nodes/{nid}/statistics`, which add up the rows of what is not in the trash and count its nodes, choices, and conditions (N76).
