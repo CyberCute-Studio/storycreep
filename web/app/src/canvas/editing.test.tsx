@@ -637,6 +637,59 @@ describe("the canvas's edits", () => {
     );
   });
 
+  it("closes the editor of a text that is as it was with Escape, which ProseMirror takes as its own, and keeps one whose text changed", async () => {
+    boardPage([testNode("nd_1", 0, 0)]);
+    const canvas = await openBoard("?node=nd_1");
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "Enter", code: "Enter" });
+    const textOf = async () => {
+      const editor = await screen.findByRole("form", {
+        name: "The text of nd_1",
+      });
+      const textbox = within(editor).getByRole("textbox", {
+        name: "Text of nd_1",
+      });
+      await waitFor(() => expect(document.activeElement).toBe(textbox));
+      return textbox;
+    };
+    // Escape as a browser sends it, of keyCode 27, which ProseMirror's own
+    // handler marks as taken (defaultPrevented) before the form hears it.
+    const pressEscape = (target: HTMLElement) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        keyCode: 27,
+        bubbles: true,
+        cancelable: true,
+      });
+      fireEvent(target, event);
+      return event;
+    };
+    const first = await textOf();
+    expect(pressEscape(first).defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "The text of nd_1" }),
+      ).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(canvas));
+    // A text that the user changed stays, to be saved or cancelled.
+    fireEvent.keyDown(canvas, { key: "Enter", code: "Enter" });
+    const second = await textOf();
+    act(() => {
+      (
+        second as unknown as {
+          editor: { commands: { insertContent: (text: string) => void } };
+        }
+      ).editor.commands.insertContent("Elara waits.");
+    });
+    pressEscape(second);
+    expect(
+      screen.getByRole("form", { name: "The text of nd_1" }),
+    ).toBeDefined();
+    expect(second.textContent).toBe("Elara waits.");
+  });
+
   it("adds no paragraph to the text for the repeats of the Enter that opened its editor, held down, and adds one for an Enter pressed in it", async () => {
     boardPage([testNode("nd_1", 0, 0)]);
     const canvas = await openBoard("?node=nd_1");
