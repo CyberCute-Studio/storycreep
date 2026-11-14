@@ -32,19 +32,24 @@ export function BoardBadge({
   if (board === undefined) {
     return null;
   }
+  // A box of a finger's height, as tall as the views' switch beside it, that
+  // cuts its text short within itself, so that what it covers ends where
+  // what it shows does: an inline link cut short by what holds it still
+  // covers the whole of its text, over the switch, as a press and axe's
+  // check of the switch's size find. It is as narrow as a finger at most.
   return (
-    <p className="min-w-0 flex-1 truncate text-fg-muted">
-      <Link
-        to="/projects/$projectId/dependencies"
-        params={{ projectId }}
-        search={{ board: boardId }}
-        className={textLink}
-      >
+    <Link
+      to="/projects/$projectId/dependencies"
+      params={{ projectId }}
+      search={{ board: boardId }}
+      className={`${textLink} flex min-h-11 min-w-11 items-center`}
+    >
+      <span className="truncate">
         {t("dependencies.badge", {
           inbound: board.inbound,
           outbound: board.outbound,
         })}
-      </Link>
-    </p>
+      </span>
+    </Link>
   );
 }
