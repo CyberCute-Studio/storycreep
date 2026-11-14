@@ -43,6 +43,8 @@ export interface BenchBoards {
   b200: BenchBoard;
   b2000: BenchBoard;
   b5000: BenchBoard;
+  /** A project of 60 boards that depend on one another, whose dependency view a run draws (NFR-PERF-11), and its first board. */
+  deps: BenchBoard;
 }
 
 /** Returns what the setup made. */

@@ -222,7 +222,7 @@ func (q *Queries) ValidationAttributeDefs(ctx context.Context, arg ValidationAtt
 }
 
 const validationBoards = `-- name: ValidationBoards :many
-SELECT id, entry_node_id FROM live_board
+SELECT id, name, entry_node_id FROM live_board
 WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
 `
 
@@ -233,11 +233,13 @@ type ValidationBoardsParams struct {
 
 type ValidationBoardsRow struct {
 	ID          pgtype.UUID
+	Name        string
 	EntryNodeID pgtype.UUID
 }
 
 // ValidationBoards returns the project's boards that are not in its trash,
-// each with its entry node, if it has one, in the trash or not.
+// each with its name, which a finding names its board by, and its entry
+// node, if it has one, in the trash or not.
 func (q *Queries) ValidationBoards(ctx context.Context, arg ValidationBoardsParams) ([]ValidationBoardsRow, error) {
 	rows, err := q.db.Query(ctx, validationBoards, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
@@ -247,7 +249,7 @@ func (q *Queries) ValidationBoards(ctx context.Context, arg ValidationBoardsPara
 	var items []ValidationBoardsRow
 	for rows.Next() {
 		var i ValidationBoardsRow
-		if err := rows.Scan(&i.ID, &i.EntryNodeID); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.EntryNodeID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -476,7 +478,7 @@ func (q *Queries) ValidationMutes(ctx context.Context, arg ValidationMutesParams
 }
 
 const validationNodes = `-- name: ValidationNodes :many
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
+SELECT id, board_id, title, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
     coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean AS text_empty
 FROM live_node WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
 `
@@ -489,6 +491,7 @@ type ValidationNodesParams struct {
 type ValidationNodesRow struct {
 	ID                 pgtype.UUID
 	BoardID            pgtype.UUID
+	Title              string
 	Type               string
 	Kind               string
 	SpeakerComponentID pgtype.UUID
@@ -500,7 +503,8 @@ type ValidationNodesRow struct {
 // ValidationNodes returns the project's nodes that are not in its trash,
 // each with what the rules read of it, an element's text only as whether it
 // is empty: one empty paragraph, as the editor's empty document is, which
-// has no segments (package richtext).
+// has no segments (package richtext), and its title, which a finding names
+// its node by.
 func (q *Queries) ValidationNodes(ctx context.Context, arg ValidationNodesParams) ([]ValidationNodesRow, error) {
 	rows, err := q.db.Query(ctx, validationNodes, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
@@ -513,6 +517,7 @@ func (q *Queries) ValidationNodes(ctx context.Context, arg ValidationNodesParams
 		if err := rows.Scan(
 			&i.ID,
 			&i.BoardID,
+			&i.Title,
 			&i.Type,
 			&i.Kind,
 			&i.SpeakerComponentID,

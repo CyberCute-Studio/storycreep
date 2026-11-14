@@ -28,10 +28,12 @@ import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects.$p
 import { Route as ProjectsProjectIdAccessRouteImport } from './routes/projects.$projectId.access'
 import { Route as ProjectsProjectIdComponentTypesRouteImport } from './routes/projects.$projectId.component-types'
 import { Route as ProjectsProjectIdComponentsRouteImport } from './routes/projects.$projectId.components'
+import { Route as ProjectsProjectIdDependenciesRouteImport } from './routes/projects.$projectId.dependencies'
 import { Route as ProjectsProjectIdSearchRouteImport } from './routes/projects.$projectId.search'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects.$projectId.settings'
 import { Route as ProjectsProjectIdStatisticsRouteImport } from './routes/projects.$projectId.statistics'
 import { Route as ProjectsProjectIdTrashRouteImport } from './routes/projects.$projectId.trash'
+import { Route as ProjectsProjectIdValidationRouteImport } from './routes/projects.$projectId.validation'
 import { Route as ProjectsProjectIdVariablesRouteImport } from './routes/projects.$projectId.variables'
 import { Route as WorkspacesWorkspaceIdIndexRouteImport } from './routes/workspaces.$workspaceId.index'
 import { Route as WorkspacesWorkspaceIdMembersRouteImport } from './routes/workspaces.$workspaceId.members'
@@ -136,6 +138,12 @@ const ProjectsProjectIdComponentsRoute =
     path: '/components',
     getParentRoute: () => ProjectsProjectIdRoute,
   } as any)
+const ProjectsProjectIdDependenciesRoute =
+  ProjectsProjectIdDependenciesRouteImport.update({
+    id: '/dependencies',
+    path: '/dependencies',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const ProjectsProjectIdSearchRoute = ProjectsProjectIdSearchRouteImport.update({
   id: '/search',
   path: '/search',
@@ -158,6 +166,12 @@ const ProjectsProjectIdTrashRoute = ProjectsProjectIdTrashRouteImport.update({
   path: '/trash',
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdValidationRoute =
+  ProjectsProjectIdValidationRouteImport.update({
+    id: '/validation',
+    path: '/validation',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const ProjectsProjectIdVariablesRoute =
   ProjectsProjectIdVariablesRouteImport.update({
     id: '/variables',
@@ -214,10 +228,12 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
   '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/statistics': typeof ProjectsProjectIdStatisticsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/validation': typeof ProjectsProjectIdValidationRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
@@ -242,10 +258,12 @@ export interface FileRoutesByTo {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
   '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/statistics': typeof ProjectsProjectIdStatisticsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/validation': typeof ProjectsProjectIdValidationRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
@@ -274,10 +292,12 @@ export interface FileRoutesById {
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
+  '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
   '/projects/$projectId/search': typeof ProjectsProjectIdSearchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/statistics': typeof ProjectsProjectIdStatisticsRoute
   '/projects/$projectId/trash': typeof ProjectsProjectIdTrashRoute
+  '/projects/$projectId/validation': typeof ProjectsProjectIdValidationRoute
   '/projects/$projectId/variables': typeof ProjectsProjectIdVariablesRoute
   '/workspaces/$workspaceId/members': typeof WorkspacesWorkspaceIdMembersRoute
   '/workspaces/$workspaceId/settings': typeof WorkspacesWorkspaceIdSettingsRoute
@@ -307,10 +327,12 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/dependencies'
     | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/statistics'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/validation'
     | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
@@ -335,10 +357,12 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/dependencies'
     | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/statistics'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/validation'
     | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
@@ -366,10 +390,12 @@ export interface FileRouteTypes {
     | '/projects/$projectId/access'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
+    | '/projects/$projectId/dependencies'
     | '/projects/$projectId/search'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/statistics'
     | '/projects/$projectId/trash'
+    | '/projects/$projectId/validation'
     | '/projects/$projectId/variables'
     | '/workspaces/$workspaceId/members'
     | '/workspaces/$workspaceId/settings'
@@ -529,6 +555,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdComponentsRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/dependencies': {
+      id: '/projects/$projectId/dependencies'
+      path: '/dependencies'
+      fullPath: '/projects/$projectId/dependencies'
+      preLoaderRoute: typeof ProjectsProjectIdDependenciesRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
     '/projects/$projectId/search': {
       id: '/projects/$projectId/search'
       path: '/search'
@@ -555,6 +588,13 @@ declare module '@tanstack/react-router' {
       path: '/trash'
       fullPath: '/projects/$projectId/trash'
       preLoaderRoute: typeof ProjectsProjectIdTrashRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
+    '/projects/$projectId/validation': {
+      id: '/projects/$projectId/validation'
+      path: '/validation'
+      fullPath: '/projects/$projectId/validation'
+      preLoaderRoute: typeof ProjectsProjectIdValidationRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
     '/projects/$projectId/variables': {
@@ -621,10 +661,12 @@ interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdAccessRoute: typeof ProjectsProjectIdAccessRoute
   ProjectsProjectIdComponentTypesRoute: typeof ProjectsProjectIdComponentTypesRoute
   ProjectsProjectIdComponentsRoute: typeof ProjectsProjectIdComponentsRoute
+  ProjectsProjectIdDependenciesRoute: typeof ProjectsProjectIdDependenciesRoute
   ProjectsProjectIdSearchRoute: typeof ProjectsProjectIdSearchRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdStatisticsRoute: typeof ProjectsProjectIdStatisticsRoute
   ProjectsProjectIdTrashRoute: typeof ProjectsProjectIdTrashRoute
+  ProjectsProjectIdValidationRoute: typeof ProjectsProjectIdValidationRoute
   ProjectsProjectIdVariablesRoute: typeof ProjectsProjectIdVariablesRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdBoardsBoardIdRoute: typeof ProjectsProjectIdBoardsBoardIdRoute
@@ -634,10 +676,12 @@ const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdAccessRoute: ProjectsProjectIdAccessRoute,
   ProjectsProjectIdComponentTypesRoute: ProjectsProjectIdComponentTypesRoute,
   ProjectsProjectIdComponentsRoute: ProjectsProjectIdComponentsRoute,
+  ProjectsProjectIdDependenciesRoute: ProjectsProjectIdDependenciesRoute,
   ProjectsProjectIdSearchRoute: ProjectsProjectIdSearchRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
   ProjectsProjectIdStatisticsRoute: ProjectsProjectIdStatisticsRoute,
   ProjectsProjectIdTrashRoute: ProjectsProjectIdTrashRoute,
+  ProjectsProjectIdValidationRoute: ProjectsProjectIdValidationRoute,
   ProjectsProjectIdVariablesRoute: ProjectsProjectIdVariablesRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
   ProjectsProjectIdBoardsBoardIdRoute: ProjectsProjectIdBoardsBoardIdRoute,

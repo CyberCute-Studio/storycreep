@@ -1241,6 +1241,59 @@ describe("the inspector of a board's flow", () => {
     ]);
   });
 
+  // Verifies: FR-DEP-03/AC3
+  it("opens on the connection that a link names, selected, in its inspector, as a link to a finding of it does", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0, { title: "The quay" }),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2", { order: "V" }),
+        testConnection("cn_2", "nd_1", "nd_3", { order: "k" }),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_1&connection=cn_2");
+    const inspector = await screen.findByRole("region", { name: "Connection" });
+    expect(canvas.dataset.connection).toBe("cn_2");
+    expect(within(inspector).getByText("The quay → The stair")).toBeDefined();
+  });
+
+  it("opens on the node of a link that names a connection that the board does not have", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0, { title: "The quay" }),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+      ],
+      connections: [testConnection("cn_1", "nd_1", "nd_2")],
+    });
+    const canvas = await openBoard("?node=nd_1&connection=cn_gone");
+    expect(
+      await screen.findByRole("region", { name: "The quay" }),
+    ).toBeDefined();
+    expect(canvas.dataset.connection ?? "").toBe("");
+  });
+
+  it("opens on the node of a link that names a connection that leaves another node", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0, { title: "The quay" }),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2"),
+        testConnection("cn_2", "nd_2", "nd_3"),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_1&connection=cn_2");
+    expect(
+      await screen.findByRole("region", { name: "The quay" }),
+    ).toBeDefined();
+    expect(canvas.dataset.connection ?? "").toBe("");
+  });
+
   it("changes the connection selected in its inspector: its label, the node that it enters, and its place, and deletes it", async () => {
     const user = userEvent.setup();
     const { calls } = flowProject({

@@ -52,9 +52,9 @@ type checker struct {
 	// not. A connection without a condition has none here.
 	conditions map[ids.UUID]condition
 	// variables are the boards of the model's variables, by their IDs, the
-	// zero UUID for a global one, and boards the model's boards.
+	// zero UUID for a global one, and boards the model's boards, by theirs.
 	variables map[ids.UUID]ids.UUID
-	boards    map[ids.UUID]bool
+	boards    map[ids.UUID]*board
 	// entries are the entry nodes of the boards whose entry node is a node
 	// outside the trash, by the boards' IDs.
 	entries map[ids.UUID]ids.UUID
@@ -72,7 +72,7 @@ func newChecker(m *model) *checker {
 		outputsOf: map[ids.UUID]int{}, connections: map[ids.UUID]*connection{}, from: map[ids.UUID][]*connection{},
 		choices: choicesOf(m.connections), fromOutput: map[ids.UUID]int{}, into: map[ids.UUID]int{},
 		roots: map[ids.UUID][]ids.UUID{}, conditions: map[ids.UUID]condition{}, variables: map[ids.UUID]ids.UUID{},
-		boards: map[ids.UUID]bool{}, entries: map[ids.UUID]ids.UUID{}}
+		boards: map[ids.UUID]*board{}, entries: map[ids.UUID]ids.UUID{}}
 	for i := range m.nodes {
 		c.nodes[m.nodes[i].id] = &m.nodes[i]
 	}
@@ -103,8 +103,9 @@ func newChecker(m *model) *checker {
 	for _, v := range m.variables {
 		c.variables[v.id] = v.board
 	}
-	for _, b := range m.boards {
-		c.boards[b.id] = true
+	for i := range m.boards {
+		b := &m.boards[i]
+		c.boards[b.id] = b
 		if c.liveNode(b.entry) {
 			c.entries[b.id] = b.entry
 		}
@@ -113,9 +114,17 @@ func newChecker(m *model) *checker {
 }
 
 // add adds a finding of the code about the entity, with the board and the
-// node of the entity's context (context).
+// node of the entity's context (context), and the board's name and the
+// node's title, which a client names it by, as the model has them, so that
+// a report names its findings without a map of every name of the draft.
 func (c *checker) add(f finding) {
 	f.board, f.node = c.context(f.entity)
+	if b := c.boards[f.board]; b != nil {
+		f.boardName = b.name
+	}
+	if n := c.nodes[f.node]; n != nil {
+		f.nodeTitle = n.title
+	}
 	c.out = append(c.out, f)
 }
 
@@ -232,7 +241,7 @@ func (c *checker) findReferences() {
 		}
 	}
 	project := ref{ids.Project, c.m.project}
-	if e := c.m.entry.board; e != (ids.UUID{}) && !c.boards[e] {
+	if e := c.m.entry.board; e != (ids.UUID{}) && c.boards[e] == nil {
 		c.dangling(finding{code: RefDangling, entity: project, field: fieldEntry, target: ref{ids.Board, e}},
 			danglingDeleted, seen)
 	}

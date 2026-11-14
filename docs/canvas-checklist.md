@@ -16,7 +16,7 @@ PRD §9.1 holds the board canvas to targets on two reference devices, which CI's
    STORYCREEP_BENCH_BASE_URL=http://192.168.1.20:8080 STORYCREEP_BENCH_EMAIL=checklist@example.com STORYCREEP_BENCH_PASSWORD='…' STORYCREEP_BENCH_SEED=1 pnpm --filter @storycreep/app exec playwright test -c playwright.bench.config.ts --project setup
    ```
 
-   It loads `medium`, `dense`, and `large` with `cmd/fixturegen`, which takes a few minutes, makes boards of 200, 2,000, and 5,000 nodes, and writes the addresses of the tablet's runs to `web/app/bench-results/tablet.md`. An instance loads each seed once: give `STORYCREEP_BENCH_SEED` a number that the instance has not had, three apart from the last, for each new load.
+   It loads `medium`, `dense`, and `large` with `cmd/fixturegen`, which takes a few minutes, makes boards of 200, 2,000, and 5,000 nodes and a project of 60 boards that depend on one another, and writes the addresses of the tablet's runs to `web/app/bench-results/tablet.md`. An instance loads each seed once: give `STORYCREEP_BENCH_SEED` a number that the instance has not had, three apart from the last, for each new load.
 3. Sign the tablet's Chrome in to the instance as the checklist's account. Close every other tab, and plug the tablet in.
 
 ## 2. Measure
@@ -32,6 +32,7 @@ Open each address of `tablet.md` on the tablet, in a new tab, and do not touch t
 | FR-EDIT-11 AC2 | The board of 5,000 nodes, `bench=pan&seconds=300&warm=pass`, which warms up for a pass of 500 of its nodes, after which PixiJS's caches of text, which are bounded, are full | Read the JavaScript heap in remote DevTools (`chrome://inspect`, Memory) once the run's status says Recording…, and at its end, each after collecting the garbage: it grows less than 10%. The GPU textures that the run reports are as many at its end as at its start. |
 | NFR-PERF-18 | `medium`, `bench=pan&seconds=300&warm=pass` | As FR-EDIT-11 AC2; and the tab's memory in Chrome's task manager stays under 400 MB. |
 | NFR-PERF-06 | `medium`, `bench=edit&seconds=30`, which moves a node in view a step of the grid and back, twice a second, as a drag of it does once it lands | The time from each edit to the frame that shows it is under 50 ms at the 95th percentile. |
+| NFR-PERF-11, FR-DEP-02 AC3 | The dependency view of the 60 boards, `bench=load`, in a tab opened anew | The first drawing of the graph, from the start of the view's load, is under 1,000 ms (plan note N77). |
 | NFR-PERF-05 | `large`, `bench=load`, on the reference desktop | The first frame of the board is under 6,000 ms. |
 | NFR-PERF-02 | `medium`, `bench=panzoom`, on the reference desktop | 60 frames a second or more, and the time between frames is under 16 ms at the 95th percentile. |
 

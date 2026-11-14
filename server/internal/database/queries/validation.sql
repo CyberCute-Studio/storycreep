@@ -13,16 +13,18 @@ SELECT seq, settings FROM project WHERE workspace_id = @workspace_id AND id = @i
 
 -- name: ValidationBoards :many
 -- ValidationBoards returns the project's boards that are not in its trash,
--- each with its entry node, if it has one, in the trash or not.
-SELECT id, entry_node_id FROM live_board
+-- each with its name, which a finding names its board by, and its entry
+-- node, if it has one, in the trash or not.
+SELECT id, name, entry_node_id FROM live_board
 WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
 -- name: ValidationNodes :many
 -- ValidationNodes returns the project's nodes that are not in its trash,
 -- each with what the rules read of it, an element's text only as whether it
 -- is empty: one empty paragraph, as the editor's empty document is, which
--- has no segments (package richtext).
-SELECT id, board_id, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
+-- has no segments (package richtext), and its title, which a finding names
+-- its node by.
+SELECT id, board_id, title, type, coalesce(kind, '')::text AS kind, speaker_component_id, is_ending, target_node_id,
     coalesce(text = '{"type": "doc", "content": [{"type": "paragraph"}]}'::jsonb, false)::boolean AS text_empty
 FROM live_node WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 

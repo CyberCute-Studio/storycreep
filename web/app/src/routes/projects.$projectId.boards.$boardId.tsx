@@ -20,6 +20,7 @@ import {
   SaveStatus,
   useEntityForm,
 } from "../content/form";
+import { BoardBadge } from "../dependencies/BoardBadge";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import type { ProjectDocument } from "../document/store";
@@ -50,7 +51,9 @@ import { useDocumentTitle } from "../ui/title";
  * The search of the board's page: the view that it shows of the board, its
  * script view in place of its canvas (plan item 68); the node that a link
  * opens the canvas on (plan item 61), as a usage list's, or whose entry the
- * script view shows; and what the canvas's benchmark and the reference
+ * script view shows, and the connection leaving it that the canvas then
+ * selects, as a link to a finding of the connection (plan item 70); and
+ * what the canvas's benchmark and the reference
  * tablet's checklist read (docs/canvas-checklist.md): the renderer to use,
  * whatever the browser's would be, and a scripted run of the canvas, of how
  * many seconds, across which rectangle of the board.
@@ -58,6 +61,7 @@ import { useDocumentTitle } from "../ui/title";
 export interface BoardSearch {
   view?: "script";
   node?: string;
+  connection?: string;
   renderer?: RendererKind;
   bench?: "pan" | "panzoom" | "load" | "edit";
   seconds?: number;
@@ -101,6 +105,9 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
     // opens the canvas as without it.
     if (typeof search.node === "string" && search.node !== "") {
       out.node = canonicalId("node", search.node);
+      if (typeof search.connection === "string" && search.connection !== "") {
+        out.connection = canonicalId("connection", search.connection);
+      }
     }
     if (
       search.renderer === "webgl" ||
@@ -173,7 +180,8 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
 
 // A board's page (PRD FR-PROJ-02, FR-EDIT-01): the canvas of its nodes and
 // connections, or its script view (FR-TEXT-04), which its links switch
-// between, and under it its name, its slug, its description, and its
+// between, beside its name its badge of its dependencies (FR-DEP-02), and
+// under it its name, its slug, its description, and its
 // colour, which an editor changes, and its deletion to the project's trash.
 // It shows the board as the project's document has it, so a change that
 // another session makes shows as it commits (FR-RT-02), and the page of no
@@ -301,7 +309,22 @@ function BoardContent({
       {/* The views' switch is beside the board's name, rather than under
       it, as the canvas takes the window's height below where it starts. */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h1 className="text-2xl font-semibold">{board.name}</h1>
+        {/* The board's badge of its dependencies is beside its name, in
+        the room that the views' switch leaves on the row, where it is cut
+        short rather than wrap: the canvas takes the window's height below
+        where it starts, which a row more would shrink, as on a tablet held
+        upright, whose minimap it took out of the window. The name and the
+        badge take no room of the row by themselves (basis-0), so that the
+        switch stays beside them as it did beside the name alone. The name
+        does not shrink, since a fraction of a pixel less than its width
+        breaks it within a word, but is at most as wide as leaves the badge
+        a finger's width and the gap (3.75rem), where a long one wraps. */}
+        <div className="flex min-w-0 flex-1 basis-0 items-baseline gap-x-4">
+          <h1 className="max-w-[calc(100%-3.75rem)] shrink-0 text-2xl font-semibold break-words">
+            {board.name}
+          </h1>
+          <BoardBadge projectId={projectId} boardId={board.id} />
+        </div>
         <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
           {/* The router marks the link of the view shown current, as it
           matches the page's search: the canvas's names no view, which its
@@ -347,6 +370,7 @@ function BoardContent({
           workspaceId={project.workspace_id}
           editable={editable}
           focus={search.node}
+          focusConnection={search.connection}
         />
       )}
       <section

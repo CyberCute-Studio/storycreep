@@ -60,7 +60,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 		return nil, fmt.Errorf("validation: read the boards: %w", err)
 	}
 	for _, b := range boards {
-		m.boards = append(m.boards, board{id: b.ID.Bytes, entry: b.EntryNodeID.Bytes})
+		m.boards = append(m.boards, board{id: b.ID.Bytes, entry: b.EntryNodeID.Bytes, name: b.Name})
 	}
 	nodes, err := q.ValidationNodes(ctx, queries.ValidationNodesParams{WorkspaceID: w, ProjectID: p})
 	if err != nil {
@@ -69,7 +69,7 @@ func load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*draft, error
 	live := map[ids.UUID]bool{}
 	for _, n := range nodes {
 		live[n.ID.Bytes] = true
-		m.nodes = append(m.nodes, node{id: n.ID.Bytes, board: n.BoardID.Bytes, typ: n.Type, kind: n.Kind,
+		m.nodes = append(m.nodes, node{id: n.ID.Bytes, board: n.BoardID.Bytes, title: n.Title, typ: n.Type, kind: n.Kind,
 			speaker: n.SpeakerComponentID.Bytes, ending: n.IsEnding, textEmpty: n.TextEmpty,
 			targetNode: n.TargetNodeID.Bytes})
 	}

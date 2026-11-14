@@ -75,7 +75,11 @@ export const testProject: ProjectBody = {
 /**
  * Returns the answer of what the start page reads, the project list of the
  * account's workspaces, whose first is workspaces' first, or undefined for
- * another operation: the account's workspaces, and each one's projects.
+ * another operation: the account's workspaces, and each one's projects; and
+ * of what a board's page reads besides its board, the graph of its badge of
+ * dependencies (plan item 70), of no board, so that a test of a board's page
+ * that does not answer it shows no badge, rather than a read that fails and
+ * is tried again in the test's background.
  */
 export function startPage(
   operation: Call[0],
@@ -87,6 +91,8 @@ export function startPage(
       return { items: workspaces, next_cursor: null };
     case "listProjects":
       return { items: projects, next_cursor: null };
+    case "getDependencyGraph":
+      return { seq: 0, boards: [], edges: [] };
   }
   return undefined;
 }

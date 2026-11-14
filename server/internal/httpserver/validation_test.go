@@ -149,7 +149,7 @@ func TestValidationReport(t *testing.T) {
 		// an ending, by c1, whose condition reads seen and whose script
 		// writes gold, and by c2, the same choice, with the same empty label
 		// and no condition, and to itself by c3.
-		element(start, harbour, "", "text", richText(textInline("Hello "), valueInline(doomed))),
+		element(start, harbour, "", "title", "Start", "text", richText(textInline("Hello "), valueInline(doomed))),
 		element(end, harbour, "Bye", "is_ending", true),
 		connect(c1, start, end, "", "condition", "seen", "on_traverse", "gold = 1"),
 		connect(c2, start, end, ""),
@@ -244,8 +244,23 @@ func TestValidationReport(t *testing.T) {
 	}) {
 		t.Errorf("the findings are not in the order of their severities and rules: %q", findingLines(r.Findings, nil))
 	}
-	// Each finding carries what a client opens it by (AC3).
+	// Each finding carries what a client opens it by (AC3), and the name of
+	// its board and the title of its node, which a client names it by.
+	boardNames := map[string]string{harbour: "Harbour", mill: "Mill", nook: "Nook"}
 	for _, f := range r.Findings {
+		if f.BoardID == "" && f.BoardName != nil || f.BoardID != "" && (f.BoardName == nil ||
+			*f.BoardName != boardNames[f.BoardID]) {
+			t.Errorf("%s of %s names its board %v, want %q", f.Code, names[f.EntityID], f.BoardName,
+				boardNames[f.BoardID])
+		}
+		title := ""
+		if f.NodeID == start {
+			title = "Start"
+		}
+		if (f.NodeID == "") != (f.NodeTitle == nil) || f.NodeTitle != nil && *f.NodeTitle != title {
+			t.Errorf("%s of %s names its node %v, want %q", f.Code, names[f.EntityID], f.NodeTitle, title)
+		}
+
 		var board, node string
 		switch f.EntityID {
 		case c2, c3:

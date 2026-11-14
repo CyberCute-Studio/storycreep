@@ -49,17 +49,19 @@ const (
 	jumper  = "jumper"
 )
 
-// board is a board: its ID and its entry node, which may be in the trash, or
-// zero for none.
+// board is a board: its ID, its entry node, which may be in the trash, or
+// zero for none, and its name, which a finding names it by.
 type board struct {
 	id, entry ids.UUID
+	name      string
 }
 
 // node is a node: its type, an element's kind, speaker, whether it is an
-// ending, and whether its text is empty, and a jumper's target, zero for
-// none.
+// ending, and whether its text is empty, a jumper's target, zero for none,
+// and its title, which a finding names it by.
 type node struct {
 	id, board  ids.UUID
+	title      string
 	typ, kind  string
 	speaker    ids.UUID
 	ending     bool
@@ -136,13 +138,15 @@ type ref struct {
 
 // finding is what a rule found: its code, the entity that it is about, the
 // board and the node by which a client opens it, each zero where it has
-// none, the field of the entity that it is about, if any, what else it names
-// (target), and the message's arguments.
+// none, with the board's name and the node's title, which a client names
+// it by, the field of the entity that it is about, if any, what else it
+// names (target), and the message's arguments.
 type finding struct {
-	code        Code
-	entity      ref
-	board, node ids.UUID
-	field       string
+	code                 Code
+	entity               ref
+	board, node          ids.UUID
+	boardName, nodeTitle string
+	field                string
 	// target is what a dangling reference refers to, with its attribute
 	// definition for an attribute (attribute), a jumper's target, or the
 	// connection that a choice or a connection repeats.

@@ -526,7 +526,9 @@ describe("the canvas's accessibility tree", () => {
     await waitFor(() =>
       expect(fourth.getAttribute("aria-selected")).toBe("true"),
     );
-    expect(canvas.dataset.selected).toBe("1");
+    // The canvas writes what it shows to its data attributes as it draws
+    // its next frame.
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
     // And Backspace right after a letter deletes it.
     await user.keyboard("q{Backspace}");
     await waitFor(() => expect(batches(calls)).toHaveLength(1));
