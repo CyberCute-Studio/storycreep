@@ -1,4 +1,5 @@
 import type { Board, ProjectStatistics } from "@storycreep/shared/api";
+import { QueryClient } from "@tanstack/react-query";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
@@ -246,6 +247,59 @@ describe("a project's statistics", () => {
     const held = reads()[before][2] as { signal: AbortSignal };
     expect(held.signal.aborted).toBe(false);
     answer = statistics({ seq: testProject.seq + 3, words: 1250 });
+    act(() =>
+      answerHeld(statistics({ seq: testProject.seq + 1, words: 1240 })),
+    );
+    await waitFor(() => expect(projectCount("Words")).toBe("1,250"));
+    expect(reads()).toHaveLength(before + 2);
+  });
+
+  // Verifies: FR-TEXT-06/AC1
+  it("wait for the answer of a read under way, rather than look again at the end of each half second while it is under way", async () => {
+    const invalidated = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    const realtime = fakeRealtime();
+    let answer: ProjectStatistics | Promise<ProjectStatistics> = statistics();
+    const calls = projectPages(() => answer);
+    renderApp(`/projects/${testProject.id}/statistics`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Statistics" });
+    const reads = () =>
+      calls.mock.calls.filter(([op]) => op === "getProjectStatistics");
+    const followed = () =>
+      invalidated.mock.calls.filter(
+        ([filters]) => filters?.queryKey?.[2] === "statistics",
+      ).length;
+    const before = reads().length;
+    let answerHeld: (stats: ProjectStatistics) => void = () => {};
+    answer = new Promise((resolve) => {
+      answerHeld = resolve;
+    });
+    const send = (rev: number) =>
+      act(() =>
+        realtime.send(
+          testProject.id,
+          [
+            {
+              type: "node.update",
+              payload: { id: "nd_a", title: `Greet ${rev}` },
+            },
+          ],
+          [{ id: "nd_a", rev }],
+        ),
+      );
+    send(2);
+    await waitFor(() => expect(reads()).toHaveLength(before + 1));
+    send(3);
+    // The end of the wait finds the read under way, and nothing more is
+    // done until it is answered, however long it takes.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 600)));
+    const looked = followed();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_100)));
+    expect(followed()).toBe(looked);
+    expect(reads()).toHaveLength(before + 1);
+    answer = statistics({ seq: testProject.seq + 2, words: 1250 });
     act(() =>
       answerHeld(statistics({ seq: testProject.seq + 1, words: 1240 })),
     );

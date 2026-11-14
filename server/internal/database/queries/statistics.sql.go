@@ -83,7 +83,8 @@ type BoardStatisticsRow struct {
 // (PRD §5.8.5); how many conditions its connections and its branches'
 // outputs have, of those that are written, as an output's is not until it
 // is, its source being empty, while a connection's that is cleared is no
-// expression; and how many of the nodes and the connections have no row of
+// expression, one of white space alone being written, as one that does not
+// compile; and how many of the nodes and the connections have no row of
 // the version or of a newer one, whose texts the job of the statistics has
 // yet to count. Each kind is read once, grouped by board, each row with its
 // row of the statistics and its condition, of which it has one at most, by
@@ -475,10 +476,9 @@ type TextsNamingRow struct {
 // which shows its key, each once: the texts whose counts a change of those
 // names changes. The index of the targets finds each of its arms, so that
 // it reads the rows that name what it is given alone. The texts that name a
-// definition, which no index finds, TextsNamingDefinitions returns, since
-// PostgreSQL reads an OR by the indexes of all of its arms or by none, and
-// an arm that no index finds would have it read every row of the project's,
-// however few it is given.
+// definition TextsNamingDefinitions returns, by the index of the
+// definitions, which its caller runs only for a batch that changed one, so
+// that a batch that changed none reads that index not at all.
 func (q *Queries) TextsNaming(ctx context.Context, arg TextsNamingParams) ([]TextsNamingRow, error) {
 	rows, err := q.db.Query(ctx, textsNaming,
 		arg.WorkspaceID,
@@ -530,10 +530,10 @@ type TextsNamingDefinitionsRow struct {
 // reference names its component and its definition whether the definition
 // is of the component's type or not, as one pasted from another project
 // may, which the validation reports, and shows both keys all the same, so a
-// definition's texts are found by the definition alone, which reads every
-// row of the project's of the index, as no index of them leads with the
-// definition: its caller runs it only for a batch that changed a
-// definition's key, or created one, which is rare (TextsNaming).
+// definition's texts are found by the definition alone, by the index of the
+// definitions (expression_ref_attribute_def, migration 00030), which reads
+// the rows that name what it is given alone: its caller runs it only for a
+// batch that changed a definition's key, or created one (TextsNaming).
 func (q *Queries) TextsNamingDefinitions(ctx context.Context, arg TextsNamingDefinitionsParams) ([]TextsNamingDefinitionsRow, error) {
 	rows, err := q.db.Query(ctx, textsNamingDefinitions, arg.WorkspaceID, arg.ProjectID, arg.AttributeIds)
 	if err != nil {

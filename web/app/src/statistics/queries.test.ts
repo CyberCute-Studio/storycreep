@@ -74,6 +74,32 @@ describe("a node's statistics", () => {
     expect(answer).toEqual(counts);
   });
 
+  it("are read again where the server had no such node as the read was sent, though the page's batches were answered before its answer came", async () => {
+    vi.useFakeTimers();
+    const { doc, store } = sendingDocument(1);
+    const call = vi
+      .spyOn(api, "call")
+      .mockImplementationOnce(async () => {
+        // The batch that creates the node is answered while the server's
+        // answer of the read, which it gave before it applied the batch, is
+        // on its way.
+        store.setState({ sending: 0 });
+        throw refused(404, { code: "not_found" });
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: counts,
+        response: new Response(),
+      } as never);
+    let answer: NodeStatistics | undefined;
+    void read(doc).then((stats) => {
+      answer = stats;
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(answer).toEqual(counts);
+  });
+
   it("are refused as of no such node where the page sends none of its batches", async () => {
     const { doc } = sendingDocument(0);
     const call = vi

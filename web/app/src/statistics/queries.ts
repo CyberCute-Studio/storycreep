@@ -24,9 +24,9 @@ export function statisticsKey(projectId: string) {
  * waits for long, as one queued while the page is offline, keeps neither
  * the page from opening nor the inspector's counts loading: the read goes
  * on without it, and the document has it read again once it applies. A
- * node's that the server answers with not_found while the page's batches
- * are unanswered waits for them for as long as they take, and reads again
- * (nodeStatisticsQuery).
+ * node's that the server answers with not_found, sent while the page's
+ * batches were unanswered, waits for them for as long as they take, and
+ * reads again (nodeStatisticsQuery).
  */
 const sentWait = 3_000;
 
@@ -55,12 +55,14 @@ export function projectStatisticsQuery(doc: ProjectDocument) {
 /**
  * The writing statistics of the node nodeId of the project of doc, of its
  * text and of the connections that leave it, read as the project's are, but
- * that a read that the server answers with not_found while the page's
- * batches are unanswered, as of a node that one of them creates, which the
+ * that a read that the server answers with not_found, sent while the page's
+ * batches were unanswered, as of a node that one of them creates, which the
  * server does not have until it has applied it, as on a connection slower
  * than sentWait, waits for them for as long as they take and reads again,
  * so that the inspector says that the counts load, rather than that there
- * is no such node, of the node that the page has just made.
+ * is no such node, of the node that the page has just made. Whether they
+ * were unanswered is as of when the read was sent, since the batch may be
+ * answered before the not_found that the server gave before it applied it.
  */
 export function nodeStatisticsQuery(doc: ProjectDocument, nodeId: string) {
   return queryOptions({
@@ -75,10 +77,11 @@ export function nodeStatisticsQuery(doc: ProjectDocument, nodeId: string) {
           )
         ).body;
       await whenSent(doc, signal, sentWait);
+      const unanswered = doc.store.getState().sending > 0;
       try {
         return await read();
       } catch (error) {
-        if (!notFoundBy(error) || doc.store.getState().sending === 0) {
+        if (!notFoundBy(error) || !unanswered) {
           throw error;
         }
         await whenSent(doc, signal);

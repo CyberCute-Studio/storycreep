@@ -75,6 +75,15 @@ CREATE TABLE text_statistic_state (
 	FOREIGN KEY (workspace_id, project_id) REFERENCES project (workspace_id, id) ON DELETE CASCADE
 );
 
+-- The texts that name each attribute's definition, by a value reference of
+-- a component's attribute, by which the derivation of the statistics finds
+-- the texts whose counts a change of a definition's key, or its creation,
+-- changes (TextsNamingDefinitions): the index of the targets finds a value
+-- reference by its component, not by its definition, which it may name
+-- whether it is of the component's type or not.
+CREATE INDEX expression_ref_attribute_def ON expression_ref (workspace_id, project_id, attribute_def_id)
+	WHERE attribute_def_id IS NOT NULL;
+
 ALTER TABLE text_statistic ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY workspace_isolation ON text_statistic TO storycreep_app
 	USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);

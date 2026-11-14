@@ -702,9 +702,10 @@ export class ProjectDocument {
    * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The wait after the writing statistics were read again, while it lasts, and whether an operation applied during it, or a read of them was under way as it began, which its end has them read again for (followStatistics). */
+  /** The wait after the writing statistics were read again, while it lasts, whether an operation applied during it, which its end has them read again for, and whether the document waits for the answers of reads of them that were under way as an operation applied, which have them read again (followStatistics). */
   private statisticsTimer: ReturnType<typeof setTimeout> | undefined;
   private statisticsAgain = false;
+  private statisticsAwaited = false;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -1433,12 +1434,17 @@ export class ProjectDocument {
    * waits again for the page's batches (whenSent) and for the server, would
    * never be answered while the operations come faster than that, as on a
    * slow connection; and as it may have read the server before the
-   * operation applied, it is read again at the end of the wait, as is one
-   * that a page's loader reads, which no page shows yet, and whose answer
-   * would otherwise be taken for one of after the operation. Those that no
-   * page shows are marked alone, so that a page that shows them later reads
-   * them again, and a document of whose statistics no page shows any, and
-   * reads none, keeps no timer, which would hold it once it is dropped.
+   * operation applied, they are read again once it is answered, as they
+   * are once one that a page's loader reads is, which no page shows yet,
+   * and whose answer would otherwise be taken for one of after the
+   * operation. The document waits for the answers of the reads under way,
+   * rather than look again at the end of each wait while they are, so that
+   * one that waits for long, as a node's that waits for the page's batches
+   * while the page is offline (nodeStatisticsQuery), keeps no timer going
+   * meanwhile. Those that no page shows are marked alone, so that a page
+   * that shows them later reads them again, and a document of whose
+   * statistics no page shows any, and reads none, keeps no timer, which
+   * would hold it once it is dropped.
    */
   private followStatistics(): void {
     if (this.statisticsTimer !== undefined) {
@@ -1448,13 +1454,22 @@ export class ProjectDocument {
     const client = this.options.queryClient;
     const queryKey = statisticsKey(this.projectId);
     const cache = client.getQueryCache();
-    const reading =
-      cache.findAll({ queryKey, fetchStatus: "fetching" }).length > 0;
+    const reading = cache
+      .findAll({ queryKey, fetchStatus: "fetching" })
+      .flatMap((query) => query.promise ?? []);
     void client.invalidateQueries({ queryKey }, { cancelRefetch: false });
-    if (!reading && cache.findAll({ queryKey, type: "active" }).length === 0) {
+    if (reading.length > 0 && !this.statisticsAwaited) {
+      this.statisticsAwaited = true;
+      void Promise.allSettled(reading).then(() => {
+        this.statisticsAwaited = false;
+        if (!this.disposed) {
+          this.followStatistics();
+        }
+      });
+    }
+    if (cache.findAll({ queryKey, type: "active" }).length === 0) {
       return;
     }
-    this.statisticsAgain = reading;
     this.statisticsTimer = setTimeout(() => {
       this.statisticsTimer = undefined;
       if (this.statisticsAgain && !this.disposed) {

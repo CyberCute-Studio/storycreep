@@ -127,7 +127,7 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 		ComponentIds: list(components)}, sites)
 }
 
-// neutralTexts holds the types of textNeutral, which changedTexts looks the
+// neutralTexts holds the types of textNeutral, which ChangedTexts looks the
 // type of each command of a change up in.
 var neutralTexts = func() map[commands.Type]bool {
 	m := make(map[commands.Type]bool, len(textNeutral))

@@ -1612,7 +1612,7 @@
             "type": "boolean"
           },
           "conditions": {
-            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written.",
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -6743,7 +6743,7 @@
             "type": "boolean"
           },
           "conditions": {
-            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written.",
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -7937,7 +7937,7 @@
             "type": "boolean"
           },
           "conditions": {
-            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written.",
+            "description": "How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"

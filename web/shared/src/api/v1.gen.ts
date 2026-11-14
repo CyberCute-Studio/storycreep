@@ -515,7 +515,7 @@ export interface BoardStatistics {
   choices: number;
   /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
   complete: boolean;
-  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. */
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
   conditions: number;
   /** The board's ID */
   id: string;
@@ -2135,7 +2135,7 @@ export interface NodeStatistics {
   choices: number;
   /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
   complete: boolean;
-  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. */
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
   conditions: number;
   /** The node's ID */
   id: string;
@@ -2508,7 +2508,7 @@ export interface ProjectStatistics {
   choices: number;
   /** Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it. */
   complete: boolean;
-  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. */
+  /** How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written. A condition of white space alone is written, one that does not compile, as the validation reports it. */
   conditions: number;
   /** How many nodes it has, of every type */
   nodes: number;
