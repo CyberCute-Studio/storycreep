@@ -231,6 +231,42 @@ describe("a project's validation", () => {
     expect(section(/^Muted \(0\)$/).textContent).toContain("Nothing is muted.");
   });
 
+  it("names a variable whose key the project's document lacks as a variable of its scope", async () => {
+    const variable = findings[5];
+    const calls = validationPage(() =>
+      report([
+        { ...variable, entity_id: "var_gone" },
+        {
+          ...variable,
+          entity_id: "var_gone_too",
+          board_id: "bd_a",
+          board_name: "Harbour",
+        },
+      ]),
+    );
+    renderApp(`/projects/${testProject.id}/validation`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Validation" });
+    await waitFor(() =>
+      expect(calls.mock.calls.some(([op]) => op === "listVariables")).toBe(
+        true,
+      ),
+    );
+    const warnings = section(/^Warnings \(2\)$/);
+    expect(
+      within(warnings)
+        .getByRole("link", { name: "A global variable" })
+        .getAttribute("href"),
+    ).toBe(`/app/projects/${testProject.id}/variables?variable=var_gone`);
+    expect(
+      within(warnings).getByRole("link", { name: "A variable of Harbour" }),
+    ).toBeDefined();
+    expect(
+      within(warnings).getByRole("button", { name: "Mute: A global variable" }),
+    ).toBeDefined();
+  });
+
   // Verifies: FR-DEP-03/AC4
   it("mutes a warning with a reason, which it then lists apart with its mute, and unmutes it", async () => {
     const user = userEvent.setup();

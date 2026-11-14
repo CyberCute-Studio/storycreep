@@ -30,7 +30,7 @@ export interface LayoutSizes {
   rowGap: number;
   /** How many boxes a row holds at most, at least 1. */
   perRow: number;
-  /** The margin around the layout, which edges that go up curve into on the right. */
+  /** The margin around the layout, which edges that go up curve into on the right, within it. */
   margin: number;
 }
 
@@ -358,8 +358,12 @@ function route(
       const sy = s.y + h * of(u);
       const tx = t.x + w;
       const ty = t.y + h * of(v);
+      // A curve of two ends at a box's side reaches three quarters of its
+      // bulge beyond them, so that one of at most the margin stays within
+      // the layout, with a quarter of the margin for its line and its arrow,
+      // however far right its boxes are.
       const bulge = Math.min(
-        sizes.margin * 2,
+        sizes.margin,
         Math.max(sizes.gap, Math.abs(sy - ty) / 4),
       );
       return {

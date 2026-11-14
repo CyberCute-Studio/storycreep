@@ -77,9 +77,6 @@ type Result struct {
 	seq      int64
 	findings []finding
 	mutes    map[muteKey]mute
-	// boards and nodes are the names of the boards and the titles of the
-	// nodes of the draft, by their IDs, which the findings are named by.
-	boards, nodes map[ids.UUID]string
 }
 
 // Run validates the project projectID of the workspace ws in tx, a
@@ -94,15 +91,7 @@ func Run(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Result, error
 	}
 	found := check(d.model)
 	slices.SortFunc(found, compare)
-	r := &Result{seq: d.seq, findings: found, mutes: d.mutes, boards: make(map[ids.UUID]string, len(d.model.boards)),
-		nodes: make(map[ids.UUID]string, len(d.model.nodes))}
-	for _, b := range d.model.boards {
-		r.boards[b.id] = b.name
-	}
-	for _, n := range d.model.nodes {
-		r.nodes[n.id] = n.title
-	}
-	return r, nil
+	return &Result{seq: d.seq, findings: found, mutes: d.mutes}, nil
 }
 
 // compare orders findings as a report lists them: by their severities and
@@ -142,7 +131,7 @@ func (r *Result) Report(l *i18n.Localizer) (Report, string) {
 		}
 		api := Finding{Code: f.code, Severity: rule.Severity, Message: message, EntityType: f.entity.kind.String(),
 			EntityID: ids.Encode(f.entity.kind, f.entity.id), Field: f.field, BoardID: encode(ids.Board, f.board),
-			BoardName: nameOf(r.boards, f.board), NodeID: encode(ids.Node, f.node), NodeTitle: nameOf(r.nodes, f.node)}
+			BoardName: nameOf(f.board, f.boardName), NodeID: encode(ids.Node, f.node), NodeTitle: nameOf(f.node, f.nodeTitle)}
 		if f.target != (ref{}) {
 			api.Target = &Target{Type: f.target.kind.String(), ID: ids.Encode(f.target.kind, f.target.id)}
 			if f.attribute != (ids.UUID{}) {
@@ -171,15 +160,13 @@ func (r *Result) Report(l *i18n.Localizer) (Report, string) {
 	return out, strings.Join(languages, ", ")
 }
 
-// nameOf returns the name that names holds of id, or nil for the zero UUID.
-// A finding's board and node are of the draft that it was found in, so names
-// holds them; one that it lacks is named "", rather than not at all, as its
-// ID is given.
-func nameOf(names map[ids.UUID]string, id ids.UUID) *string {
+// nameOf returns name, the name of the board or the node id of a finding
+// (checker.add), or nil for the zero UUID: one that the draft lacks is
+// named "", rather than not at all, as its ID is given.
+func nameOf(id ids.UUID, name string) *string {
 	if id == (ids.UUID{}) {
 		return nil
 	}
-	name := names[id]
 	return &name
 }
 

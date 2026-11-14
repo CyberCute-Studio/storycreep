@@ -3,6 +3,7 @@ import type {
   Contribution,
   Graph,
   PageContribution,
+  Variable,
 } from "@storycreep/shared/api";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,6 +20,13 @@ afterEach(() => {
 });
 
 const at = "2026-11-01T10:00:00Z";
+
+// The IDs of the boards and of the variable, which the view's filters keep
+// only as IDs of their kinds (searchId).
+const harbourId = "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVA";
+const lighthouseId = "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVB";
+const millId = "bd_01HQ8Z3XK4F7NAWR5TCQ9M2BVC";
+const goldId = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVG";
 
 /** A board of the test project, at order among its siblings. */
 function board(id: string, name: string, order: string): Board {
@@ -37,35 +45,35 @@ function board(id: string, name: string, order: string): Board {
 }
 
 /**
- * The graph of Harbour (bd_a), Lighthouse (bd_b), and Mill (bd_c), of which
- * Lighthouse reads a variable that Harbour writes, Harbour a jumper's target
- * of Lighthouse, so that each depends on the other, a cycle, and Mill reads
- * whether a node of Lighthouse was visited.
+ * The graph of Harbour, Lighthouse, and Mill, of which Lighthouse reads a
+ * variable that Harbour writes, Harbour a jumper's target of Lighthouse, so
+ * that each depends on the other, a cycle, and Mill reads whether a node of
+ * Lighthouse was visited.
  */
 function graph(more: Partial<Graph> = {}): Graph {
   return {
     seq: testProject.seq,
     boards: [
-      { id: "bd_a", name: "Harbour", inbound: 1, outbound: 1 },
-      { id: "bd_b", name: "Lighthouse", inbound: 1, outbound: 2 },
-      { id: "bd_c", name: "Mill", inbound: 1, outbound: 0 },
+      { id: harbourId, name: "Harbour", inbound: 1, outbound: 1 },
+      { id: lighthouseId, name: "Lighthouse", inbound: 1, outbound: 2 },
+      { id: millId, name: "Mill", inbound: 1, outbound: 0 },
     ],
     edges: [
       {
-        from_board_id: "bd_a",
-        to_board_id: "bd_b",
+        from_board_id: harbourId,
+        to_board_id: lighthouseId,
         kind: "variable",
         contributions: 2,
       },
       {
-        from_board_id: "bd_b",
-        to_board_id: "bd_a",
+        from_board_id: lighthouseId,
+        to_board_id: harbourId,
         kind: "jumper",
         contributions: 1,
       },
       {
-        from_board_id: "bd_b",
-        to_board_id: "bd_c",
+        from_board_id: lighthouseId,
+        to_board_id: millId,
         kind: "visit",
         contributions: 1,
       },
@@ -75,7 +83,7 @@ function graph(more: Partial<Graph> = {}): Graph {
 }
 
 const goldWrite: Contribution = {
-  variable_id: "var_gold",
+  variable_id: goldId,
   from: {
     site: "node_on_exit",
     node_id: "nd_greet",
@@ -89,13 +97,30 @@ const goldWrite: Contribution = {
   },
 };
 
-/** Answers the dependency view's pages, with the graph that answer returns for a request's query, and the contributions of contributions. */
+/** The global variable gold, which Harbour writes and Lighthouse reads. */
+const gold: Variable = {
+  id: goldId,
+  project_id: testProject.id,
+  key: "gold",
+  type: "int",
+  default: 0,
+  description: "",
+  scope: "global",
+  reset_on_enter: false,
+  order: "V",
+  rev: 1,
+  created_at: at,
+  updated_at: at,
+};
+
+/** Answers the dependency view's pages, with the graph that answer returns for a request's query, the contributions of contributions, and the project's variables. */
 function dependencyPages(
   answer: (query: Record<string, string>) => Graph,
   contributions: (query: Record<string, string>) => PageContribution = () => ({
     items: [goldWrite],
     next_cursor: null,
   }),
+  variables: Variable[] = [gold],
 ) {
   return fakeApi((operation, input) => {
     const query = ((input as { query?: Record<string, string> }).query ??
@@ -108,32 +133,14 @@ function dependencyPages(
       case "listBoards":
         return {
           items: [
-            board("bd_a", "Harbour", "V"),
-            board("bd_b", "Lighthouse", "W"),
-            board("bd_c", "Mill", "X"),
+            board(harbourId, "Harbour", "V"),
+            board(lighthouseId, "Lighthouse", "W"),
+            board(millId, "Mill", "X"),
           ],
           next_cursor: null,
         };
       case "listVariables":
-        return {
-          items: [
-            {
-              id: "var_gold",
-              project_id: testProject.id,
-              key: "gold",
-              type: "int",
-              default: 0,
-              description: "",
-              scope: "global",
-              reset_on_enter: false,
-              order: "V",
-              rev: 1,
-              created_at: at,
-              updated_at: at,
-            },
-          ],
-          next_cursor: null,
-        };
+        return { items: variables, next_cursor: null };
       case "listComponentTypes":
       case "listComponents":
         return { items: [], next_cursor: null };
@@ -216,13 +223,13 @@ describe("a project's dependency view", () => {
       within(panel)
         .getByRole("link", { name: "The on-exit script of Greet" })
         .getAttribute("href"),
-    ).toBe(`/app/projects/${testProject.id}/boards/bd_a?node=nd_greet`);
+    ).toBe(`/app/projects/${testProject.id}/boards/${harbourId}?node=nd_greet`);
     expect(
       within(panel)
         .getByRole("link", { name: "The condition of a choice from Keeper" })
         .getAttribute("href"),
     ).toBe(
-      `/app/projects/${testProject.id}/boards/bd_b?node=nd_keeper&connection=cn_ask`,
+      `/app/projects/${testProject.id}/boards/${lighthouseId}?node=nd_keeper&connection=cn_ask`,
     );
     const asked = calls.mock.calls.find(
       ([op]) => op === "listDependencyContributions",
@@ -230,11 +237,63 @@ describe("a project's dependency view", () => {
     expect(asked?.[1]).toMatchObject({
       path: {
         project_id: testProject.id,
-        from_board_id: "bd_a",
-        to_board_id: "bd_b",
+        from_board_id: harbourId,
+        to_board_id: lighthouseId,
       },
       query: { kind: "variable" },
     });
+  });
+
+  it("names a contribution's variable as an expression of the board that reads it does", async () => {
+    const user = userEvent.setup();
+    // Lighthouse, which reads the global gold, has a gold of its own, which
+    // its expressions name gold, and the global one global.gold.
+    dependencyPages(() => graph(), undefined, [
+      gold,
+      {
+        ...gold,
+        id: "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVH",
+        scope: "board",
+        board_id: lighthouseId,
+        order: "W",
+      },
+    ]);
+    renderApp(`/projects/${testProject.id}/dependencies`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Dependencies" });
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect what Lighthouse depends on in Harbour",
+      }),
+    );
+    const inspected = await screen.findByRole("heading", {
+      name: "Lighthouse depends on Harbour",
+    });
+    const panel = inspected.closest("section") as HTMLElement;
+    expect(await within(panel).findByText("global.gold")).toBeDefined();
+  });
+
+  it("shows the view without a filter that is no ID of its kind, as of a link cut short", async () => {
+    const calls = dependencyPages(() => graph());
+    renderApp(
+      `/projects/${testProject.id}/dependencies?board=bd_01HQ8Z&variable=gold&kind=all`,
+      { session: testSession },
+    );
+    await screen.findByRole("heading", { level: 1, name: "Dependencies" });
+    expect(
+      screen.getByText("3 boards, 3 dependencies between them."),
+    ).toBeDefined();
+    for (const name of ["Kind", "Board", "Variable"]) {
+      expect(
+        (screen.getByRole("combobox", { name }) as HTMLSelectElement).value,
+      ).toBe("");
+    }
+    const queries = calls.mock.calls
+      .filter(([op]) => op === "getDependencyGraph")
+      .map(([, input]) => (input as { query: unknown }).query);
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries.every((q) => JSON.stringify(q) === "{}")).toBe(true);
   });
 
   it("filters the graph by kind, board, and variable, which the address holds", async () => {
@@ -258,17 +317,17 @@ describe("a project's dependency view", () => {
     expect(router.state.location.search).toEqual({ kind: "jumper" });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Variable" }),
-      "var_gold",
+      goldId,
     );
     await waitFor(() =>
       expect(router.state.location.search).toEqual({
         kind: "jumper",
-        variable: "var_gold",
+        variable: goldId,
       }),
     );
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Board" }),
-      "bd_b",
+      lighthouseId,
     );
     await waitFor(() =>
       expect(
@@ -278,8 +337,8 @@ describe("a project's dependency view", () => {
             JSON.stringify((input as { query: unknown }).query) ===
               JSON.stringify({
                 kind: "jumper",
-                board_id: "bd_b",
-                variable_id: "var_gold",
+                board_id: lighthouseId,
+                variable_id: goldId,
               }),
         ),
       ).toBe(true),
@@ -306,19 +365,19 @@ describe("a project's dependency view", () => {
       within(panel)
         .getByRole("link", { name: "Open the board Mill" })
         .getAttribute("href"),
-    ).toBe(`/app/projects/${testProject.id}/boards/bd_c`);
+    ).toBe(`/app/projects/${testProject.id}/boards/${millId}`);
     expect(
       within(panel)
         .getByRole("link", { name: "Show only the dependencies of Mill" })
         .getAttribute("href"),
-    ).toBe(`/app/projects/${testProject.id}/dependencies?board=bd_c`);
+    ).toBe(`/app/projects/${testProject.id}/dependencies?board=${millId}`);
   });
 
   it("badges a board's page with its counts, linked to the view of its dependencies, which follows an edit", async () => {
     const realtime = fakeRealtime();
     let answer = graph();
     dependencyPages(() => answer);
-    renderApp(`/projects/${testProject.id}/boards/bd_b`, {
+    renderApp(`/projects/${testProject.id}/boards/${lighthouseId}`, {
       session: testSession,
       realtime,
     });
@@ -327,19 +386,19 @@ describe("a project's dependency view", () => {
       name: "Depends on 1 other board · 2 boards depend on it",
     });
     expect(badge.getAttribute("href")).toBe(
-      `/app/projects/${testProject.id}/dependencies?board=bd_b`,
+      `/app/projects/${testProject.id}/dependencies?board=${lighthouseId}`,
     );
     answer = graph({
       seq: testProject.seq + 1,
       boards: graph().boards.map((b) =>
-        b.id === "bd_b" ? { ...b, inbound: 0 } : b,
+        b.id === lighthouseId ? { ...b, inbound: 0 } : b,
       ),
     });
     act(() =>
       realtime.send(
         testProject.id,
-        [{ type: "board.rename", payload: { id: "bd_a", name: "Harbour" } }],
-        [{ id: "bd_a", rev: 4 }],
+        [{ type: "board.rename", payload: { id: harbourId, name: "Harbour" } }],
+        [{ id: harbourId, rev: 4 }],
       ),
     );
     await screen.findByRole("link", {
@@ -363,8 +422,8 @@ describe("a project's dependency view", () => {
     act(() =>
       realtime.send(
         testProject.id,
-        [{ type: "board.rename", payload: { id: "bd_a", name: "Harbour" } }],
-        [{ id: "bd_a", rev: 4 }],
+        [{ type: "board.rename", payload: { id: harbourId, name: "Harbour" } }],
+        [{ id: harbourId, rev: 4 }],
       ),
     );
     await screen.findByText("No board depends on another.");

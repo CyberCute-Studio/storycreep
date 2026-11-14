@@ -73,22 +73,25 @@ function Validation() {
   const mutedHeading = useRef<HTMLHeadingElement>(null);
   const onUnmute = (finding: Finding, code: MutedCode) => {
     setSaid(undefined);
-    unmute.mutate(
-      [
+    // The finding goes back to its severity's list, with the button, and
+    // the focus to the heading of the muted ones, once each unmute applies,
+    // as one pressed before the last was answered does too, whose callbacks
+    // of mutate the mutation would drop for the last's.
+    void unmute
+      .mutateAsync([
         {
           type: "validation.unmute",
           payload: { entity_id: finding.entity_id, code },
         },
-      ],
-      {
-        // The finding goes back to its severity's list, with the button,
-        // and the focus to the heading of the muted ones.
-        onSuccess: () => {
+      ])
+      .then(
+        () => {
           setSaid(t("validation.unmuted"));
           mutedHeading.current?.focus();
         },
-      },
-    );
+        // A refusal is shown by the page's alert, of the mutation's error.
+        () => undefined,
+      );
   };
   const number = (n: number) => formatNumber(i18n.language, n);
   const { counts } = report;

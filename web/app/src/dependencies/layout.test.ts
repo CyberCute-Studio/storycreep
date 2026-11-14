@@ -106,6 +106,34 @@ describe("the dependency graph's layout", () => {
     }
   });
 
+  it("keeps the curve of an edge that closes a cycle within the layout, from boxes at its right, rows apart", () => {
+    // A column of three boards, whose last depends on the first, so that the
+    // edge that closes the cycle joins the right sides of boxes at the
+    // layout's right, two rows apart.
+    const layout = layoutGraph(
+      ["a", "b", "c"],
+      [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+        { from: "c", to: "a" },
+      ],
+      sizes,
+    );
+    const up = layout.routes.find((r) => r.up);
+    expect(up?.from).toBe("c");
+    // The points of the cubic curve, sampled along it.
+    const [x0, , x1, , x2, , x3] = numbersOf(up?.path ?? "");
+    for (let i = 0; i <= 32; i++) {
+      const t = i / 32;
+      const x =
+        (1 - t) ** 3 * x0 +
+        3 * (1 - t) ** 2 * t * x1 +
+        3 * (1 - t) * t ** 2 * x2 +
+        t ** 3 * x3;
+      expect(x).toBeLessThanOrEqual(layout.width);
+    }
+  });
+
   it("leaves out edges of a board to itself, of a board it lacks, and repeated", () => {
     const layout = layoutGraph(
       ["a", "b"],

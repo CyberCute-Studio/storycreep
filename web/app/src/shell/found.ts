@@ -35,3 +35,23 @@ export function canonicalId(kind: IdKind, id: string): string {
     return id;
   }
 }
+
+/**
+ * Returns the ID of kind that a page's search holds as a filter of what the
+ * page asks the server for, as the server writes it (canonicalId), or
+ * undefined for none, or for one that is no ID of kind, as a link cut short
+ * holds: the page then shows what it shows without that filter, as the board
+ * page opens the canvas as without a node that the board does not have,
+ * rather than ask the server with it, which refuses it as none
+ * (notFoundBy), and show the page of no page for a page that is there.
+ */
+export function searchId(kind: IdKind, id: unknown): string | undefined {
+  if (typeof id !== "string" || id === "") {
+    return undefined;
+  }
+  try {
+    return encodeId(kind, decodeId(kind, id));
+  } catch {
+    return undefined;
+  }
+}

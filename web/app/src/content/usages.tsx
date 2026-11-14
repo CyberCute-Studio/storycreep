@@ -102,33 +102,53 @@ export function componentUsagesQuery(
 }
 
 /**
+ * Returns the names of the project's variables of ids, by their keys, or of
+ * its components, by their names, as the project's document has them, by
+ * which a list names what it lists. On a page that has not read the part,
+ * as the variables' page has not read the components, the document reads
+ * it once ids holds any, so that each is named by its own name rather than
+ * as a variable's or a component's; a read that failed, which the document
+ * records, leaves it named so. The list follows the names of ids alone,
+ * rather than every change of the part.
+ */
+export function useNamesOf(
+  projectId: string,
+  part: "variables" | "components",
+  ids: readonly string[],
+): (id: string) => string | undefined {
+  const doc = useProjectDocument(projectId);
+  const names = useDocumentState(
+    doc,
+    useShallow((state) =>
+      ids.map((id) =>
+        part === "variables"
+          ? state.view.variables.get(id)?.key
+          : state.view.components.get(id)?.name,
+      ),
+    ),
+  );
+  const reads = ids.length > 0;
+  useEffect(() => {
+    if (reads && !doc.holds(part)) {
+      void doc.load(part).catch(() => undefined);
+    }
+  }, [doc, part, reads]);
+  const byId = new Map(ids.map((id, i) => [id, names[i]]));
+  return (id) => byId.get(id);
+}
+
+/**
  * Returns the names of the project's components by their IDs, as the
  * project's document has them, by which a list of usages names the
- * components' descriptions that it lists. On a page that has not read the
- * components, as the variables' page, the document reads them once the
- * list holds such a description, so that it is named by its component
- * rather than as a component's; a read that failed, which the document
- * records, leaves it named so. The list follows the names of the
- * components that it lists alone, rather than every change of the
- * project's components.
+ * components' descriptions that it lists (useNamesOf).
  */
 export function useComponentNames(
   projectId: string,
   usages: readonly Usage[],
 ): (id: string) => string | undefined {
-  const doc = useProjectDocument(projectId);
-  const ids = [...new Set(usages.flatMap((usage) => usage.component_id ?? []))];
-  const names = useDocumentState(
-    doc,
-    useShallow((state) => ids.map((id) => state.view.components.get(id)?.name)),
-  );
-  const describes = ids.length > 0;
-  useEffect(() => {
-    if (describes && !doc.holds("components")) {
-      void doc.load("components").catch(() => undefined);
-    }
-  }, [doc, describes]);
-  return (id) => names[ids.indexOf(id)];
+  return useNamesOf(projectId, "components", [
+    ...new Set(usages.flatMap((usage) => usage.component_id ?? [])),
+  ]);
 }
 
 /** Returns the title of the node of usage's site, or what an untitled one is called (nodeTitleText). */

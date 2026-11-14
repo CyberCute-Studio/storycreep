@@ -1,7 +1,8 @@
 // The drawing of a project's dependency graph (PRD FR-DEP-02, plan note
 // N77): each board a button, with its name and its badge's counts, at the
-// place that the layout gives it (layout.ts), and each pair of boards that
-// edges join a line from the board that the other depends on, with an
+// place that the layout gives it (layout.ts), in the order of the rows, and
+// along each, which the keyboard's focus follows, and each pair of boards
+// that edges join a line from the board that the other depends on, with an
 // arrow at the board that depends on it, of every kind of edge between
 // them. A press of a board or of a line selects it, which the view inspects
 // beside it. The lines are drawn for the eye: a keyboard, and a screen
@@ -93,6 +94,18 @@ export function DependencyGraph({
           ),
     [boards, pairs, perRow],
   );
+  // The boards in the order that the drawing shows them, row by row, and
+  // along each row, which the keyboard's focus follows, rather than that of
+  // the tree, which the layout places anywhere (WCAG 2.4.3).
+  const shown = useMemo(
+    () =>
+      layout === undefined
+        ? []
+        : layout.boxes
+            .map((box, i) => ({ box, board: boards[i] }))
+            .sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x),
+    [layout, boards],
+  );
   const drawn = useRef(false);
   useLayoutEffect(() => {
     if (layout === undefined || drawn.current || onDrawn === undefined) {
@@ -176,8 +189,7 @@ export function DependencyGraph({
               />
             ))}
           </svg>
-          {layout.boxes.map((box, i) => {
-            const board = boards[i];
+          {shown.map(({ box, board }) => {
             const pressed = selection.board === board.id;
             return (
               <button

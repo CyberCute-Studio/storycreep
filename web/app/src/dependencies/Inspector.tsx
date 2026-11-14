@@ -1,12 +1,13 @@
 // What the dependency view inspects of what is selected in it (PRD FR-DEP-02,
 // plan note N77): of a pair of boards, each kind of edge between them, with
 // its contributions, a page at a time, each the variable or the attribute
-// that a site of the one board writes and a site of the other reads, with
-// the two sites, the jumper of the one whose target is a node of the other,
-// or the node of the one whose visit an expression of the other reads (AC2),
-// each site a link that opens its node on its board's canvas, or its
-// connection; and of a board, its badge's counts, a link to its canvas, and
-// one that keeps the view to its edges.
+// that a site of the one board writes and a site of the other reads, named
+// as an expression of the other names it, with the two sites, the jumper of
+// the one whose target is a node of the other, or the node of the one whose
+// visit an expression of the other reads (AC2), each site a link that opens
+// its node on its board's canvas, or its connection; and of a board, its
+// badge's counts, a link to its canvas, and one that keeps the view to its
+// edges.
 
 import type {
   Contribution,
@@ -17,21 +18,19 @@ import type {
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
-import { nodeTitleText } from "../content/textNames";
-import { useDocumentState, useProjectDocument } from "../document/react";
+import { nodeTitleText, type ValueNamer } from "../content/textNames";
+import { useTextNames } from "../content/useTextNames";
+import { useProjectDocument } from "../document/react";
 import { Button } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
 import { contributionsQuery, type DependencyFilters } from "./queries";
 
-/** Returns what an end of a contribution is: a node itself, as a jumper, its target, or a node visited, or a part of one. */
+/** Returns what an end of a contribution is: a node itself, as a jumper, its target, or a node visited, or a part of one, as a usage's site names it (usage.site). */
 export function endText(t: TFunction, end: End): string {
-  return t("dependencies.end", {
-    site: end.site,
-    node: nodeTitleText(t, end.node_title),
-  });
+  const node = nodeTitleText(t, end.node_title);
+  return end.site === "node" ? node : t("usage.site", { site: end.site, node });
 }
 
 /** An end of a contribution, a link that opens its node on the canvas of boardId, and its connection where it is of one. */
@@ -62,54 +61,26 @@ function EndLink({
   );
 }
 
-/**
- * Returns the names of the project's variables and attributes by their
- * IDs, as expressions name them, `gold` and `elara.trust`, as the project's
- * document has them, which the view's loader has read.
- */
-function useValueNames(projectId: string) {
-  const doc = useProjectDocument(projectId);
-  const variables = useDocumentState(doc, (state) => state.view.variables);
-  const components = useDocumentState(doc, (state) => state.view.components);
-  const types = useDocumentState(doc, (state) => state.view.componentTypes);
-  return useMemo(() => {
-    const attributes = new Map<string, string>();
-    for (const type of types.values()) {
-      for (const a of type.attributes) {
-        attributes.set(a.id, a.key);
-      }
-    }
-    return {
-      variable: (id: string) => variables.get(id)?.key,
-      attribute: (component: string, attribute: string) => {
-        const c = components.get(component)?.key;
-        const a = attributes.get(attribute);
-        return c === undefined || a === undefined ? undefined : `${c}.${a}`;
-      },
-    };
-  }, [variables, components, types]);
-}
-
-/** A contribution to an edge, with its ends, as its kind names them. */
+/** A contribution to an edge, with its ends, as its kind names them, and its variable or its attribute, as nameOf names it. */
 function ContributionItem({
   projectId,
   edge,
   contribution,
-  names,
+  nameOf,
 }: {
   projectId: string;
   edge: Edge;
   contribution: Contribution;
-  names: ReturnType<typeof useValueNames>;
+  nameOf: ValueNamer;
 }) {
   const { t } = useTranslation();
   const { from, to } = contribution;
   const value =
     edge.kind === "variable"
-      ? (names.variable(contribution.variable_id ?? "") ??
+      ? (nameOf(contribution.variable_id ?? "", undefined) ??
         t("dependencies.a_variable"))
       : edge.kind === "attribute"
-        ? (names.attribute(
+        ? (nameOf(
             contribution.component_id ?? "",
             contribution.attribute_id ?? "",
           ) ?? t("dependencies.an_attribute"))
@@ -155,7 +126,11 @@ function EdgeContributions({
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
-  const names = useValueNames(projectId);
+  // The variables and the attributes as an expression of the board that
+  // depends on the other names them, `gold`, `global.gold` where the board
+  // has a gold of its own, or `elara.trust` (valueNamer), as the project's
+  // document has them, which it reads if the view's loader has not.
+  const nameOf = useTextNames(projectId, edge.to_board_id).value;
   const list = useInfiniteQuery(
     contributionsQuery(
       doc,
@@ -193,7 +168,7 @@ function EdgeContributions({
               projectId={projectId}
               edge={edge}
               contribution={c}
-              names={names}
+              nameOf={nameOf}
             />
           ))}
         </ul>

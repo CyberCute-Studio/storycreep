@@ -22,9 +22,9 @@ import {
   useProjectDocument,
   useTree,
 } from "../document/react";
-import { loadParts, projectQuery } from "../project/queries";
+import { loadPart, loadParts, projectQuery } from "../project/queries";
 import { buildTree, itemsInOrder } from "../project/tree";
-import { canonicalId, found } from "../shell/found";
+import { found, searchId } from "../shell/found";
 import { Button } from "../ui/Button";
 import { SelectField } from "../ui/Field";
 import { useDocumentTitle } from "../ui/title";
@@ -43,41 +43,42 @@ export interface DependenciesSearch {
 }
 
 export const Route = createFileRoute("/projects/$projectId/dependencies")({
-  validateSearch: (search: Record<string, unknown>): DependenciesSearch => {
-    const out: DependenciesSearch = {};
-    if (dependencyKinds.includes(search.kind as DependencyKind)) {
-      out.kind = search.kind as DependencyKind;
-    }
-    if (typeof search.board === "string" && search.board !== "") {
-      out.board = canonicalId("board", search.board);
-    }
-    if (typeof search.variable === "string" && search.variable !== "") {
-      out.variable = canonicalId("variable", search.variable);
-    }
-    if (search.bench === "load") {
-      out.bench = "load";
-    }
-    return out;
-  },
+  // Each key of the search, undefined where the address holds nothing that
+  // the page takes, which the router would otherwise give the page as the
+  // address holds it, as it lays a route's search over that of the routes
+  // above it, which take the whole address's: a kind that is no kind, and a
+  // board's or a variable's ID that is no such ID (searchId), which the
+  // server would refuse. One of a board or a variable that the project does
+  // not have is kept, which the filter's choices offer as an unknown one,
+  // and which keeps no edge.
+  validateSearch: (search: Record<string, unknown>): DependenciesSearch => ({
+    kind: dependencyKinds.includes(search.kind as DependencyKind)
+      ? (search.kind as DependencyKind)
+      : undefined,
+    board: searchId("board", search.board),
+    variable: searchId("variable", search.variable),
+    bench: search.bench === "load" ? "load" : undefined,
+  }),
   loaderDeps: ({ search }) => ({
     kind: search.kind,
     board: search.board,
     variable: search.variable,
   }),
   // The project first, then, together, the tree of its boards, by which the
-  // view orders them, its variables, which its filter offers, and its
-  // components, which name the attributes, and the graph.
+  // view orders them, its variables, which its filter offers, and the graph.
+  // Its components, which name the attributes of a pair's inspection alone,
+  // start to load as the page does, without the graph's first drawing
+  // waiting for them (NFR-PERF-11), and the inspection reads them if this
+  // read failed (useTextNames).
   loader: async ({ context, params, deps }) => {
     await found(
       context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
+    const doc = context.documents.get(params.projectId);
+    loadPart(doc, "components").catch(() => {});
     await Promise.all([
-      loadParts(context, params.projectId, ["tree", "variables", "components"]),
-      found(
-        context.queryClient.ensureQueryData(
-          graphQuery(context.documents.get(params.projectId), deps),
-        ),
-      ),
+      loadParts(context, params.projectId, ["tree", "variables"]),
+      found(context.queryClient.ensureQueryData(graphQuery(doc, deps))),
     ]);
   },
   // The page takes the window's width, for its graph.

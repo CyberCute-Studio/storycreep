@@ -10,12 +10,11 @@ import { formatDateTime } from "@storycreep/shared/i18n";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { Dialog } from "radix-ui";
-import { type FormEvent, useEffect, useRef } from "react";
+import { type FormEvent, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useShallow } from "zustand/react/shallow";
 import { refusalOf } from "../auth/refusal";
 import { nodeTitleText } from "../content/textNames";
-import { useDocumentState, useProjectDocument } from "../document/react";
+import { useNamesOf } from "../content/usages";
 import { payloadField } from "../project/dialogs";
 import { useCommands } from "../project/queries";
 import { Button } from "../ui/Button";
@@ -38,49 +37,22 @@ export interface FindingNames {
 
 /**
  * Returns the keys of the variables and the names of the components that
- * findings are about, as the project's document has them: the document
- * reads its variables, or its components, once a finding is about one, so
- * that a finding is named by it rather than as a variable's or a
- * component's; a read that failed, which the document records, leaves it
- * named so. The list follows the names of what it lists alone.
+ * findings are about, as the project's document has them, which it reads
+ * once a finding is about one (useNamesOf), so that a finding is named by
+ * it rather than as a variable's or a component's.
  */
 export function useFindingNames(
   projectId: string,
   findings: readonly Finding[],
 ): FindingNames {
-  const doc = useProjectDocument(projectId);
   const of = (type: Finding["entity_type"]) => [
     ...new Set(
       findings.filter((f) => f.entity_type === type).map((f) => f.entity_id),
     ),
   ];
-  const variables = of("variable");
-  const components = of("component");
-  const keys = useDocumentState(
-    doc,
-    useShallow((state) =>
-      variables.map((id) => state.view.variables.get(id)?.key),
-    ),
-  );
-  const names = useDocumentState(
-    doc,
-    useShallow((state) =>
-      components.map((id) => state.view.components.get(id)?.name),
-    ),
-  );
-  const readsVariables = variables.length > 0;
-  const readsComponents = components.length > 0;
-  useEffect(() => {
-    if (readsVariables && !doc.holds("variables")) {
-      void doc.load("variables").catch(() => undefined);
-    }
-    if (readsComponents && !doc.holds("components")) {
-      void doc.load("components").catch(() => undefined);
-    }
-  }, [doc, readsVariables, readsComponents]);
   return {
-    variable: (id) => keys[variables.indexOf(id)],
-    component: (id) => names[components.indexOf(id)],
+    variable: useNamesOf(projectId, "variables", of("variable")),
+    component: useNamesOf(projectId, "components", of("component")),
   };
 }
 
@@ -103,8 +75,14 @@ export function whereText(
     case "board":
       return t("validation.where.board", { field, board });
     case "variable": {
-      const key =
-        names.variable(finding.entity_id) ?? t("validation.a_variable");
+      // A variable whose key the document does not have, as while it reads
+      // the variables, or once that read failed, is named as one.
+      const key = names.variable(finding.entity_id);
+      if (key === undefined) {
+        return finding.board_id === undefined
+          ? t("validation.where.a_global_variable")
+          : t("validation.where.a_board_variable", { board });
+      }
       return finding.board_id === undefined
         ? t("validation.where.global_variable", { key })
         : t("validation.where.board_variable", { key, board });
