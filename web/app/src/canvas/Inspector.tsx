@@ -43,6 +43,7 @@ import { sourceOf, typedExpression, useTypedSource } from "../expr/fields";
 import { colorName, type PaletteColor, paletteColors } from "../project/colors";
 import { payloadField } from "../project/dialogs";
 import type { Command } from "../project/queries";
+import { NodeStatistics } from "../statistics/NodeStatistics";
 import { Button } from "../ui/Button";
 import {
   CheckboxField,
@@ -268,6 +269,7 @@ export function Inspector({
                 node={single}
                 onFollow={onFollow}
               />
+              <NodeStatistics projectId={projectId} node={single} />
             </Fragment>
           )}
           {nodes.length > 1 && <Arrange nodes={nodes} actions={actions} />}

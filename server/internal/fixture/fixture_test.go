@@ -36,6 +36,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search/searchtest"
+	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
+	"github.com/CyberCute-Studio/storycreep/server/internal/statistics/statisticstest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/usage"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
@@ -327,6 +329,7 @@ func newProject(t *testing.T, name string) loaded {
 	expression.Register(reg)
 	dependency.Register(reg)
 	search.Register(reg)
+	statistics.Register(reg)
 	ent := entitlements.New(entitlements.Options{Meter: usage.Meter{}})
 	pipeline := commands.New(db, commands.Options{Registry: reg, Entitlements: ent})
 	projects := project.New(db, project.Options{Entitlements: ent, Pipeline: pipeline, Seed: component.Seed})
@@ -345,7 +348,8 @@ func newProject(t *testing.T, name string) loaded {
 // outside the trash, every expression of it compiles, the index of what
 // its content names (package dependency) holds what its expressions and its
 // texts name, and is what a recomputation of it from scratch gives
-// (FR-DEP-01 AC1), and so are its documents of search (package search).
+// (FR-DEP-01 AC1), and so are its documents of search (package search) and its
+// writing statistics (package statistics).
 func (l loaded) wantSpec(t *testing.T, spec fixture.Spec) {
 	t.Helper()
 	for table, want := range map[string]int{"live_board": spec.Boards, "live_node": spec.Nodes,
@@ -391,6 +395,11 @@ func (l loaded) wantSpec(t *testing.T, spec fixture.Spec) {
 		t.Fatal(err)
 	} else if len(drift) > 0 {
 		t.Errorf("the project's documents of search are not what its content holds: %q", drift[:min(len(drift), 10)])
+	}
+	if drift, err = statisticstest.Drift(context.Background(), l.admin, l.project); err != nil {
+		t.Fatal(err)
+	} else if len(drift) > 0 {
+		t.Errorf("the project's writing statistics are not what its texts count: %q", drift[:min(len(drift), 10)])
 	}
 }
 

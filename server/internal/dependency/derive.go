@@ -73,7 +73,7 @@ var textNeutral = append([]commands.Type{
 // not holds as it did.
 func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) error {
 	var nodes, connections, components []pgtype.UUID
-	for c := range changedTexts(slices.Values(changed)) {
+	for c := range ChangedTexts(slices.Values(changed)) {
 		switch c.Kind {
 		case ids.Node:
 			nodes = append(nodes, nullUUID(c.ID))
@@ -137,14 +137,16 @@ var neutralTexts = func() map[commands.Type]bool {
 	return m
 }()
 
-// changedTexts yields the nodes, the connections, and the components of
+// ChangedTexts yields the nodes, the connections, and the components of
 // changed whose texts the batch's commands may have changed, with their
 // latest revisions, as a derivation reads them (commands.Derivation.Derive,
 // commands.Tx.Changes): each that a command of a type that is not
 // textNeutral changed, whose rows of the index derive replaces, and which a
 // command's Apply that reads what the texts name before the batch is indexed
-// reads anew (TextsUsing), so that both read the same texts anew.
-func changedTexts(changed iter.Seq[commands.Change]) iter.Seq[commands.Revision] {
+// reads anew (TextsUsing), so that both read the same texts anew, and whose
+// words and characters package statistics counts again, so that one list
+// says which commands change a text.
+func ChangedTexts(changed iter.Seq[commands.Change]) iter.Seq[commands.Revision] {
 	return func(yield func(commands.Revision) bool) {
 		for c := range changed {
 			switch {

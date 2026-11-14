@@ -304,6 +304,10 @@ func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 			t.Fatalf("after the batch %s, answered %d, the project's documents of search are not what its "+
 				"content holds: %q", undoTypes(cmds), res.status, drift)
 		}
+		if drift := statisticsDrift(t, conn, p); len(drift) > 0 {
+			t.Fatalf("after the batch %s, answered %d, the project's writing statistics are not what its "+
+				"texts count: %q", undoTypes(cmds), res.status, drift)
+		}
 		for _, u := range indexedUses(t, conn, project) {
 			seen[u] = true
 		}

@@ -34,6 +34,7 @@
       "text": "",
       "preview": "",
       "words": 0,
+      "characters": 0,
       "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
@@ -62,6 +63,7 @@
       "text": "Harbour's closed to strangers. State your business.",
       "preview": "Harbour's closed to strangers. State your business.",
       "words": 7,
+      "characters": 51,
       "hash": "sha256:c837445da5f4925edceb14ff23a89dd81158e985f16b5d160c522201241629a4"
     },
     {
@@ -189,6 +191,7 @@
       "text": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
       "preview": "Ask the keeper about the old lighthouse, not the new one: LIGHT_ON.",
       "words": 12,
+      "characters": 67,
       "hash": "sha256:38482a363c9b444dc6c51c0d74f0cdc4258281108cfcffe99cf3cf5333e7f057"
     },
     {
@@ -286,6 +289,7 @@
       "text": "Elara has heard {harbour_rumours} rumours.\nTrust: {elara.trust}",
       "preview": "Elara has heard {harbour_rumours} rumours. Trust: {elara.trust}",
       "words": 7,
+      "characters": 62,
       "hash": "sha256:a893a22a46af838ba40fa316d53642a4a1aff5f8f5fb9243c0e8c1bafc16f087"
     },
     {
@@ -442,6 +446,7 @@
       "text": "Pack for the climb:\n• Rope\n• Lamp\n  3. Oil\n  4. Wick\nThen go.",
       "preview": "Pack for the climb: • Rope • Lamp 3. Oil 4. Wick Then go.",
       "words": 10,
+      "characters": 42,
       "hash": "sha256:e8da259d791343d935cfd1cc81bb8e5fc35a5f3c88806f63a6a58504d512e6f6"
     },
     {
@@ -502,6 +507,7 @@
       "text": "• Rope\nThen go.",
       "preview": "• Rope Then go.",
       "words": 3,
+      "characters": 12,
       "hash": "sha256:bc527b3a9e8c8b6a750b3e56e550d507a4cc03e33a4a1df3b2226158f67774c8"
     },
     {
@@ -663,6 +669,7 @@
       "text": "Go now!\n\n1. Elara",
       "preview": "Go now! 1. Elara",
       "words": 3,
+      "characters": 12,
       "hash": "sha256:c1a239168a8ef85348410a1b4bfb565cd9152aee49bd3d54da3ac1692e5e609a"
     },
     {
@@ -739,6 +746,7 @@
       "text": "• First\n  More\n  lines",
       "preview": "• First More lines",
       "words": 3,
+      "characters": 14,
       "hash": "sha256:db06d859d22f7495f064c577b9af3ee6e6715a1b0ce3a471c9cb9f0ad5479b53"
     },
     {
@@ -844,6 +852,7 @@
       "text": "9. a\n  b\n10. c\n  d",
       "preview": "9. a b 10. c d",
       "words": 4,
+      "characters": 4,
       "hash": "sha256:74b9f76675296b127720452770c4e2d96437c380be2cc55bc4ff36dc7b5ac8f2"
     },
     {
@@ -878,6 +887,7 @@
       "text": "\nAfter",
       "preview": "After",
       "words": 1,
+      "characters": 5,
       "hash": "sha256:7ade159e33ad72af11ed911edb6ba8b5624c695e1aa5852484b0bb5747c56f3c"
     },
     {
@@ -924,6 +934,7 @@
       "text": "• Rope",
       "preview": "• Rope",
       "words": 1,
+      "characters": 4,
       "hash": "sha256:8a17ea5a75d9acb8e85ce428871bca41ebd0e7bdeac4d96cf0a9f6b103da4b9e"
     },
     {
@@ -1083,6 +1094,7 @@
       "text": "• a\n  • b\n    • c\n      • d\n        • e",
       "preview": "• a • b • c • d • e",
       "words": 5,
+      "characters": 5,
       "hash": "sha256:6fe101a3ea01e1a4773d9acdb197846c3bcc313c3e21b010a023d9a85ce8bf4f"
     },
     {
@@ -1162,6 +1174,7 @@
       "text": "0. Zero\n  {met_elara}",
       "preview": "0. Zero {met_elara}",
       "words": 2,
+      "characters": 15,
       "hash": "sha256:243d09d592f0b41f33aeea7e6bde7296f9c9ca2e184331a2b95d81c758078698"
     },
     {
@@ -1219,6 +1232,7 @@
       "text": "\nAfter\n\nEnd",
       "preview": "After End",
       "words": 2,
+      "characters": 8,
       "hash": "sha256:30e3b27c2f59d6b100bc6789d2955ce36e588251dd38c1d9a7cc7c9b471ccc3c"
     },
     {
@@ -1247,6 +1261,7 @@
       "text": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve worn steps under her breath.",
       "preview": "The keeper climbed the spiral stairs of the old lighthouse, counting each of the hundred and twelve…",
       "words": 22,
+      "characters": 128,
       "hash": "sha256:e1a459cab5130ee07c2bbcaeed2b3cb1b2bd61e145902f96c6164aafccfddecd"
     },
     {
@@ -1275,6 +1290,7 @@
       "text": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy  — 東京タワー 3 km",
       "preview": "Příliš žluťoučký kůň 🐴 úpěl ďábelské ódy — 東京タワー 3 km",
       "words": 9,
+      "characters": 54,
       "hash": "sha256:f40ad5ba8fb127eeb990de1536ba5af0a6c62bdba97795c5f7cd0f26cfb467ce"
     },
     {
@@ -1317,6 +1333,7 @@
       "text": "Go 🐴",
       "preview": "Go 🐴",
       "words": 1,
+      "characters": 4,
       "hash": "sha256:55066f4dafda1097717a8629b188846b9cf0f26bd7447cd20d20d19db7d93744"
     },
     {
@@ -1345,6 +1362,7 @@
       "text": "Rope\t2\tcoils",
       "preview": "Rope 2 coils",
       "words": 3,
+      "characters": 12,
       "hash": "sha256:ff341395678defff332797ae7e9b971dc6f6ed154b36e1dcdb2d8d1c1325cb08"
     },
     {
@@ -1382,6 +1400,7 @@
       "text": "Fish & chips <hot>",
       "preview": "Fish & chips <hot>",
       "words": 3,
+      "characters": 18,
       "hash": "sha256:cbdc6be8042546270cfd3c3396e4a1ca932575821b75d46a6069d64a7f0020dd"
     },
     {
@@ -1473,6 +1492,7 @@
       "text": "one two three",
       "preview": "one two three",
       "words": 3,
+      "characters": 13,
       "hash": "sha256:6899ee404683a14e8c2a03149860df25d67d34d9cd4dae7350cbe91e4b3976be"
     },
     {
@@ -1510,6 +1530,7 @@
       "text": "Write",
       "preview": "Write",
       "words": 1,
+      "characters": 5,
       "hash": "sha256:3f00927a719345edd4a8316599d3b328857987547f8884306861161ffa09647e"
     },
     {
@@ -1547,6 +1568,7 @@
       "text": "x",
       "preview": "x",
       "words": 1,
+      "characters": 1,
       "hash": "sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
     },
     {
@@ -1665,6 +1687,7 @@
       "text": "one two three four",
       "preview": "one two three four",
       "words": 4,
+      "characters": 18,
       "hash": "sha256:113f69ccf08f80a63beba2f49218eaa72a183f374065e6cb56ebe9bd68eb79cc"
     },
     {
@@ -1794,6 +1817,7 @@
       "text": "3. a\n3. b",
       "preview": "3. a 3. b",
       "words": 2,
+      "characters": 2,
       "hash": "sha256:d94ddd1f631fa60f3c42b7326c58612f02183b09fb2dcc90283815b68eb0f409"
     }
   ],

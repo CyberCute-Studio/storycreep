@@ -102,7 +102,7 @@ var textSites = map[ids.Kind]string{ids.Node: SiteNodeText, ids.Connection: Site
 // or the component, of the kind, ids.Variable or ids.Component, whose UUID is
 // target, as the batch's commands before the one that calls it leave them:
 // those whose rows of the index name it, and those whose texts the batch may
-// have changed so far (changedTexts, commands.Tx.Changes), which the index
+// have changed so far (ChangedTexts, commands.Tx.Changes), which the index
 // holds as they were before the batch until its derivation indexes them
 // again, each read anew, but once at each of its owner's revisions: what a
 // text that the batch has changed names is kept for the batch's later
@@ -136,7 +136,7 @@ func TextsUsing(ctx context.Context, tx *commands.Tx, kind ids.Kind, target ids.
 	var refs []textRef
 	toRead := textOwners{}
 	changed, stale := map[commands.Ref]bool{}, map[commands.Ref]bool{}
-	for c := range changedTexts(tx.Changes()) {
+	for c := range ChangedTexts(tx.Changes()) {
 		changed[c.Ref] = true
 		if r, ok := read[c.Ref]; ok && r.rev == c.Rev {
 			refs = append(refs, r.refs...)

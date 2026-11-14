@@ -1384,8 +1384,8 @@ export class ProjectDocument {
    * or, for none, what the project read anew may have, with the role that
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
-   * it, as an unarchive's archived_at, and the trash, which a deletion or a
-   * restoration changes.
+   * it, as an unarchive's archived_at, the trash, which a deletion or a
+   * restoration changes, and the writing statistics, which any change may.
    */
   private followed(
     op: Operation | undefined,
@@ -1402,6 +1402,13 @@ export class ProjectDocument {
         queryKey: ["projects", this.projectId, "trash"],
       });
     }
+    // The writing statistics, which nearly every command changes, as the
+    // server counts each text as a batch changes it (statistics/queries.ts):
+    // those that a page shows are read again at once, so that they follow
+    // the edit within a second (PRD FR-TEXT-06 AC1).
+    void this.options.queryClient.invalidateQueries({
+      queryKey: ["projects", this.projectId, "statistics"],
+    });
   }
 
   /**
