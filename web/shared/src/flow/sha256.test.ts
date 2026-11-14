@@ -122,6 +122,29 @@ describe("of a pace", () => {
     }
     expect(yields).toBe(0);
   });
+
+  // Calls that share a pace and are asked for at once, as play mode's
+  // projection asks for its files' hashes, hash YIELD_EVERY bytes in all
+  // before the page runs, rather than each call after the first that let
+  // it run hashing more in the same task.
+  test("sha256Yielding paces calls asked for at once", async () => {
+    const part = bytes(YIELD_EVERY / 4);
+    const want = hex(sha256(part));
+    const pace = { hashed: 0 };
+    let done = 0;
+    const sums = Array.from({ length: 8 }, () =>
+      sha256Yielding(part, undefined, false, pace).then((sum) => {
+        done++;
+        return hex(sum);
+      }),
+    );
+    // The microtasks run, and no task of the event loop.
+    for (let i = 0; i < 16; i++) {
+      await null;
+    }
+    expect(done).toBe(4);
+    expect(await Promise.all(sums)).toEqual(Array(8).fill(want));
+  });
 });
 
 // A browser delays a timer nested five deep by 4 ms, and throttles a hidden

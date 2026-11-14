@@ -212,14 +212,13 @@ export class PlaySession {
         // A board whose content the document has not read, as one that came
         // back from the trash once play had read the boards, would be
         // projected without its nodes.
-        const unread = [...view.boards.values()].find(
-          (b) =>
-            b.deleted_at === undefined && !this.doc.hasRead(boardPart(b.id)),
+        const missing = [...view.boards.values()].find((b) =>
+          unreadBoard(this.doc, b),
         );
-        if (unread !== undefined) {
+        if (missing !== undefined) {
           throw new ProjectionError(
             "unread",
-            `the board ${unread.id} has not been read`,
+            `the board ${missing.id} has not been read`,
           );
         }
         projection = await projectDraft(view);
@@ -323,12 +322,12 @@ export class PlaySession {
       return;
     }
     const reads: (() => Promise<void>)[] = [];
-    // unread adds the reads of what the document holds now and has not
+    // addUnread adds the reads of what the document holds now and has not
     // read: each board's content, and each component whole.
-    const unread = () => {
+    const addUnread = () => {
       const view = doc.store.getState().view;
       for (const b of view.boards.values()) {
-        if (b.deleted_at === undefined && !doc.hasRead(boardPart(b.id))) {
+        if (unreadBoard(doc, b)) {
           reads.push(() => doc.load(boardPart(b.id)));
         }
       }
@@ -344,7 +343,7 @@ export class PlaySession {
         }
       }
     };
-    unread();
+    addUnread();
     let done = 0;
     let failed = false;
     const progress = () => {
@@ -384,7 +383,7 @@ export class PlaySession {
     // content the document took out with it, is read too.
     if (current()) {
       const before = reads.length;
-      unread();
+      addUnread();
       if (reads.length > before) {
         await inTurn();
       }
@@ -580,10 +579,21 @@ function placeOf(
   return { ...place, ...(source === undefined ? {} : { source }) };
 }
 
+// unreadBoard reports whether b is a board out of the trash whose content
+// doc has not read, which play reads before it projects the draft, and
+// which, unread even then, as one that came back from the trash since, it
+// does not project.
+function unreadBoard(
+  doc: ProjectDocument,
+  b: { readonly id: string; readonly deleted_at?: string },
+): boolean {
+  return b.deleted_at === undefined && !doc.hasRead(boardPart(b.id));
+}
+
 // The fields of an entity, and of what it holds, as a branch's outputs and
 // a type's attribute definitions, that every change of it changes, as the
 // server answers the page's own, rather than what it is.
-const unread = new Set(["rev", "updated_at", "created_at"]);
+const roundTrip = new Set(["rev", "updated_at", "created_at"]);
 
 // The fields that hold an expression, of which the projection reads the
 // source alone, which it compiles anew, so that the server's answer to the
@@ -655,7 +665,7 @@ function sameEntity(
   const x = a as Record<string, unknown>;
   const y = b as Record<string, unknown>;
   const ignored = (k: string) =>
-    unread.has(k) ||
+    roundTrip.has(k) ||
     (k === "description" && kind !== "variables") ||
     (kind === "components" &&
       k === "attributes" &&
@@ -677,7 +687,7 @@ function stable(
       const o = u as Record<string, unknown>;
       return Object.fromEntries(
         Object.keys(o)
-          .filter((k) => !unread.has(k))
+          .filter((k) => !roundTrip.has(k))
           .sort()
           .map((k) => [k, field(k, o[k])]),
       );

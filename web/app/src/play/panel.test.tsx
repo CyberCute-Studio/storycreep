@@ -325,6 +325,26 @@ describe("play mode", () => {
     ).toBeDefined();
   });
 
+  // The page that the flow goes to draws with the renderer that the page
+  // that it left was asked to, as by the reference tablet's checklist.
+  it("keeps the renderer asked for on the board's page that the flow goes to", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const { router } = renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?renderer=canvas`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await user.click(
+      await within(panel).findByRole("button", { name: "Visit Elara" }),
+    );
+    await openBoard(elara);
+    expect(router.state.location.search).toEqual({ renderer: "canvas" });
+  });
+
   // Play reads the project's content as it starts, and nothing for a step.
   // Verifies: FR-PLAY-01/AC1
   it("takes a step in the page, with no request to the server", async () => {
@@ -448,6 +468,7 @@ describe("play mode", () => {
             type: "node.update",
             payload: {
               id: id("nd", "A"),
+              title: "Pier",
               text: richText(text("Changed.")),
             },
           },
@@ -462,6 +483,10 @@ describe("play mode", () => {
         ),
       ).toBeDefined(),
     );
+    // The current node is named as the page names it, as where an error or
+    // a stand-in is, and its text is the snapshot's until Restart.
+    expect(within(panel).getByRole("heading", { name: "Pier" })).toBeDefined();
+    expect(within(panel).getByText("Trust 1.")).toBeDefined();
     await user.click(within(panel).getByRole("button", { name: "Restart" }));
     await waitFor(() =>
       expect(within(panel).getByText("Changed.")).toBeDefined(),
@@ -469,8 +494,25 @@ describe("play mode", () => {
     // Restart kept the focus in the panel, on the node that play started at.
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        within(panel).getByRole("heading", { name: "Quay" }),
+        within(panel).getByRole("heading", { name: "Pier" }),
       ),
     );
+  });
+
+  // P plays from the one node selected, or with nothing selected from the
+  // board's entry node, and not while a connection is selected.
+  it("does not play by P while a connection is selected", async () => {
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "A")}&connection=${id("cn", "1")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Connection" });
+    expect(canvas.dataset.connection).toBe(id("cn", "1"));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    expect(screen.queryByRole("region", { name: "Play" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Connection" })).toBeDefined();
   });
 });

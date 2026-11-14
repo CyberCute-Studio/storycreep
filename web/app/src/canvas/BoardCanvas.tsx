@@ -1523,8 +1523,9 @@ function BoardCanvasOf({
   // Play mode (FR-PLAY-01, plan note N78): the project's session, which the
   // panel beside the canvas shows, and where play starts from what the
   // canvas has selected: the one node selected, of any type, or, with
-  // nothing selected, the board's entry node (AC2). Starting closes the
-  // inspector, which an open one covers the play panel with.
+  // nothing selected, neither a node nor a connection, the board's entry
+  // node (AC2). Starting closes the inspector, which an open one covers the
+  // play panel with.
   // The page reads of the session only what it shows, so that a read's
   // progress or the draft's change, which the panel says, draws nothing
   // here.
@@ -1542,7 +1543,9 @@ function BoardCanvasOf({
       ? undefined
       : selected === 1 && onlyNode !== undefined
         ? { board: boardId, node: onlyNode.id }
-        : selected === 0 && board?.entry_node_id !== undefined
+        : selected === 0 &&
+            connection === undefined &&
+            board?.entry_node_id !== undefined
           ? { board: boardId, node: "" }
           : undefined;
   const startPlay = (from: PlayStart) => {

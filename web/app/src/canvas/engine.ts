@@ -918,17 +918,12 @@ class PixiEngine implements Engine {
           view.item !== undefined &&
           view.item !== item &&
           view.selected === selected &&
-          view.played === played &&
           movedOnly(view.item, item)
         ) {
           view.item = item;
         }
         const stale =
-          fresh ||
-          anew ||
-          view.item !== item ||
-          view.selected !== selected ||
-          view.played !== played;
+          fresh || anew || view.item !== item || view.selected !== selected;
         if (stale || relabel) {
           // A card's labels follow its node and the names that cards show
           // alone, so that a card drawn anew for the text's resolution, the
@@ -950,6 +945,13 @@ class PixiEngine implements Engine {
           }
           view.labels = labels;
           view.labelsVersion = f.labelsVersion;
+        }
+        // A card whose node play marks otherwise, alone, as each that a
+        // stop or a restart unmarks, draws its ring of play anew, and not
+        // its text.
+        if (view.played !== played) {
+          this.drawTrail(view, item, played, f.theme);
+          view.played = played;
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         view.root.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;

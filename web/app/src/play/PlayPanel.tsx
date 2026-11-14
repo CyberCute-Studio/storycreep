@@ -96,6 +96,15 @@ export function PlayPanel({
     named.nodes.map((id, i) => [id, names[named.boards.length + i]]),
   );
   const played = state.status === "playing" ? state.projection : undefined;
+  // The current node's title, as the page has it, as where names it, or as
+  // the snapshot has it, of a node that the page no longer has.
+  const title =
+    state.status === "playing"
+      ? titleOf(
+          { title: nodeTitles.get(state.flow.node) ?? state.flow.title },
+          t,
+        )
+      : "";
   // Where an entity is, by its node's title and its board's name, as the
   // page has them, or, of what the page no longer has, as a board that a
   // collaborator deleted for good while playing, as the snapshot that play
@@ -173,6 +182,7 @@ export function PlayPanel({
           state={state}
           session={session}
           currentRef={current}
+          title={title}
           where={where}
           link={link}
         />
@@ -191,6 +201,7 @@ function PlayFlowView({
   state,
   session,
   currentRef,
+  title,
   where,
   link,
 }: {
@@ -198,6 +209,8 @@ function PlayFlowView({
   session: PlaySession;
   /** What gets the focus after a turn: the current node's heading, or what says that the flow is at none. */
   currentRef: RefObject<HTMLElement | null>;
+  /** The current node's title, which its heading says. */
+  title: string;
   where: (board: string | undefined, node: string | undefined) => string;
   link: (
     board: string | undefined,
@@ -248,7 +261,7 @@ function PlayFlowView({
               aria-describedby={described}
               className="font-semibold break-words"
             >
-              {flow.title === "" ? t("canvas.node.untitled") : flow.title}
+              {title}
             </h3>
             {flow.speaker !== "" && (
               <p id={speakerId} className="font-medium break-words">
@@ -375,7 +388,8 @@ function ErrorItem({
 }
 
 // namedBy returns the boards and the nodes whose names the panel says, of
-// state: the flow's board, and where its errors and the stand-ins are.
+// state: the flow's board and its current node, and where its errors and
+// the stand-ins are.
 function namedBy(state: PlayState): {
   boards: readonly string[];
   nodes: readonly string[];
@@ -393,6 +407,9 @@ function namedBy(state: PlayState): {
     };
     if (state.flow.board !== "") {
       boards.add(state.flow.board);
+    }
+    if (state.flow.node !== "") {
+      nodes.add(state.flow.node);
     }
     state.flow.errors.forEach(add);
     state.projection.standIns.forEach(add);

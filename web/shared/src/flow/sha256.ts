@@ -45,7 +45,8 @@ export const YIELD_EVERY = 1 << 20;
 /**
  * How many bytes the calls of sha256Yielding that share it have hashed since
  * one of them last let the event loop run a task, as load's calls of the
- * files of one snapshot share one.
+ * files of one snapshot share one, and play mode's projection's, which it
+ * asks for at once, do.
  */
 export interface Pace {
   hashed: number;
@@ -62,7 +63,10 @@ export interface Pace {
  * unless own is set: when bytes are the caller's own copy, which nothing
  * else holds, and so nothing changes meanwhile. Once signal is aborted, it
  * rejects with its reason, as fetch does, before it hashes another
- * YIELD_EVERY bytes.
+ * YIELD_EVERY bytes. The pace stays spent until the call goes on in a task
+ * of its own, so that the calls that share it and start in the same task,
+ * as calls asked for at once do, each let the page run before they hash
+ * beyond it, rather than hash YIELD_EVERY bytes each in that task.
  */
 export async function sha256Yielding(
   bytes: Uint8Array,
@@ -80,9 +84,9 @@ export async function sha256Yielding(
   const whole = data.length - (data.length % 64);
   for (let at = 0; at < whole; at += 64) {
     if (pace.hashed >= YIELD_EVERY) {
-      pace.hashed = 0;
       await nextTask();
       signal?.throwIfAborted();
+      pace.hashed = 0;
     }
     compress(h, w, data, at);
     pace.hashed += 64;

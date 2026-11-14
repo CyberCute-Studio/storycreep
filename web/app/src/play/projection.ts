@@ -850,7 +850,8 @@ export async function projectDraft(
   const pulledAt = timestampOf(options.now ?? new Date());
   // The files' hashes, as load hashes each, at one pace, of bytes that are
   // the projection's own, asked for all at once, rather than each once the
-  // one before is done.
+  // one before is done, which the pace keeps to YIELD_EVERY bytes a task
+  // all the same, where the page has no WebCrypto.
   const pace: Pace = { hashed: 0 };
   const paths = [...files.keys()].sort(byCodePoints);
   const sums = await Promise.all(

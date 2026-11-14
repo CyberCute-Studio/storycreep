@@ -313,7 +313,9 @@ function BoardContent({
   // the page was shown at, which a page that the user opened while playing
   // shows, moves nothing; a page that the user opened while play read the
   // project is shown before the start's turn, which moves it, as it moves
-  // the page that started play.
+  // the page that started play. The other board's page draws with the
+  // renderer that this one was asked to, as by the reference tablet's
+  // checklist, rather than with the browser's.
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -331,6 +333,8 @@ function BoardContent({
       void navigate({
         to: "/projects/$projectId/boards/$boardId",
         params: { projectId, boardId: playBoard },
+        search: (prev) =>
+          prev.renderer === undefined ? {} : { renderer: prev.renderer },
       });
     }
   }, [playTurn, playBoard, board.id, navigate, projectId]);
