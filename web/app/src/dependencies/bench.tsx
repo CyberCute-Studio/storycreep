@@ -10,6 +10,7 @@
 // both from the element's data-bench-result.
 
 import { formatNumber } from "@storycreep/shared/i18n";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BenchPanel } from "../ui/BenchPanel";
 
@@ -27,7 +28,12 @@ export interface DependencyBenchResult {
   edges: number;
 }
 
-/** The result of the view's benchmark, once drawnAt says when the graph was first drawn. */
+/**
+ * The result of the view's benchmark, once drawnAt says when the graph was
+ * first drawn, as of then: a later navigation of the view, as a filter's,
+ * which has its route mark the start of its load anew, and draws another
+ * graph, leaves it as it is.
+ */
 export function DependencyBench({
   drawnAt,
   boards,
@@ -40,11 +46,20 @@ export function DependencyBench({
   edges: number;
 }) {
   const { t, i18n } = useTranslation();
-  const opened = performance.getEntriesByName(openedMark)[0]?.startTime ?? 0;
-  const result: DependencyBenchResult | undefined =
-    drawnAt === undefined
-      ? undefined
-      : { rendered: drawnAt - opened, loaded: drawnAt, boards, pairs, edges };
+  const [result, setResult] = useState<DependencyBenchResult>();
+  useEffect(() => {
+    if (drawnAt === undefined || result !== undefined) {
+      return;
+    }
+    const opened = performance.getEntriesByName(openedMark)[0]?.startTime ?? 0;
+    setResult({
+      rendered: drawnAt - opened,
+      loaded: drawnAt,
+      boards,
+      pairs,
+      edges,
+    });
+  }, [drawnAt, result, boards, pairs, edges]);
   const n = (value: number, digits = 0) =>
     formatNumber(i18n.language, value, { maximumFractionDigits: digits });
   return (

@@ -274,7 +274,7 @@ describe("a project's dependency view", () => {
     expect(await within(panel).findByText("global.gold")).toBeDefined();
   });
 
-  it("shows no refusal of a pair whose board went to the trash, which the graph read again takes away", async () => {
+  it("says that a pair's board went to the trash, rather than refuse it, until the graph read again takes the pair away", async () => {
     const user = userEvent.setup();
     const realtime = fakeRealtime();
     let answer: Graph | Promise<Graph> = graph();
@@ -323,7 +323,11 @@ describe("a project's dependency view", () => {
       ),
     );
     await waitFor(() => expect(contributionReads()).toBe(before + 1));
-    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const panel = inspected.closest("section") as HTMLElement;
+    await within(panel).findByText(
+      "A board of this dependency is no longer in the project.",
+    );
+    expect(within(panel).queryByText("gold")).toBeNull();
     expect(
       screen.queryAllByRole("alert").filter((a) => a.textContent !== ""),
     ).toEqual([]);
@@ -367,10 +371,10 @@ describe("a project's dependency view", () => {
     ]);
   });
 
-  it("shows the view without a filter that is no ID of its kind, as of a link cut short", async () => {
+  it("shows the view without a filter that is no ID of its kind, as of a link cut short, or the zero UUID's, which the server takes as none", async () => {
     const calls = dependencyPages(() => graph());
     renderApp(
-      `/projects/${testProject.id}/dependencies?board=bd_01HQ8Z&variable=gold&kind=all`,
+      `/projects/${testProject.id}/dependencies?board=bd_01HQ8Z&variable=var_${"0".repeat(26)}&kind=all`,
       { session: testSession },
     );
     await screen.findByRole("heading", { level: 1, name: "Dependencies" });
@@ -522,5 +526,35 @@ describe("a project's dependency view", () => {
     );
     await screen.findByText("No board depends on another.");
     expect(reads()).toBe(before + 1);
+  });
+
+  it("keeps its benchmark's result as of the graph's first drawing, which a filter's navigation, which marks the view's load anew, leaves as it is", async () => {
+    const user = userEvent.setup();
+    dependencyPages((query) =>
+      query.kind === "jumper"
+        ? graph({ edges: graph().edges.filter((e) => e.kind === "jumper") })
+        : graph(),
+    );
+    renderApp(`/projects/${testProject.id}/dependencies?bench=load`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Dependencies" });
+    const result = () =>
+      document
+        .querySelector("[data-bench-phase=done]")
+        ?.getAttribute("data-bench-result");
+    await waitFor(() => expect(result()).toBeDefined());
+    const first = result();
+    expect(JSON.parse(first ?? "{}")).toMatchObject({
+      boards: 3,
+      pairs: 3,
+      edges: 3,
+    });
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Kind" }),
+      "jumper",
+    );
+    await screen.findByText("3 boards, 1 dependency between them.");
+    expect(result()).toBe(first);
   });
 });

@@ -142,19 +142,24 @@ function EdgeContributions({
   // The server answers not_found once a board of the pair has gone to the
   // trash, as another session's deletion, which has the graph read again as
   // it has the contributions, and whose answer takes the pair, and so this
-  // inspection, away: the inspection shows no refusal of it meanwhile.
-  const refusal = notFoundBy(list.error) ? undefined : refusalOf(list.error, t);
+  // inspection, away: the inspection says meanwhile that the pair's board
+  // has gone, in place of the contributions read before, rather than show a
+  // refusal of it.
+  const gone = notFoundBy(list.error);
+  const refusal = gone ? undefined : refusalOf(list.error, t);
   const items = list.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <section className="space-y-2">
-      <h4 className="font-semibold">
+      <h3 className="font-semibold">
         {t("dependencies.kind_heading", {
           kind: edge.kind,
           count: edge.contributions,
         })}
-      </h4>
+      </h3>
       <Alert message={refusal?.message} />
-      {list.isPending ? (
+      {gone ? (
+        <p className="text-fg-muted">{t("dependencies.pair_gone")}</p>
+      ) : list.isPending ? (
         <p className="text-fg-muted">{t("dependencies.loading")}</p>
       ) : (
         <ul>
@@ -178,7 +183,7 @@ function EdgeContributions({
           ))}
         </ul>
       )}
-      {list.hasNextPage && (
+      {!gone && list.hasNextPage && (
         <Button
           disabled={list.isFetchingNextPage}
           onClick={() => void list.fetchNextPage()}
@@ -211,13 +216,15 @@ export function PairInspector({
   const { t } = useTranslation();
   return (
     <section aria-labelledby="dependencies-inspected" className="space-y-4">
-      <h3
+      {/* Of the page's second level, as the heading of the list of every
+      pair is, which the inspection, beside the graph, comes before. */}
+      <h2
         id="dependencies-inspected"
         tabIndex={-1}
         className="text-lg font-semibold"
       >
         {t("dependencies.pair_heading", { from: from.name, to: to.name })}
-      </h3>
+      </h2>
       <p>{t("dependencies.pair_intro", { from: from.name, to: to.name })}</p>
       {edges.map((edge) => (
         <EdgeContributions
@@ -245,13 +252,13 @@ export function BoardInspector({
   const { t } = useTranslation();
   return (
     <section aria-labelledby="dependencies-inspected" className="space-y-3">
-      <h3
+      <h2
         id="dependencies-inspected"
         tabIndex={-1}
         className="text-lg font-semibold"
       >
         {board.name}
-      </h3>
+      </h2>
       <p>
         {t("dependencies.board_summary", {
           inbound: board.inbound,

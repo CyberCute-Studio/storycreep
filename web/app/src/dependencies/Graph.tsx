@@ -172,8 +172,13 @@ export function DependencyGraph({
                 />
               );
             })}
-            {/* What a press of a line hits: a band along it, wider than
-            the line, which takes the press for its pair. */}
+            {/* What a press of a line hits: a band along it, 12 px to each
+            side, as a touch's tap on a connection's line of the canvas
+            takes (tapSlop, canvas/gestures.ts), which takes the press for
+            its pair. It is no
+            wider, as the bands of the lines that meet at a box's side would
+            cover one another, and the list of every pair is what selects a
+            pair whatever the pointer. */}
             {layout.routes.map((r) => (
               // biome-ignore lint/a11y/noStaticElementInteractions: the lines are drawn for the eye, and a press of one is a pointer's shortcut to the button of its pair in the view's list, which a keyboard and a screen reader use.
               <path
@@ -181,7 +186,7 @@ export function DependencyGraph({
                 d={r.path}
                 fill="none"
                 stroke="transparent"
-                strokeWidth={20}
+                strokeWidth={24}
                 pointerEvents="stroke"
                 className="cursor-pointer"
                 data-pair={pairKey(r.from, r.to)}

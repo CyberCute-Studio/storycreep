@@ -3,7 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
-import { fakeApi, startPage, testProject } from "./test/fake";
+import { fakeApi, refused, startPage, testProject } from "./test/fake";
 import { fakeRealtime } from "./test/realtime";
 
 // A project's validation (PRD FR-DEP-03, plan note N77), as the router
@@ -90,10 +90,11 @@ function report(not: Finding[], muted: Finding[] = [], seq = 1): Report {
   };
 }
 
-/** Answers the validation's page, of the role, with the report that answer returns, and its batches as applied. */
+/** Answers the validation's page, of the role, with the report that answer returns, and its batches as applied, or as refused with what refusal returns of a batch's first command. */
 function validationPage(
   answer: () => Report,
   role: (typeof testProject)["role"] = "owner",
+  refusal: (type: string) => Error | undefined = () => undefined,
 ) {
   let seq = testProject.seq;
   return fakeApi((operation, input) => {
@@ -126,8 +127,16 @@ function validationPage(
         return { items: [], next_cursor: null };
       case "applyCommands": {
         const { commands } = (
-          input as { body: { commands: { payload: { entity_id: string } }[] } }
+          input as {
+            body: {
+              commands: { type: string; payload: { entity_id: string } }[];
+            };
+          }
         ).body;
+        const refused = refusal(commands[0].type);
+        if (refused !== undefined) {
+          throw refused;
+        }
         seq++;
         return {
           status: "applied",
@@ -231,7 +240,7 @@ describe("a project's validation", () => {
     expect(section(/^Muted \(0\)$/).textContent).toContain("Nothing is muted.");
   });
 
-  it("names a variable whose key the project's document lacks as a variable of its scope", async () => {
+  it("names a variable whose key the project's document lacks as a variable of its scope, and a board that the draft lacks as another", async () => {
     const variable = findings[5];
     const calls = validationPage(() =>
       report([
@@ -241,6 +250,12 @@ describe("a project's validation", () => {
           entity_id: "var_gone_too",
           board_id: "bd_a",
           board_name: "Harbour",
+        },
+        {
+          ...variable,
+          entity_id: "var_gone_three",
+          board_id: "bd_gone",
+          board_name: "",
         },
       ]),
     );
@@ -253,7 +268,7 @@ describe("a project's validation", () => {
         true,
       ),
     );
-    const warnings = section(/^Warnings \(2\)$/);
+    const warnings = section(/^Warnings \(3\)$/);
     expect(
       within(warnings)
         .getByRole("link", { name: "A global variable" })
@@ -261,6 +276,11 @@ describe("a project's validation", () => {
     ).toBe(`/app/projects/${testProject.id}/variables?variable=var_gone`);
     expect(
       within(warnings).getByRole("link", { name: "A variable of Harbour" }),
+    ).toBeDefined();
+    expect(
+      within(warnings).getByRole("link", {
+        name: "A variable of another board",
+      }),
     ).toBeDefined();
     expect(
       within(warnings).getByRole("button", { name: "Mute: A global variable" }),
@@ -387,6 +407,110 @@ describe("a project's validation", () => {
     expect(
       within(section(/^Warnings \(4\)$/)).getByText("The message of dead_end."),
     ).toBeDefined();
+  });
+
+  it("mutes a finding that the report no longer has, as one fixed while its dialog was open, and says that it is listed once it is found again", async () => {
+    const user = userEvent.setup();
+    const deadEnd = findings[2];
+    let answer = report(findings);
+    const calls = validationPage(() => answer);
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/validation`,
+      { session: testSession },
+    );
+    await screen.findByRole("heading", { level: 1, name: "Validation" });
+    await user.click(
+      within(section(/^Warnings/)).getByRole("button", {
+        name: "Mute: Greet, on Harbour",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Mute: Greet, on Harbour",
+    });
+    // Another session gives Greet a choice, and the report, read again, no
+    // longer has its dead end.
+    answer = report(
+      findings.filter((f) => f !== deadEnd),
+      [],
+      2,
+    );
+    act(
+      () =>
+        void queryClient.invalidateQueries({
+          queryKey: ["projects", testProject.id, "validation"],
+        }),
+    );
+    await screen.findByRole("heading", {
+      level: 2,
+      name: /^Warnings \(3\)$/,
+      hidden: true,
+    });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Reason" }),
+      "The scene ends the demo.",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Mute" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(batches(calls)).toEqual([
+      [
+        {
+          type: "validation.mute",
+          payload: {
+            entity_id: "nd_a",
+            code: "dead_end",
+            reason: "The scene ends the demo.",
+          },
+        },
+      ],
+    ]);
+    expect(
+      screen
+        .getByText(
+          "Muted. Validation no longer finds it, so it is listed under Muted only once it is found again.",
+        )
+        .closest("[role=status]"),
+    ).not.toBeNull();
+  });
+
+  it("opens a mute's dialog without the refusal of the last unmute", async () => {
+    const user = userEvent.setup();
+    const muted = {
+      ...findings[2],
+      mute: { reason: "Fine.", muted_at: "2026-11-14T10:00:00Z" },
+    };
+    validationPage(
+      () =>
+        report(
+          findings.filter((f) => f !== findings[2]),
+          [muted],
+        ),
+      "owner",
+      (type) =>
+        type === "validation.unmute"
+          ? refused(422, { code: "project_archived" })
+          : undefined,
+    );
+    renderApp(`/projects/${testProject.id}/validation`, {
+      session: testSession,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Validation" });
+    const shown = () =>
+      screen
+        .queryAllByRole("alert", { hidden: true })
+        .filter((a) => a.textContent !== "");
+    await user.click(
+      within(section(/^Muted/)).getByRole("button", {
+        name: "Unmute: Greet, on Harbour",
+      }),
+    );
+    await waitFor(() => expect(shown()).toHaveLength(1));
+    await user.click(
+      within(section(/^Info/)).getByRole("button", {
+        name: "Mute: Greet, on Harbour",
+      }),
+    );
+    await screen.findByRole("dialog", { name: "Mute: Greet, on Harbour" });
+    expect(shown()).toEqual([]);
   });
 
   // Verifies: FR-DEP-03/AC4

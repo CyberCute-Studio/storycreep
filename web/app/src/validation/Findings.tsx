@@ -64,7 +64,9 @@ export function whereText(
 ): string {
   const field = finding.field ?? "none";
   const node = nodeTitleText(t, finding.node_title ?? "");
-  const board = finding.board_name ?? t("boards.unknown_board");
+  // A board's name is never empty, but of one that the draft lacks, which
+  // the server names "" (validation.nameOf), as it gives its ID.
+  const board = finding.board_name || t("boards.unknown_board");
   switch (finding.entity_type) {
     case "node":
       return t("validation.where.node", { field, node, board });

@@ -71,6 +71,14 @@ function Validation() {
   const unmute = useCommands(projectId);
   const unmuteRefusal = refusalOf(unmute.error, t);
   const mutedHeading = useRef<HTMLHeadingElement>(null);
+  // A mute's dialog opens without what the page said of the last mute or
+  // unmute, nor the last unmute's refusal, which its own success would
+  // otherwise be shown beside.
+  const onMute = (m: Muting) => {
+    setSaid(undefined);
+    unmute.reset();
+    setMuting(m);
+  };
   const onUnmute = (finding: Finding, code: MutedCode) => {
     setSaid(undefined);
     // The finding goes back to its severity's list, with the button, and
@@ -130,10 +138,7 @@ function Validation() {
           names={names}
           editable={editable}
           userId={userId}
-          onMute={(m) => {
-            setSaid(undefined);
-            setMuting(m);
-          }}
+          onMute={onMute}
           onUnmute={onUnmute}
         />
       ))}
@@ -156,10 +161,7 @@ function Validation() {
             names={names}
             editable={editable}
             userId={userId}
-            onMute={(m) => {
-              setSaid(undefined);
-              setMuting(m);
-            }}
+            onMute={onMute}
             onUnmute={onUnmute}
           />
         )}
@@ -171,10 +173,20 @@ function Validation() {
           names={names}
           onClose={() => setMuting(undefined)}
           onMuted={() => {
+            // One that the report no longer has, as one that another
+            // session fixed while the dialog was open, is muted all the
+            // same, as a mute is part of what it is about, but is listed
+            // under Muted only once it is found again.
+            const key = findingKey(muting.finding);
+            const listed = [...report.findings, ...report.muted].some(
+              (f) => findingKey(f) === key,
+            );
             setSaid(
-              muting.finding.mute === undefined
-                ? t("validation.muted_now")
-                : t("validation.reason_changed"),
+              muting.finding.mute !== undefined
+                ? t("validation.reason_changed")
+                : listed
+                  ? t("validation.muted_now")
+                  : t("validation.muted_gone"),
             );
             // A finding muted now goes to the muted ones, with the button
             // that opened the dialog; one whose reason changed stays.

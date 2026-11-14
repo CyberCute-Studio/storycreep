@@ -29,7 +29,8 @@ export async function found<T>(read: Promise<T>): Promise<T> {
  * the server refuses as none (notFoundBy), which shows the page of no page.
  */
 export function canonicalId(kind: IdKind, id: string): string {
-  return searchId(kind, id) ?? id;
+  const uuid = uuidOf(kind, id);
+  return uuid === undefined ? id : encodeId(kind, uuid);
 }
 
 /**
@@ -39,14 +40,22 @@ export function canonicalId(kind: IdKind, id: string): string {
  * holds: the page then shows what it shows without that filter, as the board
  * page opens the canvas as without a node that the board does not have,
  * rather than ask the server with it, which refuses it as none
- * (notFoundBy), and show the page of no page for a page that is there.
+ * (notFoundBy), and show the page of no page for a page that is there. So
+ * too for the ID of the zero UUID, which no entity has, and which the server
+ * takes as no filter, as the page would otherwise show what it does with
+ * one while the server kept everything.
  */
 export function searchId(kind: IdKind, id: unknown): string | undefined {
-  if (typeof id !== "string" || id === "") {
-    return undefined;
-  }
+  const uuid = typeof id === "string" ? uuidOf(kind, id) : undefined;
+  return uuid === undefined || uuid.every((b) => b === 0)
+    ? undefined
+    : encodeId(kind, uuid);
+}
+
+/** Returns the UUID of id, an ID of kind, or undefined for one that is no ID of kind. */
+function uuidOf(kind: IdKind, id: string): Uint8Array | undefined {
   try {
-    return encodeId(kind, decodeId(kind, id));
+    return decodeId(kind, id);
   } catch {
     return undefined;
   }
