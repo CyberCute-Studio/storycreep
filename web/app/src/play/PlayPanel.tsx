@@ -91,7 +91,14 @@ export function PlayPanel({
         </p>
       ) : state.status === "failed" ? (
         <div className="space-y-2">
-          <Alert message={t("play.failed")} />
+          <Alert
+            message={state.reading ? t("play.failed") : t("play.unplayable")}
+          />
+          {!state.reading && state.error instanceof Error && (
+            <code className="block break-words whitespace-pre-wrap text-sm">
+              {state.error.message}
+            </code>
+          )}
           <Button onClick={() => void session.restart()}>
             {t("play.try_again")}
           </Button>

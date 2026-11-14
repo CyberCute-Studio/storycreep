@@ -96,6 +96,13 @@ export type PlayState =
       readonly status: "failed";
       readonly start: PlayStart;
       readonly error: unknown;
+      /**
+       * Whether play failed to read the project, as a request that the
+       * connection lost, which Try again reads anew, rather than to run the
+       * draft that it read, as one that the loader refuses in a way that the
+       * projection stands in for none of, which the panel says, with why.
+       */
+      readonly reading: boolean;
     }
   | {
       readonly status: "playing";
@@ -147,6 +154,7 @@ export class PlaySession {
     const generation = this.begin();
     this.store.setState({ status: "loading", start, done: 0, total: 0 }, true);
     const current = () => generation === this.generation;
+    let reading = true;
     try {
       const [[{ projectDraft }, { load, Runtime }]] = await Promise.all([
         engine(),
@@ -155,6 +163,7 @@ export class PlaySession {
       if (!current()) {
         return;
       }
+      reading = false;
       const view = this.doc.store.getState().view;
       const projection = projectDraft(view);
       const snapshot = await load(projection.files);
@@ -183,7 +192,7 @@ export class PlaySession {
       this.watch(view);
     } catch (error) {
       if (current()) {
-        this.store.setState({ status: "failed", start, error }, true);
+        this.store.setState({ status: "failed", start, error, reading }, true);
       }
     }
   }

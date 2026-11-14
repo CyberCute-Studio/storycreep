@@ -374,7 +374,21 @@ describe("a play session", () => {
       throw new Error("offline");
     };
     await s.restart();
-    expect(s.state.status).toBe("failed");
+    expect(s.state).toMatchObject({ status: "failed", reading: true });
+  });
+
+  test("fails to run a draft that holds what no project does, saying it is no failed read", async () => {
+    const twin = { ...elaraComponent, id: id("cmp", "2") };
+    const { doc } = documentOf({
+      ...draft,
+      components: new Map([
+        [elaraComponent.id, elaraComponent],
+        [twin.id, twin],
+      ]),
+    });
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(s.state).toMatchObject({ status: "failed", reading: false });
   });
 
   test("says once the draft changed since it started, and restarts on the draft as it is", async () => {
