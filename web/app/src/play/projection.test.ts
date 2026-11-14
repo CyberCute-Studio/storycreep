@@ -107,9 +107,9 @@ describe("the conformance suite's snapshots", () => {
   // reference runtime does, the values that texts show among them (FR-TEXT-02
   // AC3), in the order of the choices that the author gave (FR-EDIT-03 AC1).
   // Verifies: FR-TEXT-02/AC3
-  test.each(suites)(
-    "project back to their own files: $name",
-    async ({ name, files, scenarios }) => {
+  test("project back to their own files, whose scenarios pass", async () => {
+    expect(suites.length).toBeGreaterThan(0);
+    for (const { name, files, scenarios } of suites) {
       const projected = projectDraft(draftOf(files), { now });
       expect(projected.standIns).toEqual([]);
       expect([...projected.files.keys()].sort()).toEqual(
@@ -139,8 +139,8 @@ describe("the conformance suite's snapshots", () => {
         ]),
       );
       expect(runScenarios(name, snapshot, scenarios)).toEqual([]);
-    },
-  );
+    }
+  });
 });
 
 test("the manifest says that the snapshot is of the draft, pulled now", () => {

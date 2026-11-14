@@ -215,7 +215,7 @@ function PlayFlowView({
       )}
       {standIns.length > 0 && (
         <details className="space-y-2">
-          <summary className="cursor-pointer">
+          <summary className="min-h-11 cursor-pointer py-3">
             {t("play.stand_ins", { count: standIns.length })}
           </summary>
           <ul className="list-disc space-y-1 ps-5">
