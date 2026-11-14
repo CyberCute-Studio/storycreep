@@ -79,7 +79,24 @@ export interface Frame {
   dimmed?: (node: Node) => boolean;
   /** Counts the changes of dimmed. */
   dimVersion?: number;
+  /** Where play mode is on the board, or undefined while no play is under way (plan note N78). */
+  play?: PlayMarks;
+  /** Counts the changes of play. */
+  playVersion?: number;
   theme: Theme;
+}
+
+/**
+ * Where play mode is on the board (FR-PLAY-01, plan note N78), which the
+ * canvas highlights in the play colour: the current node, by a ring around
+ * its card, the nodes that the flow passed, by a fainter one, and the
+ * connections that it took, drawn over the others, wider.
+ */
+export interface PlayMarks {
+  /** The current node, or "" for none on the board. */
+  current: string;
+  visited: ReadonlySet<string>;
+  traversed: ReadonlySet<string>;
 }
 
 /** What a frame drew, which the page's tests and the benchmark read. */
@@ -166,6 +183,9 @@ const cornerRadius = 10;
 
 /** How opaque a node that the tag filter dims is drawn (FR-EDIT-06 AC1). */
 const dimAlpha = 0.3;
+
+/** How opaque the ring of a node that play mode's flow passed is drawn, of the current node's (plan note N78). */
+const visitedAlpha = 0.45;
 
 /**
  * Of each field of a node, whether a node moved has it as it was (movedOnly):
@@ -466,6 +486,8 @@ interface CardView {
   edge: NineSliceSprite;
   stripe: Sprite;
   ring: NineSliceSprite;
+  /** The ring of play mode's current node, or of one that the flow passed, beyond the selection's. */
+  trail: NineSliceSprite;
   title: BitmapText;
   kind: BitmapText;
   body: BitmapText;
@@ -474,12 +496,29 @@ interface CardView {
   item?: NodeItem;
   /** Whether it shows its node selected. */
   selected?: boolean;
+  /** Where play mode is at its node, which it shows: the current node, one that the flow passed, or neither. */
+  played?: Played;
   /** The labels that it shows, so that a change of the names that cards show writes again only the cards that it changes. */
   labels?: NodeLabels;
   /** The version of the names that cards show that its labels were read at (Frame's labelsVersion). */
   labelsVersion?: number;
   /** When it was last freed (releaseCards), in milliseconds of the page's clock, which trimCards waits freeCardHold after. */
   freedAt: number;
+}
+
+/** Where play mode is at a node (PlayMarks). */
+type Played = "current" | "visited" | "";
+
+/** Returns where play mode is at the node of id, as play marks it. */
+function playedOf(play: PlayMarks | undefined, id: string): Played {
+  if (play === undefined) {
+    return "";
+  }
+  return play.current === id
+    ? "current"
+    : play.visited.has(id)
+      ? "visited"
+      : "";
 }
 
 /** A tile of the connections' lines: its Graphics, and the rectangle of the board that its lines take, or none for a tile without any. */
@@ -534,6 +573,7 @@ class PixiEngine implements Engine {
         connection: string | undefined;
         labelsVersion: number;
         dimVersion: number;
+        playVersion: number;
         theme: Theme;
         stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
@@ -694,6 +734,7 @@ class PixiEngine implements Engine {
       b.selectionVersion !== f.selectionVersion ||
       b.labelsVersion !== f.labelsVersion ||
       b.dimVersion !== (f.dimVersion ?? 0) ||
+      b.playVersion !== (f.playVersion ?? 0) ||
       b.theme !== f.theme;
     if (stale) {
       // A change of what the margin shows, but not of where it is, as of
@@ -823,7 +864,9 @@ class PixiEngine implements Engine {
         s.height = item.rect.height;
         s.tint = f.selection.has(item.node.id)
           ? theme.accent
-          : nodeColor(item.node.color, theme);
+          : playedOf(f.play, item.node.id) === "current"
+            ? theme.play
+            : nodeColor(item.node.color, theme);
         s.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         i++;
       }
@@ -859,6 +902,7 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
+        const played = playedOf(f.play, item.node.id);
         // A card of a node that only moved, as in each frame of a drag, is
         // where its node is now, as it was otherwise.
         if (
@@ -867,12 +911,17 @@ class PixiEngine implements Engine {
           view.item !== undefined &&
           view.item !== item &&
           view.selected === selected &&
+          view.played === played &&
           movedOnly(view.item, item)
         ) {
           view.item = item;
         }
         const stale =
-          fresh || anew || view.item !== item || view.selected !== selected;
+          fresh ||
+          anew ||
+          view.item !== item ||
+          view.selected !== selected ||
+          view.played !== played;
         if (stale || relabel) {
           // A card's labels follow its node and the names that cards show
           // alone, so that a card drawn anew for the text's resolution, the
@@ -887,8 +936,10 @@ class PixiEngine implements Engine {
               : f.labels(item);
           if (stale || !sameLabels(labels, view.labels)) {
             this.drawCard(view, item, labels, f, fonts, selected, lines);
+            this.drawTrail(view, item, played, f.theme);
             view.item = item;
             view.selected = selected;
+            view.played = played;
           }
           view.labels = labels;
           view.labelsVersion = f.labelsVersion;
@@ -912,6 +963,7 @@ class PixiEngine implements Engine {
       was.region !== region ||
       was.connectionsVersion !== scene.connectionsVersion ||
       was.connection !== f.connection ||
+      was.playVersion !== (f.playVersion ?? 0) ||
       was.zoom !== zoom ||
       was.lod !== lod ||
       was.theme !== theme
@@ -924,6 +976,7 @@ class PixiEngine implements Engine {
         lod,
         theme,
         f.connection,
+        f.play?.traversed,
       );
     }
     this.built = {
@@ -938,6 +991,7 @@ class PixiEngine implements Engine {
       connection: f.connection,
       labelsVersion: f.labelsVersion,
       dimVersion: f.dimVersion ?? 0,
+      playVersion: f.playVersion ?? 0,
       theme,
       stats: {
         lod,
@@ -1048,6 +1102,7 @@ class PixiEngine implements Engine {
       edge: nine(this.art.edge, 20),
       stripe: new Sprite(Texture.WHITE),
       ring: nine(this.art.ring, 22),
+      trail: nine(this.art.ring, 22),
       title: text(fonts.bold, titleSize),
       kind: text(fonts.regular, kindSize),
       body: text(fonts.regular, bodySize),
@@ -1062,9 +1117,36 @@ class PixiEngine implements Engine {
       view.kind,
       view.body,
       view.ring,
+      view.trail,
     );
     this.cards.addChild(view.root);
     return view;
+  }
+
+  /**
+   * Draws the ring of play mode around a card (plan note N78): beyond the
+   * selection's ring, in the play colour, whole for the current node and
+   * fainter for one that the flow passed, and none for any other.
+   */
+  private drawTrail(
+    view: CardView,
+    item: NodeItem,
+    played: Played,
+    theme: Theme,
+  ): void {
+    const t = view.trail;
+    t.visible = played !== "";
+    if (played === "") {
+      return;
+    }
+    const inset = 8;
+    const scale = cornerRadius / 16;
+    t.scale.set(scale);
+    t.width = (item.rect.width + 2 * inset) / scale;
+    t.height = (item.rect.height + 2 * inset) / scale;
+    t.position.set(-inset, -inset);
+    t.tint = theme.play;
+    t.alpha = played === "current" ? 1 : visitedAlpha;
   }
 
   private drawCard(
@@ -1227,6 +1309,7 @@ class PixiEngine implements Engine {
     lod: FrameStats["lod"],
     theme: Theme,
     selected: string | undefined,
+    traversed: ReadonlySet<string> | undefined,
   ): void {
     const grid = this.kind === "canvas" ? lineGrid : 1;
     while (this.lineTiles.length < grid * grid) {
@@ -1292,6 +1375,24 @@ class PixiEngine implements Engine {
           head(item);
         }
         g.fill({ color: theme.border });
+      }
+      // The connections that play mode's flow took, over the others, wider,
+      // in the play colour (plan note N78), under the one selected.
+      const taken =
+        traversed === undefined || traversed.size === 0
+          ? []
+          : items.filter((item) => traversed.has(item.connection.id));
+      if (taken.length > 0) {
+        for (const item of taken) {
+          trace(item);
+        }
+        g.stroke({ width: 2 * width, color: theme.play });
+        if (heads) {
+          for (const item of taken) {
+            head(item);
+          }
+          g.fill({ color: theme.play });
+        }
       }
       const chosen =
         selected === undefined

@@ -6,8 +6,9 @@ import {
   notFound,
   useNavigate,
 } from "@tanstack/react-router";
-import { type FormEvent, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
@@ -24,6 +25,7 @@ import { BoardBadge } from "../dependencies/BoardBadge";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import type { ProjectDocument } from "../document/store";
+import { playSessionOf } from "../play/session";
 import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { useLastOpened } from "../project/lastOpened";
@@ -304,6 +306,32 @@ function BoardContent({
     "board.show_canvas": show("canvas"),
     "board.show_script": show("script"),
   });
+  // Play mode follows the flow to the board that a step moved it to, as a
+  // jumper's to another board (FR-PLAY-01 AC3, plan note N78): the page of
+  // that board's canvas, where the session goes on, its state kept. A step
+  // that leaves the flow on the board shown, and the session's turn that
+  // the page was shown at, which a page that the user opened while playing
+  // shows, moves nothing.
+  const session = playSessionOf(doc);
+  const playTurn = useStore(session.store, (s) =>
+    s.status === "playing" ? s.turn : 0,
+  );
+  const playBoard = useStore(session.store, (s) =>
+    s.status === "playing" ? s.flow.board : "",
+  );
+  const seenTurn = useRef(playTurn);
+  useEffect(() => {
+    if (playTurn === seenTurn.current) {
+      return;
+    }
+    seenTurn.current = playTurn;
+    if (playBoard !== "" && playBoard !== board.id) {
+      void navigate({
+        to: "/projects/$projectId/boards/$boardId",
+        params: { projectId, boardId: playBoard },
+      });
+    }
+  }, [playTurn, playBoard, board.id, navigate, projectId]);
   return (
     <div className="space-y-6">
       {/* The views' switch is beside the board's name, rather than under

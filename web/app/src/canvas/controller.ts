@@ -22,7 +22,7 @@ import type { Node } from "@storycreep/shared/api";
 import type { CommandId } from "../commands/catalog";
 import type { Doc } from "../document/doc";
 import { movedBy, resizedBy } from "./edit";
-import type { Engine, FrameStats, RendererKind } from "./engine";
+import type { Engine, FrameStats, PlayMarks, RendererKind } from "./engine";
 import {
   type GestureHost,
   Gestures,
@@ -486,6 +486,9 @@ export class CanvasController implements GestureHost {
   /** Which nodes the canvas dims, as the tag filter asks (FR-EDIT-06 AC1), and how often that changed. */
   private dims: ((node: Node) => boolean) | undefined;
   private dimVersion = 0;
+  /** Where play mode is on the board, which the canvas highlights (plan note N78), and how often that changed. */
+  private play: PlayMarks | undefined;
+  private playVersion = 0;
   /**
    * How many of the board's nodes are dimmed, of the document's nodes and
    * the dims' version that it was counted at, rather than of the scene's,
@@ -1495,6 +1498,26 @@ export class CanvasController implements GestureHost {
   }
 
   /**
+   * Highlights where play mode is on the board, or nothing (FR-PLAY-01,
+   * plan note N78): the canvas draws the current node, the nodes that the
+   * flow passed, and the connections that it took, in the play colour, and
+   * changes nothing of the board.
+   */
+  setPlay(marks: PlayMarks | undefined): void {
+    if (marks === this.play) {
+      return;
+    }
+    this.play = marks;
+    this.playVersion++;
+    this.invalidate();
+  }
+
+  /** Where play mode is on the board, as setPlay last set it. */
+  get playMarks(): PlayMarks | undefined {
+    return this.play;
+  }
+
+  /**
    * How many of the board's nodes are dimmed, counted once for each change
    * of the document's nodes or of the dims, rather than in each frame of a
    * drag, which changes where nodes are, and none of their tags.
@@ -2047,6 +2070,8 @@ export class CanvasController implements GestureHost {
         labelsVersion: this.labelsVersion,
         dimmed: this.dims,
         dimVersion: this.dimVersion,
+        play: this.play,
+        playVersion: this.playVersion,
         theme,
       });
     } catch (error) {

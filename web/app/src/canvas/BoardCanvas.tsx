@@ -64,10 +64,13 @@ import {
 } from "../commands/registry";
 import { boardPart } from "../document/doc";
 import {
+  useBoard,
   useDocumentState,
   useDocuments,
   useProjectDocument,
 } from "../document/react";
+import { PlayPanel } from "../play/PlayPanel";
+import { type PlayStart, playSessionOf } from "../play/session";
 import {
   HistoryButtons,
   type HistoryOf,
@@ -1517,6 +1520,59 @@ function BoardCanvasOf({
     ),
   );
   const onlyLink = onlyTarget === undefined ? undefined : linkOf(onlyTarget);
+  // Play mode (FR-PLAY-01, plan note N78): the project's session, which the
+  // panel beside the canvas shows, and where play starts from what the
+  // canvas has selected: the one node selected, of any type, or, with
+  // nothing selected, the board's entry node (AC2). Starting closes the
+  // inspector, which an open one covers the play panel with.
+  const session = playSessionOf(doc);
+  const play = useStore(session.store);
+  const playing = play.status !== "idle";
+  const board = useBoard(doc, boardId);
+  const playFrom: PlayStart | undefined =
+    content !== "ready"
+      ? undefined
+      : selected === 1 && onlyNode !== undefined
+        ? { board: boardId, node: onlyNode.id }
+        : selected === 0 && board?.entry_node_id !== undefined
+          ? { board: boardId, node: "" }
+          : undefined;
+  const startPlay = (from: PlayStart) => {
+    setInspecting(false);
+    void session.start(from);
+  };
+  // Where play is on the board, which the canvas highlights, and its tree
+  // says of the current node; the canvas shows the current node once the
+  // flow comes to it, as after each choice and once the board's page
+  // followed the flow here.
+  const playNode =
+    play.status === "playing" && play.flow.board === boardId
+      ? play.flow.node
+      : "";
+  const playTurn = play.status === "playing" ? play.turn : 0;
+  const marks = useMemo(
+    () =>
+      play.status === "playing"
+        ? {
+            current: play.flow.board === boardId ? play.flow.node : "",
+            visited: play.flow.visited,
+            traversed: play.flow.traversed,
+          }
+        : undefined,
+    [play, boardId],
+  );
+  useEffect(() => {
+    controller.setPlay(marks);
+  }, [controller, marks]);
+  useEffect(() => {
+    if (content !== "ready" || playNode === "" || playTurn === 0) {
+      return;
+    }
+    const r = controller.scene.boundsOf([playNode]);
+    if (r !== undefined) {
+      controller.reveal(r);
+    }
+  }, [controller, content, playNode, playTurn]);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -1726,6 +1782,15 @@ function BoardCanvasOf({
       run: () => clipboardAsked("copy"),
     },
     "canvas.menu": { run: () => controller.menuOfSelection() },
+    "play.start": {
+      enabled: playFrom !== undefined,
+      run: () => {
+        if (playFrom !== undefined) {
+          startPlay(playFrom);
+        }
+      },
+    },
+    "play.stop": { enabled: playing, run: () => session.stop() },
     ...(editable
       ? {
           ...historyHandlers(history),
@@ -2185,7 +2250,11 @@ function BoardCanvasOf({
           </p>
         )}
       </fieldset>
-      <div className={inspecting && editable ? besidePanel : undefined}>
+      <div
+        className={
+          (inspecting && editable) || playing ? besidePanel : undefined
+        }
+      >
         <div className="relative min-w-0">
           <div
             ref={hostRef}
@@ -2264,6 +2333,7 @@ function BoardCanvasOf({
             selection={selection}
             connection={connection}
             editable={editable}
+            playNode={playNode === "" ? undefined : playNode}
             onClipboard={treeClipboard}
           />
           {/* What the canvas places over its nodes, outside its element, which
@@ -2407,6 +2477,16 @@ function BoardCanvasOf({
                           <MenuSeparator />
                         </>
                       )}
+                      {content === "ready" &&
+                        board?.entry_node_id !== undefined && (
+                          <MenuItem
+                            onSelect={() =>
+                              startPlay({ board: boardId, node: "" })
+                            }
+                          >
+                            {t("canvas.menu.play_entry")}
+                          </MenuItem>
+                        )}
                       <MenuItem onSelect={() => controller.fit()}>
                         {t("canvas.fit")}
                       </MenuItem>
@@ -2442,6 +2522,15 @@ function BoardCanvasOf({
                       {onlyLink !== undefined && (
                         <MenuItem onSelect={goToTarget}>
                           {t("canvas.go_to_target")}
+                        </MenuItem>
+                      )}
+                      {onlyNode !== undefined && content === "ready" && (
+                        <MenuItem
+                          onSelect={() =>
+                            startPlay({ board: boardId, node: onlyNode.id })
+                          }
+                        >
+                          {t("canvas.menu.play_here")}
                         </MenuItem>
                       )}
                       <MenuItem onSelect={() => controller.zoomToSelection()}>
@@ -2574,6 +2663,17 @@ function BoardCanvasOf({
             onClose={() => setInspecting(false)}
             returnFocus={() => inspectorButton.current}
             headingRef={inspectorHeading}
+          />
+        )}
+        {/* Play mode's panel, while play is under way, where the inspector,
+        while it is open, is not (plan note N78), which gives the focus back
+        to the canvas once play stops. */}
+        {playing && !(inspecting && editable) && (
+          <PlayPanel
+            projectId={projectId}
+            doc={doc}
+            session={session}
+            returnFocus={() => hostRef.current}
           />
         )}
       </div>

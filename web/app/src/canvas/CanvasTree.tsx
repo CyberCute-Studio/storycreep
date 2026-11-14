@@ -94,6 +94,7 @@ const Row = memo(function Row({
   label,
   leaving,
   selected,
+  current,
   expanded,
   tab,
   choices,
@@ -106,6 +107,8 @@ const Row = memo(function Row({
   label: string;
   leaving: number;
   selected: boolean;
+  /** Whether it is play mode's current node (plan note N78). */
+  current: boolean;
   expanded: boolean;
   /** Whether the Tab key stops on the node. */
   tab: boolean;
@@ -129,6 +132,7 @@ const Row = memo(function Row({
       data-node={id}
       aria-label={label}
       aria-selected={selected}
+      aria-current={current ? "step" : undefined}
       aria-expanded={leaving > 0 ? expanded : undefined}
       tabIndex={tab ? 0 : -1}
       className={itemClass}
@@ -196,6 +200,7 @@ export const CanvasTree = memo(function CanvasTree({
   selection,
   connection,
   editable,
+  playNode,
   onClipboard,
 }: {
   ref?: Ref<TreeHandle>;
@@ -207,6 +212,8 @@ export const CanvasTree = memo(function CanvasTree({
   connection: string | undefined;
   /** Whether the user may change the board, which alone selects a connection. */
   editable: boolean;
+  /** Play mode's current node on the board, which its item says it is (aria-current), or undefined for none (plan note N78). */
+  playNode?: string;
   /** Copies, cuts, or pastes, as the clipboard's keys ask (clipboardKey), once the tree has selected what they act on. */
   onClipboard: (asked: ClipboardAsk) => void;
 }) {
@@ -712,6 +719,7 @@ export const CanvasTree = memo(function CanvasTree({
               label={row.label}
               leaving={row.leaving}
               selected={selection.has(row.id)}
+              current={row.id === playNode}
               expanded={open}
               tab={on.node === row.id && on.connection === undefined}
               choices={open ? choices.get(row.id) : undefined}

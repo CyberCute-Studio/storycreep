@@ -10,23 +10,27 @@
 // as long as the document is, so that the flow follows a jumper to another
 // board's page and keeps its state there (AC3).
 
-import type { Board, Node } from "@storycreep/shared/api";
-import {
-  type Choice,
-  type Event,
-  type ExpressionField,
-  LoadError,
-  load,
-  type Phase,
-  type Reason,
+import type {
+  Choice,
+  Event,
+  ExpressionField,
+  Phase,
+  Reason,
   Runtime,
-  type RuntimeError,
-  type Snapshot,
+  RuntimeError,
+  Snapshot,
 } from "@storycreep/shared/flow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart, type Doc } from "../document/doc";
 import type { ProjectDocument } from "../document/store";
-import { type Projection, ProjectionError, projectDraft } from "./projection";
+import type { Projection } from "./projection";
+
+// What play runs a draft with, the projection, the shared flow's loader,
+// and its runtime, with the JSON Schemas that the loader checks a snapshot
+// against, read once play starts, rather than with the board's page, whose
+// first frame they would else make later.
+const engine = () =>
+  Promise.all([import("./projection"), import("@storycreep/shared/flow")]);
 
 /** Where play starts: a node of a board, or the board's entry node where node is "". */
 export interface PlayStart {
@@ -144,7 +148,10 @@ export class PlaySession {
     this.store.setState({ status: "loading", start, done: 0, total: 0 }, true);
     const current = () => generation === this.generation;
     try {
-      await this.readAll(current);
+      const [[{ projectDraft }, { load, Runtime }]] = await Promise.all([
+        engine(),
+        this.readAll(current),
+      ]);
       if (!current()) {
         return;
       }
@@ -598,28 +605,4 @@ export function playSessionOf(doc: ProjectDocument): PlaySession {
     sessions.set(doc, s);
   }
   return s;
-}
-
-/**
- * Returns where play starts from what a board's canvas has selected (AC2):
- * the one node selected, of any type, as start() takes a jumper to its
- * target, or the board's entry node, or undefined where neither is, as on a
- * board without an entry node with nothing selected.
- */
-export function startOf(
-  board: Board,
-  selected: readonly Node[],
-): PlayStart | undefined {
-  if (selected.length === 1) {
-    return { board: board.id, node: selected[0].id };
-  }
-  if (selected.length === 0 && board.entry_node_id !== undefined) {
-    return { board: board.id, node: "" };
-  }
-  return undefined;
-}
-
-/** Reports whether error is the projection's or the loader's, which the panel says in words of its own, rather than a failed read's. */
-export function isPlayError(error: unknown): boolean {
-  return error instanceof ProjectionError || error instanceof LoadError;
 }
