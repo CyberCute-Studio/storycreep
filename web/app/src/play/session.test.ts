@@ -4,7 +4,7 @@ import type {
   Connection,
   Node,
 } from "@storycreep/shared/api";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createStore } from "zustand/vanilla";
 import type { ComponentEntry, Doc, Part } from "../document/doc";
 import type { ProjectDocument } from "../document/store";
@@ -17,7 +17,23 @@ import {
   testVariable,
   text,
 } from "../test/play";
-import { draftChanged, PlaySession } from "./session";
+import { draftChanged, PlaySession, parallelReads } from "./session";
+
+// What a test has the shared flow's load do as play loads the projection,
+// before it loads it.
+const hooks = vi.hoisted(() => ({
+  loading: undefined as (() => void) | undefined,
+}));
+vi.mock("@storycreep/shared/flow", async (importOriginal) => {
+  const flow = await importOriginal<typeof import("@storycreep/shared/flow")>();
+  return {
+    ...flow,
+    load: (...args: Parameters<typeof flow.load>) => {
+      hooks.loading?.();
+      return flow.load(...args);
+    },
+  };
+});
 
 // Each entity's ID, in its canonical spelling, of a mnemonic of digits and
 // the letters of Crockford's base 32.
@@ -418,6 +434,137 @@ describe("a play session", () => {
     expect(playing(s).flow.text).toBe("Changed.");
   });
 
+  test("says the draft changed where it changed while play loaded its projection", async () => {
+    const { doc, store } = documentOf(draft);
+    const s = new PlaySession(doc);
+    const a = draft.nodes.get(id("nd", "A")) as Node;
+    hooks.loading = () => {
+      hooks.loading = undefined;
+      store.setState({
+        view: {
+          ...draft,
+          nodes: new Map(draft.nodes).set(a.id, {
+            ...a,
+            text: richText(text("Changed.")),
+          }),
+        },
+      });
+    };
+    try {
+      await s.start({ board: harbour.id, node: "" });
+    } finally {
+      hooks.loading = undefined;
+    }
+    expect(playing(s).changed).toBe(true);
+    expect(playing(s).flow.text).toBe("Trust 1.");
+  });
+
+  // Of a branch whose if and else both lead to one node, the path is of
+  // the connection that the flow took, the else's, as the if's condition
+  // is false.
+  test("marks the connection that a branch took, of two that lead to one node", async () => {
+    const branch = id("nd", "B");
+    const output = (o: string, kind: "if" | "else", extra: object = {}) => ({
+      id: id("bo", o),
+      node_id: branch,
+      kind,
+      rev: 1,
+      created_at: at,
+      updated_at: at,
+      ...extra,
+    });
+    const { doc } = documentOf(
+      testDraft({
+        boards: [harbour],
+        variables: [gold],
+        nodes: [
+          testNode(id("nd", "A"), 0, 0, on(harbour)),
+          {
+            ...testNode(branch, 200, 0, on(harbour)),
+            type: "branch",
+            outputs: [
+              output("1", "if", {
+                order: "a",
+                condition: expression("gold > 10"),
+              }),
+              output("2", "else"),
+            ],
+          } as Node,
+          testNode(id("nd", "C"), 400, 0, on(harbour)),
+        ],
+        connections: [
+          testConnection(id("cn", "1"), id("nd", "A"), branch, on(harbour)),
+          testConnection(id("cn", "2"), branch, id("nd", "C"), {
+            ...on(harbour),
+            from_port: id("bo", "1"),
+          }),
+          testConnection(id("cn", "3"), branch, id("nd", "C"), {
+            ...on(harbour),
+            from_port: id("bo", "2"),
+          }),
+        ],
+      }),
+    );
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    s.choose(id("cn", "1"));
+    const { flow } = playing(s);
+    expect(flow.path).toEqual([id("nd", "A"), branch, id("nd", "C")]);
+    expect([...flow.traversed]).toEqual([id("cn", "1"), id("cn", "3")]);
+  });
+
+  test("reads no more once a read has failed", async () => {
+    const boards = Array.from({ length: 12 }, (_, i) =>
+      testBoard(id("bd", `${i + 10}`), `Board ${i}`),
+    );
+    const { doc, reads } = documentOf(testDraft({ boards }));
+    (doc as { load: unknown }).load = async (part: Part) => {
+      reads.push(part);
+      if (part === `board:${boards[0].id}`) {
+        throw new Error("offline");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const s = new PlaySession(doc);
+    await s.start({ board: boards[0].id, node: "" });
+    expect(s.state).toMatchObject({ status: "failed", reading: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reads.filter((r) => r.startsWith("board:")).length).toBe(
+      parallelReads,
+    );
+  });
+
+  // A component that a read of the components' list took the values of
+  // while play read the others is read whole again, as many at a time as
+  // the others.
+  test("reads again, parallelReads at a time, the components whose values a read of the list took", async () => {
+    const components = Array.from({ length: 10 }, (_, i) => {
+      const c: ComponentEntry = {
+        ...elaraComponent,
+        id: id("cmp", `${i + 10}`),
+        key: `c${i}`,
+      };
+      delete c.attributes;
+      return c;
+    });
+    const { doc, reads } = documentOf(
+      testDraft({ boards: [harbour], componentTypes: [character], components }),
+    );
+    let reading = 0;
+    let most = 0;
+    (doc as { readComponent: unknown }).readComponent = async (c: string) => {
+      reads.push(c);
+      reading++;
+      most = Math.max(most, reading);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      reading--;
+    };
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    expect(reads.filter((r) => r.startsWith("cmp_"))).toHaveLength(20);
+    expect(most).toBe(parallelReads);
+  });
+
   test("stops, and does nothing more of a start that a stop overtook", async () => {
     const { doc } = documentOf(draft);
     const s = new PlaySession(doc);
@@ -426,6 +573,43 @@ describe("a play session", () => {
     await started;
     expect(s.state.status).toBe("idle");
   });
+});
+
+test("the server's answer to the page's own change of an expression, compiled, and a branch output's revision, are no change of the draft", () => {
+  const a = draft.nodes.get(id("nd", "A")) as Node;
+  const b = draft.nodes.get(id("nd", "B")) as Node;
+  const answered = {
+    ...draft,
+    nodes: new Map(draft.nodes)
+      .set(a.id, {
+        ...a,
+        rev: 2,
+        on_exit: {
+          source: "elara.trust += 1",
+          is_valid: true,
+          ast: { kind: "script", statements: [] },
+          ast_version: 1,
+        },
+      })
+      .set(b.id, {
+        ...b,
+        outputs: (b.outputs ?? []).map((o) => ({
+          ...o,
+          rev: 2,
+          updated_at: "2026-11-02T10:00:00Z",
+        })),
+      }),
+  };
+  expect(draftChanged(draft, answered)).toBe(false);
+  expect(
+    draftChanged(draft, {
+      ...answered,
+      nodes: new Map(answered.nodes).set(a.id, {
+        ...a,
+        on_exit: expression("elara.trust += 2"),
+      }),
+    }),
+  ).toBe(true);
 });
 
 test("a component's values that a read of the list leaves out are no change of the draft", () => {

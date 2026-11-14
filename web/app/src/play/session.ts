@@ -21,7 +21,12 @@ import type {
   Snapshot,
 } from "@storycreep/shared/flow";
 import { createStore, type StoreApi } from "zustand/vanilla";
-import { boardPart, type Doc } from "../document/doc";
+import {
+  boardPart,
+  type ComponentEntry,
+  type Doc,
+  expressionFields,
+} from "../document/doc";
 import type { ProjectDocument } from "../document/store";
 import type { Projection } from "./projection";
 
@@ -165,7 +170,10 @@ export class PlaySession {
       }
       reading = false;
       const view = this.doc.store.getState().view;
-      const projection = projectDraft(view);
+      const projection = await projectDraft(view);
+      if (!current()) {
+        return;
+      }
       const snapshot = await load(projection.files);
       if (!current()) {
         return;
@@ -223,11 +231,6 @@ export class PlaySession {
     this.store.setState({ status: "idle" }, true);
   }
 
-  /** Ends play for good, as the document goes. */
-  dispose(): void {
-    this.stop();
-  }
-
   // begin ends what the session ran, and returns the next generation.
   private begin(): number {
     this.unwatch?.();
@@ -241,7 +244,7 @@ export class PlaySession {
   // tree, the variables, and the components, then every board's content
   // and every component whole, parallelReads at a time, telling the store
   // how many it has read, while current reports that the start is still
-  // the session's.
+  // the session's, and no more once a read has failed.
   private async readAll(current: () => boolean): Promise<void> {
     const doc = this.doc;
     await Promise.all([
@@ -259,54 +262,82 @@ export class PlaySession {
         reads.push(() => doc.load(boardPart(b.id)));
       }
     }
-    for (const c of view.components.values()) {
-      if (c.deleted_at === undefined && c.attributes === undefined) {
-        reads.push(() => doc.readComponent(c.id));
+    const wholes = (components: Iterable<ComponentEntry>) => {
+      for (const c of components) {
+        if (c.deleted_at === undefined && c.attributes === undefined) {
+          reads.push(() => doc.readComponent(c.id));
+        }
       }
-    }
+    };
+    wholes(view.components.values());
     let done = 0;
+    let failed = false;
     const progress = () => {
       const s = this.state;
       if (current() && s.status === "loading") {
         this.store.setState({ ...s, done, total: reads.length });
       }
     };
-    progress();
+    // inTurn makes the reads from the next on, parallelReads at a time.
     let next = 0;
-    const worker = async () => {
-      while (next < reads.length && current()) {
-        const read = reads[next++];
-        await read();
-        done++;
-        progress();
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(parallelReads, reads.length) }, worker),
-    );
-    // A component that a read of the components' list took the values of
-    // since, as it answers them without them, is read whole again.
-    if (current()) {
-      const again = [...doc.store.getState().view.components.values()].filter(
-        (c) => c.deleted_at === undefined && c.attributes === undefined,
+    const inTurn = async () => {
+      progress();
+      const worker = async () => {
+        while (next < reads.length && current() && !failed) {
+          const read = reads[next++];
+          try {
+            await read();
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
+          done++;
+          progress();
+        }
+      };
+      await Promise.all(
+        Array.from(
+          { length: Math.min(parallelReads, reads.length - next) },
+          worker,
+        ),
       );
-      await Promise.all(again.map((c) => doc.readComponent(c.id)));
+    };
+    await inTurn();
+    // A component that a read of the components' list took the values of
+    // since, as it answers them without them, is read whole again, as the
+    // others are.
+    if (current()) {
+      const before = reads.length;
+      wholes(doc.store.getState().view.components.values());
+      if (reads.length > before) {
+        await inTurn();
+      }
     }
   }
 
   // watch marks the session changed once the draft that it projected, of
   // view, changes, as the page's own batch or another session's operation
-  // changes what the projection reads.
+  // changes what the projection reads, since play projected it: while play
+  // loaded the projection too, before the watch began.
   private watch(projected: Doc): void {
-    this.unwatch = this.doc.store.subscribe((state) => {
+    // done marks the session changed where view is not the draft that it
+    // projected, and reports whether the watch is over.
+    const done = (view: Doc): boolean => {
       const s = this.state;
       if (s.status !== "playing" || s.changed) {
-        this.unwatch?.();
-        this.unwatch = undefined;
-        return;
+        return true;
       }
-      if (draftChanged(projected, state.view)) {
+      if (draftChanged(projected, view)) {
         this.store.setState({ ...s, changed: true });
+        return true;
+      }
+      return false;
+    };
+    if (done(this.doc.store.getState().view)) {
+      return;
+    }
+    this.unwatch = this.doc.store.subscribe((state) => {
+      if (done(state.view)) {
         this.unwatch?.();
         this.unwatch = undefined;
       }
@@ -332,31 +363,17 @@ export class PlaySession {
     const traversed = new Set(flow.traversed);
     const errors = [...flow.errors];
     let ended: Reason | undefined;
-    // The node that the flow left last, whose connection to the node that
-    // it enters next it took: the one chosen, or, from a branch, which goes
-    // on by itself, the first of its connections that leads there.
-    let left: string | undefined;
-    let pending = chosen;
+    // The connections that the call took: the one chosen, and the one of
+    // each branch that the flow passed on by.
+    for (const c of r.taken()) {
+      traversed.add(c);
+    }
     for (const e of events) {
       switch (e.kind) {
-        case "exit":
-          left = e.node;
-          break;
-        case "enter": {
-          if (pending !== undefined) {
-            traversed.add(pending);
-            pending = undefined;
-          } else if (left !== undefined) {
-            const c = connectionTo(s, left, e.node);
-            if (c !== undefined) {
-              traversed.add(c);
-            }
-          }
-          left = undefined;
+        case "enter":
           path.push(e.node);
           visited.add(e.node);
           break;
-        }
         case "end":
           ended = e.reason;
           break;
@@ -369,6 +386,7 @@ export class PlaySession {
             step,
           });
           break;
+        case "exit":
         case "ready":
         case "signal":
           break;
@@ -417,30 +435,6 @@ function emptyFlow(): PlayFlow {
     errors: [],
     steps: 0,
   };
-}
-
-// connectionTo returns the connection that leaves from, a node of s, for
-// to, directly or through a jumper whose target to is, the first in the
-// order of from's ports and of their connections, or undefined for none.
-function connectionTo(
-  s: Snapshot,
-  from: string,
-  to: string,
-): string | undefined {
-  const n = s.nodes.get(from);
-  if (n === undefined) {
-    return undefined;
-  }
-  for (const connections of n.ports.values()) {
-    for (const c of connections) {
-      const dest = s.nodes.get(c.to);
-      const resolved = dest?.type === "jumper" ? dest.target?.nodeId : dest?.id;
-      if (resolved === to) {
-        return c.id;
-      }
-    }
-  }
-  return undefined;
 }
 
 // placeOf returns where the entity at of a runtime error is, as a link opens
@@ -504,9 +498,15 @@ function placeOf(
   return {};
 }
 
-// The fields of an entity that the projection does not read, which a
-// change of alone changes nothing that play shows.
+// The fields of an entity, and of what it holds, as a branch's outputs and
+// a type's attribute definitions, that the projection does not read, which
+// a change of alone changes nothing that play shows.
 const unread = new Set(["rev", "updated_at", "created_at"]);
+
+// The fields that hold an expression, of which the projection reads the
+// source alone, which it compiles anew, so that the server's answer to the
+// page's own change of one, compiled, is no change of it.
+const expressions = new Set<string>(expressionFields);
 
 // The kinds of the project's content that the projection reads.
 const projected = [
@@ -521,9 +521,10 @@ const projected = [
 // draftChanged reports whether after, the document as the page shows it
 // now, holds otherwise than before what the projection reads: an entity of
 // the project's content, in the trash or not, added, gone, or changed but
-// for what the projection does not read, as a board's or a component's
-// description, or a component's values where a read of the components'
-// list left them out.
+// for what the projection does not read, as its revision and its times, and
+// those of what it holds, an expression's but its source, a board's or a
+// component's description, or a component's values where a read of the
+// components' list left them out.
 export function draftChanged(before: Doc, after: Doc): boolean {
   if (before === after) {
     return false;
@@ -575,8 +576,8 @@ function sameEntity(
   return stable(x, ignored) === stable(y, ignored);
 }
 
-// stable returns the JSON of v, its keys sorted, without the top-level keys
-// that ignored tells.
+// stable returns the JSON of v, as the projection reads it, its keys
+// sorted, without the top-level keys that ignored tells.
 function stable(
   v: Record<string, unknown>,
   ignored: (k: string) => boolean,
@@ -589,16 +590,26 @@ function stable(
       const o = u as Record<string, unknown>;
       return Object.fromEntries(
         Object.keys(o)
+          .filter((k) => !unread.has(k))
           .sort()
-          .map((k) => [k, sorted(o[k])]),
+          .map((k) => [k, field(k, o[k])]),
       );
     }
     return u;
   };
+  // field returns the value u of the key k as the projection reads it: an
+  // expression's source alone.
+  const field = (k: string, u: unknown): unknown =>
+    expressions.has(k) &&
+    typeof u === "object" &&
+    u !== null &&
+    typeof (u as { source?: unknown }).source === "string"
+      ? (u as { source: string }).source
+      : sorted(u);
   const top: Record<string, unknown> = {};
   for (const k of Object.keys(v).sort()) {
     if (!ignored(k)) {
-      top[k] = sorted(v[k]);
+      top[k] = field(k, v[k]);
     }
   }
   return JSON.stringify(top);

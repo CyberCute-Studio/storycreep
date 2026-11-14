@@ -38,7 +38,7 @@ import {
   versionOf,
   walk,
 } from "@storycreep/shared/expr/compile";
-import { OUT, sha256 } from "@storycreep/shared/flow";
+import { fileHash, OUT, type Pace } from "@storycreep/shared/flow";
 import type {
   ASTExpression,
   ASTScript,
@@ -65,6 +65,8 @@ import {
   segmentsOf,
   tryParseRichTextOfAnySize,
 } from "@storycreep/shared/richtext";
+import { byCodePoints } from "../canvas/edit";
+import { hundredths } from "../document/appliers/node";
 import type { Doc } from "../document/doc";
 import { compareChildren } from "../project/orderkey";
 
@@ -87,6 +89,22 @@ export type ExpressionField =
   | "condition"
   | "on_traverse";
 
+// Where an expression is, as its stand-in says: its owner, which kind of
+// entity it is, its field, and the node that a link opens it by.
+type ExpressionAt = {
+  entity: string;
+  owner: "node" | "choice" | "connection" | "output";
+  field: ExpressionField;
+  node: string;
+};
+
+// What a text's value reference or mention refers to that its text cannot
+// show, and why (StandIn's reference).
+type Unreadable = {
+  ref: string;
+  reason: "gone" | "board" | "runtime";
+};
+
 /**
  * What the projection stood in for, of what no snapshot holds (N78), each
  * with the board and the node that a link opens it by, as a validation
@@ -107,6 +125,12 @@ export type StandIn = {
       readonly kind: "expression";
       /** The node, the connection, or the branch output whose it is. */
       readonly entity: string;
+      /**
+       * What entity is: a node, a connection that leaves an element, which
+       * is a choice, one that leaves a branch, which the flow passes on by
+       * alone, or a branch's output.
+       */
+      readonly owner: "node" | "choice" | "connection" | "output";
       readonly field: ExpressionField;
       readonly source: string;
       /** The compiler's error, or "" for an output without a condition. */
@@ -120,6 +144,12 @@ export type StandIn = {
       readonly field: "text" | "label";
       /** The variable or the component referred to. */
       readonly ref: string;
+      /**
+       * Why it is left out: what it refers to is not in the snapshot, as in
+       * the trash ("gone"), is another board's variable ("board"), or is an
+       * attribute that is not runtime ("runtime").
+       */
+      readonly reason: "gone" | "board" | "runtime";
     }
   | {
       /** A text or a label that is no rich text that the server takes, left out. */
@@ -155,6 +185,8 @@ export type StandIn = {
       /** A connection that leaves a port that its node does not have, or a jumper, or enters a node that its board does not hold, left out. */
       readonly kind: "connection";
       readonly entity: string;
+      /** Why: it leaves by a port that its node does not have, a jumper's among them ("port"), or it enters a node that its board does not hold, in the trash or on another board ("target"). */
+      readonly reason: "port" | "target";
     }
 );
 
@@ -202,14 +234,16 @@ const literalFalse: ASTExpression = { kind: "lit", type: "bool", value: false };
  * derived, with what it stands in for listed (StandIn). It reads the
  * entities that view holds: a board whose content the page has not read
  * has no nodes, and a component that it has not read whole no values of
- * its own, which play mode reads first (session.ts). It throws a
- * ProjectionError where view has not read the project, or holds what no
- * project has.
+ * its own, which play mode reads first (session.ts). It reads view at once,
+ * and resolves once it has hashed the files that it wrote, as load does,
+ * by the platform's SHA-256, or by its own, which lets the page run, where
+ * it has none. It rejects with a ProjectionError where view has not read
+ * the project, or holds what no project has.
  */
-export function projectDraft(
+export async function projectDraft(
   view: ProjectionSources,
   options: ProjectOptions = {},
-): Projection {
+): Promise<Projection> {
   const project = view.project;
   if (project === undefined) {
     throw new ProjectionError("unread", "the project has not been read");
@@ -230,6 +264,16 @@ export function projectDraft(
     list.sort(byId);
     for (const n of list) {
       nodes.set(n.id, n);
+    }
+  }
+  // The connections of each board, once.
+  const connectionsOf = new Map<string, ConnectionBody[]>();
+  for (const c of live(view.connections)) {
+    const list = connectionsOf.get(c.board_id);
+    if (list === undefined) {
+      connectionsOf.set(c.board_id, [c]);
+    } else {
+      list.push(c);
     }
   }
 
@@ -320,7 +364,7 @@ export function projectDraft(
     expression: Expression,
     ctx: Context,
     board: string,
-    at: { entity: string; field: ExpressionField; node: string },
+    at: ExpressionAt,
   ): unknown => {
     let ast: ExprNode;
     try {
@@ -354,7 +398,7 @@ export function projectDraft(
   const script = (
     expression: Expression | undefined,
     board: string,
-    at: { entity: string; field: ExpressionField; node: string },
+    at: ExpressionAt,
   ): Script | undefined => {
     if (expression === undefined || expression.source === "") {
       return undefined;
@@ -367,7 +411,7 @@ export function projectDraft(
   const condition = (
     expression: Expression | undefined,
     board: string,
-    at: { entity: string; field: ExpressionField; node: string },
+    at: ExpressionAt,
   ): Condition | undefined => {
     if (expression === undefined || expression.source === "") {
       return undefined;
@@ -394,13 +438,16 @@ export function projectDraft(
     },
     component: (id) => componentById.get(id)?.name ?? "",
   };
-  const readable = (
+  // unreadable returns what an inline node of a text of the board refers to
+  // that the snapshot does not hold, or that the board does not read, and
+  // why, or undefined for none.
+  const unreadable = (
     inline: { type: string; attrs?: unknown },
     board: string,
-  ): string | undefined => {
+  ): Unreadable | undefined => {
     if (inline.type === "mention") {
       const id = (inline.attrs as { id: string }).id;
-      return componentById.has(id) ? undefined : id;
+      return componentById.has(id) ? undefined : { ref: id, reason: "gone" };
     }
     if (inline.type !== "valueRef") {
       return undefined;
@@ -408,15 +455,21 @@ export function projectDraft(
     const a = inline.attrs as { ref: string; attribute?: string };
     if (a.attribute === undefined) {
       const v = variableById.get(a.ref);
-      return v !== undefined && (v.scope === "global" || v.board_id === board)
-        ? undefined
-        : a.ref;
+      return v === undefined
+        ? { ref: a.ref, reason: "gone" }
+        : v.scope === "global" || v.board_id === board
+          ? undefined
+          : { ref: a.ref, reason: "board" };
     }
     const c = componentById.get(a.ref);
     const d = definitionsOf
       .get(c?.component_type_id ?? "")
       ?.find((x) => x.id === a.attribute);
-    return d?.runtime === true ? undefined : a.ref;
+    return d === undefined
+      ? { ref: a.ref, reason: "gone" }
+      : d.runtime
+        ? undefined
+        : { ref: a.ref, reason: "runtime" };
   };
   const segments = (
     text: RichTextDoc | undefined,
@@ -432,9 +485,9 @@ export function projectDraft(
       return undefined;
     }
     let doc = parsed.doc;
-    const dropped: string[] = [];
+    const dropped: Unreadable[] = [];
     const kept = keepInlines(doc.content, (inline) => {
-      const ref = readable(inline, board);
+      const ref = unreadable(inline, board);
       if (ref !== undefined) {
         dropped.push(ref);
         return false;
@@ -442,8 +495,8 @@ export function projectDraft(
       return true;
     });
     if (dropped.length > 0) {
-      for (const ref of dropped) {
-        standIns.push({ kind: "reference", board, ...at, ref });
+      for (const { ref, reason } of dropped) {
+        standIns.push({ kind: "reference", board, ...at, ref, reason });
       }
       // The texts on either side of what went join, as the server would
       // store the document without it.
@@ -466,8 +519,9 @@ export function projectDraft(
     const ports = new Map<string, Set<string>>();
     const fileNodes: Node[] = [];
     for (const n of own) {
-      const at = (field: ExpressionField) => ({
+      const at = (field: ExpressionField): ExpressionAt => ({
         entity: n.id,
+        owner: "node",
         field,
         node: n.id,
       });
@@ -529,9 +583,10 @@ export function projectDraft(
             if (o.kind === "else") {
               return { id: o.id, kind: "else", order };
             }
-            const where = {
+            const where: ExpressionAt = {
               entity: o.id,
-              field: "condition" as const,
+              owner: "output",
+              field: "condition",
               node: n.id,
             };
             let c = condition(o.condition, b.id, where);
@@ -585,22 +640,17 @@ export function projectDraft(
 
     // The board's connections, each port's in their author's order.
     const byPort = new Map<string, ConnectionBody[]>();
-    for (const c of live(view.connections)) {
-      if (c.board_id !== b.id) {
-        continue;
-      }
+    for (const c of connectionsOf.get(b.id) ?? []) {
       const to = nodes.get(c.to_node_id);
-      if (
-        ports.get(c.from_node_id)?.has(c.from_port) !== true ||
-        to === undefined ||
-        to.board_id !== b.id
-      ) {
+      const port = ports.get(c.from_node_id)?.has(c.from_port) === true;
+      if (!port || to === undefined || to.board_id !== b.id) {
         if (nodes.has(c.from_node_id)) {
           standIns.push({
             kind: "connection",
             board: b.id,
             node: c.from_node_id,
             entity: c.id,
+            reason: port ? "target" : "port",
           });
         }
         continue;
@@ -614,8 +664,15 @@ export function projectDraft(
     for (const list of byPort.values()) {
       list.sort(compareChildren);
       list.forEach((c, order) => {
-        const at = (field: ExpressionField) => ({
+        // A connection that leaves an element is a choice; one that leaves a
+        // branch the flow passes on by alone.
+        const owner =
+          nodes.get(c.from_node_id)?.type === "branch"
+            ? "connection"
+            : "choice";
+        const at = (field: ExpressionField): ExpressionAt => ({
           entity: c.id,
+          owner,
           field,
           node: c.from_node_id,
         });
@@ -745,23 +802,32 @@ export function projectDraft(
     schemaVersion: 1,
   };
 
-  const files = new Map<string, Uint8Array>();
+  const files = new Map<string, Uint8Array<ArrayBuffer>>();
   files.set("project/settings.json", encoded(settings));
   files.set("project/variables.json", encoded(variablesFile));
   files.set("project/component_types.json", encoded(componentTypesFile));
   files.set("project/components.json", encoded(componentsFile));
-  for (const [id, f] of boardFiles) {
-    files.set(boardPath(boardFiles.get(id)?.board.slug ?? ""), encoded(f));
+  for (const f of boardFiles.values()) {
+    files.set(boardPath(f.board.slug), encoded(f));
   }
+  const pulledAt = timestampOf(options.now ?? new Date());
+  // The files' hashes, one after another, as load hashes them, at one pace,
+  // of bytes that are the projection's own.
+  const pace: Pace = { hashed: 0 };
   const hashes: Record<string, string> = {};
   let all = "";
   for (const path of [...files.keys()].sort(byCodePoints)) {
-    hashes[path] = hashOf(files.get(path) as Uint8Array);
+    hashes[path] = await fileHash(
+      files.get(path) as Uint8Array<ArrayBuffer>,
+      pace,
+      true,
+    );
     all += `${path} ${hashes[path]}\n`;
   }
   const manifest: Manifest = {
     astVersion: versionOf(asts),
-    boards: index.sort(byId),
+    // In the order of the boards' IDs, as the boards are.
+    boards: index,
     counts: {
       boards: index.length,
       components: components.length,
@@ -778,8 +844,8 @@ export function projectDraft(
       channel: "draft",
       // As the conformance suite's fixtures have it: the hash of the files'
       // paths and hashes, which no runtime checks (plan item 78).
-      contentHash: hashOf(new TextEncoder().encode(all)),
-      pulledAt: timestampOf(options.now ?? new Date()),
+      contentHash: await fileHash(new TextEncoder().encode(all), pace, true),
+      pulledAt,
     },
   };
   files.set("storycreep.json", encoded(manifest));
@@ -849,40 +915,14 @@ function keepInlines(
   });
 }
 
-// hundredths returns x rounded to hundredths, half away from zero, as the
-// published format holds a position, never -0.
-function hundredths(x: number): number {
-  const r = (Math.sign(x) * Math.round(Math.abs(x) * 100)) / 100;
-  return r === 0 ? 0 : r;
-}
-
 function byId(a: { id: string }, b: { id: string }): number {
   return byCodePoints(a.id, b.id);
-}
-
-// byCodePoints compares two strings by their code points, as Go compares
-// strings, which differs from JavaScript's code units beyond the BMP.
-function byCodePoints(a: string, b: string): number {
-  const x = [...a];
-  const y = [...b];
-  for (let i = 0; i < Math.min(x.length, y.length); i++) {
-    const d = (x[i].codePointAt(0) ?? 0) - (y[i].codePointAt(0) ?? 0);
-    if (d !== 0) {
-      return d;
-    }
-  }
-  return x.length - y.length;
 }
 
 // timestampOf returns the moment t as a published Timestamp, in UTC, to the
 // second.
 function timestampOf(t: Date): string {
   return `${t.toISOString().slice(0, 19)}Z`;
-}
-
-// hashOf returns the hash of bytes, as the manifest lists a file's.
-function hashOf(bytes: Uint8Array): string {
-  return `sha256:${Array.from(sha256(bytes), (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
@@ -892,7 +932,7 @@ function hashOf(bytes: Uint8Array): string {
  * characters, and U+2028 and U+2029 escaped, as Go's encoding/json escapes
  * them, HTML not, and a line feed at its end.
  */
-export function encoded(v: unknown): Uint8Array {
+export function encoded(v: unknown): Uint8Array<ArrayBuffer> {
   const text = JSON.stringify(sortedKeys(v), null, 2).replace(
     /[\u2028\u2029]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16)}`,

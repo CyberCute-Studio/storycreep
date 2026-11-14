@@ -1,7 +1,8 @@
 // SHA-256 (FIPS 180-4), with which load hashes a snapshot's files where the
 // platform's, WebCrypto's crypto.subtle, is not there: in a page that is no
 // secure context, as that of a self-hosted instance served over plain HTTP,
-// on which everything but offline use works (PRD FR-OFF-01 AC4).
+// on which everything but offline use works (PRD FR-OFF-01 AC4); and the
+// hash of a file as a manifest lists it, by the platform's where it is.
 
 import { copyOf } from "../expr";
 
@@ -88,6 +89,27 @@ export async function sha256Yielding(
   }
   pace.hashed += data.length - whole;
   return finish(h, w, data);
+}
+
+/**
+ * Returns the hash of bytes as a snapshot's manifest lists a file's: sha256:
+ * and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
+ * copies them, or, where the page is no secure context and has none
+ * (crypto.subtle), by sha256Yielding's, at pace, as load hashes a file, and
+ * as play mode's projection lists the files that it writes.
+ */
+export async function fileHash(
+  bytes: Uint8Array<ArrayBuffer>,
+  pace: Pace = { hashed: 0 },
+  own = false,
+  signal?: AbortSignal,
+): Promise<string> {
+  const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
+  const sum =
+    subtle === undefined
+      ? await sha256Yielding(bytes, signal, own, pace)
+      : new Uint8Array(await subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 // nextTask resolves in a task of the event loop's own, after those that it

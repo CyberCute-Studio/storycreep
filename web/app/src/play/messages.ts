@@ -81,21 +81,26 @@ export function standInMessage(
         return t("play.stand_in.no_condition", { where });
       }
       if (s.field === "condition") {
-        return s.entity.startsWith("cn_")
-          ? t("play.stand_in.choice_condition", { where })
-          : t("play.stand_in.output_condition", { where });
+        switch (s.owner) {
+          case "choice":
+            return t("play.stand_in.choice_condition", { where });
+          case "connection":
+            return t("play.stand_in.connection_condition", { where });
+          default:
+            return t("play.stand_in.output_condition", { where });
+        }
       }
       if (s.field === "on_traverse") {
-        return t("play.stand_in.traverse", { where });
+        return s.owner === "choice"
+          ? t("play.stand_in.traverse", { where })
+          : t("play.stand_in.connection_traverse", { where });
       }
       return t("play.stand_in.script", {
         where,
         field: fieldName(t, s.field === "on_enter" ? "onEnter" : "onExit"),
       });
     case "reference":
-      return s.field === "text"
-        ? t("play.stand_in.reference_text", { where })
-        : t("play.stand_in.reference_label", { where });
+      return referenceMessage(t, s, where);
     case "text":
       return s.field === "text"
         ? t("play.stand_in.text", { where })
@@ -109,6 +114,32 @@ export function standInMessage(
     case "entry":
       return t("play.stand_in.entry");
     case "connection":
-      return t("play.stand_in.connection", { where });
+      return s.reason === "port"
+        ? t("play.stand_in.connection", { where })
+        : t("play.stand_in.connection_target", { where });
+  }
+}
+
+// referenceMessage returns standInMessage's of a value reference or a
+// mention left out of a text or a label, by why.
+function referenceMessage(
+  t: TFunction,
+  s: Extract<StandIn, { kind: "reference" }>,
+  where: string,
+): string {
+  const text = s.field === "text";
+  switch (s.reason) {
+    case "gone":
+      return text
+        ? t("play.stand_in.reference_text", { where })
+        : t("play.stand_in.reference_label", { where });
+    case "board":
+      return text
+        ? t("play.stand_in.board_variable_text", { where })
+        : t("play.stand_in.board_variable_label", { where });
+    case "runtime":
+      return text
+        ? t("play.stand_in.not_runtime_text", { where })
+        : t("play.stand_in.not_runtime_label", { where });
   }
 }

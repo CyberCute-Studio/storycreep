@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Connection, Node } from "@storycreep/shared/api";
+import type { Attribute, Connection, Node } from "@storycreep/shared/api";
 import { readJSON } from "@storycreep/shared/expr";
 import { load, Runtime, type Schema, validate } from "@storycreep/shared/flow";
 import {
@@ -110,7 +110,7 @@ describe("the conformance suite's snapshots", () => {
   test("project back to their own files, whose scenarios pass", async () => {
     expect(suites.length).toBeGreaterThan(0);
     for (const { name, files, scenarios } of suites) {
-      const projected = projectDraft(draftOf(files), { now });
+      const projected = await projectDraft(draftOf(files), { now });
       expect(projected.standIns).toEqual([]);
       expect([...projected.files.keys()].sort()).toEqual(
         [...files.keys()].sort(),
@@ -143,8 +143,8 @@ describe("the conformance suite's snapshots", () => {
   });
 });
 
-test("the manifest says that the snapshot is of the draft, pulled now", () => {
-  const { files } = projectDraft(draftOf(suites[0].files), { now });
+test("the manifest says that the snapshot is of the draft, pulled now", async () => {
+  const { files } = await projectDraft(draftOf(suites[0].files), { now });
   const m = JSON.parse(
     decoder.decode(files.get("storycreep.json") as Uint8Array),
   );
@@ -252,8 +252,8 @@ const brokenDraft = testDraft({
 });
 
 describe("a draft with what no snapshot holds", () => {
-  test("is projected with what it stands in for listed", () => {
-    const { standIns } = projectDraft(brokenDraft, { now });
+  test("is projected with what it stands in for listed", async () => {
+    const { standIns } = await projectDraft(brokenDraft, { now });
     expect(standIns).toEqual([
       {
         kind: "speaker",
@@ -269,6 +269,7 @@ describe("a draft with what no snapshot holds", () => {
         entity: "nd_00000000000000000000000006",
         field: "text",
         ref: other_gold.id,
+        reason: "board",
       },
       {
         kind: "reference",
@@ -277,12 +278,14 @@ describe("a draft with what no snapshot holds", () => {
         entity: "nd_00000000000000000000000006",
         field: "text",
         ref: "cmp_00000000000000000000000007",
+        reason: "gone",
       },
       expect.objectContaining({
         kind: "expression",
         board: intro.id,
         node: "nd_00000000000000000000000006",
         entity: "nd_00000000000000000000000006",
+        owner: "node",
         field: "on_enter",
         source: "gold +=",
       }),
@@ -305,12 +308,14 @@ describe("a draft with what no snapshot holds", () => {
         board: intro.id,
         node: "nd_00000000000000000000000008",
         entity: "cn_00000000000000000000000014",
+        reason: "port",
       },
       expect.objectContaining({
         kind: "expression",
         board: intro.id,
         node: "nd_00000000000000000000000006",
         entity: "cn_00000000000000000000000012",
+        owner: "choice",
         field: "condition",
         source: "gold >",
       }),
@@ -331,12 +336,14 @@ describe("a draft with what no snapshot holds", () => {
 
   // Every projected file, of a draft that the projection stands in for
   // anything of or not, validates against its published JSON Schema.
-  test("validates against the published JSON Schemas", () => {
-    expect(invalidFiles(projectDraft(brokenDraft, { now }).files)).toEqual([]);
+  test("validates against the published JSON Schemas", async () => {
+    expect(
+      invalidFiles((await projectDraft(brokenDraft, { now })).files),
+    ).toEqual([]);
   });
 
   test("plays with each stand-in in place", async () => {
-    const projection = projectDraft(brokenDraft, { now });
+    const projection = await projectDraft(brokenDraft, { now });
     const r = new Runtime(await load(projection.files), true);
     // The script that does not compile does nothing, and the references that
     // went are left out of the text, which the board's own value shows in.
@@ -361,4 +368,156 @@ describe("a draft with what no snapshot holds", () => {
       "cn_00000000000000000000000013",
     ]);
   });
+});
+
+// A board of a draft with a stand-in of each reason that a reference or a
+// connection is left out for, and of an expression of a connection out of
+// a branch.
+const reasons = testBoard("bd_00000000000000000000000020", "Reasons");
+const onReasons = { board_id: reasons.id };
+const trashed = testVariable(
+  "var_00000000000000000000000028",
+  "trashed",
+  "int",
+  0,
+  { deleted_at: "2026-11-02T10:00:00Z" },
+);
+const mood: Attribute = {
+  id: "atr_00000000000000000000000030",
+  component_type_id: "ct_00000000000000000000000029",
+  key: "mood",
+  name: "Mood",
+  type: "string",
+  default: "calm",
+  runtime: false,
+  order: "a",
+  rev: 1,
+  created_at: "2026-11-01T10:00:00Z",
+  updated_at: "2026-11-01T10:00:00Z",
+};
+const reasonsDraft = testDraft({
+  boards: [reasons],
+  variables: [trashed],
+  componentTypes: [
+    {
+      id: mood.component_type_id,
+      project_id: testProjectId,
+      key: "character",
+      name: "Character",
+      icon: "person",
+      attributes: [mood],
+      rev: 1,
+      created_at: mood.created_at,
+      updated_at: mood.updated_at,
+    },
+  ],
+  components: [
+    {
+      id: "cmp_00000000000000000000000031",
+      project_id: testProjectId,
+      component_type_id: mood.component_type_id,
+      key: "keeper",
+      name: "Keeper",
+      order: "a",
+      attributes: { [mood.id]: "calm" },
+      rev: 1,
+      created_at: mood.created_at,
+      updated_at: mood.updated_at,
+    },
+  ],
+  nodes: [
+    testNode("nd_00000000000000000000000021", 0, 0, {
+      ...onReasons,
+      text: richText(
+        { type: "valueRef", attrs: { ref: trashed.id } },
+        {
+          type: "valueRef",
+          attrs: { ref: "cmp_00000000000000000000000031", attribute: mood.id },
+        },
+      ),
+    }),
+    {
+      ...testNode("nd_00000000000000000000000022", 200, 0, onReasons),
+      type: "branch",
+      outputs: [
+        {
+          id: "bo_00000000000000000000000027",
+          node_id: "nd_00000000000000000000000022",
+          kind: "if",
+          order: "a",
+          condition: expression("true"),
+          rev: 1,
+          created_at: mood.created_at,
+          updated_at: mood.updated_at,
+        },
+      ],
+    } as Node,
+    testNode("nd_00000000000000000000000023", 400, 0, onReasons),
+    testNode("nd_00000000000000000000000024", 600, 0, {
+      ...onReasons,
+      deleted_at: "2026-11-02T10:00:00Z",
+    }),
+  ],
+  connections: [
+    testConnection(
+      "cn_00000000000000000000000025",
+      "nd_00000000000000000000000021",
+      "nd_00000000000000000000000024",
+      onReasons,
+    ),
+    testConnection(
+      "cn_00000000000000000000000026",
+      "nd_00000000000000000000000022",
+      "nd_00000000000000000000000023",
+      {
+        ...onReasons,
+        from_port: "bo_00000000000000000000000027",
+        condition: expression("gold >"),
+        on_traverse: expression("gold +="),
+      },
+    ),
+  ] as Connection[],
+});
+
+test("a stand-in says why a reference or a connection is left out, and whose an expression is", async () => {
+  const { standIns } = await projectDraft(reasonsDraft, { now });
+  const at = { board: reasons.id, node: "nd_00000000000000000000000021" };
+  expect(standIns).toEqual([
+    {
+      kind: "reference",
+      ...at,
+      entity: at.node,
+      field: "text",
+      ref: trashed.id,
+      reason: "gone",
+    },
+    {
+      kind: "reference",
+      ...at,
+      entity: at.node,
+      field: "text",
+      ref: "cmp_00000000000000000000000031",
+      reason: "runtime",
+    },
+    {
+      kind: "connection",
+      ...at,
+      entity: "cn_00000000000000000000000025",
+      reason: "target",
+    },
+    expect.objectContaining({
+      kind: "expression",
+      node: "nd_00000000000000000000000022",
+      entity: "cn_00000000000000000000000026",
+      owner: "connection",
+      field: "condition",
+    }),
+    expect.objectContaining({
+      kind: "expression",
+      node: "nd_00000000000000000000000022",
+      entity: "cn_00000000000000000000000026",
+      owner: "connection",
+      field: "on_traverse",
+    }),
+  ]);
 });

@@ -1512,11 +1512,6 @@ export class CanvasController implements GestureHost {
     this.invalidate();
   }
 
-  /** Where play mode is on the board, as setPlay last set it. */
-  get playMarks(): PlayMarks | undefined {
-    return this.play;
-  }
-
   /**
    * How many of the board's nodes are dimmed, counted once for each change
    * of the document's nodes or of the dims, rather than in each frame of a

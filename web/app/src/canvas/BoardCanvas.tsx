@@ -1525,9 +1525,17 @@ function BoardCanvasOf({
   // canvas has selected: the one node selected, of any type, or, with
   // nothing selected, the board's entry node (AC2). Starting closes the
   // inspector, which an open one covers the play panel with.
+  // The page reads of the session only what it shows, so that a read's
+  // progress or the draft's change, which the panel says, draws nothing
+  // here.
   const session = playSessionOf(doc);
-  const play = useStore(session.store);
-  const playing = play.status !== "idle";
+  const playing = useStore(session.store, (s) => s.status !== "idle");
+  const playFlow = useStore(session.store, (s) =>
+    s.status === "playing" ? s.flow : undefined,
+  );
+  const playTurn = useStore(session.store, (s) =>
+    s.status === "playing" ? s.turn : 0,
+  );
   const board = useBoard(doc, boardId);
   const playFrom: PlayStart | undefined =
     content !== "ready"
@@ -1546,20 +1554,17 @@ function BoardCanvasOf({
   // flow comes to it, as after each choice and once the board's page
   // followed the flow here.
   const playNode =
-    play.status === "playing" && play.flow.board === boardId
-      ? play.flow.node
-      : "";
-  const playTurn = play.status === "playing" ? play.turn : 0;
+    playFlow !== undefined && playFlow.board === boardId ? playFlow.node : "";
   const marks = useMemo(
     () =>
-      play.status === "playing"
-        ? {
-            current: play.flow.board === boardId ? play.flow.node : "",
-            visited: play.flow.visited,
-            traversed: play.flow.traversed,
-          }
-        : undefined,
-    [play, boardId],
+      playFlow === undefined
+        ? undefined
+        : {
+            current: playFlow.board === boardId ? playFlow.node : "",
+            visited: playFlow.visited,
+            traversed: playFlow.traversed,
+          },
+    [playFlow, boardId],
   );
   useEffect(() => {
     controller.setPlay(marks);

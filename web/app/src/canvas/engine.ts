@@ -89,7 +89,7 @@ export interface Frame {
 /**
  * Where play mode is on the board (FR-PLAY-01, plan note N78), which the
  * canvas highlights in the play colour: the current node, by a ring around
- * its card, the nodes that the flow passed, by a fainter one, and the
+ * its card, the nodes that the flow passed, by a thinner one, and the
  * connections that it took, drawn over the others, wider.
  */
 export interface PlayMarks {
@@ -184,8 +184,11 @@ const cornerRadius = 10;
 /** How opaque a node that the tag filter dims is drawn (FR-EDIT-06 AC1). */
 const dimAlpha = 0.3;
 
-/** How opaque the ring of a node that play mode's flow passed is drawn, of the current node's (plan note N78). */
-const visitedAlpha = 0.45;
+/**
+ * How far in from each edge of the cards' textures, of 64 pixels, their
+ * corners, which a nine-slice sprite keeps as it stretches, reach.
+ */
+const slices = { card: 20, edge: 20, ring: 22 } as const;
 
 /**
  * Of each field of a node, whether a node moved has it as it was (movedOnly):
@@ -1090,22 +1093,14 @@ class PixiEngine implements Engine {
   }
 
   private newCard(fonts: Fonts): CardView {
-    const nine = (texture: Texture, inset: number) =>
-      new NineSliceSprite({
-        texture,
-        leftWidth: inset,
-        rightWidth: inset,
-        topHeight: inset,
-        bottomHeight: inset,
-      });
     const text = (fontFamily: string, fontSize: number) =>
       new BitmapText({ text: "", style: { fontFamily, fontSize } });
     const view: CardView = {
       root: new Container(),
-      card: nine(this.art.card, 20),
-      edge: nine(this.art.edge, 20),
+      card: nineSlice(this.art.card, slices.card),
+      edge: nineSlice(this.art.edge, slices.edge),
       stripe: new Sprite(Texture.WHITE),
-      ring: nine(this.art.ring, 22),
+      ring: nineSlice(this.art.ring, slices.ring),
       title: text(fonts.bold, titleSize),
       kind: text(fonts.regular, kindSize),
       body: text(fonts.regular, bodySize),
@@ -1127,8 +1122,10 @@ class PixiEngine implements Engine {
 
   /**
    * Draws the ring of play mode around a card (plan note N78): beyond the
-   * selection's ring, in the play colour, whole for the current node and
-   * fainter for one that the flow passed, and none for any other.
+   * selection's ring, in the play colour, as wide as the selection's for
+   * the current node and as thin as the card's edge for one that the flow
+   * passed, each whole, so that each contrasts with the board as the colour
+   * does, and none for any other.
    */
   private drawTrail(
     view: CardView,
@@ -1142,27 +1139,25 @@ class PixiEngine implements Engine {
       }
       return;
     }
+    const [texture, slice] =
+      played === "current"
+        ? [this.art.ring, slices.ring]
+        : [this.art.edge, slices.edge];
     let t = view.trail;
     if (t === undefined) {
-      t = new NineSliceSprite({
-        texture: this.art.ring,
-        leftWidth: 22,
-        rightWidth: 22,
-        topHeight: 22,
-        bottomHeight: 22,
-      });
+      t = nineSlice(texture, slice);
       view.trail = t;
       view.root.addChild(t);
+    } else if (t.texture !== texture) {
+      t.texture = texture;
+      t.leftWidth = slice;
+      t.rightWidth = slice;
+      t.topHeight = slice;
+      t.bottomHeight = slice;
     }
     t.visible = true;
-    const inset = 8;
-    const scale = cornerRadius / 16;
-    t.scale.set(scale);
-    t.width = (item.rect.width + 2 * inset) / scale;
-    t.height = (item.rect.height + 2 * inset) / scale;
-    t.position.set(-inset, -inset);
+    fitCorners(t, item.rect.width, item.rect.height, 8);
     t.tint = theme.play;
-    t.alpha = played === "current" ? 1 : visitedAlpha;
   }
 
   private drawCard(
@@ -1178,18 +1173,9 @@ class PixiEngine implements Engine {
     const { width: w, height: h } = item.rect;
     const node = item.node;
     view.root.visible = true;
-    // The textures' corners are drawn at 16 of 64 pixels; a card's are
-    // cornerRadius of the board's units.
-    const corners = (s: NineSliceSprite, inset: number) => {
-      const scale = cornerRadius / 16;
-      s.scale.set(scale);
-      s.width = (w + 2 * inset) / scale;
-      s.height = (h + 2 * inset) / scale;
-      s.position.set(-inset, -inset);
-    };
-    corners(view.card, 0);
+    fitCorners(view.card, w, h, 0);
     view.card.tint = theme.surface;
-    corners(view.edge, 0);
+    fitCorners(view.edge, w, h, 0);
     // A broken jumper's edge, and its line that says so, are of the colour
     // of what is wrong (FR-EDIT-05 AC1).
     view.edge.tint = labels.broken
@@ -1200,7 +1186,7 @@ class PixiEngine implements Engine {
     view.stripe.position.set(cornerRadius, 0);
     view.stripe.width = Math.max(0, w - 2 * cornerRadius);
     view.stripe.height = 4;
-    corners(view.ring, 4);
+    fitCorners(view.ring, w, h, 4);
     view.ring.visible = selected;
     view.ring.tint = theme.accent;
     // The room of a line, within the card's padding, which each character
@@ -1668,6 +1654,36 @@ function countIn(nodes: readonly NodeItem[], r: Rect): number {
     }
   }
   return n;
+}
+
+/** Returns a sprite of texture whose corners, slice pixels in from each of its edges, stay as they are as it stretches. */
+function nineSlice(texture: Texture, slice: number): NineSliceSprite {
+  return new NineSliceSprite({
+    texture,
+    leftWidth: slice,
+    rightWidth: slice,
+    topHeight: slice,
+    bottomHeight: slice,
+  });
+}
+
+/**
+ * Lays s, a sprite of a card's texture, out around a card of width w and
+ * height h, inset units of the board beyond its edges: the textures'
+ * corners are drawn at 16 of 64 pixels, and a card's are cornerRadius of
+ * the board's units.
+ */
+function fitCorners(
+  s: NineSliceSprite,
+  w: number,
+  h: number,
+  inset: number,
+): void {
+  const scale = cornerRadius / 16;
+  s.scale.set(scale);
+  s.width = (w + 2 * inset) / scale;
+  s.height = (h + 2 * inset) / scale;
+  s.position.set(-inset, -inset);
 }
 
 /** Returns a white texture of size pixels square, drawn by draw on a Canvas 2D context. */
