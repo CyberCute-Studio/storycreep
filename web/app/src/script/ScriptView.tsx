@@ -78,8 +78,8 @@ import type { ScopeSources } from "../expr/scope";
 import { payloadField } from "../project/dialogs";
 import { loadPart, useCommands } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
+import { leavesBy } from "../richtext/escape";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { inputMethodTook, suggestionTook } from "../richtext/suggest";
 import { focusIsNowhere, followInPage, showInPage } from "../shell/focus";
 import { Button, buttonClass, LastingButton } from "../ui/Button";
 import { TextField, useFocusRefusal } from "../ui/Field";
@@ -1303,30 +1303,6 @@ function sameEntry(a: EntryProps, b: EntryProps): boolean {
     a.adding === b.adding &&
     a.refused === b.refused &&
     a.shared === b.shared
-  );
-}
-
-/**
- * Reports whether e, a key that went down in an editor's form, is the
- * Escape that closes the editor, where it holds no change: one of the
- * form's own fields, rather than of a dialog of its rich text, as the
- * link's, which is in a portal, whose keys React brings here too; not one
- * that an input method took, as one that composes, or the Escape that
- * cancels what it composed (inputMethodTook); and not one that the list of
- * a { or an @ of its rich text took, which closes the list alone
- * (suggestionTook), as the list that the caret opens, of no change, once
- * it is moved after a { or an @ that the text holds. It does not read
- * whether something else took the key: ProseMirror takes every Escape in
- * its text (captureKeyDown).
- */
-function leavesBy(e: KeyboardEvent<HTMLFormElement>): boolean {
-  return (
-    e.key === "Escape" &&
-    !inputMethodTook(e.nativeEvent) &&
-    !suggestionTook(e.nativeEvent) &&
-    // The DOM's Node, rather than the API's of the same name, a type alone.
-    e.target instanceof globalThis.Node &&
-    e.currentTarget.contains(e.target)
   );
 }
 

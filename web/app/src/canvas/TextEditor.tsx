@@ -40,6 +40,7 @@ import { useTextChoices, useTextNames } from "../content/useTextNames";
 import { equal } from "../document/reconcile";
 import { payloadField } from "../project/dialogs";
 import type { RichTextValue } from "../richtext/convert";
+import { leavesBy } from "../richtext/escape";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { Button } from "../ui/Button";
 import { useOwnKeys } from "../ui/held";
@@ -440,13 +441,10 @@ export function TextEditor({
         // Escape closes an editor whose text is as it was, as the inspector's
         // Cancel does; one whose text changed keeps it, to be saved, as one
         // whose save was refused for a change made elsewhere, which shows
-        // what the user typed over the text as it is now.
-        if (
-          e.key === "Escape" &&
-          !e.nativeEvent.isComposing &&
-          !e.defaultPrevented &&
-          !changed()
-        ) {
+        // what the user typed over the text as it is now. It is told by
+        // where it went down (leavesBy), as ProseMirror takes every Escape
+        // in the text as its own.
+        if (leavesBy(e) && !changed()) {
           e.preventDefault();
           onClose();
         }

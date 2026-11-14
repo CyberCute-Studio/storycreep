@@ -309,6 +309,46 @@ test.describe("a board's canvas, editing its nodes", () => {
     expect(sent.map((b) => b.map((c) => c.type))).toEqual([["node.update"]]);
   });
 
+  test("closes the editor of an element's text with Escape where its text is as it was, and keeps it where the text changed", async ({
+    page,
+  }) => {
+    const board = await openBoard(page);
+    const canvas = canvasOf(page, board.name);
+    const open = async () => {
+      const at = await pointOf(canvas, middleOf(0, 0));
+      if (test.info().project.use.hasTouch) {
+        await page.touchscreen.tap(at.x, at.y);
+        await page.touchscreen.tap(at.x, at.y);
+      } else {
+        await page.mouse.click(at.x, at.y);
+        await page.mouse.click(at.x, at.y);
+      }
+      const editor = page.getByRole("form", {
+        name: message("canvas.text_editor", { node: "Scene 1.1" }),
+      });
+      const text = editor.getByRole("textbox", {
+        name: message("canvas.text_of", { node: "Scene 1.1" }),
+      });
+      await expect(text).toBeFocused();
+      return { editor, text };
+    };
+    const sent = sentBatches(page);
+    // ProseMirror takes every Escape in its text as its own, which the
+    // editor does not wait for.
+    const first = await open();
+    await page.keyboard.press("Escape");
+    await expect(first.editor).toBeHidden();
+    await expect(canvas).toBeFocused();
+    // A text that the user changed stays, to be saved or cancelled.
+    const second = await open();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" The bell rings.");
+    await page.keyboard.press("Escape");
+    await expect(second.editor).toBeVisible();
+    await expect(second.text).toContainText("The bell rings.");
+    expect(sent).toEqual([]);
+  });
+
   test("opens the node of a component's usage on the canvas, selected, from the component's panel", async ({
     page,
   }) => {
