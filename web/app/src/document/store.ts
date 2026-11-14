@@ -48,6 +48,7 @@ import {
 import { csrfHeaders } from "../auth/session";
 import type { ErrorLog } from "../errors/log";
 import { conflictOf, projectQuery } from "../project/queries";
+import { statisticsKey } from "../statistics/queries";
 import { type AnyCommand, applyCommands, canonical } from "./apply";
 import {
   type Doc,
@@ -701,7 +702,7 @@ export class ProjectDocument {
    * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The wait after the writing statistics were read again, while it lasts, and whether an operation applied during it, whose statistics its end has read again (followStatistics). */
+  /** The wait after the writing statistics were read again, while it lasts, and whether an operation applied during it, or a read of them was under way as it began, which its end has them read again for (followStatistics). */
   private statisticsTimer: ReturnType<typeof setTimeout> | undefined;
   private statisticsAgain = false;
   private unsubscribe: (() => void) | undefined;
@@ -1427,24 +1428,33 @@ export class ProjectDocument {
    * statisticsPause ago, and then once more at the end of that wait, for
    * the operations that applied during it, so that they follow each edit
    * within a second (PRD FR-TEXT-06 AC1), however many operations apply.
-   * Those that no page shows are marked alone, so that a page that shows
-   * them later reads them again, and a document of whose statistics no page
-   * shows any keeps no timer, which would hold it once it is dropped.
+   * A read that is under way is let finish rather than begun anew
+   * (cancelRefetch), since one begun anew as each operation applies, which
+   * waits again for the page's batches (whenSent) and for the server, would
+   * never be answered while the operations come faster than that, as on a
+   * slow connection; and as it may have read the server before the
+   * operation applied, it is read again at the end of the wait, as is one
+   * that a page's loader reads, which no page shows yet, and whose answer
+   * would otherwise be taken for one of after the operation. Those that no
+   * page shows are marked alone, so that a page that shows them later reads
+   * them again, and a document of whose statistics no page shows any, and
+   * reads none, keeps no timer, which would hold it once it is dropped.
    */
   private followStatistics(): void {
     if (this.statisticsTimer !== undefined) {
       this.statisticsAgain = true;
       return;
     }
-    const queryKey = ["projects", this.projectId, "statistics"];
-    void this.options.queryClient.invalidateQueries({ queryKey });
-    if (
-      this.options.queryClient
-        .getQueryCache()
-        .findAll({ queryKey, type: "active" }).length === 0
-    ) {
+    const client = this.options.queryClient;
+    const queryKey = statisticsKey(this.projectId);
+    const cache = client.getQueryCache();
+    const reading =
+      cache.findAll({ queryKey, fetchStatus: "fetching" }).length > 0;
+    void client.invalidateQueries({ queryKey }, { cancelRefetch: false });
+    if (!reading && cache.findAll({ queryKey, type: "active" }).length === 0) {
       return;
     }
+    this.statisticsAgain = reading;
     this.statisticsTimer = setTimeout(() => {
       this.statisticsTimer = undefined;
       if (this.statisticsAgain && !this.disposed) {

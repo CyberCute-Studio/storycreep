@@ -9,7 +9,7 @@
 
 import type { NodeStatistics, ProjectStatistics } from "@storycreep/shared/api";
 import { queryOptions } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, notFoundBy } from "../api";
 import { whenSent } from "../document/sent";
 import type { ProjectDocument } from "../document/store";
 
@@ -23,7 +23,10 @@ export function statisticsKey(projectId: string) {
  * batches at most, which the server answers in far less, so that one that
  * waits for long, as one queued while the page is offline, keeps neither
  * the page from opening nor the inspector's counts loading: the read goes
- * on without it, and the document has it read again once it applies.
+ * on without it, and the document has it read again once it applies. A
+ * node's that the server answers with not_found while the page's batches
+ * are unanswered waits for them for as long as they take, and reads again
+ * (nodeStatisticsQuery).
  */
 const sentWait = 3_000;
 
@@ -51,20 +54,36 @@ export function projectStatisticsQuery(doc: ProjectDocument) {
 
 /**
  * The writing statistics of the node nodeId of the project of doc, of its
- * text and of the connections that leave it, read as the project's are.
+ * text and of the connections that leave it, read as the project's are, but
+ * that a read that the server answers with not_found while the page's
+ * batches are unanswered, as of a node that one of them creates, which the
+ * server does not have until it has applied it, as on a connection slower
+ * than sentWait, waits for them for as long as they take and reads again,
+ * so that the inspector says that the counts load, rather than that there
+ * is no such node, of the node that the page has just made.
  */
 export function nodeStatisticsQuery(doc: ProjectDocument, nodeId: string) {
   return queryOptions({
     queryKey: [...statisticsKey(doc.projectId), "nodes", nodeId] as const,
     queryFn: async ({ signal }): Promise<NodeStatistics> => {
+      const read = async () =>
+        (
+          await api.call(
+            "getNodeStatistics",
+            { path: { project_id: doc.projectId, node_id: nodeId } },
+            { signal },
+          )
+        ).body;
       await whenSent(doc, signal, sentWait);
-      return (
-        await api.call(
-          "getNodeStatistics",
-          { path: { project_id: doc.projectId, node_id: nodeId } },
-          { signal },
-        )
-      ).body;
+      try {
+        return await read();
+      } catch (error) {
+        if (!notFoundBy(error) || doc.store.getState().sending === 0) {
+          throw error;
+        }
+        await whenSent(doc, signal);
+        return await read();
+      }
     },
     // The inspector shows a refusal of it.
     meta: { showsRefusals: true },

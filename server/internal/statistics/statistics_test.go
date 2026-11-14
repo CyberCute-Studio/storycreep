@@ -26,6 +26,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
+	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
 	"github.com/CyberCute-Studio/storycreep/server/internal/statistics/statisticstest"
@@ -79,6 +80,22 @@ func TestNameNeutral(t *testing.T) {
 			t.Errorf("componentNaming lists %s, which is not a registered type of command, or which nameNeutral "+
 				"lists too", typ)
 		}
+	}
+}
+
+// TestReadNamesNil checks that ReadNames passes over a nil mention and a nil
+// value of a document that a program built, as Doc.Segments does, which
+// counts the document: it names nothing, so it reads nothing, and counts as
+// nothing.
+func TestReadNamesNil(t *testing.T) {
+	doc := &richtext.Doc{Blocks: []richtext.Block{&richtext.Paragraph{Inlines: []richtext.Inline{
+		&richtext.Text{Text: "Hello"}, (*richtext.Mention)(nil), (*richtext.Value)(nil)}}}}
+	names, err := statistics.ReadNames(context.Background(), nil, ids.UUID{}, ids.UUID{}, []*richtext.Doc{doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if words, characters := statistics.Count(doc, names); words != 1 || characters != 5 {
+		t.Errorf("Count = %d words, %d characters, want 1 and 5", words, characters)
 	}
 }
 

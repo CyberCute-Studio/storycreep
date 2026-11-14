@@ -58,12 +58,15 @@ import (
 // of an older version are not complete. That holds between versions that both
 // count the texts: a replica of a version before the statistics, which the
 // rolling upgrade that brings them runs beside the newer replicas, writes no
-// row and deletes no state, so a text that it changes, or an entity that it
-// creates, once the newer job has recorded the project, keeps the row that it
-// had, or has none, until a batch of a newer replica changes it, and the
-// project's statistics say that they are not complete for as long as one has
-// none. An upgrade that stops the older replicas before the newer ones start
-// leaves none of these.
+// row and deletes no state, and its trash's purge counts no text again, so a
+// text that it changes, or that names what its purge deletes, or an entity
+// that it creates, once the newer job has recorded the project, keeps the
+// row that it had, which a read takes for complete, or has none, until a
+// batch of a newer replica changes it, or, of one that names what was
+// deleted, a newer replica's purge that deletes what a text may name counts
+// it again (Recount), and the project's statistics say that they are not
+// complete for as long as one has none. An upgrade that stops the older
+// replicas before the newer ones start leaves none of these.
 const Version = 1
 
 // ErrNotFound is returned for a node that the project does not have, or that

@@ -90,10 +90,17 @@ func ReadNames(ctx context.Context, q *queries.Queries, workspaceID, projectID i
 		}
 		for in := range d.Inlines() {
 			var err error
+			// A nil mention or value names nothing, as Doc.Segments, which
+			// counts the document, passes over it.
 			switch in := in.(type) {
 			case *richtext.Mention:
-				err = add(&components, ids.Component, in.Component)
+				if in != nil {
+					err = add(&components, ids.Component, in.Component)
+				}
 			case *richtext.Value:
+				if in == nil {
+					break
+				}
 				if in.Attribute == "" {
 					err = add(&variables, ids.Variable, in.Ref)
 					break

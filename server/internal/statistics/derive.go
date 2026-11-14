@@ -147,12 +147,25 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 	}
 	q := queries.New(tx)
 	ws, project := nullUUID(tx.WorkspaceID()), nullUUID(tx.ProjectID())
-	if len(variables) > 0 || len(named) > 0 || len(keyed) > 0 || len(attributes) > 0 {
+	// The texts that name a definition that the batch changed are read apart
+	// from the others, and only for a batch that changed one, since no index
+	// finds them, so that a batch that renames a variable, or creates one,
+	// reads the rows of the index that name it alone.
+	if len(variables) > 0 || len(named) > 0 || len(keyed) > 0 {
 		texts, err := q.TextsNaming(ctx, queries.TextsNamingParams{WorkspaceID: ws, ProjectID: project,
-			VariableIds: list(variables), NamedIds: list(named), KeyedIds: list(keyed),
-			AttributeIds: list(attributes)})
+			VariableIds: list(variables), NamedIds: list(named), KeyedIds: list(keyed)})
 		if err != nil {
 			return fmt.Errorf("statistics: find the texts that name what the batch changed: %w", err)
+		}
+		for _, t := range texts {
+			sel.addText(t.NodeID, t.ConnectionID)
+		}
+	}
+	if len(attributes) > 0 {
+		texts, err := q.TextsNamingDefinitions(ctx, queries.TextsNamingDefinitionsParams{WorkspaceID: ws,
+			ProjectID: project, AttributeIds: attributes})
+		if err != nil {
+			return fmt.Errorf("statistics: find the texts that name the definitions that the batch changed: %w", err)
 		}
 		for _, t := range texts {
 			sel.addText(t.NodeID, t.ConnectionID)

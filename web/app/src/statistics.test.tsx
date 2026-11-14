@@ -64,8 +64,10 @@ function statistics(more: Partial<ProjectStatistics> = {}): ProjectStatistics {
   };
 }
 
-/** Answers the project's pages, of Lighthouse before Harbour in the tree, and their statistics as stats returns them. */
-function projectPages(stats: () => ProjectStatistics) {
+/** Answers the project's pages, of Lighthouse before Harbour in the tree, and their statistics as stats returns them, or once what it returns resolves. */
+function projectPages(
+  stats: () => ProjectStatistics | Promise<ProjectStatistics>,
+) {
   return fakeApi((operation) => {
     switch (operation) {
       case "getProject":
@@ -201,5 +203,89 @@ describe("a project's statistics", () => {
     await waitFor(() => expect(reads()).toBe(before + 2));
     await waitFor(() => expect(projectCount("Words")).toBe("1,250"));
     expect(reads()).toBe(before + 2);
+  });
+
+  // Verifies: FR-TEXT-06/AC1
+  it("let a read under way finish as operations apply, and are read again once it is answered, as on a slow connection", async () => {
+    const realtime = fakeRealtime();
+    let answer: ProjectStatistics | Promise<ProjectStatistics> = statistics();
+    const calls = projectPages(() => answer);
+    renderApp(`/projects/${testProject.id}/statistics`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Statistics" });
+    const reads = () =>
+      calls.mock.calls.filter(([op]) => op === "getProjectStatistics");
+    const before = reads().length;
+    let answerHeld: (stats: ProjectStatistics) => void = () => {};
+    answer = new Promise((resolve) => {
+      answerHeld = resolve;
+    });
+    const send = (rev: number) =>
+      act(() =>
+        realtime.send(
+          testProject.id,
+          [
+            {
+              type: "node.update",
+              payload: { id: "nd_a", title: `Greet ${rev}` },
+            },
+          ],
+          [{ id: "nd_a", rev }],
+        ),
+      );
+    send(2);
+    await waitFor(() => expect(reads()).toHaveLength(before + 1));
+    // Operations go on applying for longer than the read is answered in, and
+    // the read is neither begun anew nor ended.
+    send(3);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 1_200)));
+    send(4);
+    expect(reads()).toHaveLength(before + 1);
+    const held = reads()[before][2] as { signal: AbortSignal };
+    expect(held.signal.aborted).toBe(false);
+    answer = statistics({ seq: testProject.seq + 3, words: 1250 });
+    act(() =>
+      answerHeld(statistics({ seq: testProject.seq + 1, words: 1240 })),
+    );
+    await waitFor(() => expect(projectCount("Words")).toBe("1,250"));
+    expect(reads()).toHaveLength(before + 2);
+  });
+
+  // Verifies: FR-TEXT-06/AC1
+  it("are read again for an operation that applies while the page's first read of them is under way", async () => {
+    const realtime = fakeRealtime();
+    let release: () => void = () => {};
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let n = 0;
+    projectPages(async () => {
+      n++;
+      if (n === 1) {
+        await first;
+        return statistics();
+      }
+      return statistics({ seq: testProject.seq + 1, words: 1240 });
+    });
+    renderApp(`/projects/${testProject.id}/statistics`, {
+      session: testSession,
+      realtime,
+    });
+    await waitFor(() => {
+      expect(n).toBe(1);
+      expect(realtime.subscribed(testProject.id)).toBe(true);
+    });
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "node.update", payload: { id: "nd_a", title: "Greet" } }],
+        [{ id: "nd_a", rev: 2 }],
+      ),
+    );
+    act(() => release());
+    await waitFor(() => expect(projectCount("Words")).toBe("1,240"));
+    expect(n).toBe(2);
   });
 });

@@ -280,8 +280,8 @@ type NodeTextSourcesRow struct {
 // that it changed, and of those that name what it renamed, once every
 // command of the batch has applied, under the lock of the project's row
 // (NodeTextSources, ConnectionTextSources, which read each text with its row,
-// TextsNaming, TextNames, and UpsertTextStatistics, for the rows that
-// differ), and the job of the statistics those of the entities that have none
+// TextsNaming, TextsNamingDefinitions, TextNames, and UpsertTextStatistics,
+// for the rows that differ), and the job of the statistics those of the entities that have none
 // of the current version or a newer one, under the same lock
 // (ProjectsToCount, LockProjectToIndex, UncountedTexts, SetTextStatisticState),
 // as the trash's purge counts again the texts that name what it deleted
@@ -451,17 +451,15 @@ WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.expression_id IS NULL
         r.target_kind = 'variable' AND r.target_id = ANY($3::uuid[])
         OR r.target_kind = 'component' AND r.target_id = ANY($4::uuid[])
         OR r.target_kind = 'attribute' AND r.target_id = ANY($5::uuid[])
-        OR r.target_kind = 'attribute' AND r.attribute_def_id = ANY($6::uuid[])
     )
 `
 
 type TextsNamingParams struct {
-	WorkspaceID  pgtype.UUID
-	ProjectID    pgtype.UUID
-	VariableIds  []pgtype.UUID
-	NamedIds     []pgtype.UUID
-	KeyedIds     []pgtype.UUID
-	AttributeIds []pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	VariableIds []pgtype.UUID
+	NamedIds    []pgtype.UUID
+	KeyedIds    []pgtype.UUID
 }
 
 type TextsNamingRow struct {
@@ -472,17 +470,15 @@ type TextsNamingRow struct {
 // TextsNaming returns the nodes and the connections of the project, in the
 // trash or not, whose texts name, by the index of what they name (package
 // dependency), a variable among variable_ids, by a value reference, a
-// component among named_ids, by a mention, which shows its name, a component
-// among keyed_ids, by a value reference of one of its attributes, which
-// shows its key, or a definition among attribute_ids, by a value reference
-// of the attribute of a component, each once: the texts whose counts a
-// change of those names changes. A value reference names its component and
-// its definition whether the definition is of the component's type or not,
-// as one pasted from another project may, which the validation reports, and
-// shows both keys all the same, so a definition's texts are found by the
-// definition alone, which reads the project's rows of the index: a change of
-// a definition's key is rare, and those of the other names are found by the
-// index of the targets.
+// component among named_ids, by a mention, which shows its name, or a
+// component among keyed_ids, by a value reference of one of its attributes,
+// which shows its key, each once: the texts whose counts a change of those
+// names changes. The index of the targets finds each of its arms, so that
+// it reads the rows that name what it is given alone. The texts that name a
+// definition, which no index finds, TextsNamingDefinitions returns, since
+// PostgreSQL reads an OR by the indexes of all of its arms or by none, and
+// an arm that no index finds would have it read every row of the project's,
+// however few it is given.
 func (q *Queries) TextsNaming(ctx context.Context, arg TextsNamingParams) ([]TextsNamingRow, error) {
 	rows, err := q.db.Query(ctx, textsNaming,
 		arg.WorkspaceID,
@@ -490,7 +486,6 @@ func (q *Queries) TextsNaming(ctx context.Context, arg TextsNamingParams) ([]Tex
 		arg.VariableIds,
 		arg.NamedIds,
 		arg.KeyedIds,
-		arg.AttributeIds,
 	)
 	if err != nil {
 		return nil, err
@@ -499,6 +494,55 @@ func (q *Queries) TextsNaming(ctx context.Context, arg TextsNamingParams) ([]Tex
 	var items []TextsNamingRow
 	for rows.Next() {
 		var i TextsNamingRow
+		if err := rows.Scan(&i.NodeID, &i.ConnectionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const textsNamingDefinitions = `-- name: TextsNamingDefinitions :many
+SELECT DISTINCT r.node_id, r.connection_id
+FROM expression_ref r
+WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.expression_id IS NULL
+    AND r.component_id IS NULL AND r.target_kind = 'attribute' AND r.attribute_def_id = ANY($3::uuid[])
+`
+
+type TextsNamingDefinitionsParams struct {
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	AttributeIds []pgtype.UUID
+}
+
+type TextsNamingDefinitionsRow struct {
+	NodeID       pgtype.UUID
+	ConnectionID pgtype.UUID
+}
+
+// TextsNamingDefinitions returns the nodes and the connections of the
+// project, in the trash or not, whose texts name, by the index of what they
+// name, a definition among attribute_ids, by a value reference of the
+// attribute of a component, which shows its key, each once. A value
+// reference names its component and its definition whether the definition
+// is of the component's type or not, as one pasted from another project
+// may, which the validation reports, and shows both keys all the same, so a
+// definition's texts are found by the definition alone, which reads every
+// row of the project's of the index, as no index of them leads with the
+// definition: its caller runs it only for a batch that changed a
+// definition's key, or created one, which is rare (TextsNaming).
+func (q *Queries) TextsNamingDefinitions(ctx context.Context, arg TextsNamingDefinitionsParams) ([]TextsNamingDefinitionsRow, error) {
+	rows, err := q.db.Query(ctx, textsNamingDefinitions, arg.WorkspaceID, arg.ProjectID, arg.AttributeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TextsNamingDefinitionsRow
+	for rows.Next() {
+		var i TextsNamingDefinitionsRow
 		if err := rows.Scan(&i.NodeID, &i.ConnectionID); err != nil {
 			return nil, err
 		}

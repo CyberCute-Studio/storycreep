@@ -13,15 +13,21 @@ import { projectStatisticsQuery } from "../statistics/queries";
 import { Page, Status, TextLink } from "../ui/Page";
 
 export const Route = createFileRoute("/projects/$projectId/statistics")({
-  // The project comes first, then the tree of its boards, by which the page
-  // orders them (loadParts), and the statistics.
+  // The project comes first, then, together, the tree of its boards, by
+  // which the page orders them (loadParts), and the statistics, which need
+  // nothing of the tree.
   loader: async ({ context, params }) => {
-    await loadParts(context, params.projectId, ["tree"]);
     await found(
-      context.queryClient.ensureQueryData(
-        projectStatisticsQuery(context.documents.get(params.projectId)),
-      ),
+      context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
+    await Promise.all([
+      loadParts(context, params.projectId, ["tree"]),
+      found(
+        context.queryClient.ensureQueryData(
+          projectStatisticsQuery(context.documents.get(params.projectId)),
+        ),
+      ),
+    ]);
   },
   // As the tree's page, which reads the tree of the project's document,
   // which a later visit may find made anew (keptUnshown).
