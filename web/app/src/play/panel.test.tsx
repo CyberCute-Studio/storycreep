@@ -18,6 +18,7 @@ import type { Engine, Frame } from "../canvas/engine";
 import type { ComponentEntry } from "../document/doc";
 import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
+import "../test/editor";
 import { fakeApi, startPage, testProject } from "../test/fake";
 import {
   expression,
@@ -71,6 +72,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const id = (prefix: string, body: string) =>
@@ -189,8 +191,11 @@ const connections: Connection[] = [
   }),
 ];
 
-/** Answers the board's pages of the project, and records what they ask. */
-function playProject() {
+/**
+ * Answers the board's pages of the project, its boards those that boards
+ * returns as they are read, and records what they ask.
+ */
+function playProject(boards: () => Board[] = () => [harbour, elara]) {
   return fakeApi((operation, input) => {
     const path = (input as { path?: Record<string, string> } | undefined)?.path;
     switch (operation) {
@@ -211,7 +216,7 @@ function playProject() {
           description: richText(),
         };
       case "listBoards":
-        return { items: [harbour, elara], next_cursor: null };
+        return { items: boards(), next_cursor: null };
       case "listBoardNodes":
         return {
           items: nodes.filter((n) => n.board_id === path?.board_id),
@@ -253,6 +258,32 @@ async function openBoard(board: Board) {
 /** The play marks of the canvas's last frame. */
 function lastMarks() {
   return frames.at(-1)?.play;
+}
+
+/** Makes the window as wide as width, as matchMedia tells the page, which resize changes as a tablet that turns does. */
+function windowOf(width: number) {
+  const listeners = new Set<() => void>();
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches() {
+      return query === "(min-width: 900px)" && width >= 900;
+    },
+    media: query,
+    addEventListener: (_: string, listener: () => void) =>
+      listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) =>
+      listeners.delete(listener),
+  }));
+  return {
+    // The listeners that there were as the window changed, as a browser
+    // tells them, rather than one that a listener adds anew meanwhile, as
+    // the canvas's of the screen's density does.
+    resize: (next: number) => {
+      width = next;
+      for (const listener of [...listeners]) {
+        listener();
+      }
+    },
+  };
 }
 
 describe("play mode", () => {
@@ -343,6 +374,98 @@ describe("play mode", () => {
     );
     await openBoard(elara);
     expect(router.state.location.search).toEqual({ renderer: "canvas" });
+  });
+
+  // A board that the page no longer holds, as one that a collaborator
+  // deleted while playing, which the snapshot still holds, has no page to
+  // open: the page shown stays, and its panel says where the flow is, as
+  // the snapshot names it, with the focus on the current node's heading.
+  it("stays on the board's page where the flow goes to a board that the page no longer holds", async () => {
+    const user = userEvent.setup();
+    let boards = [harbour, elara];
+    playProject(() => boards);
+    const realtime = fakeRealtime();
+    const { router } = renderApp(
+      `/projects/${project.id}/boards/${harbour.id}`,
+      { session: testSession, realtime },
+    );
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await waitFor(() =>
+      expect(within(panel).getByText("Trust 1.")).toBeDefined(),
+    );
+    boards = [harbour];
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "board.delete", payload: { id: elara.id } }],
+        [{ id: elara.id, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The draft has changed since play started. Restart to play it as it is now.",
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "Visit Elara" }),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+    expect(panel.isConnected).toBe(true);
+    expect(within(panel).getByText("Elara trusts you 2.")).toBeDefined();
+    expect(within(panel).getByText("Elara")).toBeDefined();
+    expect(router.state.location.pathname).toBe(
+      `/projects/${project.id}/boards/${harbour.id}`,
+    );
+    expect(
+      screen.getByRole("application", { name: "Nodes of Harbour" }),
+    ).toBeDefined();
+  });
+
+  // Below 900 px the panel is a sheet over the canvas, which waits while
+  // the editor of a text is open, as the inspector's sheet closes to show
+  // it, rather than hold the editor inert, as once a tablet turned while
+  // the inspector was open beside the canvas.
+  it("shows the editor of a text that the inspector's sheet asked for while playing, and the play sheet once the editor closes", async () => {
+    const size = windowOf(1200);
+    const user = userEvent.setup();
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "B")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Wait" });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("You wait.");
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    await screen.findByRole("region", { name: "Wait" });
+    expect(screen.queryByRole("region", { name: "Play" })).toBeNull();
+    act(() => size.resize(800));
+    const sheet = await screen.findByRole("dialog", { name: "Wait" });
+    await user.click(
+      within(sheet).getByRole("button", { name: "Edit the text" }),
+    );
+    const editor = await screen.findByRole("form", {
+      name: "The text of Wait",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Wait" })).toBeNull(),
+    );
+    expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull();
+    expect(editor.closest("[inert]")).toBeNull();
+    await user.click(within(editor).getByRole("button", { name: "Cancel" }));
+    const play = await screen.findByRole("dialog", { name: "Play" });
+    expect(within(play).getByText("You wait.")).toBeDefined();
   });
 
   // Play reads the project's content as it starts, and nothing for a step.

@@ -22,6 +22,7 @@ import type {
 } from "@storycreep/shared/flow";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart, type Doc, expressionFields } from "../document/doc";
+import { equal } from "../document/reconcile";
 import type { ProjectDocument } from "../document/store";
 import type { Projection } from "./projection";
 
@@ -670,46 +671,66 @@ function sameEntity(
     (kind === "components" &&
       k === "attributes" &&
       (x.attributes === undefined || y.attributes === undefined));
-  return stable(x, ignored) === stable(y, ignored);
+  return equal(compared(x, ignored), compared(y, ignored));
 }
 
-// stable returns the JSON of v, as draftChanged compares it, its keys
-// sorted, without the top-level keys that ignored tells.
-function stable(
+// compared returns v as draftChanged compares it, which equal compares
+// whatever the order of its fields: without the top-level fields that
+// ignored tells, nor, at any depth, the round trip's, or those of no
+// value, which its JSON would leave out.
+function compared(
   v: Record<string, unknown>,
   ignored: (k: string) => boolean,
-): string {
-  const sorted = (u: unknown): unknown => {
-    if (Array.isArray(u)) {
-      return u.map(sorted);
+): Record<string, unknown> {
+  // fields returns the fields of o but those that skip tells.
+  const fields = (o: Record<string, unknown>, skip: (k: string) => boolean) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, u] of Object.entries(o)) {
+      if (u !== undefined && !skip(k)) {
+        out[k] = field(k, u);
+      }
     }
-    if (typeof u === "object" && u !== null) {
-      const o = u as Record<string, unknown>;
-      return Object.fromEntries(
-        Object.keys(o)
-          .filter((k) => !roundTrip.has(k))
-          .sort()
-          .map((k) => [k, field(k, o[k])]),
-      );
-    }
-    return u;
+    return out;
   };
   // field returns the value u of the key k as draftChanged compares it: an
   // expression's source alone, which is what the projection reads of it.
-  const field = (k: string, u: unknown): unknown =>
-    expressions.has(k) &&
-    typeof u === "object" &&
-    u !== null &&
-    typeof (u as { source?: unknown }).source === "string"
-      ? (u as { source: string }).source
-      : sorted(u);
-  const top: Record<string, unknown> = {};
-  for (const k of Object.keys(v).sort()) {
-    if (!ignored(k)) {
-      top[k] = field(k, v[k]);
+  const field = (k: string, u: unknown): unknown => {
+    if (
+      expressions.has(k) &&
+      typeof u === "object" &&
+      u !== null &&
+      typeof (u as { source?: unknown }).source === "string"
+    ) {
+      return (u as { source: string }).source;
     }
-  }
-  return JSON.stringify(top);
+    if (Array.isArray(u)) {
+      return u.map((w) => field("", w));
+    }
+    return typeof u === "object" && u !== null
+      ? fields(u as Record<string, unknown>, (f) => roundTrip.has(f))
+      : u;
+  };
+  return fields(v, ignored);
+}
+
+/**
+ * Reports whether the page of the board shown, of doc's project, leaves a
+ * turn that left the flow on board to that board's page, which it opens:
+ * for another board that the document holds, rather than one that it no
+ * longer does, as one that a collaborator deleted while playing, which the
+ * snapshot still holds, and whose page would be none, so that the page
+ * shown stays, and takes the turn itself.
+ */
+export function followsFlow(
+  doc: ProjectDocument,
+  board: string,
+  shown: string,
+): boolean {
+  return (
+    board !== "" &&
+    board !== shown &&
+    doc.store.getState().view.boards.has(board)
+  );
 }
 
 const sessions = new WeakMap<ProjectDocument, PlaySession>();

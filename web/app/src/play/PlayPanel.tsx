@@ -30,7 +30,12 @@ import {
   fieldName,
   standInMessage,
 } from "./messages";
-import type { PlayError, PlaySession, PlayState } from "./session";
+import {
+  followsFlow,
+  type PlayError,
+  type PlaySession,
+  type PlayState,
+} from "./session";
 
 export function PlayPanel({
   projectId,
@@ -68,13 +73,14 @@ export function PlayPanel({
   // with what the turn showed anew, and on the page of another board that
   // the board's page followed the flow to: so that a keyboard and a screen
   // reader are where the flow is, which the heading names and describes.
-  // The page of another board leaves the turn to that board's.
+  // The page of another board leaves the turn to that board's, which it
+  // opens, but for a board that the page no longer holds (followsFlow).
   const turn = state.status === "playing" ? state.turn : 0;
   const flowBoard = state.status === "playing" ? state.flow.board : "";
   useEffect(() => {
     if (
       turn === 0 ||
-      (flowBoard !== "" && flowBoard !== boardId) ||
+      followsFlow(doc, flowBoard, boardId) ||
       !session.firstShown("panel", turn)
     ) {
       return;
@@ -87,7 +93,7 @@ export function PlayPanel({
     ) {
       current.current?.focus();
     }
-  }, [session, turn, flowBoard, boardId]);
+  }, [doc, session, turn, flowBoard, boardId]);
   if (state.status === "idle") {
     return null;
   }

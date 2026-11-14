@@ -1564,11 +1564,11 @@ function BoardCanvasOf({
       playFlow === undefined
         ? undefined
         : {
-            current: playFlow.board === boardId ? playFlow.node : "",
+            current: playNode,
             visited: playFlow.visited,
             traversed: playFlow.traversed,
           },
-    [playFlow, boardId],
+    [playFlow, playNode],
   );
   useEffect(() => {
     controller.setPlay(marks);
@@ -2676,16 +2676,21 @@ function BoardCanvasOf({
         )}
         {/* Play mode's panel, while play is under way, where the inspector,
         while it is open, is not (plan note N78), which gives the focus back
-        to the canvas once play stops. */}
-        {playing && !(inspecting && editable) && (
-          <PlayPanel
-            projectId={projectId}
-            boardId={boardId}
-            doc={doc}
-            session={session}
-            returnFocus={() => hostRef.current}
-          />
-        )}
+        to the canvas once play stops. A sheet over the canvas waits while
+        the editor of a text is open, which it would else hold inert under
+        it, as the inspector's sheet closes to show the editor; it shows
+        again once the editor closes. */}
+        {playing &&
+          !(inspecting && editable) &&
+          (docked || editing === undefined) && (
+            <PlayPanel
+              projectId={projectId}
+              boardId={boardId}
+              doc={doc}
+              session={session}
+              returnFocus={() => hostRef.current}
+            />
+          )}
       </div>
       <p id={helpId} className="text-sm text-fg-muted">
         {editable

@@ -25,7 +25,7 @@ import { BoardBadge } from "../dependencies/BoardBadge";
 import { boardPart } from "../document/doc";
 import { useBoard, useProjectDocument, useTree } from "../document/react";
 import type { ProjectDocument } from "../document/store";
-import { playSessionOf } from "../play/session";
+import { followsFlow, playSessionOf } from "../play/session";
 import { colorName, paletteColors } from "../project/colors";
 import { DeleteBoardDialog, payloadField } from "../project/dialogs";
 import { useLastOpened } from "../project/lastOpened";
@@ -315,7 +315,10 @@ function BoardContent({
   // project is shown before the start's turn, which moves it, as it moves
   // the page that started play. The other board's page draws with the
   // renderer that this one was asked to, as by the reference tablet's
-  // checklist, rather than with the browser's.
+  // checklist, rather than with the browser's. A board that the page no
+  // longer holds, as one that a collaborator deleted while playing, which
+  // the snapshot still holds, is not opened, as its page is none: the page
+  // shown stays, and its panel takes the turn (followsFlow).
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -329,7 +332,7 @@ function BoardContent({
       return;
     }
     seenTurn.current = playTurn;
-    if (playBoard !== "" && playBoard !== board.id) {
+    if (followsFlow(doc, playBoard, board.id)) {
       void navigate({
         to: "/projects/$projectId/boards/$boardId",
         params: { projectId, boardId: playBoard },
@@ -337,7 +340,7 @@ function BoardContent({
           prev.renderer === undefined ? {} : { renderer: prev.renderer },
       });
     }
-  }, [playTurn, playBoard, board.id, navigate, projectId]);
+  }, [playTurn, playBoard, board.id, navigate, projectId, doc]);
   return (
     <div className="space-y-6">
       {/* The views' switch is beside the board's name, rather than under
