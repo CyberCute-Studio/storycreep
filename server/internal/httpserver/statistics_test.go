@@ -60,12 +60,13 @@ func nodeStatistics(t *testing.T, h http.Handler, si signedIn, project, node str
 // it: the words and the characters of each element's text and each
 // connection's label, a mention counted as its component's name and a value
 // reference as its name in braces, and the nodes, the choices, and the
-// conditions, of each node, of its board, and of the project, none of what
-// is in the trash; and that each batch that the API answers is in them at
-// once, a rename of what a text names among them, without a rescan of the
-// project's texts: a batch counts the texts that it changes, or that name
-// what it renames, and no other (AC1). A text that has no row yet makes the
-// statistics incomplete until the job of the statistics has counted it.
+// conditions that are written, of each node, of its board, and of the
+// project, none of what is in the trash; and that each batch that the API
+// answers is in them at once, a rename of what a text names among them,
+// without a rescan of the project's texts: a batch counts the texts that it
+// changes, or that name what it renames, and no other (AC1). A text that has
+// no row yet makes the statistics incomplete until the job of the statistics
+// has counted it.
 //
 // Verifies: FR-TEXT-06/AC1
 func TestStatistics(t *testing.T) {
@@ -82,6 +83,7 @@ func TestStatistics(t *testing.T) {
 	prop, trust := ids.Encode(ids.ComponentType, ids.New()), ids.Encode(ids.AttributeDef, ids.New())
 	elara := ids.Encode(ids.Component, ids.New())
 	ifOut, elseOut := ids.Encode(ids.BranchOutput, ids.New()), ids.Encode(ids.BranchOutput, ids.New())
+	unwritten := ids.Encode(ids.BranchOutput, ids.New())
 	pos := map[string]int{"x": 0, "y": 0}
 	cmd := func(typ string, p map[string]any) wireCommand { return wireCommand{Type: typ, Payload: p} }
 	element := func(id, board string, text json.RawMessage) wireCommand {
@@ -106,6 +108,8 @@ func TestStatistics(t *testing.T) {
 			"text": paragraph("The end."), "is_ending": true}),
 		cmd("node.create", map[string]any{"id": gate, "board_id": harbour, "type": "branch", "position": pos}),
 		cmd("branch_output.create", map[string]any{"id": ifOut, "node_id": gate, "condition": "lantern_lit"}),
+		// An output whose condition is not written yet has none.
+		cmd("branch_output.create", map[string]any{"id": unwritten, "node_id": gate}),
 		cmd("branch_output.create", map[string]any{"id": elseOut, "node_id": gate, "else": true}),
 		element(gone, harbour, paragraph("Lost words here")),
 		element(dusty, attic, paragraph("Dusty attic words")),

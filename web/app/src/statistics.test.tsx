@@ -166,4 +166,40 @@ describe("a project's statistics", () => {
     await waitFor(() => expect(projectCount("Words")).toBe("1,240"));
     expect(reads()).toBe(before + 1);
   });
+
+  // Verifies: FR-TEXT-06/AC1
+  it("are read again once for a run of operations, and once more, soon after, for the rest of the run", async () => {
+    const realtime = fakeRealtime();
+    let stats = statistics();
+    const calls = projectPages(() => stats);
+    renderApp(`/projects/${testProject.id}/statistics`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Statistics" });
+    const reads = () =>
+      calls.mock.calls.filter(([op]) => op === "getProjectStatistics").length;
+    const before = reads();
+    stats = statistics({ seq: testProject.seq + 5, words: 1250 });
+    act(() => {
+      for (let rev = 2; rev <= 6; rev++) {
+        realtime.send(
+          testProject.id,
+          [
+            {
+              type: "node.update",
+              payload: { id: "nd_a", title: `Greet ${rev}` },
+            },
+          ],
+          [{ id: "nd_a", rev }],
+        );
+      }
+    });
+    // The first of them has them read at once, and the rest once, together.
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    expect(reads()).toBe(before + 1);
+    await waitFor(() => expect(reads()).toBe(before + 2));
+    await waitFor(() => expect(projectCount("Words")).toBe("1,250"));
+    expect(reads()).toBe(before + 2);
+  });
 });

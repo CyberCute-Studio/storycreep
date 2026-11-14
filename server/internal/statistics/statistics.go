@@ -47,15 +47,23 @@ import (
 // statistics records it was written of. A change of what a text's words or
 // characters are (count), or of which entities have a row, increments it, so
 // that the job of the statistics writes every row again, as it writes the
-// rows that are missing (CountProjects). While a rolling
-// upgrade replaces a version's replicas with the next one's, a replica of
-// the older version writes the rows of what its batches change of its own
-// version, and deletes the project's state that the newer one recorded
+// rows that are missing (CountProjects). While a rolling upgrade replaces a
+// version's replicas with the next one's, a replica of the older version
+// writes the rows of what its batches change of its own version, and deletes
+// the project's state that the newer one recorded
 // (queries.UpsertTextStatistics), so that the newer job writes them again,
 // while the older job leaves alone the rows and the states of a newer version
 // (queries.ProjectsToCount, queries.UncountedTexts,
 // queries.SetTextStatisticState). A read says that the statistics of a text
-// of an older version are not complete.
+// of an older version are not complete. That holds between versions that both
+// count the texts: a replica of a version before the statistics, which the
+// rolling upgrade that brings them runs beside the newer replicas, writes no
+// row and deletes no state, so a text that it changes, or an entity that it
+// creates, once the newer job has recorded the project, keeps the row that it
+// had, or has none, until a batch of a newer replica changes it, and the
+// project's statistics say that they are not complete for as long as one has
+// none. An upgrade that stops the older replicas before the newer ones start
+// leaves none of these.
 const Version = 1
 
 // ErrNotFound is returned for a node that the project does not have, or that
@@ -65,11 +73,11 @@ var ErrNotFound = errors.New("statistics: no such node")
 // Counts are the writing statistics of a part of a project's content: a
 // node, a board, or the project, of what of it is not in the trash.
 type Counts struct {
-	Words      int64 `json:"words" minimum:"0" doc:"How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them."`
-	Characters int64 `json:"characters" minimum:"0" doc:"How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items."`
+	Words      int64 `json:"words" minimum:"0" doc:"How many words its texts have: an element's text and the labels of the connections that leave a node. A word is a run of characters between white space with at least one letter or number among them, a mention counting as its component's name and a value reference as its name in braces, as PRD FR-TEXT-05 and FR-TEXT-06 define them. A value reference's name is its keys, a variable's, or a component's and its attribute's joined by a dot, without the global. or cmp. that an expression writes where one key shadows another."`
+	Characters int64 `json:"characters" minimum:"0" doc:"How many characters its texts have, white space among them, as code points: of what their authors wrote, a mention counting as its component's name and a value reference as its name in braces, as words says, but not the line breaks between paragraphs, list items, and lines, nor the bullets, numbers, and indentation of list items."`
 	Choices    int64 `json:"choices" minimum:"0" doc:"How many choices it has: the connections that leave an element that is not an ending (PRD §5.8.5)."`
-	Conditions int64 `json:"conditions" minimum:"0" doc:"How many conditions it has: of the connections that leave its nodes, and of its branches' outputs."`
-	Complete   bool  `json:"complete" doc:"Whether every text that it adds up has been counted. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these."`
+	Conditions int64 `json:"conditions" minimum:"0" doc:"How many conditions it has that are written: of the connections that leave its nodes, and of its branches' outputs, but for an output's that is empty, as a new output's is until it is written."`
+	Complete   bool  `json:"complete" doc:"Whether every text that it adds up has been counted by this version of the server. A text that predates the statistics is counted by a job that runs as the server starts and then every hour, and until it has, its words and characters are not among these; a text that an older version counted, which the job counts again once a newer version counts otherwise, is among them as that version counted it."`
 }
 
 // add adds o to c, and takes c to be complete only if both are.

@@ -1,6 +1,8 @@
 package statistics
 
 import (
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
@@ -23,5 +25,8 @@ func SetCountLockWait(t interface{ Cleanup(func()) }, d time.Duration) {
 }
 
 // NameNeutral returns the types of command whose changes of what texts name
-// the derivation passes over (nameNeutral), for TestNameNeutral.
-func NameNeutral() []commands.Type { return nameNeutral }
+// the derivation passes over (nameNeutral), and those that change some of a
+// component's names alone (componentNaming), for TestNameNeutral.
+func NameNeutral() (neutral, naming []commands.Type) {
+	return nameNeutral, slices.Collect(maps.Keys(componentNaming))
+}

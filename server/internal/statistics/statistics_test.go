@@ -62,13 +62,22 @@ func registry(counted bool) *commands.Registry {
 
 // TestNameNeutral checks that each type of command that the derivation
 // passes over the changes of names of is a registered type, or the name of
-// the derivation that compiles expressions.
+// the derivation that compiles expressions, and that each that changes some
+// of a component's names alone is a registered type, which the first list
+// does not hold.
 func TestNameNeutral(t *testing.T) {
 	types := registry(true).Types()
-	for _, typ := range statistics.NameNeutral() {
+	neutral, naming := statistics.NameNeutral()
+	for _, typ := range neutral {
 		if !slices.Contains(types, typ) && typ != commands.Type(expression.Name) {
 			t.Errorf("nameNeutral lists %s, which is neither a registered type of command nor %s", typ,
 				expression.Name)
+		}
+	}
+	for _, typ := range naming {
+		if !slices.Contains(types, typ) || slices.Contains(neutral, typ) {
+			t.Errorf("componentNaming lists %s, which is not a registered type of command, or which nameNeutral "+
+				"lists too", typ)
 		}
 	}
 }
@@ -331,5 +340,87 @@ func TestPurgeRecounts(t *testing.T) {
 	if w, c := words(); w != 2 || c != 11 {
 		t.Errorf("once they are purged, the text has %d words and %d characters, want 2 and 11", w, c)
 	}
+	u.wantNoDrift(t)
+}
+
+// TestCountsWhatChangesShow checks that a change of a component counts again
+// the texts that show what it changed, and no other: a rename those that
+// mention the component, a change of its key those that show one of its
+// attributes, and the creation of a definition of its type, which changes
+// each of the type's components, those that name the new definition alone,
+// as a paste's that a text named while the project had none of its ID. The
+// test changes the rows of the texts that a change should not count, which
+// stay as they are.
+func TestCountsWhatChangesShow(t *testing.T) {
+	ctx := context.Background()
+	u := newUncounted(t)
+	if _, err := statistics.CountProjects(ctx, u.db); err != nil {
+		t.Fatal(err)
+	}
+	board := ids.Encode(ids.Board, ids.New())
+	prop, elara := ids.Encode(ids.ComponentType, ids.New()), ids.Encode(ids.Component, ids.New())
+	trust, loyalty := ids.Encode(ids.AttributeDef, ids.New()), ids.Encode(ids.AttributeDef, ids.New())
+	mention, value, later := ids.Encode(ids.Node, ids.New()), ids.Encode(ids.Node, ids.New()),
+		ids.Encode(ids.Node, ids.New())
+	node := func(id, inline string) map[string]any {
+		text := json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[` + inline + `]}]}`)
+		return map[string]any{"id": id, "board_id": board, "type": "element",
+			"position": map[string]int{"x": 0, "y": 0}, "text": text}
+	}
+	attribute := func(def string) string {
+		return `{"type":"valueRef","attrs":{"ref":"` + elara + `","attribute":"` + def + `"}}`
+	}
+	u.apply(t,
+		"board.create", map[string]any{"id": board, "name": "Harbour"},
+		"component_type.create", map[string]any{"id": prop, "name": "Prop"},
+		"attribute.create", map[string]any{"id": trust, "component_type_id": prop, "name": "Trust", "type": "int",
+			"runtime": true},
+		"component.create", map[string]any{"id": elara, "component_type_id": prop, "name": "Elara"},
+		"node.create", node(mention, `{"type":"mention","attrs":{"id":"`+elara+`"}}`),
+		"node.create", node(value, attribute(trust)),
+		"node.create", node(later, attribute(loyalty)))
+	set := func(node string, words int) {
+		t.Helper()
+		if _, err := u.admin.Exec(ctx, `UPDATE text_statistic SET words = $1 WHERE kind = 'node' AND entity_id = $2`,
+			words, decode(t, ids.Node, node)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := func(what, node string, words, characters int) {
+		t.Helper()
+		var w, c int
+		if err := u.admin.QueryRow(ctx, `SELECT words, characters FROM text_statistic WHERE kind = 'node'
+			AND entity_id = $1`, decode(t, ids.Node, node)).Scan(&w, &c); err != nil {
+			t.Fatal(err)
+		}
+		if w != words || c != characters {
+			t.Errorf("%s, the text has %d words and %d characters, want %d and %d", what, w, c, words, characters)
+		}
+	}
+	// "Elara", "{elara.trust}", and "{}", of a definition that the project
+	// does not have yet.
+	want("at first", mention, 1, 5)
+	want("at first", value, 1, 13)
+	want("at first", later, 0, 2)
+
+	set(mention, 999)
+	set(value, 999)
+	u.apply(t, "attribute.create", map[string]any{"id": loyalty, "component_type_id": prop, "name": "Loyalty",
+		"type": "int", "runtime": true})
+	want("after the creation of a definition", mention, 999, 5)
+	want("after the creation of a definition", value, 999, 13)
+	want("after the creation of a definition", later, 1, 15)
+
+	u.apply(t, "component.rename", map[string]any{"id": elara, "name": "Elara Vance"})
+	want("after the component's rename", mention, 2, 11)
+	want("after the component's rename", value, 999, 13)
+
+	set(mention, 999)
+	u.apply(t, "component.set_key", map[string]any{"id": elara, "key": "ev"})
+	want("after the component's change of key", mention, 999, 11)
+	want("after the component's change of key", value, 1, 10)
+	want("after the component's change of key", later, 1, 12)
+
+	set(mention, 2)
 	u.wantNoDrift(t)
 }

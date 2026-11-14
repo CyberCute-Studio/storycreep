@@ -3,9 +3,9 @@
 // its nodes, choices, and conditions, of the project and of each of its
 // boards, and of a node. The server counts each text as a batch changes it,
 // so a read gives what the project holds now, and the project's document
-// has its reads read again as each of its operations applies
-// (ProjectDocument), so that what a page shows follows an edit, the page's
-// own or another session's, within a second (AC1).
+// has its reads read again as its operations apply (ProjectDocument), so
+// that what a page shows follows an edit, the page's own or another
+// session's, within a second (AC1).
 
 import type { NodeStatistics, ProjectStatistics } from "@storycreep/shared/api";
 import { queryOptions } from "@tanstack/react-query";
@@ -19,15 +19,24 @@ export function statisticsKey(projectId: string) {
 }
 
 /**
+ * How long, in milliseconds, a read of the statistics waits for the page's
+ * batches at most, which the server answers in far less, so that one that
+ * waits for long, as one queued while the page is offline, keeps neither
+ * the page from opening nor the inspector's counts loading: the read goes
+ * on without it, and the document has it read again once it applies.
+ */
+const sentWait = 3_000;
+
+/**
  * The writing statistics of the project of doc and of each of its boards,
- * read once the page's batches have been answered, so that they hold what
- * the page shows of them.
+ * read once the page's batches have been answered, or after sentWait, so
+ * that they hold what the page shows of them.
  */
 export function projectStatisticsQuery(doc: ProjectDocument) {
   return queryOptions({
     queryKey: [...statisticsKey(doc.projectId), "project"] as const,
     queryFn: async ({ signal }): Promise<ProjectStatistics> => {
-      await whenSent(doc, signal);
+      await whenSent(doc, signal, sentWait);
       return (
         await api.call(
           "getProjectStatistics",
@@ -48,7 +57,7 @@ export function nodeStatisticsQuery(doc: ProjectDocument, nodeId: string) {
   return queryOptions({
     queryKey: [...statisticsKey(doc.projectId), "nodes", nodeId] as const,
     queryFn: async ({ signal }): Promise<NodeStatistics> => {
-      await whenSent(doc, signal);
+      await whenSent(doc, signal, sentWait);
       return (
         await api.call(
           "getNodeStatistics",

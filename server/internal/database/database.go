@@ -649,6 +649,15 @@ func UniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
 }
 
+// LockNotAvailable reports whether err is PostgreSQL's lock_not_available,
+// which a statement that waited for a lock for lock_timeout fails with
+// (queries.SetIndexLockWait), as a job that passes over a project whose lock
+// a transaction holds for long sees it (sweep.Fill).
+func LockNotAvailable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
+}
+
 // querier is what pgx.Conn, pgxpool.Pool, and pgx.Tx have in common for
 // reading.
 type querier interface {

@@ -14,11 +14,19 @@ import (
 // Names are the names that a text's counts read of what it names
 // (richtext.Names), as the project has them, in the trash or not: a value's
 // name is a variable's key, as met_elara, or a component's key and its
-// attribute's key joined by a dot, as elara.trust, and a mention's is its
-// component's name. A name of something that the project does not have, as
-// what the trash's purge deleted, is "", so that a value reference of it is
-// {}, two characters and no word, and a mention of it nothing, which is what
-// the validation reports a dangling reference for (FR-TEXT-02 AC2).
+// attribute's key joined by a dot, as elara.trust, whether the definition is
+// of the component's type or not, as a reference pasted from another
+// project may name one, and a mention's is its component's name. A value's
+// name is its keys alone, whatever the board of its text: without the
+// global. that an expression of a board that has a variable of the same key
+// writes before a global variable's key, nor the cmp. that it writes before
+// a component's key that a variable that the board reads has too, which the
+// editor shows (FR-TEXT-02), so that a text's counts read nothing of its
+// board's variables, and no change of another variable's key or scope
+// changes them. A name of something that the project does not have, as what
+// the trash's purge deleted, is "", so that a value reference of it is {},
+// two characters and no word, and a mention of it nothing, which is what the
+// validation reports a dangling reference for (FR-TEXT-02 AC2).
 type Names struct {
 	// variables are the variables' keys, components the components' names
 	// and keys, and attributes the definitions' keys, each by its public ID

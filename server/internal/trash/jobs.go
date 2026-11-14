@@ -151,6 +151,7 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			Retention: retention, MaxRows: purgeRows}); err != nil {
 			return fmt.Errorf("purge the boards: %w", err)
 		}
+		boards := n
 		nodes, err := q.PurgeNodes(ctx, queries.PurgeNodesParams{WorkspaceID: ws, ProjectID: project,
 			Retention: retention, MaxRows: int32(purgeRows - n)})
 		if err != nil {
@@ -197,8 +198,10 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 		// that named what the purge deleted, by its own statements or by the
 		// cascades of their foreign keys, as a board's variables go with it
 		// and a type's definitions with the type, are counted again, without
-		// the names that they lost (package statistics).
-		if n > 0 {
+		// the names that they lost (package statistics), once it has deleted
+		// what a text may name, or what holds it: a node, an output, or a
+		// connection is named by none.
+		if boards+variables+components+attributes+types > 0 {
 			if _, err := statistics.Recount(ctx, q, workspaceID, project.Bytes); err != nil {
 				return fmt.Errorf("count again the texts that named what it purged: %w", err)
 			}

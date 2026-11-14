@@ -1,8 +1,11 @@
 // Package sweep runs a periodic job's work over every workspace, one
 // workspace at a time, as the jobs that work on each workspace's rows in a
 // transaction of that workspace do (PRD §5.4): the rollup and the
-// reconciliation of usage (package usage), and the purge of the projects
-// whose time in the trash has passed (package project). It lists the
+// reconciliation of usage (package usage), the purge of the projects whose
+// time in the trash has passed (package project), and, as a Fill, the jobs
+// that write the rows that the projects' entities lack, of the search's
+// index (package search) and of the writing statistics (package
+// statistics), one project at a time under its lock. It lists the
 // workspaces from the workspace table, which has no row-level security, and
 // never takes the maintenance path.
 //

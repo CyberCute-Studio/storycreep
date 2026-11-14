@@ -21,13 +21,14 @@
 -- name what it renames, whose names they count, and the job of the
 -- statistics (text_statistics) the rows of the entities that have none of
 -- the current version, which package statistics names: of the content that is
--- there already when this migration applies, of a text that names what the
--- trash's purge deleted, which it marks to be counted again, and of every
--- text again once a version of the server changes how a text is counted. Two
--- entities of different kinds may share a UUID, so a row is of its kind and
--- its entity's UUID, and its entity's own column, which the kind and the UUID
--- give, holds the foreign key that deletes it with its entity, by the
--- cascade of the entity's purge, as search_entry's does.
+-- there already when this migration applies, and of every text again once a
+-- version of the server changes how a text is counted. The trash's purge
+-- counts again, in the transaction that deletes it, each text that names what
+-- it deletes, whose names it loses (statistics.Recount). Two entities of
+-- different kinds may share a UUID, so a row is of its kind and its entity's
+-- UUID, and its entity's own column, which the kind and the UUID give, holds
+-- the foreign key that deletes it with its entity, by the cascade of the
+-- entity's purge, as search_entry's does.
 CREATE TABLE text_statistic (
 	id uuid PRIMARY KEY DEFAULT uuid_v7(),
 	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,
@@ -39,8 +40,8 @@ CREATE TABLE text_statistic (
 	words integer NOT NULL CHECK (words >= 0),
 	characters integer NOT NULL CHECK (characters >= 0),
 	-- The version of how a text is counted that the server wrote the row of
-	-- (statistics.Version), or 0 for a row that is to be counted again, as
-	-- one of a text that names what the trash's purge deleted.
+	-- (statistics.Version), or 0 for a row that is to be counted again, as a
+	-- later migration may mark the rows that it changes the meaning of.
 	version integer NOT NULL CHECK (version >= 0),
 	UNIQUE (workspace_id, project_id, kind, entity_id),
 	FOREIGN KEY (workspace_id, project_id) REFERENCES project (workspace_id, id) ON DELETE CASCADE,
@@ -59,12 +60,12 @@ CREATE INDEX text_statistic_connection ON text_statistic (workspace_id, project_
 -- has written the row of every node and connection of a project that had
 -- none, so that its later runs pass over the project until a version of the
 -- server changes how a text is counted. A project without a row has not been
--- counted whole yet, as one that this migration finds, or one whose purge
--- marked a text to be counted again, or a replica of an older version of the
--- server has written a row of it since a newer one recorded it, as during a
--- rolling upgrade, which deletes the row (UpsertTextStatistics), so that the
--- newer job writes it again; a read says that the statistics of such a
--- project are not complete.
+-- counted whole yet, as one that this migration finds, or a replica of an
+-- older version of the server has written a row of it since a newer one
+-- recorded it, as during a rolling upgrade, which deletes the row
+-- (UpsertTextStatistics), so that the newer job writes it again; a read says
+-- that the statistics of a project whose texts lack a row of the version
+-- are not complete.
 CREATE TABLE text_statistic_state (
 	id uuid PRIMARY KEY DEFAULT uuid_v7(),
 	workspace_id uuid NOT NULL REFERENCES workspace ON DELETE CASCADE,

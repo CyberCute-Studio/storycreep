@@ -1,8 +1,9 @@
 // What the writing statistics show of a part of a project (PRD FR-TEXT-06):
 // its words, characters, choices, and conditions, and its nodes, each with
 // its name, as a list of terms, and the note that a part whose texts the
-// server has yet to count, as content that predates the statistics, may
-// have more words and characters than it says.
+// server has yet to count, as content that predates the statistics, or of
+// an older version's counts, may have other words and characters than it
+// says.
 
 import type { NodeStatistics } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";

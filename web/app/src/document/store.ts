@@ -413,6 +413,16 @@ const confirmWait = 5_000;
 /** How many of the states that entities had before operations changed them the document keeps, the latest (earlier). */
 const earlierKept = 1_000;
 
+/**
+ * How long, in milliseconds, the document waits after it has had the
+ * writing statistics read again before it has them read again for the
+ * operations that applied meanwhile (followStatistics), so that a run of
+ * operations, as another session's typing, has them read twice a second at
+ * most, rather than once for each, while they follow each edit within a
+ * second (PRD FR-TEXT-06 AC1).
+ */
+const statisticsPause = 500;
+
 /** The fields of an entity that no command writes, which a conflict does not compare. */
 const meta = new Set(["rev", "created_at", "updated_at"]);
 
@@ -691,6 +701,9 @@ export class ProjectDocument {
    * (stepped); undefined once it has, or the socket is back.
    */
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The wait after the writing statistics were read again, while it lasts, and whether an operation applied during it, whose statistics its end has read again (followStatistics). */
+  private statisticsTimer: ReturnType<typeof setTimeout> | undefined;
+  private statisticsAgain = false;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -894,6 +907,7 @@ export class ProjectDocument {
     this.disposed = true;
     clearTimeout(this.resyncTimer);
     clearTimeout(this.lostTimer);
+    clearTimeout(this.statisticsTimer);
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.history.close();
@@ -1403,12 +1417,41 @@ export class ProjectDocument {
       });
     }
     // The writing statistics, which nearly every command changes, as the
-    // server counts each text as a batch changes it (statistics/queries.ts):
-    // those that a page shows are read again at once, so that they follow
-    // the edit within a second (PRD FR-TEXT-06 AC1).
-    void this.options.queryClient.invalidateQueries({
-      queryKey: ["projects", this.projectId, "statistics"],
-    });
+    // server counts each text as a batch changes it (statistics/queries.ts).
+    this.followStatistics();
+  }
+
+  /**
+   * Has the reads of the writing statistics that a page shows read again,
+   * as an operation applies: at once, unless they were read again less than
+   * statisticsPause ago, and then once more at the end of that wait, for
+   * the operations that applied during it, so that they follow each edit
+   * within a second (PRD FR-TEXT-06 AC1), however many operations apply.
+   * Those that no page shows are marked alone, so that a page that shows
+   * them later reads them again, and a document of whose statistics no page
+   * shows any keeps no timer, which would hold it once it is dropped.
+   */
+  private followStatistics(): void {
+    if (this.statisticsTimer !== undefined) {
+      this.statisticsAgain = true;
+      return;
+    }
+    const queryKey = ["projects", this.projectId, "statistics"];
+    void this.options.queryClient.invalidateQueries({ queryKey });
+    if (
+      this.options.queryClient
+        .getQueryCache()
+        .findAll({ queryKey, type: "active" }).length === 0
+    ) {
+      return;
+    }
+    this.statisticsTimer = setTimeout(() => {
+      this.statisticsTimer = undefined;
+      if (this.statisticsAgain && !this.disposed) {
+        this.statisticsAgain = false;
+        this.followStatistics();
+      }
+    }, statisticsPause);
   }
 
   /**

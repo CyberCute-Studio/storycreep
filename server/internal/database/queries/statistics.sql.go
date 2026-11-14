@@ -38,7 +38,7 @@ WITH nodes AS (
     SELECT o.board_id, count(*) AS conditions
     FROM live_branch_output o
     JOIN expression e ON e.workspace_id = o.workspace_id AND e.project_id = o.project_id
-        AND e.branch_output_id = o.id AND e.field = 'condition'
+        AND e.branch_output_id = o.id AND e.field = 'condition' AND e.source <> ''
     WHERE o.workspace_id = $1 AND o.project_id = $2
     GROUP BY o.board_id
 )
@@ -81,7 +81,9 @@ type BoardStatisticsRow struct {
 // their rows of the statistics hold them; how many of the connections are
 // choices, those that leave an element that is not an ending, by its out
 // (PRD §5.8.5); how many conditions its connections and its branches'
-// outputs have; and how many of the nodes and the connections have no row of
+// outputs have, of those that are written, as an output's is not until it
+// is, its source being empty, while a connection's that is cleared is no
+// expression; and how many of the nodes and the connections have no row of
 // the version or of a newer one, whose texts the job of the statistics has
 // yet to count. Each kind is read once, grouped by board, each row with its
 // row of the statistics and its condition, of which it has one at most, by
@@ -195,7 +197,7 @@ LEFT JOIN LATERAL (
     SELECT count(*) AS conditions
     FROM live_branch_output lo
     JOIN expression e ON e.workspace_id = lo.workspace_id AND e.project_id = lo.project_id
-        AND e.branch_output_id = lo.id AND e.field = 'condition'
+        AND e.branch_output_id = lo.id AND e.field = 'condition' AND e.source <> ''
     WHERE lo.workspace_id = n.workspace_id AND lo.project_id = n.project_id AND lo.node_id = n.id
 ) o ON true
 WHERE n.workspace_id = $2 AND n.project_id = $3 AND n.id = $4
@@ -222,12 +224,12 @@ type NodeStatisticsRow struct {
 // its text and of the labels of the connections that leave it, as their rows
 // of the statistics hold them; how many of those connections are choices,
 // which leave an element that is not an ending (BoardStatistics); how many
-// conditions they and the node's outputs have; and how many of the node and
-// the connections have no row of the version or of a newer one. It reads the
-// node's connections and outputs by the indexes of their node, and their
-// conditions by the keys of their expressions, so that it reads what the node
-// has alone. A node in the trash, or that the project does not have, has no
-// row.
+// conditions they and the node's outputs have, of those that are written
+// (BoardStatistics); and how many of the node and the connections have no
+// row of the version or of a newer one. It reads the node's connections and
+// outputs by the indexes of their node, and their conditions by the keys of
+// their expressions, so that it reads what the node has alone. A node in the
+// trash, or that the project does not have, has no row.
 func (q *Queries) NodeStatistics(ctx context.Context, arg NodeStatisticsParams) (NodeStatisticsRow, error) {
 	row := q.db.QueryRow(ctx, nodeStatistics,
 		arg.Version,
@@ -447,8 +449,9 @@ FROM expression_ref r
 WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.expression_id IS NULL
     AND r.component_id IS NULL AND (
         r.target_kind = 'variable' AND r.target_id = ANY($3::uuid[])
-        OR r.target_kind IN ('component', 'attribute') AND r.target_id = ANY($4::uuid[])
-        OR r.target_kind = 'attribute' AND r.attribute_def_id = ANY($5::uuid[])
+        OR r.target_kind = 'component' AND r.target_id = ANY($4::uuid[])
+        OR r.target_kind = 'attribute' AND r.target_id = ANY($5::uuid[])
+        OR r.target_kind = 'attribute' AND r.attribute_def_id = ANY($6::uuid[])
     )
 `
 
@@ -456,7 +459,8 @@ type TextsNamingParams struct {
 	WorkspaceID  pgtype.UUID
 	ProjectID    pgtype.UUID
 	VariableIds  []pgtype.UUID
-	ComponentIds []pgtype.UUID
+	NamedIds     []pgtype.UUID
+	KeyedIds     []pgtype.UUID
 	AttributeIds []pgtype.UUID
 }
 
@@ -468,8 +472,9 @@ type TextsNamingRow struct {
 // TextsNaming returns the nodes and the connections of the project, in the
 // trash or not, whose texts name, by the index of what they name (package
 // dependency), a variable among variable_ids, by a value reference, a
-// component among component_ids, by a mention or a value reference of one of
-// its attributes, or a definition among attribute_ids, by a value reference
+// component among named_ids, by a mention, which shows its name, a component
+// among keyed_ids, by a value reference of one of its attributes, which
+// shows its key, or a definition among attribute_ids, by a value reference
 // of the attribute of a component, each once: the texts whose counts a
 // change of those names changes. A value reference names its component and
 // its definition whether the definition is of the component's type or not,
@@ -483,7 +488,8 @@ func (q *Queries) TextsNaming(ctx context.Context, arg TextsNamingParams) ([]Tex
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.VariableIds,
-		arg.ComponentIds,
+		arg.NamedIds,
+		arg.KeyedIds,
 		arg.AttributeIds,
 	)
 	if err != nil {
