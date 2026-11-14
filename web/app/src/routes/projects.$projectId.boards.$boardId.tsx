@@ -315,9 +315,12 @@ function BoardContent({
         where it starts, which a row more would shrink, as on a tablet held
         upright, whose minimap it took out of the window. The name and the
         badge take no room of the row by themselves (basis-0), so that the
-        switch stays beside them as it did beside the name alone. */}
+        switch stays beside them as it did beside the name alone. The name
+        does not shrink, since a fraction of a pixel less than its width
+        breaks it within a word, but is at most as wide as leaves the badge
+        a finger's width and the gap (3.75rem), where a long one wraps. */}
         <div className="flex min-w-0 flex-1 basis-0 items-baseline gap-x-4">
-          <h1 className="min-w-0 text-2xl font-semibold break-words">
+          <h1 className="max-w-[calc(100%-3.75rem)] shrink-0 text-2xl font-semibold break-words">
             {board.name}
           </h1>
           <BoardBadge projectId={projectId} boardId={board.id} />

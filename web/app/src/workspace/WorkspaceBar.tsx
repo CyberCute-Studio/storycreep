@@ -26,9 +26,15 @@ import { Menu, MenuItem } from "../ui/Menu";
 import { Alert } from "../ui/Page";
 import { managesWorkspace, type Workspace, workspacesQuery } from "./queries";
 
-/** The classes of a link of a workspace's or a project's navigation, the current one marked. */
+/**
+ * The classes of a link of a workspace's or a project's navigation, the
+ * current one marked: of a finger's height, 8 px apart (the list's gap), with
+ * 8 px each side of its text, so that the project's eleven pages take two
+ * rows of a tablet held upright, whose canvas takes the window's height
+ * below them.
+ */
 export const navLink =
-  "flex min-h-11 items-center rounded-md px-3 text-fg underline-offset-2 hover:underline data-[status=active]:bg-surface data-[status=active]:font-semibold";
+  "flex min-h-11 items-center rounded-md px-2 text-fg underline-offset-2 hover:underline data-[status=active]:bg-surface data-[status=active]:font-semibold";
 
 export function WorkspaceBar({ workspace }: { workspace: Workspace }) {
   const { t } = useTranslation();

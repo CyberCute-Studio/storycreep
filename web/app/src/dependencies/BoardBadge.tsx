@@ -36,7 +36,8 @@ export function BoardBadge({
   // cuts its text short within itself, so that what it covers ends where
   // what it shows does: an inline link cut short by what holds it still
   // covers the whole of its text, over the switch, as a press and axe's
-  // check of the switch's size find. It is as narrow as a finger at most.
+  // check of the switch's size find. It takes what the board's name leaves
+  // of the row, and is no narrower than a finger.
   return (
     <Link
       to="/projects/$projectId/dependencies"
