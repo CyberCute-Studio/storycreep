@@ -4,6 +4,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { byName } from "../content/textNames";
 import { DependencyBench } from "../dependencies/bench";
 import {
   DependencyGraph,
@@ -65,19 +66,22 @@ export const Route = createFileRoute("/projects/$projectId/dependencies")({
     variable: search.variable,
   }),
   // The project first, then, together, the tree of its boards, by which the
-  // view orders them, its variables, which its filter offers, and the graph.
-  // Its components, which name the attributes of a pair's inspection alone,
-  // start to load as the page does, without the graph's first drawing
-  // waiting for them (NFR-PERF-11), and the inspection reads them if this
-  // read failed (useTextNames).
+  // view orders them, and the graph. Its variables, which its filter offers,
+  // and which name the variables of a pair's inspection, and its
+  // components, which name the attributes of one, start to load as the page
+  // does, without the graph's first drawing waiting for them (NFR-PERF-11),
+  // as a project's variables are read 200 a page: the filter offers them
+  // once they are read, and the inspection reads them if this read failed
+  // (useTextNames).
   loader: async ({ context, params, deps }) => {
     await found(
       context.queryClient.ensureQueryData(projectQuery(params.projectId)),
     );
     const doc = context.documents.get(params.projectId);
+    loadPart(doc, "variables").catch(() => {});
     loadPart(doc, "components").catch(() => {});
     await Promise.all([
-      loadParts(context, params.projectId, ["tree", "variables"]),
+      loadParts(context, params.projectId, ["tree"]),
       found(context.queryClient.ensureQueryData(graphQuery(doc, deps))),
     ]);
   },
@@ -116,25 +120,22 @@ function Dependencies() {
   const graph = useSuspenseQuery(graphQuery(doc, filters)).data;
   useDocumentTitle(t("dependencies.page_title", { project: project.name }));
   const tree = useTree(doc);
-  // The boards in the order of the tree, and after them, in the order of
-  // their IDs, those that the tree does not hold yet, as one that another
-  // session created as the graph was read.
-  const boards = useMemo(() => {
-    const byId = new Map(graph.boards.map((b) => [b.id, b]));
+  // The graph's boards by their IDs, and in the order of the tree, and
+  // after them, in the order of their IDs, those that the tree does not
+  // hold yet, as one that another session created as the graph was read.
+  const { boardOf, boards } = useMemo(() => {
+    const boardOf = new Map(graph.boards.map((b) => [b.id, b]));
+    const rest = new Map(boardOf);
     const out: GraphBoard[] = [];
     for (const item of itemsInOrder(buildTree(tree.folders, tree.boards))) {
-      const b = byId.get(item.item.id);
+      const b = rest.get(item.item.id);
       if (b !== undefined) {
         out.push(b);
-        byId.delete(b.id);
+        rest.delete(b.id);
       }
     }
-    return [...out, ...byId.values()];
+    return { boardOf, boards: [...out, ...rest.values()] };
   }, [graph.boards, tree]);
-  const boardOf = useMemo(
-    () => new Map(graph.boards.map((b) => [b.id, b])),
-    [graph.boards],
-  );
   // The pairs of boards that edges join, in the order of the graph's
   // edges, each with its edges, in the order of their kinds.
   const pairs = useMemo(() => {
@@ -177,25 +178,17 @@ function Dependencies() {
     selection.pair === undefined ? undefined : pairs.get(selection.pair);
   const selectedBoard =
     selection.board === undefined ? undefined : boardOf.get(selection.board);
+  // The variable filter's choices: the global variables, by key, as a
+  // board's variable is read on its board alone (PRD FR-VAR-02), and so
+  // makes no edge between two boards.
   const variables = useDocumentState(doc, (state) => state.view.variables);
-  const boardNames = useDocumentState(doc, (state) => state.view.boards);
   const variableChoices = useMemo(
     () =>
       [...variables.values()]
-        .map((v) => ({
-          id: v.id,
-          name:
-            v.board_id === undefined
-              ? v.key
-              : t("dependencies.board_variable", {
-                  key: v.key,
-                  board:
-                    boardNames.get(v.board_id)?.name ??
-                    t("boards.unknown_board"),
-                }),
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name, i18n.language)),
-    [variables, boardNames, t, i18n.language],
+        .filter((v) => v.board_id === undefined)
+        .map((v) => ({ id: v.id, name: v.key }))
+        .sort(byName),
+    [variables],
   );
   const setFilter = (change: Partial<DependencyFilters>) =>
     void navigate({
@@ -216,7 +209,11 @@ function Dependencies() {
   const [drawnAt, setDrawnAt] = useState<number>();
   const onDrawn = useCallback(() => setDrawnAt(performance.now()), []);
   const number = (n: number) => formatNumber(i18n.language, n);
+  // A board's name, or what one that the graph does not have is called, on
+  // its own, as a cell of the list, and within a sentence, as a button's.
   const nameOf = (id: string) =>
+    boardOf.get(id)?.name ?? t("dependencies.unknown_board");
+  const nameWithin = (id: string) =>
     boardOf.get(id)?.name ?? t("boards.unknown_board");
   return (
     <div className="space-y-6">
@@ -265,7 +262,9 @@ function Dependencies() {
             </option>
           ))}
           {filters.board !== undefined && !boardOf.has(filters.board) && (
-            <option value={filters.board}>{t("boards.unknown_board")}</option>
+            <option value={filters.board}>
+              {t("dependencies.unknown_board")}
+            </option>
           )}
         </SelectField>
         <SelectField
@@ -286,7 +285,7 @@ function Dependencies() {
             </option>
           ))}
           {filters.variable !== undefined &&
-            !variables.has(filters.variable) && (
+            !variableChoices.some((v) => v.id === filters.variable) && (
               <option value={filters.variable}>
                 {t("dependencies.a_variable")}
               </option>
@@ -419,8 +418,8 @@ function Dependencies() {
                         <Button
                           aria-pressed={selection.pair === key}
                           aria-label={t("dependencies.inspect_pair", {
-                            from: nameOf(pair.from),
-                            to: nameOf(pair.to),
+                            from: nameWithin(pair.from),
+                            to: nameWithin(pair.to),
                           })}
                           onClick={() => {
                             focusInspected.current = true;

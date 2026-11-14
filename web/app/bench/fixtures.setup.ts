@@ -232,6 +232,10 @@ async function dependencyProject(
   const boards = Array.from({ length: n }, () => newId("board"));
   const scenes = Array.from({ length: n }, () => newId("node"));
   const commands: Command[] = [];
+  // Every board, its variable, and its scene come first, as the server
+  // applies a batch's commands in order and refuses a jumper's target that
+  // the project does not have yet: the jumpers below lead to the scenes of
+  // boards after their own.
   for (let i = 0; i < n; i++) {
     commands.push(
       {
@@ -247,16 +251,6 @@ async function dependencyProject(
           scope: "global",
         },
       },
-    );
-  }
-  for (let i = 0; i < n; i++) {
-    const end = newId("node");
-    const reads = [
-      `v_${(i + n - 1) % n}`,
-      `v_${(i * 7 + 3) % n}`,
-      ...(i % 5 === 0 ? [`visited(node("${scenes[(i + 29) % n]}"))`] : []),
-    ];
-    commands.push(
       {
         type: "node.create",
         payload: {
@@ -269,6 +263,16 @@ async function dependencyProject(
           on_exit: `v_${i} = true`,
         },
       },
+    );
+  }
+  for (let i = 0; i < n; i++) {
+    const end = newId("node");
+    const reads = [
+      `v_${(i + n - 1) % n}`,
+      `v_${(i * 7 + 3) % n}`,
+      ...(i % 5 === 0 ? [`visited(node("${scenes[(i + 29) % n]}"))`] : []),
+    ];
+    commands.push(
       {
         type: "node.create",
         payload: {

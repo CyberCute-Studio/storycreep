@@ -19,6 +19,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { notFoundBy } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { nodeTitleText, type ValueNamer } from "../content/textNames";
 import { useTextNames } from "../content/useTextNames";
@@ -138,7 +139,11 @@ function EdgeContributions({
       filters.variable,
     ),
   );
-  const refusal = refusalOf(list.error, t);
+  // The server answers not_found once a board of the pair has gone to the
+  // trash, as another session's deletion, which has the graph read again as
+  // it has the contributions, and whose answer takes the pair, and so this
+  // inspection, away: the inspection shows no refusal of it meanwhile.
+  const refusal = notFoundBy(list.error) ? undefined : refusalOf(list.error, t);
   const items = list.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <section className="space-y-2">

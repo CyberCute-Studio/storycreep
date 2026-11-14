@@ -6,6 +6,7 @@
 
 import { formatNumber } from "@storycreep/shared/i18n";
 import { useTranslation } from "react-i18next";
+import { BenchPanel } from "../ui/BenchPanel";
 
 /** What a run of the view's benchmark measured. */
 export interface DependencyBenchResult {
@@ -36,20 +37,11 @@ export function DependencyBench({
   const n = (value: number, digits = 0) =>
     formatNumber(i18n.language, value, { maximumFractionDigits: digits });
   return (
-    <section
-      aria-labelledby="bench-title"
-      className="space-y-2 rounded-md border border-border bg-surface p-4"
-      data-bench-phase={result === undefined ? "running" : "done"}
-      data-bench-result={
-        result === undefined ? undefined : JSON.stringify(result)
-      }
+    <BenchPanel
+      scenario="dependencies"
+      phase={result === undefined ? "running" : "done"}
+      result={result}
     >
-      <h2 id="bench-title" className="text-lg font-semibold">
-        {t("bench.title", { scenario: "dependencies" })}
-      </h2>
-      <p role="status">
-        {result === undefined ? t("bench.recording") : t("bench.done")}
-      </p>
       {result !== undefined && (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
           <dt>{t("bench.graph_rendered")}</dt>
@@ -60,6 +52,6 @@ export function DependencyBench({
           <dd>{n(result.edges)}</dd>
         </dl>
       )}
-    </section>
+    </BenchPanel>
   );
 }

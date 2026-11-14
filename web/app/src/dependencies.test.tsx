@@ -9,7 +9,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
-import { fakeApi, startPage, testProject } from "./test/fake";
+import { fakeApi, refused, startPage, testProject } from "./test/fake";
 import { fakeRealtime } from "./test/realtime";
 
 // A project's dependency view (PRD FR-DEP-02, plan note N77), as the router
@@ -115,7 +115,7 @@ const gold: Variable = {
 
 /** Answers the dependency view's pages, with the graph that answer returns for a request's query, the contributions of contributions, and the project's variables. */
 function dependencyPages(
-  answer: (query: Record<string, string>) => Graph,
+  answer: (query: Record<string, string>) => Graph | Promise<Graph>,
   contributions: (query: Record<string, string>) => PageContribution = () => ({
     items: [goldWrite],
     next_cursor: null,
@@ -274,6 +274,99 @@ describe("a project's dependency view", () => {
     expect(await within(panel).findByText("global.gold")).toBeDefined();
   });
 
+  it("shows no refusal of a pair whose board went to the trash, which the graph read again takes away", async () => {
+    const user = userEvent.setup();
+    const realtime = fakeRealtime();
+    let answer: Graph | Promise<Graph> = graph();
+    let trashed = false;
+    const calls = dependencyPages(
+      () => answer,
+      () => {
+        if (trashed) {
+          throw refused(404, { code: "not_found" });
+        }
+        return { items: [goldWrite], next_cursor: null };
+      },
+    );
+    renderApp(`/projects/${testProject.id}/dependencies`, {
+      session: testSession,
+      realtime,
+    });
+    await screen.findByRole("heading", { level: 1, name: "Dependencies" });
+    await user.click(
+      screen.getByRole("button", {
+        name: "Inspect what Lighthouse depends on in Harbour",
+      }),
+    );
+    const inspected = await screen.findByRole("heading", {
+      name: "Lighthouse depends on Harbour",
+    });
+    await within(inspected.closest("section") as HTMLElement).findByText(
+      "gold",
+    );
+    // Another session deletes Lighthouse to the trash: the contributions,
+    // read again, are answered with not_found before the graph is.
+    let release: (graph: Graph) => void = () => {};
+    answer = new Promise<Graph>((resolve) => {
+      release = resolve;
+    });
+    trashed = true;
+    const contributionReads = () =>
+      calls.mock.calls.filter(([op]) => op === "listDependencyContributions")
+        .length;
+    const before = contributionReads();
+    act(() =>
+      realtime.send(
+        testProject.id,
+        [{ type: "board.rename", payload: { id: harbourId, name: "Harbour" } }],
+        [{ id: harbourId, rev: 4 }],
+      ),
+    );
+    await waitFor(() => expect(contributionReads()).toBe(before + 1));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(
+      screen.queryAllByRole("alert").filter((a) => a.textContent !== ""),
+    ).toEqual([]);
+    act(() =>
+      release(
+        graph({
+          seq: testProject.seq + 1,
+          boards: graph().boards.filter((b) => b.id !== lighthouseId),
+          edges: [],
+        }),
+      ),
+    );
+    await screen.findByText(/^Select a line or a board of the graph/);
+    expect(
+      screen.queryByRole("heading", { name: "Lighthouse depends on Harbour" }),
+    ).toBeNull();
+  });
+
+  it("offers the global variables to the variable filter, as a board's makes no edge between two boards", async () => {
+    dependencyPages(() => graph(), undefined, [
+      gold,
+      {
+        ...gold,
+        id: "var_01HQ8Z3XK4F7NAWR5TCQ9M2BVH",
+        key: "tide",
+        scope: "board",
+        board_id: lighthouseId,
+        order: "W",
+      },
+    ]);
+    renderApp(`/projects/${testProject.id}/dependencies`, {
+      session: testSession,
+    });
+    const filter = within(
+      await screen.findByRole("combobox", { name: "Variable" }),
+    );
+    await filter.findByRole("option", { name: "gold" });
+    expect(filter.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Every variable",
+      "gold",
+    ]);
+  });
+
   it("shows the view without a filter that is no ID of its kind, as of a link cut short", async () => {
     const calls = dependencyPages(() => graph());
     renderApp(
@@ -315,6 +408,7 @@ describe("a project's dependency view", () => {
     );
     await screen.findByText("3 boards, 1 dependency between them.");
     expect(router.state.location.search).toEqual({ kind: "jumper" });
+    await screen.findByRole("option", { name: "gold" });
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Variable" }),
       goldId,

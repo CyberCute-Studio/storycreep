@@ -432,7 +432,8 @@ interface BoardCanvasProps {
    * The connection, leaving the node of focus, that the canvas selects once
    * it has opened on that node, as a link to a finding of a connection asks
    * (plan item 70), on a board that may be changed, whose inspector then
-   * shows the connection's form; on another, the node stays selected.
+   * shows the connection's form; on another, and for one that does not
+   * leave that node, the node stays selected.
    */
   focusConnection?: string;
 }
@@ -899,17 +900,26 @@ function BoardCanvasOf({
   useLayoutEffect(() => {
     opensInspector.current = editable && docked;
   });
+  // A connection that the link names is selected only if it leaves the
+  // node, as a link of a connection names the node that it leaves: one of a
+  // link cut short or written by hand, or of a connection that a session
+  // has since reconnected, leaves the node selected, rather than select a
+  // connection elsewhere on the board while the canvas shows the node.
   const openNode = useCallback(
     (id: string, connection?: string) =>
       controller.focus(id, () => {
-        if (connection !== undefined) {
+        if (
+          connection !== undefined &&
+          doc.store.getState().view.connections.get(connection)
+            ?.from_node_id === id
+        ) {
           controller.selectConnection(connection);
         }
         if (opensInspector.current) {
           setInspecting(true);
         }
       }),
-    [controller],
+    [controller, doc],
   );
   useEffect(() => {
     if (focus !== undefined) {

@@ -17,6 +17,7 @@
 import { formatNumber } from "@storycreep/shared/i18n";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { BenchPanel, type BenchPhase } from "../ui/BenchPanel";
 import {
   type BenchOptions,
   type CanvasHandle,
@@ -241,9 +242,7 @@ export default function Bench({
   edit?: (places: ReadonlyMap<string, Point>) => Promise<{ applied: boolean }>;
 }) {
   const { t, i18n } = useTranslation();
-  const [phase, setPhase] = useState<"waiting" | "warm" | "running" | "done">(
-    "waiting",
-  );
+  const [phase, setPhase] = useState<BenchPhase>("waiting");
   const [result, setResult] = useState<BenchResult>();
 
   useEffect(() => {
@@ -496,24 +495,7 @@ export default function Bench({
       ? t("bench.none")
       : formatNumber(i18n.language, value, { maximumFractionDigits: digits });
   return (
-    <section
-      aria-labelledby="bench-title"
-      className="space-y-2 rounded-md border border-border bg-surface p-4"
-      data-bench-phase={phase}
-      data-bench-result={
-        result === undefined ? undefined : JSON.stringify(result)
-      }
-    >
-      <h2 id="bench-title" className="text-lg font-semibold">
-        {t("bench.title", { scenario: options.scenario })}
-      </h2>
-      <p role="status">
-        {phase === "done"
-          ? t("bench.done")
-          : phase === "running"
-            ? t("bench.recording")
-            : t("bench.warming")}
-      </p>
+    <BenchPanel scenario={options.scenario} phase={phase} result={result}>
       {result !== undefined && (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1">
           <dt>{t("bench.renderer")}</dt>
@@ -573,6 +555,6 @@ export default function Bench({
           )}
         </dl>
       )}
-    </section>
+    </BenchPanel>
   );
 }

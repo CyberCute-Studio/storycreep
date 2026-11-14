@@ -1275,6 +1275,25 @@ describe("the inspector of a board's flow", () => {
     expect(canvas.dataset.connection ?? "").toBe("");
   });
 
+  it("opens on the node of a link that names a connection that leaves another node", async () => {
+    flowProject({
+      nodes: [
+        testNode("nd_1", 0, 0, { title: "The quay" }),
+        testNode("nd_2", 480, 0, { title: "The dock" }),
+        testNode("nd_3", 480, 300, { title: "The stair" }),
+      ],
+      connections: [
+        testConnection("cn_1", "nd_1", "nd_2"),
+        testConnection("cn_2", "nd_2", "nd_3"),
+      ],
+    });
+    const canvas = await openBoard("?node=nd_1&connection=cn_2");
+    expect(
+      await screen.findByRole("region", { name: "The quay" }),
+    ).toBeDefined();
+    expect(canvas.dataset.connection ?? "").toBe("");
+  });
+
   it("changes the connection selected in its inspector: its label, the node that it enters, and its place, and deletes it", async () => {
     const user = userEvent.setup();
     const { calls } = flowProject({

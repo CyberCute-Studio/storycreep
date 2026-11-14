@@ -108,14 +108,13 @@ export function whereText(
 function FindingWhere({
   projectId,
   finding,
-  names,
+  text,
 }: {
   projectId: string;
   finding: Finding;
-  names: FindingNames;
+  /** Where it is, as whereText says. */
+  text: string;
 }) {
-  const { t } = useTranslation();
-  const text = whereText(t, finding, names);
   const { board_id: board, node_id: node } = finding;
   switch (finding.entity_type) {
     case "node":
@@ -210,11 +209,13 @@ export function FindingItem({
   const { t, i18n } = useTranslation();
   const code = mutedCode(finding);
   const mute = finding.mute;
+  // Where it is, which its link says, and which names its buttons.
+  const where = whereText(t, finding, names);
   return (
     <li className="space-y-1 border-t border-border py-3">
       <p className="break-words">{finding.message}</p>
       <p className="break-words text-fg-muted">
-        <FindingWhere projectId={projectId} finding={finding} names={names} />
+        <FindingWhere projectId={projectId} finding={finding} text={where} />
         {" · "}
         <code>{finding.code}</code>
       </p>
@@ -241,7 +242,7 @@ export function FindingItem({
               label={t("validation.mute")}
               finding={finding}
               code={code}
-              names={names}
+              where={where}
               onMute={onMute}
             />
           ) : (
@@ -250,13 +251,13 @@ export function FindingItem({
                 label={t("validation.change_reason")}
                 finding={finding}
                 code={code}
-                names={names}
+                where={where}
                 onMute={onMute}
               />
               <Button
                 aria-label={t("validation.button_of", {
                   label: t("validation.unmute"),
-                  where: whereText(t, finding, names),
+                  where,
                 })}
                 onClick={() => onUnmute(finding, code)}
               >
@@ -275,23 +276,21 @@ function MuteButton({
   label,
   finding,
   code,
-  names,
+  where,
   onMute,
 }: {
   label: string;
   finding: Finding;
   code: MutedCode;
-  names: FindingNames;
+  /** Where the finding is, as whereText says. */
+  where: string;
   onMute: (muting: Muting) => void;
 }) {
   const { t } = useTranslation();
   return (
     <Button
       aria-haspopup="dialog"
-      aria-label={t("validation.button_of", {
-        label,
-        where: whereText(t, finding, names),
-      })}
+      aria-label={t("validation.button_of", { label, where })}
       onClick={(event) =>
         onMute({ finding, code, opener: event.currentTarget })
       }

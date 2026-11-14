@@ -29,16 +29,12 @@ export async function found<T>(read: Promise<T>): Promise<T> {
  * the server refuses as none (notFoundBy), which shows the page of no page.
  */
 export function canonicalId(kind: IdKind, id: string): string {
-  try {
-    return encodeId(kind, decodeId(kind, id));
-  } catch {
-    return id;
-  }
+  return searchId(kind, id) ?? id;
 }
 
 /**
  * Returns the ID of kind that a page's search holds as a filter of what the
- * page asks the server for, as the server writes it (canonicalId), or
+ * page asks the server for, as the server writes it (encodeId), or
  * undefined for none, or for one that is no ID of kind, as a link cut short
  * holds: the page then shows what it shows without that filter, as the board
  * page opens the canvas as without a node that the board does not have,
