@@ -183,7 +183,7 @@ SET version = greatest(text_statistic_state.version, excluded.version);
 -- yet to count. Each kind is read once, grouped by board, each row with its
 -- row of the statistics and its condition, of which it has one at most, by
 -- the key of its expressions, so that the read reads no row twice, and in
--- time that grows with the project's size alone: about 0.1 s on the large
+-- time that grows with the project's size alone: about 40 ms on the large
 -- fixture (BenchmarkStatistics).
 WITH nodes AS (
     SELECT n.board_id, count(*) AS nodes, sum(s.words) AS words, sum(s.characters) AS characters,
