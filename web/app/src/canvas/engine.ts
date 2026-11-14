@@ -486,8 +486,12 @@ interface CardView {
   edge: NineSliceSprite;
   stripe: Sprite;
   ring: NineSliceSprite;
-  /** The ring of play mode's current node, or of one that the flow passed, beyond the selection's. */
-  trail: NineSliceSprite;
+  /**
+   * The ring of play mode's current node, or of one that the flow passed,
+   * beyond the selection's, made once play first marks the card's node, so
+   * that a board that is not played has no more objects than before.
+   */
+  trail?: NineSliceSprite;
   title: BitmapText;
   kind: BitmapText;
   body: BitmapText;
@@ -1102,7 +1106,6 @@ class PixiEngine implements Engine {
       edge: nine(this.art.edge, 20),
       stripe: new Sprite(Texture.WHITE),
       ring: nine(this.art.ring, 22),
-      trail: nine(this.art.ring, 22),
       title: text(fonts.bold, titleSize),
       kind: text(fonts.regular, kindSize),
       body: text(fonts.regular, bodySize),
@@ -1117,7 +1120,6 @@ class PixiEngine implements Engine {
       view.kind,
       view.body,
       view.ring,
-      view.trail,
     );
     this.cards.addChild(view.root);
     return view;
@@ -1134,11 +1136,25 @@ class PixiEngine implements Engine {
     played: Played,
     theme: Theme,
   ): void {
-    const t = view.trail;
-    t.visible = played !== "";
     if (played === "") {
+      if (view.trail !== undefined) {
+        view.trail.visible = false;
+      }
       return;
     }
+    let t = view.trail;
+    if (t === undefined) {
+      t = new NineSliceSprite({
+        texture: this.art.ring,
+        leftWidth: 22,
+        rightWidth: 22,
+        topHeight: 22,
+        bottomHeight: 22,
+      });
+      view.trail = t;
+      view.root.addChild(t);
+    }
+    t.visible = true;
     const inset = 8;
     const scale = cornerRadius / 16;
     t.scale.set(scale);

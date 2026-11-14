@@ -358,7 +358,8 @@ describe("play mode", () => {
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "Play" })).toBeNull(),
     );
-    expect(lastMarks()).toBeUndefined();
+    // The canvas draws its next frame without the marks.
+    await waitFor(() => expect(lastMarks()).toBeUndefined());
   });
 
   it("lists a runtime error with where it is and its expression's source, and halts there", async () => {
