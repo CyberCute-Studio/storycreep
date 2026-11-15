@@ -14,6 +14,7 @@ import type { TFunction } from "i18next";
 import {
   type FormEvent,
   type KeyboardEvent,
+  memo,
   useEffect,
   useId,
   useLayoutEffect,
@@ -25,7 +26,8 @@ import { sessionQuery } from "../api";
 import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
-import { payloadField } from "../project/dialogs";
+import { payloadField, useExpected } from "../project/dialogs";
+import { conflictOf } from "../project/queries";
 import { inputMethodTook } from "../richtext/suggest";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
@@ -75,13 +77,15 @@ function escaped(onEscape: () => void) {
 const maxName = 100;
 
 // The status of the last load of each session that left the flow on another
-// board, with the turn that it was, which the section of that board's page,
-// which the board's page follows the flow to (followsFlow), says once it
-// shows, as long as the turn is still the session's, rather than nothing, as
-// the section that loaded it goes with its own page.
+// board, with that board and the turn that it was, which the section of that
+// board's page, which the board's page follows the flow to (followsFlow),
+// says once it shows, as long as the turn is still the session's, rather
+// than nothing, as the section that loaded it goes with its own page; the
+// section of another board's page, as the one that loaded it shown anew
+// while the page waits to follow the flow (holding), says nothing of it.
 const followedLoads = new WeakMap<
   PlaySession,
-  { readonly turn: number; readonly status: string }
+  { readonly board: string; readonly turn: number; readonly status: string }
 >();
 
 // The forms of the section, whose name's field shows a refusal of the
@@ -90,16 +94,22 @@ type NameForm = "save" | "rename";
 
 // What the section said last, of what it did or why it could not: of a
 // refusal of a form's press, the form, under whose name's field a refusal of
-// the name is shown, rather than under another's.
+// the name is shown, rather than under another's, and the error that it
+// was, after which a rename expects the revision that the list has, once it
+// was refused for one that changed elsewhere (useExpected).
 type Said =
   | { readonly status: string }
   | {
       readonly refusal: Refusal | undefined;
       readonly alert?: string;
       readonly form?: NameForm;
+      readonly error?: unknown;
     };
 
-export function SavedStates({
+// The section, which renders only as what it shows changes, rather than as
+// every turn of the session renders the panel, since it reads the session's
+// state only as a press asks for it.
+export const SavedStates = memo(function SavedStates({
   doc,
   session,
   boardId,
@@ -127,16 +137,15 @@ export function SavedStates({
   // as it is there, as a screen reader hears a change of it (followedLoads).
   useEffect(() => {
     const followed = followedLoads.get(session);
+    if (followed === undefined || followed.board !== boardId) {
+      return;
+    }
     followedLoads.delete(session);
     const s = session.state;
-    if (
-      followed !== undefined &&
-      s.status === "playing" &&
-      s.turn === followed.turn
-    ) {
+    if (s.status === "playing" && s.turn === followed.turn) {
       setSaid({ status: followed.status });
     }
-  }, [session]);
+  }, [session, boardId]);
   // The field or the button of the section that had the focus last. Once
   // what the section shows anew has taken it away, whatever took it, as a
   // rename, a deletion, or a list read again, or another session's deletion
@@ -168,7 +177,17 @@ export function SavedStates({
       setSaid(typeof done === "string" ? { status: done } : done);
       return typeof done === "string";
     } catch (error) {
-      setSaid({ refusal: refusalOf(error, t, payloadField("name")), form });
+      // A refusal for a revision that changed elsewhere, which the list
+      // read again shows, as a rename pressed again expects it then
+      // (useExpected).
+      if (conflictOf(error)) {
+        await list.refetch();
+      }
+      setSaid({
+        refusal: refusalOf(error, t, payloadField("name")),
+        form,
+        error,
+      });
       return false;
     } finally {
       setBusy(false);
@@ -200,7 +219,6 @@ export function SavedStates({
       try {
         if (
           !session.load({
-            id: body.id,
             name: body.name,
             state: body.state,
             names: body.names,
@@ -235,7 +253,11 @@ export function SavedStates({
         now.status === "playing" &&
         followsFlow(doc, now.flow.board, boardId)
       ) {
-        followedLoads.set(session, { turn: now.turn, status });
+        followedLoads.set(session, {
+          board: now.flow.board,
+          turn: now.turn,
+          status,
+        });
       }
       return status;
     });
@@ -271,6 +293,8 @@ export function SavedStates({
   // What the server refused of form's name, which its field shows.
   const refusalOfForm = (form: NameForm) =>
     refusal?.form === form ? refusal.refusal : undefined;
+  // The error that the server refused the last rename with, if it was.
+  const renameError = refusal?.form === "rename" ? refusal.error : undefined;
   return (
     // No Escape in the section closes the sheet that the panel is, which
     // would stop play and lose its history, as one pressed once more than
@@ -374,6 +398,7 @@ export function SavedStates({
                   state={s}
                   disabled={busy}
                   refusal={refusalOfForm("rename")}
+                  error={renameError}
                   onCancel={() => {
                     // A refusal of the rename goes with its field, as the
                     // focus in it, or on its Cancel, does.
@@ -387,13 +412,13 @@ export function SavedStates({
                     setRenaming(undefined);
                     headingRef.current?.focus();
                   }}
-                  onRename={(name) =>
+                  onRename={(name, rev) =>
                     act(async () => {
                       await doc.send([
                         {
                           type: "play_state.rename",
                           payload: { id: s.id, name },
-                          expected_rev: { [s.id]: s.rev },
+                          expected_rev: { [s.id]: rev },
                         },
                       ]);
                       setRenaming(undefined);
@@ -469,7 +494,7 @@ export function SavedStates({
       )}
     </section>
   );
-}
+});
 
 // changedWhen returns when the play state s last changed, its name or its
 // state, as the list says it, and whether by the user whose ID is userId: a
@@ -572,25 +597,41 @@ function SaveForm({
   );
 }
 
-// RenameForm asks for the new name of the play state state.
+// RenameForm asks for the new name of the play state state, and renames it
+// expecting the revision that it had once the form opened, so that a rename
+// elsewhere meanwhile, which the list shows as it reads it again, is refused
+// rather than written over unasked (PRD §7.10), or, once a rename was
+// refused for it, which the section says, the one that the list has then
+// (useExpected).
 function RenameForm({
   state,
   disabled,
   refusal,
+  error,
   onCancel,
   onRename,
 }: {
   state: PlayStateSummary;
+  /** Whether a press of the section is under way, while which the rename stays, as a dialog stays open while its request is, so that its refusal is said under its field. */
   disabled: boolean;
   /** Why the server refused the last rename, whose name field it may name. */
   refusal: Refusal | undefined;
+  /** The error that the server refused the last rename with, if it did. */
+  error: unknown;
   onCancel: () => void;
-  onRename: (name: string) => Promise<boolean>;
+  /** Renames the state to name, expecting its revision rev, and resolves to whether it did. */
+  onRename: (name: string, rev: number) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(state.name);
   const [problem, setProblem] = useState<string>();
   const [sent, setSent] = useState<string>();
+  const rev = useExpected(state.rev, error);
+  const cancel = () => {
+    if (!disabled) {
+      onCancel();
+    }
+  };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
@@ -598,14 +639,15 @@ function RenameForm({
     setProblem(p);
     if (p === undefined) {
       setSent(trimmed);
-      await onRename(trimmed);
+      await onRename(trimmed, rev);
     }
   };
   return (
-    // Escape cancels the rename, as its button does.
+    // Escape cancels the rename, as its button does, but for while a press
+    // is under way (disabled).
     <form
       onSubmit={(e) => void submit(e)}
-      onKeyDown={escaped(onCancel)}
+      onKeyDown={escaped(cancel)}
       className="space-y-2"
       noValidate
     >
@@ -624,7 +666,9 @@ function RenameForm({
         <Button type="submit" variant="primary" disabled={disabled}>
           {t("play.saved.rename_save")}
         </Button>
-        <Button onClick={onCancel}>{t("play.saved.rename_cancel")}</Button>
+        <Button disabled={disabled} onClick={cancel}>
+          {t("play.saved.rename_cancel")}
+        </Button>
       </div>
     </form>
   );

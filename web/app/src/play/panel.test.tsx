@@ -1901,6 +1901,127 @@ describe("saved play states", () => {
     );
   });
 
+  // A rename expects the revision that the state had once its field opened,
+  // so that another session's rename meanwhile, which the list shows as it
+  // reads it again, is refused rather than written over unasked (PRD
+  // §7.10), after which the list is read again, and the rename pressed
+  // again expects the revision that it has then; while the rename is under
+  // way, neither Cancel nor Escape takes away its field, under which a
+  // refusal of its name is said.
+  it("refuses a rename over another session's rename made since its field opened, and keeps the field while the rename is under way", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "After act 1",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    // The first rename is answered once refuse is called, with the
+    // server's refusal for the revision that the other session's left.
+    let refuse = () => {};
+    let renames = 0;
+    const calls = playProject(undefined, undefined, (operation, input) => {
+      if (operation === "applyCommands" && renames++ === 0) {
+        return new Promise((_, reject) => {
+          refuse = () =>
+            reject(
+              refused(409, {
+                code: "revision_conflict",
+                message: "Someone else changed it meanwhile.",
+                details: {
+                  conflicts: [
+                    {
+                      command: 0,
+                      command_id: "00000000-0000-7000-8000-000000000001",
+                      type: "play_state.rename",
+                      id: pst,
+                      expected_rev: 1,
+                      exists: true,
+                      current_rev: 2,
+                    },
+                  ],
+                  states: { [pst]: saved.states[0] },
+                },
+              }),
+            );
+        });
+      }
+      return saved.answer(operation, input);
+    });
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “After act 1”",
+      }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “After act 1”",
+    });
+    await user.clear(field);
+    await user.type(field, "Storm");
+    saved.states[0] = { ...saved.states[0], name: "Romance path", rev: 2 };
+    act(() =>
+      realtime.send(
+        project.id,
+        [
+          {
+            type: "play_state.rename",
+            payload: { id: pst, name: "Romance path" },
+          },
+        ],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByRole("textbox", {
+      name: "New name of “Romance path”",
+    });
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    const cancel = within(panel).getByRole("button", {
+      name: "Cancel",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(cancel.disabled).toBe(true));
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(field.isConnected).toBe(true);
+    await act(async () => refuse());
+    await within(panel).findByText("Someone else changed it meanwhile.");
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await within(panel).findByText("Renamed “Romance path” to “Storm”.");
+    expect(
+      sentBatches(calls).map((batch) =>
+        batch.map((c) => (c as { expected_rev?: unknown }).expected_rev),
+      ),
+    ).toEqual([[{ [pst]: 1 }], [{ [pst]: 2 }]]);
+  });
+
   // A load that leaves the flow on another board, whose page the board's
   // page follows the flow to, says what it kept in that page's section's
   // status, as the page that loaded it goes.

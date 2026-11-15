@@ -170,7 +170,7 @@ async function savedAtDock(): Promise<SavedStart> {
     attributes: { [elara.id]: { [trust.id]: "elara.trust" } },
   });
   const { state, names } = JSON.parse(JSON.stringify(saving));
-  return { id: id("pst", "1"), name: "At the dock", state, names };
+  return { name: "At the dock", state, names };
 }
 
 describe("a saved play state", () => {

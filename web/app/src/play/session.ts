@@ -71,9 +71,12 @@ export interface PlayStart {
   readonly saved?: SavedStart;
 }
 
-/** A saved play state that play starts at, as the server keeps it (FR-PLAY-05). */
+/**
+ * A saved play state that play starts at, as the server kept it when play
+ * read it (FR-PLAY-05), of which play keeps a copy, rather than which of the
+ * project's play states it is, which may change or go meanwhile.
+ */
 export interface SavedStart {
-  readonly id: string;
   readonly name: string;
   /** Its state, a save state of the draft as it was when it was saved (§8.5). */
   readonly state: SaveState;

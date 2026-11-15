@@ -234,7 +234,10 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * and so is one beyond the window, as below the page's fold, but for one
  * that an element that scrolls, or clips what it holds, shows none of, as a
  * docked panel's choices once it has scrolled past them, which is beside
- * nothing that it is shown beside.
+ * nothing that it is shown beside; what clips a control is what holds the
+ * box that it is placed in, which for one placed absolutely is its nearest
+ * positioned holder, and for one that is fixed the window, and neither the
+ * body nor the root, which the window scrolls.
  */
 export async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -269,23 +272,41 @@ export async function smallTargets(page: Page): Promise<string[]> {
       }
       // A control that an element of the page that scrolls, or clips what
       // it holds, shows none of, as a docked panel's choices once the panel
-      // has scrolled past them, is pressed nowhere there.
+      // has scrolled past them, is pressed nowhere there. What clips an
+      // element is what holds the box that it is placed in, its containing
+      // block, and what holds that: one placed absolutely is placed in its
+      // nearest positioned holder (offsetParent), past what is between, and
+      // one that is fixed in the window, past every holder. The body and the
+      // root clip nothing, as the window scrolls what they hold, and a
+      // control beyond the window is a control still.
       let clipped = false;
-      for (
-        let holder = pressed.parentElement;
-        holder !== null && !clipped;
-        holder = holder.parentElement
-      ) {
-        const held = getComputedStyle(holder);
-        if (held.overflowX === "visible" && held.overflowY === "visible") {
-          continue;
+      for (let placed: Element = pressed; !clipped; ) {
+        const position = getComputedStyle(placed).position;
+        const holder =
+          position === "fixed"
+            ? null
+            : position === "absolute"
+              ? placed instanceof HTMLElement
+                ? placed.offsetParent
+                : null
+              : placed.parentElement;
+        if (
+          holder === null ||
+          holder === document.body ||
+          holder === document.documentElement
+        ) {
+          break;
         }
-        const view = holder.getBoundingClientRect();
-        clipped =
-          box.bottom <= view.top ||
-          box.top >= view.bottom ||
-          box.right <= view.left ||
-          box.left >= view.right;
+        const held = getComputedStyle(holder);
+        if (held.overflowX !== "visible" || held.overflowY !== "visible") {
+          const view = holder.getBoundingClientRect();
+          clipped =
+            box.bottom <= view.top ||
+            box.top >= view.bottom ||
+            box.right <= view.left ||
+            box.left >= view.right;
+        }
+        placed = holder;
       }
       if (clipped) {
         continue;
