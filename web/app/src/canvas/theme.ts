@@ -22,6 +22,8 @@ export interface Theme {
   accent: number;
   /** What is wrong, as a broken jumper's edge and the line that says so. */
   danger: number;
+  /** Where play mode is: the current node's ring, and the path that the flow took (plan note N78). */
+  play: number;
   /** Whether the theme is dark, which picks the palette's colours. */
   dark: boolean;
 }
@@ -35,6 +37,7 @@ const tokens = {
   muted: "--color-fg-muted",
   accent: "--color-accent",
   danger: "--color-danger",
+  play: "--color-play",
 } as const;
 
 /**
@@ -42,7 +45,7 @@ const tokens = {
  * as under Windows's contrast themes, for each of the tokens, as it draws
  * the page's own elements: the board and the cards on Canvas, their edges
  * and text in CanvasText, what is wrong among them, which its words say,
- * and the selection in Highlight. The browser
+ * the selection in Highlight, and where play mode is in LinkText. The browser
  * forces the colour of the probe that reads a token as well, so that each
  * token would read as the text's colour, and the board be drawn in one.
  */
@@ -54,6 +57,7 @@ const systemColors: Record<keyof typeof tokens, string> = {
   muted: "CanvasText",
   accent: "Highlight",
   danger: "CanvasText",
+  play: "LinkText",
 };
 
 /** The light theme's colours, for a page that has none of the tokens, as the tests' jsdom. */
@@ -65,6 +69,7 @@ const fallback: Theme = {
   muted: 0x4b5260,
   accent: 0x2b50c8,
   danger: 0xb3261e,
+  play: 0x0d6b43,
   dark: false,
 };
 
@@ -103,6 +108,7 @@ export function readTheme(element: HTMLElement, forced = false): Theme {
       muted: read("muted"),
       accent: read("accent"),
       danger: read("danger"),
+      play: read("play"),
       // Dark where the board stands out of white more than of black, as
       // light text would on it, by the contrast that the palette's colours
       // are measured by against it.
@@ -123,6 +129,7 @@ export function sameTheme(a: Theme, b: Theme): boolean {
     a.muted === b.muted &&
     a.accent === b.accent &&
     a.danger === b.danger &&
+    a.play === b.play &&
     a.dark === b.dark
   );
 }

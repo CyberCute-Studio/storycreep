@@ -154,6 +154,14 @@ export interface PanelProps {
    * panel that opens gives it the focus.
    */
   headingRef?: RefObject<HTMLHeadingElement | null>;
+  /**
+   * Whether the heading takes the focus as the panel opens, as it does
+   * unless the page says otherwise; a sheet's always does, as it holds the
+   * focus. A panel that opens beside what the user types in, as play mode's
+   * beside the editor of a text once a tablet's turn makes room for it,
+   * leaves the focus there. It is read as the panel opens.
+   */
+  focusOnOpen?: boolean;
   children: ReactNode;
 }
 
@@ -162,7 +170,8 @@ export interface PanelProps {
  * keyboard or a screen reader is in it, rather than in the list that it is
  * beside, which may be a thousand items long; a page shows another thing's
  * panel anew, keyed by the thing, which gives that one's heading the focus
- * too. Once it has gone, the focus that it had goes back to what
+ * too, but for a docked panel that the page opens beside what the user types
+ * in (focusOnOpen). Once it has gone, the focus that it had goes back to what
  * returnFocus finds.
  */
 export function Panel({
@@ -171,11 +180,14 @@ export function Panel({
   onClose,
   returnFocus,
   headingRef,
+  focusOnOpen = true,
   children,
 }: PanelProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const sheet = !useDocked();
+  // Whether the heading takes the focus as the panel opens, as it was then.
+  const opensFocused = useRef(sheet || focusOnOpen);
   const frame = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   // The heading's own ref and the page's, set once as it mounts, rather
@@ -214,7 +226,9 @@ export function Panel({
   }, [sheet]);
   useLayoutEffect(() => {
     const element = frame.current;
-    heading.current?.focus();
+    if (opensFocused.current) {
+      heading.current?.focus();
+    }
     return () => {
       // The focus goes back to the list from the panel alone, or from
       // nowhere: the focus elsewhere stays where it is, as in a dialog of

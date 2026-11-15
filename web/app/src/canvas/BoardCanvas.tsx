@@ -64,10 +64,13 @@ import {
 } from "../commands/registry";
 import { boardPart } from "../document/doc";
 import {
+  useBoard,
   useDocumentState,
   useDocuments,
   useProjectDocument,
 } from "../document/react";
+import { PlayPanel } from "../play/PlayPanel";
+import { type PlayStart, playSessionOf } from "../play/session";
 import {
   HistoryButtons,
   type HistoryOf,
@@ -436,6 +439,13 @@ interface BoardCanvasProps {
    * leave that node, the node stays selected.
    */
   focusConnection?: string;
+  /**
+   * Tells whether the canvas has open what the user types in, which a page
+   * change would take away unsaved: the inspector, or the editor of a text,
+   * as it opens and closes, which the board's page waits for to close before
+   * it follows play mode's flow to another board's page (plan note N78).
+   */
+  onHolding?: (holding: boolean) => void;
 }
 
 /**
@@ -466,6 +476,7 @@ function BoardCanvasOf({
   editable = false,
   focus,
   focusConnection,
+  onHolding,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -1517,6 +1528,76 @@ function BoardCanvasOf({
     ),
   );
   const onlyLink = onlyTarget === undefined ? undefined : linkOf(onlyTarget);
+  // Play mode (FR-PLAY-01, plan note N78): the project's session, which the
+  // panel beside the canvas shows, and where play starts from what the
+  // canvas has selected: the one node selected, of any type, or, with
+  // nothing selected, neither a node nor a connection, the board's entry
+  // node (AC2). Starting closes the inspector, which an open one covers the
+  // play panel with.
+  // The page reads of the session only what it shows, so that a read's
+  // progress or the draft's change, which the panel says, draws nothing
+  // here.
+  const session = playSessionOf(doc);
+  const playing = useStore(session.store, (s) => s.status !== "idle");
+  const playFlow = useStore(session.store, (s) =>
+    s.status === "playing" ? s.flow : undefined,
+  );
+  const playTurn = useStore(session.store, (s) =>
+    s.status === "playing" ? s.turn : 0,
+  );
+  const board = useBoard(doc, boardId);
+  const playFrom: PlayStart | undefined =
+    content !== "ready"
+      ? undefined
+      : selected === 1 && onlyNode !== undefined
+        ? { board: boardId, node: onlyNode.id }
+        : selected === 0 &&
+            connection === undefined &&
+            board?.entry_node_id !== undefined
+          ? { board: boardId, node: "" }
+          : undefined;
+  const startPlay = (from: PlayStart) => {
+    setInspecting(false);
+    void session.start(from);
+  };
+  // Where play is on the board, which the canvas highlights, and its tree
+  // says of the current node; the canvas shows the current node once the
+  // flow comes to it, as after each choice and once the board's page
+  // followed the flow here, once for each turn, rather than again as the
+  // user comes back to the board, whose canvas shows it where it was.
+  const playNode =
+    playFlow !== undefined && playFlow.board === boardId ? playFlow.node : "";
+  const marks = useMemo(
+    () =>
+      playFlow === undefined
+        ? undefined
+        : {
+            current: playNode,
+            visited: playFlow.visited,
+            traversed: playFlow.traversed,
+          },
+    [playFlow, playNode],
+  );
+  useEffect(() => {
+    controller.setPlay(marks);
+  }, [controller, marks]);
+  useEffect(() => {
+    if (content !== "ready" || playNode === "" || playTurn === 0) {
+      return;
+    }
+    const r = controller.scene.boundsOf([playNode]);
+    if (r !== undefined && session.firstShown("canvas", playTurn)) {
+      controller.revealWhenPlaced(r);
+    }
+  }, [controller, session, content, playNode, playTurn]);
+  // What the user types in on the canvas, the inspector or the editor of a
+  // text, open, which the board's page does not take away unsaved as it
+  // follows play's flow to another board's page, but waits for to close
+  // (onHolding), while the panel keeps the focus where the flow is.
+  const holding = (inspecting && editable) || editing !== undefined;
+  useEffect(() => {
+    onHolding?.(holding);
+  }, [onHolding, holding]);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -1726,6 +1807,15 @@ function BoardCanvasOf({
       run: () => clipboardAsked("copy"),
     },
     "canvas.menu": { run: () => controller.menuOfSelection() },
+    "play.start": {
+      enabled: playFrom !== undefined,
+      run: () => {
+        if (playFrom !== undefined) {
+          startPlay(playFrom);
+        }
+      },
+    },
+    "play.stop": { enabled: playing, run: () => session.stop() },
     ...(editable
       ? {
           ...historyHandlers(history),
@@ -2185,7 +2275,11 @@ function BoardCanvasOf({
           </p>
         )}
       </fieldset>
-      <div className={inspecting && editable ? besidePanel : undefined}>
+      <div
+        className={
+          (inspecting && editable) || playing ? besidePanel : undefined
+        }
+      >
         <div className="relative min-w-0">
           <div
             ref={hostRef}
@@ -2264,6 +2358,7 @@ function BoardCanvasOf({
             selection={selection}
             connection={connection}
             editable={editable}
+            playNode={playNode === "" ? undefined : playNode}
             onClipboard={treeClipboard}
           />
           {/* What the canvas places over its nodes, outside its element, which
@@ -2407,6 +2502,16 @@ function BoardCanvasOf({
                           <MenuSeparator />
                         </>
                       )}
+                      {content === "ready" &&
+                        board?.entry_node_id !== undefined && (
+                          <MenuItem
+                            onSelect={() =>
+                              startPlay({ board: boardId, node: "" })
+                            }
+                          >
+                            {t("canvas.menu.play_entry")}
+                          </MenuItem>
+                        )}
                       <MenuItem onSelect={() => controller.fit()}>
                         {t("canvas.fit")}
                       </MenuItem>
@@ -2442,6 +2547,15 @@ function BoardCanvasOf({
                       {onlyLink !== undefined && (
                         <MenuItem onSelect={goToTarget}>
                           {t("canvas.go_to_target")}
+                        </MenuItem>
+                      )}
+                      {onlyNode !== undefined && content === "ready" && (
+                        <MenuItem
+                          onSelect={() =>
+                            startPlay({ board: boardId, node: onlyNode.id })
+                          }
+                        >
+                          {t("canvas.menu.play_here")}
                         </MenuItem>
                       )}
                       <MenuItem onSelect={() => controller.zoomToSelection()}>
@@ -2576,6 +2690,28 @@ function BoardCanvasOf({
             headingRef={inspectorHeading}
           />
         )}
+        {/* Play mode's panel, while play is under way, where the inspector,
+        while it is open, is not (plan note N78), which gives the focus back
+        to the canvas once play stops. A sheet over the canvas waits while
+        the editor of a text is open, which it would else hold inert under
+        it, as the inspector's sheet closes to show the editor; it shows
+        again once the editor closes. Beside the canvas, the panel opens
+        without taking the focus while the editor is open, as once a
+        tablet's turn makes room for it, which leaves the focus in the
+        editor's text. */}
+        {playing &&
+          !(inspecting && editable) &&
+          (docked || editing === undefined) && (
+            <PlayPanel
+              projectId={projectId}
+              boardId={boardId}
+              doc={doc}
+              session={session}
+              returnFocus={() => hostRef.current}
+              focusOnOpen={editing === undefined}
+              holding={holding}
+            />
+          )}
       </div>
       <p id={helpId} className="text-sm text-fg-muted">
         {editable

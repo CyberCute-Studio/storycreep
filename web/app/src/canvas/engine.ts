@@ -79,7 +79,24 @@ export interface Frame {
   dimmed?: (node: Node) => boolean;
   /** Counts the changes of dimmed. */
   dimVersion?: number;
+  /** Where play mode is on the board, or undefined while no play is under way (plan note N78). */
+  play?: PlayMarks;
+  /** Counts the changes of play. */
+  playVersion?: number;
   theme: Theme;
+}
+
+/**
+ * Where play mode is on the board (FR-PLAY-01, plan note N78), which the
+ * canvas highlights in the play colour: the current node, by a ring around
+ * its card, the nodes that the flow passed, by a thinner one, and the
+ * connections that it took, drawn over the others, wider.
+ */
+export interface PlayMarks {
+  /** The current node, or "" for none on the board. */
+  current: string;
+  visited: ReadonlySet<string>;
+  traversed: ReadonlySet<string>;
 }
 
 /** What a frame drew, which the page's tests and the benchmark read. */
@@ -166,6 +183,12 @@ const cornerRadius = 10;
 
 /** How opaque a node that the tag filter dims is drawn (FR-EDIT-06 AC1). */
 const dimAlpha = 0.3;
+
+/**
+ * How far in from each edge of the cards' textures, of 64 pixels, their
+ * corners, which a nine-slice sprite keeps as it stretches, reach.
+ */
+const slices = { card: 20, edge: 20, ring: 22 } as const;
 
 /**
  * Of each field of a node, whether a node moved has it as it was (movedOnly):
@@ -466,6 +489,12 @@ interface CardView {
   edge: NineSliceSprite;
   stripe: Sprite;
   ring: NineSliceSprite;
+  /**
+   * The ring of play mode's current node, or of one that the flow passed,
+   * beyond the selection's, made once play first marks the card's node, so
+   * that a board that is not played has no more objects than before.
+   */
+  trail?: NineSliceSprite;
   title: BitmapText;
   kind: BitmapText;
   body: BitmapText;
@@ -474,12 +503,29 @@ interface CardView {
   item?: NodeItem;
   /** Whether it shows its node selected. */
   selected?: boolean;
+  /** Where play mode is at its node, which it shows: the current node, one that the flow passed, or neither. */
+  played?: Played;
   /** The labels that it shows, so that a change of the names that cards show writes again only the cards that it changes. */
   labels?: NodeLabels;
   /** The version of the names that cards show that its labels were read at (Frame's labelsVersion). */
   labelsVersion?: number;
   /** When it was last freed (releaseCards), in milliseconds of the page's clock, which trimCards waits freeCardHold after. */
   freedAt: number;
+}
+
+/** Where play mode is at a node (PlayMarks). */
+type Played = "current" | "visited" | "";
+
+/** Returns where play mode is at the node of id, as play marks it. */
+function playedOf(play: PlayMarks | undefined, id: string): Played {
+  if (play === undefined) {
+    return "";
+  }
+  return play.current === id
+    ? "current"
+    : play.visited.has(id)
+      ? "visited"
+      : "";
 }
 
 /** A tile of the connections' lines: its Graphics, and the rectangle of the board that its lines take, or none for a tile without any. */
@@ -534,6 +580,7 @@ class PixiEngine implements Engine {
         connection: string | undefined;
         labelsVersion: number;
         dimVersion: number;
+        playVersion: number;
         theme: Theme;
         stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
@@ -694,6 +741,7 @@ class PixiEngine implements Engine {
       b.selectionVersion !== f.selectionVersion ||
       b.labelsVersion !== f.labelsVersion ||
       b.dimVersion !== (f.dimVersion ?? 0) ||
+      b.playVersion !== (f.playVersion ?? 0) ||
       b.theme !== f.theme;
     if (stale) {
       // A change of what the margin shows, but not of where it is, as of
@@ -823,7 +871,9 @@ class PixiEngine implements Engine {
         s.height = item.rect.height;
         s.tint = f.selection.has(item.node.id)
           ? theme.accent
-          : nodeColor(item.node.color, theme);
+          : playedOf(f.play, item.node.id) === "current"
+            ? theme.play
+            : nodeColor(item.node.color, theme);
         s.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
         i++;
       }
@@ -859,6 +909,7 @@ class PixiEngine implements Engine {
           this.cardViews.set(item.node.id, view);
         }
         const selected = f.selection.has(item.node.id);
+        const played = playedOf(f.play, item.node.id);
         // A card of a node that only moved, as in each frame of a drag, is
         // where its node is now, as it was otherwise.
         if (
@@ -887,11 +938,20 @@ class PixiEngine implements Engine {
               : f.labels(item);
           if (stale || !sameLabels(labels, view.labels)) {
             this.drawCard(view, item, labels, f, fonts, selected, lines);
+            this.drawTrail(view, item, played, f.theme);
             view.item = item;
             view.selected = selected;
+            view.played = played;
           }
           view.labels = labels;
           view.labelsVersion = f.labelsVersion;
+        }
+        // A card whose node play marks otherwise, alone, as each that a
+        // stop or a restart unmarks, draws its ring of play anew, and not
+        // its text.
+        if (view.played !== played) {
+          this.drawTrail(view, item, played, f.theme);
+          view.played = played;
         }
         view.root.position.set(item.rect.x - origin.x, item.rect.y - origin.y);
         view.root.alpha = f.dimmed?.(item.node) === true ? dimAlpha : 1;
@@ -912,6 +972,7 @@ class PixiEngine implements Engine {
       was.region !== region ||
       was.connectionsVersion !== scene.connectionsVersion ||
       was.connection !== f.connection ||
+      was.playVersion !== (f.playVersion ?? 0) ||
       was.zoom !== zoom ||
       was.lod !== lod ||
       was.theme !== theme
@@ -924,6 +985,7 @@ class PixiEngine implements Engine {
         lod,
         theme,
         f.connection,
+        f.play?.traversed,
       );
     }
     this.built = {
@@ -938,6 +1000,7 @@ class PixiEngine implements Engine {
       connection: f.connection,
       labelsVersion: f.labelsVersion,
       dimVersion: f.dimVersion ?? 0,
+      playVersion: f.playVersion ?? 0,
       theme,
       stats: {
         lod,
@@ -1032,22 +1095,14 @@ class PixiEngine implements Engine {
   }
 
   private newCard(fonts: Fonts): CardView {
-    const nine = (texture: Texture, inset: number) =>
-      new NineSliceSprite({
-        texture,
-        leftWidth: inset,
-        rightWidth: inset,
-        topHeight: inset,
-        bottomHeight: inset,
-      });
     const text = (fontFamily: string, fontSize: number) =>
       new BitmapText({ text: "", style: { fontFamily, fontSize } });
     const view: CardView = {
       root: new Container(),
-      card: nine(this.art.card, 20),
-      edge: nine(this.art.edge, 20),
+      card: nineSlice(this.art.card, slices.card),
+      edge: nineSlice(this.art.edge, slices.edge),
       stripe: new Sprite(Texture.WHITE),
-      ring: nine(this.art.ring, 22),
+      ring: nineSlice(this.art.ring, slices.ring),
       title: text(fonts.bold, titleSize),
       kind: text(fonts.regular, kindSize),
       body: text(fonts.regular, bodySize),
@@ -1067,6 +1122,46 @@ class PixiEngine implements Engine {
     return view;
   }
 
+  /**
+   * Draws the ring of play mode around a card (plan note N78): beyond the
+   * selection's ring, in the play colour, as wide as the selection's for
+   * the current node and as thin as the card's edge for one that the flow
+   * passed, each whole, so that each contrasts with the board as the colour
+   * does, and none for any other.
+   */
+  private drawTrail(
+    view: CardView,
+    item: NodeItem,
+    played: Played,
+    theme: Theme,
+  ): void {
+    if (played === "") {
+      if (view.trail !== undefined) {
+        view.trail.visible = false;
+      }
+      return;
+    }
+    const [texture, slice] =
+      played === "current"
+        ? [this.art.ring, slices.ring]
+        : [this.art.edge, slices.edge];
+    let t = view.trail;
+    if (t === undefined) {
+      t = nineSlice(texture, slice);
+      view.trail = t;
+      view.root.addChild(t);
+    } else if (t.texture !== texture) {
+      t.texture = texture;
+      t.leftWidth = slice;
+      t.rightWidth = slice;
+      t.topHeight = slice;
+      t.bottomHeight = slice;
+    }
+    t.visible = true;
+    fitCorners(t, item.rect.width, item.rect.height, 8);
+    t.tint = theme.play;
+  }
+
   private drawCard(
     view: CardView,
     item: NodeItem,
@@ -1080,18 +1175,9 @@ class PixiEngine implements Engine {
     const { width: w, height: h } = item.rect;
     const node = item.node;
     view.root.visible = true;
-    // The textures' corners are drawn at 16 of 64 pixels; a card's are
-    // cornerRadius of the board's units.
-    const corners = (s: NineSliceSprite, inset: number) => {
-      const scale = cornerRadius / 16;
-      s.scale.set(scale);
-      s.width = (w + 2 * inset) / scale;
-      s.height = (h + 2 * inset) / scale;
-      s.position.set(-inset, -inset);
-    };
-    corners(view.card, 0);
+    fitCorners(view.card, w, h, 0);
     view.card.tint = theme.surface;
-    corners(view.edge, 0);
+    fitCorners(view.edge, w, h, 0);
     // A broken jumper's edge, and its line that says so, are of the colour
     // of what is wrong (FR-EDIT-05 AC1).
     view.edge.tint = labels.broken
@@ -1102,7 +1188,7 @@ class PixiEngine implements Engine {
     view.stripe.position.set(cornerRadius, 0);
     view.stripe.width = Math.max(0, w - 2 * cornerRadius);
     view.stripe.height = 4;
-    corners(view.ring, 4);
+    fitCorners(view.ring, w, h, 4);
     view.ring.visible = selected;
     view.ring.tint = theme.accent;
     // The room of a line, within the card's padding, which each character
@@ -1227,6 +1313,7 @@ class PixiEngine implements Engine {
     lod: FrameStats["lod"],
     theme: Theme,
     selected: string | undefined,
+    traversed: ReadonlySet<string> | undefined,
   ): void {
     const grid = this.kind === "canvas" ? lineGrid : 1;
     while (this.lineTiles.length < grid * grid) {
@@ -1292,6 +1379,24 @@ class PixiEngine implements Engine {
           head(item);
         }
         g.fill({ color: theme.border });
+      }
+      // The connections that play mode's flow took, over the others, wider,
+      // in the play colour (plan note N78), under the one selected.
+      const taken =
+        traversed === undefined || traversed.size === 0
+          ? []
+          : items.filter((item) => traversed.has(item.connection.id));
+      if (taken.length > 0) {
+        for (const item of taken) {
+          trace(item);
+        }
+        g.stroke({ width: 2 * width, color: theme.play });
+        if (heads) {
+          for (const item of taken) {
+            head(item);
+          }
+          g.fill({ color: theme.play });
+        }
       }
       const chosen =
         selected === undefined
@@ -1551,6 +1656,36 @@ function countIn(nodes: readonly NodeItem[], r: Rect): number {
     }
   }
   return n;
+}
+
+/** Returns a sprite of texture whose corners, slice pixels in from each of its edges, stay as they are as it stretches. */
+function nineSlice(texture: Texture, slice: number): NineSliceSprite {
+  return new NineSliceSprite({
+    texture,
+    leftWidth: slice,
+    rightWidth: slice,
+    topHeight: slice,
+    bottomHeight: slice,
+  });
+}
+
+/**
+ * Lays s, a sprite of a card's texture, out around a card of width w and
+ * height h, inset units of the board beyond its edges: the textures'
+ * corners are drawn at 16 of 64 pixels, and a card's are cornerRadius of
+ * the board's units.
+ */
+function fitCorners(
+  s: NineSliceSprite,
+  w: number,
+  h: number,
+  inset: number,
+): void {
+  const scale = cornerRadius / 16;
+  s.scale.set(scale);
+  s.width = (w + 2 * inset) / scale;
+  s.height = (h + 2 * inset) / scale;
+  s.position.set(-inset, -inset);
 }
 
 /** Returns a white texture of size pixels square, drawn by draw on a Canvas 2D context. */

@@ -43,4 +43,5 @@ export {
   ValueError,
 } from "./runtime";
 export { type Schema, validate } from "./schema";
+export { fileHash, type Pace } from "./sha256";
 export { render } from "./text";

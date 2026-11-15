@@ -1,6 +1,13 @@
 // The rich text of a project's content (PRD FR-TEXT-01, ADR-020). See
-// parse.ts.
+// parse.ts, and derive.ts for its segments, plain text, and preview.
 
+export {
+  type Names,
+  PREVIEW_CHARS,
+  plainTextOf,
+  previewOf,
+  segmentsOf,
+} from "./derive";
 export {
   checkHref,
   emptyRichText,

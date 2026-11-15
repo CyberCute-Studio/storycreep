@@ -3,8 +3,8 @@
 // palette, the table of the shortcuts, and the keys share (AC1). A command
 // is run by what a page of the app registers for it while it is shown
 // (registry.tsx), as the canvas's zoom, so the palette lists what the page
-// shown can do. Remapping the keys is plan item 129's, and play mode's
-// commands item 71's.
+// shown can do, play mode's start and stop among them (plan note N78).
+// Remapping the keys is plan item 129's.
 
 import type { TFunction } from "i18next";
 import type { Binding, KeyInput, Platform } from "./keys";
@@ -19,7 +19,8 @@ export type Group =
   | "view"
   | "creation"
   | "connection"
-  | "editing";
+  | "editing"
+  | "play";
 
 /** The groups in the order that the table shows them. */
 export const groups: readonly Group[] = [
@@ -31,6 +32,7 @@ export const groups: readonly Group[] = [
   "creation",
   "connection",
   "editing",
+  "play",
 ];
 
 /** A command: its group, its keys, and where they act. */
@@ -253,6 +255,15 @@ export const commands = {
   },
   "canvas.inspector": { group: "editing", on: canvas, keys: [letter("i")] },
   "canvas.snap": { group: "editing", on: canvas, keys: [letter("s")] },
+  // Play mode (FR-PLAY-01, plan note N78): P plays from what the canvas has
+  // selected, or from the board's entry node, and Shift with P stops, each
+  // a key of the canvas alone, as its letters are (WCAG 2.1.4).
+  "play.start": { group: "play", on: canvas, keys: [letter("p")] },
+  "play.stop": {
+    group: "play",
+    on: canvas,
+    keys: [{ key: "p", shift: true }],
+  },
 } as const satisfies Record<string, CommandSpec>;
 
 /** The ID of a command, which the palette, the table, and the keys share. */
@@ -412,6 +423,10 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.canvas.inspector");
     case "canvas.snap":
       return t("command.canvas.snap");
+    case "play.start":
+      return t("command.play.start");
+    case "play.stop":
+      return t("command.play.stop");
   }
 }
 
@@ -434,5 +449,7 @@ export function groupName(t: TFunction, group: Group): string {
       return t("shortcuts.group.connection");
     case "editing":
       return t("shortcuts.group.editing");
+    case "play":
+      return t("shortcuts.group.play");
   }
 }

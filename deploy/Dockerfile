@@ -34,8 +34,13 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY web/shared/ web/shared/
 COPY web/app/ web/app/
 # The table of case folding that @storycreep/shared/fold reads, as the
-# canvas's tag filter compares tags as the server does.
-COPY schema/unicode/fold.json schema/unicode/
+# canvas's tag filter compares tags as the server does; and what play mode's
+# runtime, @storycreep/shared/flow, reads (plan item 71): the Unicode tables
+# of the expressions' evaluator, and the JSON Schemas of the published format
+# and of the save state, which its loader checks a snapshot against.
+COPY schema/unicode/fold.json schema/unicode/tables.json schema/unicode/
+COPY schema/published/v1/ schema/published/v1/
+COPY schema/save-state/v1/ schema/save-state/v1/
 # Vite writes the bundle to server/internal/webassets/dist/app.
 RUN pnpm --filter @storycreep/app build
 

@@ -1,6 +1,7 @@
 # The build context of deploy/Dockerfile is the repository's root. Only the
-# sources of the server and of the web app go into it, with the table of
-# case folding that the app's tag filter imports from schema/, without their tests
+# sources of the server and of the web app go into it, with what the app
+# imports from schema/: the table of case folding of its tag filter, and the
+# Unicode tables and the JSON Schemas of play mode's runtime, without their tests
 # and their data, which the image does not need, so that a change elsewhere
 # does not rebuild it, nor the bundle that a local build of the app left in
 # the server's tree, which the image builds anew.
@@ -19,6 +20,9 @@ server/internal/webassets/dist/
 !web/shared/
 !web/site/package.json
 !schema/unicode/fold.json
+!schema/unicode/tables.json
+!schema/published/v1/
+!schema/save-state/v1/
 web/**/node_modules/
 web/**/*.test.*
 web/**/*.spec.*

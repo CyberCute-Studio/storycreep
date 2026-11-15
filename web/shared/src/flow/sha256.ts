@@ -1,7 +1,8 @@
 // SHA-256 (FIPS 180-4), with which load hashes a snapshot's files where the
 // platform's, WebCrypto's crypto.subtle, is not there: in a page that is no
 // secure context, as that of a self-hosted instance served over plain HTTP,
-// on which everything but offline use works (PRD FR-OFF-01 AC4).
+// on which everything but offline use works (PRD FR-OFF-01 AC4); and the
+// hash of a file as a manifest lists it, by the platform's where it is.
 
 import { copyOf } from "../expr";
 
@@ -44,7 +45,8 @@ export const YIELD_EVERY = 1 << 20;
 /**
  * How many bytes the calls of sha256Yielding that share it have hashed since
  * one of them last let the event loop run a task, as load's calls of the
- * files of one snapshot share one.
+ * files of one snapshot share one, and play mode's projection's, which it
+ * asks for at once, do.
  */
 export interface Pace {
   hashed: number;
@@ -61,7 +63,10 @@ export interface Pace {
  * unless own is set: when bytes are the caller's own copy, which nothing
  * else holds, and so nothing changes meanwhile. Once signal is aborted, it
  * rejects with its reason, as fetch does, before it hashes another
- * YIELD_EVERY bytes.
+ * YIELD_EVERY bytes. The pace stays spent until the call goes on in a task
+ * of its own, so that the calls that share it and start in the same task,
+ * as calls asked for at once do, each let the page run before they hash
+ * beyond it, rather than hash YIELD_EVERY bytes each in that task.
  */
 export async function sha256Yielding(
   bytes: Uint8Array,
@@ -79,15 +84,36 @@ export async function sha256Yielding(
   const whole = data.length - (data.length % 64);
   for (let at = 0; at < whole; at += 64) {
     if (pace.hashed >= YIELD_EVERY) {
-      pace.hashed = 0;
       await nextTask();
       signal?.throwIfAborted();
+      pace.hashed = 0;
     }
     compress(h, w, data, at);
     pace.hashed += 64;
   }
   pace.hashed += data.length - whole;
   return finish(h, w, data);
+}
+
+/**
+ * Returns the hash of bytes as a snapshot's manifest lists a file's: sha256:
+ * and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's, which
+ * copies them, or, where the page is no secure context and has none
+ * (crypto.subtle), by sha256Yielding's, at pace, as load hashes a file, and
+ * as play mode's projection lists the files that it writes.
+ */
+export async function fileHash(
+  bytes: Uint8Array<ArrayBuffer>,
+  pace: Pace = { hashed: 0 },
+  own = false,
+  signal?: AbortSignal,
+): Promise<string> {
+  const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
+  const sum =
+    subtle === undefined
+      ? await sha256Yielding(bytes, signal, own, pace)
+      : new Uint8Array(await subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 // nextTask resolves in a task of the event loop's own, after those that it

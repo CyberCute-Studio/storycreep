@@ -40,6 +40,9 @@ const boundaries: readonly [string, string][] = [
   ["focus", "surface"],
   ["accent", "canvas"],
   ["accent", "surface"],
+  // Play mode's current node and path, on the canvas and around a card.
+  ["play", "canvas"],
+  ["play", "surface"],
 ];
 
 type Mode = "light" | "dark";

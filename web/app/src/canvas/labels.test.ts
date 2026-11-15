@@ -505,6 +505,7 @@ describe("a node's colour", () => {
     muted: 0x4b5260,
     accent: 0x2b50c8,
     danger: 0xb3261e,
+    play: 0x0d6b43,
     dark: false,
   };
   const dark: Theme = {
@@ -515,6 +516,7 @@ describe("a node's colour", () => {
     muted: 0xa8afbc,
     accent: 0x8fa8ff,
     danger: 0xff8b80,
+    play: 0x6fd3a2,
     dark: true,
   };
   const colors = [
@@ -555,6 +557,7 @@ describe("a node's colour", () => {
       muted: 0xffffff,
       accent: 0xffff00,
       danger: 0xffffff,
+      play: 0xffff00,
       dark: true,
     };
     for (const color of colors) {
@@ -592,6 +595,7 @@ describe("the canvas's theme", () => {
         muted: system("CanvasText"),
         accent: system("Highlight"),
         danger: system("CanvasText"),
+        play: system("LinkText"),
         dark: false,
       });
       expect(forced.canvas).not.toBe(forced.fg);

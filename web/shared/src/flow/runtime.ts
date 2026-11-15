@@ -189,6 +189,8 @@ export class Runtime {
   // the branches that it has passed through.
   private errored = false;
   private passes = 0;
+  // took holds the connections that the last call took, in order.
+  private took: string[] = [];
   // at and expression are the entity and the expression that the evaluator
   // evaluates, which its runtime errors are of.
   private at = "";
@@ -250,6 +252,7 @@ export class Runtime {
     this.events = [];
     this.errored = false;
     this.passes = 0;
+    this.took = [];
     this.at = "";
     this.expression = "";
     if (clears) {
@@ -459,6 +462,7 @@ export class Runtime {
 
   // traverse runs the on-traverse of c, the connection that the flow takes.
   private traverse(c: Connection): void {
+    this.took.push(c.id);
     this.runScript(c.id, "onTraverse", c.onTraverse);
   }
 
@@ -646,6 +650,17 @@ export class Runtime {
   /** Reports whether the flow ended, as is_finished() does. */
   isFinished(): boolean {
     return this.phase === "ended";
+  }
+
+  /**
+   * Returns the connections that the last call that moves the flow took, in
+   * order, each as it ran its on-traverse: a choice's, and the one of each
+   * branch that the flow passed on by, [] for none. No event reports them
+   * (§5.8.5); play mode marks the path that the flow took by them (plan
+   * note N78).
+   */
+  taken(): readonly string[] {
+    return this.took;
   }
 
   /**

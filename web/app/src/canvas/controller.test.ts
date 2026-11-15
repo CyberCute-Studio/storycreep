@@ -30,6 +30,7 @@ const theme: Theme = {
   muted: 0x4b5260,
   accent: 0x2b50c8,
   danger: 0xb3261e,
+  play: 0x0d6b43,
   dark: false,
 };
 
@@ -289,6 +290,34 @@ describe("the canvas's controller", () => {
     c.setViewport({ x: 10, y: 10, zoom: 1 });
     time.tick();
     expect(frames.length).toBe(drawn + 1);
+  });
+
+  // A step of play mode on another board, which changes the marks only
+  // there, draws nothing of this board anew.
+  it("draws play's marks anew only once they change on the board", () => {
+    const { c, time, frames } = setUp();
+    placed(c, time);
+    const marks = (
+      current: string,
+      visited: string[],
+      traversed: string[],
+    ) => ({
+      current,
+      visited: new Set(visited),
+      traversed: new Set(traversed),
+    });
+    c.setPlay(marks("", ["nd_1"], []));
+    time.tick();
+    const drawn = frames.length;
+    const version = frames.at(-1)?.playVersion;
+    c.setPlay(marks("", ["nd_1", "nd_elsewhere"], ["cn_elsewhere"]));
+    time.tick();
+    expect(frames.length).toBe(drawn);
+    c.setPlay(marks("nd_1", ["nd_1", "nd_elsewhere"], ["cn_elsewhere"]));
+    time.tick();
+    expect(frames.length).toBe(drawn + 1);
+    expect(frames.at(-1)?.playVersion).toBe((version ?? 0) + 1);
+    expect(frames.at(-1)?.play?.current).toBe("nd_1");
   });
 
   it("tells the benchmark which frames the browser's frame drew, and which the page's own work did, as once the canvas's size changed", () => {
@@ -1274,6 +1303,55 @@ describe("the canvas's controller of a board that may be changed", () => {
     c.focus("nd_1", () => found++);
     expect([...c.selection()]).toEqual(["nd_1"]);
     expect(found).toBe(2);
+  });
+
+  // As on the board's page that play mode followed the flow to, which asks
+  // to show the current node before the canvas is placed (plan note N78).
+  it("shows what a reveal asked for before the canvas was placed, from the view that it restores, once it is placed", () => {
+    const { c, time } = setUp();
+    c.restore({
+      viewport: { x: 0, y: 0, zoom: 2 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    c.sync(docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]), false);
+    c.setReady();
+    c.revealWhenPlaced({ x: 4000, y: 0, width: 240, height: 128 });
+    time.tick();
+    // At the restored view's zoom, the node's middle at the canvas's centre.
+    expect(c.viewport()).toEqual({
+      x: 4000 + 120 - 250,
+      y: 64 - 150,
+      zoom: 2,
+    });
+    // A node in the restored view moves nothing.
+    const again = setUp();
+    again.c.restore({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    again.c.sync(docOf([testNode("nd_1", 100, 100)]), false);
+    again.c.setReady();
+    again.c.revealWhenPlaced({ x: 100, y: 100, width: 240, height: 128 });
+    again.time.tick();
+    expect(again.c.viewport()).toEqual({ x: 0, y: 0, zoom: 1 });
+    // The reveal of an item of the tree that the focus came to before the
+    // canvas was placed gives way to the view that it restores.
+    const tree = setUp();
+    tree.c.restore({
+      viewport: { x: 0, y: 0, zoom: 1 },
+      size: { width: 1000, height: 600 },
+      selection: [],
+    });
+    tree.c.sync(
+      docOf([testNode("nd_1", 0, 0), testNode("nd_2", 4000, 0)]),
+      false,
+    );
+    tree.c.setReady();
+    tree.c.reveal({ x: 4000, y: 0, width: 240, height: 128 });
+    tree.time.tick();
+    expect(tree.c.viewport()).toEqual({ x: 0, y: 0, zoom: 1 });
   });
 
   it("opens as without a link to a node that the board does not have, which it tells nothing of", () => {

@@ -22,7 +22,7 @@ import type { Node } from "@storycreep/shared/api";
 import type { CommandId } from "../commands/catalog";
 import type { Doc } from "../document/doc";
 import { movedBy, resizedBy } from "./edit";
-import type { Engine, FrameStats, RendererKind } from "./engine";
+import type { Engine, FrameStats, PlayMarks, RendererKind } from "./engine";
 import {
   type GestureHost,
   Gestures,
@@ -486,6 +486,9 @@ export class CanvasController implements GestureHost {
   /** Which nodes the canvas dims, as the tag filter asks (FR-EDIT-06 AC1), and how often that changed. */
   private dims: ((node: Node) => boolean) | undefined;
   private dimVersion = 0;
+  /** Where play mode is on the board, which the canvas highlights (plan note N78), and how often that changed. */
+  private play: PlayMarks | undefined;
+  private playVersion = 0;
   /**
    * How many of the board's nodes are dimmed, of the document's nodes and
    * the dims' version that it was counted at, rather than of the scene's,
@@ -502,6 +505,8 @@ export class CanvasController implements GestureHost {
   private untold = false;
   /** The node that the canvas opens on, in place of the fit or the view that it restores, as a link to the node asks, and what it calls once it has (focus). */
   private focusing: { id: string; found?: () => void } | undefined;
+  /** What the canvas shows once it is placed, of a reveal asked for before (revealWhenPlaced). */
+  private revealing: Rect | undefined;
   private labelsVersion = 0;
   private theme: Theme | undefined;
   private modeValue: Mode = "pan";
@@ -959,10 +964,40 @@ export class CanvasController implements GestureHost {
    * line, that the accessibility tree's focus is on, so that what marks it
    * on the canvas is in view: where the canvas does not show it whole, with
    * 24 px around it, it moves to have r's middle at its centre, at the zoom
-   * that it is at, animated as a move that a key asks for is.
+   * that it is at, animated as a move that a key asks for is. On a canvas
+   * not yet placed on the board's content, the fit or the view that it
+   * restores takes the place of the move, as of an item of the tree that
+   * the focus came to while the content was read.
    */
   reveal(r: Rect): void {
     const v = this.target();
+    const to = this.revealed(v, r);
+    if (to !== undefined) {
+      this.animateTo(to);
+    }
+  }
+
+  /**
+   * Shows r of the board as reveal does, but on a canvas not yet placed on
+   * the board's content, whose placing would take the place of the move, as
+   * of the board's page that play mode followed the flow to, where it shows
+   * play's current node (plan note N78): there it shows r once the canvas
+   * is placed, from the fit or the view that it restores, at once.
+   */
+  revealWhenPlaced(r: Rect): void {
+    if (!this.placed) {
+      this.revealing = r;
+      this.invalidate();
+      return;
+    }
+    this.reveal(r);
+  }
+
+  /**
+   * Returns where the canvas moves from v to show r of the board whole, with
+   * 24 px around it, at v's zoom, or undefined where v shows it so (reveal).
+   */
+  private revealed(v: Viewport, r: Rect): Viewport | undefined {
     const around = 24 / v.zoom;
     if (
       contains(visibleRect(v, this.sz), {
@@ -972,9 +1007,9 @@ export class CanvasController implements GestureHost {
         height: r.height + 2 * around,
       })
     ) {
-      return;
+      return undefined;
     }
-    this.animateTo(anchorAt(middleOf(r), this.centre(), v.zoom));
+    return anchorAt(middleOf(r), this.centre(), v.zoom);
   }
 
   /** Returns where r of the board is on the canvas, in its CSS pixels. */
@@ -1495,6 +1530,26 @@ export class CanvasController implements GestureHost {
   }
 
   /**
+   * Highlights where play mode is on the board, or nothing (FR-PLAY-01,
+   * plan note N78): the canvas draws the current node, the nodes that the
+   * flow passed, and the connections that it took, in the play colour, and
+   * changes nothing of the board. Marks that differ from the last only
+   * elsewhere, as of a step on another board, draw nothing anew.
+   */
+  setPlay(marks: PlayMarks | undefined): void {
+    if (marks === this.play) {
+      return;
+    }
+    const same = sameMarksOn(this.scene, this.play, marks);
+    this.play = marks;
+    if (same) {
+      return;
+    }
+    this.playVersion++;
+    this.invalidate();
+  }
+
+  /**
    * How many of the board's nodes are dimmed, counted once for each change
    * of the document's nodes or of the dims, rather than in each frame of a
    * drag, which changes where nodes are, and none of their tags.
@@ -1971,6 +2026,10 @@ export class CanvasController implements GestureHost {
       this.focusing = undefined;
       const focus =
         focusing === undefined ? undefined : this.scene.nodes.rect(focusing.id);
+      // What a reveal asked to show meanwhile, as play mode's current node,
+      // is shown from there, but for a link's node, which the canvas opens on.
+      const revealing = this.revealing;
+      this.revealing = undefined;
       this.v =
         focus !== undefined
           ? fitTo(focus, this.sz, 48, fitZoom)
@@ -1981,6 +2040,9 @@ export class CanvasController implements GestureHost {
                 this.centre(),
                 saved.viewport.zoom,
               );
+      if (focus === undefined && revealing !== undefined) {
+        this.v = this.revealed(this.v, revealing) ?? this.v;
+      }
       this.animation = undefined;
       this.placed = true;
       this.gestures.replaced(from);
@@ -2047,6 +2109,8 @@ export class CanvasController implements GestureHost {
         labelsVersion: this.labelsVersion,
         dimmed: this.dims,
         dimVersion: this.dimVersion,
+        play: this.play,
+        playVersion: this.playVersion,
         theme,
       });
     } catch (error) {
@@ -2153,4 +2217,27 @@ export class CanvasController implements GestureHost {
     }
     this.gestures.cancelAll();
   }
+}
+
+/**
+ * Reports whether play marks a and b mark scene's nodes and connections
+ * alike: the same current node, and the same of them passed and taken.
+ */
+function sameMarksOn(
+  scene: Scene,
+  a: PlayMarks | undefined,
+  b: PlayMarks | undefined,
+): boolean {
+  if ((a?.current ?? "") !== (b?.current ?? "")) {
+    return false;
+  }
+  let same = true;
+  scene.nodes.forEach((id) => {
+    same &&= (a?.visited.has(id) ?? false) === (b?.visited.has(id) ?? false);
+  });
+  scene.connections.forEach((id) => {
+    same &&=
+      (a?.traversed.has(id) ?? false) === (b?.traversed.has(id) ?? false);
+  });
+  return same;
 }

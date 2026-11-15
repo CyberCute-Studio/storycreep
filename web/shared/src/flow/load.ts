@@ -65,7 +65,7 @@ import type {
 } from "../published";
 import { foldCase } from "./fold";
 import { ANY_VALUE, type Schema, validate } from "./schema";
-import { type Pace, sha256Yielding } from "./sha256";
+import { fileHash, type Pace } from "./sha256";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
 export const MANIFEST_PATH = "storycreep.json";
@@ -287,24 +287,16 @@ export interface LoadOptions {
   readonly signal?: AbortSignal;
 }
 
-// digest returns the hash of a file's bytes as the manifest lists a file's:
-// sha256: and the lowercase hexadecimal SHA-256 of the bytes, by WebCrypto's,
-// which copies them, or, where the page is no secure context and has none
-// (crypto.subtle), by sha256Yielding's, which lets the page run at pace, the
-// pace of the files of one snapshot, and copies them too where it lets it
-// run before it has hashed them all, unless they are the loader's own copy,
-// and stops once signal is aborted.
-async function digest(
+// digest returns the hash of a file's bytes as the manifest lists a file's
+// (fileHash), at pace, the pace of the files of one snapshot, copying them
+// where it lets the page run before it has hashed them all, unless they are
+// the loader's own copy, and stops once signal is aborted.
+function digest(
   file: Opened,
   signal: AbortSignal | undefined,
   pace: Pace,
 ): Promise<string> {
-  const subtle: SubtleCrypto | undefined = globalThis.crypto?.subtle;
-  const sum =
-    subtle === undefined
-      ? await sha256Yielding(file.bytes, signal, file.own, pace)
-      : new Uint8Array(await subtle.digest("SHA-256", file.bytes));
-  return `sha256:${Array.from(sum, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  return fileHash(file.bytes, pace, file.own, signal);
 }
 
 // The names that Windows reserves for devices, which no slug may be.

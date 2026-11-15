@@ -48,6 +48,10 @@
   --color-code-number: light-dark(#0d6b43, #6fd3a2);
   --color-code-string: light-dark(#8f4600, #f1b26c);
 
+  /* Where play mode is on the board's canvas: the current node, the nodes
+     that the flow passed, and the connections that it took (web/app/src/play). */
+  --color-play: light-dark(#0d6b43, #6fd3a2);
+
   /* An error, and the text on a destructive action. */
   --color-danger: light-dark(#b3261e, #ff8b80);
   --color-danger-fg: light-dark(#ffffff, #2b0806);
