@@ -2,7 +2,13 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Attribute, Connection, Node } from "@storycreep/shared/api";
 import { readJSON } from "@storycreep/shared/expr";
-import { load, Runtime, type Schema, validate } from "@storycreep/shared/flow";
+import {
+  attributeKey,
+  load,
+  Runtime,
+  type Schema,
+  validate,
+} from "@storycreep/shared/flow";
 import {
   conformance,
   readScenarios,
@@ -139,6 +145,62 @@ describe("the conformance suite's snapshots", () => {
         ]),
       );
       expect(runScenarios(name, snapshot, scenarios)).toEqual([]);
+    }
+  });
+
+  // What play's inspector lists is what the runtime holds, each of its
+  // declaration's type (FR-PLAY-02), and each condition that the snapshot
+  // holds has its compiled AST, of the source, which the author view reads
+  // the failed parts of (FR-PLAY-03).
+  test("list the values and the conditions that the runtime holds", async () => {
+    for (const { name, files } of suites) {
+      const projected = await projectDraft(draftOf(files), { now });
+      const snapshot = await load(projected.files);
+      expect(
+        projected.values.map((v) => v.key),
+        name,
+      ).toEqual([
+        ...snapshot.variables,
+        ...snapshot.attributes.map(([c, a]) => attributeKey(c, a)),
+      ]);
+      for (const v of projected.values) {
+        expect(v.type, `${name}: ${v.name}`).toBe(
+          v.kind === "variable"
+            ? snapshot.declared.get(v.variable)?.type
+            : snapshot.declaredTypes.get(v.key),
+        );
+        if (v.type === "enum") {
+          expect(v.options).toEqual(snapshot.options.get(v.key));
+        }
+      }
+      const held = new Map<string, string>();
+      for (const f of projected.boards.values()) {
+        for (const c of f.connections) {
+          if (c.condition !== undefined) {
+            held.set(c.id, c.condition.source);
+          }
+        }
+        for (const n of f.nodes) {
+          if (n.type === "branch") {
+            for (const o of n.outputs) {
+              if (o.kind !== "else") {
+                held.set(o.id, o.condition.source);
+              }
+            }
+          }
+        }
+      }
+      expect([...projected.conditions.keys()].sort(), name).toEqual(
+        [...held.keys()].sort(),
+      );
+      for (const [entity, tree] of projected.conditions) {
+        // The whole source, from its first token to its last.
+        const source = Array.from(held.get(entity) ?? "");
+        expect(
+          source.slice(tree.src.start, tree.src.end).join("").trim(),
+          `${name}: ${entity}`,
+        ).toBe(source.join("").trim());
+      }
     }
   });
 });

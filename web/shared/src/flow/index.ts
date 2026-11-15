@@ -34,6 +34,7 @@ export {
   type FlowError,
   interpolate,
   MAX_PASSES,
+  type Observer,
   type Phase,
   type Reason,
   Runtime,

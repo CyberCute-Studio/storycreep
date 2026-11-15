@@ -264,6 +264,10 @@ export const commands = {
     on: canvas,
     keys: [{ key: "p", shift: true }],
   },
+  // Play's Step back and Reset (FR-PLAY-04, plan note N79), of the palette
+  // alone, as its panel's buttons are.
+  "play.step_back": { group: "play", on: page, keys: [] },
+  "play.reset": { group: "play", on: page, keys: [] },
 } as const satisfies Record<string, CommandSpec>;
 
 /** The ID of a command, which the palette, the table, and the keys share. */
@@ -427,6 +431,10 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.play.start");
     case "play.stop":
       return t("command.play.stop");
+    case "play.step_back":
+      return t("command.play.step_back");
+    case "play.reset":
+      return t("command.play.reset");
   }
 }
 

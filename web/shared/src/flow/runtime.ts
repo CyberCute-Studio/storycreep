@@ -112,6 +112,26 @@ export interface Choice {
 export type Phase = "awaiting_choice" | "ended";
 
 /**
+ * What a runtime tells, beyond its events, of the choices that it builds,
+ * which play mode's author view shows (PRD FR-PLAY-03, plan note N79). No
+ * event reports it, as none reports taken, and the Godot runtime has none.
+ */
+export interface Observer {
+  /**
+   * Called as the flow builds the choices of the element node, once it has
+   * evaluated the conditions of the connections that leave it and before
+   * anything else runs, as the on-exit of an end of no_choices, and as
+   * loadState builds them again: with the connections whose conditions did
+   * not hold, in their order, [] for none, each as choices() would offer
+   * it, its label's values resolved as the conditions read them, so that
+   * the observer renders no label of its own. What it reads of the runtime
+   * meanwhile, as variable, attribute, and visits, is what those conditions
+   * read. It must not call what moves the flow.
+   */
+  choices(node: string, hidden: readonly Choice[]): void;
+}
+
+/**
  * The most branches that the flow passes through in one call, so that a
  * cycle of branches whose conditions always hold, which no element stops,
  * ends rather than runs without end.
@@ -172,6 +192,7 @@ export function interpolate(v: Value, decimals: number | undefined): string {
 export class Runtime {
   private readonly s: Snapshot;
   private readonly strict: boolean;
+  private readonly observer: Observer | undefined;
   // events are the events of the call that runs.
   private events: Event[] = [];
   private vars = new Map<string, Value>();
@@ -201,11 +222,13 @@ export class Runtime {
   /**
    * Returns a runtime of the snapshot s, its variables and its runtime
    * attributes their values in the snapshot, no node visited, and the flow
-   * not started, in strict mode if strict is set.
+   * not started, in strict mode if strict is set, which tells observer, if
+   * it is given one, of the choices that it builds.
    */
-  constructor(s: Snapshot, strict: boolean) {
+  constructor(s: Snapshot, strict: boolean, observer?: Observer) {
     this.s = s;
     this.strict = strict;
+    this.observer = observer;
     this.env = {
       variable: (id) => this.vars.get(id) ?? NONE,
       setVariable: (id, v) => {
@@ -545,7 +568,7 @@ export class Runtime {
       this.end("dead_end");
       return;
     }
-    this.currentChoices = this.hold(cs);
+    this.currentChoices = this.hold(n.id, cs);
     if (this.currentChoices.length === 0) {
       this.end("no_choices");
       return;
@@ -554,10 +577,21 @@ export class Runtime {
     this.emit({ kind: "ready", node: n.id });
   }
 
-  // hold returns the connections of cs whose conditions hold, in order, a
-  // connection without one among them.
-  private hold(cs: readonly Connection[]): Connection[] {
-    return cs.filter((c) => this.holds(c.id, c.condition));
+  // hold returns the connections of cs, which leave the element node, whose
+  // conditions hold, in order, a connection without one among them, once it
+  // has told the observer of the others, as choices offers a choice, which
+  // it renders the labels of only where it has an observer.
+  private hold(node: string, cs: readonly Connection[]): Connection[] {
+    const held: Connection[] = [];
+    const hidden: Connection[] = [];
+    for (const c of cs) {
+      (this.holds(c.id, c.condition) ? held : hidden).push(c);
+    }
+    this.observer?.choices(
+      node,
+      hidden.map((c) => this.choiceOf(c)),
+    );
+    return held;
   }
 
   // branch picks the output of the branch n, the current node: its first if
@@ -671,10 +705,16 @@ export class Runtime {
    * change them; the next node's choices read it.
    */
   choices(): Choice[] {
-    return this.currentChoices.map((c) => ({
+    return this.currentChoices.map((c) => this.choiceOf(c));
+  }
+
+  // choiceOf returns the connection c as a choice: its ID, and its label's
+  // text, its values resolved as they are now, "" for none.
+  private choiceOf(c: Connection): Choice {
+    return {
       id: c.id,
       text: c.label === undefined ? "" : this.render(c.label),
-    }));
+    };
   }
 
   /**
@@ -822,10 +862,10 @@ export class Runtime {
    * and the cursor, without the on-exit of the node that was current, as no
    * board entry, and without the visit count, the enter, or the on-enter of
    * the cursor's node, whose choices it builds again when the cursor awaits
-   * one, from the conditions as they hold of st, and which it does not end
-   * when none holds. It clears a halt, and returns the events that it emits,
-   * as a call that moves the flow does: the runtime errors of the
-   * conditions, [] for none.
+   * one, from the conditions as they hold of st, telling the observer of
+   * them, and which it does not end when none holds. It clears a halt, and
+   * returns the events that it emits, as a call that moves the flow does:
+   * the runtime errors of the conditions, [] for none.
    *
    * It loads a state of the snapshot alone, as save-state/v1's schema takes
    * one, and throws a StateError, and changes nothing, of any other: of
@@ -863,6 +903,7 @@ export class Runtime {
         this.node = c.nodeId;
         if (c.phase === "awaiting_choice") {
           this.currentChoices = this.hold(
+            c.nodeId,
             this.nodeOf(c.nodeId).ports.get(OUT) ?? [],
           );
         }

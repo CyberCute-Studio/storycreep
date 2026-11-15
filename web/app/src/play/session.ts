@@ -8,8 +8,19 @@
 // and says once the draft has changed since, which Restart projects anew
 // (N78). A session is the page's, one for each document of a project, kept
 // as long as the document is, so that the flow follows a jumper to another
-// board's page and keeps its state there (AC3).
+// board's page and keeps its state there (AC3). It keeps each value of the
+// flow's state, and which the last step changed, which its inspector edits
+// by hand (FR-PLAY-02), the choices that the flow hides, with why
+// (FR-PLAY-03), and the history of its steps, of which Step back restores
+// the state before the last, exactly, and Reset starts anew with the
+// snapshot's values (FR-PLAY-04, plan note N79).
 
+import {
+  type Node as ExprNode,
+  NONE,
+  sameValue,
+  type Value,
+} from "@storycreep/shared/expr/compile";
 import type {
   Choice,
   Event,
@@ -20,18 +31,28 @@ import type {
   RuntimeError,
   Snapshot,
 } from "@storycreep/shared/flow";
+import type { SaveState } from "@storycreep/shared/save-state";
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { boardPart, type Doc, expressionFields } from "../document/doc";
 import { equal } from "../document/reconcile";
 import { inTurns, type ProjectDocument } from "../document/store";
-import type { ExpressionOwner, Projection } from "./projection";
+import type { FailedPart } from "./explain";
+import type { ExpressionOwner, ProjectedValue, Projection } from "./projection";
 
 // What play runs a draft with, the projection, the shared flow's loader,
 // and its runtime, with the JSON Schemas that the loader checks a snapshot
-// against, read once play starts, rather than with the board's page, whose
-// first frame they would else make later.
+// against, and the evaluator that explains a hidden choice, read once play
+// starts, rather than with the board's page, whose first frame they would
+// else make later.
 const engine = () =>
-  Promise.all([import("./projection"), import("@storycreep/shared/flow")]);
+  Promise.all([
+    import("./projection"),
+    import("@storycreep/shared/flow"),
+    import("./explain"),
+  ]);
+
+// What engine reads.
+type Engine = Awaited<ReturnType<typeof engine>>;
 
 /** Where play starts: a node of a board, or the board's entry node where node is "". */
 export interface PlayStart {
@@ -54,6 +75,57 @@ export interface PlayError {
   readonly source?: string;
   /** The step that reported it, from 0, the start's. */
   readonly step: number;
+  /**
+   * Of a runtime error of the choices built again of a value set by hand
+   * (PlaySession's edit), that value's index among its step's edits, after
+   * which the history lists it; absent for the step's own.
+   */
+  readonly edit?: number;
+}
+
+/**
+ * A choice that the flow hides, as its condition was false as the flow
+ * built the current node's choices, which the author view lists, with why
+ * (FR-PLAY-03).
+ */
+export interface HiddenChoice {
+  /** Its connection's ID. */
+  readonly id: string;
+  /** Its text, the connection's label with its values resolved, "" for none. */
+  readonly text: string;
+  /** Its condition's source, as the snapshot holds it. */
+  readonly source: string;
+  /**
+   * The parts of its condition that failed, with the values that they
+   * read, or undefined where the condition does not compile, which play
+   * stands in for with false (N78).
+   */
+  readonly failed: readonly FailedPart[] | undefined;
+}
+
+/** A value that the author set by hand in the inspector (FR-PLAY-02), as the runtime holds it. */
+export interface PlayEdit {
+  /** The value's key (ProjectedValue's). */
+  readonly key: string;
+  readonly value: Value;
+}
+
+/** A node that a step entered, and its board. */
+export interface PlayPlace {
+  readonly board: string;
+  readonly node: string;
+}
+
+/** A step of the flow, as its history lists it (FR-PLAY-04). */
+export interface PlayStep {
+  /** The choice that the step took, as it was offered, absent for the start's step. */
+  readonly choice?: Choice;
+  /** The nodes that the flow entered in the step, in order: the branches that it passed on by, and then the node that it came to. */
+  readonly entered: readonly PlayPlace[];
+  /** Why the flow ended in the step, if it did. */
+  readonly ended?: Reason;
+  /** The values that the author set by hand after the step, before the next, in order. */
+  readonly edits: readonly PlayEdit[];
 }
 
 /** What the flow shows where it is at rest. */
@@ -79,8 +151,22 @@ export interface PlayFlow {
   readonly traversed: ReadonlySet<string>;
   /** The runtime errors of every step, in order. */
   readonly errors: readonly PlayError[];
-  /** How many steps the flow has taken: the start's, and one for each choice. */
-  readonly steps: number;
+  /** The value of each variable and runtime attribute, by its key (ProjectedValue's). */
+  readonly values: ReadonlyMap<string, Value>;
+  /**
+   * The keys of the values that the last step changed (FR-PLAY-02 AC2), of
+   * the start's, those that differ from the snapshot's; an edit by hand
+   * changes none of them.
+   */
+  readonly changes: ReadonlySet<string>;
+  /** The current node's choices that the flow hides, in their author's order, as it built its choices. */
+  readonly hidden: readonly HiddenChoice[];
+  /**
+   * The steps that the flow has taken, in order, the start's first
+   * (FR-PLAY-04): as many as it has taken, the start's, and one for each
+   * choice, whose index is the step's of its runtime errors (PlayError).
+   */
+  readonly history: readonly PlayStep[];
 }
 
 /**
@@ -111,6 +197,13 @@ export interface PlayedProjection {
   >;
   /** Each expression's source, by its entity's ID and its field, as `${id} ${field}`. */
   readonly sources: ReadonlyMap<string, string>;
+  /** Each condition's AST, as the compiler gave it, with where its parts are, by its entity's ID (Projection's). */
+  readonly conditions: ReadonlyMap<string, ExprNode>;
+  /** The snapshot's variables and runtime attributes, which the inspector lists (Projection's), and each by its key. */
+  readonly values: readonly ProjectedValue[];
+  readonly valueByKey: ReadonlyMap<string, ProjectedValue>;
+  /** The components' names, by their IDs, as the snapshot holds them. */
+  readonly componentNames: ReadonlyMap<string, string>;
 }
 
 /** What of a turn a board's page shows once (PlaySession's firstShown). */
@@ -146,12 +239,24 @@ export type PlayState =
       /** Whether the draft has changed since play projected it (N78). */
       readonly changed: boolean;
       /**
-       * Counts the session's calls of the flow, its starts and its choices,
-       * across its restarts, after each of which the board's page shows the
-       * current node's board, as once the flow followed a jumper (AC3).
+       * Counts the session's turns, its starts, its choices, its steps
+       * back, and its resets, across its restarts, after each of which the
+       * board's page shows the current node's board, as once the flow
+       * followed a jumper (AC3); a value set by hand is none.
        */
       readonly turn: number;
     };
+
+/**
+ * What the author chose of play's panel, which play's starts and the board's
+ * pages that the flow is followed to keep: whether it shows the choices that
+ * the flow hides (FR-PLAY-03), and what the inspector's filter holds
+ * (FR-PLAY-02).
+ */
+export interface PlayView {
+  readonly showHidden: boolean;
+  readonly filter: string;
+}
 
 /** How many reads play makes at once as it starts, of boards and components, within the account's limit of reads. */
 export const parallelReads = 4;
@@ -160,6 +265,10 @@ export const parallelReads = 4;
 export class PlaySession {
   readonly store: StoreApi<PlayState> = createStore<PlayState>(() => ({
     status: "idle",
+  }));
+  readonly view: StoreApi<PlayView> = createStore<PlayView>(() => ({
+    showHidden: false,
+    filter: "",
   }));
   private readonly doc: ProjectDocument;
   // generation counts the starts and stops, so that a start that one after
@@ -170,6 +279,16 @@ export class PlaySession {
   private aborting = new AbortController();
   private runtime: Runtime | undefined;
   private snapshot: Snapshot | undefined;
+  // What runs the snapshot, once play has read it, which Reset makes a new
+  // runtime with.
+  private modules: Engine | undefined;
+  // The state and the flow before each step but the start's, in order,
+  // which Step back restores the last of (FR-PLAY-04).
+  private back: { readonly state: SaveState; readonly flow: PlayFlow }[] = [];
+  // The choices that the runtime hid as it built the current node's in the
+  // call that runs, which its observer tells, or undefined where it built
+  // none, which observed alone reads.
+  private hidden: HiddenChoice[] | undefined;
   private unwatch: (() => void) | undefined;
   private turns = 0;
   // The last turn that a board's page showed, by what of it (firstShown).
@@ -212,8 +331,8 @@ export class PlaySession {
     const current = () => generation === this.generation;
     let reading = true;
     try {
-      const [[{ projectDraft, ProjectionError }, { load, Runtime }]] =
-        await Promise.all([engine(), this.readAll(current)]);
+      const [modules] = await Promise.all([engine(), this.readAll(current)]);
+      const [{ projectDraft, ProjectionError }, { load }] = modules;
       if (!current()) {
         return;
       }
@@ -251,13 +370,8 @@ export class PlaySession {
         return;
       }
       this.snapshot = snapshot;
-      this.runtime = new Runtime(snapshot, true);
-      const flow = this.flowAfter(
-        emptyFlow(),
-        played,
-        this.runtime.start(start.board, start.node),
-        undefined,
-      );
+      this.modules = modules;
+      const flow = this.startFlow(played, start);
       this.store.setState(
         {
           status: "playing",
@@ -287,18 +401,174 @@ export class PlaySession {
     return s.status === "idle" ? Promise.resolve() : this.start(s.start);
   }
 
-  /** Takes the current node's choice of the connection id (§5.8.5). */
+  /**
+   * Takes the current node's choice of the connection id (§5.8.5), a step,
+   * once it has kept the state and the flow before it, which Step back
+   * restores. A choice that the flow does not offer, as once strict mode
+   * halted it, which the panel offers none of, does nothing.
+   */
   choose(id: string): void {
+    const s = this.state;
+    const r = this.runtime;
+    if (s.status !== "playing" || r === undefined) {
+      return;
+    }
+    const choice = s.flow.choices.find((c) => c.id === id);
+    if (
+      choice === undefined ||
+      s.flow.halted ||
+      s.flow.phase !== "awaiting_choice"
+    ) {
+      return;
+    }
+    // The state before the step is kept once the step has run, so that a
+    // call that threw keeps none that no step of the history follows.
+    const state = r.saveState();
+    const { result: events, hidden } = this.observed(() => r.choose(id));
+    this.back.push({ state, flow: s.flow });
+    this.store.setState({
+      ...s,
+      flow: this.flowAfter(s.flow, s.projection, events, hidden, choice),
+      turn: ++this.turns,
+    });
+  }
+
+  /**
+   * Returns the flow to where it was before its last step, with the state
+   * that it had then, exactly: the values, those that the author set by
+   * hand before the step among them, the visit counts, the choices, and
+   * the history and the runtime errors as they were (FR-PLAY-04 AC1). The
+   * start's step has none before it. It is a turn, so that the board's page
+   * shows the board that the flow is on again.
+   */
+  stepBack(): void {
+    const s = this.state;
+    const r = this.runtime;
+    const last = this.back.at(-1);
+    if (s.status !== "playing" || r === undefined || last === undefined) {
+      return;
+    }
+    // The state is the flow's at rest before a step: at a choice that it
+    // offered, not halted, whose choices loading builds again as they were,
+    // of the same values, and so are the choices hidden, which the flow
+    // kept holds. It is taken off the states kept once it has loaded, so
+    // that a load that threw would keep it, with the flow that the history
+    // still shows, rather than leave the next step back a step short.
+    this.observed(() => r.loadState(last.state));
+    this.back.pop();
+    this.store.setState({ ...s, flow: last.flow, turn: ++this.turns });
+  }
+
+  /**
+   * Starts the flow anew where play started, with the snapshot's values and
+   * no node visited, on the snapshot that play runs, rather than on the
+   * draft projected anew, as Restart does, and clears the history
+   * (FR-PLAY-04). It is a turn, as a start is.
+   */
+  reset(): void {
     const s = this.state;
     if (s.status !== "playing" || this.runtime === undefined) {
       return;
     }
-    const events = this.runtime.choose(id);
     this.store.setState({
       ...s,
-      flow: this.flowAfter(s.flow, s.projection, events, id),
+      flow: this.startFlow(s.projection, s.start),
       turn: ++this.turns,
     });
+  }
+
+  /**
+   * Sets the variable or the runtime attribute of key to v by hand
+   * (FR-PLAY-02), as the runtime's setVariable or setAttribute take it, so
+   * that the next evaluation reads it, without a restart (AC1): the current
+   * node's text shows it, and, while the flow awaits a choice and strict
+   * mode has not halted it, its choices are built again of it, as loading a
+   * state builds them, so that a choice whose condition the value makes
+   * true is offered, and one that it makes false is hidden; where it hides
+   * them all, the flow awaits a choice of none, as loading a state leaves
+   * it, rather than ends, which the panel says, until a value set offers
+   * one again, or Step back, Reset, or Restart. It changes no value's mark
+   * of the last step, and the history lists it after the step, with the
+   * runtime errors of the choices built again of it after it. Halted, the
+   * flow stays halted, until Step back, Reset, or Restart, as strict mode
+   * halts it until a start or a load (§5.8.7). It returns false, and
+   * changes nothing, of a value that the runtime does not take of the type
+   * (AC3), as a string of more than 4,096 characters.
+   */
+  edit(key: string, v: Value): boolean {
+    const s = this.state;
+    const r = this.runtime;
+    const snapshot = this.snapshot;
+    const m = this.modules;
+    if (
+      s.status !== "playing" ||
+      r === undefined ||
+      snapshot === undefined ||
+      m === undefined
+    ) {
+      return false;
+    }
+    const target = s.projection.valueByKey.get(key);
+    if (target === undefined) {
+      return false;
+    }
+    const before = valueIn(r, target);
+    try {
+      if (target.kind === "variable") {
+        r.setVariable(target.variable, v);
+      } else {
+        r.setAttribute(target.component, target.attribute, v);
+      }
+    } catch (error) {
+      if (error instanceof m[1].ValueError) {
+        return false;
+      }
+      throw error;
+    }
+    const value = valueIn(r, target);
+    if (sameValue(before, value)) {
+      return true;
+    }
+    const flow = s.flow;
+    const { result: events, hidden } =
+      r.current().phase === "awaiting_choice" && !r.halted()
+        ? this.observed(() => r.loadState(r.saveState()))
+        : { result: [], hidden: undefined };
+    const last = flow.history.at(-1);
+    // The value's index among the step's edits, after which the history
+    // lists the runtime errors of the choices built again of it.
+    const edit = last?.edits.length ?? 0;
+    const errors = [...flow.errors];
+    for (const e of events) {
+      if (e.kind === "error") {
+        errors.push({
+          ...errorOf(s.projection, snapshot, e, flow.history.length - 1),
+          edit,
+        });
+      }
+    }
+    const history =
+      last === undefined
+        ? flow.history
+        : [
+            ...flow.history.slice(0, -1),
+            { ...last, edits: [...last.edits, { key, value }] },
+          ];
+    const { node } = r.current();
+    this.store.setState({
+      ...s,
+      flow: {
+        ...flow,
+        text: node === "" ? "" : r.text(),
+        choices: r.choices(),
+        hidden: hidden ?? flow.hidden,
+        halted: r.halted(),
+        errors,
+        values: valuesOf(r, s.projection, flow.values),
+        history,
+      },
+    });
+    return true;
   }
 
   /** Ends play. */
@@ -314,6 +584,8 @@ export class PlaySession {
     this.unwatch = undefined;
     this.runtime = undefined;
     this.snapshot = undefined;
+    this.modules = undefined;
+    this.back = [];
     this.aborting.abort();
     this.aborting = new AbortController();
     return ++this.generation;
@@ -433,23 +705,81 @@ export class PlaySession {
     });
   }
 
-  // flowAfter returns flow after the events of a call of the runtime, the
-  // start's, or a choice of the connection chosen.
+  // startFlow makes a new runtime of the snapshot that play runs, which
+  // tells the session of the choices that it hides, and returns the flow of
+  // its start at start, with no step before it.
+  private startFlow(played: PlayedProjection, start: PlayStart): PlayFlow {
+    const m = this.modules;
+    const snapshot = this.snapshot;
+    if (m === undefined || snapshot === undefined) {
+      return emptyFlow(new Map());
+    }
+    const [, { Runtime }, { failedParts }] = m;
+    // hide explains each choice that the runtime r hid, as it builds them,
+    // while what r holds is what their conditions read, with its text as
+    // the runtime renders a choice's.
+    const hide = (r: Runtime, c: Choice): HiddenChoice => {
+      const tree = played.conditions.get(c.id);
+      const source = played.sources.get(`${c.id} condition`) ?? "";
+      return {
+        id: c.id,
+        text: c.text,
+        source,
+        failed: tree === undefined ? undefined : failedParts(tree, source, r),
+      };
+    };
+    const r: Runtime = new Runtime(snapshot, true, {
+      choices: (_, hidden) => {
+        this.hidden = hidden.map((c) => hide(r, c));
+      },
+    });
+    this.runtime = r;
+    this.back = [];
+    const before = valuesOf(r, played);
+    const { result: events, hidden } = this.observed(() =>
+      r.start(start.board, start.node),
+    );
+    return this.flowAfter(emptyFlow(before), played, events, hidden, undefined);
+  }
+
+  // observed runs call, a call of the runtime that may build the current
+  // node's choices, and returns what it returns, with the choices that the
+  // runtime hid as it built them, which its observer told meanwhile, or
+  // undefined where it built none: the one place that reads what the
+  // observer tells, so that no call reads what another's told.
+  private observed<T>(call: () => T): {
+    readonly result: T;
+    readonly hidden: readonly HiddenChoice[] | undefined;
+  } {
+    this.hidden = undefined;
+    try {
+      const result = call();
+      return { result, hidden: this.hidden };
+    } finally {
+      this.hidden = undefined;
+    }
+  }
+
+  // flowAfter returns flow after the events of a call of the runtime that
+  // is a step, a start's, or a choice's of the choice chosen, of which the
+  // runtime hid the choices hidden (observed).
   private flowAfter(
     flow: PlayFlow,
     projection: PlayedProjection,
     events: readonly Event[],
-    chosen: string | undefined,
+    hidden: readonly HiddenChoice[] | undefined,
+    chosen: Choice | undefined,
   ): PlayFlow {
     const r = this.runtime;
     const s = this.snapshot;
     if (r === undefined || s === undefined) {
       return flow;
     }
-    const step = chosen === undefined ? 0 : flow.steps;
+    const step = chosen === undefined ? 0 : flow.history.length;
     const visited = new Set(flow.visited);
     const traversed = new Set(flow.traversed);
     const errors = [...flow.errors];
+    const entered: PlayPlace[] = [];
     let ended: Reason | undefined;
     // The connections that the call took: the one chosen, and the one of
     // each branch that the flow passed on by.
@@ -460,18 +790,16 @@ export class PlaySession {
       switch (e.kind) {
         case "enter":
           visited.add(e.node);
+          entered.push({
+            board: s.nodes.get(e.node)?.board ?? "",
+            node: e.node,
+          });
           break;
         case "end":
           ended = e.reason;
           break;
         case "error":
-          errors.push({
-            ...placeOf(projection, s, e.at, e.expression),
-            code: e.code,
-            at: e.at,
-            expression: e.expression,
-            step,
-          });
+          errors.push(errorOf(projection, s, e, step));
           break;
         case "exit":
         case "ready":
@@ -482,6 +810,19 @@ export class PlaySession {
     const { node, phase } = r.current();
     const board = node === "" ? "" : (s.nodes.get(node)?.board ?? "");
     const shown = projection.nodes.get(node);
+    const values = valuesOf(r, projection, flow.values);
+    const changes = new Set<string>();
+    for (const [key, v] of values) {
+      if (!sameValue(flow.values.get(key) ?? NONE, v)) {
+        changes.add(key);
+      }
+    }
+    const taken: PlayStep = {
+      ...(chosen === undefined ? {} : { choice: chosen }),
+      entered,
+      ...(ended === undefined ? {} : { ended }),
+      edits: [],
+    };
     return {
       board,
       node,
@@ -495,13 +836,29 @@ export class PlaySession {
       visited,
       traversed,
       errors,
-      steps: flow.steps + 1,
+      values,
+      changes,
+      hidden: hidden ?? [],
+      history: [...flow.history, taken],
     };
   }
 }
 
-// emptyFlow returns the flow before play starts.
-function emptyFlow(): PlayFlow {
+/**
+ * Reports whether flow has taken a step since its start's, which Step back
+ * steps back from: the one rule that the panel's Step back, the palette's,
+ * and what the panel and the inspector say of how to go on read. A flow
+ * that halted, ended, or offers a choice of none in the start's step has no
+ * step to step back from: its Step back is disabled, and what they say of
+ * how to go on names none (plan note N79).
+ */
+export function steppedSinceStart(flow: Pick<PlayFlow, "history">): boolean {
+  return flow.history.length > 1;
+}
+
+// emptyFlow returns the flow before play starts, of the values that the
+// snapshot holds.
+function emptyFlow(values: ReadonlyMap<string, Value>): PlayFlow {
   return {
     board: "",
     node: "",
@@ -515,7 +872,54 @@ function emptyFlow(): PlayFlow {
     visited: new Set(),
     traversed: new Set(),
     errors: [],
-    steps: 0,
+    values,
+    changes: new Set(),
+    hidden: [],
+    history: [],
+  };
+}
+
+// valueIn returns the value of target that r holds.
+function valueIn(r: Runtime, target: ProjectedValue): Value {
+  return target.kind === "variable"
+    ? r.variable(target.variable)
+    : r.attribute(target.component, target.attribute);
+}
+
+// valuesOf returns the value of each variable and runtime attribute of
+// projection that r holds, by its key, as the very object that previous
+// holds of it where that is the same value, so that the inspector's row of
+// a value that did not change draws nothing again (ValueRow), though
+// loading a state, as Step back and a value set by hand do, makes each of
+// the runtime's values anew.
+function valuesOf(
+  r: Runtime,
+  projection: PlayedProjection,
+  previous?: ReadonlyMap<string, Value>,
+): ReadonlyMap<string, Value> {
+  return new Map(
+    projection.values.map((v): [string, Value] => {
+      const now = valueIn(r, v);
+      const was = previous?.get(v.key);
+      return [v.key, was !== undefined && sameValue(was, now) ? was : now];
+    }),
+  );
+}
+
+// errorOf returns the runtime error that the event e reports, of the step,
+// with where it is.
+function errorOf(
+  projection: PlayedProjection,
+  s: Snapshot,
+  e: Extract<Event, { kind: "error" }>,
+  step: number,
+): PlayError {
+  return {
+    ...placeOf(projection, s, e.at, e.expression),
+    code: e.code,
+    at: e.at,
+    expression: e.expression,
+    step,
   };
 }
 
@@ -573,7 +977,17 @@ function playedOf(projection: Projection): PlayedProjection {
       source(c.id, "onTraverse", c.onTraverse);
     }
   }
-  return { standIns: projection.standIns, nodes, boards, places, sources };
+  return {
+    standIns: projection.standIns,
+    nodes,
+    boards,
+    places,
+    sources,
+    conditions: projection.conditions,
+    values: projection.values,
+    valueByKey: new Map(projection.values.map((v) => [v.key, v])),
+    componentNames: projection.componentNames,
+  };
 }
 
 // placeOf returns where the entity at of a runtime error is, as a link opens

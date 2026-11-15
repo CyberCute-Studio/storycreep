@@ -1591,10 +1591,17 @@ describe("the panel", () => {
     expect(list.closest("[inert]")).toBeNull();
     act(() => window.resize(640));
     // An Escape that ends what an input method was composing is its own,
-    // which leaves the sheet open, with what was typed, as typing goes on.
+    // which leaves the sheet open, with what was typed, as typing goes on:
+    // as the event says, or as Safari tells of one, once the composition
+    // has ended, by its keyCode alone, 229.
     fireEvent.keyDown(within(sheet).getByLabelText("Description"), {
       key: "Escape",
       isComposing: true,
+    });
+    fireEvent.keyDown(within(sheet).getByLabelText("Description"), {
+      key: "Escape",
+      code: "Escape",
+      keyCode: 229,
     });
     await user.type(within(sheet).getByLabelText("Description"), "!");
     expect(screen.getByRole("dialog", { name: "rep" })).toBe(sheet);

@@ -255,11 +255,14 @@ export function Panel({
     // A key of what the panel opened in a portal, as a dialog, which closes
     // itself on Escape, comes through React here too, but is not the
     // sheet's; nor is an Escape that ends what an input method was
-    // composing in one of the sheet's fields, as of Japanese or Chinese.
+    // composing in one of the sheet's fields, as of Japanese or Chinese, as
+    // the event says, or as Safari tells of one, once the composition has
+    // ended, by its keyCode alone, 229, as the palette reads it.
     if (
       sheet &&
       event.key === "Escape" &&
       !event.nativeEvent.isComposing &&
+      event.nativeEvent.keyCode !== 229 &&
       !event.defaultPrevented &&
       event.currentTarget.contains(event.target as Node)
     ) {
