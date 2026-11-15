@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Engine, Frame } from "../canvas/engine";
 import type { ComponentEntry } from "../document/doc";
+import { focusIsNowhere } from "../shell/focus";
 import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
 import "../test/editor";
@@ -2132,6 +2133,212 @@ describe("saved play states", () => {
     expect(document.activeElement).toBe(
       within(panel).getByRole("heading", { name: "Saved states" }),
     );
+  });
+
+  // Once the focus has left the section, as for nothing, the going of the
+  // button that had it last, as by another session's deletion of its
+  // state, gives the section's heading no focus, which stays nowhere, as
+  // the page's content has it then (focusIsNowhere).
+  it("leaves the focus where the user put it once the state whose button had it before goes", async () => {
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const load = await within(panel).findByRole("button", {
+      name: "Load “Romance path”",
+    });
+    act(() => load.focus());
+    // The focus leaves for nothing, as a press of the panel's text leaves it.
+    await act(async () => load.blur());
+    expect(document.activeElement).toBe(document.body);
+    saved.states.splice(0, 1);
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.delete", payload: { id: pst } }],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(document.activeElement).not.toBe(
+      within(panel).getByRole("heading", { name: "Saved states" }),
+    );
+    expect(focusIsNowhere(document)).toBe(true);
+  });
+
+  // A rename whose state another session deletes ends with its field, whose
+  // focus the section's heading then has, so that the undo of the deletion
+  // brings the state back with its buttons, rather than with the rename's
+  // field open again, taking the focus from where the user has put it since.
+  it("ends a rename whose state another session deleted, so that its field does not open again, taking the focus, as the state comes back", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “Romance path”",
+      }),
+    );
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("textbox", {
+        name: "New name of “Romance path”",
+      }),
+    );
+    const [state] = saved.states.splice(0, 1);
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.delete", payload: { id: pst } }],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("heading", { name: "Saved states" }),
+    );
+    act(() => canvas.focus());
+    saved.states.push({ ...state, rev: 3 });
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.restore", payload: { id: pst } }],
+        [{ id: pst, rev: 3 }],
+      ),
+    );
+    await within(panel).findByRole("button", {
+      name: "Rename “Romance path”",
+    });
+    expect(
+      within(panel).queryByRole("textbox", {
+        name: "New name of “Romance path”",
+      }),
+    ).toBeNull();
+    expect(document.activeElement).toBe(canvas);
+  });
+
+  // A load of a state that another session deleted while the page did not
+  // hear of it, as while its channel was down, is refused, which the
+  // section says, after which it reads the list again, which no longer
+  // holds the state, rather than offer its buttons, each refused alike.
+  it("reads the list again once the server refuses a press, as a load of a state that another session deleted unheard", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getPlayState" && saved.states.length === 0
+        ? Promise.reject(
+            refused(404, {
+              code: "not_found",
+              message: "There is no such play state.",
+            }),
+          )
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const load = await within(panel).findByRole("button", {
+      name: "Load “Romance path”",
+    });
+    saved.states.splice(0, 1);
+    await user.click(load);
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(alerts(panel)).toContain("There is no such play state.");
   });
 
   // On a sheet, Escape in the saved states empties the name or cancels a

@@ -6,7 +6,7 @@
 // undo takes back. Loading one starts play at it, with what loading could
 // not keep of it, which the panel says (PlayPanel).
 
-import type { PlayStateSummary } from "@storycreep/shared/api";
+import { ApiError, type PlayStateSummary } from "@storycreep/shared/api";
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { newId } from "@storycreep/shared/ids";
 import { useQuery } from "@tanstack/react-query";
@@ -27,7 +27,6 @@ import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
 import { payloadField, useExpected } from "../project/dialogs";
-import { conflictOf } from "../project/queries";
 import { inputMethodTook } from "../richtext/suggest";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
@@ -146,11 +145,12 @@ export const SavedStates = memo(function SavedStates({
       setSaid({ status: followed.status });
     }
   }, [session, boardId]);
-  // The field or the button of the section that had the focus last. Once
-  // what the section shows anew has taken it away, whatever took it, as a
-  // rename, a deletion, or a list read again, or another session's deletion
-  // of its state, or an undo of its save, and nothing has the focus, the
-  // section's heading has it, rather than the page.
+  // The field or the button of the section that has the focus, or had it
+  // last, until the focus left the section (onBlur). Once what the section
+  // shows anew has taken it away, whatever took it, as a rename, a
+  // deletion, or a list read again, or another session's deletion of its
+  // state, or an undo of its save, and nothing has the focus, the section's
+  // heading has it, rather than the page.
   const focused = useRef<Element | null>(null);
   useLayoutEffect(() => {
     const was = focused.current;
@@ -177,10 +177,19 @@ export const SavedStates = memo(function SavedStates({
       setSaid(typeof done === "string" ? { status: done } : done);
       return typeof done === "string";
     } catch (error) {
-      // A refusal for a revision that changed elsewhere, which the list
-      // read again shows, as a rename pressed again expects it then
-      // (useExpected).
-      if (conflictOf(error)) {
+      // A refusal of the server's, an answer below 500 with its error
+      // envelope, rather than a fault of the server's or the instance's, or
+      // no answer, which a read again would meet as well (refusalOf), is
+      // of a list that may be behind the server, which the list read again
+      // shows as it is: a state that changed elsewhere, whose revision a
+      // rename pressed again then expects (useExpected), or that another
+      // session deleted while the page did not hear of it, as a load of it
+      // is refused for.
+      if (
+        error instanceof ApiError &&
+        error.status < 500 &&
+        error.error !== undefined
+      ) {
         await list.refetch();
       }
       setSaid({
@@ -201,6 +210,16 @@ export const SavedStates = memo(function SavedStates({
       collator.compare(a.name, b.name) ||
       Date.parse(b.updated_at) - Date.parse(a.updated_at),
   );
+  // A rename whose state the list no longer shows, as once another session
+  // deleted it, or the list could not be read again, ends with its field,
+  // rather than open again, taking the focus from wherever the user has
+  // put it, as the state comes back, as by the undo of its deletion.
+  if (
+    renaming !== undefined &&
+    (list.isError || !states.some((s) => s.id === renaming))
+  ) {
+    setRenaming(undefined);
+  }
   const load = (s: PlayStateSummary) =>
     act(async () => {
       const pressed = session.state;
@@ -307,6 +326,26 @@ export const SavedStates = memo(function SavedStates({
       className="space-y-2"
       onFocus={(event) => {
         focused.current = event.target;
+      }}
+      // Once the focus has left the section, as for the current node's
+      // heading after a load, or for nothing, as a press of what takes none
+      // leaves it, rather than gone with what the section showed anew, which
+      // a browser may tell as a blur too, what had it is no longer the
+      // section's to give the focus back for, so that its going later, as
+      // by another session's deletion of its state, moves no focus that the
+      // user put elsewhere, or nowhere.
+      onBlur={(event) => {
+        const left = event.target;
+        const section = event.currentTarget;
+        queueMicrotask(() => {
+          if (
+            focused.current === left &&
+            left.isConnected &&
+            !section.contains(document.activeElement)
+          ) {
+            focused.current = null;
+          }
+        });
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {

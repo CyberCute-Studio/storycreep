@@ -63,17 +63,6 @@ export interface LoadReport {
   readonly cursor?: CursorFallback;
 }
 
-/** Reports whether loading kept everything of the state as it was saved. */
-export function keptWhole(r: LoadReport): boolean {
-  return (
-    r.dropped.length === 0 &&
-    r.droppedVisits === 0 &&
-    r.defaulted.length === 0 &&
-    r.retyped.length === 0 &&
-    r.cursor === undefined
-  );
-}
-
 /** What a saved state loads as on a snapshot (adapt). */
 export interface Adapted {
   /** A state of the snapshot, which its runtime's loadState takes. */
