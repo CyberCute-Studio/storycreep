@@ -498,7 +498,7 @@ func TestRestorePurged(t *testing.T) {
 var trashTables = []struct{ name, kind string }{{"folder", ""}, {"connection", ""}, {"branch_output", ""},
 	{"node", "node"},
 	{"board", "board"}, {"variable", "variable"}, {"attribute_def", ""}, {"component_type", ""},
-	{"component", "component"}}
+	{"component", "component"}, {"play_state", ""}}
 
 // TestTrashTables checks that every table of a project's content with a
 // deleted_at is registered with the trash, and holds each to what that

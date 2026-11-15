@@ -853,7 +853,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ClipboardPasteCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDeleteManyCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeRestoreManyCommand | NodeUpdateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ClipboardPasteCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDeleteManyCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeRestoreManyCommand | NodeUpdateCommand | PlayStateCreateCommand | PlayStateDeleteCommand | PlayStateRenameCommand | PlayStateRestoreCommand | PlayStateSetStateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -1524,6 +1524,14 @@ export interface CreatedAPITokenBody {
   user_id: string;
   /** The ID of the workspace that the token belongs to, and acts in alone */
   workspace_id: string;
+}
+
+export interface Cursor {
+  boardId: string;
+  /** The current node, a node of the board that is no jumper. */
+  nodeId: string;
+  /** awaiting_choice when the node's choices are built and the game chooses one, or advances; ended when the flow ended at the node, after its on-exit ran (PRD §5.8.5). */
+  phase: "awaiting_choice" | "ended";
 }
 
 export interface Edge {
@@ -2263,6 +2271,12 @@ export interface PageNode {
   next_cursor: string | null;
 }
 
+export interface PagePlayStateSummary {
+  items: Array<PlayStateSummary>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageProject {
   items: Array<Project>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2333,6 +2347,154 @@ export interface PasswordBody {
 export interface PasswordResetBody {
   /** The email address of the account whose password to reset, in any case */
   email: string;
+}
+
+export interface PlayStateBody {
+  /** When the play state was saved */
+  created_at: string;
+  /** The ID of the user who saved the play state, whom it no longer names once their account is deleted */
+  created_by?: string;
+  /** When the play state went to the project's trash, if it is there */
+  deleted_at?: string;
+  /** The play state's ID */
+  id: string;
+  /** The play state's name, which need not be unique among the project's play states */
+  name: string;
+  /** The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's */
+  names: PlayStateNames;
+  /** The ID of the play state's project */
+  project_id: string;
+  /** The play state's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** The play state's state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key, as the project's entities were when it was saved, which they may no longer be (PRD FR-PLAY-05 AC2). */
+  state: SaveState;
+  /** When the play state last changed, its name or its state */
+  updated_at: string;
+  /** The ID of the user who changed the play state last, its name or its state, whom it no longer names once their account is deleted */
+  updated_by?: string;
+}
+
+/** A command of the type play_state.create. */
+export interface PlayStateCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: PlayStateCreatePayload;
+  /** The command's type. */
+  type: "play_state.create";
+}
+
+/** The payload of a command of the type play_state.create. */
+export interface PlayStateCreatePayload {
+  /** The new play state's ID, a pst_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The play state's name, of 1 to 100 characters, without white space around it, and without control characters, which need not be unique among the project's play states */
+  name: string;
+  /** The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none. */
+  names?: PlayStateNames;
+  /** The play state's state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps it as the client sent it, and reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2). */
+  state: SaveState;
+}
+
+/** A command of the type play_state.delete. */
+export interface PlayStateDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: PlayStateDeletePayload;
+  /** The command's type. */
+  type: "play_state.delete";
+}
+
+/** The payload of a command of the type play_state.delete. */
+export interface PlayStateDeletePayload {
+  /** The play state's ID */
+  id: string;
+}
+
+export interface PlayStateNames {
+  /** Each runtime attribute's name, by its component's ID and its attribute definition's, as elara.trust */
+  attributes?: Record<string, Record<string, string>>;
+  /** Each variable's name, by its ID, as met_elara */
+  variables?: Record<string, string>;
+}
+
+/** A command of the type play_state.rename. */
+export interface PlayStateRenameCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: PlayStateRenamePayload;
+  /** The command's type. */
+  type: "play_state.rename";
+}
+
+/** The payload of a command of the type play_state.rename. */
+export interface PlayStateRenamePayload {
+  /** The play state's ID */
+  id: string;
+  /** The play state's new name, of 1 to 100 characters, without white space around it, and without control characters, which need not be unique among the project's play states */
+  name: string;
+}
+
+/** A command of the type play_state.restore. */
+export interface PlayStateRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: PlayStateRestorePayload;
+  /** The command's type. */
+  type: "play_state.restore";
+}
+
+/** The payload of a command of the type play_state.restore. */
+export interface PlayStateRestorePayload {
+  /** The play state's ID */
+  id: string;
+}
+
+/** A command of the type play_state.set_state. */
+export interface PlayStateSetStateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: PlayStateSetStatePayload;
+  /** The command's type. */
+  type: "play_state.set_state";
+}
+
+/** The payload of a command of the type play_state.set_state. */
+export interface PlayStateSetStatePayload {
+  /** The play state's ID */
+  id: string;
+  /** The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none. */
+  names?: PlayStateNames;
+  /** The play state's new state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps it as the client sent it, and reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2). */
+  state: SaveState;
+}
+
+export interface PlayStateSummary {
+  /** When the play state was saved */
+  created_at: string;
+  /** The ID of the user who saved the play state, whom it no longer names once their account is deleted */
+  created_by?: string;
+  /** The play state's ID */
+  id: string;
+  /** The play state's name, which need not be unique among the project's play states */
+  name: string;
+  /** The ID of the play state's project */
+  project_id: string;
+  /** The play state's revision, which every change of it increments, and which a change expects with expected_rev */
+  rev: number;
+  /** When the play state last changed, its name or its state */
+  updated_at: string;
+  /** The ID of the user who changed the play state last, its name or its state, whom it no longer names once their account is deleted */
+  updated_by?: string;
 }
 
 export interface Project {
@@ -2770,6 +2932,26 @@ export interface RichTextValueRef {
 
 /** A variable's ID. */
 export type RichTextVariableId = string;
+
+export interface SaveState {
+  /** The values of the components' runtime attributes, by the component's ID and the attribute definition's. */
+  attributes: Record<string, Record<string, boolean | number | string>>;
+  /** Where the flow is. Without it, the flow has not started. */
+  cursor?: Cursor;
+  projectId: string;
+  /** The version of the published format of the snapshot that the state was saved against. */
+  schemaVersion: number;
+  /** The snapshot that the state was saved against, a release, which is there exactly when snapshotVersion is. Without them, the state was saved against a draft (PRD §7.8). */
+  snapshotId?: string;
+  /** The release's version, which is there exactly when snapshotId is. Without them, the state was saved against a draft. */
+  snapshotVersion?: string;
+  /** The version of the save-state format, 1, which a runtime of an older one refuses (PRD §8.5). */
+  stateVersion: 1;
+  /** The values of the variables, global and of each board, by their IDs, each of its variable's type. */
+  variables: Record<string, boolean | number | string>;
+  /** How many times the flow has entered each node that it has entered, by the node's ID; a node that it has not entered has none. */
+  visits: Record<string, number>;
+}
 
 export interface SessionBody {
   /** When its user signed in */
@@ -3882,6 +4064,24 @@ export interface Operations {
     };
   };
   /**
+   * Get a saved play state
+   *
+   * Returns a saved play state of the project, with its state, a save state of the project's flow (PRD §8.5), as it was saved, which play mode loads as a starting point (PRD FR-PLAY-05). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type play_state.* save, rename, replace the state of, delete, and restore them, which an owner, an admin, or an editor of the project may send. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A play state that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getPlayState: {
+    input: {
+      path: {
+        /** The play state's ID */
+        play_state_id: string;
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: PlayStateBody;
+    };
+  };
+  /**
    * Get a project
    *
    * Returns a project, with the role that the signed-in user acts with on it. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -4353,6 +4553,28 @@ export interface Operations {
     };
     responses: {
       200: PageNode;
+    };
+  };
+  /**
+   * List a project's saved play states
+   *
+   * Lists the project's saved play states that are not in its trash, each without its state, which GET /api/v1/projects/{project_id}/play-states/{play_state_id} returns, in the order of their IDs, oldest first (PRD FR-PLAY-05). Every member who reads the project sees them all, whoever saved them. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type play_state.* save, rename, replace the state of, delete, and restore them, which an owner, an admin, or an editor of the project may send. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listPlayStates: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PagePlayStateSummary;
     };
   };
   /**
@@ -5220,6 +5442,7 @@ export const routes = {
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
   getNodeStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/statistics" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
+  getPlayState: { method: "GET", path: "/api/v1/projects/{project_id}/play-states/{play_state_id}" },
   getProject: { method: "GET", path: "/api/v1/projects/{project_id}" },
   getProjectStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/statistics" },
   getReadiness: { method: "GET", path: "/readyz" },
@@ -5244,6 +5467,7 @@ export const routes = {
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
   listNodeReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by" },
+  listPlayStates: { method: "GET", path: "/api/v1/projects/{project_id}/play-states" },
   listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },

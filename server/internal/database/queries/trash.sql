@@ -68,7 +68,9 @@ WHERE p.workspace_id = @workspace_id AND (
     OR EXISTS (SELECT 1 FROM attribute_def a WHERE a.workspace_id = p.workspace_id AND a.project_id = p.id
         AND a.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
-        AND t.deleted_at <= now() - @retention::interval))
+        AND t.deleted_at <= now() - @retention::interval)
+    OR EXISTS (SELECT 1 FROM play_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
+        AND s.deleted_at <= now() - @retention::interval))
 ORDER BY p.id;
 
 -- name: LockProjectToPurge :one
@@ -154,6 +156,19 @@ WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN 
     WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id
         AND v.deleted_at <= now() - @retention::interval
     ORDER BY v.deleted_at, v.id
+    LIMIT @max_rows
+);
+
+-- name: PurgePlayStates :execrows
+-- PurgePlayStates deletes at most max_rows of the project's play states that
+-- have been in its trash for retention, those that have been there longest
+-- first, and returns how many it deleted.
+DELETE FROM play_state d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (
+    SELECT s.id FROM play_state s
+    WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id
+        AND s.deleted_at <= now() - @retention::interval
+    ORDER BY s.deleted_at, s.id
     LIMIT @max_rows
 );
 

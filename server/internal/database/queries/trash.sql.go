@@ -55,7 +55,9 @@ WHERE p.workspace_id = $1 AND (
     OR EXISTS (SELECT 1 FROM attribute_def a WHERE a.workspace_id = p.workspace_id AND a.project_id = p.id
         AND a.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
-        AND t.deleted_at <= now() - $2::interval))
+        AND t.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM play_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
+        AND s.deleted_at <= now() - $2::interval))
 ORDER BY p.id
 `
 
@@ -392,6 +394,40 @@ type PurgeNodesParams struct {
 // passed.
 func (q *Queries) PurgeNodes(ctx context.Context, arg PurgeNodesParams) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeNodes,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgePlayStates = `-- name: PurgePlayStates :execrows
+DELETE FROM play_state d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT s.id FROM play_state s
+    WHERE s.workspace_id = $1 AND s.project_id = $2
+        AND s.deleted_at <= now() - $3::interval
+    ORDER BY s.deleted_at, s.id
+    LIMIT $4
+)
+`
+
+type PurgePlayStatesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgePlayStates deletes at most max_rows of the project's play states that
+// have been in its trash for retention, those that have been there longest
+// first, and returns how many it deleted.
+func (q *Queries) PurgePlayStates(ctx context.Context, arg PurgePlayStatesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgePlayStates,
 		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Retention,

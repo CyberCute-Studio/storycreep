@@ -1,5 +1,5 @@
-// The appliers of the clipboard's paste (PRD FR-EDIT-07) and of the
-// validation's mutes (FR-VAL-02). A paste's nodes, outputs, and connections
+// The appliers of the clipboard's paste (PRD FR-EDIT-07), of the
+// validation's mutes (FR-VAL-02), and of the saved play states (FR-PLAY-05). A paste's nodes, outputs, and connections
 // are the clipboard's, but what their texts, speakers, covers, targets, and
 // expressions become depends on what the destination's names resolve to, the
 // trash among them, and on what the server compiles, so the applier predicts
@@ -9,13 +9,27 @@
 // no entity's body, but changes the revision of the entity whose finding it
 // mutes, unless it changes nothing, as a mute with the reason that the
 // finding has, which the store then sets back, as the operation's revisions
-// do not name it.
+// do not name it. A play state is no part of the document: play mode reads
+// the project's list of them as a query of its own, which the store reads
+// again as an operation of them applies (followed), so their appliers change
+// nothing.
 
 import { type Appliers, canonical } from "../apply";
 import { boardPart, type Draft, nodeOfOutput, placeOf } from "../doc";
 import { renames, settled, withField } from "./node";
 
-type Types = "clipboard.paste" | "validation.mute" | "validation.unmute";
+type Types =
+  | "clipboard.paste"
+  | "validation.mute"
+  | "validation.unmute"
+  | "play_state.create"
+  | "play_state.rename"
+  | "play_state.set_state"
+  | "play_state.delete"
+  | "play_state.restore";
+
+/** Changes nothing of the document, which holds no play state. */
+function none(): void {}
 
 /** Changes the entity of entityId, whose finding a mute changes, as the server changes it: its revision alone. */
 function touchOwner(draft: Draft, entityId: string): void {
@@ -84,4 +98,9 @@ export const otherAppliers: Appliers<Types> = {
   },
   "validation.mute": (draft, p) => touchOwner(draft, p.entity_id),
   "validation.unmute": (draft, p) => touchOwner(draft, p.entity_id),
+  "play_state.create": none,
+  "play_state.rename": none,
+  "play_state.set_state": none,
+  "play_state.delete": none,
+  "play_state.restore": none,
 };

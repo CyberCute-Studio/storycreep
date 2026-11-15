@@ -48,8 +48,10 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/boards/{board_id}"}: scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/folders"}:           scope.ProjectRead,
 	// So are its variables, which change through its commands.
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables"}:               scope.ProjectRead,
-	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables/{variable_id}"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables"}:                   scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/play-states"}:                 scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/play-states/{play_state_id}"}: scope.ProjectRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/variables/{variable_id}"}:     scope.ProjectRead,
 	// So are its component types and components, which change through its
 	// commands.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/component-types"}:                     scope.ProjectRead,
