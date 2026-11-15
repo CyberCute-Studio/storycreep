@@ -70,6 +70,7 @@ import {
   useProjectDocument,
 } from "../document/react";
 import { PlayPanel } from "../play/PlayPanel";
+import { goToSaved } from "../play/SavedStates";
 import {
   type PlayStart,
   playSessionOf,
@@ -1841,6 +1842,17 @@ function BoardCanvasOf({
       enabled: playFlow !== undefined,
       run: () => session.reset(),
     },
+    // The panel's saved play states, which the palette goes to, as their
+    // name's field for a save, which only the user who may edit does
+    // (FR-PLAY-05).
+    "play.save_state": {
+      enabled: playFlow !== undefined && editable,
+      run: () => goToSaved(document, "save"),
+    },
+    "play.saved_states": {
+      enabled: playFlow !== undefined,
+      run: () => goToSaved(document, "list"),
+    },
     ...(editable
       ? {
           ...historyHandlers(history),
@@ -2735,6 +2747,7 @@ function BoardCanvasOf({
               returnFocus={() => hostRef.current}
               focusOnOpen={editing === undefined}
               holding={holding}
+              editable={editable}
             />
           )}
       </div>

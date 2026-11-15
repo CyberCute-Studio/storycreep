@@ -5,8 +5,10 @@
 // (FR-PLAY-04), why it ended, its runtime errors, which strict mode halts it
 // at, with where each is and its expression's source, the values of its
 // state, which the author sets by hand (FR-PLAY-02), its history, which
-// copies as text (FR-PLAY-04), and what the projection stood in for (plan
-// note N79). Closing it stops play.
+// copies as text (FR-PLAY-04), the project's saved play states, which it
+// saves and loads, with what a load could not keep (FR-PLAY-05, plan note
+// N80), and what the projection stood in for (plan note N79). Closing it
+// stops play.
 
 import { ApiError, NetworkError } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
@@ -39,6 +41,7 @@ import {
   expressionPlace,
   standInMessage,
 } from "./messages";
+import { SavedStates } from "./SavedStates";
 import {
   followsFlow,
   type PlayError,
@@ -46,7 +49,7 @@ import {
   type PlayState,
   steppedSinceStart,
 } from "./session";
-import type { Where } from "./steps";
+import { justLoaded, reportLines, type Where } from "./steps";
 import type { GroupNames } from "./values";
 
 export function PlayPanel({
@@ -57,6 +60,7 @@ export function PlayPanel({
   returnFocus,
   focusOnOpen = true,
   holding = false,
+  editable = false,
 }: {
   projectId: string;
   /** The board whose page shows the panel. */
@@ -74,6 +78,8 @@ export function PlayPanel({
    * focus where the flow is meanwhile.
    */
   holding?: boolean;
+  /** Whether the user may save, rename, replace, and delete the project's saved play states, as the board's page may edit the project. */
+  editable?: boolean;
 }) {
   const { t } = useTranslation();
   const state = useStore(session.store);
@@ -222,12 +228,14 @@ export function PlayPanel({
       ) : (
         <PlayFlowView
           state={state}
+          doc={doc}
           session={session}
           currentRef={current}
           title={title}
           where={where}
           link={link}
           project={projectName}
+          editable={editable}
         />
       )}
       <div className="flex flex-wrap gap-2">
@@ -242,14 +250,17 @@ export function PlayPanel({
 
 function PlayFlowView({
   state,
+  doc,
   session,
   currentRef,
   title,
   where,
   link,
   project,
+  editable,
 }: {
   state: Extract<PlayState, { status: "playing" }>;
+  doc: ProjectDocument;
   session: PlaySession;
   /** What gets the focus after a turn: the current node's heading, or what says that the flow is at none. */
   currentRef: RefObject<HTMLElement | null>;
@@ -263,6 +274,8 @@ function PlayFlowView({
   ) => ReactNode;
   /** The project's name, which the history's text says. */
   project: string;
+  /** Whether the user may change the saved play states. */
+  editable: boolean;
 }) {
   const { t } = useTranslation();
   const { flow, projection } = state;
@@ -273,6 +286,13 @@ function PlayFlowView({
     board: (id) => where(id, undefined),
     component: (id) => projection.componentNames.get(id) ?? id,
   };
+  // What loading the saved play state that play started at could not keep,
+  // which the panel says until the flow takes a step.
+  const loaded = justLoaded(flow);
+  const loadedLines =
+    loaded === undefined
+      ? []
+      : reportLines(t, loaded.report, projection, where, groupNames);
   const speakerId = useId();
   const textId = useId();
   const endedId = useId();
@@ -308,6 +328,30 @@ function PlayFlowView({
         <p role="status" className="rounded-md border border-border p-3">
           {t("play.changed")}
         </p>
+      )}
+      {loaded !== undefined && (
+        // What a screen reader hears of it as it loads is the saved play
+        // states' status, which says how much is listed here.
+        <section
+          aria-label={t("play.saved.report")}
+          className="space-y-1 rounded-md border border-border p-3"
+        >
+          <p className="font-medium break-words">
+            {t("play.saved.loaded", { name: loaded.name })}
+          </p>
+          {loadedLines.length === 0 ? (
+            <p>{t("play.saved.kept_whole")}</p>
+          ) : (
+            <ul className="list-disc space-y-1 ps-5">
+              {loadedLines.map((line, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: the lines of a load's report, which does not change
+                <li key={i} className="break-words">
+                  {line}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
       <section aria-label={t("play.current")} className="space-y-2">
         {flow.node === "" ? (
@@ -411,6 +455,7 @@ function PlayFlowView({
           </ol>
         </section>
       )}
+      <SavedStates doc={doc} session={session} editable={editable} />
       <Inspector session={session} state={state} names={groupNames} />
       <History
         state={state}

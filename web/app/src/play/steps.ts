@@ -1,10 +1,18 @@
 // Play mode's history (PRD FR-PLAY-04, plan note N79): what each step of the
 // flow did, as the panel lists it, and the whole as text, for a bug report
-// (AC2), with the values that the flow holds at its end.
+// (AC2), with the values that the flow holds at its end; and what loading a
+// saved play state could not keep, which the panel says, and the history
+// with the start's step that loaded it (FR-PLAY-05 AC2, plan note N80).
 
 import type { TFunction } from "i18next";
 import { endedMessage, errorMessage, expressionPlace } from "./messages";
-import type { PlayError, PlayedProjection, PlayFlow } from "./session";
+import type { LoadReport } from "./saved";
+import type {
+  PlayError,
+  PlayedProjection,
+  PlayFlow,
+  PlayLoaded,
+} from "./session";
 import { type GroupNames, shownValue, valueGroups, valueLabel } from "./values";
 
 /** What the history names places by: where a node is, by its title and its board's name, or a board alone. */
@@ -51,12 +59,17 @@ export function historyLines(
     (errors.get(key) ?? []).map((e) => errorLine(t, e, where));
   return flow.history.map((step, i) => {
     const heading =
-      step.choice === undefined
-        ? t("play.history.started")
-        : step.choice.text === ""
-          ? t("play.history.continued")
-          : t("play.history.chose", { choice: step.choice.text });
-    const lines: string[] = [];
+      step.loaded !== undefined
+        ? t("play.history.loaded", { name: step.loaded.name })
+        : step.choice === undefined
+          ? t("play.history.started")
+          : step.choice.text === ""
+            ? t("play.history.continued")
+            : t("play.history.chose", { choice: step.choice.text });
+    const lines: string[] =
+      step.loaded === undefined
+        ? []
+        : reportLines(t, step.loaded.report, projection, where, names);
     step.entered.forEach((at, j) => {
       const place = where(at.board, at.node);
       lines.push(
@@ -122,6 +135,67 @@ export function historyText(
     }
   }
   return `${out.join("\n")}\n`;
+}
+
+/**
+ * Returns what loading the saved play state loaded could not keep as it was
+ * saved, as the panel and the history say it, one line for each value that
+ * it dropped, defaulted, or retyped, in the order of the report, and one
+ * of the visit counts that it dropped, and of where it started instead of
+ * at its cursor; [] for a state that loaded whole.
+ */
+export function reportLines(
+  t: TFunction,
+  report: LoadReport,
+  projection: PlayedProjection,
+  where: Where,
+  names: GroupNames,
+): string[] {
+  // name returns the name of the snapshot's value of the key, as the
+  // inspector names it.
+  const name = (key: string) => {
+    const target = projection.valueByKey.get(key);
+    return target === undefined ? key : valueLabel(t, target, names);
+  };
+  const lines = report.dropped.map((d) =>
+    t("play.saved.dropped", { name: d.name ?? d.key }),
+  );
+  if (report.droppedVisits > 0) {
+    lines.push(t("play.saved.dropped_visits", { count: report.droppedVisits }));
+  }
+  for (const key of report.defaulted) {
+    lines.push(t("play.saved.defaulted", { name: name(key) }));
+  }
+  for (const key of report.retyped) {
+    lines.push(t("play.saved.retyped", { name: name(key) }));
+  }
+  const c = report.cursor;
+  if (c !== undefined) {
+    lines.push(
+      c.at === "board"
+        ? t("play.saved.cursor_board", { board: where(c.board, undefined) })
+        : c.at === "project"
+          ? t("play.saved.cursor_project")
+          : t("play.saved.cursor_none"),
+    );
+  }
+  return lines;
+}
+
+/** Returns how many lines reportLines says of report. */
+export function reportCount(report: LoadReport): number {
+  return (
+    report.dropped.length +
+    (report.droppedVisits > 0 ? 1 : 0) +
+    report.defaulted.length +
+    report.retyped.length +
+    (report.cursor === undefined ? 0 : 1)
+  );
+}
+
+/** Returns the start's step's load of a saved play state, of flow, while it is the only step, or undefined. */
+export function justLoaded(flow: PlayFlow): PlayLoaded | undefined {
+  return flow.history.length === 1 ? flow.history[0].loaded : undefined;
 }
 
 // errorLine returns a runtime error as the history says it: its code, what

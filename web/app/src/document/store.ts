@@ -48,6 +48,7 @@ import {
 import { csrfHeaders } from "../auth/session";
 import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
+import { playStatesKey } from "../play/queries";
 import { conflictOf, projectQuery } from "../project/queries";
 import { statisticsKey } from "../statistics/queries";
 import { validationKey } from "../validation/queries";
@@ -1427,9 +1428,10 @@ export class ProjectDocument {
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
    * it, as an unarchive's archived_at, the trash, which a deletion or a
-   * restoration changes, and the reads that the server derives of the whole
-   * project, which any change may: the writing statistics, the validation
-   * report, and the dependency graph (Follower).
+   * restoration changes, the saved play states, which their commands change
+   * and the document holds none of (play/queries.ts), and the reads that the
+   * server derives of the whole project, which any change may: the writing
+   * statistics, the validation report, and the dependency graph (Follower).
    */
   private followed(
     op: Operation | undefined,
@@ -1444,6 +1446,14 @@ export class ProjectDocument {
     ) {
       void this.options.queryClient.invalidateQueries({
         queryKey: ["projects", this.projectId, "trash"],
+      });
+    }
+    if (
+      op === undefined ||
+      op.commands.some((c) => c.type.startsWith("play_state."))
+    ) {
+      void this.options.queryClient.invalidateQueries({
+        queryKey: playStatesKey(this.projectId),
       });
     }
     // The writing statistics, which nearly every command changes, as the

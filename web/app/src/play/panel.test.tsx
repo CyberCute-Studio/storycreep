@@ -4,6 +4,7 @@ import type {
   ComponentType,
   Connection,
   Node,
+  PlayStateBody,
 } from "@storycreep/shared/api";
 import {
   act,
@@ -235,9 +236,14 @@ const connections: Connection[] = [
 function playProject(
   boards: () => Board[] = () => [harbour, elara],
   refuse: (operation: string) => void = () => {},
+  extra: (operation: string, input: unknown) => unknown = () => undefined,
 ) {
   return fakeApi((operation, input) => {
     refuse(operation);
+    const answered = extra(operation, input);
+    if (answered !== undefined) {
+      return answered;
+    }
     const path = (input as { path?: Record<string, string> } | undefined)?.path;
     switch (operation) {
       case "getProject":
@@ -272,6 +278,8 @@ function playProject(
         return { items: [] };
       case "listNodeReferrers":
         return { items: [], next_cursor: null };
+      case "listPlayStates":
+        return { items: [], next_cursor: null };
     }
     const answer = startPage(operation);
     if (answer === undefined) {
@@ -279,6 +287,14 @@ function playProject(
     }
     return answer;
   });
+}
+
+/** The text of every alert of the panel, the halt's and the saved states', joined. */
+function alerts(panel: HTMLElement): string {
+  return within(panel)
+    .getAllByRole("alert")
+    .map((a) => a.textContent ?? "")
+    .join("\n");
 }
 
 /** The reads of the project's content that calls holds. */
@@ -711,7 +727,7 @@ describe("play mode", () => {
     // which reads the draft anew; but no Step back, as play halted in the
     // start's step, which has none to step back from, and Step back is
     // disabled; nor does the inspector name it.
-    expect(within(panel).getByRole("alert").textContent).toContain(
+    expect(alerts(panel)).toContain(
       "Play stopped at a runtime error, as strict mode does. Reset or restart to play again.",
     );
     expect(
@@ -1139,7 +1155,7 @@ describe("play mode's state", () => {
       within(panel).getByRole("button", { name: "Open the ledger" }),
     );
     await waitFor(() =>
-      expect(within(panel).getByRole("alert").textContent).toContain(
+      expect(alerts(panel)).toContain(
         "Play stopped at a runtime error, as strict mode does. Step back, reset, or restart to play again.",
       ),
     );
@@ -1377,5 +1393,328 @@ describe("play mode's state", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+  });
+});
+
+// The saved play states of the project, as the fake server keeps them,
+// which its list, its read, and its commands answer of.
+function savedStates(initial: PlayStateBody[] = []) {
+  const states = [...initial];
+  let seq = 1;
+  const answer = (operation: string, input: unknown): unknown => {
+    switch (operation) {
+      case "listPlayStates":
+        return {
+          items: states.map(
+            ({ state: _, names: __, deleted_at: ___, ...summary }) => summary,
+          ),
+          next_cursor: null,
+        };
+      case "getPlayState": {
+        const path = (input as { path: { play_state_id: string } }).path;
+        return states.find((s) => s.id === path.play_state_id);
+      }
+      case "applyCommands": {
+        const { commands } = (
+          input as {
+            body: {
+              commands: {
+                type: string;
+                payload: PlayStateBody & { id: string };
+              }[];
+            };
+          }
+        ).body;
+        for (const c of commands) {
+          const i = states.findIndex((s) => s.id === c.payload.id);
+          switch (c.type) {
+            case "play_state.create":
+              states.push({
+                id: c.payload.id,
+                project_id: project.id,
+                name: c.payload.name,
+                rev: 1,
+                created_by: testSession.user_id,
+                updated_by: testSession.user_id,
+                created_at: at,
+                updated_at: at,
+                state: c.payload.state,
+                names: c.payload.names,
+              });
+              break;
+            case "play_state.rename":
+              states[i] = { ...states[i], name: c.payload.name };
+              break;
+            case "play_state.delete":
+              states.splice(i, 1);
+              break;
+          }
+        }
+        seq++;
+        return {
+          status: "applied",
+          seq,
+          revisions: commands.map((c) => ({ id: c.payload.id, rev: 2 })),
+          not_reconnected: [],
+          undo: [],
+        };
+      }
+    }
+    return undefined;
+  };
+  return { states, answer };
+}
+
+/** Returns the commands of the batches that calls sent, without their IDs. */
+function sentBatches(calls: ReturnType<typeof playProject>) {
+  return calls.mock.calls
+    .filter(([operation]) => operation === "applyCommands")
+    .map(([, input]) =>
+      (
+        input as {
+          body: {
+            commands: { command_id: string; type: string; payload: unknown }[];
+          };
+        }
+      ).body.commands.map(({ command_id: _, ...command }) => command),
+    );
+}
+
+describe("saved play states", () => {
+  // The flow at the end of Wait here, as play saved it, its trust raised
+  // by the quay's on-exit, which Reset takes back, and the load brings
+  // back, at the node where the flow ended.
+  // Verifies: FR-PLAY-05/AC1
+  it("saves the flow's state under a name, lists it, and loads it as play's start", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    const calls = playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await within(panel).findByText("You wait.");
+    const name = within(panel).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    // A name of white space alone is none.
+    await user.type(name, "   ");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    expect(within(panel).getByText("Enter a name.")).toBeDefined();
+    await user.clear(name);
+    await user.type(name, " After the wait ");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByText("Saved “After the wait”.");
+    expect(sentBatches(calls)).toEqual([
+      [
+        {
+          type: "play_state.create",
+          payload: {
+            id: expect.stringMatching(/^pst_/),
+            name: "After the wait",
+            state: expect.objectContaining({
+              cursor: {
+                boardId: harbour.id,
+                nodeId: id("nd", "B"),
+                phase: "ended",
+              },
+              attributes: { [elaraComponent.id]: { [trust.id]: 2 } },
+              variables: { [gold.id]: 3 },
+            }),
+            names: {
+              variables: { [gold.id]: "gold" },
+              attributes: {
+                [elaraComponent.id]: { [trust.id]: "elara.trust" },
+              },
+            },
+          },
+        },
+      ],
+    ]);
+    expect((name as HTMLInputElement).value).toBe("");
+    const item = await within(panel).findByText("After the wait");
+    expect(item.closest("li")?.textContent).toContain("Saved by you");
+    await user.click(within(panel).getByRole("button", { name: "Reset" }));
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      within(panel).getByRole("button", { name: "Load “After the wait”" }),
+    );
+    await within(panel).findByText("You wait.");
+    expect(
+      within(panel).getByText("Loaded “After the wait” as it was saved."),
+    ).toBeDefined();
+    const report = within(panel).getByRole("region", {
+      name: "What loading the saved state kept",
+    });
+    expect(report.textContent).toContain(
+      "Every value, and where the flow is, loaded as they were saved.",
+    );
+    // The load is a turn, after which the current node's heading has the
+    // focus, as after a start.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Wait" }),
+      ),
+    );
+    // The history's start is the load.
+    expect(
+      within(panel).getByRole("region", { name: "History" }).textContent,
+    ).toContain("Loaded “After the wait”");
+  });
+
+  // A viewer loads a saved state, of a variable deleted since, which the
+  // report names as it was saved, but saves, renames, and deletes none.
+  // Verifies: FR-PLAY-05/AC2
+  it("loads a state of a deleted variable for a viewer, with what it dropped, and offers no change", async () => {
+    const user = userEvent.setup();
+    const gone = id("var", "9");
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 4 } },
+          cursor: {
+            boardId: harbour.id,
+            nodeId: id("nd", "A"),
+            phase: "awaiting_choice",
+          },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3, [gone]: true },
+          visits: { [id("nd", "A")]: 1 },
+        },
+        names: { variables: { [gold.id]: "gold", [gone]: "rumours" } },
+      },
+    ]);
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getProject"
+        ? { ...project, role: "viewer" }
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const item = (await within(panel).findByText("Romance path")).closest("li");
+    expect(item?.textContent).not.toContain("by you");
+    expect(
+      within(panel).queryByRole("textbox", {
+        name: "Name of the state to save",
+      }),
+    ).toBeNull();
+    for (const label of ["Replace", "Rename", "Delete"]) {
+      expect(
+        within(panel).queryByRole("button", {
+          name: `${label} “Romance path”`,
+        }),
+      ).toBeNull();
+    }
+    await user.click(
+      within(panel).getByRole("button", { name: "Load “Romance path”" }),
+    );
+    await within(panel).findByText("Trust 4.");
+    const report = within(panel).getByRole("region", {
+      name: "What loading the saved state kept",
+    });
+    expect(report.textContent).toContain(
+      "rumours is no longer a variable or a runtime attribute of the project, so its saved value was dropped.",
+    );
+    expect(
+      within(panel).getByText(
+        "Loaded “Romance path”: 1 thing could not be kept as it was saved, which play lists above where the flow is.",
+      ),
+    ).toBeDefined();
+  });
+
+  // Each change is a command of the page's history, which expects the
+  // revision that the list read.
+  it("renames and deletes a saved state, each a command that expects its revision", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    const calls = playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.type(
+      within(panel).getByRole("textbox", { name: "Name of the state to save" }),
+      "Quay",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByRole("button", { name: "Rename “Quay”" });
+    const pst = saved.states[0].id;
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “Quay”",
+    });
+    expect(document.activeElement).toBe(field);
+    // Escape cancels the rename, and leaves play playing.
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("region", { name: "Play" })).toBeDefined();
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    await user.clear(
+      within(panel).getByRole("textbox", { name: "New name of “Quay”" }),
+    );
+    await user.type(
+      within(panel).getByRole("textbox", { name: "New name of “Quay”" }),
+      "At the quay",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await within(panel).findByText("Renamed “Quay” to “At the quay”.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Delete “At the quay”",
+      }),
+    );
+    await within(panel).findByText(
+      "Deleted “At the quay”. Undo brings it back.",
+    );
+    expect(sentBatches(calls).slice(1)).toEqual([
+      [
+        {
+          type: "play_state.rename",
+          payload: { id: pst, name: "At the quay" },
+          expected_rev: { [pst]: 1 },
+        },
+      ],
+      [
+        {
+          type: "play_state.delete",
+          payload: { id: pst },
+          expected_rev: { [pst]: 2 },
+        },
+      ],
+    ]);
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
   });
 });

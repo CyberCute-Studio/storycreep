@@ -268,6 +268,11 @@ export const commands = {
   // alone, as its panel's buttons are.
   "play.step_back": { group: "play", on: page, keys: [] },
   "play.reset": { group: "play", on: page, keys: [] },
+  // The panel's saved play states (FR-PLAY-05, plan note N80): the field of
+  // the name of one to save, and their list, which loads one, of the
+  // palette alone too.
+  "play.save_state": { group: "play", on: page, keys: [] },
+  "play.saved_states": { group: "play", on: page, keys: [] },
 } as const satisfies Record<string, CommandSpec>;
 
 /** The ID of a command, which the palette, the table, and the keys share. */
@@ -435,6 +440,10 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.play.step_back");
     case "play.reset":
       return t("command.play.reset");
+    case "play.save_state":
+      return t("command.play.save_state");
+    case "play.saved_states":
+      return t("command.play.saved_states");
   }
 }
 
