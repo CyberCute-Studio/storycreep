@@ -804,9 +804,10 @@ export class PlaySession {
   // state loaded, as it reads onto the snapshot (adapt), and the flow
   // started where its cursor did not load, as a board entry, as any start
   // there is, which resets the board's resetOnEnter variables of what the
-  // state held and runs the entry's on-enter. Where loading it throws, it
-  // keeps the runtime and the states kept before the steps that the session
-  // had, and throws.
+  // state held and runs the entry's on-enter. Where the start throws, as a
+  // load does of a state that the runtime does not load, it keeps the
+  // runtime and the states kept before the steps that the session had, and
+  // throws.
   private startFlow(played: PlayedProjection, start: PlayStart): PlayFlow {
     const m = this.modules;
     const snapshot = this.snapshot;
@@ -837,34 +838,31 @@ export class PlaySession {
     this.back = [];
     const before = valuesOf(r, played);
     const saved = start.saved;
-    if (saved === undefined) {
-      const { result: events, hidden } = this.observed(() =>
-        r.start(start.board, start.node),
-      );
-      return this.flowAfter(
-        emptyFlow(before),
-        played,
-        events,
-        hidden,
-        undefined,
-      );
-    }
     try {
-      const adapted = adapt(saved.state, saved.names, snapshot);
-      const { result: events, hidden } = this.observed(() => {
-        const loaded = r.loadState(adapted.state);
-        const at = adapted.start;
-        return at === undefined
-          ? loaded
-          : [...loaded, ...r.start(at.board, at.node)];
-      });
+      // The start's call of r, at the node, or, of a saved play state, its
+      // load, and the start where its cursor did not load, with what it
+      // loaded.
+      let call: () => readonly Event[] = () => r.start(start.board, start.node);
+      let loaded: PlayLoaded | undefined;
+      if (saved !== undefined) {
+        const adapted = adapt(saved.state, saved.names, snapshot);
+        call = () => {
+          const events = r.loadState(adapted.state);
+          const at = adapted.start;
+          return at === undefined
+            ? events
+            : [...events, ...r.start(at.board, at.node)];
+        };
+        loaded = { name: saved.name, report: adapted.report };
+      }
+      const { result: events, hidden } = this.observed(call);
       return this.flowAfter(
         emptyFlow(before),
         played,
         events,
         hidden,
         undefined,
-        { name: saved.name, report: adapted.report },
+        loaded,
       );
     } catch (error) {
       this.runtime = was.runtime;

@@ -1900,4 +1900,124 @@ describe("saved play states", () => {
       "The project has no saved states yet. Name the flow's state above to save it.",
     );
   });
+
+  // On a sheet, Escape in the saved states empties the name or cancels a
+  // rename, after which the section's heading has the focus that the
+  // rename's field or its Cancel had, and none there, as one pressed once
+  // more than there was to empty or to cancel, closes the sheet, which would
+  // stop play, as none in the inspector does; each state's buttons, named
+  // by its name alone, are described by when it last changed, which tells
+  // two of a name apart.
+  it("keeps the play sheet open by Escape in the saved states, and gives their heading the focus once a rename is cancelled", async () => {
+    windowOf(800);
+    const user = userEvent.setup();
+    playProject(undefined, undefined, savedStates().answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const sheet = await screen.findByRole("dialog", { name: "Play" });
+    await within(sheet).findByText("Trust 1.");
+    const name = within(sheet).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    await user.type(name, "Quay");
+    await user.keyboard("{Escape}");
+    expect((name as HTMLInputElement).value).toBe("");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    await user.type(name, "Quay{Enter}");
+    const rename = await within(sheet).findByRole("button", {
+      name: "Rename “Quay”",
+      description: /^Last changed by you, /,
+    });
+    expect(
+      within(sheet).getByRole("button", {
+        name: "Load “Quay”",
+        description: /^Last changed by you, /,
+      }),
+    ).toBeDefined();
+    const heading = within(sheet).getByRole("heading", {
+      name: "Saved states",
+    });
+    await user.click(rename);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(heading);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    await user.click(
+      within(sheet).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(heading);
+    // Outside the section, Escape closes the sheet, which stops play.
+    within(sheet).getByRole("button", { name: "Reset" }).focus();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull(),
+    );
+  });
+
+  // The palette's commands of the saved states go to what the panel shows,
+  // while the page shows it, rather than to nothing while the inspector is
+  // open in its place (plan note N78).
+  it("goes to the saved states from the palette while the page shows the panel, and not while the inspector is open in its place", async () => {
+    windowOf(1200);
+    const user = userEvent.setup();
+    playProject(undefined, undefined, savedStates().answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    // saving opens the palette from the canvas, and returns its option of
+    // Save play state.
+    const saving = async () => {
+      canvas.focus();
+      await user.keyboard("{Control>}k{/Control}");
+      const palette = await screen.findByRole("dialog", { name: "Commands" });
+      await user.type(within(palette).getByRole("combobox"), "saved play");
+      const options = within(palette).getAllByRole("option");
+      const disabled = Object.fromEntries(
+        options.map((o) => [
+          o.dataset.command,
+          o.getAttribute("aria-disabled") === "true",
+        ]),
+      );
+      return {
+        option: options.find((o) => o.dataset.command === "play.save_state"),
+        disabled,
+      };
+    };
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Play" })).toBeNull(),
+    );
+    const hidden = await saving();
+    expect(hidden.disabled["play.save_state"]).toBe(true);
+    expect(hidden.disabled["play.saved_states"]).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
+    );
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    const shown = await screen.findByRole("region", { name: "Play" });
+    const { option, disabled } = await saving();
+    expect(disabled["play.save_state"]).toBe(false);
+    expect(disabled["play.saved_states"]).toBe(false);
+    await user.click(option as HTMLElement);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(shown).getByRole("textbox", {
+          name: "Name of the state to save",
+        }),
+      ),
+    );
+  });
 });

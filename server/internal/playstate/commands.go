@@ -327,7 +327,11 @@ func checkNameTexts(names PlayStateNames) input.FieldErrors {
 // nodeId, or a key of its variables, its attributes, or its visits, that is
 // not a canonical ID of its kind; a snapshotId without a snapshotVersion, or
 // one without the other; a value that is no boolean, number, or string; a
-// visit count below 1 or beyond MaxInt; and a state of more than
+// number written with more than value.MaxNumberLength characters or with an
+// exponent beyond ±value.MaxExponent, as a variable's default is refused
+// (value.Value.FormProblem), which no runtime writes, and which the database
+// would hold, and write back, at length, or refuse, past its numeric's digits;
+// a visit count below 1 or beyond MaxInt; and a state of more than
 // MaxStateBytes, as JSON, with each number written as a runtime writes it,
 // however the payload writes it (shortestNumbers), so that the undo of a
 // replace, which writes each number of the state back with every digit, as
@@ -364,6 +368,8 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 	checkValue := func(at string, v value.Value) {
 		if v.Kind() == "" {
 			add(at, "is no value: neither a boolean, a number, nor a string")
+		} else if problem := v.FormProblem(); problem != "" {
+			add(at, problem)
 		}
 	}
 	// A key that is not canonical is refused at its own path, as its value

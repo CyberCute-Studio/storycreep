@@ -11,7 +11,13 @@ import { formatDateTime } from "@storycreep/shared/i18n";
 import { newId } from "@storycreep/shared/ids";
 import { useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { type FormEvent, type KeyboardEvent, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { type Refusal, refusalOf } from "../auth/refusal";
@@ -50,18 +56,14 @@ export function goToSaved(doc: Document, what: "save" | "list"): void {
   field?.focus({ preventScroll: true });
 }
 
-// keepsSheet handles Escape in a field of the section, which does what onEscape
-// says rather than close the sheet that the panel is, which would stop play
-// and lose its history, as the inspector's fields do (plan note N79), but
-// for an Escape that cancels what an input method was composing, which is
-// the input method's, and does nothing else (inputMethodTook).
-function keepsSheet(onEscape: () => void) {
+// escaped returns the handler of a key in a form of the section, which runs
+// onEscape for an Escape, as the inspector's fields do (plan note N79), but
+// for one that cancels what an input method was composing, which is the
+// input method's, and does nothing else (inputMethodTook). No Escape in the
+// section closes the sheet that the panel is (SavedStates).
+function escaped(onEscape: () => void) {
   return (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Escape") {
-      return;
-    }
-    event.stopPropagation();
-    if (!inputMethodTook(event.nativeEvent)) {
+    if (event.key === "Escape" && !inputMethodTook(event.nativeEvent)) {
       onEscape();
     }
   };
@@ -99,6 +101,9 @@ export function SavedStates({
   const list = useQuery(playStatesQuery(doc));
   const userId = useQuery(sessionQuery).data?.user_id;
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // The prefix of the IDs of the states' lines of when each last changed,
+  // which describe the buttons of each, as two of a name are told apart.
+  const changedIds = useId();
   const [said, setSaid] = useState<Said>();
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
@@ -216,7 +221,21 @@ export function SavedStates({
   const refusalOfForm = (form: NameForm) =>
     refusal?.form === form ? refusal.refusal : undefined;
   return (
-    <section aria-labelledby={savedHeadingId} className="space-y-2">
+    // No Escape in the section closes the sheet that the panel is, which
+    // would stop play and lose its history, as one pressed once more than
+    // there was to empty or to cancel would, once the focus is on the
+    // heading after a rename, a deletion, or a rename cancelled: in a field
+    // it empties the name or cancels the rename alone (escaped), as the
+    // inspector's do (plan note N79).
+    <section
+      aria-labelledby={savedHeadingId}
+      className="space-y-2"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+        }
+      }}
+    >
       <h3
         id={savedHeadingId}
         ref={headingRef}
@@ -272,7 +291,16 @@ export function SavedStates({
               .filter((m) => m !== undefined)
               .join(" ")}
           />
-          <Button onClick={() => void list.refetch()}>
+          <Button
+            onClick={() =>
+              void list.refetch().then((read) => {
+                // The button goes once the list is read.
+                if (!read.isError) {
+                  headingRef.current?.focus();
+                }
+              })
+            }
+          >
             {t("play.saved.read_again")}
           </Button>
         </div>
@@ -293,7 +321,8 @@ export function SavedStates({
                   disabled={busy}
                   refusal={refusalOfForm("rename")}
                   onCancel={() => {
-                    // A refusal of the rename goes with its field.
+                    // A refusal of the rename goes with its field, as the
+                    // focus in it, or on its Cancel, does.
                     setSaid((was) =>
                       was !== undefined &&
                       "form" in was &&
@@ -302,6 +331,7 @@ export function SavedStates({
                         : was,
                     );
                     setRenaming(undefined);
+                    headingRef.current?.focus();
                   }}
                   onRename={(name) =>
                     act(async () => {
@@ -321,13 +351,20 @@ export function SavedStates({
               ) : (
                 <>
                   <p className="font-medium break-words">{s.name}</p>
-                  <p className="text-sm text-fg-muted">
+                  {/* Which describes each of its buttons, which the name
+                      alone names, as it names those of another state of the
+                      name. */}
+                  <p
+                    id={`${changedIds}-${s.id}`}
+                    className="text-sm text-fg-muted"
+                  >
                     {changedWhen(t, i18n.language, s, userId)}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       disabled={busy}
                       aria-label={t("play.saved.load_named", { name: s.name })}
+                      aria-describedby={`${changedIds}-${s.id}`}
                       onClick={() => void load(s)}
                     >
                       {t("play.saved.load")}
@@ -339,6 +376,7 @@ export function SavedStates({
                           aria-label={t("play.saved.replace_named", {
                             name: s.name,
                           })}
+                          aria-describedby={`${changedIds}-${s.id}`}
                           onClick={() => void replace(s)}
                         >
                           {t("play.saved.replace")}
@@ -348,6 +386,7 @@ export function SavedStates({
                           aria-label={t("play.saved.rename_named", {
                             name: s.name,
                           })}
+                          aria-describedby={`${changedIds}-${s.id}`}
                           onClick={() => {
                             setSaid(undefined);
                             setRenaming(s.id);
@@ -360,6 +399,7 @@ export function SavedStates({
                           aria-label={t("play.saved.delete_named", {
                             name: s.name,
                           })}
+                          aria-describedby={`${changedIds}-${s.id}`}
                           onClick={() => void remove(s)}
                         >
                           {t("play.saved.delete")}
@@ -453,7 +493,7 @@ function SaveForm({
     <form
       id={saveFormId}
       onSubmit={(e) => void submit(e)}
-      onKeyDown={keepsSheet(() => {
+      onKeyDown={escaped(() => {
         setName("");
         setProblem(undefined);
       })}
@@ -511,7 +551,7 @@ function RenameForm({
     // Escape cancels the rename, as its button does.
     <form
       onSubmit={(e) => void submit(e)}
-      onKeyDown={keepsSheet(onCancel)}
+      onKeyDown={escaped(onCancel)}
       className="space-y-2"
       noValidate
     >

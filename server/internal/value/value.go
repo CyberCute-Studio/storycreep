@@ -260,6 +260,19 @@ func (v Value) Kind() string {
 	return kindOf(string(v.raw))
 }
 
+// FormProblem says what is wrong with how v is written, if it is a number
+// written with more than MaxNumberLength characters or with an exponent beyond
+// ±MaxExponent, which Of refuses of a number whatever its type, int or float
+// (formProblem), or returns "" for a number written within them and for any
+// value that is no number. Package playstate holds the values of a save state
+// to it, whose types the server does not read.
+func (v Value) FormProblem() string {
+	if v.Kind() != "number" {
+		return ""
+	}
+	return formProblem(string(v.raw), true)
+}
+
 // Integral is an integer of a file, as a published file's count or a
 // segment's decimals, or of a save state, as a visit count, which a consumer
 // reads as an integer by its declaration, whatever its JSON form, and which

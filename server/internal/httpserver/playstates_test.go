@@ -218,8 +218,11 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 // another project, or that the save-state format's schema refuses, as one of
 // another stateVersion, with an ID that is not canonical, a key among them,
 // at the key's own location, a snapshotId without its snapshotVersion, a
-// value that is no boolean, number, or string, a visit count below 1, or
-// more than a mebibyte; names of more than a mebibyte; a name that is empty,
+// value that is no boolean, number, or string, a number written with more
+// characters, or a greater exponent, than a variable's default may be, of a
+// variable or of an attribute, at its own location, rather than one that the
+// database cannot hold, a visit count below 1, or more than a mebibyte;
+// names of more than a mebibyte; a name that is empty,
 // of more than 100 characters, or with white space around it; and a change of
 // a play state in the trash, or of none. Nothing of a refused batch applies.
 func TestPlayStateRefusals(t *testing.T) {
@@ -251,6 +254,12 @@ func TestPlayStateRefusals(t *testing.T) {
 			"state": st}}
 	}
 	node, named := ids.Encode(ids.Node, ids.New()), ids.Encode(ids.Variable, ids.New())
+	// A number of 17,003 characters, more digits after its point than
+	// PostgreSQL's numeric holds, and one of an exponent beyond ±999, each
+	// of which JSON.parse reads as 0.
+	long, component := ids.Encode(ids.Variable, ids.New()), ids.Encode(ids.Component, ids.New())
+	attribute := ids.Encode(ids.AttributeDef, ids.New())
+	longNumber := json.Number("0." + strings.Repeat("0", 17000) + "1")
 	for _, c := range []struct {
 		cmds []wireCommand
 		loc  string
@@ -265,6 +274,11 @@ func TestPlayStateRefusals(t *testing.T) {
 			"body.commands[0].payload.state.snapshotVersion"},
 		{[]wireCommand{create("After act 1", with("variables",
 			map[string]any{ids.Encode(ids.Variable, ids.New()): map[string]int{"a": 1}}))}, ""},
+		{[]wireCommand{create("After act 1", with("variables", map[string]any{long: longNumber}))},
+			"body.commands[0].payload.state.variables." + long},
+		{[]wireCommand{create("After act 1", with("attributes",
+			map[string]any{component: map[string]any{attribute: json.Number("1e-1000")}}))},
+			"body.commands[0].payload.state.attributes." + component + "." + attribute},
 		{[]wireCommand{create("After act 1", with("visits", map[string]any{node: 0}))},
 			"body.commands[0].payload.state.visits." + node},
 		{[]wireCommand{create("After act 1", with("visits", nil))}, ""},
