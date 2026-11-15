@@ -12,11 +12,11 @@
 // returns it, of the project's draft or of one of its releases: where the
 // flow is, and the values of the variables and of the components' runtime
 // attributes, and the nodes' visit counts, by ID, never by key. The server
-// keeps the state as the client saved it, once it has checked that it is a
-// save state of the project, as the save-state format's schema takes one,
-// and reads nothing of the draft in it: what a state's entities have become
-// since it was saved, as a variable deleted or retyped, play mode reads as it
-// loads the state (FR-PLAY-05 AC2).
+// keeps the state as the client saved it, once it has checked what
+// checkState lists of it, and that it is the project's, and reads nothing of
+// the draft in it: what a state's entities have become since it was saved,
+// as a variable deleted or retyped, play mode reads as it loads the state
+// (FR-PLAY-05 AC2).
 //
 // A deleted play state goes to the project's trash, unlisted, from which only
 // the undo of its deletion, a restore, brings it back, and which purges it

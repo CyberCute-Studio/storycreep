@@ -311,12 +311,15 @@ func checkNameTexts(names PlayStateNames) input.FieldErrors {
 }
 
 // checkState returns the problems of st, the state of a payload's field name,
-// that its schema, which huma builds from its Go type, cannot say: those of a
-// save state that the save-state format's schema refuses (PRD §8.5), as an ID
-// that is not a canonical ID of its kind, a stateVersion that is not 1, a
-// snapshotId without a snapshotVersion, a value that is no boolean, number,
-// or string, or a visit count below 1; and a state of more than MaxStateBytes,
-// as JSON. It reads nothing but st.
+// beyond what its schema, which huma builds from its Go type, says: a
+// stateVersion that is not 1; a projectId, a snapshotId, a cursor's boardId or
+// nodeId, or a key of its variables, its attributes, or its visits, that is
+// not a canonical ID of its kind; a snapshotId without a snapshotVersion, or
+// one without the other; a value that is no boolean, number, or string; a
+// visit count below 1 or beyond MaxInt; and a state of more than
+// MaxStateBytes, as JSON. That is all that the server checks of a state, with
+// Apply's check that it is of the batch's project (stored). It reads nothing
+// but st.
 func checkState(name string, st published.SaveState) input.FieldErrors {
 	var errs input.FieldErrors
 	add := func(at, msg string) {
