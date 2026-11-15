@@ -300,13 +300,12 @@ func (q *Queries) RenamePlayState(ctx context.Context, arg RenamePlayStateParams
 }
 
 const restorePlayState = `-- name: RestorePlayState :one
-UPDATE play_state SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND deleted_at IS NOT NULL
+UPDATE play_state SET deleted_at = NULL, rev = rev + 1
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NOT NULL
 RETURNING rev
 `
 
 type RestorePlayStateParams struct {
-	UpdatedBy   pgtype.UUID
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	ID          pgtype.UUID
@@ -315,39 +314,32 @@ type RestorePlayStateParams struct {
 // RestorePlayState takes the play state out of the project's trash, unless it
 // is not there, and returns its new revision, or no row if it is not.
 func (q *Queries) RestorePlayState(ctx context.Context, arg RestorePlayStateParams) (int64, error) {
-	row := q.db.QueryRow(ctx, restorePlayState,
-		arg.UpdatedBy,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, restorePlayState, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var rev int64
 	err := row.Scan(&rev)
 	return rev, err
 }
 
 const trashPlayState = `-- name: TrashPlayState :one
-UPDATE play_state SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = $1
-WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND deleted_at IS NULL
+UPDATE play_state SET deleted_at = now(), rev = rev + 1
+WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
 RETURNING rev
 `
 
 type TrashPlayStateParams struct {
-	UpdatedBy   pgtype.UUID
 	WorkspaceID pgtype.UUID
 	ProjectID   pgtype.UUID
 	ID          pgtype.UUID
 }
 
 // TrashPlayState deletes the play state to the project's trash, unless it is
-// there already, and returns its new revision, or no row if it is.
+// there already, and returns its new revision, or no row if it is. It leaves
+// when the play state last changed, and who changed it, as they were, as
+// RestorePlayState does, since neither changes its name or its state, which
+// is what the list says they are of: a state restored by the undo of its
+// deletion is listed as it was before.
 func (q *Queries) TrashPlayState(ctx context.Context, arg TrashPlayStateParams) (int64, error) {
-	row := q.db.QueryRow(ctx, trashPlayState,
-		arg.UpdatedBy,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, trashPlayState, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var rev int64
 	err := row.Scan(&rev)
 	return rev, err

@@ -66,14 +66,18 @@ RETURNING rev;
 
 -- name: TrashPlayState :one
 -- TrashPlayState deletes the play state to the project's trash, unless it is
--- there already, and returns its new revision, or no row if it is.
-UPDATE play_state SET deleted_at = now(), rev = rev + 1, updated_at = now(), updated_by = @updated_by
+-- there already, and returns its new revision, or no row if it is. It leaves
+-- when the play state last changed, and who changed it, as they were, as
+-- RestorePlayState does, since neither changes its name or its state, which
+-- is what the list says they are of: a state restored by the undo of its
+-- deletion is listed as it was before.
+UPDATE play_state SET deleted_at = now(), rev = rev + 1
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NULL
 RETURNING rev;
 
 -- name: RestorePlayState :one
 -- RestorePlayState takes the play state out of the project's trash, unless it
 -- is not there, and returns its new revision, or no row if it is not.
-UPDATE play_state SET deleted_at = NULL, rev = rev + 1, updated_at = now(), updated_by = @updated_by
+UPDATE play_state SET deleted_at = NULL, rev = rev + 1
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NOT NULL
 RETURNING rev;

@@ -1428,10 +1428,11 @@ export class ProjectDocument {
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
    * it, as an unarchive's archived_at, the trash, which a deletion or a
-   * restoration changes, the saved play states, which their commands change
-   * and the document holds none of (play/queries.ts), and the reads that the
-   * server derives of the whole project, which any change may: the writing
-   * statistics, the validation report, and the dependency graph (Follower).
+   * restoration changes, but of a play state, the saved play states, which
+   * their commands change and the document holds none of (play/queries.ts),
+   * and the reads that the server derives of the whole project, which any
+   * change of the draft may: the writing statistics, the validation report,
+   * and the dependency graph (Follower).
    */
   private followed(
     op: Operation | undefined,
@@ -1440,18 +1441,22 @@ export class ProjectDocument {
     readAt?: number,
   ): void {
     this.projectFollowed(before, role, readAt);
+    // A command of a saved play state changes none of the draft, and its
+    // deletion and its restoration none of what the trash lists, which lists
+    // no play state.
+    const playState = (c: { readonly type: string }) =>
+      c.type.startsWith("play_state.");
     if (
       op === undefined ||
-      op.commands.some((c) => /\.(delete|restore)(_many)?$/.test(c.type))
+      op.commands.some(
+        (c) => !playState(c) && /\.(delete|restore)(_many)?$/.test(c.type),
+      )
     ) {
       void this.options.queryClient.invalidateQueries({
         queryKey: ["projects", this.projectId, "trash"],
       });
     }
-    if (
-      op === undefined ||
-      op.commands.some((c) => c.type.startsWith("play_state."))
-    ) {
+    if (op === undefined || op.commands.some(playState)) {
       void this.options.queryClient.invalidateQueries({
         queryKey: playStatesKey(this.projectId),
       });
@@ -1460,9 +1465,12 @@ export class ProjectDocument {
     // server counts each text as a batch changes it (statistics/queries.ts),
     // and the validation report and the dependency graph, which the server
     // derives of the draft as each is read (validation/queries.ts,
-    // dependencies/queries.ts).
-    for (const follower of this.followers) {
-      follower.follow();
+    // dependencies/queries.ts), but for an operation of the saved play
+    // states alone.
+    if (op === undefined || !op.commands.every(playState)) {
+      for (const follower of this.followers) {
+        follower.follow();
+      }
     }
   }
 

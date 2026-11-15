@@ -6,7 +6,7 @@
 
 import type { TFunction } from "i18next";
 import { endedMessage, errorMessage, expressionPlace } from "./messages";
-import type { LoadReport } from "./saved";
+import type { CursorFallback, DroppedValue, LoadReport } from "./saved";
 import type {
   PlayError,
   PlayedProjection,
@@ -137,6 +137,31 @@ export function historyText(
   return `${out.join("\n")}\n`;
 }
 
+// A line of what loading a saved play state could not keep (reportLines).
+type ReportLine =
+  | { readonly kind: "dropped"; readonly value: DroppedValue }
+  | { readonly kind: "dropped_visits"; readonly count: number }
+  | { readonly kind: "defaulted" | "retyped"; readonly key: string }
+  | { readonly kind: "cursor"; readonly cursor: CursorFallback };
+
+// linesOf returns the lines of report, as reportLines says them, and
+// reportCount counts them: one for each value that it dropped, defaulted,
+// or retyped, in the order of the report, and one of the visit counts that
+// it dropped, and of where it started instead of at its cursor.
+function linesOf(report: LoadReport): ReportLine[] {
+  return [
+    ...report.dropped.map((value): ReportLine => ({ kind: "dropped", value })),
+    ...(report.droppedVisits > 0
+      ? [{ kind: "dropped_visits", count: report.droppedVisits } as const]
+      : []),
+    ...report.defaulted.map((key): ReportLine => ({ kind: "defaulted", key })),
+    ...report.retyped.map((key): ReportLine => ({ kind: "retyped", key })),
+    ...(report.cursor === undefined
+      ? []
+      : [{ kind: "cursor", cursor: report.cursor } as const]),
+  ];
+}
+
 /**
  * Returns what loading the saved play state loaded could not keep as it was
  * saved, as the panel and the history say it, one line for each value that
@@ -157,40 +182,32 @@ export function reportLines(
     const target = projection.valueByKey.get(key);
     return target === undefined ? key : valueLabel(t, target, names);
   };
-  const lines = report.dropped.map((d) =>
-    t("play.saved.dropped", { name: d.name ?? d.key }),
-  );
-  if (report.droppedVisits > 0) {
-    lines.push(t("play.saved.dropped_visits", { count: report.droppedVisits }));
-  }
-  for (const key of report.defaulted) {
-    lines.push(t("play.saved.defaulted", { name: name(key) }));
-  }
-  for (const key of report.retyped) {
-    lines.push(t("play.saved.retyped", { name: name(key) }));
-  }
-  const c = report.cursor;
-  if (c !== undefined) {
-    lines.push(
-      c.at === "board"
-        ? t("play.saved.cursor_board", { board: where(c.board, undefined) })
-        : c.at === "project"
-          ? t("play.saved.cursor_project")
-          : t("play.saved.cursor_none"),
-    );
-  }
-  return lines;
+  return linesOf(report).map((line) => {
+    switch (line.kind) {
+      case "dropped":
+        return t("play.saved.dropped", {
+          name: line.value.name ?? line.value.key,
+        });
+      case "dropped_visits":
+        return t("play.saved.dropped_visits", { count: line.count });
+      case "defaulted":
+        return t("play.saved.defaulted", { name: name(line.key) });
+      case "retyped":
+        return t("play.saved.retyped", { name: name(line.key) });
+    }
+    // Where it started instead of at its cursor.
+    const c = line.cursor;
+    return c.at === "board"
+      ? t("play.saved.cursor_board", { board: where(c.board, undefined) })
+      : c.at === "project"
+        ? t("play.saved.cursor_project")
+        : t("play.saved.cursor_none");
+  });
 }
 
 /** Returns how many lines reportLines says of report. */
 export function reportCount(report: LoadReport): number {
-  return (
-    report.dropped.length +
-    (report.droppedVisits > 0 ? 1 : 0) +
-    report.defaulted.length +
-    report.retyped.length +
-    (report.cursor === undefined ? 0 : 1)
-  );
+  return linesOf(report).length;
 }
 
 /** Returns the start's step's load of a saved play state, of flow, while it is the only step, or undefined. */

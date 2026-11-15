@@ -47,6 +47,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
+	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // MaxNameLength is the most characters that a play state's name may have, as
@@ -58,12 +59,16 @@ const MaxNameLength = 100
 // of 64 characters each, and the dot between them.
 const MaxValueNameLength = 200
 
-// MaxStateBytes is the most bytes that a play state's state may take, as JSON:
-// a mebibyte, ten times what a save state of a project of 5,000 nodes and 500
+// MaxStateBytes is the most bytes that a play state's state may take, as JSON,
+// with each number written as a runtime writes it (shortestNumbers): a
+// mebibyte, ten times what a save state of a project of 5,000 nodes and 500
 // variables takes (PRD §8.5). MaxNamesBytes is the most that the names of its
 // values may take, as JSON, as many again, so that the undo of a change of
 // the state, which holds the state that it changed and the names of its
-// values, fits the undo's bound twice over (commands.DefaultMaxUndoBytes).
+// values, fits the undo's bound twice over (commands.DefaultMaxUndoBytes),
+// but for a state of many numbers that the operation log writes with every
+// digit, as 1e300, whose change is refused once its undo would pass the bound
+// (commands.LogBytes).
 const (
 	MaxStateBytes = 1 << 20
 	MaxNamesBytes = MaxStateBytes
@@ -133,7 +138,11 @@ func bodyOf(p queries.PlayState) (PlayStateBody, error) {
 }
 
 // stateOf returns the state and the names of its values that the columns
-// state and names hold, as the commands stored them (stored).
+// state and names hold, as the commands stored them (stored), with each
+// number written as a runtime writes it (shortestNumbers), rather than as
+// jsonb writes it back, without an exponent, as 1e300 with 301 digits, so
+// that a read returns the state as a runtime saved it, as package variable
+// reads a stored value.
 func stateOf(state, names []byte) (published.SaveState, PlayStateNames, error) {
 	var st published.SaveState
 	if err := json.Unmarshal(state, &st); err != nil {
@@ -143,7 +152,39 @@ func stateOf(state, names []byte) (published.SaveState, PlayStateNames, error) {
 	if err := json.Unmarshal(names, &n); err != nil {
 		return published.SaveState{}, PlayStateNames{}, fmt.Errorf("the names of its values: %w", err)
 	}
-	return st, n, nil
+	return shortestNumbers(st), n, nil
+}
+
+// shortestNumbers returns st with each of its values that is a number written
+// as a float's value is (value.Float), the shortest number that reads as its
+// double again, as a runtime's save_state() writes it, which is how an int's
+// within MaxInt is written already, and which JSON.parse reads as the same
+// double as it reads the number however it is written, as jsonb writes it
+// back, with every digit; and every other value as it is. It writes them into
+// maps of its own, so that st's are as they were.
+func shortestNumbers(st published.SaveState) published.SaveState {
+	shortest := func(v value.Value) value.Value {
+		if v.Kind() == "number" {
+			if f, problem := v.Read(value.Float, value.Checks{}); problem == "" {
+				return f
+			}
+		}
+		return v
+	}
+	variables := make(map[string]value.Value, len(st.Variables))
+	for k, v := range st.Variables {
+		variables[k] = shortest(v)
+	}
+	attributes := make(map[string]published.AttributeValues, len(st.Attributes))
+	for c, values := range st.Attributes {
+		out := make(published.AttributeValues, len(values))
+		for a, v := range values {
+			out[a] = shortest(v)
+		}
+		attributes[c] = out
+	}
+	st.Variables, st.Attributes = variables, attributes
+	return st
 }
 
 // encode returns the ID of the entity of the kind k whose UUID is the column

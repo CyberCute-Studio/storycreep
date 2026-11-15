@@ -858,10 +858,14 @@ export class PlaySession {
           ? loaded
           : [...loaded, ...r.start(at.board, at.node)];
       });
-      return this.flowAfter(emptyFlow(before), played, events, hidden, {
-        name: saved.name,
-        report: adapted.report,
-      });
+      return this.flowAfter(
+        emptyFlow(before),
+        played,
+        events,
+        hidden,
+        undefined,
+        { name: saved.name, report: adapted.report },
+      );
     } catch (error) {
       this.runtime = was.runtime;
       this.back = was.back;
@@ -888,25 +892,23 @@ export class PlaySession {
   }
 
   // flowAfter returns flow after the events of a call of the runtime that
-  // is a step, a start's, or a choice's of the choice chosen, of which the
-  // runtime hid the choices hidden (observed): a start's that loaded a
-  // saved play state where chosen is what it loaded, whose step came to the
-  // node where the loaded flow is, which it entered no more than once.
+  // is a step, a start's, or a choice's of choice, of which the runtime hid
+  // the choices hidden (observed): a start's that loaded a saved play state
+  // where loaded is what it loaded, whose step came to the node where the
+  // loaded flow is, which it entered no more than once.
   private flowAfter(
     flow: PlayFlow,
     projection: PlayedProjection,
     events: readonly Event[],
     hidden: readonly HiddenChoice[] | undefined,
-    chosen: Choice | PlayLoaded | undefined,
+    choice: Choice | undefined,
+    loaded?: PlayLoaded,
   ): PlayFlow {
     const r = this.runtime;
     const s = this.snapshot;
     if (r === undefined || s === undefined) {
       return flow;
     }
-    const choice = chosen !== undefined && "id" in chosen ? chosen : undefined;
-    const loaded =
-      chosen !== undefined && "report" in chosen ? chosen : undefined;
     const step = choice === undefined ? 0 : flow.history.length;
     const visited = new Set(flow.visited);
     const traversed = new Set(flow.traversed);

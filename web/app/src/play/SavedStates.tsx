@@ -137,14 +137,16 @@ export function SavedStates({
   const load = (s: PlayStateSummary) =>
     act(async () => {
       const pressed = session.state;
-      const turn = pressed.status === "playing" ? pressed.turn : undefined;
+      const flow = pressed.status === "playing" ? pressed.flow : undefined;
       const body = await readPlayState(doc.projectId, s.id);
-      // Play took a turn while the state was read, as a choice, a step back,
-      // Reset, Restart, or a start from the canvas, which loading it now would
-      // undo: the later press wins, as a start that another replaced does
-      // nothing more once its reads are answered (PlaySession.start).
+      // Play went on while the state was read, as by a choice, a step back,
+      // a value set by hand, which is no turn, Reset, Restart, or a start
+      // from the canvas, each of which leaves another flow, which loading it
+      // now would undo: the later press wins, as a start that another
+      // replaced does nothing more once its reads are answered
+      // (PlaySession.start).
       const answered = session.state;
-      if (answered.status === "playing" && answered.turn !== turn) {
+      if (answered.status === "playing" && answered.flow !== flow) {
         return t("play.saved.load_overtaken", { name: body.name });
       }
       try {
@@ -254,18 +256,10 @@ export function SavedStates({
           said !== undefined && "status" in said ? said.status : undefined
         }
       />
-      {/* A refusal of a form's name is said under its field instead. */}
-      <Alert
-        message={
-          refusal === undefined
-            ? undefined
-            : (refusal.alert ??
-              (refusal.form !== undefined &&
-              refusal.refusal?.fields.name !== undefined
-                ? undefined
-                : refusal.refusal?.message))
-        }
-      />
+      {/* A refusal's message leaves out what it places at the field of its
+          form's name, which says it there (refusalOf), and says the rest,
+          as of a state too large refused with the name. */}
+      <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
       {list.isPending ? (
         <p className="text-fg-muted">{t("play.saved.reading")}</p>
       ) : list.isError ? (
@@ -411,6 +405,18 @@ function nameProblem(t: TFunction, name: string): string | undefined {
   return undefined;
 }
 
+// refusedName returns what refusal, the server's of a form's last press,
+// says of the name that the press sent, sent, while the form's field holds
+// it, name, as typed, and nothing once the name is changed, as the form's
+// own problem of it goes as it is changed.
+function refusedName(
+  refusal: Refusal | undefined,
+  name: string,
+  sent: string | undefined,
+): string | undefined {
+  return name.trim() === sent ? refusal?.fields.name : undefined;
+}
+
 // SaveForm asks for the name of the play state to save, which the flow's
 // state is saved as.
 function SaveForm({
@@ -427,15 +433,19 @@ function SaveForm({
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [problem, setProblem] = useState<string>();
+  const [sent, setSent] = useState<string>();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
     const p = nameProblem(t, trimmed);
     setProblem(p);
-    // The name stays where nothing was saved, as once the server refused
-    // it, which says why under the field, or play stopped meanwhile.
-    if (p === undefined && (await onSave(trimmed))) {
-      setName("");
+    if (p === undefined) {
+      setSent(trimmed);
+      // The name stays where nothing was saved, as once the server refused
+      // it, which says why under the field, or play stopped meanwhile.
+      if (await onSave(trimmed)) {
+        setName("");
+      }
     }
   };
   return (
@@ -453,7 +463,7 @@ function SaveForm({
       <TextField
         label={t("play.saved.name")}
         hint={t("play.saved.name_hint")}
-        error={problem ?? refusal?.fields.name}
+        error={problem ?? refusedName(refusal, name, sent)}
         value={name}
         maxLength={maxName * 2}
         onChange={(e) => {
@@ -486,12 +496,14 @@ function RenameForm({
   const { t } = useTranslation();
   const [name, setName] = useState(state.name);
   const [problem, setProblem] = useState<string>();
+  const [sent, setSent] = useState<string>();
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
     const p = nameProblem(t, trimmed);
     setProblem(p);
     if (p === undefined) {
+      setSent(trimmed);
       await onRename(trimmed);
     }
   };
@@ -505,7 +517,7 @@ function RenameForm({
     >
       <TextField
         label={t("play.saved.new_name", { name: state.name })}
-        error={problem ?? refusal?.fields.name}
+        error={problem ?? refusedName(refusal, name, sent)}
         value={name}
         maxLength={maxName * 2}
         autoFocus

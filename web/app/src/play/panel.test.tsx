@@ -1582,14 +1582,17 @@ describe("saved play states", () => {
   });
 
   // A save that the server refuses keeps the name typed, under which it says
-  // why, and a rename's refusal is said under the rename's field, not the
-  // save's.
+  // why, while the field holds it, and the rest of the refusal, of the state,
+  // beside it; and a rename's refusal is said under the rename's field, not
+  // the save's.
   it("keeps the name of a refused save, and says a refusal under the field of its own form", async () => {
     const user = userEvent.setup();
     const saved = savedStates();
     let refuse = false;
+    let refusals = 0;
     playProject(undefined, undefined, (operation, input) => {
       if (operation === "applyCommands" && refuse) {
+        refusals++;
         throw refused(422, {
           code: "validation_failed",
           details: {
@@ -1598,6 +1601,15 @@ describe("saved play states", () => {
                 location: "body.commands[0].payload.name",
                 message: "has a control character",
               },
+              // The save's state too, which no field of the form shows.
+              ...(refusals === 1
+                ? [
+                    {
+                      location: "body.commands[0].payload.state",
+                      message: "takes too many bytes",
+                    },
+                  ]
+                : []),
             ],
           },
         });
@@ -1624,6 +1636,13 @@ describe("saved play states", () => {
     await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
     expect((name as HTMLInputElement).value).toBe("Storm");
     expect(within(panel).getByText("Has a control character.")).toBeDefined();
+    expect(within(panel).getByText("Takes too many bytes.")).toBeDefined();
+    // The refusal is of the name as it was sent, which the field says no
+    // more once the name is changed, and again once it is that name.
+    await user.type(name, "y");
+    expect(name.getAttribute("aria-invalid")).not.toBe("true");
+    await user.type(name, "{Backspace}");
+    expect(name.getAttribute("aria-invalid")).toBe("true");
     await user.click(
       within(panel).getByRole("button", { name: "Rename “Quay”" }),
     );
@@ -1643,8 +1662,9 @@ describe("saved play states", () => {
     expect(saved.states.map((s) => s.name)).toEqual(["Quay"]);
   });
 
-  // A load whose read is answered once play has taken another turn, as a
-  // choice, does nothing, rather than undo the turn, and says so.
+  // A load whose read is answered once play has gone on, as by a choice, or
+  // by a value set by hand, which is no turn, does nothing, rather than undo
+  // it, and says so.
   it("does not load a state whose read is answered once play went on", async () => {
     const user = userEvent.setup();
     const saved = savedStates([
@@ -1673,13 +1693,13 @@ describe("saved play states", () => {
         names: {},
       },
     ]);
+    // Each read of the state is answered once release is called.
     let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     playProject(undefined, undefined, (operation, input) =>
       operation === "getPlayState"
-        ? gate.then(() => saved.answer(operation, input))
+        ? new Promise<void>((resolve) => {
+            release = resolve;
+          }).then(() => saved.answer(operation, input))
         : saved.answer(operation, input),
     );
     renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
@@ -1707,6 +1727,30 @@ describe("saved play states", () => {
         name: "What loading the saved state kept",
       }),
     ).toBeNull();
+    // A value set by hand while the state is read.
+    const load = within(panel).getByRole("button", {
+      name: "Load “Romance path”",
+    }) as HTMLButtonElement;
+    await user.click(load);
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "8{Enter}");
+    await act(async () => release());
+    await waitFor(() => expect(load.disabled).toBe(false));
+    expect(
+      (within(panel).getByRole("textbox", { name: "gold" }) as HTMLInputElement)
+        .value,
+    ).toBe("8");
+    expect(
+      within(panel).queryByRole("region", {
+        name: "What loading the saved state kept",
+      }),
+    ).toBeNull();
+    expect(
+      within(panel).getByText(
+        "“Romance path” was not loaded, as play went on while it was read. Load it again to start there.",
+      ),
+    ).toBeDefined();
   });
 
   // A viewer loads a saved state, of a variable deleted since, which the

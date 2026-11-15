@@ -13,6 +13,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/authz"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -197,7 +198,7 @@ func Register(r *commands.Registry) {
 				return err
 			}
 			return changed(tx, s.ID)(queries.New(tx).TrashPlayState(ctx, queries.TrashPlayStateParams{
-				UpdatedBy: by(tx), WorkspaceID: s.WorkspaceID, ProjectID: s.ProjectID, ID: s.ID}))
+				WorkspaceID: s.WorkspaceID, ProjectID: s.ProjectID, ID: s.ID}))
 		},
 	})
 
@@ -219,7 +220,7 @@ func Register(r *commands.Registry) {
 				return err
 			}
 			return changed(tx, s.ID)(queries.New(tx).RestorePlayState(ctx, queries.RestorePlayStateParams{
-				UpdatedBy: by(tx), WorkspaceID: s.WorkspaceID, ProjectID: s.ProjectID, ID: s.ID}))
+				WorkspaceID: s.WorkspaceID, ProjectID: s.ProjectID, ID: s.ID}))
 		},
 	})
 }
@@ -242,8 +243,14 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return err
 	}
-	if err := q.InsertPlayState(ctx, queries.InsertPlayStateParams{ID: id, WorkspaceID: ws, ProjectID: project,
-		Name: p.Name, State: data, Names: names, CreatedBy: by(tx)}); err != nil {
+	err = q.InsertPlayState(ctx, queries.InsertPlayStateParams{ID: id, WorkspaceID: ws, ProjectID: project,
+		Name: p.Name, State: data, Names: names, CreatedBy: by(tx)})
+	if database.UniqueViolation(err, "play_state_pkey") {
+		// The ID is another project's, or another workspace's, whose rows
+		// this transaction does not see.
+		return commands.Refuse("id", "is the ID of a play state that exists already", nil)
+	}
+	if err != nil {
 		return fmt.Errorf("playstate: add the play state: %w", err)
 	}
 	return tx.Changed(ids.PlayState, id.Bytes, 1)
@@ -321,9 +328,12 @@ func checkNameTexts(names PlayStateNames) input.FieldErrors {
 // not a canonical ID of its kind; a snapshotId without a snapshotVersion, or
 // one without the other; a value that is no boolean, number, or string; a
 // visit count below 1 or beyond MaxInt; and a state of more than
-// MaxStateBytes, as JSON. That is all that the server checks of a state, with
-// Apply's check that it is of the batch's project (stored). It reads nothing
-// but st.
+// MaxStateBytes, as JSON, with each number written as a runtime writes it,
+// however the payload writes it (shortestNumbers), so that the undo of a
+// replace, which writes each number of the state back with every digit, as
+// the operation log does, is held to the bound that the state was. That is
+// all that the server checks of a state, with Apply's check that it is of
+// the batch's project (stored). It reads nothing but st.
 func checkState(name string, st published.SaveState) input.FieldErrors {
 	var errs input.FieldErrors
 	add := func(at, msg string) {
@@ -378,7 +388,7 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 	if len(errs) > 0 {
 		return errs
 	}
-	data, err := json.Marshal(st)
+	data, err := json.Marshal(shortestNumbers(st))
 	switch {
 	case err != nil:
 		return input.FieldErrors{{Field: name, Message: "is no save state: " + err.Error()}}

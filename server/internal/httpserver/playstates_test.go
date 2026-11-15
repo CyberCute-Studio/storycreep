@@ -61,7 +61,8 @@ func (f *rolesFixture) deletedPlayState(t *testing.T, project string) string {
 // and when; the list holds those that are not in the trash, page by page,
 // without their states; a rename and a replace of the state change it, each
 // with its revision; and a play state deleted is not found, until the undo
-// of its deletion restores it.
+// of its deletion restores it, last changed when it was before, since
+// neither changed its name or its state.
 //
 // Verifies: FR-PLAY-05/AC1
 func TestPlayStates(t *testing.T) {
@@ -132,6 +133,7 @@ func TestPlayStates(t *testing.T) {
 		t.Errorf("after the rename and the replace, the play state is %+v, with the state %s", b, state)
 	}
 
+	before, _ := get(states[2])
 	deleted := resultFrom(t, call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t,
 		wireCommand{Type: "play_state.delete", Payload: map[string]string{"id": states[2]}}), owner.header(true)))
 	wantCode(t, "a play state in the trash", call(s.main, http.MethodGet, playStatePath(p.ID, states[2]), nil,
@@ -178,14 +180,17 @@ func TestPlayStates(t *testing.T) {
 		t.Errorf("the play states listed are %v, want %v", got, sorted(states[0], states[1]))
 	}
 
-	// The undo of the deletion restores the play state.
+	// The undo of the deletion restores the play state, which changed
+	// neither its name nor its state, so it last changed when it did before.
 	undo := make([]wireCommand, len(deleted.Undo))
 	for i, u := range deleted.Undo {
 		undo[i] = wireCommand{Type: u.Type, Payload: json.RawMessage(u.Payload), ExpectedRev: u.ExpectedRev}
 	}
 	resultFrom(t, call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t, undo...), owner.header(true)))
-	if b, _ := get(states[2]); b.Name != "Romance path" || b.Rev != 3 {
-		t.Errorf("after the undo of its deletion, the play state is %+v", b)
+	if b, _ := get(states[2]); b.Name != "Romance path" || b.Rev != 3 || !b.UpdatedAt.Equal(before.UpdatedAt) ||
+		b.UpdatedBy != before.UpdatedBy {
+		t.Errorf("after the undo of its deletion, the play state is %+v, want it last changed as before, %+v", b,
+			before)
 	}
 	if got := list(); !slices.Equal(got, sorted(states...)) {
 		t.Errorf("after the undo, the play states listed are %v, want %v", got, sorted(states...))
@@ -314,6 +319,19 @@ func TestPlayStateRefusals(t *testing.T) {
 		t.Errorf("names of more than a mebibyte: %d %.500s", res.status, res.body)
 	}
 
+	// The ID of a play state of another project, which the batch's
+	// transaction does not see, is refused as one that the project has is.
+	for _, id := range []string{kept, trashed} {
+		res = call(s.main, http.MethodPost, commandsPath(other.ID), commandBatch(t,
+			wireCommand{Type: "play_state.create", Payload: map[string]any{"id": id, "name": "Taken",
+				"state": emptyState(other.ID)}}), owner.header(true))
+		if code, locs, _ := problemsOf(t, res); res.status != http.StatusUnprocessableEntity ||
+			code != api.CodeValidationFailed || !slices.Contains(locs, "body.commands[0].payload.id") {
+			t.Errorf("a create with the ID of another project's play state: %d %s, want 422 %s at its id",
+				res.status, res.body, api.CodeValidationFailed)
+		}
+	}
+
 	// Nothing of the refused batches applied.
 	var b playstate.PlayStateBody
 	if res := call(s.main, http.MethodGet, playStatePath(p.ID, kept), nil, owner.header(false)); res.status !=
@@ -326,5 +344,70 @@ func TestPlayStateRefusals(t *testing.T) {
 	if res := call(s.main, http.MethodGet, playStatesPath(p.ID), nil, owner.header(false)); res.status !=
 		http.StatusOK || json.Unmarshal(res.body, &page) != nil || len(page.Items) != 1 {
 		t.Errorf("after the refusals, the play states are %d %s, want the one kept", res.status, res.body)
+	}
+	if res := call(s.main, http.MethodGet, playStatesPath(other.ID), nil, owner.header(false)); res.status !=
+		http.StatusOK || json.Unmarshal(res.body, &page) != nil || len(page.Items) != 0 {
+		t.Errorf("after the refusals, the other project's play states are %d %s, want none", res.status, res.body)
+	}
+}
+
+// TestPlayStateNumbers checks that a play state's values that are numbers
+// come back as a runtime writes them, the shortest number that reads as the
+// double again, rather than as the database writes them back, 1e300 with 301
+// digits, and that the bound of a state counts its numbers so too, however a
+// payload writes them: a state well within a mebibyte as it was saved, of
+// many such numbers, is replaced, and the undo of its replacement, which
+// writes each of them back with every digit, as the operation log does,
+// applies.
+func TestPlayStateNumbers(t *testing.T) {
+	t.Parallel()
+	s, _, owner, ws := inviteServer(t, "open", nil)
+	p := createProject(t, s.main, owner, ws, "Harbour")
+	saved := emptyState(p.ID)
+	variables := map[string]any{}
+	for range 4000 {
+		variables[ids.Encode(ids.Variable, ids.New())] = 1e300
+	}
+	saved["variables"] = variables
+	if data, err := json.Marshal(saved); err != nil || len(data) > playstate.MaxStateBytes/4 ||
+		len(data)+len(variables)*(301-len("1e+300")) <= playstate.MaxStateBytes {
+		t.Fatalf("the state takes %d bytes, %v: want it well within the bound, and past it without exponents",
+			len(data), err)
+	}
+	id := newPlayStateID()
+	resultFrom(t, call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t,
+		wireCommand{Type: "play_state.create", Payload: map[string]any{"id": id, "name": "Rich", "state": saved}}),
+		owner.header(true)))
+
+	var body struct {
+		State json.RawMessage `json:"state"`
+	}
+	res := call(s.main, http.MethodGet, playStatePath(p.ID, id), nil, owner.header(false))
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &body) != nil {
+		t.Fatalf("read the play state: %d %.500s", res.status, res.body)
+	}
+	if want, _ := json.Marshal(saved); len(body.State) > len(want) ||
+		!strings.Contains(string(body.State), ":1e+300") {
+		t.Errorf("the state read takes %d bytes, %.200s, want at most the %d that it was saved with, with 1e+300",
+			len(body.State), body.State, len(want))
+	}
+
+	replaced := resultFrom(t, call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t,
+		wireCommand{Type: "play_state.set_state", Payload: map[string]any{"id": id, "state": emptyState(p.ID)},
+			ExpectedRev: map[string]int64{id: 1}}), owner.header(true)))
+	if len(replaced.Undo) != 1 {
+		t.Fatalf("the replace's undo has %d steps, want one that writes the state back", len(replaced.Undo))
+	}
+	// The undo, as the answer holds it, sent as it is, though it writes each
+	// number with every digit, as the operation log's jsonb does.
+	undo := wireCommand{Type: replaced.Undo[0].Type, Payload: json.RawMessage(replaced.Undo[0].Payload),
+		ExpectedRev: replaced.Undo[0].ExpectedRev}
+	resultFrom(t, call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t, undo), owner.header(true)))
+	res = call(s.main, http.MethodGet, playStatePath(p.ID, id), nil, owner.header(false))
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &body) != nil {
+		t.Fatalf("read the play state: %d %.500s", res.status, res.body)
+	}
+	if want, _ := json.Marshal(saved); !jsonEqual(t, body.State, want) {
+		t.Errorf("after the undo of its replacement, the state is %.200s, want it as saved", body.State)
 	}
 }
