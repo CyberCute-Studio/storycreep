@@ -60,10 +60,14 @@ const MaxValueNameLength = 200
 
 // MaxStateBytes is the most bytes that a play state's state may take, as JSON:
 // a mebibyte, ten times what a save state of a project of 5,000 nodes and 500
-// variables takes (PRD §8.5), so that the undo of a change of the state, which
-// holds the state that it changed, fits the undo's bound many times over
-// (commands.DefaultMaxUndoBytes).
-const MaxStateBytes = 1 << 20
+// variables takes (PRD §8.5). MaxNamesBytes is the most that the names of its
+// values may take, as JSON, as many again, so that the undo of a change of
+// the state, which holds the state that it changed and the names of its
+// values, fits the undo's bound twice over (commands.DefaultMaxUndoBytes).
+const (
+	MaxStateBytes = 1 << 20
+	MaxNamesBytes = MaxStateBytes
+)
 
 // ErrNotFound is returned for a play state that the project does not have, or
 // that is in its trash.
@@ -99,7 +103,10 @@ type PlayStateBody struct {
 // its component's key and its own, as an expression names it, which play mode
 // names a value that a load of the state drops by, once its entity is deleted
 // and has no name of its own (FR-PLAY-05 AC2). The server checks only that
-// each is the name of a value that the state holds.
+// each is the name of a value that the state holds, of 1 to
+// MaxValueNameLength characters, without white space around it, and without
+// control characters, and that together they take at most MaxNamesBytes, as
+// JSON.
 type PlayStateNames struct {
 	Variables  map[string]string            `json:"variables,omitempty" doc:"Each variable's name, by its ID, as met_elara"`
 	Attributes map[string]map[string]string `json:"attributes,omitempty" doc:"Each runtime attribute's name, by its component's ID and its attribute definition's, as elara.trust"`

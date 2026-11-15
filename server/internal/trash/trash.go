@@ -27,14 +27,15 @@
 // board reconnects them where they can be, and its batch's answer lists
 // those that it could not reconnect, through the reconnections that package
 // connection registers with the pipeline (commands.RegisterReconnection,
-// AC1).
+// AC1). A saved play state that is deleted (package playstate) goes to the
+// trash too, unlisted, which the undo of its deletion alone restores.
 //
 // A table whose rows go to the trash is registered with it by its live view,
 // its branch of the list's query (TrashItems) if its rows are listed, and
 // its purge (PurgeBoards, PurgeNodes, PurgeBranchOutputs, PurgeConnections,
 // PurgeVariables, PurgeComponents, PurgeAttributeDefs, PurgeComponentTypes,
-// PurgeFolders), which the package's tests hold every table of a project's
-// content with a deleted_at to.
+// PurgeFolders, PurgePlayStates), which the package's tests hold every table
+// of a project's content with a deleted_at to.
 //
 // Listing the trash is reading the project's content (§5.6): it needs a role
 // on the project that is not none, and project:read of an API token.

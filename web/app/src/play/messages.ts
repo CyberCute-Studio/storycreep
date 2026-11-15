@@ -2,16 +2,13 @@
 // why it ended, each runtime error, and what the projection stood in for,
 // each a message of the catalog, by a key that extraction reads.
 
-import type {
-  ExpressionField,
-  Reason,
-  RuntimeError,
-} from "@storycreep/shared/flow";
+import type { ExpressionField, RuntimeError } from "@storycreep/shared/flow";
 import type { TFunction } from "i18next";
 import type { ExpressionOwner, StandIn } from "./projection";
+import type { PlayEnd } from "./session";
 
-/** Returns why the flow ended, as play mode says it (§5.8.5). */
-export function endedMessage(t: TFunction, reason: Reason): string {
+/** Returns why the flow ended, as play mode says it (§5.8.5), or that it had ended where a saved play state was saved (FR-PLAY-05). */
+export function endedMessage(t: TFunction, reason: PlayEnd): string {
   switch (reason) {
     case "ending":
       return t("play.ended.ending");
@@ -19,6 +16,8 @@ export function endedMessage(t: TFunction, reason: Reason): string {
       return t("play.ended.dead_end");
     case "no_choices":
       return t("play.ended.no_choices");
+    case "saved":
+      return t("play.ended.saved");
   }
 }
 

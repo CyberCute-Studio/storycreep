@@ -1541,7 +1541,7 @@ describe("saved play states", () => {
     ]);
     expect((name as HTMLInputElement).value).toBe("");
     const item = await within(panel).findByText("After the wait");
-    expect(item.closest("li")?.textContent).toContain("Saved by you");
+    expect(item.closest("li")?.textContent).toContain("Last changed by you");
     await user.click(within(panel).getByRole("button", { name: "Reset" }));
     await within(panel).findByText("Trust 1.");
     await user.click(
@@ -1564,10 +1564,149 @@ describe("saved play states", () => {
         within(panel).getByRole("heading", { name: "Wait" }),
       ),
     );
-    // The history's start is the load.
+    // The flow had ended where it was saved, which the state does not say
+    // why of, and which the panel and the history's start say.
     expect(
-      within(panel).getByRole("region", { name: "History" }).textContent,
-    ).toContain("Loaded “After the wait”");
+      within(
+        within(panel).getByRole("region", { name: "Where the flow is" }),
+      ).getByText("The flow had ended here when the state was saved."),
+    ).toBeDefined();
+    // The history's start is the load.
+    const history = within(panel).getByRole("region", {
+      name: "History",
+    }).textContent;
+    expect(history).toContain("Loaded “After the wait”");
+    expect(history).toContain(
+      "The flow had ended here when the state was saved.",
+    );
+  });
+
+  // A save that the server refuses keeps the name typed, under which it says
+  // why, and a rename's refusal is said under the rename's field, not the
+  // save's.
+  it("keeps the name of a refused save, and says a refusal under the field of its own form", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    let refuse = false;
+    playProject(undefined, undefined, (operation, input) => {
+      if (operation === "applyCommands" && refuse) {
+        throw refused(422, {
+          code: "validation_failed",
+          details: {
+            errors: [
+              {
+                location: "body.commands[0].payload.name",
+                message: "has a control character",
+              },
+            ],
+          },
+        });
+      }
+      return saved.answer(operation, input);
+    });
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const name = within(panel).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    await user.type(name, "Quay");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByRole("button", { name: "Rename “Quay”" });
+    refuse = true;
+    await user.type(name, "Storm");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
+    expect((name as HTMLInputElement).value).toBe("Storm");
+    expect(within(panel).getByText("Has a control character.")).toBeDefined();
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “Quay”",
+    });
+    await user.clear(field);
+    await user.type(field, "Harbour");
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(field.getAttribute("aria-invalid")).toBe("true"),
+    );
+    expect(name.getAttribute("aria-invalid")).not.toBe("true");
+    expect(within(panel).getAllByText("Has a control character.")).toHaveLength(
+      1,
+    );
+    expect(saved.states.map((s) => s.name)).toEqual(["Quay"]);
+  });
+
+  // A load whose read is answered once play has taken another turn, as a
+  // choice, does nothing, rather than undo the turn, and says so.
+  it("does not load a state whose read is answered once play went on", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 4 } },
+          cursor: {
+            boardId: harbour.id,
+            nodeId: id("nd", "A"),
+            phase: "awaiting_choice",
+          },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3 },
+          visits: { [id("nd", "A")]: 1 },
+        },
+        names: {},
+      },
+    ]);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getPlayState"
+        ? gate.then(() => saved.answer(operation, input))
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “Romance path”",
+      }),
+    );
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await within(panel).findByText("You wait.");
+    await act(async () => release());
+    await within(panel).findByText(
+      "“Romance path” was not loaded, as play went on while it was read. Load it again to start there.",
+    );
+    expect(within(panel).getByText("You wait.")).toBeDefined();
+    expect(
+      within(panel).queryByRole("region", {
+        name: "What loading the saved state kept",
+      }),
+    ).toBeNull();
   });
 
   // A viewer loads a saved state, of a variable deleted since, which the

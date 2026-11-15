@@ -70,10 +70,20 @@ function keepsSheet(onEscape: () => void) {
 /** The most characters that a play state's name may have, as the server takes it. */
 const maxName = 100;
 
-// What the section said last, of what it did or why it could not.
+// The forms of the section, whose name's field shows a refusal of the
+// server that names it.
+type NameForm = "save" | "rename";
+
+// What the section said last, of what it did or why it could not: of a
+// refusal of a form's press, the form, under whose name's field a refusal of
+// the name is shown, rather than under another's.
 type Said =
   | { readonly status: string }
-  | { readonly refusal: Refusal | undefined; readonly alert?: string };
+  | {
+      readonly refusal: Refusal | undefined;
+      readonly alert?: string;
+      readonly form?: NameForm;
+    };
 
 export function SavedStates({
   doc,
@@ -93,30 +103,50 @@ export function SavedStates({
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
   // act runs what a press asked for, one at a time, and says what it did,
-  // or why it could not, the server's refusal among them, or nothing for
-  // undefined, as of a press while play does not play.
-  const act = async (run: () => Promise<string | Said | undefined>) => {
+  // or why it could not, the server's refusal among them, which is form's,
+  // the form whose press it was, if any, or nothing for undefined, as of a
+  // press while play does not play. It resolves to whether it did what was
+  // asked, so that a form keeps what was typed in it where it did not.
+  const act = async (
+    run: () => Promise<string | Said | undefined>,
+    form?: NameForm,
+  ): Promise<boolean> => {
     if (busy) {
-      return;
+      return false;
     }
     setBusy(true);
     try {
       const done = await run();
       setSaid(typeof done === "string" ? { status: done } : done);
+      return typeof done === "string";
     } catch (error) {
-      setSaid({ refusal: refusalOf(error, t, payloadField("name")) });
+      setSaid({ refusal: refusalOf(error, t, payloadField("name")), form });
+      return false;
     } finally {
       setBusy(false);
     }
   };
+  // The newest first of a name, by when each last changed, compared as
+  // times rather than as the API writes them, whose fractions of a second
+  // are as long as they need be.
   const states = [...(list.data ?? [])].sort(
     (a, b) =>
       collator.compare(a.name, b.name) ||
-      b.updated_at.localeCompare(a.updated_at),
+      Date.parse(b.updated_at) - Date.parse(a.updated_at),
   );
   const load = (s: PlayStateSummary) =>
     act(async () => {
+      const pressed = session.state;
+      const turn = pressed.status === "playing" ? pressed.turn : undefined;
       const body = await readPlayState(doc.projectId, s.id);
+      // Play took a turn while the state was read, as a choice, a step back,
+      // Reset, Restart, or a start from the canvas, which loading it now would
+      // undo: the later press wins, as a start that another replaced does
+      // nothing more once its reads are answered (PlaySession.start).
+      const answered = session.state;
+      if (answered.status === "playing" && answered.turn !== turn) {
+        return t("play.saved.load_overtaken", { name: body.name });
+      }
       try {
         if (
           !session.load({
@@ -180,6 +210,9 @@ export function SavedStates({
       return t("play.saved.deleted", { name: s.name });
     });
   const refusal = said !== undefined && "refusal" in said ? said : undefined;
+  // What the server refused of form's name, which its field shows.
+  const refusalOfForm = (form: NameForm) =>
+    refusal?.form === form ? refusal.refusal : undefined;
   return (
     <section aria-labelledby={savedHeadingId} className="space-y-2">
       <h3
@@ -192,7 +225,6 @@ export function SavedStates({
       </h3>
       {editable && (
         <SaveForm
-          session={session}
           disabled={busy}
           onSave={(name) =>
             act(async () => {
@@ -212,9 +244,9 @@ export function SavedStates({
                 },
               ]);
               return t("play.saved.saved", { name });
-            })
+            }, "save")
           }
-          refusal={refusal?.refusal}
+          refusal={refusalOfForm("save")}
         />
       )}
       <Status
@@ -222,14 +254,16 @@ export function SavedStates({
           said !== undefined && "status" in said ? said.status : undefined
         }
       />
+      {/* A refusal of a form's name is said under its field instead. */}
       <Alert
         message={
           refusal === undefined
             ? undefined
             : (refusal.alert ??
-              (refusal.refusal?.fields.name === undefined
-                ? refusal.refusal?.message
-                : undefined))
+              (refusal.form !== undefined &&
+              refusal.refusal?.fields.name !== undefined
+                ? undefined
+                : refusal.refusal?.message))
         }
       />
       {list.isPending ? (
@@ -263,7 +297,18 @@ export function SavedStates({
                 <RenameForm
                   state={s}
                   disabled={busy}
-                  onCancel={() => setRenaming(undefined)}
+                  refusal={refusalOfForm("rename")}
+                  onCancel={() => {
+                    // A refusal of the rename goes with its field.
+                    setSaid((was) =>
+                      was !== undefined &&
+                      "form" in was &&
+                      was.form === "rename"
+                        ? undefined
+                        : was,
+                    );
+                    setRenaming(undefined);
+                  }}
                   onRename={(name) =>
                     act(async () => {
                       await doc.send([
@@ -276,14 +321,14 @@ export function SavedStates({
                       setRenaming(undefined);
                       headingRef.current?.focus();
                       return t("play.saved.renamed", { from: s.name, name });
-                    })
+                    }, "rename")
                   }
                 />
               ) : (
                 <>
                   <p className="font-medium break-words">{s.name}</p>
                   <p className="text-sm text-fg-muted">
-                    {savedWhen(t, i18n.language, s, userId)}
+                    {changedWhen(t, i18n.language, s, userId)}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -338,9 +383,11 @@ export function SavedStates({
   );
 }
 
-// savedWhen returns when the play state s was saved last, as the list says
-// it, and whether by the user whose ID is userId.
-function savedWhen(
+// changedWhen returns when the play state s last changed, its name or its
+// state, as the list says it, and whether by the user whose ID is userId: a
+// rename changes it as a save and a replace do, which the server does not
+// tell apart.
+function changedWhen(
   t: TFunction,
   language: string,
   s: PlayStateSummary,
@@ -348,8 +395,8 @@ function savedWhen(
 ): string {
   const at = formatDateTime(language, new Date(s.updated_at));
   return s.updated_by !== undefined && s.updated_by === userId
-    ? t("play.saved.saved_by_you", { at })
-    : t("play.saved.saved_at", { at });
+    ? t("play.saved.changed_by_you", { at })
+    : t("play.saved.changed_at", { at });
 }
 
 // nameProblem returns why name, a play state's name as typed, is none that
@@ -367,14 +414,13 @@ function nameProblem(t: TFunction, name: string): string | undefined {
 // SaveForm asks for the name of the play state to save, which the flow's
 // state is saved as.
 function SaveForm({
-  session,
   disabled,
   onSave,
   refusal,
 }: {
-  session: PlaySession;
   disabled: boolean;
-  onSave: (name: string) => Promise<void>;
+  /** Saves the flow's state under the name, and resolves to whether it did. */
+  onSave: (name: string) => Promise<boolean>;
   /** Why the server refused the last save, whose name field it may name. */
   refusal: Refusal | undefined;
 }) {
@@ -386,11 +432,11 @@ function SaveForm({
     const trimmed = name.trim();
     const p = nameProblem(t, trimmed);
     setProblem(p);
-    if (p !== undefined || session.saving() === undefined) {
-      return;
+    // The name stays where nothing was saved, as once the server refused
+    // it, which says why under the field, or play stopped meanwhile.
+    if (p === undefined && (await onSave(trimmed))) {
+      setName("");
     }
-    await onSave(trimmed);
-    setName("");
   };
   return (
     // Escape empties the name, as the inspector's filter is emptied.
@@ -426,13 +472,16 @@ function SaveForm({
 function RenameForm({
   state,
   disabled,
+  refusal,
   onCancel,
   onRename,
 }: {
   state: PlayStateSummary;
   disabled: boolean;
+  /** Why the server refused the last rename, whose name field it may name. */
+  refusal: Refusal | undefined;
   onCancel: () => void;
-  onRename: (name: string) => Promise<void>;
+  onRename: (name: string) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(state.name);
@@ -456,7 +505,7 @@ function RenameForm({
     >
       <TextField
         label={t("play.saved.new_name", { name: state.name })}
-        error={problem}
+        error={problem ?? refusal?.fields.name}
         value={name}
         maxLength={maxName * 2}
         autoFocus

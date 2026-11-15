@@ -7,9 +7,10 @@
 // longer is dropped, one that the state lacks, as of a variable added since,
 // defaulted, one that its declaration no longer reads, as of a variable whose
 // type changed, or of an enum whose options did, retyped, and so defaulted,
-// the visit counts of the nodes that no longer are dropped, and a cursor at a
-// node where the flow can no longer rest replaced by the entry of its board,
-// or of the project. The shared runtime's loadState takes a state of its own
+// the visit counts of the nodes that no longer are, or that are jumpers,
+// dropped, and a cursor at a node where the flow can no longer rest replaced
+// by the entry of its board, or of the project, where the flow then starts as
+// any start there does. The shared runtime's loadState takes a state of its own
 // snapshot alone, so play loads the state that this makes of the saved one
 // (plan item 105 brings the rules into the runtimes, Go's and Godot's). Play
 // imports it once play starts, as it imports the runtime (session.ts).
@@ -52,7 +53,7 @@ export type CursorFallback =
 export interface LoadReport {
   /** The values of the variables and the runtime attributes that the snapshot no longer has, which loading dropped. */
   readonly dropped: readonly DroppedValue[];
-  /** How many visit counts of the nodes that the snapshot no longer has, or that are jumpers now, loading dropped. */
+  /** How many visit counts of the nodes that the snapshot no longer has, or that are jumpers, which the flow counts no visit of, loading dropped. */
   readonly droppedVisits: number;
   /** The keys of the snapshot's values that the state holds none of, as those added since it was saved, which loading gave their values in the snapshot. */
   readonly defaulted: readonly string[];
@@ -98,8 +99,11 @@ export interface Adapted {
  * leaves, as one at rest there is; or else none, and the flow started, once
  * the state has loaded, at the entry node of the cursor's board, if s has
  * the board, and the board an entry node, or else at the project's entry,
- * if it has one, as reported. A state saved before the flow started has no
- * cursor, and loads with none. Its snapshot is s's, as loadState takes it.
+ * if it has one, as reported: a start, as a board entry, which resets the
+ * board's resetOnEnter variables and runs the entry's on-enter, as any start
+ * there does (§5.8.5), rather than put the flow at a node that it did not
+ * enter. A state saved before the flow started has no cursor, and loads with
+ * none. Its snapshot is s's, as loadState takes it.
  */
 export function adapt(
   saved: SaveState,

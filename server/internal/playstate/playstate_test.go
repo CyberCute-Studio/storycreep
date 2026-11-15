@@ -21,11 +21,14 @@ func TestMain(m *testing.M) {
 
 // TestPlayStateIsolation tries the package's queries from another
 // workspace's transaction, where row-level security must keep them from
-// reading or changing its play states (NFR-SEC-01).
+// reading, adding, or changing its play states (NFR-SEC-01): each of them,
+// the restore once the play states are in the trash, since it changes none
+// that is not.
 //
 // Verifies: NFR-SEC-01
 func TestPlayStateIsolation(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 	f := isolationtest.New(t, dbtest.New(t), isolationtest.Tables)
 	uuid := func(id ids.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	params := func(target *isolationtest.Workspace) (pgtype.UUID, pgtype.UUID, pgtype.UUID) {
@@ -63,6 +66,25 @@ func TestPlayStateIsolation(t *testing.T) {
 			}
 			return many(found, err)
 		}},
+		{Name: "play states by their IDs", Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			ws, p, id := params(target)
+			rows, err := queries.New(tx).PlayStatesByID(ctx, queries.PlayStatesByIDParams{WorkspaceID: ws,
+				ProjectID: p, Ids: []pgtype.UUID{id}})
+			var found []ids.UUID
+			for _, r := range rows {
+				found = append(found, r.ID.Bytes)
+			}
+			return many(found, err)
+		}},
+		{Name: "add a play state", Denied: true, Run: func(ctx context.Context, tx pgx.Tx,
+			target *isolationtest.Workspace) ([]ids.UUID, error) {
+			ws, p, _ := params(target)
+			id := ids.New()
+			err := queries.New(tx).InsertPlayState(ctx, queries.InsertPlayStateParams{ID: uuid(id), WorkspaceID: ws,
+				ProjectID: p, Name: "Added", State: []byte(`{}`), Names: []byte(`{}`)})
+			return []ids.UUID{id}, err
+		}},
 		{Name: "the revisions of play states", Run: func(ctx context.Context, tx pgx.Tx,
 			target *isolationtest.Workspace) ([]ids.UUID, error) {
 			ws, p, id := params(target)
@@ -98,4 +120,19 @@ func TestPlayStateIsolation(t *testing.T) {
 	} {
 		f.Check(t, op)
 	}
+
+	// The restore, of the play states once they are in the trash.
+	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
+		if _, err := f.Admin().Exec(ctx, "UPDATE play_state SET deleted_at = now() WHERE id = $1",
+			w.Rows["play_state"]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.Check(t, isolationtest.Op{Name: "restore a play state from the trash", Run: func(ctx context.Context,
+		tx pgx.Tx, target *isolationtest.Workspace) ([]ids.UUID, error) {
+		ws, p, id := params(target)
+		_, err := queries.New(tx).RestorePlayState(ctx, queries.RestorePlayStateParams{WorkspaceID: ws, ProjectID: p,
+			ID: id})
+		return one(id, err)
+	}})
 }

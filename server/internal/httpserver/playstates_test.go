@@ -211,11 +211,12 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 // TestPlayStateRefusals checks how the API answers a command of a play state
 // that refuses its batch, at the location of the payload's field: a state of
 // another project, or that the save-state format's schema refuses, as one of
-// another stateVersion, with an ID that is not canonical, a snapshotId
-// without its snapshotVersion, a value that is no boolean, number, or string,
-// a visit count below 1, or more than a mebibyte; a name that is empty, of
-// more than 100 characters, or with white space around it; and a change of a
-// play state in the trash, or of none. Nothing of a refused batch applies.
+// another stateVersion, with an ID that is not canonical, a key among them,
+// at the key's own location, a snapshotId without its snapshotVersion, a
+// value that is no boolean, number, or string, a visit count below 1, or
+// more than a mebibyte; names of more than a mebibyte; a name that is empty,
+// of more than 100 characters, or with white space around it; and a change of
+// a play state in the trash, or of none. Nothing of a refused batch applies.
 func TestPlayStateRefusals(t *testing.T) {
 	t.Parallel()
 	s, _, owner, ws := inviteServer(t, "open", nil)
@@ -254,7 +255,7 @@ func TestPlayStateRefusals(t *testing.T) {
 		{[]wireCommand{create("After act 1", with("projectId", strings.ToLower(p.ID)))},
 			"body.commands[0].payload.state.projectId"},
 		{[]wireCommand{create("After act 1", with("variables", map[string]any{"met_elara": true}))},
-			"body.commands[0].payload.state.variables"},
+			"body.commands[0].payload.state.variables.met_elara"},
 		{[]wireCommand{create("After act 1", with("snapshotId", ids.Encode(ids.Snapshot, ids.New())))},
 			"body.commands[0].payload.state.snapshotVersion"},
 		{[]wireCommand{create("After act 1", with("variables",
@@ -297,6 +298,20 @@ func TestPlayStateRefusals(t *testing.T) {
 	if code, locs, _ := problemsOf(t, res); res.status != http.StatusUnprocessableEntity ||
 		code != api.CodeValidationFailed || !slices.Contains(locs, "body.commands[0].payload.state") {
 		t.Errorf("a state of more than a mebibyte: %d %s", res.status, res.body)
+	}
+	// Names of more than a mebibyte, as JSON, of a state of less, each of a
+	// value that it holds.
+	many, labels := map[string]any{}, map[string]string{}
+	for range 6000 {
+		v := ids.Encode(ids.Variable, ids.New())
+		many[v], labels[v] = true, strings.Repeat("a", playstate.MaxValueNameLength)
+	}
+	res = call(s.main, http.MethodPost, commandsPath(p.ID), commandBatch(t, wireCommand{Type: "play_state.create",
+		Payload: map[string]any{"id": newPlayStateID(), "name": "Named", "state": with("variables", many),
+			"names": map[string]any{"variables": labels}}}), owner.header(true))
+	if code, locs, _ := problemsOf(t, res); res.status != http.StatusUnprocessableEntity ||
+		code != api.CodeValidationFailed || !slices.Contains(locs, "body.commands[0].payload.names") {
+		t.Errorf("names of more than a mebibyte: %d %.500s", res.status, res.body)
 	}
 
 	// Nothing of the refused batches applied.

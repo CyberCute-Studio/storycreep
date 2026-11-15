@@ -7614,7 +7614,7 @@
           },
           "names": {
             "$ref": "#/components/schemas/PlayStateNames",
-            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none."
+            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."
           },
           "state": {
             "$ref": "#/components/schemas/SaveState",
@@ -7853,7 +7853,7 @@
           },
           "names": {
             "$ref": "#/components/schemas/PlayStateNames",
-            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none."
+            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."
           },
           "state": {
             "$ref": "#/components/schemas/SaveState",

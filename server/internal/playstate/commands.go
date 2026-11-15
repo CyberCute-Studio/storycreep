@@ -45,7 +45,7 @@ type createPayload struct {
 	ID    string              `json:"id" doc:"The new play state's ID, a pst_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Name  string              `json:"name" maxLength:"100" doc:"The play state's name, of 1 to 100 characters, without white space around it, and without control characters, which need not be unique among the project's play states"`
 	State published.SaveState `json:"state" doc:"The play state's state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps it as the client sent it, and reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2)."`
-	Names PlayStateNames      `json:"names,omitzero" doc:"The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none."`
+	Names PlayStateNames      `json:"names,omitzero" doc:"The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."`
 }
 
 // renamePayload is Rename's payload.
@@ -58,7 +58,7 @@ type renamePayload struct {
 type statePayload struct {
 	ID    string              `json:"id" doc:"The play state's ID"`
 	State published.SaveState `json:"state" doc:"The play state's new state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps it as the client sent it, and reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2)."`
-	Names PlayStateNames      `json:"names,omitzero" doc:"The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed. Without it, none."`
+	Names PlayStateNames      `json:"names,omitzero" doc:"The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."`
 }
 
 // idPayload is the payload of a command that needs nothing but its play
@@ -269,10 +269,14 @@ func stored(tx *commands.Tx, st published.SaveState, names PlayStateNames) (stat
 }
 
 // checkNames returns the problems of names, the names of the values of the
-// state st, of which each must be a value's that st holds. It reads nothing
-// but its arguments.
+// state st, of which each must be a value's that st holds, and which take at
+// most MaxNamesBytes, as JSON. It reads nothing but its arguments.
 func checkNames(st published.SaveState, names PlayStateNames) input.FieldErrors {
 	var errs input.FieldErrors
+	if data, err := json.Marshal(names); err == nil && len(data) > MaxNamesBytes {
+		errs = append(errs, input.FieldError{Field: "names", Message: fmt.Sprintf("take %d bytes as JSON, more "+
+			"than the %d that the names of a play state's values may take", len(data), MaxNamesBytes)})
+	}
 	for _, v := range slices.Sorted(maps.Keys(names.Variables)) {
 		if _, ok := st.Variables[v]; !ok {
 			errs = append(errs, input.FieldError{Field: "names.variables." + v,
@@ -352,19 +356,21 @@ func checkState(name string, st published.SaveState) input.FieldErrors {
 			add(at, "is no value: neither a boolean, a number, nor a string")
 		}
 	}
+	// A key that is not canonical is refused at its own path, as its value
+	// is, so that each is told apart.
 	for _, k := range slices.Sorted(maps.Keys(st.Variables)) {
-		canonical("variables", ids.Variable, k)
+		canonical("variables."+k, ids.Variable, k)
 		checkValue("variables."+k, st.Variables[k])
 	}
 	for _, c := range slices.Sorted(maps.Keys(st.Attributes)) {
-		canonical("attributes", ids.Component, c)
+		canonical("attributes."+c, ids.Component, c)
 		for _, a := range slices.Sorted(maps.Keys(st.Attributes[c])) {
-			canonical("attributes."+c, ids.AttributeDef, a)
+			canonical("attributes."+c+"."+a, ids.AttributeDef, a)
 			checkValue("attributes."+c+"."+a, st.Attributes[c][a])
 		}
 	}
 	for _, n := range slices.Sorted(maps.Keys(st.Visits)) {
-		canonical("visits", ids.Node, n)
+		canonical("visits."+n, ids.Node, n)
 		if count := st.Visits[n]; count < 1 || count > published.MaxInt {
 			add("visits."+n, fmt.Sprintf("is not a visit count, from 1 to %d", published.MaxInt))
 		}

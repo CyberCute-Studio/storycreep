@@ -766,7 +766,7 @@ func TestTrashIsolation(t *testing.T) {
 	}
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
 		for _, table := range []string{"board", "node", "branch_output", "connection", "folder", "variable",
-			"component_type", "attribute_def", "component"} {
+			"component_type", "attribute_def", "component", "play_state"} {
 			if _, err := f.Admin().Exec(ctx, "UPDATE "+table+" SET deleted_at = now() - interval '31 days' "+
 				"WHERE id = $1", w.Rows[table]); err != nil {
 				t.Fatal(err)
@@ -831,6 +831,10 @@ func TestTrashIsolation(t *testing.T) {
 				return nil, err
 			}
 			if _, err := q.PurgeComponentTypes(ctx, queries.PurgeComponentTypesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgePlayStates(ctx, queries.PurgePlayStatesParams{WorkspaceID: uuid(target.ID),
 				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
 				return nil, err
 			}

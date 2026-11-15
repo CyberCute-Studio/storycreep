@@ -517,16 +517,16 @@ type TrashItemsRow struct {
 // with deleted_at, which the live views leave out (migration 00019). The
 // tables whose rows the trash lists are its boards', its nodes', its
 // variables', and its components'; its folders', its component types', its
-// attribute definitions', its branch outputs', and its connections' rows go
-// to the trash too, but are not listed. Each such table has a branch here,
-// in the list and in the purge, which package trash's tests hold it to. A
-// row that belongs to a board, as a board's node or variable, is in the trash
-// with its board too, which lists the board alone, and is purged with it, by
-// the cascade of its foreign key to the board, even one deleted on its own,
-// before its board, which the list holds, and whose own time in the trash
-// ends first. A branch output is in the trash with its node alike, and a
-// connection with either of its nodes, and with the output that it leaves,
-// and each is purged with it.
+// attribute definitions', its branch outputs', its connections', and its play
+// states' rows go to the trash too, but are not listed. Each such table has a
+// branch here, in the list and in the purge, which package trash's tests hold
+// it to. A row that belongs to a board, as a board's node or variable, is in
+// the trash with its board too, which lists the board alone, and is purged
+// with it, by the cascade of its foreign key to the board, even one deleted on
+// its own, before its board, which the list holds, and whose own time in the
+// trash ends first. A branch output is in the trash with its node alike, and a
+// connection with either of its nodes, and with the output that it leaves, and
+// each is purged with it.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and
