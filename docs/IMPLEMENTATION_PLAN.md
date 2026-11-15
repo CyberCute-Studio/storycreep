@@ -784,7 +784,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-PLAY-02 AC1–AC3, FR-PLAY-03 AC1–AC2, and FR-PLAY-04 AC1–AC2 pass.
 
 ### 73. Saved play states
-**Status:** todo · **Depends on:** 72
+**Status:** done ([#87](https://github.com/CyberCute-Studio/storycreep/pull/87)) · **Depends on:** 72
 **PRD:** FR-PLAY-05
 - The `play_state` entity and its commands, scoped to the project and visible to the workspace: `play_state.create`, `play_state.rename`, `play_state.set_state`, `play_state.delete`, and `play_state.restore`, each undoable, of the role "Edit nodes, connections, text, expressions", whose state is a save state of the project (§8.5), checked as N80 lists, with the names of its values, and a deleted one in the trash, unlisted; and the routes that list a project's play states and read one (`server/internal/playstate`, migration 00031, `httpserver/playstates.go`, N80).
 - Saving and loading in play's panel: the flow's save state, with the values set by hand, saved under a name, and renamed, replaced, and deleted by an editor; loading one, which any member does, starts play at it, read onto the draft as it is by §8.5's rules, with a report of the values that it dropped, defaulted, and retyped, the visit counts that it dropped, and where play started instead of a cursor that no longer rests, which Reset and Restart load again; and the palette's Save play state and Saved play states (`play/saved.ts`, `play/session.ts`, `play/SavedStates.tsx`, `play/keys.ts`, `play/queries.ts`, `commands/catalog.ts`, N80).
