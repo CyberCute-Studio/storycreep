@@ -235,6 +235,7 @@ export function PlayPanel({
           where={where}
           link={link}
           project={projectName}
+          boardId={boardId}
           editable={editable}
         />
       )}
@@ -257,6 +258,7 @@ function PlayFlowView({
   where,
   link,
   project,
+  boardId,
   editable,
 }: {
   state: Extract<PlayState, { status: "playing" }>;
@@ -274,6 +276,8 @@ function PlayFlowView({
   ) => ReactNode;
   /** The project's name, which the history's text says. */
   project: string;
+  /** The board whose page shows the panel. */
+  boardId: string;
   /** Whether the user may change the saved play states. */
   editable: boolean;
 }) {
@@ -455,7 +459,12 @@ function PlayFlowView({
           </ol>
         </section>
       )}
-      <SavedStates doc={doc} session={session} editable={editable} />
+      <SavedStates
+        doc={doc}
+        session={session}
+        boardId={boardId}
+        editable={editable}
+      />
       <Inspector session={session} state={state} names={groupNames} />
       <History
         state={state}

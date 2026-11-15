@@ -60,7 +60,8 @@ const MaxNameLength = 100
 const MaxValueNameLength = 200
 
 // MaxStateBytes is the most bytes that a play state's state may take, as JSON,
-// with each number written as a runtime writes it (shortestNumbers): a
+// with each number written as a runtime writes it (shortestNumbers), and each
+// string as encoding/json writes it, with <, >, and & escaped (checkState): a
 // mebibyte, ten times what a save state of a project of 5,000 nodes and 500
 // variables takes (PRD §8.5). MaxNamesBytes is the most that the names of its
 // values may take, as JSON, as many again, so that the undo of a change of

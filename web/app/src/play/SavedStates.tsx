@@ -14,7 +14,9 @@ import type { TFunction } from "i18next";
 import {
   type FormEvent,
   type KeyboardEvent,
+  useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -25,12 +27,12 @@ import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
 import { payloadField } from "../project/dialogs";
 import { inputMethodTook } from "../richtext/suggest";
-import { showInPage } from "../shell/focus";
+import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
 import { Alert, Status } from "../ui/Page";
 import { playStatesQuery, readPlayState } from "./queries";
-import type { PlaySession } from "./session";
+import { followsFlow, type PlaySession } from "./session";
 import { reportCount } from "./steps";
 
 // The IDs of the form that saves a play state, whose field of its name the
@@ -72,6 +74,16 @@ function escaped(onEscape: () => void) {
 /** The most characters that a play state's name may have, as the server takes it. */
 const maxName = 100;
 
+// The status of the last load of each session that left the flow on another
+// board, with the turn that it was, which the section of that board's page,
+// which the board's page follows the flow to (followsFlow), says once it
+// shows, as long as the turn is still the session's, rather than nothing, as
+// the section that loaded it goes with its own page.
+const followedLoads = new WeakMap<
+  PlaySession,
+  { readonly turn: number; readonly status: string }
+>();
+
 // The forms of the section, whose name's field shows a refusal of the
 // server that names it.
 type NameForm = "save" | "rename";
@@ -90,10 +102,13 @@ type Said =
 export function SavedStates({
   doc,
   session,
+  boardId,
   editable,
 }: {
   doc: ProjectDocument;
   session: PlaySession;
+  /** The board whose page shows the section. */
+  boardId: string;
   /** Whether the user may save, rename, replace, and delete them: an owner's, an admin's, or an editor's role, of a project that is not archived. */
   editable: boolean;
 }) {
@@ -107,6 +122,34 @@ export function SavedStates({
   const [said, setSaid] = useState<Said>();
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string>();
+  // The status of a load that the page of another board made, which left
+  // the flow on this one, is said once the section shows, into its status
+  // as it is there, as a screen reader hears a change of it (followedLoads).
+  useEffect(() => {
+    const followed = followedLoads.get(session);
+    followedLoads.delete(session);
+    const s = session.state;
+    if (
+      followed !== undefined &&
+      s.status === "playing" &&
+      s.turn === followed.turn
+    ) {
+      setSaid({ status: followed.status });
+    }
+  }, [session]);
+  // The field or the button of the section that had the focus last. Once
+  // what the section shows anew has taken it away, whatever took it, as a
+  // rename, a deletion, or a list read again, or another session's deletion
+  // of its state, or an undo of its save, and nothing has the focus, the
+  // section's heading has it, rather than the page.
+  const focused = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    const was = focused.current;
+    if (was !== null && !was.isConnected && focusIsNowhere(document)) {
+      focused.current = null;
+      headingRef.current?.focus();
+    }
+  });
   // act runs what a press asked for, one at a time, and says what it did,
   // or why it could not, the server's refusal among them, which is form's,
   // the form whose press it was, if any, or nothing for undefined, as of a
@@ -143,7 +186,7 @@ export function SavedStates({
     act(async () => {
       const pressed = session.state;
       const flow = pressed.status === "playing" ? pressed.flow : undefined;
-      const body = await readPlayState(doc.projectId, s.id);
+      const body = await readPlayState(doc, s.id);
       // Play went on while the state was read, as by a choice, a step back,
       // a value set by hand, which is no turn, Reset, Restart, or a start
       // from the canvas, each of which leaves another flow, which loading it
@@ -177,16 +220,24 @@ export function SavedStates({
         };
       }
       // What loading could not keep, which the panel lists, as many as the
-      // status says.
+      // status says, which the section of the page of the board that the
+      // load left the flow on says, where it is another's.
       const now = session.state;
       const report =
         now.status === "playing"
           ? now.flow.history[0]?.loaded?.report
           : undefined;
-      return t("play.saved.loaded_status", {
+      const status = t("play.saved.loaded_status", {
         name: body.name,
         count: report === undefined ? 0 : reportCount(report),
       });
+      if (
+        now.status === "playing" &&
+        followsFlow(doc, now.flow.board, boardId)
+      ) {
+        followedLoads.set(session, { turn: now.turn, status });
+      }
+      return status;
     });
   const replace = (s: PlayStateSummary) =>
     act(async () => {
@@ -230,6 +281,9 @@ export function SavedStates({
     <section
       aria-labelledby={savedHeadingId}
       className="space-y-2"
+      onFocus={(event) => {
+        focused.current = event.target;
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();

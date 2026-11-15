@@ -1466,8 +1466,11 @@ export class ProjectDocument {
     // and the validation report and the dependency graph, which the server
     // derives of the draft as each is read (validation/queries.ts,
     // dependencies/queries.ts), but for an operation of the saved play
-    // states alone.
-    if (op === undefined || !op.commands.every(playState)) {
+    // states alone, which has a command of them at least.
+    if (
+      op === undefined ||
+      !(op.commands.length > 0 && op.commands.every(playState))
+    ) {
       for (const follower of this.followers) {
         follower.follow();
       }

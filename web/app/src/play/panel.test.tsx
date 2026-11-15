@@ -1901,6 +1901,118 @@ describe("saved play states", () => {
     );
   });
 
+  // A load that leaves the flow on another board, whose page the board's
+  // page follows the flow to, says what it kept in that page's section's
+  // status, as the page that loaded it goes.
+  it("says a load's status on the page of the board that the load left the flow on", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "At the meeting",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 2 } },
+          cursor: { boardId: elara.id, nodeId: id("nd", "E"), phase: "ended" },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3 },
+          visits: { [id("nd", "A")]: 1, [id("nd", "E")]: 1 },
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “At the meeting”",
+      }),
+    );
+    await openBoard(elara);
+    const there = await screen.findByRole("region", { name: "Play" });
+    await within(there).findByText("Elara trusts you 2.");
+    expect(panel.isConnected).toBe(false);
+    await within(there).findByText("Loaded “At the meeting” as it was saved.");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(there).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+  });
+
+  // Another session's deletion of the state whose Load has the focus takes
+  // the button away, after which the section's heading has the focus,
+  // rather than the page.
+  it("gives the saved states' heading the focus once another session deleted the state whose button had it", async () => {
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const load = await within(panel).findByRole("button", {
+      name: "Load “Romance path”",
+    });
+    act(() => load.focus());
+    saved.states.splice(0, 1);
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.delete", payload: { id: pst } }],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("heading", { name: "Saved states" }),
+    );
+  });
+
   // On a sheet, Escape in the saved states empties the name or cancels a
   // rename, after which the section's heading has the focus that the
   // rename's field or its Cancel had, and none there, as one pressed once

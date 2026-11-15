@@ -262,7 +262,8 @@ test.describe("play mode", () => {
     expect(await violations(page)).toEqual([]);
     // Filling the name's field scrolled the page, after which the canvas
     // lays its targets out again, a frame or more later on a loaded runner;
-    // the targets are measured once it has.
+    // the targets are measured once it has. It scrolled the panel too, past
+    // its choices, which it then shows none of, beside nothing (smallTargets).
     await expect.poll(() => smallTargets(page)).toEqual([]);
 
     // The variable goes, and play the draft as it is now.

@@ -231,7 +231,10 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * in the window, as the context menu covers the handles of the node that it
  * opens over, which a tap there does not press, as it presses the menu's
  * item (plan note N71); one that anything else covers is a control still,
- * and so is one beyond the window, as below the page's fold.
+ * and so is one beyond the window, as below the page's fold, but for one
+ * that an element that scrolls, or clips what it holds, shows none of, as a
+ * docked panel's choices once it has scrolled past them, which is beside
+ * nothing that it is shown beside.
  */
 export async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -262,6 +265,29 @@ export async function smallTargets(page: Page): Promise<string[]> {
           : el;
       const box = pressed.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) {
+        continue;
+      }
+      // A control that an element of the page that scrolls, or clips what
+      // it holds, shows none of, as a docked panel's choices once the panel
+      // has scrolled past them, is pressed nowhere there.
+      let clipped = false;
+      for (
+        let holder = pressed.parentElement;
+        holder !== null && !clipped;
+        holder = holder.parentElement
+      ) {
+        const held = getComputedStyle(holder);
+        if (held.overflowX === "visible" && held.overflowY === "visible") {
+          continue;
+        }
+        const view = holder.getBoundingClientRect();
+        clipped =
+          box.bottom <= view.top ||
+          box.top >= view.bottom ||
+          box.right <= view.left ||
+          box.left >= view.right;
+      }
+      if (clipped) {
         continue;
       }
       const middle = {

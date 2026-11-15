@@ -335,9 +335,11 @@ func checkNameTexts(names PlayStateNames) input.FieldErrors {
 // MaxStateBytes, as JSON, with each number written as a runtime writes it,
 // however the payload writes it (shortestNumbers), so that the undo of a
 // replace, which writes each number of the state back with every digit, as
-// the operation log does, is held to the bound that the state was. That is
-// all that the server checks of a state, with Apply's check that it is of
-// the batch's project (stored). It reads nothing but st.
+// the operation log does, is held to the bound that the state was, and each
+// string as encoding/json writes it, with <, >, and & escaped, as the undo's
+// bound counts a payload's strings (commands.LogBytes). That is all that the
+// server checks of a state, with Apply's check that it is of the batch's
+// project (stored). It reads nothing but st.
 func checkState(name string, st published.SaveState) input.FieldErrors {
 	var errs input.FieldErrors
 	add := func(at, msg string) {

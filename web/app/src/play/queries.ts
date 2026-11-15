@@ -1,9 +1,10 @@
 // A project's saved play states (PRD FR-PLAY-05, plan note N80), as the
 // server keeps them: the list, each without its state, which every member
 // who reads the project reads, and a play state with its state, which play
-// reads as it loads it. The project's document reads the list again as an
-// operation of a play state applies, the page's own or another session's
-// (followed), so that the list follows them.
+// reads as it loads it, each once the page's batches have been answered. The
+// project's document reads the list again as an operation of a play state
+// applies, the page's own or another session's (followed), so that the list
+// follows them.
 
 import type { PlayStateBody, PlayStateSummary } from "@storycreep/shared/api";
 import { queryOptions } from "@tanstack/react-query";
@@ -43,14 +44,20 @@ export function playStatesQuery(doc: ProjectDocument) {
   });
 }
 
-/** Reads the saved play state id of projectId, with its state. */
+/**
+ * Reads the saved play state id of the project of doc, with its state, once
+ * the page's batches have been answered, or after sentWait, as the list is
+ * read, so that it is the state as the page's last command left it, as the
+ * undo of a replace sent a moment before, rather than as it was before it.
+ */
 export async function readPlayState(
-  projectId: string,
+  doc: ProjectDocument,
   id: string,
 ): Promise<PlayStateBody> {
+  await whenSent(doc, new AbortController().signal, sentWait);
   return (
     await api.call("getPlayState", {
-      path: { project_id: projectId, play_state_id: id },
+      path: { project_id: doc.projectId, play_state_id: id },
     })
   ).body;
 }
