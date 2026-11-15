@@ -79,7 +79,8 @@ func registerPlayStates(m *api.Mux, playStates *playstate.Service) {
 		Path:        "/api/v1/projects/{project_id}/play-states/{play_state_id}",
 		Summary:     "Get a saved play state",
 		Description: "Returns a saved play state of the project, with its state, a save state of the project's flow " +
-			"(PRD §8.5), as it was saved, which play mode loads as a starting point (PRD FR-PLAY-05)." +
+			"(PRD §8.5), as it was saved, each number written in its shortest form, as a runtime writes it, which " +
+			"play mode loads as a starting point (PRD FR-PLAY-05)." +
 			playStateChangesDoc + projectNotFoundDoc + tokenNotFoundDoc + " A play state that the project does not " +
 			"have, or that is in its trash, is answered with 404 not_found." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Play states"},
