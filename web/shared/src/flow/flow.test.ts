@@ -1314,12 +1314,12 @@ describe("the observer", () => {
   });
 
   test("is told again as loadState builds the choices of a state", async () => {
+    const told: string[][] = [];
     const r = new Runtime(await load(suite("choices")), true, {
       choices: (_, hidden) => {
         told.push(hidden.map((c) => c.id));
       },
     });
-    const told: string[][] = [];
     r.start("", nd("START"));
     r.setVariable(vr("CASH"), intValue(3));
     r.loadState(r.saveState());

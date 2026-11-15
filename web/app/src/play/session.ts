@@ -448,12 +448,14 @@ export class PlaySession {
     if (s.status !== "playing" || r === undefined || last === undefined) {
       return;
     }
-    this.back.pop();
     // The state is the flow's at rest before a step: at a choice that it
     // offered, not halted, whose choices loading builds again as they were,
     // of the same values, and so are the choices hidden, which the flow
-    // kept holds.
+    // kept holds. It is taken off the states kept once it has loaded, so
+    // that a load that threw would keep it, with the flow that the history
+    // still shows, rather than leave the next step back a step short.
     this.observed(() => r.loadState(last.state));
+    this.back.pop();
     this.store.setState({ ...s, flow: last.flow, turn: ++this.turns });
   }
 
@@ -840,6 +842,18 @@ export class PlaySession {
       history: [...flow.history, taken],
     };
   }
+}
+
+/**
+ * Reports whether flow has taken a step since its start's, which Step back
+ * steps back from: the one rule that the panel's Step back, the palette's,
+ * and what the panel and the inspector say of how to go on read. A flow
+ * that halted, ended, or offers a choice of none in the start's step has no
+ * step to step back from: its Step back is disabled, and what they say of
+ * how to go on names none (plan note N79).
+ */
+export function steppedSinceStart(flow: Pick<PlayFlow, "history">): boolean {
+  return flow.history.length > 1;
 }
 
 // emptyFlow returns the flow before play starts, of the values that the

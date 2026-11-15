@@ -70,7 +70,11 @@ import {
   useProjectDocument,
 } from "../document/react";
 import { PlayPanel } from "../play/PlayPanel";
-import { type PlayStart, playSessionOf } from "../play/session";
+import {
+  type PlayStart,
+  playSessionOf,
+  steppedSinceStart,
+} from "../play/session";
 import {
   HistoryButtons,
   type HistoryOf,
@@ -1550,7 +1554,7 @@ function BoardCanvasOf({
             visited: s.flow.visited,
             traversed: s.flow.traversed,
             // Whether play has a step to step back from, beyond the start's.
-            stepped: s.flow.history.length > 1,
+            stepped: steppedSinceStart(s.flow),
           }
         : undefined,
     ),

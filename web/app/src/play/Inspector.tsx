@@ -7,7 +7,11 @@
 // a field of text for a number or a string, which takes only what is a
 // value of the type, and says why it does not take the rest (AC3); the
 // value set goes into the flow at once, as its next evaluation reads it,
-// without a restart (AC1).
+// without a restart (AC1). Escape in its filter or in a value's field
+// empties the filter or goes back to the value, and never closes the sheet
+// that the panel is, which would stop play; and a turn, as a choice, a step
+// back, or a reset, discards what a field holds unset, so that it shows the
+// value that the turn left.
 
 import {
   boolValue,
@@ -27,7 +31,7 @@ import {
 } from "../ui/Field";
 import { foldWords, wordsMatcher } from "../ui/match";
 import type { ProjectedValue } from "./projection";
-import type { PlaySession, PlayState } from "./session";
+import { type PlaySession, type PlayState, steppedSinceStart } from "./session";
 import { type GroupNames, typedValue, valueGroups } from "./values";
 
 export function Inspector({
@@ -45,7 +49,7 @@ export function Inspector({
   const { flow, projection } = state;
   // Whether the flow has a step to step back from, beyond the start's, as
   // the panel's Step back reads it.
-  const stepped = flow.history.length > 1;
+  const stepped = steppedSinceStart(flow);
   const matches = wordsMatcher(filter);
   // The words of each value's name, folded once for the values that play
   // runs, rather than on each draw of the panel, which each step, each
@@ -68,7 +72,20 @@ export function Inspector({
     })
     .filter((g) => g.values.length > 0);
   return (
-    <section aria-labelledby={titleId} className="space-y-3">
+    // No Escape in the filter or in a value's field closes the sheet that
+    // the panel is, which would stop play and lose its history, as one
+    // pressed once more than there was to empty or to go back from, or after
+    // a value set by Enter, would: each empties the filter or goes back to
+    // the value alone (plan note N79).
+    <section
+      aria-labelledby={titleId}
+      className="space-y-3"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+        }
+      }}
+    >
       <h3 id={titleId} className="font-semibold">
         {t("play.inspector.title")}
       </h3>
@@ -87,18 +104,14 @@ export function Inspector({
               session.view.setState({ filter: event.currentTarget.value })
             }
             onKeyDown={(event) => {
-              // Escape empties the filter, as a search box's does, rather
-              // than closing the sheet that the panel is, which would stop
-              // play; once it is empty, Escape closes the sheet, as it does
-              // in its other fields. An Escape that cancels what an input
-              // method was composing is the input method's, which empties
-              // no filter, and which the sheet leaves alone too
-              // (inputMethodTook, ui/Panel.tsx).
-              if (inputMethodTook(event.nativeEvent)) {
-                return;
-              }
-              if (event.key === "Escape" && filter !== "") {
-                event.stopPropagation();
+              // Escape empties the filter, as a search box's does, but for
+              // one that cancels what an input method was composing, which
+              // is the input method's, and empties no filter
+              // (inputMethodTook).
+              if (
+                event.key === "Escape" &&
+                !inputMethodTook(event.nativeEvent)
+              ) {
                 session.view.setState({ filter: "" });
               }
             }}
@@ -182,10 +195,11 @@ function ValueGroupView({
 }
 
 // A value's row, which draws again only once its value, or its mark,
-// changes: the session keeps a value that a step, a step back, or a value
-// set by hand does not change as the same object (session.ts's valuesOf),
-// so that each of them, in a project of a thousand variables, draws the
-// rows of those that it changed alone.
+// changes, or a turn discards what its field holds unset (ValueEditor): the
+// session keeps a value that a step, a step back, or a value set by hand
+// does not change as the same object (session.ts's valuesOf), so that each
+// of them, in a project of a thousand variables, draws the rows of those
+// that it changed alone.
 const ValueRow = memo(function ValueRow(props: {
   session: PlaySession;
   target: ProjectedValue;
@@ -205,6 +219,16 @@ const ValueRow = memo(function ValueRow(props: {
   );
 });
 
+/** What a value's field holds that it has not set (ValueEditor). */
+interface Unset {
+  /** What the user typed, or undefined where the field shows the value, as of an enum's choice that the runtime refused. */
+  readonly draft?: string;
+  /** Why the field did not set it, or undefined where it has not tried yet. */
+  readonly error?: string;
+  /** The session's turn that it was typed or chosen in. */
+  readonly turn: number;
+}
+
 function ValueEditor({
   session,
   target,
@@ -218,10 +242,29 @@ function ValueEditor({
   changed: boolean;
 }) {
   const { t } = useTranslation();
-  // What the user typed and has not set yet, or undefined while the field
-  // shows the value, as the flow changes it.
-  const [draft, setDraft] = useState<string>();
-  const [error, setError] = useState<string>();
+  // What the field holds that it has not set, what the user typed and why
+  // the field did not set it, of the turn that it was typed in, or
+  // undefined while the field shows the value, as the flow changes it. A
+  // turn, as a choice, a step back, or a reset, discards it, so that the
+  // field shows the value that the turn left, and its mark; the row reads
+  // the turn only while it holds something unset, so that a turn draws
+  // again the rows of the values that it changed, and of those alone
+  // (ValueRow).
+  const [unset, setUnset] = useState<Unset>();
+  const turn = useStore(session.store, (s) =>
+    unset !== undefined && s.status === "playing" ? s.turn : undefined,
+  );
+  if (unset !== undefined && unset.turn !== turn) {
+    setUnset(undefined);
+  }
+  const live = unset?.turn === turn ? unset : undefined;
+  const draft = live?.draft;
+  const error = live?.error;
+  // now returns the session's turn, which what the field holds unset is of.
+  const now = () => {
+    const s = session.state;
+    return s.status === "playing" ? s.turn : 0;
+  };
   const type = typeName(t, target.type);
   const hint = changed
     ? t("play.inspector.hint", {
@@ -229,33 +272,24 @@ function ValueEditor({
         changed: t("play.inspector.changed"),
       })
     : type;
-  // set sets v, or says that the runtime does not take it, as a string of
-  // more than 4,096 characters, or with a NUL or a lone surrogate, and
-  // reports whether it was set.
-  const set = (v: Value): boolean => {
-    if (!session.edit(target.key, v)) {
-      setError(
-        target.type === "string"
-          ? t("play.inspector.string_error")
-          : valueError(t, target.type),
-      );
-      return false;
-    }
-    setError(undefined);
-    return true;
-  };
+  // refused sets v, and returns why the runtime does not take it, as a
+  // string of more than 4,096 characters, or with a NUL or a lone
+  // surrogate, or undefined once it is set.
+  const refused = (v: Value): string | undefined =>
+    session.edit(target.key, v)
+      ? undefined
+      : target.type === "string"
+        ? t("play.inspector.string_error")
+        : valueError(t, target.type);
   // commit sets what text spells, or says that it is no value of the type,
-  // and keeps it in the field, unset, until the user mends it or goes back
-  // to the value with Escape.
+  // and keeps it in the field, unset, until the user mends it, goes back to
+  // the value with Escape, or a turn discards it.
   const commit = (text: string) => {
     const v = typedValue(target, text);
-    if (v === undefined) {
-      setError(valueError(t, target.type));
-      return;
-    }
-    if (set(v)) {
-      setDraft(undefined);
-    }
+    const why = v === undefined ? valueError(t, target.type) : refused(v);
+    setUnset(
+      why === undefined ? undefined : { draft: text, error: why, turn: now() },
+    );
   };
   const keys = (
     event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
@@ -265,17 +299,13 @@ function ValueEditor({
     // that cancels it, as the event says, or as Safari tells of one, once
     // the composition has ended, by its keyCode alone, is the input
     // method's, which neither sets what is typed, nor goes back to the
-    // value, which would lose it, and which the sheet leaves alone too
-    // (inputMethodTook, ui/Panel.tsx).
+    // value, which would lose it (inputMethodTook).
     if (inputMethodTook(event.nativeEvent)) {
       return;
     }
-    if (event.key === "Escape" && draft !== undefined) {
-      // Escape goes back to the value, rather than closing the sheet that
-      // the panel is.
-      event.stopPropagation();
-      setDraft(undefined);
-      setError(undefined);
+    if (event.key === "Escape") {
+      // Escape goes back to the value, and closes no sheet (Inspector).
+      setUnset(undefined);
     } else if (event.key === "Enter" && enterSets && draft !== undefined) {
       event.preventDefault();
       commit(draft);
@@ -290,8 +320,7 @@ function ValueEditor({
     autoComplete: "off",
     spellCheck: false,
     onChange: (event: { currentTarget: { value: string } }) => {
-      setDraft(event.currentTarget.value);
-      setError(undefined);
+      setUnset({ draft: event.currentTarget.value, turn: now() });
     },
     onBlur: () => {
       if (draft !== undefined) {
@@ -324,7 +353,10 @@ function ValueEditor({
           onChange={(event) => {
             const v = typedValue(target, event.currentTarget.value);
             if (v !== undefined) {
-              set(v);
+              const why = refused(v);
+              setUnset(
+                why === undefined ? undefined : { error: why, turn: now() },
+              );
             }
           }}
         >

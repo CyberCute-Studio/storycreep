@@ -1158,10 +1158,11 @@ describe("play mode's state", () => {
   });
 
   // Below 900 px the panel is a sheet, which Escape closes, stopping play;
-  // in the inspector's filter, Escape empties the filter first, as a
-  // search box's does, and keeps play, and with the filter empty closes
-  // the sheet, as in its other fields.
-  it("empties the inspector's filter with Escape on a sheet, rather than stopping play", async () => {
+  // in the inspector's filter and in its values' fields, Escape empties the
+  // filter, as a search box's does, or goes back to the value, and never
+  // closes the sheet, even with nothing to empty or to go back from, as
+  // after a value set by Enter, while elsewhere in the sheet it closes it.
+  it("empties the inspector's filter and goes back to a value with Escape on a sheet, and stops play by Escape only outside them", async () => {
     windowOf(800);
     const user = userEvent.setup();
     playProject();
@@ -1187,9 +1188,65 @@ describe("play mode's state", () => {
       within(sheet).getByRole("textbox", { name: "elara.trust" }),
     ).toBeDefined();
     await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    // A value set by Enter, and an Escape after it, which has nothing to go
+    // back from.
+    const field = within(sheet).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "7{Enter}");
+    await user.keyboard("{Escape}");
+    expect((field as HTMLInputElement).value).toBe("7");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    within(sheet).getByRole("button", { name: "Reset" }).focus();
+    await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull(),
     );
+  });
+
+  // A turn, as a choice, a step back, or a reset, discards what a value's
+  // field holds unset, and why the field did not set it, so that the field
+  // shows the value that the turn left, the step back's as it was before
+  // the step among them.
+  // Verifies: FR-PLAY-04/AC1
+  it("discards what a value's field holds unset at a turn, and shows the value that the turn left", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const panel = await startPlay();
+    const values = within(panel).getByRole("region", { name: "Values" });
+    const trust = () =>
+      within(values).getByRole("textbox", {
+        name: "elara.trust",
+      }) as HTMLInputElement;
+    // unset types what is no int into the trust's field, which says so.
+    const unset = async (text: string) => {
+      await user.clear(trust());
+      await user.type(trust(), `${text}{Enter}`);
+      expect(trust().value).toBe(text);
+      expect(trust().getAttribute("aria-invalid")).toBe("true");
+    };
+    await unset("x");
+    // The quay's on-exit raises the trust, which the field shows.
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await waitFor(() =>
+      expect(within(panel).getByText("You wait.")).toBeDefined(),
+    );
+    expect(trust().value).toBe("2");
+    expect(trust().getAttribute("aria-invalid")).toBeNull();
+    await unset("y");
+    await user.click(within(panel).getByRole("button", { name: "Step back" }));
+    await waitFor(() =>
+      expect(within(panel).getByText("Trust 1.")).toBeDefined(),
+    );
+    expect(trust().value).toBe("1");
+    expect(trust().getAttribute("aria-invalid")).toBeNull();
+    await unset("z");
+    await user.click(within(panel).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(trust().value).toBe("1"));
+    expect(trust().getAttribute("aria-invalid")).toBeNull();
+    expect(
+      within(values).queryByText("Enter a whole number, such as 3 or -12."),
+    ).toBeNull();
   });
 
   // A key that an input method takes as it composes, as the Enter that ends

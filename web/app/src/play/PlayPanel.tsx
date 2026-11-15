@@ -44,6 +44,7 @@ import {
   type PlayError,
   type PlaySession,
   type PlayState,
+  steppedSinceStart,
 } from "./session";
 import type { Where } from "./steps";
 import type { GroupNames } from "./values";
@@ -282,7 +283,7 @@ function PlayFlowView({
   // disabled, and what the panel says of how to go on, of a halt and of a
   // choice of none, as the inspector says of a halt and of an end, does not
   // name it.
-  const stepped = flow.history.length > 1;
+  const stepped = steppedSinceStart(flow);
   // Whether the flow awaits a choice of none, as once a value set by hand
   // hid every choice of the current node, which loading a state, as the
   // session builds the choices again by, does not end the flow at, so that
@@ -395,8 +396,12 @@ function PlayFlowView({
           <ol className="space-y-2">
             {flow.errors.map((e, i) => (
               <ErrorItem
-                // The errors only grow, in order.
-                // biome-ignore lint/suspicious/noArrayIndexKey: the list is appended to alone
+                // The errors are the steps', in order, which a step adds
+                // to at the end, and a step back or a reset cuts back, so
+                // that an index may come to be another error's; an item
+                // holds no state of its own, and shows the error that it is
+                // given.
+                // biome-ignore lint/suspicious/noArrayIndexKey: an error's item holds no state, so that its place in the list is key enough
                 key={i}
                 error={e}
                 where={where}

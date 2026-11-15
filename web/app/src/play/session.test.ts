@@ -10,7 +10,7 @@ import {
   intValue,
   stringValue,
 } from "@storycreep/shared/expr/compile";
-import { attributeKey } from "@storycreep/shared/flow";
+import { attributeKey, Runtime, StateError } from "@storycreep/shared/flow";
 import { describe, expect, test, vi } from "vitest";
 import { createStore } from "zustand/vanilla";
 import type { ComponentEntry, Doc, Part } from "../document/doc";
@@ -1056,6 +1056,35 @@ describe("a play session's state", () => {
     expect(playing(s).flow.values).toEqual(atElara.values);
     // The start's step has none before it.
     s.stepBack();
+    s.stepBack();
+    expect(playing(s).flow).toBe(atStart);
+  });
+
+  // A state kept before a step that the runtime would not load, which none
+  // that it saved is, stays kept, with the flow that the history still
+  // shows, so that the next step back is no step short.
+  test("keeps the state before the last step where loading it threw", async () => {
+    const { doc } = documentOf(draft);
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    const atStart = playing(s).flow;
+    s.choose(id("cn", "3"));
+    const atElara = playing(s).flow;
+    s.choose(id("cn", "4"));
+    const atEnd = playing(s).flow;
+    const load = vi
+      .spyOn(Runtime.prototype, "loadState")
+      .mockImplementationOnce(() => {
+        throw new StateError("it is refused");
+      });
+    try {
+      expect(() => s.stepBack()).toThrow(StateError);
+    } finally {
+      load.mockRestore();
+    }
+    expect(playing(s).flow).toBe(atEnd);
+    s.stepBack();
+    expect(playing(s).flow).toBe(atElara);
     s.stepBack();
     expect(playing(s).flow).toBe(atStart);
   });
