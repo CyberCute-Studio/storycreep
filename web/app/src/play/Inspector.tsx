@@ -14,7 +14,7 @@ import {
   type Value,
   valueString,
 } from "@storycreep/shared/expr/compile";
-import { type KeyboardEvent, memo, useId, useState } from "react";
+import { type KeyboardEvent, memo, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { typeName, valueError } from "../content/ValueField";
@@ -43,13 +43,25 @@ export function Inspector({
   const titleId = useId();
   const { flow, projection } = state;
   const matches = wordsMatcher(filter);
+  // The words of each value's name, folded once for the values that play
+  // runs, rather than on each draw of the panel, which each step, each
+  // value set, and each letter typed in the filter makes: of a thousand
+  // values, folding them all takes some milliseconds each time, many times
+  // what grouping them does.
+  const words = useMemo(
+    () => new Map(projection.values.map((v) => [v.key, foldWords(v.name)])),
+    [projection.values],
+  );
   const groups = valueGroups(t, projection.values, names)
-    .map((g) => ({
-      ...g,
-      values: g.values.filter((v) =>
-        matches([...foldWords(v.name), ...foldWords(g.name)]),
-      ),
-    }))
+    .map((g) => {
+      const groupWords = foldWords(g.name);
+      return {
+        ...g,
+        values: g.values.filter((v) =>
+          matches([...(words.get(v.key) ?? []), ...groupWords]),
+        ),
+      };
+    })
     .filter((g) => g.values.length > 0);
   return (
     <section aria-labelledby={titleId} className="space-y-3">
@@ -74,13 +86,13 @@ export function Inspector({
               // Escape empties the filter, as a search box's does, rather
               // than closing the sheet that the panel is, which would stop
               // play; once it is empty, Escape closes the sheet, as it does
-              // in its other fields. An Escape that ends what an input
-              // method was composing is the input method's.
-              if (
-                event.key === "Escape" &&
-                filter !== "" &&
-                !event.nativeEvent.isComposing
-              ) {
+              // in its other fields. An Escape that cancels what an input
+              // method was composing is the input method's, which neither
+              // empties the filter nor closes the sheet (inputMethodKey).
+              if (inputMethodKey(event)) {
+                return;
+              }
+              if (event.key === "Escape" && filter !== "") {
                 event.stopPropagation();
                 session.view.setState({ filter: "" });
               }
@@ -90,7 +102,13 @@ export function Inspector({
             <p className="text-sm">{t("play.inspector.halted")}</p>
           ) : (
             flow.phase === "ended" && (
-              <p className="text-sm">{t("play.inspector.ended")}</p>
+              // A flow that ended in the start's step has no step to step
+              // back from, as Step back says, being disabled.
+              <p className="text-sm">
+                {flow.history.length < 2
+                  ? t("play.inspector.ended_at_start")
+                  : t("play.inspector.ended")}
+              </p>
             )
           )}
           {groups.length === 0 ? (
@@ -232,6 +250,13 @@ function ValueEditor({
     event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
     enterSets: boolean,
   ) => {
+    // An Enter that ends what an input method was composing, or an Escape
+    // that cancels it, is the input method's, which neither sets what is
+    // typed, nor goes back to the value, which would lose it, nor closes the
+    // sheet (inputMethodKey).
+    if (inputMethodKey(event)) {
+      return;
+    }
     if (event.key === "Escape" && draft !== undefined) {
       // Escape goes back to the value, rather than closing the sheet that
       // the panel is.
@@ -263,12 +288,17 @@ function ValueEditor({
   };
   switch (target.type) {
     case "bool":
+      // The runtime takes either value of a bool, so that the session
+      // refuses one only once play no longer runs, where the inspector is
+      // gone: the box has no error to say, and stays as the value is.
       return (
         <CheckboxField
           label={target.name}
           hint={hint}
           checked={value.bool}
-          onChange={(event) => set(boolValue(event.currentTarget.checked))}
+          onChange={(event) =>
+            session.edit(target.key, boolValue(event.currentTarget.checked))
+          }
         />
       );
     case "enum":
@@ -307,4 +337,22 @@ function ValueEditor({
       );
   }
   return <TextField {...typed} onKeyDown={(event) => keys(event, true)} />;
+}
+
+// inputMethodKey reports whether event is of a key that an input method
+// takes as it composes, as Enter, which ends what was typed in Japanese or
+// Chinese, and Escape, which cancels it: as the event says, or as Safari
+// tells of such a key, after the composition has ended, by its keyCode
+// alone, 229, as the palette reads it. Such a key is the input method's, so
+// that it stops an Escape before the sheet that the panel is, which closes
+// at one that it does not take as composing, and would stop play.
+function inputMethodKey(
+  event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+): boolean {
+  const composing =
+    event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+  if (composing && event.key === "Escape") {
+    event.stopPropagation();
+  }
+  return composing;
 }

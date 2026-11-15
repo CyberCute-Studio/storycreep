@@ -151,8 +151,6 @@ export interface PlayFlow {
   readonly traversed: ReadonlySet<string>;
   /** The runtime errors of every step, in order. */
   readonly errors: readonly PlayError[];
-  /** How many steps the flow has taken: the start's, and one for each choice. */
-  readonly steps: number;
   /** The value of each variable and runtime attribute, by its key (ProjectedValue's). */
   readonly values: ReadonlyMap<string, Value>;
   /**
@@ -163,7 +161,11 @@ export interface PlayFlow {
   readonly changes: ReadonlySet<string>;
   /** The current node's choices that the flow hides, in their author's order, as it built its choices. */
   readonly hidden: readonly HiddenChoice[];
-  /** The steps that the flow has taken, in order, the start's first (FR-PLAY-04). */
+  /**
+   * The steps that the flow has taken, in order, the start's first
+   * (FR-PLAY-04): as many as it has taken, the start's, and one for each
+   * choice, whose index is the step's of its runtime errors (PlayError).
+   */
   readonly history: readonly PlayStep[];
 }
 
@@ -537,7 +539,7 @@ export class PlaySession {
     for (const e of events) {
       if (e.kind === "error") {
         errors.push({
-          ...errorOf(s.projection, snapshot, e, flow.steps - 1),
+          ...errorOf(s.projection, snapshot, e, flow.history.length - 1),
           edit,
         });
       }
@@ -770,7 +772,7 @@ export class PlaySession {
     if (r === undefined || s === undefined) {
       return flow;
     }
-    const step = chosen === undefined ? 0 : flow.steps;
+    const step = chosen === undefined ? 0 : flow.history.length;
     const visited = new Set(flow.visited);
     const traversed = new Set(flow.traversed);
     const errors = [...flow.errors];
@@ -831,7 +833,6 @@ export class PlaySession {
       visited,
       traversed,
       errors,
-      steps: flow.steps + 1,
       values,
       changes,
       hidden: hidden ?? [],
@@ -856,7 +857,6 @@ function emptyFlow(values: ReadonlyMap<string, Value>): PlayFlow {
     visited: new Set(),
     traversed: new Set(),
     errors: [],
-    steps: 0,
     values,
     changes: new Set(),
     hidden: [],

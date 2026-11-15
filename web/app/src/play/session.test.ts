@@ -256,7 +256,7 @@ describe("a play session", () => {
     s.choose(id("cn", "4"));
     s.choose(id("cn", "1"));
     expect(reads).toHaveLength(before);
-    expect(playing(s).flow.steps).toBe(4);
+    expect(playing(s).flow.history).toHaveLength(4);
   });
 
   // Verifies: FR-PLAY-01/AC2

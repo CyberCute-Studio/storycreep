@@ -690,8 +690,10 @@ describe("play mode", () => {
         name: "Ledger on Harbour, its on-enter script",
       }),
     ).toBeDefined();
+    // It says each way on, Step back and Reset among them, rather than
+    // Restart alone, which reads the draft anew and loses the history.
     expect(within(panel).getByRole("alert").textContent).toContain(
-      "Play stopped at a runtime error",
+      "Play stopped at a runtime error, as strict mode does. Step back, reset, or restart to play again.",
     );
     // What the projection stood in for, the script that does not compile.
     await user.click(
@@ -1094,5 +1096,135 @@ describe("play mode's state", () => {
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull(),
     );
+  });
+
+  // A key that an input method takes as it composes, as the Enter that ends
+  // what was typed in Japanese or Chinese, or the Escape that cancels it, is
+  // the input method's: a value's field neither sets what is typed nor goes
+  // back to the value, which would lose it, the filter empties nothing, and
+  // neither closes the sheet, of such a key as the event says it is, or as
+  // Safari tells of one, once the composition has ended, by its keyCode
+  // alone, 229.
+  it("leaves the keys of an input method's composition to it in the inspector's fields on a sheet", async () => {
+    windowOf(800);
+    const user = userEvent.setup();
+    playProject();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const sheet = await screen.findByRole("dialog", { name: "Play" });
+    await within(sheet).findByText("Trust 1.");
+    const field = within(sheet).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "7");
+    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(field, { key: "Enter", code: "Enter", keyCode: 229 });
+    fireEvent.keyDown(field, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(field, { key: "Escape", code: "Escape", keyCode: 229 });
+    expect((field as HTMLInputElement).value).toBe("7");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    // Nothing was set: the toll that 7 would afford is still hidden.
+    expect(choicesOf(sheet)).toEqual(["Visit Elara", "Wait here"]);
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(choicesOf(sheet)).toEqual([
+        "Visit Elara",
+        "Wait here",
+        "Pay the toll",
+      ]),
+    );
+    const filter = within(sheet).getByRole("searchbox", {
+      name: "Filter the values",
+    });
+    await user.type(filter, "gold");
+    fireEvent.keyDown(filter, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(filter, { key: "Escape", code: "Escape", keyCode: 229 });
+    expect((filter as HTMLInputElement).value).toBe("gold");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+  });
+
+  // The panel says that it copied the history until the history changes,
+  // and not again once a step back gives back the very history that it
+  // copied before the step; the inspector says how to go on of a flow that
+  // a step ended, by a step back.
+  it("says that it copied the history only until the history changes", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async (_: string) => {});
+    vi.stubGlobal("isSecureContext", true);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      playProject();
+      const panel = await startPlay();
+      await user.click(
+        within(panel).getByRole("button", { name: "Copy as text" }),
+      );
+      await waitFor(() =>
+        expect(
+          within(panel).getByText("Copied the history as text."),
+        ).toBeDefined(),
+      );
+      await user.click(
+        within(panel).getByRole("button", { name: "Wait here" }),
+      );
+      await waitFor(() =>
+        expect(within(panel).getByText("You wait.")).toBeDefined(),
+      );
+      expect(
+        within(panel).queryByText("Copied the history as text."),
+      ).toBeNull();
+      expect(
+        within(panel).getByText(
+          "The flow has ended: a value set here changes the text, but no choice. Step back to before the step that ended it.",
+        ),
+      ).toBeDefined();
+      await user.click(
+        within(panel).getByRole("button", { name: "Step back" }),
+      );
+      await waitFor(() =>
+        expect(within(panel).getByText("Trust 1.")).toBeDefined(),
+      );
+      expect(
+        within(panel).queryByText("Copied the history as text."),
+      ).toBeNull();
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  // A flow that ended in the start's step has no step to step back from,
+  // which the inspector does not tell the author to take.
+  it("says that the flow ended as play started, without a step back to take", async () => {
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "B")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Wait" });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("You wait.");
+    expect(
+      within(panel).getByText(
+        "The flow ended as play started: a value set here changes the text, but no choice.",
+      ),
+    ).toBeDefined();
+    expect(
+      within(panel).queryByText(/Step back to before the step that ended it/),
+    ).toBeNull();
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "Step back",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 });

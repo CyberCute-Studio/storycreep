@@ -28,20 +28,26 @@ export function History({
   const { t } = useTranslation();
   const titleId = useId();
   const area = useRef<HTMLElement>(null);
-  const { flow, projection } = state;
+  const { flow, projection, turn } = state;
   const history = flow.history;
-  // Whether the last copy copied, and of which history, which the panel
-  // says until another step, or a step back, makes another history.
+  // Whether the last copy copied, and of which history, at which turn,
+  // which the panel says until a value set, or a turn, as a step, a step
+  // back, or a reset, makes another history: a step back gives back the
+  // very history of before the step, copied or not, which its turn tells
+  // apart, so that the panel does not say anew that it copied it.
   const [copy, setCopy] = useState<{
     readonly of: typeof history;
+    readonly turn: number;
     readonly copied: boolean;
   }>();
-  const copied = copy?.of === history ? copy.copied : undefined;
+  const copied =
+    copy?.of === history && copy.turn === turn ? copy.copied : undefined;
   const copyHistory = async () => {
     const text = historyText(t, project, flow, projection, where, names);
     const of = history;
     setCopy({
       of,
+      turn,
       copied: await copyText(text, area.current ?? document.body),
     });
   };
