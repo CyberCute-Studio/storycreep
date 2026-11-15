@@ -18,6 +18,7 @@ import { type KeyboardEvent, memo, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { typeName, valueError } from "../content/ValueField";
+import { inputMethodTook } from "../richtext/suggest";
 import {
   CheckboxField,
   SelectField,
@@ -42,6 +43,9 @@ export function Inspector({
   const filter = useStore(session.view, (v) => v.filter);
   const titleId = useId();
   const { flow, projection } = state;
+  // Whether the flow has a step to step back from, beyond the start's, as
+  // the panel's Step back reads it.
+  const stepped = flow.history.length > 1;
   const matches = wordsMatcher(filter);
   // The words of each value's name, folded once for the values that play
   // runs, rather than on each draw of the panel, which each step, each
@@ -87,9 +91,10 @@ export function Inspector({
               // than closing the sheet that the panel is, which would stop
               // play; once it is empty, Escape closes the sheet, as it does
               // in its other fields. An Escape that cancels what an input
-              // method was composing is the input method's, which neither
-              // empties the filter nor closes the sheet (inputMethodKey).
-              if (inputMethodKey(event)) {
+              // method was composing is the input method's, which empties
+              // no filter, and which the sheet leaves alone too
+              // (inputMethodTook, ui/Panel.tsx).
+              if (inputMethodTook(event.nativeEvent)) {
                 return;
               }
               if (event.key === "Escape" && filter !== "") {
@@ -98,16 +103,22 @@ export function Inspector({
               }
             }}
           />
+          {/* A flow that has taken no step since its start's, as one that
+              halted or ended in it, has no step to step back from, as Step
+              back says, being disabled, so that what the inspector says of
+              how to go on does not name it. */}
           {flow.halted ? (
-            <p className="text-sm">{t("play.inspector.halted")}</p>
+            <p className="text-sm">
+              {stepped
+                ? t("play.inspector.halted")
+                : t("play.inspector.halted_at_start")}
+            </p>
           ) : (
             flow.phase === "ended" && (
-              // A flow that ended in the start's step has no step to step
-              // back from, as Step back says, being disabled.
               <p className="text-sm">
-                {flow.history.length < 2
-                  ? t("play.inspector.ended_at_start")
-                  : t("play.inspector.ended")}
+                {stepped
+                  ? t("play.inspector.ended")
+                  : t("play.inspector.ended_at_start")}
               </p>
             )
           )}
@@ -251,10 +262,12 @@ function ValueEditor({
     enterSets: boolean,
   ) => {
     // An Enter that ends what an input method was composing, or an Escape
-    // that cancels it, is the input method's, which neither sets what is
-    // typed, nor goes back to the value, which would lose it, nor closes the
-    // sheet (inputMethodKey).
-    if (inputMethodKey(event)) {
+    // that cancels it, as the event says, or as Safari tells of one, once
+    // the composition has ended, by its keyCode alone, is the input
+    // method's, which neither sets what is typed, nor goes back to the
+    // value, which would lose it, and which the sheet leaves alone too
+    // (inputMethodTook, ui/Panel.tsx).
+    if (inputMethodTook(event.nativeEvent)) {
       return;
     }
     if (event.key === "Escape" && draft !== undefined) {
@@ -337,22 +350,4 @@ function ValueEditor({
       );
   }
   return <TextField {...typed} onKeyDown={(event) => keys(event, true)} />;
-}
-
-// inputMethodKey reports whether event is of a key that an input method
-// takes as it composes, as Enter, which ends what was typed in Japanese or
-// Chinese, and Escape, which cancels it: as the event says, or as Safari
-// tells of such a key, after the composition has ended, by its keyCode
-// alone, 229, as the palette reads it. Such a key is the input method's, so
-// that it stops an Escape before the sheet that the panel is, which closes
-// at one that it does not take as composing, and would stop play.
-function inputMethodKey(
-  event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
-): boolean {
-  const composing =
-    event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
-  if (composing && event.key === "Escape") {
-    event.stopPropagation();
-  }
-  return composing;
 }

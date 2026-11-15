@@ -183,6 +183,13 @@ const nodes: Node[] = [
     title: "Gate",
     text: richText(text("A gate.")),
   }),
+  // A desk that leads to the gate and to the ledger, which a step comes to,
+  // so that there is a step to step back from.
+  testNode(id("nd", "K"), 800, 300, {
+    ...onBoard(harbour),
+    title: "Desk",
+    text: richText(text("A desk.")),
+  }),
 ];
 
 const connections: Connection[] = [
@@ -207,6 +214,16 @@ const connections: Connection[] = [
     ...onBoard(harbour),
     label: richText(text("Go through")),
     condition: expression("gold < 5"),
+  }),
+  testConnection(id("cn", "6"), id("nd", "K"), id("nd", "G"), {
+    ...onBoard(harbour),
+    order: "a",
+    label: richText(text("Walk to the gate")),
+  }),
+  testConnection(id("cn", "7"), id("nd", "K"), id("nd", "D"), {
+    ...onBoard(harbour),
+    order: "b",
+    label: richText(text("Open the ledger")),
   }),
 ];
 
@@ -690,11 +707,25 @@ describe("play mode", () => {
         name: "Ledger on Harbour, its on-enter script",
       }),
     ).toBeDefined();
-    // It says each way on, Step back and Reset among them, rather than
-    // Restart alone, which reads the draft anew and loses the history.
+    // It says each way on, Reset among them, rather than Restart alone,
+    // which reads the draft anew; but no Step back, as play halted in the
+    // start's step, which has none to step back from, and Step back is
+    // disabled; nor does the inspector name it.
     expect(within(panel).getByRole("alert").textContent).toContain(
-      "Play stopped at a runtime error, as strict mode does. Step back, reset, or restart to play again.",
+      "Play stopped at a runtime error, as strict mode does. Reset or restart to play again.",
     );
+    expect(
+      within(panel).getByText(
+        "Play is stopped at a runtime error: a value set here changes the text, but no choice, until you reset or restart.",
+      ),
+    ).toBeDefined();
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "Step back",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     // What the projection stood in for, the script that does not compile.
     await user.click(
       within(panel).getByText(
@@ -1046,6 +1077,11 @@ describe("play mode's state", () => {
     const none = await within(panel).findByText(
       /^No choice here holds with the values now/,
     );
+    // Of the start's step, which has no step to step back from, it names
+    // no Step back.
+    expect(none.textContent).toBe(
+      "No choice here holds with the values now, so the flow offers none. Set a value that a choice's condition needs, or reset; Show hidden choices says why each is hidden.",
+    );
     expect(within(panel).queryByRole("region", { name: "Choices" })).toBeNull();
     // Said as it comes, as the focus stays in the field, and as the
     // current node's heading describes it.
@@ -1061,6 +1097,64 @@ describe("play mode's state", () => {
     expect(
       within(panel).queryByText(/^No choice here holds with the values now/),
     ).toBeNull();
+  });
+
+  // Once the flow has taken a step, Step back is a way on, which what the
+  // panel says of a choice of none, the halt's alert, and the inspector
+  // name; of the start's step, which has none to step back from, they do
+  // not (above).
+  it("names Step back as a way on from a choice of none and from a halt once there is a step to step back from", async () => {
+    const user = userEvent.setup();
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "K")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Desk" });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("A desk.");
+    await user.click(
+      within(panel).getByRole("button", { name: "Walk to the gate" }),
+    );
+    await within(panel).findByText("A gate.");
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "9{Enter}");
+    const none = await within(panel).findByText(
+      /^No choice here holds with the values now/,
+    );
+    expect(none.textContent).toBe(
+      "No choice here holds with the values now, so the flow offers none. Set a value that a choice's condition needs, or step back or reset; Show hidden choices says why each is hidden.",
+    );
+    const stepBack = within(panel).getByRole("button", {
+      name: "Step back",
+    }) as HTMLButtonElement;
+    expect(stepBack.disabled).toBe(false);
+    await user.click(stepBack);
+    await within(panel).findByText("A desk.");
+    await user.click(
+      within(panel).getByRole("button", { name: "Open the ledger" }),
+    );
+    await waitFor(() =>
+      expect(within(panel).getByRole("alert").textContent).toContain(
+        "Play stopped at a runtime error, as strict mode does. Step back, reset, or restart to play again.",
+      ),
+    );
+    expect(
+      within(panel).getByText(
+        "Play is stopped at a runtime error: a value set here changes the text, but no choice, until you step back, reset, or restart.",
+      ),
+    ).toBeDefined();
+    expect(
+      (
+        within(panel).getByRole("button", {
+          name: "Step back",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   // Below 900 px the panel is a sheet, which Escape closes, stopping play;

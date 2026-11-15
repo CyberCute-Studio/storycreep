@@ -239,9 +239,10 @@ export type PlayState =
       /** Whether the draft has changed since play projected it (N78). */
       readonly changed: boolean;
       /**
-       * Counts the session's calls of the flow, its starts and its choices,
-       * across its restarts, after each of which the board's page shows the
-       * current node's board, as once the flow followed a jumper (AC3).
+       * Counts the session's turns, its starts, its choices, its steps
+       * back, and its resets, across its restarts, after each of which the
+       * board's page shows the current node's board, as once the flow
+       * followed a jumper (AC3); a value set by hand is none.
        */
       readonly turn: number;
     };

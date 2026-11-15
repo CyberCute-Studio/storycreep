@@ -277,6 +277,12 @@ function PlayFlowView({
   const endedId = useId();
   const noChoiceId = useId();
   const errorsId = useId();
+  // Whether the flow has taken a step since its start's, which Step back
+  // steps back from: without one, as in the start's step, Step back is
+  // disabled, and what the panel says of how to go on, of a halt and of a
+  // choice of none, as the inspector says of a halt and of an end, does not
+  // name it.
+  const stepped = flow.history.length > 1;
   // Whether the flow awaits a choice of none, as once a value set by hand
   // hid every choice of the current node, which loading a state, as the
   // session builds the choices again by, does not end the flow at, so that
@@ -344,7 +350,7 @@ function PlayFlowView({
         <div role="status">
           {noChoice && (
             <p id={noChoiceId} className="font-medium">
-              {t("play.no_choice")}
+              {stepped ? t("play.no_choice") : t("play.no_choice_at_start")}
             </p>
           )}
         </div>
@@ -371,15 +377,16 @@ function PlayFlowView({
           Reset, each a turn, after which the current node's heading has
           the focus, as after a choice. */}
       <div className="flex flex-wrap gap-2">
-        <Button
-          disabled={flow.history.length < 2}
-          onClick={() => session.stepBack()}
-        >
+        <Button disabled={!stepped} onClick={() => session.stepBack()}>
           {t("play.step_back")}
         </Button>
         <Button onClick={() => session.reset()}>{t("play.reset")}</Button>
       </div>
-      {flow.halted && <Alert message={t("play.halted")} />}
+      {flow.halted && (
+        <Alert
+          message={stepped ? t("play.halted") : t("play.halted_at_start")}
+        />
+      )}
       {flow.errors.length > 0 && (
         <section aria-labelledby={errorsId} className="space-y-2">
           <h3 id={errorsId} className="font-semibold">
