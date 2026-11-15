@@ -260,7 +260,10 @@ test.describe("play mode", () => {
       play.getByRole("button", { name: "Load “Rich”" }),
     ).toBeVisible();
     expect(await violations(page)).toEqual([]);
-    expect(await smallTargets(page)).toEqual([]);
+    // Filling the name's field scrolled the page, after which the canvas
+    // lays its targets out again, a frame or more later on a loaded runner;
+    // the targets are measured once it has.
+    await expect.poll(() => smallTargets(page)).toEqual([]);
 
     // The variable goes, and play the draft as it is now.
     await apply(page.request, story.session, story.projectId, [
