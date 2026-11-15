@@ -1,6 +1,7 @@
 // The appliers of the clipboard's paste (PRD FR-EDIT-07), of the
-// validation's mutes (FR-VAL-02), and of the saved play states (FR-PLAY-05). A paste's nodes, outputs, and connections
-// are the clipboard's, but what their texts, speakers, covers, targets, and
+// validation's mutes (FR-VAL-02), and of the saved play states
+// (FR-PLAY-05). A paste's nodes, outputs, and connections are the
+// clipboard's, but what their texts, speakers, covers, targets, and
 // expressions become depends on what the destination's names resolve to, the
 // trash among them, and on what the server compiles, so the applier predicts
 // none of them: the store reads the board's content again, which brings them

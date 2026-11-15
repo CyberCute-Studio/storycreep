@@ -9,15 +9,14 @@
 import { ApiError, type PlayStateSummary } from "@storycreep/shared/api";
 import { formatDateTime } from "@storycreep/shared/i18n";
 import { newId } from "@storycreep/shared/ids";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import {
+  type ChangeEvent,
   type FormEvent,
-  type KeyboardEvent,
   memo,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -27,11 +26,11 @@ import { type Refusal, refusalOf } from "../auth/refusal";
 import { collator } from "../content/textNames";
 import type { ProjectDocument } from "../document/store";
 import { payloadField, useExpected } from "../project/dialogs";
-import { inputMethodTook } from "../richtext/suggest";
 import { focusIsNowhere, showInPage } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
 import { Alert, Status } from "../ui/Page";
+import { escaped, keepSheetOpen } from "./keys";
 import { playStatesQuery, readPlayState } from "./queries";
 import { followsFlow, type PlaySession } from "./session";
 import { reportCount } from "./steps";
@@ -57,19 +56,6 @@ export function goToSaved(doc: Document, what: "save" | "list"): void {
   const field = doc.getElementById(saveFormId)?.querySelector("input");
   field?.scrollIntoView?.({ block: "center" });
   field?.focus({ preventScroll: true });
-}
-
-// escaped returns the handler of a key in a form of the section, which runs
-// onEscape for an Escape, as the inspector's fields do (plan note N79), but
-// for one that cancels what an input method was composing, which is the
-// input method's, and does nothing else (inputMethodTook). No Escape in the
-// section closes the sheet that the panel is (SavedStates).
-function escaped(onEscape: () => void) {
-  return (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape" && !inputMethodTook(event.nativeEvent)) {
-      onEscape();
-    }
-  };
 }
 
 /** The most characters that a play state's name may have, as the server takes it. */
@@ -145,35 +131,45 @@ export const SavedStates = memo(function SavedStates({
       setSaid({ status: followed.status });
     }
   }, [session, boardId]);
-  // The field or the button of the section that has the focus, or had it
-  // last, until the focus left the section (onBlur). Once what the section
-  // shows anew has taken it away, whatever took it, as a rename, a
-  // deletion, or a list read again, or another session's deletion of its
-  // state, or an undo of its save, and nothing has the focus, the section's
-  // heading has it, rather than the page.
-  const focused = useRef<Element | null>(null);
-  useLayoutEffect(() => {
-    const was = focused.current;
-    if (was !== null && !was.isConnected && focusIsNowhere(document)) {
-      focused.current = null;
+  // headingAfter gives the section's heading the focus once a press of the
+  // section whose control goes with what it did is done, as a deletion, a
+  // rename saved, or Try again, from where the press left it: pressed, the
+  // control that had it as the press began, or nowhere, as once the browser
+  // took it from that control as the press disabled it, but not from where
+  // the user has put it while the press was under way. What another
+  // session's change takes away, as the button of a state that it deleted,
+  // leaves the focus where the browser leaves it (plan note N80).
+  const headingAfter = (pressed: Element | null) => {
+    if (document.activeElement === pressed || focusIsNowhere(document)) {
       headingRef.current?.focus();
     }
+  };
+  // What a press runs, as a request of the page's, which the app's query
+  // client records once it fails, as it records a mutation's, but for a
+  // refusal of the server's, which the section says (createQueryClient), so
+  // that a fault of the app's, which the section says the error console
+  // has, is there.
+  const press = useMutation({
+    mutationFn: (run: () => Promise<string | Said | undefined>) => run(),
   });
   // act runs what a press asked for, one at a time, and says what it did,
   // or why it could not, the server's refusal among them, which is form's,
   // the form whose press it was, if any, or nothing for undefined, as of a
-  // press while play does not play. It resolves to whether it did what was
-  // asked, so that a form keeps what was typed in it where it did not.
+  // press while play does not play; run is given the control that had the
+  // focus as it was pressed (headingAfter). It resolves to whether it did
+  // what was asked, so that a form keeps what was typed in it where it did
+  // not.
   const act = async (
-    run: () => Promise<string | Said | undefined>,
+    run: (pressed: Element | null) => Promise<string | Said | undefined>,
     form?: NameForm,
   ): Promise<boolean> => {
     if (busy) {
       return false;
     }
+    const pressed = document.activeElement;
     setBusy(true);
     try {
-      const done = await run();
+      const done = await press.mutateAsync(() => run(pressed));
       setSaid(typeof done === "string" ? { status: done } : done);
       return typeof done === "string";
     } catch (error) {
@@ -211,13 +207,11 @@ export const SavedStates = memo(function SavedStates({
       Date.parse(b.updated_at) - Date.parse(a.updated_at),
   );
   // A rename whose state the list no longer shows, as once another session
-  // deleted it, or the list could not be read again, ends with its field,
-  // rather than open again, taking the focus from wherever the user has
-  // put it, as the state comes back, as by the undo of its deletion.
-  if (
-    renaming !== undefined &&
-    (list.isError || !states.some((s) => s.id === renaming))
-  ) {
+  // deleted it, ends with its field, rather than open again, taking the
+  // focus from wherever the user has put it, as the state comes back, as by
+  // the undo of its deletion; one whose list could not be read again stays,
+  // as the list shows the states that it read last.
+  if (renaming !== undefined && !states.some((s) => s.id === renaming)) {
     setRenaming(undefined);
   }
   const load = (s: PlayStateSummary) =>
@@ -247,7 +241,14 @@ export const SavedStates = memo(function SavedStates({
         }
       } catch (error) {
         // A state that the runtime does not load, as one of a newer
-        // stateVersion, which the server takes none of.
+        // stateVersion, which the server takes none of, of which it throws
+        // its StateError, told by its name, since the page reads the runtime
+        // only once play starts (PlaySession.load); any other error is a
+        // fault of the app's, which the section says as one, and the error
+        // console records (press).
+        if (!(error instanceof Error && error.name === "StateError")) {
+          throw error;
+        }
         return {
           refusal: undefined,
           alert: t("play.saved.unloadable", {
@@ -296,7 +297,7 @@ export const SavedStates = memo(function SavedStates({
       return t("play.saved.replaced", { name: s.name });
     });
   const remove = (s: PlayStateSummary) =>
-    act(async () => {
+    act(async (pressed) => {
       await doc.send([
         {
           type: "play_state.delete",
@@ -305,7 +306,7 @@ export const SavedStates = memo(function SavedStates({
         },
       ]);
       // The row goes with the state, and with it the button pressed.
-      headingRef.current?.focus();
+      headingAfter(pressed);
       return t("play.saved.deleted", { name: s.name });
     });
   const refusal = said !== undefined && "refusal" in said ? said : undefined;
@@ -320,38 +321,11 @@ export const SavedStates = memo(function SavedStates({
     // there was to empty or to cancel would, once the focus is on the
     // heading after a rename, a deletion, or a rename cancelled: in a field
     // it empties the name or cancels the rename alone (escaped), as the
-    // inspector's do (plan note N79).
+    // inspector's do (plan note N79, keepSheetOpen).
     <section
       aria-labelledby={savedHeadingId}
       className="space-y-2"
-      onFocus={(event) => {
-        focused.current = event.target;
-      }}
-      // Once the focus has left the section, as for the current node's
-      // heading after a load, or for nothing, as a press of what takes none
-      // leaves it, rather than gone with what the section showed anew, which
-      // a browser may tell as a blur too, what had it is no longer the
-      // section's to give the focus back for, so that its going later, as
-      // by another session's deletion of its state, moves no focus that the
-      // user put elsewhere, or nowhere.
-      onBlur={(event) => {
-        const left = event.target;
-        const section = event.currentTarget;
-        queueMicrotask(() => {
-          if (
-            focused.current === left &&
-            left.isConnected &&
-            !section.contains(document.activeElement)
-          ) {
-            focused.current = null;
-          }
-        });
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-        }
-      }}
+      onKeyDown={keepSheetOpen}
     >
       <h3
         id={savedHeadingId}
@@ -398,138 +372,154 @@ export const SavedStates = memo(function SavedStates({
       <Alert message={refusal?.alert ?? refusal?.refusal?.message} />
       {list.isPending ? (
         <p className="text-fg-muted">{t("play.saved.reading")}</p>
-      ) : list.isError ? (
-        <div className="space-y-2">
-          <Alert
-            message={[
-              t("play.saved.read_failed"),
-              refusalOf(list.error, t).message,
-            ]
-              .filter((m) => m !== undefined)
-              .join(" ")}
-          />
-          <Button
-            onClick={() =>
-              void list.refetch().then((read) => {
-                // The button goes once the list is read.
-                if (!read.isError) {
-                  headingRef.current?.focus();
-                }
-              })
-            }
-          >
-            {t("play.saved.read_again")}
-          </Button>
-        </div>
-      ) : states.length === 0 ? (
-        <p className="text-fg-muted">
-          {editable ? t("play.saved.none_editable") : t("play.saved.none")}
-        </p>
       ) : (
-        <ul className="space-y-2">
-          {states.map((s) => (
-            <li
-              key={s.id}
-              className="space-y-2 rounded-md border border-border p-2"
-            >
-              {renaming === s.id ? (
-                <RenameForm
-                  state={s}
-                  disabled={busy}
-                  refusal={refusalOfForm("rename")}
-                  error={renameError}
-                  onCancel={() => {
-                    // A refusal of the rename goes with its field, as the
-                    // focus in it, or on its Cancel, does.
-                    setSaid((was) =>
-                      was !== undefined &&
-                      "form" in was &&
-                      was.form === "rename"
-                        ? undefined
-                        : was,
-                    );
-                    setRenaming(undefined);
-                    headingRef.current?.focus();
-                  }}
-                  onRename={(name, rev) =>
-                    act(async () => {
-                      await doc.send([
-                        {
-                          type: "play_state.rename",
-                          payload: { id: s.id, name },
-                          expected_rev: { [s.id]: rev },
-                        },
-                      ]);
-                      setRenaming(undefined);
-                      headingRef.current?.focus();
-                      return t("play.saved.renamed", { from: s.name, name });
-                    }, "rename")
-                  }
-                />
-              ) : (
-                <>
-                  <p className="font-medium break-words">{s.name}</p>
-                  {/* Which describes each of its buttons, which the name
-                      alone names, as it names those of another state of the
-                      name. */}
-                  <p
-                    id={`${changedIds}-${s.id}`}
-                    className="text-sm text-fg-muted"
-                  >
-                    {changedWhen(t, i18n.language, s, userId)}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
+        <>
+          {/* A list that could not be read says why, and one that could
+              not be read again says it beside the states that it read last,
+              as the list of the tokens does, rather than take them away,
+              with a rename under way, for a read that the user did not ask
+              for, as once another session saved one. */}
+          {list.isError && (
+            <div className="space-y-2">
+              <Alert
+                message={[
+                  t("play.saved.read_failed"),
+                  refusalOf(list.error, t).message,
+                ]
+                  .filter((m) => m !== undefined)
+                  .join(" ")}
+              />
+              <Button
+                onClick={() => {
+                  const pressed = document.activeElement;
+                  void list.refetch().then((read) => {
+                    // The button goes once the list is read.
+                    if (!read.isError) {
+                      headingAfter(pressed);
+                    }
+                  });
+                }}
+              >
+                {t("play.saved.read_again")}
+              </Button>
+            </div>
+          )}
+          {list.data === undefined ? null : states.length === 0 ? (
+            <p className="text-fg-muted">
+              {editable ? t("play.saved.none_editable") : t("play.saved.none")}
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {states.map((s) => (
+                <li
+                  key={s.id}
+                  className="space-y-2 rounded-md border border-border p-2"
+                >
+                  {renaming === s.id ? (
+                    <RenameForm
+                      state={s}
                       disabled={busy}
-                      aria-label={t("play.saved.load_named", { name: s.name })}
-                      aria-describedby={`${changedIds}-${s.id}`}
-                      onClick={() => void load(s)}
-                    >
-                      {t("play.saved.load")}
-                    </Button>
-                    {editable && (
-                      <>
+                      refusal={refusalOfForm("rename")}
+                      error={renameError}
+                      onCancel={() => {
+                        // A refusal of the rename goes with its field, as the
+                        // focus in it, or on its Cancel, does.
+                        setSaid((was) =>
+                          was !== undefined &&
+                          "form" in was &&
+                          was.form === "rename"
+                            ? undefined
+                            : was,
+                        );
+                        setRenaming(undefined);
+                        headingRef.current?.focus();
+                      }}
+                      onRename={(name, rev) =>
+                        act(async (pressed) => {
+                          await doc.send([
+                            {
+                              type: "play_state.rename",
+                              payload: { id: s.id, name },
+                              expected_rev: { [s.id]: rev },
+                            },
+                          ]);
+                          setRenaming(undefined);
+                          headingAfter(pressed);
+                          return t("play.saved.renamed", {
+                            from: s.name,
+                            name,
+                          });
+                        }, "rename")
+                      }
+                    />
+                  ) : (
+                    <>
+                      <p className="font-medium break-words">{s.name}</p>
+                      {/* Which describes each of its buttons, which the
+                          name alone names, as it names those of another
+                          state of the name. */}
+                      <p
+                        id={`${changedIds}-${s.id}`}
+                        className="text-sm text-fg-muted"
+                      >
+                        {changedWhen(t, i18n.language, s, userId)}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           disabled={busy}
-                          aria-label={t("play.saved.replace_named", {
+                          aria-label={t("play.saved.load_named", {
                             name: s.name,
                           })}
                           aria-describedby={`${changedIds}-${s.id}`}
-                          onClick={() => void replace(s)}
+                          onClick={() => void load(s)}
                         >
-                          {t("play.saved.replace")}
+                          {t("play.saved.load")}
                         </Button>
-                        <Button
-                          disabled={busy}
-                          aria-label={t("play.saved.rename_named", {
-                            name: s.name,
-                          })}
-                          aria-describedby={`${changedIds}-${s.id}`}
-                          onClick={() => {
-                            setSaid(undefined);
-                            setRenaming(s.id);
-                          }}
-                        >
-                          {t("play.saved.rename")}
-                        </Button>
-                        <Button
-                          disabled={busy}
-                          aria-label={t("play.saved.delete_named", {
-                            name: s.name,
-                          })}
-                          aria-describedby={`${changedIds}-${s.id}`}
-                          onClick={() => void remove(s)}
-                        >
-                          {t("play.saved.delete")}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+                        {editable && (
+                          <>
+                            <Button
+                              disabled={busy}
+                              aria-label={t("play.saved.replace_named", {
+                                name: s.name,
+                              })}
+                              aria-describedby={`${changedIds}-${s.id}`}
+                              onClick={() => void replace(s)}
+                            >
+                              {t("play.saved.replace")}
+                            </Button>
+                            <Button
+                              disabled={busy}
+                              aria-label={t("play.saved.rename_named", {
+                                name: s.name,
+                              })}
+                              aria-describedby={`${changedIds}-${s.id}`}
+                              onClick={() => {
+                                setSaid(undefined);
+                                setRenaming(s.id);
+                              }}
+                            >
+                              {t("play.saved.rename")}
+                            </Button>
+                            <Button
+                              disabled={busy}
+                              aria-label={t("play.saved.delete_named", {
+                                name: s.name,
+                              })}
+                              aria-describedby={`${changedIds}-${s.id}`}
+                              onClick={() => void remove(s)}
+                            >
+                              {t("play.saved.delete")}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );
@@ -575,6 +565,51 @@ function refusedName(
   return name.trim() === sent ? refusal?.fields.name : undefined;
 }
 
+// useNameField holds the name of a play state that a form's field asks for,
+// as typed, from initial, with why it is none that the server takes once the
+// form was pressed (nameProblem), and the name that the form's last press
+// sent, of which refusal, the server's of that press, says what it does
+// under the field while the field holds it (refusedName), as the save's and
+// the rename's forms ask for one alike.
+function useNameField(initial: string, refusal: Refusal | undefined) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(initial);
+  const [problem, setProblem] = useState<string>();
+  const [sent, setSent] = useState<string>();
+  return {
+    /** The props of the field's TextField, but for its label and hint. */
+    field: {
+      error: problem ?? refusedName(refusal, name, sent),
+      value: name,
+      maxLength: maxName * 2,
+      onChange: (event: ChangeEvent<HTMLInputElement>) => {
+        setName(event.target.value);
+        setProblem(undefined);
+      },
+    },
+    /**
+     * Returns the name to send, without the white space around it, or
+     * undefined, of one that the server takes none of, which the field then
+     * says why of.
+     */
+    toSend: (): string | undefined => {
+      const trimmed = name.trim();
+      const p = nameProblem(t, trimmed);
+      setProblem(p);
+      if (p !== undefined) {
+        return undefined;
+      }
+      setSent(trimmed);
+      return trimmed;
+    },
+    /** Empties the field, and what it said of the name. */
+    clear: () => {
+      setName("");
+      setProblem(undefined);
+    },
+  };
+}
+
 // SaveForm asks for the name of the play state to save, which the flow's
 // state is saved as.
 function SaveForm({
@@ -589,21 +624,14 @@ function SaveForm({
   refusal: Refusal | undefined;
 }) {
   const { t } = useTranslation();
-  const [name, setName] = useState("");
-  const [problem, setProblem] = useState<string>();
-  const [sent, setSent] = useState<string>();
+  const name = useNameField("", refusal);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = name.trim();
-    const p = nameProblem(t, trimmed);
-    setProblem(p);
-    if (p === undefined) {
-      setSent(trimmed);
-      // The name stays where nothing was saved, as once the server refused
-      // it, which says why under the field, or play stopped meanwhile.
-      if (await onSave(trimmed)) {
-        setName("");
-      }
+    const sent = name.toSend();
+    // The name stays where nothing was saved, as once the server refused it,
+    // which says why under the field, or play stopped meanwhile.
+    if (sent !== undefined && (await onSave(sent))) {
+      name.clear();
     }
   };
   return (
@@ -611,23 +639,14 @@ function SaveForm({
     <form
       id={saveFormId}
       onSubmit={(e) => void submit(e)}
-      onKeyDown={escaped(() => {
-        setName("");
-        setProblem(undefined);
-      })}
+      onKeyDown={escaped(name.clear)}
       className="space-y-2"
       noValidate
     >
       <TextField
         label={t("play.saved.name")}
         hint={t("play.saved.name_hint")}
-        error={problem ?? refusedName(refusal, name, sent)}
-        value={name}
-        maxLength={maxName * 2}
-        onChange={(e) => {
-          setName(e.target.value);
-          setProblem(undefined);
-        }}
+        {...name.field}
       />
       <Button type="submit" variant="primary" disabled={disabled}>
         {t("play.saved.save")}
@@ -662,9 +681,7 @@ function RenameForm({
   onRename: (name: string, rev: number) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
-  const [name, setName] = useState(state.name);
-  const [problem, setProblem] = useState<string>();
-  const [sent, setSent] = useState<string>();
+  const name = useNameField(state.name, refusal);
   const rev = useExpected(state.rev, error);
   const cancel = () => {
     if (!disabled) {
@@ -673,12 +690,9 @@ function RenameForm({
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const trimmed = name.trim();
-    const p = nameProblem(t, trimmed);
-    setProblem(p);
-    if (p === undefined) {
-      setSent(trimmed);
-      await onRename(trimmed, rev);
+    const sent = name.toSend();
+    if (sent !== undefined) {
+      await onRename(sent, rev);
     }
   };
   return (
@@ -692,14 +706,8 @@ function RenameForm({
     >
       <TextField
         label={t("play.saved.new_name", { name: state.name })}
-        error={problem ?? refusedName(refusal, name, sent)}
-        value={name}
-        maxLength={maxName * 2}
         autoFocus
-        onChange={(e) => {
-          setName(e.target.value);
-          setProblem(undefined);
-        }}
+        {...name.field}
       />
       <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="primary" disabled={disabled}>

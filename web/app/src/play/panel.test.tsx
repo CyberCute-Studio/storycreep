@@ -14,7 +14,15 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import type { Engine, Frame } from "../canvas/engine";
 import type { ComponentEntry } from "../document/doc";
 import { focusIsNowhere } from "../shell/focus";
@@ -30,6 +38,7 @@ import {
   text,
 } from "../test/play";
 import { fakeRealtime } from "../test/realtime";
+import { PlaySession } from "./session";
 
 // Play mode on a board's page (PRD FR-PLAY-01, plan note N78): started from
 // the canvas, its panel beside it, which takes the choices, the canvas's
@@ -2076,70 +2085,84 @@ describe("saved play states", () => {
     );
   });
 
-  // Another session's deletion of the state whose Load has the focus takes
-  // the button away, after which the section's heading has the focus,
-  // rather than the page.
-  it("gives the saved states' heading the focus once another session deleted the state whose button had it", async () => {
-    const pst = id("pst", "1");
-    const saved = savedStates([
-      {
-        id: pst,
-        project_id: project.id,
-        name: "Romance path",
-        rev: 1,
-        created_by: "usr_other",
-        updated_by: "usr_other",
-        created_at: at,
-        updated_at: at,
-        state: {
-          attributes: {},
-          projectId: project.id,
-          schemaVersion: 1,
-          stateVersion: 1,
-          variables: {},
-          visits: {},
-        },
-        names: {},
+  // A deletion gives the section's heading the focus that its button had,
+  // once it is done, as the button goes with the state, but not from where
+  // the user has put the focus while it was under way, as on the canvas,
+  // whose keys would else go to the heading (plan note N80).
+  it("gives the saved states' heading the focus after a deletion, but not from where the user put it while the deletion was under way", async () => {
+    const user = userEvent.setup();
+    const state = (n: string, name: string): PlayStateBody => ({
+      id: id("pst", n),
+      project_id: project.id,
+      name,
+      rev: 1,
+      created_by: "usr_other",
+      updated_by: "usr_other",
+      created_at: at,
+      updated_at: at,
+      state: {
+        attributes: {},
+        projectId: project.id,
+        schemaVersion: 1,
+        stateVersion: 1,
+        variables: {},
+        visits: {},
       },
+      names: {},
+    });
+    const saved = savedStates([
+      state("1", "Romance path"),
+      state("2", "Storm"),
     ]);
-    playProject(undefined, undefined, saved.answer);
-    const realtime = fakeRealtime();
+    // The first deletion is answered once release is called.
+    let release = () => {};
+    let batches = 0;
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "applyCommands" && batches++ === 0
+        ? new Promise<void>((resolve) => {
+            release = resolve;
+          }).then(() => saved.answer(operation, input))
+        : saved.answer(operation, input),
+    );
     renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
       session: testSession,
-      realtime,
     });
     const canvas = await openBoard(harbour);
-    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
-    act(() => realtime.hold(project.id));
     canvas.focus();
     fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
     const panel = await screen.findByRole("region", { name: "Play" });
     await within(panel).findByText("Trust 1.");
-    const load = await within(panel).findByRole("button", {
-      name: "Load “Romance path”",
-    });
-    act(() => load.focus());
-    saved.states.splice(0, 1);
-    act(() =>
-      realtime.send(
-        project.id,
-        [{ type: "play_state.delete", payload: { id: pst } }],
-        [{ id: pst, rev: 2 }],
-      ),
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Delete “Romance path”",
+      }),
     );
+    act(() => canvas.focus());
+    await act(async () => release());
     await within(panel).findByText(
-      "The project has no saved states yet. Name the flow's state above to save it.",
+      "Deleted “Romance path”. Undo brings it back.",
     );
+    await waitFor(() =>
+      expect(
+        within(panel).queryByRole("button", { name: "Load “Romance path”" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement).toBe(canvas);
+    await user.click(
+      within(panel).getByRole("button", { name: "Delete “Storm”" }),
+    );
+    await within(panel).findByText("Deleted “Storm”. Undo brings it back.");
     expect(document.activeElement).toBe(
       within(panel).getByRole("heading", { name: "Saved states" }),
     );
   });
 
-  // Once the focus has left the section, as for nothing, the going of the
-  // button that had it last, as by another session's deletion of its
-  // state, gives the section's heading no focus, which stays nowhere, as
-  // the page's content has it then (focusIsNowhere).
-  it("leaves the focus where the user put it once the state whose button had it before goes", async () => {
+  // Another session's deletion of the state whose Load has the focus takes
+  // the button away, which leaves the focus where the browser leaves it,
+  // nowhere, as the page's content has it then (focusIsNowhere), rather than
+  // give it to the section's heading, which the section's own presses alone
+  // do (plan note N80).
+  it("leaves the focus where the browser leaves it once another session deleted the state whose button had it", async () => {
     const pst = id("pst", "1");
     const saved = savedStates([
       {
@@ -2179,9 +2202,6 @@ describe("saved play states", () => {
       name: "Load “Romance path”",
     });
     act(() => load.focus());
-    // The focus leaves for nothing, as a press of the panel's text leaves it.
-    await act(async () => load.blur());
-    expect(document.activeElement).toBe(document.body);
     saved.states.splice(0, 1);
     act(() =>
       realtime.send(
@@ -2199,10 +2219,152 @@ describe("saved play states", () => {
     expect(focusIsNowhere(document)).toBe(true);
   });
 
+  // A read of the list again that fails, as once another session saved a
+  // state, says why beside the states that the list read last, with Try
+  // again, rather than take them away, with a rename under way, whose field
+  // keeps what was typed in it, and the focus; Try again reads the list.
+  it("keeps the list, and a rename under way, once a read of the list again fails, and reads it by Try again", async () => {
+    const user = userEvent.setup();
+    const state = (n: string, name: string): PlayStateBody => ({
+      id: id("pst", n),
+      project_id: project.id,
+      name,
+      rev: 1,
+      created_by: "usr_other",
+      updated_by: "usr_other",
+      created_at: at,
+      updated_at: at,
+      state: {
+        attributes: {},
+        projectId: project.id,
+        schemaVersion: 1,
+        stateVersion: 1,
+        variables: {},
+        visits: {},
+      },
+      names: {},
+    });
+    const saved = savedStates([state("1", "After act 1")]);
+    let failing = false;
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "listPlayStates" && failing
+        ? Promise.reject(
+            refused(429, { code: "rate_limited", message: "Slow down." }),
+          )
+        : saved.answer(operation, input),
+    );
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “After act 1”",
+      }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “After act 1”",
+    });
+    await user.clear(field);
+    await user.type(field, "Storm");
+    failing = true;
+    const other = state("2", "Romance path");
+    saved.states.push(other);
+    act(() =>
+      realtime.send(
+        project.id,
+        [
+          {
+            type: "play_state.create",
+            payload: { id: other.id, name: other.name },
+          },
+        ],
+        [{ id: other.id, rev: 1 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(alerts(panel)).toContain("The saved states could not be read."),
+    );
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+    expect(document.activeElement).toBe(field);
+    expect(within(panel).queryByText("Romance path")).toBeNull();
+    failing = false;
+    await user.click(within(panel).getByRole("button", { name: "Try again" }));
+    await within(panel).findByText("Romance path");
+    expect(alerts(panel)).not.toContain("The saved states could not be read.");
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+  });
+
+  // A fault of the app's as a state loads, rather than the runtime's refusal
+  // of a state that it does not load, is said as one, which the error console
+  // records, rather than as a state that could not be loaded.
+  it("says a fault of the app's as a state loads as one, which the error console records", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const { log } = renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const fault = vi
+      .spyOn(PlaySession.prototype, "load")
+      .mockImplementation(() => {
+        throw new TypeError("a fault");
+      });
+    onTestFinished(() => fault.mockRestore());
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “Romance path”",
+      }),
+    );
+    await waitFor(() =>
+      expect(alerts(panel)).toContain(
+        "Something went wrong. The error console has the details.",
+      ),
+    );
+    expect(alerts(panel)).not.toContain("could not be loaded");
+    expect(log.entries()).toMatchObject([{ message: "a fault" }]);
+  });
+
   // A rename whose state another session deletes ends with its field, whose
-  // focus the section's heading then has, so that the undo of the deletion
-  // brings the state back with its buttons, rather than with the rename's
-  // field open again, taking the focus from where the user has put it since.
+  // focus is then where the browser leaves it, nowhere (focusIsNowhere), so
+  // that the undo of the deletion brings the state back with its buttons,
+  // rather than with the rename's field open again, taking the focus from
+  // where the user has put it since.
   it("ends a rename whose state another session deleted, so that its field does not open again, taking the focus, as the state comes back", async () => {
     const user = userEvent.setup();
     const pst = id("pst", "1");
@@ -2261,9 +2423,7 @@ describe("saved play states", () => {
     await within(panel).findByText(
       "The project has no saved states yet. Name the flow's state above to save it.",
     );
-    expect(document.activeElement).toBe(
-      within(panel).getByRole("heading", { name: "Saved states" }),
-    );
+    expect(focusIsNowhere(document)).toBe(true);
     act(() => canvas.focus());
     saved.states.push({ ...state, rev: 3 });
     act(() =>
