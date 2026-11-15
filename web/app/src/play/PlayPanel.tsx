@@ -1,9 +1,12 @@
 // Play mode's panel (PRD FR-PLAY-01, §5.8.7, plan note N78), beside a
 // board's canvas, or a sheet over it below 900 px (ui/Panel.tsx): where the
-// flow is, its speaker, its text, and its choices, which a press takes, why
-// it ended, its runtime errors, which strict mode halts it at, with where
-// each is and its expression's source, and what the projection stood in
-// for. Closing it stops play.
+// flow is, its speaker, its text, and its choices, which a press takes, and
+// those that it hides, with why (FR-PLAY-03), Step back and Reset
+// (FR-PLAY-04), why it ended, its runtime errors, which strict mode halts it
+// at, with where each is and its expression's source, the values of its
+// state, which the author sets by hand (FR-PLAY-02), its history, which
+// copies as text (FR-PLAY-04), and what the projection stood in for (plan
+// note N79). Closing it stops play.
 
 import { ApiError, NetworkError } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
@@ -27,6 +30,9 @@ import { focusIsNowhere } from "../shell/focus";
 import { Button } from "../ui/Button";
 import { Alert, textLink } from "../ui/Page";
 import { Panel } from "../ui/Panel";
+import { HiddenChoices } from "./HiddenChoices";
+import { History } from "./History";
+import { Inspector } from "./Inspector";
 import {
   endedMessage,
   errorMessage,
@@ -39,6 +45,8 @@ import {
   type PlaySession,
   type PlayState,
 } from "./session";
+import type { Where } from "./steps";
+import type { GroupNames } from "./values";
 
 export function PlayPanel({
   projectId,
@@ -79,6 +87,8 @@ export function PlayPanel({
       ...named.nodes.map((id) => s.view.nodes.get(id)?.title),
     ]),
   );
+  // The project's name, which the history's text says.
+  const projectName = useDocumentState(doc, (s) => s.view.project?.name ?? "");
   const heading = useRef<HTMLHeadingElement>(null);
   const current = useRef<HTMLElement>(null);
   // The current node's heading gets the focus once a turn has left the
@@ -134,7 +144,7 @@ export function PlayPanel({
   // collaborator deleted for good while playing, as the snapshot that play
   // runs has them, linked to the node on its board's canvas, as a finding
   // of the validation is (FR-DEP-03 AC3), while the page has the board.
-  const where = (board: string | undefined, node: string | undefined) => {
+  const where: Where = (board, node) => {
     const boardName =
       (board === undefined
         ? undefined
@@ -216,6 +226,7 @@ export function PlayPanel({
           title={title}
           where={where}
           link={link}
+          project={projectName}
         />
       )}
       <div className="flex flex-wrap gap-2">
@@ -235,6 +246,7 @@ function PlayFlowView({
   title,
   where,
   link,
+  project,
 }: {
   state: Extract<PlayState, { status: "playing" }>;
   session: PlaySession;
@@ -242,16 +254,24 @@ function PlayFlowView({
   currentRef: RefObject<HTMLElement | null>;
   /** The current node's title, which its heading says. */
   title: string;
-  where: (board: string | undefined, node: string | undefined) => string;
+  where: Where;
   link: (
     board: string | undefined,
     node: string | undefined,
     text: string,
   ) => ReactNode;
+  /** The project's name, which the history's text says. */
+  project: string;
 }) {
   const { t } = useTranslation();
   const { flow, projection } = state;
   const standIns = projection.standIns;
+  // What names the inspector's groups and the history's values: a board as
+  // the panel names it, and a component as the snapshot does.
+  const groupNames: GroupNames = {
+    board: (id) => where(id, undefined),
+    component: (id) => projection.componentNames.get(id) ?? id,
+  };
   const speakerId = useId();
   const textId = useId();
   const endedId = useId();
@@ -327,6 +347,19 @@ function PlayFlowView({
           </ul>
         </section>
       )}
+      <HiddenChoices session={session} hidden={flow.hidden} />
+      {/* Step back, of a flow that has taken a step since its start, and
+          Reset, each a turn, after which the current node's heading has
+          the focus, as after a choice. */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          disabled={flow.history.length < 2}
+          onClick={() => session.stepBack()}
+        >
+          {t("play.step_back")}
+        </Button>
+        <Button onClick={() => session.reset()}>{t("play.reset")}</Button>
+      </div>
       {flow.halted && <Alert message={t("play.halted")} />}
       {flow.errors.length > 0 && (
         <section aria-labelledby={errorsId} className="space-y-2">
@@ -347,6 +380,13 @@ function PlayFlowView({
           </ol>
         </section>
       )}
+      <Inspector session={session} state={state} names={groupNames} />
+      <History
+        state={state}
+        project={project}
+        where={where}
+        names={groupNames}
+      />
       {standIns.length > 0 && (
         <details className="space-y-2">
           <summary className="min-h-11 cursor-pointer py-3">
@@ -457,6 +497,16 @@ function namedBy(state: PlayState): {
     }
     state.flow.errors.forEach(add);
     state.projection.standIns.forEach(add);
+    // The nodes that the history lists, and the boards of the variables
+    // that the inspector groups by them.
+    for (const step of state.flow.history) {
+      step.entered.forEach(add);
+    }
+    for (const v of state.projection.values) {
+      if (v.kind === "variable" && v.board !== undefined) {
+        boards.add(v.board);
+      }
+    }
   }
   return { boards: [...boards], nodes: [...nodes] };
 }

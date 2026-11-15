@@ -1816,6 +1816,14 @@ function BoardCanvasOf({
       },
     },
     "play.stop": { enabled: playing, run: () => session.stop() },
+    "play.step_back": {
+      enabled: (playFlow?.history.length ?? 0) > 1,
+      run: () => session.stepBack(),
+    },
+    "play.reset": {
+      enabled: playFlow !== undefined,
+      run: () => session.reset(),
+    },
     ...(editable
       ? {
           ...historyHandlers(history),

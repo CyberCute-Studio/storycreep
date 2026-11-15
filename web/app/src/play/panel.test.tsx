@@ -189,6 +189,13 @@ const connections: Connection[] = [
     order: "a",
     label: richText(text("Visit Elara")),
   }),
+  // A choice that the gold, 3, does not afford, which the flow hides.
+  testConnection(id("cn", "3"), id("nd", "A"), id("nd", "B"), {
+    ...onBoard(harbour),
+    order: "c",
+    label: richText(text("Pay the toll")),
+    condition: expression("gold > 5"),
+  }),
 ];
 
 /**
@@ -355,7 +362,9 @@ describe("play mode", () => {
       ),
     );
     expect(
-      within(there).getByText(
+      within(
+        within(there).getByRole("region", { name: "Where the flow is" }),
+      ).getByText(
         "The flow ended here, at a dead end: no connection leads on.",
       ),
     ).toBeDefined();
@@ -756,5 +765,246 @@ describe("play mode", () => {
     fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
     expect(screen.queryByRole("region", { name: "Play" })).toBeNull();
     expect(screen.getByRole("region", { name: "Connection" })).toBeDefined();
+  });
+});
+
+// The variable inspector, the author view of hidden choices, and the
+// history, in play's panel (PRD FR-PLAY-02, FR-PLAY-03, FR-PLAY-04, plan
+// note N79).
+describe("play mode's state", () => {
+  // startPlay plays the harbour from its entry node by P, and returns the
+  // panel once it shows the entry node.
+  async function startPlay() {
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await waitFor(() =>
+      expect(within(panel).getByText("Trust 1.")).toBeDefined(),
+    );
+    return panel;
+  }
+
+  // The labels of the choices' buttons, in their order.
+  const choicesOf = (panel: HTMLElement) =>
+    within(within(panel).getByRole("region", { name: "Choices" }))
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+
+  // Verifies: FR-PLAY-02/AC1, FR-PLAY-03/AC1, FR-PLAY-03/AC2
+  it("sets a value in the inspector, which the choices read at once, and shows a hidden choice with the part of its condition that failed", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const panel = await startPlay();
+    // Unticked, the hidden choice is not listed at all, as the runtime
+    // offers it to no player.
+    expect(choicesOf(panel)).toEqual(["Visit Elara", "Wait here"]);
+    expect(within(panel).queryByText("Pay the toll")).toBeNull();
+    await user.click(
+      within(panel).getByRole("checkbox", { name: "Show hidden choices" }),
+    );
+    const hidden = within(panel).getByRole("region", {
+      name: "1 hidden choice",
+    });
+    expect(within(hidden).getByText("Pay the toll")).toBeDefined();
+    expect(within(hidden).getByText("Its condition is false:")).toBeDefined();
+    expect(within(hidden).getAllByText("gold > 5")).toHaveLength(2);
+    expect(within(hidden).getByText("gold is 3")).toBeDefined();
+    // The choices that a player has are the same either way.
+    expect(choicesOf(panel)).toEqual(["Visit Elara", "Wait here"]);
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "7{Enter}");
+    await waitFor(() =>
+      expect(choicesOf(panel)).toEqual([
+        "Visit Elara",
+        "Wait here",
+        "Pay the toll",
+      ]),
+    );
+    expect(within(panel).getByText("No choice here is hidden.")).toBeDefined();
+    expect((field as HTMLInputElement).value).toBe("7");
+    expect(document.activeElement).toBe(field);
+  });
+
+  // Verifies: FR-PLAY-02/AC3
+  it("takes no value that is none of the type, and says why", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const panel = await startPlay();
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "1.5{Enter}");
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      within(panel).getByText("Enter a whole number, such as 3 or -12."),
+    ).toBeDefined();
+    // The flow did not take it: the toll's condition reads 3 still.
+    await user.click(
+      within(panel).getByRole("checkbox", { name: "Show hidden choices" }),
+    );
+    expect(within(panel).getByText("gold is 3")).toBeDefined();
+    // Escape goes back to the value, and leaves the panel open.
+    field.focus();
+    await user.keyboard("{Escape}");
+    expect((field as HTMLInputElement).value).toBe("3");
+    expect(field.getAttribute("aria-invalid")).toBeNull();
+    expect(screen.getByRole("region", { name: "Play" })).toBe(panel);
+  });
+
+  // Verifies: FR-PLAY-02/AC2
+  it("marks the values that the last step changed, and filters them by name", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const panel = await startPlay();
+    const values = within(panel).getByRole("region", { name: "Values" });
+    const trustField = within(values).getByRole("textbox", {
+      name: "elara.trust",
+    });
+    expect(trustField.getAttribute("aria-describedby")).not.toBeNull();
+    const description = (f: HTMLElement) =>
+      (f.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((d) => document.getElementById(d)?.textContent)
+        .join(" ");
+    expect(description(trustField)).not.toContain("Changed by the last step");
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await waitFor(() =>
+      expect(within(panel).getByText("You wait.")).toBeDefined(),
+    );
+    // The quay's on-exit raised Elara's trust, and nothing else.
+    const raised = within(values).getByRole("textbox", { name: "elara.trust" });
+    expect((raised as HTMLInputElement).value).toBe("2");
+    expect(description(raised)).toContain("Changed by the last step");
+    expect(
+      description(within(values).getByRole("textbox", { name: "gold" })),
+    ).not.toContain("Changed by the last step");
+    expect(within(values).getByText("Global variables")).toBeDefined();
+    expect(
+      within(values).getByText("Runtime attributes of Elara"),
+    ).toBeDefined();
+    await user.type(
+      within(values).getByRole("searchbox", { name: "Filter the values" }),
+      "trust",
+    );
+    expect(within(values).queryByRole("textbox", { name: "gold" })).toBeNull();
+    expect(
+      within(values).getByRole("textbox", { name: "elara.trust" }),
+    ).toBeDefined();
+    await user.type(
+      within(values).getByRole("searchbox", { name: "Filter the values" }),
+      "zzz",
+    );
+    expect(
+      within(values).getByText("No value matches the filter."),
+    ).toBeDefined();
+  });
+
+  // Verifies: FR-PLAY-04/AC1
+  it("lists the history, steps back to the state before the last step, a value set by hand among it, and resets", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const panel = await startPlay();
+    const stepBack = within(panel).getByRole("button", { name: "Step back" });
+    expect((stepBack as HTMLButtonElement).disabled).toBe(true);
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "8{Enter}");
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await waitFor(() =>
+      expect(within(panel).getByText("You wait.")).toBeDefined(),
+    );
+    const history = within(panel).getByRole("region", { name: "History" });
+    const steps = () =>
+      within(history)
+        .getAllByRole("listitem")
+        .filter((li) => li.parentElement?.tagName === "OL");
+    expect(steps()).toHaveLength(2);
+    expect(within(steps()[0]).getByText("Started")).toBeDefined();
+    expect(
+      within(steps()[0]).getByText("Came to Quay on Harbour"),
+    ).toBeDefined();
+    expect(within(steps()[0]).getByText("Set gold to 8 by hand")).toBeDefined();
+    expect(within(steps()[1]).getByText("Chose “Wait here”")).toBeDefined();
+    await user.click(stepBack);
+    await waitFor(() =>
+      expect(within(panel).getByText("Trust 1.")).toBeDefined(),
+    );
+    expect(steps()).toHaveLength(1);
+    expect(
+      (within(panel).getByRole("textbox", { name: "gold" }) as HTMLInputElement)
+        .value,
+    ).toBe("8");
+    expect((stepBack as HTMLButtonElement).disabled).toBe(true);
+    // The current node's heading has the focus after the step back, as
+    // after a choice.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Quay" }),
+      ),
+    );
+    await user.click(within(panel).getByRole("button", { name: "Reset" }));
+    await waitFor(() =>
+      expect(
+        (
+          within(panel).getByRole("textbox", {
+            name: "gold",
+          }) as HTMLInputElement
+        ).value,
+      ).toBe("3"),
+    );
+    expect(within(steps()[0]).queryByText("Set gold to 8 by hand")).toBeNull();
+  });
+
+  // Verifies: FR-PLAY-04/AC2
+  it("copies the history as text for a bug report", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async (_: string) => {});
+    vi.stubGlobal("isSecureContext", true);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      playProject();
+      const panel = await startPlay();
+      await user.click(
+        within(panel).getByRole("button", { name: "Wait here" }),
+      );
+      await waitFor(() =>
+        expect(within(panel).getByText("You wait.")).toBeDefined(),
+      );
+      await user.click(
+        within(panel).getByRole("button", { name: "Copy as text" }),
+      );
+      await waitFor(() =>
+        expect(
+          within(panel).getByText("Copied the history as text."),
+        ).toBeDefined(),
+      );
+      expect(writeText.mock.calls[0]?.[0]).toBe(
+        [
+          `Play history of ${project.name}`,
+          "",
+          "1. Started",
+          "   Came to Quay on Harbour",
+          "2. Chose “Wait here”",
+          "   Came to Wait on Harbour",
+          "   The flow ended here, at a dead end: no connection leads on.",
+          "",
+          "Values now:",
+          "   Global variables",
+          "      gold = 3",
+          "   Runtime attributes of Elara",
+          "      elara.trust = 2",
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 });

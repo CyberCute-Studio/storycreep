@@ -4,10 +4,12 @@ import { canvasOf, drawn, makeProject, test } from "./boards.ts";
 import { apply, signedIn } from "./content.ts";
 import { en, expect, press, smallTargets, violations } from "./fixtures.ts";
 
-// Play mode (PRD FR-PLAY-01, plan note N78), in the browser, against the
-// server: started from a board's canvas, its panel beside it on the
-// desktop, or a sheet over it on the tablet, a choice that a jumper takes
-// to another board's page, with the state that the flow had, and its stop.
+// Play mode (PRD FR-PLAY-01, plan notes N78 and N79), in the browser,
+// against the server: started from a board's canvas, its panel beside it on
+// the desktop, or a sheet over it on the tablet, a choice that a jumper
+// takes to another board's page, with the state that the flow had, and its
+// stop; and a value set in its inspector, which offers a hidden choice at
+// once, the author view of that choice, and a step back.
 
 /** A rich text of one paragraph of inline nodes. */
 function paragraph(...content: unknown[]) {
@@ -26,7 +28,8 @@ interface Story {
  * Makes a project of the boards Harbour and Elara: Harbour's entry, Quay,
  * whose text shows gold and whose on-exit raises it, leads by the choice
  * Visit Elara to a jumper to Elara's entry, Meeting, an ending, whose text
- * shows gold too.
+ * shows gold too, and by the choice Pay the toll, of more than 5 gold, to
+ * Gate, an ending of Harbour's.
  */
 async function makeStory(page: Page, name: string): Promise<Story> {
   const session = await signedIn(page, name);
@@ -36,6 +39,7 @@ async function makeStory(page: Page, name: string): Promise<Story> {
   const quay = newId("node");
   const jumper = newId("node");
   const meeting = newId("node");
+  const gate = newId("node");
   const gold = newId("variable");
   const value = { type: "valueRef", attrs: { ref: gold } };
   await apply(page.request, session, projectId, [
@@ -83,12 +87,35 @@ async function makeStory(page: Page, name: string): Promise<Story> {
       },
     },
     {
+      type: "node.create",
+      payload: {
+        id: gate,
+        board_id: harbour,
+        type: "element",
+        kind: "narration",
+        title: "Gate",
+        position: { x: 400, y: 300 },
+        is_ending: true,
+        text: paragraph(text("The gate opens.")),
+      },
+    },
+    {
       type: "connection.create",
       payload: {
         id: newId("connection"),
         from_node_id: quay,
         to_node_id: jumper,
         label: paragraph(text("Visit Elara")),
+      },
+    },
+    {
+      type: "connection.create",
+      payload: {
+        id: newId("connection"),
+        from_node_id: quay,
+        to_node_id: gate,
+        label: paragraph(text("Pay the toll")),
+        condition: "gold > 5",
       },
     },
     { type: "board.set_entry_node", payload: { id: harbour, node_id: quay } },
@@ -134,7 +161,11 @@ test.describe("play mode", () => {
     await drawn(canvasOf(page, "Elara"));
     const there = playOf(page);
     await expect(there.getByText("You bring 1 gold.")).toBeVisible();
-    await expect(there.getByText(en["play.ended.ending"])).toBeVisible();
+    await expect(
+      there
+        .getByRole("region", { name: en["play.current"] })
+        .getByText(en["play.ended.ending"]),
+    ).toBeVisible();
     // The page that the flow went to gives the node's heading the focus,
     // which the choice pressed had, as it went with the page that it was on.
     await expect(there.getByRole("heading", { name: "Meeting" })).toBeFocused();
@@ -142,5 +173,53 @@ test.describe("play mode", () => {
 
     await press(there.getByRole("button", { name: en["play.stop"] }));
     await expect(there).toBeHidden();
+  });
+
+  // Verifies: FR-PLAY-02/AC1, FR-PLAY-03/AC1, FR-PLAY-04/AC1
+  test("sets a value in the inspector, which offers a hidden choice at once, explains the choice while it is hidden, and steps back", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Tester");
+    await page.goto(`/app/projects/${story.projectId}/boards/${story.harbour}`);
+    await drawn(canvasOf(page, "Harbour"));
+    await press(page.getByRole("button", { name: en["shell.commands"] }));
+    const palette = page.getByRole("dialog", { name: en["palette.title"] });
+    await press(
+      palette.getByRole("option", { name: en["command.play.start"] }),
+    );
+    const play = playOf(page);
+    await expect(play.getByText("Gold 0.")).toBeVisible();
+    const choices = play.getByRole("region", { name: en["play.choices"] });
+    await expect(choices.getByRole("button")).toHaveText(["Visit Elara"]);
+
+    await press(play.getByRole("checkbox", { name: en["play.hidden.toggle"] }));
+    const hidden = play.getByRole("region", { name: "1 hidden choice" });
+    await expect(hidden.getByText("Pay the toll")).toBeVisible();
+    await expect(hidden.getByText("gold is 0")).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    expect(await smallTargets(page)).toEqual([]);
+
+    const gold = play.getByRole("textbox", { name: "gold" });
+    await gold.fill("9");
+    await gold.press("Enter");
+    await expect(play.getByText("Gold 9.")).toBeVisible();
+    await expect(choices.getByRole("button")).toHaveText([
+      "Visit Elara",
+      "Pay the toll",
+    ]);
+    await expect(play.getByText(en["play.hidden.none"])).toBeVisible();
+
+    await press(choices.getByRole("button", { name: "Pay the toll" }));
+    await expect(play.getByText("The gate opens.")).toBeVisible();
+    await expect(
+      play
+        .getByRole("region", { name: en["play.inspector.title"] })
+        .getByRole("textbox", { name: "gold" }),
+    ).toHaveValue("10");
+    await press(play.getByRole("button", { name: en["play.step_back"] }));
+    await expect(play.getByText("Gold 9.")).toBeVisible();
+    await expect(gold).toHaveValue("9");
+    await expect(play.getByRole("heading", { name: "Quay" })).toBeFocused();
+    expect(await violations(page)).toEqual([]);
   });
 });

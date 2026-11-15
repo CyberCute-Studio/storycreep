@@ -1245,6 +1245,81 @@ describe("the state", () => {
   });
 });
 
+// The observer of the choices that the flow hides, which play mode's author
+// view explains (PRD FR-PLAY-03, plan note N79).
+describe("the observer", () => {
+  test("is told of the choices that the flow hides as it builds them, before anything else runs", async () => {
+    // The gated node's on-exit sets the gold, after its one choice, whose
+    // condition reads it, was hidden.
+    const s = await load(
+      suite("choices", {
+        "boards/main.json": (f) => {
+          const n = f.nodes.find((x: Obj) => x.id === nd("GATED"));
+          n.onExit = {
+            ast: {
+              kind: "script",
+              statements: [
+                {
+                  kind: "assign",
+                  op: "=",
+                  target: { kind: "var", name: "gold", ref: vr("CASH") },
+                  value: { kind: "lit", type: "int", value: 5 },
+                },
+              ],
+            },
+            source: "gold = 5",
+          };
+        },
+      }),
+    );
+    const told: { node: string; hidden: string[]; gold: Value }[] = [];
+    const r: Runtime = new Runtime(s, true, {
+      choices: (node, hidden) => {
+        told.push({
+          node,
+          hidden: hidden.map((c) => c.id),
+          gold: r.variable(vr("CASH")),
+        });
+      },
+    });
+    r.start("", nd("START"));
+    expect(told).toEqual([
+      // The start's on-enter has raised the gold to 1, which is less than
+      // the rope's 2.
+      {
+        node: nd("START"),
+        hidden: [cn("PAY"), cn("DEPART")],
+        gold: intValue(1),
+      },
+    ]);
+    expect(r.choices().map((c) => c.id)).toEqual([cn("ASK")]);
+    told.length = 0;
+    // The gated node's one choice is hidden, so the flow ends there, of
+    // no_choices, once its on-exit has run, which the observer was told
+    // before.
+    const events = r.goto("", nd("GATED"));
+    expect(told).toEqual([
+      { node: nd("GATED"), hidden: [cn("FREE")], gold: intValue(1) },
+    ]);
+    expect(events.at(-1)).toEqual({ kind: "end", reason: "no_choices" });
+    expect(r.variable(vr("CASH"))).toEqual(intValue(5));
+  });
+
+  test("is told again as loadState builds the choices of a state", async () => {
+    const r = new Runtime(await load(suite("choices")), true, {
+      choices: (_, hidden) => {
+        told.push(hidden.map((c) => c.id));
+      },
+    });
+    const told: string[][] = [];
+    r.start("", nd("START"));
+    r.setVariable(vr("CASH"), intValue(3));
+    r.loadState(r.saveState());
+    expect(told).toEqual([[cn("PAY"), cn("DEPART")], [cn("DEPART")]]);
+    expect(r.choices().map((c) => c.id)).toEqual([cn("PAY"), cn("ASK")]);
+  });
+});
+
 describe("setVariable and setAttribute", () => {
   // Each refused with a ValueError that says why.
   test.each<[string, string, Value, RegExp]>([

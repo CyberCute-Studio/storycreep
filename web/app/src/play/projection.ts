@@ -40,6 +40,7 @@ import {
   walk,
 } from "@storycreep/shared/expr/compile";
 import {
+  attributeKey,
   type ExpressionField,
   fileHash,
   OUT,
@@ -197,6 +198,33 @@ export type StandIn = {
     }
 );
 
+/**
+ * A variable, or a component's runtime attribute, of the snapshot, which
+ * play mode's inspector lists with its value (FR-PLAY-02, plan note N79).
+ */
+export type ProjectedValue = {
+  /** Its key of the runtime's state: the variable's ID, or attributeKey of the component and the attribute definition. */
+  readonly key: string;
+  /** Its name as an expression of its board names it: the variable's key, or the component's and the attribute's keys, as elara.trust. */
+  readonly name: string;
+  /** Its type, of which an enum's value is one of its options. */
+  readonly type: "bool" | "int" | "float" | "string" | "enum";
+  /** An enum's options, in their author's order, [] of another type. */
+  readonly options: readonly string[];
+} & (
+  | {
+      readonly kind: "variable";
+      readonly variable: string;
+      /** The board whose variable it is, absent for a global one. */
+      readonly board?: string;
+    }
+  | {
+      readonly kind: "attribute";
+      readonly component: string;
+      readonly attribute: string;
+    }
+);
+
 /** What the projection wrote: the snapshot's files, the boards' files as objects, and what it stood in for. */
 export interface Projection {
   /** The snapshot's files, by their paths, as load reads them. */
@@ -207,6 +235,16 @@ export interface Projection {
   readonly componentNames: ReadonlyMap<string, string>;
   /** What the projection stood in for, in the order of the boards and of their nodes and connections. */
   readonly standIns: readonly StandIn[];
+  /**
+   * Each condition that compiled, of a connection or a branch's output, by
+   * the entity's ID: its AST as the compiler gave it, which, unlike the one
+   * that a snapshot's file holds, has where each of its parts is in its
+   * source, which play mode's author view shows the part of that failed
+   * (FR-PLAY-03).
+   */
+  readonly conditions: ReadonlyMap<string, ExprNode>;
+  /** The snapshot's variables, in the order of their IDs, and then each component's runtime attributes, in the order of the components' IDs and of their type's definitions, as the runtime holds them. */
+  readonly values: readonly ProjectedValue[];
 }
 
 /** projectDraft's error for a document that it cannot project at all. */
@@ -379,6 +417,7 @@ export async function projectDraft(
   }
 
   const asts: ExprNode[] = [];
+  const conditions = new Map<string, ExprNode>();
   const signals = new Set<string>();
   // compiled returns the AST of an expression's source, compiled in ctx as
   // an expression of the board, as the published format holds it, or
@@ -406,6 +445,9 @@ export async function projectDraft(
       return undefined;
     }
     asts.push(ast);
+    if (ctx === "condition") {
+      conditions.set(at.entity, ast);
+    }
     walk(ast, (n) => {
       if (
         n.kind === "call" &&
@@ -904,11 +946,39 @@ export async function projectDraft(
     },
   };
   files.set("storycreep.json", encoded(manifest));
+  const values: ProjectedValue[] = variables.map((v) => ({
+    kind: "variable",
+    key: v.id,
+    variable: v.id,
+    name: v.key,
+    type: v.type,
+    options: [],
+    ...(v.scope === "board" && v.board_id !== undefined
+      ? { board: v.board_id }
+      : {}),
+  }));
+  for (const c of components) {
+    for (const d of definitionsOf.get(c.component_type_id) ?? []) {
+      if (d.runtime && d.type !== "text") {
+        values.push({
+          kind: "attribute",
+          key: attributeKey(c.id, d.id),
+          component: c.id,
+          attribute: d.id,
+          name: `${c.key}.${d.key}`,
+          type: d.type,
+          options: d.type === "enum" ? [...(d.options ?? [])] : [],
+        });
+      }
+    }
+  }
   return {
     files,
     boards: boardFiles,
     componentNames: new Map(components.map((c) => [c.id, c.name])),
     standIns,
+    conditions,
+    values,
   };
 }
 
