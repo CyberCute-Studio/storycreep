@@ -13,6 +13,7 @@ import {
   valueString,
 } from "@storycreep/shared/expr/compile";
 import type { TFunction } from "i18next";
+import { collator } from "../content/textNames";
 import { parseValue } from "../content/values";
 import type { ProjectedValue } from "./projection";
 
@@ -37,16 +38,21 @@ export interface GroupNames {
  * history's text writes them in: the global variables, by their names;
  * then each board's variables, by the boards' names, and the variables'
  * within; then each component's runtime attributes, by the components'
- * names, in the order of their type's definitions. A group without values
- * is left out.
+ * names, in the order of their type's definitions. Names are compared by
+ * one collation, the page's (collator), the groups' as the values', and
+ * those that it holds equal by their code units, and then by their IDs. A
+ * group without values is left out.
  */
 export function valueGroups(
   t: TFunction,
   values: readonly ProjectedValue[],
   names: GroupNames,
 ): ValueGroup[] {
+  const byCodeUnits = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const byName = (a: ProjectedValue, b: ProjectedValue) =>
-    a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    collator.compare(a.name, b.name) ||
+    byCodeUnits(a.name, b.name) ||
+    byCodeUnits(a.key, b.key);
   const globals: ProjectedValue[] = [];
   const boards = new Map<string, ProjectedValue[]>();
   const components = new Map<string, ProjectedValue[]>();
@@ -79,7 +85,12 @@ export function valueGroups(
   ): ValueGroup[] =>
     [...m]
       .map(([id, list]) => ({ id, name: name(id), list }))
-      .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1))
+      .sort(
+        (a, b) =>
+          collator.compare(a.name, b.name) ||
+          byCodeUnits(a.name, b.name) ||
+          byCodeUnits(a.id, b.id),
+      )
       .map(({ id, name, list }) => ({
         id,
         name,
@@ -138,14 +149,6 @@ export function valueLabel(
  */
 export function shownValue(v: Value): string {
   return v.type === "string" ? JSON.stringify(v.str) : valueString(v);
-}
-
-/**
- * Returns the text that the inspector's field of v holds: a value as
- * to_string writes it, a string as it is.
- */
-export function fieldText(v: Value): string {
-  return valueString(v);
 }
 
 /**

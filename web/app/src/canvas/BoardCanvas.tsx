@@ -1536,11 +1536,24 @@ function BoardCanvasOf({
   // play panel with.
   // The page reads of the session only what it shows, so that a read's
   // progress or the draft's change, which the panel says, draws nothing
-  // here.
+  // here, nor does a value set by hand in the panel's inspector, which
+  // changes the flow but not where it is, its path, or its steps.
   const session = playSessionOf(doc);
   const playing = useStore(session.store, (s) => s.status !== "idle");
-  const playFlow = useStore(session.store, (s) =>
-    s.status === "playing" ? s.flow : undefined,
+  const playFlow = useStore(
+    session.store,
+    useShallow((s) =>
+      s.status === "playing"
+        ? {
+            board: s.flow.board,
+            node: s.flow.node,
+            visited: s.flow.visited,
+            traversed: s.flow.traversed,
+            // Whether play has a step to step back from, beyond the start's.
+            stepped: s.flow.history.length > 1,
+          }
+        : undefined,
+    ),
   );
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -1817,7 +1830,7 @@ function BoardCanvasOf({
     },
     "play.stop": { enabled: playing, run: () => session.stop() },
     "play.step_back": {
-      enabled: (playFlow?.history.length ?? 0) > 1,
+      enabled: playFlow?.stepped ?? false,
       run: () => session.stepBack(),
     },
     "play.reset": {

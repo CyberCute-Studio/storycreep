@@ -122,11 +122,13 @@ export interface Observer {
    * evaluated the conditions of the connections that leave it and before
    * anything else runs, as the on-exit of an end of no_choices, and as
    * loadState builds them again: with the connections whose conditions did
-   * not hold, in their order, [] for none. What it reads of the runtime
+   * not hold, in their order, [] for none, each as choices() would offer
+   * it, its label's values resolved as the conditions read them, so that
+   * the observer renders no label of its own. What it reads of the runtime
    * meanwhile, as variable, attribute, and visits, is what those conditions
    * read. It must not call what moves the flow.
    */
-  choices(node: string, hidden: readonly Connection[]): void;
+  choices(node: string, hidden: readonly Choice[]): void;
 }
 
 /**
@@ -577,14 +579,18 @@ export class Runtime {
 
   // hold returns the connections of cs, which leave the element node, whose
   // conditions hold, in order, a connection without one among them, once it
-  // has told the observer of the others.
+  // has told the observer of the others, as choices offers a choice, which
+  // it renders the labels of only where it has an observer.
   private hold(node: string, cs: readonly Connection[]): Connection[] {
     const held: Connection[] = [];
     const hidden: Connection[] = [];
     for (const c of cs) {
       (this.holds(c.id, c.condition) ? held : hidden).push(c);
     }
-    this.observer?.choices(node, hidden);
+    this.observer?.choices(
+      node,
+      hidden.map((c) => this.choiceOf(c)),
+    );
     return held;
   }
 
@@ -699,10 +705,16 @@ export class Runtime {
    * change them; the next node's choices read it.
    */
   choices(): Choice[] {
-    return this.currentChoices.map((c) => ({
+    return this.currentChoices.map((c) => this.choiceOf(c));
+  }
+
+  // choiceOf returns the connection c as a choice: its ID, and its label's
+  // text, its values resolved as they are now, "" for none.
+  private choiceOf(c: Connection): Choice {
+    return {
       id: c.id,
       text: c.label === undefined ? "" : this.render(c.label),
-    }));
+    };
   }
 
   /**
@@ -851,9 +863,9 @@ export class Runtime {
    * board entry, and without the visit count, the enter, or the on-enter of
    * the cursor's node, whose choices it builds again when the cursor awaits
    * one, from the conditions as they hold of st, telling the observer of
-   * them, and which it does not end when none holds. It clears a halt, and returns the events that it emits,
-   * as a call that moves the flow does: the runtime errors of the
-   * conditions, [] for none.
+   * them, and which it does not end when none holds. It clears a halt, and
+   * returns the events that it emits, as a call that moves the flow does:
+   * the runtime errors of the conditions, [] for none.
    *
    * It loads a state of the snapshot alone, as save-state/v1's schema takes
    * one, and throws a StateError, and changes nothing, of any other: of

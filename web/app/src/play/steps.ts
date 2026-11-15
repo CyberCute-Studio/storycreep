@@ -4,12 +4,7 @@
 
 import type { TFunction } from "i18next";
 import { endedMessage, errorMessage, expressionPlace } from "./messages";
-import type {
-  PlayError,
-  PlayedProjection,
-  PlayFlow,
-  PlayStep,
-} from "./session";
+import type { PlayError, PlayedProjection, PlayFlow } from "./session";
 import { type GroupNames, shownValue, valueGroups, valueLabel } from "./values";
 
 /** What the history names places by: where a node is, by its title and its board's name, or a board alone. */
@@ -25,53 +20,67 @@ export interface StepLines {
 }
 
 /**
- * Returns what the step of the index i of flow's history did: whether it
+ * Returns what each step of flow's history did, in order: whether it
  * started or took a choice, the nodes that it passed and the one that it
  * came to, why the flow ended in it, the runtime errors that it reported,
- * and the values that the author set by hand after it.
+ * and the values that the author set by hand after it, each followed by the
+ * runtime errors of the choices built again of it, as they happened. It
+ * reads the flow's runtime errors once, rather than once for each step.
  */
-export function stepLines(
+export function historyLines(
   t: TFunction,
   flow: PlayFlow,
-  i: number,
   projection: PlayedProjection,
   where: Where,
   names: GroupNames,
-): StepLines {
-  const step: PlayStep = flow.history[i];
-  const heading =
-    step.choice === undefined
-      ? t("play.history.started")
-      : step.choice.text === ""
-        ? t("play.history.continued")
-        : t("play.history.chose", { choice: step.choice.text });
-  const lines: string[] = [];
-  step.entered.forEach((at, j) => {
-    const place = where(at.board, at.node);
-    lines.push(
-      j === step.entered.length - 1
-        ? t("play.history.came_to", { where: place })
-        : t("play.history.passed", { where: place }),
-    );
-  });
-  if (step.ended !== undefined) {
-    lines.push(endedMessage(t, step.ended));
-  }
+): StepLines[] {
+  // The runtime errors of each step's own, by the step's index, and of the
+  // choices built again of each value set by hand after it, by the step's
+  // index and the value's, in their order.
+  const errors = new Map<string, PlayError[]>();
   for (const e of flow.errors) {
-    if (e.step === i) {
-      lines.push(errorLine(t, e, where));
+    const key = e.edit === undefined ? `${e.step}` : `${e.step} ${e.edit}`;
+    const list = errors.get(key);
+    if (list === undefined) {
+      errors.set(key, [e]);
+    } else {
+      list.push(e);
     }
   }
-  for (const edit of step.edits) {
-    const target = projection.valueByKey.get(edit.key);
-    lines.push(
-      t("play.history.set", {
-        name: target === undefined ? edit.key : valueLabel(t, target, names),
-        value: shownValue(edit.value),
-      }),
-    );
-  }
-  return { heading, lines };
+  const errorLines = (key: string) =>
+    (errors.get(key) ?? []).map((e) => errorLine(t, e, where));
+  return flow.history.map((step, i) => {
+    const heading =
+      step.choice === undefined
+        ? t("play.history.started")
+        : step.choice.text === ""
+          ? t("play.history.continued")
+          : t("play.history.chose", { choice: step.choice.text });
+    const lines: string[] = [];
+    step.entered.forEach((at, j) => {
+      const place = where(at.board, at.node);
+      lines.push(
+        j === step.entered.length - 1
+          ? t("play.history.came_to", { where: place })
+          : t("play.history.passed", { where: place }),
+      );
+    });
+    if (step.ended !== undefined) {
+      lines.push(endedMessage(t, step.ended));
+    }
+    lines.push(...errorLines(`${i}`));
+    step.edits.forEach((edit, j) => {
+      const target = projection.valueByKey.get(edit.key);
+      lines.push(
+        t("play.history.set", {
+          name: target === undefined ? edit.key : valueLabel(t, target, names),
+          value: shownValue(edit.value),
+        }),
+        ...errorLines(`${i} ${j}`),
+      );
+    });
+    return { heading, lines };
+  });
 }
 
 /**
@@ -88,13 +97,14 @@ export function historyText(
   names: GroupNames,
 ): string {
   const out = [t("play.history.text_title", { project }), ""];
-  flow.history.forEach((_, i) => {
-    const { heading, lines } = stepLines(t, flow, i, projection, where, names);
-    out.push(t("play.history.text_step", { number: i + 1, line: heading }));
-    for (const line of lines) {
-      out.push(`   ${line}`);
-    }
-  });
+  historyLines(t, flow, projection, where, names).forEach(
+    ({ heading, lines }, i) => {
+      out.push(t("play.history.text_step", { number: i + 1, line: heading }));
+      for (const line of lines) {
+        out.push(`   ${line}`);
+      }
+    },
+  );
   const groups = valueGroups(t, projection.values, names);
   if (groups.length > 0) {
     out.push("", t("play.history.text_values"));

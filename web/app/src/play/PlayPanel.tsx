@@ -275,7 +275,16 @@ function PlayFlowView({
   const speakerId = useId();
   const textId = useId();
   const endedId = useId();
+  const noChoiceId = useId();
   const errorsId = useId();
+  // Whether the flow awaits a choice of none, as once a value set by hand
+  // hid every choice of the current node, which loading a state, as the
+  // session builds the choices again by, does not end the flow at, so that
+  // the panel says why it offers none, and how to go on.
+  const noChoice =
+    flow.phase === "awaiting_choice" &&
+    flow.choices.length === 0 &&
+    !flow.halted;
   // The current node's heading, which gets the focus after a turn, says
   // what follows it as its description, so that a screen reader says the
   // node whole as the focus comes to it.
@@ -283,6 +292,7 @@ function PlayFlowView({
     ...(flow.speaker === "" ? [] : [speakerId]),
     textId,
     ...(flow.ended === undefined ? [] : [endedId]),
+    ...(noChoice ? [noChoiceId] : []),
   ].join(" ");
   return (
     <div className="space-y-4">
@@ -329,6 +339,15 @@ function PlayFlowView({
             {endedMessage(t, flow.ended)}
           </p>
         )}
+        {/* Said as a value set in the inspector hides the last choice,
+            where the focus stays in the field. */}
+        <div role="status">
+          {noChoice && (
+            <p id={noChoiceId} className="font-medium">
+              {t("play.no_choice")}
+            </p>
+          )}
+        </div>
       </section>
       {flow.phase === "awaiting_choice" && flow.choices.length > 0 && (
         <section aria-label={t("play.choices")}>

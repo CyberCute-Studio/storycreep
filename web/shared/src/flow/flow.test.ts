@@ -47,7 +47,7 @@ import {
 import type { SaveState } from "../save-state";
 import { foldCase, nfc } from "./fold";
 import { ASTUnsupportedError, BOARD_SCHEMA, LoadError, load } from "./load";
-import { Runtime, StateError, ValueError } from "./runtime";
+import { type Choice, Runtime, StateError, ValueError } from "./runtime";
 import { type Schema, validate } from "./schema";
 import { YIELD_EVERY } from "./sha256";
 import { conformance, readTree } from "./testing";
@@ -1272,12 +1272,12 @@ describe("the observer", () => {
         },
       }),
     );
-    const told: { node: string; hidden: string[]; gold: Value }[] = [];
+    const told: { node: string; hidden: Choice[]; gold: Value }[] = [];
     const r: Runtime = new Runtime(s, true, {
       choices: (node, hidden) => {
         told.push({
           node,
-          hidden: hidden.map((c) => c.id),
+          hidden: [...hidden],
           gold: r.variable(vr("CASH")),
         });
       },
@@ -1285,10 +1285,14 @@ describe("the observer", () => {
     r.start("", nd("START"));
     expect(told).toEqual([
       // The start's on-enter has raised the gold to 1, which is less than
-      // the rope's 2.
+      // the rope's 2. Each hidden choice is as choices() would offer it,
+      // with its label's text.
       {
         node: nd("START"),
-        hidden: [cn("PAY"), cn("DEPART")],
+        hidden: [
+          { id: cn("PAY"), text: "Buy a rope" },
+          { id: cn("DEPART"), text: "Leave" },
+        ],
         gold: intValue(1),
       },
     ]);
@@ -1299,7 +1303,11 @@ describe("the observer", () => {
     // before.
     const events = r.goto("", nd("GATED"));
     expect(told).toEqual([
-      { node: nd("GATED"), hidden: [cn("FREE")], gold: intValue(1) },
+      {
+        node: nd("GATED"),
+        hidden: [{ id: cn("FREE"), text: "Open" }],
+        gold: intValue(1),
+      },
     ]);
     expect(events.at(-1)).toEqual({ kind: "end", reason: "no_choices" });
     expect(r.variable(vr("CASH"))).toEqual(intValue(5));

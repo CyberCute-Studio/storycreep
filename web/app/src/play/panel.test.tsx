@@ -176,6 +176,13 @@ const nodes: Node[] = [
     title: "Broken",
     on_enter: expression("gold +="),
   }),
+  // A gate whose one choice the gold, 3, affords, which a value set by hand
+  // can hide.
+  testNode(id("nd", "G"), 800, 0, {
+    ...onBoard(harbour),
+    title: "Gate",
+    text: richText(text("A gate.")),
+  }),
 ];
 
 const connections: Connection[] = [
@@ -195,6 +202,11 @@ const connections: Connection[] = [
     order: "c",
     label: richText(text("Pay the toll")),
     condition: expression("gold > 5"),
+  }),
+  testConnection(id("cn", "5"), id("nd", "G"), id("nd", "B"), {
+    ...onBoard(harbour),
+    label: richText(text("Go through")),
+    condition: expression("gold < 5"),
   }),
 ];
 
@@ -1006,5 +1018,81 @@ describe("play mode's state", () => {
     } finally {
       Reflect.deleteProperty(navigator, "clipboard");
     }
+  });
+
+  // A value set by hand that hides every choice of the current node leaves
+  // the flow awaiting a choice of none, which the panel says under the
+  // node, with how to go on, rather than showing nothing; a value set after
+  // it offers the choice again.
+  it("says why the flow offers no choice once a value set by hand hides every one", async () => {
+    const user = userEvent.setup();
+    playProject();
+    renderApp(
+      `/projects/${project.id}/boards/${harbour.id}?node=${id("nd", "G")}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    await screen.findByRole("region", { name: "Gate" });
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("A gate.");
+    expect(choicesOf(panel)).toEqual(["Go through"]);
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "9{Enter}");
+    const none = await within(panel).findByText(
+      /^No choice here holds with the values now/,
+    );
+    expect(within(panel).queryByRole("region", { name: "Choices" })).toBeNull();
+    // Said as it comes, as the focus stays in the field, and as the
+    // current node's heading describes it.
+    expect(none.closest('[role="status"]')).not.toBeNull();
+    expect(
+      within(panel)
+        .getByRole("heading", { name: "Gate" })
+        .getAttribute("aria-describedby"),
+    ).toContain(none.id);
+    await user.clear(field);
+    await user.type(field, "1{Enter}");
+    await waitFor(() => expect(choicesOf(panel)).toEqual(["Go through"]));
+    expect(
+      within(panel).queryByText(/^No choice here holds with the values now/),
+    ).toBeNull();
+  });
+
+  // Below 900 px the panel is a sheet, which Escape closes, stopping play;
+  // in the inspector's filter, Escape empties the filter first, as a
+  // search box's does, and keeps play, and with the filter empty closes
+  // the sheet, as in its other fields.
+  it("empties the inspector's filter with Escape on a sheet, rather than stopping play", async () => {
+    windowOf(800);
+    const user = userEvent.setup();
+    playProject();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const sheet = await screen.findByRole("dialog", { name: "Play" });
+    await within(sheet).findByText("Trust 1.");
+    const filter = within(sheet).getByRole("searchbox", {
+      name: "Filter the values",
+    });
+    await user.type(filter, "gold");
+    expect(
+      within(sheet).queryByRole("textbox", { name: "elara.trust" }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    expect((filter as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    expect(
+      within(sheet).getByRole("textbox", { name: "elara.trust" }),
+    ).toBeDefined();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull(),
+    );
   });
 });

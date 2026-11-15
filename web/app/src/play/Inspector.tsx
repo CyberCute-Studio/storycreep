@@ -9,7 +9,11 @@
 // value set goes into the flow at once, as its next evaluation reads it,
 // without a restart (AC1).
 
-import { boolValue, type Value } from "@storycreep/shared/expr/compile";
+import {
+  boolValue,
+  type Value,
+  valueString,
+} from "@storycreep/shared/expr/compile";
 import { type KeyboardEvent, memo, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
@@ -23,7 +27,7 @@ import {
 import { foldWords, wordsMatcher } from "../ui/match";
 import type { ProjectedValue } from "./projection";
 import type { PlaySession, PlayState } from "./session";
-import { fieldText, type GroupNames, typedValue, valueGroups } from "./values";
+import { type GroupNames, typedValue, valueGroups } from "./values";
 
 export function Inspector({
   session,
@@ -66,6 +70,21 @@ export function Inspector({
             onChange={(event) =>
               session.view.setState({ filter: event.currentTarget.value })
             }
+            onKeyDown={(event) => {
+              // Escape empties the filter, as a search box's does, rather
+              // than closing the sheet that the panel is, which would stop
+              // play; once it is empty, Escape closes the sheet, as it does
+              // in its other fields. An Escape that ends what an input
+              // method was composing is the input method's.
+              if (
+                event.key === "Escape" &&
+                filter !== "" &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.stopPropagation();
+                session.view.setState({ filter: "" });
+              }
+            }}
           />
           {flow.halted ? (
             <p className="text-sm">{t("play.inspector.halted")}</p>
@@ -134,9 +153,10 @@ function ValueGroupView({
 }
 
 // A value's row, which draws again only once its value, or its mark,
-// changes: the runtime keeps a value that a step does not set as the same
-// object, so that a step of a project of a thousand variables draws the rows
-// of those that it changed alone.
+// changes: the session keeps a value that a step, a step back, or a value
+// set by hand does not change as the same object (session.ts's valuesOf),
+// so that each of them, in a project of a thousand variables, draws the
+// rows of those that it changed alone.
 const ValueRow = memo(function ValueRow(props: {
   session: PlaySession;
   target: ProjectedValue;
@@ -181,7 +201,8 @@ function ValueEditor({
       })
     : type;
   // set sets v, or says that the runtime does not take it, as a string of
-  // more than 4,096 characters, and reports whether it was set.
+  // more than 4,096 characters, or with a NUL or a lone surrogate, and
+  // reports whether it was set.
   const set = (v: Value): boolean => {
     if (!session.edit(target.key, v)) {
       setError(
@@ -226,7 +247,8 @@ function ValueEditor({
     label: target.name,
     hint,
     error,
-    value: draft ?? fieldText(value),
+    // A value as to_string writes it, a string as it is.
+    value: draft ?? valueString(value),
     autoComplete: "off",
     spellCheck: false,
     onChange: (event: { currentTarget: { value: string } }) => {

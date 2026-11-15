@@ -1170,12 +1170,79 @@ describe("a play session's state", () => {
     const s = new PlaySession(doc);
     await s.start({ board: harbour.id, node: id("nd", "A") });
     expect(playing(s).flow.choices).toHaveLength(1);
+    // A value that the condition reads without an error, and then one that
+    // it divides by, whose error is the second value's, after which the
+    // history lists it.
+    s.edit(gold.id, intValue(2));
     s.edit(gold.id, intValue(0));
     const { flow } = playing(s);
     expect(flow.halted).toBe(true);
     expect(flow.choices).toEqual([]);
     expect(flow.errors).toMatchObject([
-      { code: "division_by_zero", at: id("cn", "1"), step: 0 },
+      { code: "division_by_zero", at: id("cn", "1"), step: 0, edit: 1 },
     ]);
+  });
+
+  // A value set by hand that hides every choice leaves the flow awaiting a
+  // choice of none, as loading a state does, rather than ending it, so that
+  // a value set after it offers a choice again.
+  test("awaits a choice of none once a value set by hand hides every choice", async () => {
+    const { doc } = documentOf(
+      testDraft({
+        boards: [harbour],
+        variables: [gold],
+        nodes: [
+          testNode(id("nd", "A"), 0, 0, on(harbour)),
+          testNode(id("nd", "B"), 0, 0, on(harbour)),
+        ],
+        connections: [
+          testConnection(id("cn", "1"), id("nd", "A"), id("nd", "B"), {
+            ...on(harbour),
+            label: richText(text("Spend")),
+            condition: expression("gold < 5"),
+          }),
+        ],
+      }),
+    );
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: id("nd", "A") });
+    expect(s.edit(gold.id, intValue(9))).toBe(true);
+    const { flow } = playing(s);
+    expect(flow).toMatchObject({
+      phase: "awaiting_choice",
+      choices: [],
+      ended: undefined,
+      halted: false,
+    });
+    expect(flow.hidden).toMatchObject([
+      {
+        id: id("cn", "1"),
+        text: "Spend",
+        failed: [{ source: "gold < 5", reads: [{ name: "gold", value: "9" }] }],
+      },
+    ]);
+    s.edit(gold.id, intValue(1));
+    expect(playing(s).flow.choices).toEqual([
+      { id: id("cn", "1"), text: "Spend" },
+    ]);
+  });
+
+  // The session keeps a value that a step, a step back, or a value set by
+  // hand does not change as the same object, though loading a state makes
+  // each of the runtime's anew, so that the inspector draws the rows of
+  // those that changed alone.
+  test("keeps the same object of each value that does not change", async () => {
+    const { doc } = documentOf(draft);
+    const s = new PlaySession(doc);
+    await s.start({ board: harbour.id, node: "" });
+    const trustAtStart = playing(s).flow.values.get(trustKey);
+    s.edit(gold.id, intValue(9));
+    expect(playing(s).flow.values.get(trustKey)).toBe(trustAtStart);
+    s.choose(id("cn", "1"));
+    const goldSet = playing(s).flow.values.get(gold.id);
+    expect(goldSet).toEqual(intValue(9));
+    s.stepBack();
+    s.choose(id("cn", "1"));
+    expect(playing(s).flow.values.get(gold.id)).toBe(goldSet);
   });
 });

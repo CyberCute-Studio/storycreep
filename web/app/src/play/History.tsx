@@ -10,7 +10,7 @@ import { copyText } from "../errors/copy";
 import { Button } from "../ui/Button";
 import { Status } from "../ui/Page";
 import type { PlayState } from "./session";
-import { historyText, stepLines, type Where } from "./steps";
+import { historyLines, historyText, type Where } from "./steps";
 import type { GroupNames } from "./values";
 
 export function History({
@@ -51,16 +51,8 @@ export function History({
         {t("play.history.title")}
       </h3>
       <ol className="list-decimal space-y-2 ps-6">
-        {history.map((_, i) => {
-          const { heading, lines } = stepLines(
-            t,
-            flow,
-            i,
-            projection,
-            where,
-            names,
-          );
-          return (
+        {historyLines(t, flow, projection, where, names).map(
+          ({ heading, lines }, i) => (
             // The steps are a list that a step adds to, at its end, and
             // that Step back takes the last of.
             // biome-ignore lint/suspicious/noArrayIndexKey: a step is its place in the list
@@ -77,8 +69,8 @@ export function History({
                 </ul>
               )}
             </li>
-          );
-        })}
+          ),
+        )}
       </ol>
       <Status
         message={
