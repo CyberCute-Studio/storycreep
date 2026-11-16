@@ -109,7 +109,10 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
  * that it shows of labels, with its marks, as @Elara or {gold}, as what is
  * pasted or dropped into a text that holds neither, as a comment, becomes
  * (RichTextEditor's references): a comment names nothing of the story's,
- * which the server refuses it for.
+ * which the server refuses it for. The paste's HTML gives those copied from
+ * another text as the text that they showed there already (cleanPastedHTML's
+ * chips), whose names the comment's labels may not know: this takes what is
+ * left of them, as of a slice that no HTML gave.
  */
 export function withoutReferences(slice: Slice, labels: ChipLabels): Slice {
   const strip = (fragment: Fragment): Fragment => {

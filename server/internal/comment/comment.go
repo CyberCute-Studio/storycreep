@@ -89,16 +89,6 @@ var targets = []struct {
 	ids    ids.Kind
 }{{Node, ids.Node}, {Connection, ids.Connection}, {Board, ids.Board}, {Variable, ids.Variable}}
 
-// TargetTypes returns the kinds of target, in the order of the enum of the
-// API.
-func TargetTypes() []TargetType {
-	out := make([]TargetType, len(targets))
-	for i, t := range targets {
-		out[i] = t.target
-	}
-	return out
-}
-
 // Kind returns the kind of the IDs of the entities of the kind t, or zero for
 // a kind that is not a target's.
 func (t TargetType) Kind() ids.Kind {

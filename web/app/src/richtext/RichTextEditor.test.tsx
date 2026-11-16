@@ -602,14 +602,12 @@ describe("the rich-text editor", () => {
   // A comment's text (plan item 74) refers to nothing of the story's, which
   // the server refuses it for: its { and @ are text, it has no button of a
   // value's format, and a mention or a value reference pasted into it is
-  // the text that it shows, with its marks.
-  test("a text without references has no format of a value, and takes a mention or a value reference pasted into it as the text that it shows", () => {
+  // the text that it showed where it was copied, with its marks, though the
+  // comment's form, as here, knows no name of the story's.
+  test("a text without references has no format of a value, and takes a mention or a value reference pasted into it as the text that it showed where it was copied", () => {
     const component = newId("component");
     const variable = newId("variable");
-    const { textbox, last } = renderEditor({
-      references: false,
-      names: { mention: () => "Elara", value: () => "gold" },
-    });
+    const { textbox, last } = renderEditor({ references: false });
     expect(screen.queryByRole("button", { name: "Number format" })).toBeNull();
     screen.getByRole("button", { name: "Bold" });
     act(() => {

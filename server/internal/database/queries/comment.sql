@@ -13,14 +13,22 @@
 
 -- name: InsertComment :exec
 -- InsertComment adds a comment: a root, with its target, one of node_id,
--- connection_id, board_id, and variable_id, which starts its thread now, or a
--- reply, with its parent, of the thread that its parent started.
+-- connection_id, board_id, and variable_id, which starts its thread, or a
+-- reply, with its parent, of the thread that its parent started. It is
+-- posted as the server's clock has it as the batch applies, under the lock
+-- of the project's row, rather than as the batch's transaction began
+-- (now()), before it waited for that lock behind the project's other
+-- batches, so that of two comments of the project's batches the one posted
+-- later is later, as a reply after another of its thread, and in the pages
+-- of the list after it.
+WITH posted AS (SELECT clock_timestamp() AS at)
 INSERT INTO comment (id, workspace_id, project_id, parent_id, node_id, connection_id, board_id, variable_id, body,
-    created_by, thread_at)
-VALUES (@id, @workspace_id, @project_id, sqlc.narg(parent_id), sqlc.narg(node_id), sqlc.narg(connection_id),
-    sqlc.narg(board_id), sqlc.narg(variable_id), @body, @created_by,
+    created_by, created_at, updated_at, thread_at)
+SELECT @id, @workspace_id, @project_id, sqlc.narg(parent_id), sqlc.narg(node_id), sqlc.narg(connection_id),
+    sqlc.narg(board_id), sqlc.narg(variable_id), @body, @created_by, posted.at, posted.at,
     coalesce((SELECT p.thread_at FROM comment p WHERE p.workspace_id = @workspace_id AND p.project_id = @project_id
-        AND p.id = sqlc.narg(parent_id)), now()));
+        AND p.id = sqlc.narg(parent_id)), posted.at)
+FROM posted;
 
 -- name: CommentAny :one
 -- CommentAny returns a comment of the project, whether or not it is deleted,

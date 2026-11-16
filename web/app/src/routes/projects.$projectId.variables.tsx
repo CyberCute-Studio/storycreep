@@ -165,26 +165,27 @@ function VariablesPage() {
             onSelect={select}
             newItemHere={t("variables.new_here")}
             onCreateIn={(parentId, opener) => setCreating({ parentId, opener })}
-            renderItem={(variable) => (
-              <>
-                <span className="font-mono break-all">{variable.key}</span>
-                <span className="text-sm break-words text-fg-muted">
-                  {t("variables.item_detail", {
-                    type: typeName(t, variable.type),
-                    scope: scopeOf(variable),
-                  })}
-                </span>
-                {/* How many of its threads of comments are open (plan item
-                74), which its panel shows. */}
-                {openOf(commentCounts, variable.id) > 0 && (
-                  <span className="text-sm text-fg-muted">
-                    {t("variables.item_comments", {
-                      count: openOf(commentCounts, variable.id),
+            renderItem={(variable) => {
+              // How many of its threads of comments are open (plan item 74),
+              // which its panel shows.
+              const open = openOf(commentCounts, variable.id);
+              return (
+                <>
+                  <span className="font-mono break-all">{variable.key}</span>
+                  <span className="text-sm break-words text-fg-muted">
+                    {t("variables.item_detail", {
+                      type: typeName(t, variable.type),
+                      scope: scopeOf(variable),
                     })}
                   </span>
-                )}
-              </>
-            )}
+                  {open > 0 && (
+                    <span className="text-sm text-fg-muted">
+                      {t("variables.item_comments", { count: open })}
+                    </span>
+                  )}
+                </>
+              );
+            }}
             header={(newFolder) => (
               <>
                 <div className="flex flex-wrap items-center gap-2">

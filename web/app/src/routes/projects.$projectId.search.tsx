@@ -276,10 +276,7 @@ function ResultItem({
 }) {
   const { t } = useTranslation();
   const untitled = t("boards.untitled_node");
-  const node =
-    result.node_title === undefined || result.node_title === ""
-      ? untitled
-      : result.node_title;
+  const node = placeNodeTitle(t, result.node_title);
   if (result.type === "comment") {
     return <CommentResult projectId={projectId} result={result} />;
   }

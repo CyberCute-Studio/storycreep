@@ -17,6 +17,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Engine, Frame } from "./canvas/engine";
+import { itemButton } from "./content/ContentTree";
 import { renderApp, testSession } from "./test/app";
 import { testNode } from "./test/canvas";
 import "./test/editor";
@@ -1023,6 +1024,94 @@ describe("a target's threads", () => {
       .batches()
       .map((batch) => String(batch[0].payload.id));
     expect(second).not.toBe(first);
+  });
+
+  it("keeps what its forms hold, unsent, a new thread's text, a reply, and an edit, as they go with the panel and are made again, until each is posted or cancelled", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Lanterns?");
+    const server = commentProject([root]);
+    let comments = await openGold();
+    expect(await within(comments).findByText("Lanterns?")).toBeDefined();
+    const lanterns = () =>
+      within(comments)
+        .getByText(/^Lanterns/)
+        .closest("li[data-thread]") as HTMLElement;
+    typeInto(
+      within(comments).getByRole("textbox", { name: "New comment" }),
+      "A new one.",
+    );
+    await user.click(within(lanterns()).getByRole("button", { name: "Reply" }));
+    typeInto(
+      within(lanterns()).getByRole("textbox", { name: "Reply" }),
+      "Two.",
+    );
+    await user.click(within(lanterns()).getByRole("button", { name: "Edit" }));
+    replaceIn(
+      within(lanterns()).getByRole("textbox", { name: "Comment" }),
+      paragraph("Lanterns, or torches?"),
+    );
+    // The panel goes, with its forms, as once another variable's shows, and
+    // shows again: each form opens with what it held, and none takes the
+    // focus, which only the press that opens a form gives its field.
+    const reopen = async () => {
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      expect(screen.queryByRole("region", { name: "Comments" })).toBeNull();
+      await user.click(itemButton(gold.id) as HTMLElement);
+      comments = await screen.findByRole("region", { name: "Comments" });
+      expect(await within(comments).findByText(/^Lanterns/)).toBeDefined();
+    };
+    await reopen();
+    expect(
+      within(comments).getByRole("textbox", { name: "New comment" })
+        .textContent,
+    ).toBe("A new one.");
+    const reply = within(lanterns()).getByRole("textbox", { name: "Reply" });
+    expect(reply.textContent).toBe("Two.");
+    const edit = within(lanterns()).getByRole("textbox", { name: "Comment" });
+    expect(edit.textContent).toBe("Lanterns, or torches?");
+    for (const field of within(comments).getAllByRole("textbox")) {
+      expect(document.activeElement).not.toBe(field);
+    }
+    // The reply posted and the edit cancelled are no longer held, and the
+    // new thread's text is until it is posted.
+    await user.click(
+      within(lanterns()).getByRole("button", { name: "Post reply" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(lanterns()).queryByRole("textbox", { name: "Reply" }),
+      ).toBeNull(),
+    );
+    expect(within(lanterns()).getByText("Two.")).toBeDefined();
+    await user.click(
+      within(lanterns()).getByRole("button", { name: "Cancel" }),
+    );
+    expect(within(comments).getByText("Lanterns?")).toBeDefined();
+    await reopen();
+    expect(
+      within(comments).queryByRole("textbox", { name: "Reply" }),
+    ).toBeNull();
+    expect(
+      within(comments).queryByRole("textbox", { name: "Comment" }),
+    ).toBeNull();
+    expect(
+      within(comments).getByRole("textbox", { name: "New comment" })
+        .textContent,
+    ).toBe("A new one.");
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    await reopen();
+    expect(
+      within(comments).getByRole("textbox", { name: "New comment" })
+        .textContent,
+    ).toBe("");
+    // The reply was sent once, and nothing else but the new thread.
+    expect(server.batches().map((batch) => batch[0].type)).toEqual([
+      "comment.create",
+      "comment.create",
+    ]);
   });
 
   it("shows the threads as the server lists them once a deletion takes a thread out of the list's filter, with the deletion's Undo above them", async () => {

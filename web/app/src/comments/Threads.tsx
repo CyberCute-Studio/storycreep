@@ -24,7 +24,10 @@
 // its body and its author, as the server lists it. The threads move the
 // focus after their own presses alone (usePressFocus): to the Undo that a
 // deletion gives, and to their heading once the control that a press left
-// the focus on goes.
+// the focus on goes. What a form of the threads holds, unsent, a new
+// thread's text, or a reply or an edit open, stays with the project's
+// document until it is posted or cancelled (draftsOf), so that the form made
+// again, as once what is selected changes and changes back, opens with it.
 
 import type {
   CommentBody,
@@ -329,39 +332,83 @@ export function ReadFailed({
 }
 
 /**
- * Returns what gives the ID of the comment that a form posts with a body:
- * the one that the form last sent that body under, until an answer says
- * that it is posted (posted), or else one made anew, so that Post pressed
- * again once no answer came, with the text as it was, sends the same
- * batch, which the document sends with the IDs of the first (enqueue), and
- * which the server answers as it did that one rather than post the comment
- * twice, as the dialogs that create keep theirs; and that Post pressed with
- * the text changed since posts a comment of its own, under its own ID,
- * rather than one that the server refuses for the ID of the first, which
- * may have been posted (NewThread, ReplyForm).
+ * What a form of the threads holds of what the user typed, unsent, which
+ * the page's document of the project keeps (draftsOf): the body, once the
+ * user changed it; of a new comment's form, the ID that it last sent the
+ * body under (keptId); and of an edit's, the revision that it expects, the
+ * one that its comment had as its field opened, or that a refusal gave
+ * since (EditForm).
  */
-function useKeptId(): {
-  idFor: (body: RichTextDoc) => string;
-  posted: () => void;
-} {
-  const kept = useRef<{ id: string; body: string }>(undefined);
-  return {
-    idFor: (body) => {
-      const sent = JSON.stringify(body);
-      if (kept.current?.body !== sent) {
-        kept.current = { id: newId("comment"), body: sent };
-      }
-      return kept.current.id;
-    },
-    posted: () => {
-      kept.current = undefined;
-    },
-  };
+interface Draft {
+  body?: RichTextDoc;
+  kept?: { id: string; body: string };
+  rev?: number;
+}
+
+/** The drafts of the forms of the threads of each document of a project, by their keys (draftsOf). */
+const draftsByDocument = new WeakMap<ProjectDocument, Map<string, Draft>>();
+
+/**
+ * Returns the drafts of the forms of the threads of doc, the page's
+ * document of the project, which goes with the account: a new thread's,
+ * while it holds text, by its target's ID, and a reply's and an edit's,
+ * while they are open, by their thread's and their comment's (draftKey), as
+ * the page counts them as holding what was typed (CommentDrafts), each until
+ * it is posted or cancelled, or, of a new thread, emptied. A form made
+ * again, as once what is selected on the canvas, or the variable whose
+ * panel shows, changes and changes back, or once a thread that a read took
+ * out of the list is back, opens with what it held, without the focus,
+ * which only a press that opens it gives.
+ */
+function draftsOf(doc: ProjectDocument): Map<string, Draft> {
+  let drafts = draftsByDocument.get(doc);
+  if (drafts === undefined) {
+    drafts = new Map();
+    draftsByDocument.set(doc, drafts);
+  }
+  return drafts;
+}
+
+/** The key of a form's draft (draftsOf): a new thread's on the target of id, a reply's to the thread of id, or an edit's of the comment of id. */
+function draftKey(form: "thread" | "reply" | "edit", id: string): string {
+  return `${form}:${id}`;
+}
+
+/** Returns the draft of drafts of key, made anew, empty, if they have none. */
+function draftOf(drafts: Map<string, Draft>, key: string): Draft {
+  let draft = drafts.get(key);
+  if (draft === undefined) {
+    draft = {};
+    drafts.set(key, draft);
+  }
+  return draft;
+}
+
+/**
+ * Returns the ID of the comment that a form posts with body, as draft keeps
+ * it: the one that the form last sent that body under, until the form's
+ * comment is posted and its draft goes, or else one made anew, so that Post
+ * pressed again once no answer came, with the text as it was, sends the
+ * same batch, which the document sends with the IDs of the first (enqueue),
+ * and which the server answers as it did that one rather than post the
+ * comment twice, as the dialogs that create keep theirs, though the form
+ * was made again meanwhile; and that Post pressed with the text changed
+ * since posts a comment of its own, under its own ID, rather than one that
+ * the server refuses for the ID of the first, which may have been posted
+ * (NewThread, ReplyForm).
+ */
+function keptId(draft: Draft, body: RichTextDoc): string {
+  const sent = JSON.stringify(body);
+  if (draft.kept?.body !== sent) {
+    draft.kept = { id: newId("comment"), body: sent };
+  }
+  return draft.kept.id;
 }
 
 /**
  * The form of a new thread on target, which empties once its comment is
- * posted, whose ID is the one that the form keeps for its body (useKeptId).
+ * posted, whose ID is the one that the form keeps for its body (keptId),
+ * and which opens with what it held, unsent, as it was made last (draftsOf).
  */
 function NewThread({
   doc,
@@ -377,23 +424,39 @@ function NewThread({
 }) {
   const { t } = useTranslation();
   const [said, setSaid] = useState<string>();
-  const kept = useKeptId();
+  const drafts = draftsOf(doc);
+  const key = draftKey("thread", target.id);
+  const [initial] = useState(() => drafts.get(key)?.body);
   return (
     <div className="space-y-2">
       <CommentForm
         label={label}
         hint={t("comments.new_hint")}
         submit={t("comments.post")}
-        onEdit={() => setSaid(undefined)}
+        initial={initial}
+        onEdit={(value) => {
+          setSaid(undefined);
+          // The form holds what was typed while it has text, as the page
+          // counts it (CommentForm's holds).
+          if (textOf(value).chars === 0) {
+            drafts.delete(key);
+          } else if (value?.doc !== undefined) {
+            draftOf(drafts, key).body = value.doc;
+          }
+        }}
         onSend={async (body) => {
           onSending();
           await sendComments(doc, [
             {
               type: "comment.create",
-              payload: { id: kept.idFor(body), target: target.id, body },
+              payload: {
+                id: keptId(draftOf(drafts, key), body),
+                target: target.id,
+                body,
+              },
             },
           ]);
-          kept.posted();
+          drafts.delete(key);
           setSaid(t("comments.posted"));
         }}
       />
@@ -575,6 +638,7 @@ export function ThreadList({
     undo?: boolean;
   }>();
   const pressFocus = usePressFocus(heading);
+  const drafts = draftsOf(doc);
   // A press of a thread's button, as a request of the page's, which the
   // app's query client records once it fails, but for a refusal of the
   // server's, which the thread says.
@@ -721,6 +785,7 @@ export function ThreadList({
             <ThreadItem
               key={thread.root.id}
               send={send}
+              drafts={drafts}
               thread={thread}
               writable={writable}
               userId={userId}
@@ -747,6 +812,7 @@ export function ThreadList({
 /** A thread: what it is on, where the list names it, its comments, the line of the Undo of a deletion of one of them, and its buttons. */
 function ThreadItem({
   send,
+  drafts,
   thread,
   writable,
   userId,
@@ -760,6 +826,8 @@ function ThreadItem({
   onResolve,
 }: {
   send: Send;
+  /** The drafts of the forms of the threads, which a reply's and an edit's open with (draftsOf). */
+  drafts: Map<string, Draft>;
   thread: Thread;
   writable: boolean;
   userId: string | undefined;
@@ -777,13 +845,22 @@ function ThreadItem({
 }) {
   const { t, i18n } = useTranslation();
   const { root, replies } = thread;
-  const [replying, setReplying] = useState(false);
+  // The reply's form is open while its draft is (draftsOf), as it was made
+  // last; Reply's press alone gives its field the focus (opened).
+  const replyKey = draftKey("reply", root.id);
+  const [replying, setReplying] = useState(() => drafts.has(replyKey));
+  const [opened, setOpened] = useState(false);
   const replyButton = useRef<HTMLButtonElement>(null);
   const resolved = root.resolved === true;
+  const closeReply = () => {
+    drafts.delete(replyKey);
+    setReplying(false);
+  };
   const comment = (c: CommentBody, reply: boolean) => (
     <CommentItem
       key={c.id}
       send={send}
+      drafts={drafts}
       comment={c}
       reply={reply}
       own={writable && c.author !== undefined && c.author.id === userId}
@@ -812,20 +889,20 @@ function ThreadItem({
         </ol>
       )}
       {undo}
-      {resolved && (
+      {resolved && root.resolved_at !== undefined && (
         <p className="text-sm text-fg-muted">
           {root.resolved_by === undefined
             ? t("comments.resolved_at", {
                 at: formatRelativeTime(
                   i18n.language,
-                  new Date(root.resolved_at ?? root.updated_at),
+                  new Date(root.resolved_at),
                 ),
               })
             : t("comments.resolved_by", {
                 name: root.resolved_by.display_name,
                 at: formatRelativeTime(
                   i18n.language,
-                  new Date(root.resolved_at ?? root.updated_at),
+                  new Date(root.resolved_at),
                 ),
               })}
         </p>
@@ -835,15 +912,17 @@ function ThreadItem({
           <ReplyForm
             send={send}
             rootId={root.id}
+            draft={draftOf(drafts, replyKey)}
+            autoFocus={opened}
             onCancel={() => {
-              setReplying(false);
+              closeReply();
               requestAnimationFrame(() => replyButton.current?.focus());
             }}
             // The Reply button comes back as the form goes, which takes the
             // focus that the form had, rather than from where the user put
             // it meanwhile.
             onDone={(focused) => {
-              setReplying(false);
+              closeReply();
               if (focused) {
                 requestAnimationFrame(() =>
                   (replyButton.current ?? heading.current)?.focus(),
@@ -856,7 +935,11 @@ function ThreadItem({
             <Button
               ref={replyButton}
               aria-describedby={idOf("byline", root.id)}
-              onClick={() => setReplying(true)}
+              onClick={() => {
+                draftOf(drafts, replyKey);
+                setOpened(true);
+                setReplying(true);
+              }}
             >
               {t("comments.reply")}
             </Button>
@@ -876,38 +959,50 @@ function ThreadItem({
 
 /**
  * The form of a reply to the thread whose first comment's ID is rootId,
- * whose comment's ID is the one that the form keeps for its body while it
- * is open (useKeptId), so that Post reply pressed again once no answer
- * came, with the text as it was, sends the same batch, which the server
- * answers as it did the first rather than post the reply twice.
+ * which opens with what draft holds of it, and whose comment's ID is the
+ * one that the form keeps for its body while it is open (keptId), so that
+ * Post reply pressed again once no answer came, with the text as it was,
+ * sends the same batch, which the server answers as it did the first rather
+ * than post the reply twice.
  */
 function ReplyForm({
   send,
   rootId,
+  draft,
+  autoFocus,
   onCancel,
   onDone,
 }: {
   send: Send;
   rootId: string;
+  /** What the form holds, unsent, which the page's document keeps while it is open (draftsOf). */
+  draft: Draft;
+  /** Whether the text takes the focus as the form shows, as once Reply's press opened it, and not once it is made again. */
+  autoFocus: boolean;
   onCancel: () => void;
   onDone: (focused: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const kept = useKeptId();
+  const [initial] = useState(() => draft.body);
   return (
     <CommentForm
       label={t("comments.reply_label")}
       submit={t("comments.reply_post")}
-      autoFocus
+      initial={initial}
+      autoFocus={autoFocus}
+      onEdit={(value) => {
+        if (value?.doc !== undefined) {
+          draft.body = value.doc;
+        }
+      }}
       onCancel={onCancel}
       onSend={async (body) => {
         await send([
           {
             type: "comment.create",
-            payload: { id: kept.idFor(body), parent_id: rootId, body },
+            payload: { id: keptId(draft, body), parent_id: rootId, body },
           },
         ]);
-        kept.posted();
       }}
       onDone={onDone}
     />
@@ -917,6 +1012,7 @@ function ReplyForm({
 /** A comment: who wrote it and when, its body, and the user's own buttons of it, or, deleted, that it is, as the server lists a thread's first comment that is deleted while a reply of it is not. */
 function CommentItem({
   send,
+  drafts,
   comment: c,
   reply,
   own,
@@ -925,6 +1021,8 @@ function CommentItem({
   onDelete,
 }: {
   send: Send;
+  /** The drafts of the forms of the threads, which an edit's opens with (draftsOf). */
+  drafts: Map<string, Draft>;
   comment: CommentBody;
   reply: boolean;
   /** Whether the comment is the user's own, which they edit and delete. */
@@ -934,9 +1032,18 @@ function CommentItem({
   onDelete: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const [editing, setEditing] = useState(false);
+  // The edit's form is open while its draft is (draftsOf), as it was made
+  // last, of the user's own comment; Edit's press alone gives its field the
+  // focus (opened).
+  const editKey = draftKey("edit", c.id);
+  const [editing, setEditing] = useState(() => own && drafts.has(editKey));
+  const [opened, setOpened] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const bylineId = idOf("byline", c.id);
+  const closeEdit = () => {
+    drafts.delete(editKey);
+    setEditing(false);
+  };
   if (c.deleted || c.body === undefined) {
     return (
       <div>
@@ -971,15 +1078,17 @@ function CommentItem({
         <EditForm
           comment={c}
           body={c.body}
+          draft={draftOf(drafts, editKey)}
+          autoFocus={opened}
           send={send}
           onCancel={() => {
-            setEditing(false);
+            closeEdit();
             requestAnimationFrame(() => editButton.current?.focus());
           }}
           // Edit comes back as the form goes, which takes the focus that the
           // form had, rather than from where the user put it meanwhile.
           onDone={(focused) => {
-            setEditing(false);
+            closeEdit();
             if (focused) {
               requestAnimationFrame(() => editButton.current?.focus());
             }
@@ -995,7 +1104,11 @@ function CommentItem({
               <Button
                 ref={editButton}
                 aria-describedby={bylineId}
-                onClick={() => setEditing(true)}
+                onClick={() => {
+                  draftOf(drafts, editKey).rev = c.rev;
+                  setOpened(true);
+                  setEditing(true);
+                }}
               >
                 {t("comments.edit")}
               </Button>
@@ -1038,29 +1151,43 @@ function currentRev(error: unknown, id: string): number | undefined {
  * (currentRev), the server's own, rather than the one that the list shows
  * as the refusal is said, as the tree's dialogs take it (useExpected): the
  * list's read may be answered after the refusal, and the field would then
- * expect the revision that it was refused for again.
+ * expect the revision that it was refused for again. It opens with what
+ * draft holds of it, its text and the revision that it expects, as it was
+ * made last (draftsOf).
  */
 function EditForm({
   comment: c,
   body,
+  draft,
+  autoFocus,
   send,
   onCancel,
   onDone,
 }: {
   comment: CommentBody;
   body: RichTextDoc;
+  /** What the form holds, unsent, which the page's document keeps while it is open (draftsOf). */
+  draft: Draft;
+  /** Whether the text takes the focus as the form shows, as once Edit's press opened it, and not once it is made again. */
+  autoFocus: boolean;
   send: Send;
   onCancel: () => void;
   onDone: (focused: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [rev, setRev] = useState(c.rev);
+  const [initial] = useState(() => draft.body ?? body);
+  const [rev, setRev] = useState(() => draft.rev ?? c.rev);
   return (
     <CommentForm
       label={t("comments.edit_label")}
       submit={t("comments.save")}
-      initial={body}
-      autoFocus
+      initial={initial}
+      autoFocus={autoFocus}
+      onEdit={(value) => {
+        if (value?.doc !== undefined) {
+          draft.body = value.doc;
+        }
+      }}
       onCancel={onCancel}
       onSend={async (next) => {
         try {
@@ -1075,6 +1202,7 @@ function EditForm({
           const now = currentRev(refused, c.id);
           if (now !== undefined) {
             setRev(now);
+            draft.rev = now;
           }
           throw refused;
         }
@@ -1110,12 +1238,12 @@ function CommentForm({
   hint?: string;
   /** The submit button's label. */
   submit: string;
-  /** The body that the form starts with, as an edit's. */
+  /** The body that the form starts with, as an edit's, or what it held as it was made last (draftsOf), but not once its comment is posted. */
   initial?: RichTextDoc;
   /** Whether the text takes the focus as the form shows, as a reply's and an edit's, which their button opened. */
   autoFocus?: boolean;
-  /** Called as the text changes. */
-  onEdit?: () => void;
+  /** Called as the text changes, with what it is then. */
+  onEdit?: (value: RichTextValue | undefined) => void;
   /** Sends the body, and rejects with the server's refusal. */
   onSend: (body: RichTextDoc) => Promise<void>;
   /**
@@ -1182,12 +1310,12 @@ function CommentForm({
         label={label}
         hint={hint}
         references={false}
-        defaultValue={initial}
+        defaultValue={posted === 0 ? initial : undefined}
         error={problem ?? refusal?.fields.body ?? refusal?.message}
         onChange={(next) => {
           setValue(next);
           setProblem(undefined);
-          onEdit?.();
+          onEdit?.(next);
           if (send.isError) {
             send.reset();
           }

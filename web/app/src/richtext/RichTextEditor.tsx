@@ -62,6 +62,7 @@ import {
   withoutReferences,
 } from "./extensions";
 import { typedHref } from "./link";
+import { cleanPastedHTML } from "./paste";
 import { type SuggestionKeys, Suggestions } from "./Suggestions";
 
 export interface RichTextEditorProps {
@@ -111,8 +112,9 @@ export interface RichTextEditorProps {
    * One that may not, as a comment's (plan item 74), whose { and @ are text
    * as any other character, as without choices, has no button of a value's
    * format, and takes a mention or a value reference pasted or dropped into
-   * it as the text that it shows (withoutReferences), so that it holds none
-   * that the server would refuse it for.
+   * it as the text that it showed where it was copied, as @Elara, whose
+   * name the text need not know (cleanPastedHTML's chips), so that it holds
+   * none that the server would refuse it for.
    */
   references?: boolean;
 }
@@ -262,7 +264,12 @@ export function RichTextEditor({
     () => ({
       ...pasteProps,
       // What is pasted or dropped into a text without references, as a
-      // comment, is its text alone where it has them.
+      // comment, is its text alone where it has them: the text that a
+      // mention or a value reference copied from another text showed there
+      // (cleanPastedHTML's chips), which this one has no name of, or else
+      // the text that it shows here (withoutReferences).
+      transformPastedHTML: (html: string) =>
+        cleanPastedHTML(html, latest.current.references),
       transformPasted: (slice: Slice) =>
         latest.current.references
           ? slice
