@@ -6,14 +6,7 @@ import {
   notFound,
   useNavigate,
 } from "@tanstack/react-router";
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { sessionQuery } from "../api";
@@ -23,7 +16,7 @@ import type { RendererKind } from "../canvas/engine";
 import type { Rect } from "../canvas/viewport";
 import { useCommandHandlers } from "../commands/registry";
 import { commentCountsQuery, openOf } from "../comments/queries";
-import { CommentDrafts, Comments } from "../comments/Threads";
+import { CommentDrafts, Comments, useCommentDrafts } from "../comments/Threads";
 import {
   ConflictNotice,
   changedOf,
@@ -302,15 +295,18 @@ function BoardContent({
     [search.renderer, search.bench, search.seconds, search.area, search.warm],
   );
   const script = search.view === "script";
-  // How many of the board's own threads of comments are open, which its
-  // header's link to them says (plan item 74), but in a run of the
-  // benchmark, which measures the canvas alone (BoardCanvas), and a link to
-  // them, without a node to open, which brings them into view as the page
-  // shows.
+  // The board's own threads of comments under the canvas, and how many of
+  // them are open, which its header's link to them says (plan item 74), but
+  // in a run of the benchmark, which measures the canvas alone
+  // (BoardCanvas), and so shows and reads no comments, as their reads again
+  // as each of its edits applies (followed) would land in its frames; and a
+  // link to them, without a node to open, which brings them into view as
+  // the page shows.
+  const benching = search.bench !== undefined;
   const openThreads = openOf(
     useQuery({
       ...commentCountsQuery(doc, board.id),
-      enabled: search.bench === undefined,
+      enabled: !benching,
     }).data,
     board.id,
   );
@@ -370,19 +366,10 @@ function BoardContent({
   );
   const [holding, setHolding] = useState(false);
   // How many forms of the board's own comments, under the canvas, hold what
-  // the user typed, unsent, which the page waits for as it waits for the
-  // canvas's (CommentDrafts).
-  const [drafts, setDrafts] = useState(0);
-  const holdDraft = useCallback(() => {
-    setDrafts((n) => n + 1);
-    let held = true;
-    return () => {
-      if (held) {
-        held = false;
-        setDrafts((n) => n - 1);
-      }
-    };
-  }, []);
+  // the user typed, unsent (CommentDrafts), which the page counts and waits
+  // for itself, as it waits for the canvas's, since the script view has no
+  // canvas to tell it of them.
+  const [drafts, holdDraft] = useCommentDrafts();
   const seenTurn = useRef(playTurn);
   useEffect(() => {
     if (playTurn === seenTurn.current || holding || drafts > 0) {
@@ -431,14 +418,17 @@ function BoardContent({
         <div className="flex flex-wrap gap-2">
           {/* The board's own comments, under the canvas, as its settings
           are, which the link brings into view with the focus on their
-          heading, with how many of their threads are open (plan item 74). */}
-          <a
-            href={`#${boardCommentsId}`}
-            onClick={(e) => followInPage(e, boardCommentsId)}
-            className={buttonClass()}
-          >
-            {t("board.comments_link", { count: openThreads })}
-          </a>
+          heading, with how many of their threads are open (plan item 74),
+          but in a run of the benchmark, which shows none. */}
+          {!benching && (
+            <a
+              href={`#${boardCommentsId}`}
+              onClick={(e) => followInPage(e, boardCommentsId)}
+              className={buttonClass()}
+            >
+              {t("board.comments_link", { count: openThreads })}
+            </a>
+          )}
           <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
             {/* The router marks the link of the view shown current, as it
             matches the page's search: the canvas's names no view, which its
@@ -491,16 +481,18 @@ function BoardContent({
           onHolding={setHolding}
         />
       )}
-      <div className="mx-auto max-w-3xl">
-        <CommentDrafts.Provider value={holdDraft}>
-          <Comments
-            projectId={projectId}
-            target={{ type: "board", id: board.id }}
-            headingId={boardCommentsId}
-            level={2}
-          />
-        </CommentDrafts.Provider>
-      </div>
+      {!benching && (
+        <div className="mx-auto max-w-3xl">
+          <CommentDrafts.Provider value={holdDraft}>
+            <Comments
+              projectId={projectId}
+              target={{ type: "board", id: board.id }}
+              headingId={boardCommentsId}
+              level={2}
+            />
+          </CommentDrafts.Provider>
+        </div>
+      )}
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"

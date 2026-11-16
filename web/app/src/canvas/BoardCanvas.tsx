@@ -67,6 +67,7 @@ import {
   useRegistry,
 } from "../commands/registry";
 import { commentCountsQuery } from "../comments/queries";
+import { CommentDrafts, useCommentDrafts } from "../comments/Threads";
 import { boardPart } from "../document/doc";
 import {
   useBoard,
@@ -465,9 +466,11 @@ interface BoardCanvasProps {
   drafting?: boolean;
   /**
    * Tells whether the canvas has open what the user types in, which a page
-   * change would take away unsaved: the inspector, or the editor of a text,
-   * as it opens and closes, which the board's page waits for to close before
-   * it follows play mode's flow to another board's page (plan note N78).
+   * change would take away unsaved: the inspector of a board that the user
+   * may change, a form of comments in the inspector that holds what was
+   * typed (plan item 74), or the editor of a text, as it opens and closes,
+   * which the board's page waits for to close before it follows play mode's
+   * flow to another board's page (plan note N78).
    */
   onHolding?: (holding: boolean) => void;
 }
@@ -1704,10 +1707,16 @@ function BoardCanvasOf({
   // text, open, which the board's page does not take away unsaved as it
   // follows play's flow to another board's page, but waits for to close
   // (onHolding), while the panel keeps the focus where the flow is. The
-  // inspector is open on any board, of which a user who may not change it
-  // sees the comments alone, and may be writing one, as on the board's own
-  // under the canvas (drafting, plan item 74).
-  const holding = inspecting || editing !== undefined || drafting;
+  // inspector of a board that the user may not change, as a commenter's or
+  // a viewer's, shows the comments of what is selected alone, which hold
+  // what was typed while one of their forms does (CommentDrafts), as the
+  // board's own under the canvas do (drafting, plan item 74).
+  const [inspectorDrafts, holdInspectorDraft] = useCommentDrafts();
+  const holding =
+    (inspecting && editable) ||
+    editing !== undefined ||
+    drafting ||
+    inspectorDrafts > 0;
   useEffect(() => {
     onHolding?.(holding);
   }, [onHolding, holding]);
@@ -2819,28 +2828,30 @@ function BoardCanvasOf({
           )}
         </div>
         {inspecting && (
-          <Inspector
-            projectId={projectId}
-            editable={editable}
-            selection={selection}
-            connection={connection}
-            actions={actions}
-            targets={targets}
-            onSelectConnection={(id) => controller.selectConnection(id)}
-            onSelectNode={(id) => controller.select([id], "replace")}
-            onFollow={follow}
-            // A sheet over the canvas closes to show the editor of the text,
-            // which it would else hold inert under it.
-            onEditText={(id) => {
-              openText(id);
-              if (!docked) {
-                setInspecting(false);
-              }
-            }}
-            onClose={() => setInspecting(false)}
-            returnFocus={() => inspectorButton.current}
-            headingRef={inspectorHeading}
-          />
+          <CommentDrafts.Provider value={holdInspectorDraft}>
+            <Inspector
+              projectId={projectId}
+              editable={editable}
+              selection={selection}
+              connection={connection}
+              actions={actions}
+              targets={targets}
+              onSelectConnection={(id) => controller.selectConnection(id)}
+              onSelectNode={(id) => controller.select([id], "replace")}
+              onFollow={follow}
+              // A sheet over the canvas closes to show the editor of the
+              // text, which it would else hold inert under it.
+              onEditText={(id) => {
+                openText(id);
+                if (!docked) {
+                  setInspecting(false);
+                }
+              }}
+              onClose={() => setInspecting(false)}
+              returnFocus={() => inspectorButton.current}
+              headingRef={inspectorHeading}
+            />
+          </CommentDrafts.Provider>
         )}
         {/* Play mode's panel, while play is under way, where the inspector,
         while it is open, is not (plan note N78), which gives the focus back

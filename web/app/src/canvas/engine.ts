@@ -1491,17 +1491,17 @@ class PixiEngine implements Engine {
         comments === undefined || lod !== "detail"
           ? []
           : items.filter((item) => comments(item.connection.id) > 0);
-      for (const item of commented) {
-        const m = curveMiddle(item.curve);
-        g.circle(m.x - origin.x, m.y - origin.y, 7);
-      }
       if (commented.length > 0) {
-        g.fill({ color: theme.accent });
         for (const item of commented) {
           const m = curveMiddle(item.curve);
           g.circle(m.x - origin.x, m.y - origin.y, 7);
         }
-        g.stroke({ width: 2, color: theme.canvas });
+        // A stroke right after a fill rings the path that the fill filled,
+        // which is built once.
+        g.fill({ color: theme.accent }).stroke({
+          width: 2,
+          color: theme.canvas,
+        });
       }
     });
   }

@@ -88,10 +88,11 @@ func registerComments(m *api.Mux, comments *comment.Service) {
 		Description: "Lists the comments of the project's threads that are shown and that the filters keep, thread " +
 			"by thread, the newest thread first, by when its first comment was posted, and within a thread its " +
 			"first comment, then its replies, oldest first, by when each was posted, as the server's clock has it " +
-			"rather than the times of the IDs that the clients made (PRD FR-COMMENT-01). Each comment names its thread's target, and the target's board and node, by " +
-			"which a client opens it, and a thread's first comment whether the thread is resolved. A thread's first " +
-			"comment that is deleted while a reply of the thread is not is listed as deleted, without its body and " +
-			"its author, and a deleted reply is not listed." + commentsDoc + projectNotFoundDoc + tokenNotFoundDoc +
+			"rather than the times of the IDs that the clients made (PRD FR-COMMENT-01). Each comment names its " +
+			"thread's target, and the target's board and node, by which a client opens it, and a thread's first " +
+			"comment whether the thread is resolved. A thread's first comment that is deleted while a reply of the " +
+			"thread is not is listed as deleted, without its body and its author, and a deleted reply is not " +
+			"listed." + commentsDoc + projectNotFoundDoc + tokenNotFoundDoc +
 			" An author, a board, or a target whose ID does not decode, or is of another kind, is answered with 400 " +
 			"invalid_id, and one that the project does not have keeps nothing." + tokenAuthDoc(scope.ProjectRead),
 		Tags: []string{"Comments"},

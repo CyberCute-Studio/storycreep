@@ -245,7 +245,6 @@ function CommentsPage() {
             doc={doc}
             threads={threads}
             writable={writable}
-            readAt={list.dataUpdatedAt}
             reread={() => list.refetch()}
             heading={heading}
             empty={

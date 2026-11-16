@@ -171,8 +171,10 @@ type Sent = { type: string; payload: Record<string, unknown> }[];
  * is not deleted, and its target, as the node nd_1, is not in the trash,
  * which node.delete puts it in and node.restore takes it out of; a deleted
  * first comment of a thread that is shown is listed without its body and
- * its author; each command of a comment has its undo; and refuse throws its
- * refusal of a batch, if any, before it applies.
+ * its author; each command of a comment has its undo; refuse throws its
+ * refusal of a batch, if any, before it applies; and listed answers each
+ * read of the list with what it makes of the comments listed, as late as
+ * it resolves.
  */
 function commentProject(
   stored: Stored[],
@@ -180,6 +182,7 @@ function commentProject(
     role?: (typeof testProject)["role"];
     refuse?: (commands: Sent) => Error | undefined;
     search?: (query: Record<string, unknown>) => unknown;
+    listed?: (items: CommentBody[]) => Promise<CommentBody[]>;
   } = {},
 ) {
   const comments = [...stored];
@@ -233,7 +236,8 @@ function commentProject(
       : { parent_id: c.parent_id }),
   });
   // Each thread that is shown, newest first, with its replies that are not
-  // deleted, oldest first.
+  // deleted, oldest first, by when each was posted, and then by its ID, as
+  // the server orders them (the times here are all of one form).
   const threads = () =>
     comments
       .filter((c) => c.parent_id === undefined)
@@ -242,7 +246,15 @@ function commentProject(
         root,
         replies: comments
           .filter((c) => c.parent_id === root.id && !c.deleted)
-          .sort((a, b) => (a.id < b.id ? -1 : 1)),
+          .sort((a, b) =>
+            a.created_at !== b.created_at
+              ? a.created_at < b.created_at
+                ? -1
+                : 1
+              : a.id < b.id
+                ? -1
+                : 1,
+          ),
       }))
       .filter(
         ({ root, replies }) =>
@@ -418,8 +430,15 @@ function commentProject(
           items: trashed.has(quay.id) ? [] : [{ ...quay, rev: nodeRev }],
           next_cursor: null,
         };
-      case "listComments":
-        return { items: list(call.query ?? {}), next_cursor: null };
+      case "listComments": {
+        const items = list(call.query ?? {});
+        return options.listed === undefined
+          ? { items, next_cursor: null }
+          : options.listed(items).then((listed) => ({
+              items: listed,
+              next_cursor: null,
+            }));
+      }
       case "countComments":
         return { items: counts(), next_cursor: null };
       case "listCommentAuthors": {
@@ -754,6 +773,178 @@ describe("a target's threads", () => {
         name: "Undo the deletion of the comment",
       }),
     ).toBeNull();
+  });
+
+  it("keeps a deletion's Undo through a read that was under way as the deletion was sent, which shows the comment as it was, until a new thread is posted", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
+    // What the list was read with before the deletion, which a read that
+    // was under way as it was sent is answered with after it.
+    let before: CommentBody[] = [];
+    let deleting = false;
+    let answeredLate = false;
+    commentProject([root], {
+      refuse: (commands) => {
+        deleting ||= commands[0].type === "comment.delete";
+        return undefined;
+      },
+      listed: async (items) => {
+        if (!deleting) {
+          before = items;
+          return items;
+        }
+        deleting = false;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        answeredLate = true;
+        return before;
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("A stray thought.")).toBeDefined();
+    await user.click(within(comments).getByRole("button", { name: "Delete" }));
+    expect(
+      await within(comments).findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    await waitFor(() => expect(answeredLate).toBe(true));
+    await act(async () => {});
+    // The comment stays deleted in its place, with its Undo, though the
+    // late answer still has it.
+    expect(within(comments).queryByText("A stray thought.")).toBeNull();
+    expect(within(comments).getByText("Comment deleted.")).toBeDefined();
+    expect(
+      within(comments).getByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+
+    // A new thread is the threads' next action, which ends the Undo.
+    typeInto(
+      within(comments).getByRole("textbox", { name: "New comment" }),
+      "A better one.",
+    );
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    expect(await within(comments).findByText("A better one.")).toBeDefined();
+    await waitFor(() =>
+      expect(
+        within(comments).queryByRole("button", {
+          name: "Undo the deletion of the comment",
+        }),
+      ).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(within(comments).queryByText("A stray thought.")).toBeNull(),
+    );
+  });
+
+  it("ends a deletion's Undo that the server refuses for the comment's restoration elsewhere, and shows the comment as it is", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
+    const server = commentProject([root], {
+      refuse: (commands) => {
+        if (commands[0].type !== "comment.restore") {
+          return undefined;
+        }
+        // Another session of the user's restored the comment meanwhile.
+        root.deleted = false;
+        root.rev = 3;
+        return refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "comment.restore",
+                id: root.id,
+                expected_rev: 2,
+                exists: true,
+                current_rev: 3,
+              },
+            ],
+            states: { [root.id]: { id: root.id, rev: 3 } },
+          },
+        });
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("A stray thought.")).toBeDefined();
+    await user.click(within(comments).getByRole("button", { name: "Delete" }));
+    await user.click(
+      await within(comments).findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    );
+    expect(
+      await within(comments).findByText(
+        "This thread changed elsewhere since it was shown here, so it is shown again as it is now. Try again if you still mean it.",
+      ),
+    ).toBeDefined();
+    expect(within(comments).getByText("A stray thought.")).toBeDefined();
+    expect(
+      within(comments).queryByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeNull();
+    expect(server.batches()[1]).toEqual([
+      {
+        type: "comment.restore",
+        payload: { id: root.id },
+        expected_rev: { [root.id]: 2 },
+      },
+    ]);
+  });
+
+  it("keeps a deleted reply in its place among replies posted within the same millisecond, as the server orders them to the microsecond", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Where to?", mira);
+    // Mira's reply was posted first, though its ID is the greater.
+    const theirs = {
+      ...reply("cmt_09", root, "North.", mira),
+      created_at: "2026-11-10T10:00:00.123400Z",
+    };
+    const mine = {
+      ...reply("cmt_05", root, "South.", jo),
+      created_at: "2026-11-10T10:00:00.123900Z",
+    };
+    // Whether the list was read without the deleted reply, once deleted.
+    let relisted = false;
+    commentProject([root, theirs, mine], {
+      listed: async (items) => {
+        relisted ||= !items.some((c) => c.id === mine.id);
+        return items;
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("South.")).toBeDefined();
+    const replies = () =>
+      within(
+        within(comments).getByRole("list", { name: /^\d+ repl/ }),
+      ).getAllByRole("listitem");
+    expect(replies().map((r) => r.textContent)).toEqual([
+      expect.stringContaining("North."),
+      expect.stringContaining("South."),
+    ]);
+    const item = within(comments)
+      .getByText("South.")
+      .closest("li") as HTMLElement;
+    await user.click(within(item).getByRole("button", { name: "Delete" }));
+    expect(
+      await within(comments).findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    // The server lists the thread without it, where the list puts it back.
+    await waitFor(() => expect(relisted).toBe(true));
+    await act(async () => {});
+    expect(within(comments).queryByText("South.")).toBeNull();
+    expect(replies().map((r) => r.textContent)).toEqual([
+      expect.stringContaining("North."),
+      expect.stringContaining("Reply deleted."),
+    ]);
   });
 
   it("says that a comment changed elsewhere since its edit began, keeps what was typed, and expects the revision that it is read with then", async () => {

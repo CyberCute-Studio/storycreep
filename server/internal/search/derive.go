@@ -35,15 +35,16 @@ func Register(r *commands.Registry) {
 }
 
 // neutral are the types of command that change a node, a connection, a
-// variable, a component, or an attribute definition, but nothing that a
-// document holds (NewDocument): a move, a deletion to the trash or a
+// variable, a component, a comment, or an attribute definition, but nothing
+// that a document holds (NewDocument): a move, a deletion to the trash or a
 // restoration, which the search reads of the entities themselves, a change
 // of a field that no document holds, as a variable's default, a definition's
 // key, or a thread's resolution, and the mutes of the validation's findings,
 // with the name of the derivation that compiles expressions
 // (expression.Name, which this package does not import), which changes
-// their owners' revisions alone. A definition's move is neutral, since a component's document holds
-// its values in the order of their definitions' IDs, not of their places.
+// their owners' revisions alone. A definition's move is neutral, since a
+// component's document holds its values in the order of their definitions'
+// IDs, not of their places.
 // derive passes over a change that these alone made, so that moving a
 // selection of 2,000 nodes reads none of them. A type that is not here is
 // taken to change documents, so that a new type of command indexes too
