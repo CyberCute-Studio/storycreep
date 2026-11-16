@@ -348,8 +348,9 @@ function ResultItem({
  * on, as a link to where its comments show, as the project's list of
  * comments links to it, a node's, and a connection's by the node that it
  * leaves, in the canvas's inspector, a board's on its page, and a
- * variable's in its panel, its kind, its board, and the snippet of its
- * text, marked.
+ * variable's in its panel, its kind, its board, but of a board's own
+ * thread, which its link names by its board, and the snippet of its text,
+ * marked.
  */
 function CommentResult({
   projectId,
@@ -392,7 +393,10 @@ function CommentResult({
       <p className="font-medium">{link}</p>
       <p className="text-sm text-fg-muted">
         {t("search.kinds", { kind: result.type })}
+        {/* A board's own thread is named by its board, which its link
+        says already. */}
         {result.board_name !== undefined &&
+          result.target_type !== "board" &&
           ` · ${t("search.on_board", { board: result.board_name })}`}
       </p>
       {result.snippet.length > 0 && (

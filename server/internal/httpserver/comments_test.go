@@ -333,6 +333,34 @@ func TestCommentThreads(t *testing.T) {
 	}
 }
 
+// TestCommentTimesOfOneBatch checks that a comment's edit and its thread's
+// resolution in the batch that posted it are dated as the batch applies, as
+// its posting is, rather than as the batch's transaction began, before the
+// comment was posted: none is before the comment's created_at.
+func TestCommentTimesOfOneBatch(t *testing.T) {
+	t.Parallel()
+	f := newRolesFixture(t)
+	editor := f.as["editor"]
+	p := f.project(t, "")
+	node := createNode(t, f.s.main, editor, p, f.board(t, p), "element", nil)
+	root := newCommentID()
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "comment.create", Payload: map[string]any{"id": root, "target": node,
+			"body": paragraph("Does the lighthouse exist yet?")}},
+		wireCommand{Type: "comment.edit", Payload: map[string]any{"id": root, "body": paragraph("It does.")}},
+		wireCommand{Type: "comment.resolve", Payload: map[string]any{"id": root}}), editor.header(true)))
+	list := listComments(t, f.s.main, editor, p)
+	if len(list) != 1 {
+		t.Fatalf("the comments are %v, want the one posted", commentIDs(list))
+	}
+	c := list[0]
+	if c.EditedAt == nil || c.ResolvedAt == nil || c.EditedAt.Before(c.CreatedAt) ||
+		c.UpdatedAt.Before(c.CreatedAt) || !c.UpdatedAt.Equal(*c.EditedAt) || c.ResolvedAt.Before(c.CreatedAt) {
+		t.Errorf("the comment posted, edited, and resolved in one batch is %+v, want it edited and resolved at or "+
+			"after it was posted, at %v", c, c.CreatedAt)
+	}
+}
+
 // TestCommentsInTheTrash checks that a thread is in the trash with its
 // target: once a node is deleted, the list, the counts, and the search show
 // none of its threads, and no command changes them but a comment's deletion

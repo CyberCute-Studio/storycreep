@@ -173,9 +173,10 @@ type Sent = { type: string; payload: Record<string, unknown> }[];
  * which node.delete puts it in and node.restore takes it out of; a deleted
  * first comment of a thread that is shown is listed without its body and
  * its author; each command of a comment has its undo; refuse throws its
- * refusal of a batch, if any, before it applies; and listed answers each
- * read of the list with what it makes of the comments listed, as late as
- * it resolves.
+ * refusal of a batch, if any, before it applies; held holds a batch, if it
+ * gives a promise, until that resolves, as the batch then applies; and
+ * listed answers each read of the list with what it makes of the comments
+ * listed, as late as it resolves.
  */
 function commentProject(
   stored: Stored[],
@@ -184,6 +185,7 @@ function commentProject(
     refuse?: (commands: Sent) => Error | undefined;
     search?: (query: Record<string, unknown>) => unknown;
     listed?: (items: CommentBody[]) => Promise<CommentBody[]>;
+    held?: (commands: Sent) => Promise<void> | undefined;
   } = {},
 ) {
   const comments = [...stored];
@@ -458,8 +460,13 @@ function commentProject(
       }
       case "searchProject":
         return options.search?.(call.query ?? {});
-      case "applyCommands":
-        return apply(call.body?.commands ?? []);
+      case "applyCommands": {
+        const commands = call.body?.commands ?? [];
+        const held = options.held?.(commands);
+        return held === undefined
+          ? apply(commands)
+          : held.then(() => apply(commands));
+      }
     }
     const answer = startPage(operation);
     if (answer === undefined) {
@@ -1024,6 +1031,87 @@ describe("a target's threads", () => {
       .batches()
       .map((batch) => String(batch[0].payload.id));
     expect(second).not.toBe(first);
+  });
+
+  it("posts a new thread once, under the ID that its form keeps, though its text was emptied and typed again after a Post that no answer came to", async () => {
+    const user = userEvent.setup();
+    let lost = false;
+    const server = commentProject([], {
+      refuse: (commands) => {
+        if (commands[0].type !== "comment.create" || lost) {
+          return undefined;
+        }
+        lost = true;
+        return new TypeError("Failed to fetch");
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("No comments yet.")).toBeDefined();
+    const field = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    typeInto(field, "A new one.");
+    const post = within(comments).getByRole("button", {
+      name: "Post comment",
+    });
+    await user.click(post);
+    await waitFor(() => expect(server.batches()).toHaveLength(1));
+    replaceIn(field, { type: "doc", content: [{ type: "paragraph" }] });
+    typeInto(field, "A new one.");
+    await user.click(post);
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    const [first, second] = server
+      .batches()
+      .map((batch) => String(batch[0].payload.id));
+    expect(second).toBe(first);
+  });
+
+  it("keeps a form's text read-only while its batch is under way, so that nothing is typed after what it sends, which the form lets go of once it is posted", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Lanterns?", mira);
+    let answer: (() => void) | undefined;
+    const server = commentProject([root], {
+      held: () =>
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("Lanterns?")).toBeDefined();
+    const field = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    typeInto(field, "A new one.");
+    expect(field.getAttribute("aria-readonly")).toBeNull();
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    await waitFor(() => expect(server.batches()).toHaveLength(1));
+    expect(field.getAttribute("aria-readonly")).toBe("true");
+    act(() => answer?.());
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    const emptied = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    expect(emptied.textContent).toBe("");
+    expect(emptied.getAttribute("aria-readonly")).toBeNull();
+    // A reply's text alike, until the reply is posted and its form closes.
+    const lanterns = within(comments)
+      .getByText("Lanterns?")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(lanterns).getByRole("button", { name: "Reply" }));
+    const reply = within(lanterns).getByRole("textbox", { name: "Reply" });
+    typeInto(reply, "Two.");
+    await user.click(
+      within(lanterns).getByRole("button", { name: "Post reply" }),
+    );
+    await waitFor(() => expect(server.batches()).toHaveLength(2));
+    expect(reply.getAttribute("aria-readonly")).toBe("true");
+    act(() => answer?.());
+    expect(await within(lanterns).findByText("Two.")).toBeDefined();
+    expect(
+      within(lanterns).queryByRole("textbox", { name: "Reply" }),
+    ).toBeNull();
   });
 
   it("keeps what its forms hold, unsent, a new thread's text, a reply, and an edit, as they go with the panel and are made again, until each is posted or cancelled", async () => {
@@ -1593,7 +1681,7 @@ describe("the canvas's marks of comments", () => {
 });
 
 describe("the project's search of comments", () => {
-  it("lists a comment found by what its thread is on, which links to where its comments show", async () => {
+  it("lists a comment found by what its thread is on, which links to where its comments show, and names a board's own thread's board once", async () => {
     commentProject([], {
       search: (query) => ({
         items:
@@ -1615,6 +1703,16 @@ describe("the project's search of comments", () => {
                   target_type: "node",
                   target_id: quay.id,
                 },
+                {
+                  type: "comment",
+                  id: "cmt_02",
+                  title: [],
+                  snippet: [{ text: "lantern", match: true }],
+                  board_id: harbour.id,
+                  board_name: harbour.name,
+                  target_type: "board",
+                  target_id: harbour.id,
+                },
               ]
             : [],
         next_cursor: null,
@@ -1632,6 +1730,16 @@ describe("the project's search of comments", () => {
     const item = link.closest("li") as HTMLElement;
     expect(item.textContent).toContain("Comment · On Harbour");
     expect(within(item).getByText("lantern").tagName).toBe("MARK");
+    // A board's own thread is named by its board once, by its link.
+    const board = screen.getByRole("link", {
+      name: "Comment on the board Harbour",
+    });
+    expect(board.getAttribute("href")).toBe(
+      `/app/projects/${testProject.id}/boards/${harbour.id}?comments=true`,
+    );
+    const boardItem = board.closest("li") as HTMLElement;
+    expect(boardItem.textContent).toContain("Comment");
+    expect(boardItem.textContent).not.toContain("On Harbour");
     expect(
       within(screen.getByRole("combobox", { name: "Find" })).getByRole(
         "option",

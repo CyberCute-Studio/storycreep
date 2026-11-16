@@ -176,8 +176,12 @@ LIMIT @max_rows;
 -- name: EditComment :one
 -- EditComment changes the comment's body, unless it has the body already,
 -- and records when it was edited, and returns its new revision, or no row if
--- it has the body.
-UPDATE comment SET body = @body, edited_at = now(), updated_at = now(), rev = rev + 1
+-- it has the body. It is edited as the server's clock has it as the batch
+-- applies, as InsertComment posts a comment, so that an edit in the batch
+-- that posted the comment is not before it.
+WITH edited AS (SELECT clock_timestamp() AS at)
+UPDATE comment SET body = @body, edited_at = edited.at, updated_at = edited.at, rev = rev + 1
+FROM edited
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND body <> @body
 RETURNING rev;
 
@@ -201,8 +205,10 @@ RETURNING rev;
 -- name: ResolveComment :one
 -- ResolveComment resolves the thread of the root, as resolved_by, unless it
 -- is resolved already, and returns the root's new revision, or no row if it
--- is.
-UPDATE comment SET resolved_at = now(), resolved_by = @resolved_by, rev = rev + 1
+-- is. It is resolved as the server's clock has it as the batch applies, as
+-- InsertComment posts a comment, so that a thread resolved in the batch that
+-- started it is not resolved before it was started.
+UPDATE comment SET resolved_at = clock_timestamp(), resolved_by = @resolved_by, rev = rev + 1
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND parent_id IS NULL
     AND resolved_at IS NULL
 RETURNING rev;

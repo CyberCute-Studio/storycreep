@@ -354,7 +354,9 @@ const draftsByDocument = new WeakMap<ProjectDocument, Map<string, Draft>>();
  * while it holds text, by its target's ID, and a reply's and an edit's,
  * while they are open, by their thread's and their comment's (draftKey), as
  * the page counts them as holding what was typed (CommentDrafts), each until
- * it is posted or cancelled, or, of a new thread, emptied. A form made
+ * it is posted or cancelled, or, of a new thread, emptied, but for the ID
+ * that it last sent a body under (keptId), which a new thread's keeps until
+ * its comment is posted. A form made
  * again, as once what is selected on the canvas, or the variable whose
  * panel shows, changes and changes back, or once a thread that a read took
  * out of the list is back, opens with what it held, without the focus,
@@ -387,7 +389,8 @@ function draftOf(drafts: Map<string, Draft>, key: string): Draft {
 /**
  * Returns the ID of the comment that a form posts with body, as draft keeps
  * it: the one that the form last sent that body under, until the form's
- * comment is posted and its draft goes, or else one made anew, so that Post
+ * comment is posted and its draft goes, though its text was emptied and
+ * typed again meanwhile, or else one made anew, so that Post
  * pressed again once no answer came, with the text as it was, sends the
  * same batch, which the document sends with the IDs of the first (enqueue),
  * and which the server answers as it did that one rather than post the
@@ -437,9 +440,17 @@ function NewThread({
         onEdit={(value) => {
           setSaid(undefined);
           // The form holds what was typed while it has text, as the page
-          // counts it (CommentForm's holds).
+          // counts it (CommentForm's holds); emptied, it keeps the ID that
+          // it last sent a body under until its comment is posted, so that
+          // the same text typed again once no answer came is the same
+          // batch (keptId).
+          const draft = drafts.get(key);
           if (textOf(value).chars === 0) {
-            drafts.delete(key);
+            if (draft?.kept === undefined) {
+              drafts.delete(key);
+            } else {
+              draft.body = undefined;
+            }
           } else if (value?.doc !== undefined) {
             draftOf(drafts, key).body = value.doc;
           }
@@ -1074,7 +1085,9 @@ function CommentItem({
           <span className="text-fg-muted"> {t("comments.edited")}</span>
         )}
       </p>
-      {editing ? (
+      {/* An edit open is the user's own comment's, while they may still
+      change it, as no longer once the project is archived meanwhile. */}
+      {editing && own ? (
         <EditForm
           comment={c}
           body={c.body}
@@ -1216,7 +1229,10 @@ function EditForm({
  * The form of a comment's body: a rich text of formatting and links alone,
  * which the server takes, with why it would not under the field, the
  * server's refusal among them, as author_required of another's comment,
- * and its button, which says that it is unavailable while its batch is
+ * whose text is read-only while its batch is under way, as the canvas's
+ * editor of a text is, so that nothing is typed after what was sent, which
+ * the form, emptied or closed once its comment is posted, would lose, and
+ * its button, which says that it is unavailable while its batch is
  * under way, rather than be disabled, so that it keeps the focus, which it
  * has once the form has posted, the text emptied, or which the form that
  * closes once it has, a reply's or an edit's, gives where onDone says. A
@@ -1310,6 +1326,7 @@ function CommentForm({
         label={label}
         hint={hint}
         references={false}
+        editable={!send.isPending}
         defaultValue={posted === 0 ? initial : undefined}
         error={problem ?? refusal?.fields.body ?? refusal?.message}
         onChange={(next) => {
