@@ -641,7 +641,7 @@ describe("a target's threads", () => {
     expect(historyUndo().disabled).toBe(true);
   });
 
-  it("leaves a deleted first comment of a thread with replies in its place, without its body and its author, with an Undo of its own that the page's undo is not", async () => {
+  it("lists a deleted first comment of a thread with replies in its place, without its body and its author, as the server does, with an Undo of its own in its thread that the page's undo is not", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "Lanterns?");
     const theirs = reply("cmt_02", root, "Two of them.", mira);
@@ -660,7 +660,7 @@ describe("a target's threads", () => {
     const undo = await within(comments).findByRole("button", {
       name: "Undo the deletion of the comment",
     });
-    // The Undo is in the Delete's place, with its focus.
+    // The Undo, a line of the thread, takes the focus that Delete had.
     await waitFor(() => expect(document.activeElement).toBe(undo));
     expect(server.batches()).toEqual([
       [
@@ -676,13 +676,13 @@ describe("a target's threads", () => {
     await waitFor(() =>
       expect(within(comments).queryByText("Lanterns?")).toBeNull(),
     );
-    expect(within(comments).getByText("Comment deleted.")).toBeDefined();
+    const listed = undo.closest("li[data-thread]") as HTMLElement;
+    expect(within(listed).getByText("Comment deleted.")).toBeDefined();
+    expect(within(listed).getByText("Your comment was deleted.")).toBeDefined();
     expect(within(comments).queryByText("Jo commented")).toBeNull();
-    expect(within(comments).getByText("Two of them.")).toBeDefined();
+    expect(within(listed).getByText("Two of them.")).toBeDefined();
     expect(
-      within(comments).getByText(
-        "Comment deleted. Undo, in its place, brings it back.",
-      ),
+      within(comments).getByText("Comment deleted. Undo brings it back."),
     ).toBeDefined();
     expect(historyUndo().disabled).toBe(true);
 
@@ -698,23 +698,38 @@ describe("a target's threads", () => {
     ]);
     expect(within(comments).getByText("Comment restored.")).toBeDefined();
     expect(within(comments).queryByText("Comment deleted.")).toBeNull();
+    expect(
+      within(comments).queryByText("Your comment was deleted."),
+    ).toBeNull();
     expect(historyUndo().disabled).toBe(true);
   });
 
-  it("keeps a deleted thread without replies in its place with its Undo, though the server no longer lists it", async () => {
+  it("offers the Undo of a thread's only comment above the threads once the server no longer lists the thread, with the focus that Delete had", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
     commentProject([root]);
     const comments = await openGold();
     expect(await within(comments).findByText("A stray thought.")).toBeDefined();
     await user.click(within(comments).getByRole("button", { name: "Delete" }));
-    const undo = await within(comments).findByRole("button", {
+    await within(comments).findByRole("button", {
       name: "Undo the deletion of the comment",
     });
     await waitFor(() =>
       expect(within(comments).getByText("0 open threads, 0 resolved.")),
     );
-    expect(within(comments).getByText("Comment deleted.")).toBeDefined();
+    // The threads show none, as the server lists none, and the Undo is a
+    // line of their own, which keeps the focus as it leaves the thread.
+    expect(within(comments).getByText("No comments yet.")).toBeDefined();
+    expect(within(comments).queryByText("A stray thought.")).toBeNull();
+    expect(within(comments).queryByText("Comment deleted.")).toBeNull();
+    expect(
+      within(comments).getByText("Your comment was deleted."),
+    ).toBeDefined();
+    const undo = within(comments).getByRole("button", {
+      name: "Undo the deletion of the comment",
+    });
+    expect(undo.closest("li[data-thread]")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(undo));
     await user.click(undo);
     expect(await within(comments).findByText("A stray thought.")).toBeDefined();
     expect(
@@ -724,7 +739,7 @@ describe("a target's threads", () => {
     ).toBeNull();
   });
 
-  it("keeps a deleted reply in its place with its Undo, in a thread whose first comment was deleted before, though the server no longer lists the thread, and offers the Undo until the list's next action", async () => {
+  it("offers the Undo of a reply above the threads once the server no longer lists its thread, whose first comment was deleted before, until the list's next action", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "Gone.", mira, {
       deleted: true,
@@ -738,20 +753,24 @@ describe("a target's threads", () => {
       .getByText("Still here.")
       .closest("li[data-thread]") as HTMLElement;
     await user.click(within(theirs).getByRole("button", { name: "Delete" }));
-    const undo = await within(comments).findByRole("button", {
+    await within(comments).findByRole("button", {
       name: "Undo the deletion of the comment",
     });
-    // The thread, which the server lists no more, stays with its first
-    // comment as deleted and the reply's Undo, but without its Reply.
+    // The thread, which the server lists no more, is gone, and the reply's
+    // Undo is a line of the threads' own.
     await waitFor(() =>
       expect(within(comments).getByText("1 open thread, 0 resolved.")),
     );
-    const gone = undo.closest("li[data-thread]") as HTMLElement;
-    expect(within(gone).getByText("Comment deleted.")).toBeDefined();
-    expect(within(gone).getByText("Reply deleted.")).toBeDefined();
-    expect(within(gone).queryByRole("button", { name: "Reply" })).toBeNull();
+    expect(within(comments).queryByText("Comment deleted.")).toBeNull();
+    expect(within(comments).queryByText("Reply deleted.")).toBeNull();
+    expect(within(comments).getByText("Your reply was deleted.")).toBeDefined();
+    const undo = within(comments).getByRole("button", {
+      name: "Undo the deletion of the comment",
+    });
+    expect(undo.closest("li[data-thread]")).toBeNull();
     await user.click(undo);
     expect(await within(comments).findByText("Still here.")).toBeDefined();
+    expect(within(comments).getByText("Comment deleted.")).toBeDefined();
 
     // The list's next action ends the Undo shown.
     const again = within(comments)
@@ -775,7 +794,7 @@ describe("a target's threads", () => {
     ).toBeNull();
   });
 
-  it("keeps a deletion's Undo through a read that was under way as the deletion was sent, which shows the comment as it was, until a new thread is posted", async () => {
+  it("keeps a deletion's Undo through a read that was under way as the deletion was sent, answered after it with the comment as it was, until a new thread is posted", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
     // What the list was read with before the deletion, which a read that
@@ -809,10 +828,9 @@ describe("a target's threads", () => {
     ).toBeDefined();
     await waitFor(() => expect(answeredLate).toBe(true));
     await act(async () => {});
-    // The comment stays deleted in its place, with its Undo, though the
-    // late answer still has it.
-    expect(within(comments).queryByText("A stray thought.")).toBeNull();
-    expect(within(comments).getByText("Comment deleted.")).toBeDefined();
+    // The late answer, which still has the comment, which the threads show
+    // as the server listed it, leaves the Undo.
+    expect(within(comments).getByText("A stray thought.")).toBeDefined();
     expect(
       within(comments).getByRole("button", {
         name: "Undo the deletion of the comment",
@@ -880,7 +898,7 @@ describe("a target's threads", () => {
     );
     expect(
       await within(comments).findByText(
-        "This thread changed elsewhere since it was shown here, so it is shown again as it is now. Try again if you still mean it.",
+        "This comment changed elsewhere since you deleted it, so its deletion can no longer be undone here. The comments are shown as they are now.",
       ),
     ).toBeDefined();
     expect(within(comments).getByText("A stray thought.")).toBeDefined();
@@ -898,53 +916,83 @@ describe("a target's threads", () => {
     ]);
   });
 
-  it("keeps a deleted reply in its place among replies posted within the same millisecond, as the server orders them to the microsecond", async () => {
+  it("posts a new thread and a reply once, under the IDs that their forms keep, when Post is pressed again after no answer came", async () => {
     const user = userEvent.setup();
-    const root = thread("cmt_01", "variable", gold.id, "Where to?", mira);
-    // Mira's reply was posted first, though its ID is the greater.
-    const theirs = {
-      ...reply("cmt_09", root, "North.", mira),
-      created_at: "2026-11-10T10:00:00.123400Z",
-    };
-    const mine = {
-      ...reply("cmt_05", root, "South.", jo),
-      created_at: "2026-11-10T10:00:00.123900Z",
-    };
-    // Whether the list was read without the deleted reply, once deleted.
-    let relisted = false;
-    commentProject([root, theirs, mine], {
-      listed: async (items) => {
-        relisted ||= !items.some((c) => c.id === mine.id);
-        return items;
+    const root = thread("cmt_01", "variable", gold.id, "Lanterns?", mira);
+    // The first batch of each comment applies, and its answer is lost.
+    const lost = new Set<string>();
+    const server = commentProject([root], {
+      refuse: (commands) => {
+        const id = String(commands[0].payload.id);
+        if (commands[0].type !== "comment.create" || lost.has(id)) {
+          return undefined;
+        }
+        lost.add(id);
+        return new TypeError("Failed to fetch");
       },
     });
     const comments = await openGold();
-    expect(await within(comments).findByText("South.")).toBeDefined();
-    const replies = () =>
-      within(
-        within(comments).getByRole("list", { name: /^\d+ repl/ }),
-      ).getAllByRole("listitem");
-    expect(replies().map((r) => r.textContent)).toEqual([
-      expect.stringContaining("North."),
-      expect.stringContaining("South."),
-    ]);
-    const item = within(comments)
-      .getByText("South.")
-      .closest("li") as HTMLElement;
-    await user.click(within(item).getByRole("button", { name: "Delete" }));
+    expect(await within(comments).findByText("Lanterns?")).toBeDefined();
+    typeInto(
+      within(comments).getByRole("textbox", { name: "New comment" }),
+      "A new one.",
+    );
+    const post = within(comments).getByRole("button", {
+      name: "Post comment",
+    });
+    await user.click(post);
+    await waitFor(() => expect(server.batches()).toHaveLength(1));
+    await user.click(post);
+    expect(await within(comments).findByText("A new one.")).toBeDefined();
+    const lanterns = within(comments)
+      .getByText("Lanterns?")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(lanterns).getByRole("button", { name: "Reply" }));
+    typeInto(within(lanterns).getByRole("textbox", { name: "Reply" }), "Two.");
+    const answer = within(lanterns).getByRole("button", {
+      name: "Post reply",
+    });
+    await user.click(answer);
+    await waitFor(() => expect(server.batches()).toHaveLength(3));
+    await user.click(answer);
+    expect(await within(comments).findByText("Two.")).toBeDefined();
+    // Each comment was sent twice, under one ID.
+    const created = server
+      .batches()
+      .map((batch) => batch[0])
+      .filter((c) => c.type === "comment.create")
+      .map((c) => String(c.payload.id));
+    expect(created).toHaveLength(4);
+    expect(created[1]).toBe(created[0]);
+    expect(created[3]).toBe(created[2]);
+    expect(created[2]).not.toBe(created[0]);
+  });
+
+  it("shows the threads as the server lists them once a deletion takes a thread out of the list's filter, with the deletion's Undo above them", async () => {
+    const user = userEvent.setup();
+    // The user, by an ID that the list's filter in the address takes.
+    const me: CommentAuthor = { id: newId("user"), display_name: "Jo" };
+    const root = thread("cmt_01", "variable", gold.id, "Is it lit?", mira);
+    const mine = reply("cmt_02", root, "Not yet.", me);
+    commentProject([root, mine]);
+    renderApp(`/projects/${testProject.id}/comments?author=${me.id}`, {
+      session: { ...testSession, user_id: me.id },
+    });
+    expect(await screen.findByText("Not yet.")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    // The server lists Mira's thread no more, as the user wrote nothing in
+    // it that is not deleted: her comment is not shown as deleted.
     expect(
-      await within(comments).findByRole("button", {
-        name: "Undo the deletion of the comment",
-      }),
+      await screen.findByText("No open thread matches the filters."),
     ).toBeDefined();
-    // The server lists the thread without it, where the list puts it back.
-    await waitFor(() => expect(relisted).toBe(true));
-    await act(async () => {});
-    expect(within(comments).queryByText("South.")).toBeNull();
-    expect(replies().map((r) => r.textContent)).toEqual([
-      expect.stringContaining("North."),
-      expect.stringContaining("Reply deleted."),
-    ]);
+    expect(screen.queryByText("Is it lit?")).toBeNull();
+    expect(screen.queryByText("Comment deleted.")).toBeNull();
+    expect(screen.getByText("Your reply was deleted.")).toBeDefined();
+    await user.click(
+      screen.getByRole("button", { name: "Undo the deletion of the comment" }),
+    );
+    expect(await screen.findByText("Not yet.")).toBeDefined();
+    expect(screen.getByText("Is it lit?")).toBeDefined();
   });
 
   it("says that a comment changed elsewhere since its edit began, keeps what was typed, and expects the revision that it is read with then", async () => {

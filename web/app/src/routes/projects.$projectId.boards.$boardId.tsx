@@ -354,9 +354,10 @@ function BoardContent({
   // shown stays, and its panel takes the turn (followsFlow). While the
   // canvas has open what the user types in, the inspector or the editor of
   // a text, which the page change would take away unsaved, or a form of the
-  // board's own comments holds what was typed in it, unsent (CommentDrafts),
-  // the page waits for it to close, or to be sent or emptied, and then
-  // follows the flow to where it is by then (BoardCanvas's onHolding).
+  // board's comments, its own or the inspector's, holds what was typed in
+  // it, unsent (CommentDrafts), the page waits for it to close, or to be
+  // sent or emptied, and then follows the flow to where it is by then
+  // (BoardCanvas's onHolding).
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -365,10 +366,11 @@ function BoardContent({
     s.status === "playing" ? s.flow.board : "",
   );
   const [holding, setHolding] = useState(false);
-  // How many forms of the board's own comments, under the canvas, hold what
-  // the user typed, unsent (CommentDrafts), which the page counts and waits
-  // for itself, as it waits for the canvas's, since the script view has no
-  // canvas to tell it of them.
+  // How many forms of the board's comments, its own under the canvas and
+  // the canvas's inspector's, hold what the user typed, unsent
+  // (CommentDrafts), which the page counts and waits for itself, as it
+  // waits for the canvas's, since the script view has no canvas to tell it
+  // of them, and tells the canvas of (drafting).
   const [drafts, holdDraft] = useCommentDrafts();
   const seenTurn = useRef(playTurn);
   useEffect(() => {
@@ -454,45 +456,45 @@ function BoardContent({
           </nav>
         </div>
       </div>
-      {script ? (
-        <ScriptView
-          projectId={projectId}
-          board={board}
-          read={firstRead}
-          editable={editable}
-          focus={search.node}
-        />
-      ) : (
-        <BoardCanvas
-          projectId={projectId}
-          boardId={board.id}
-          boardName={board.name}
-          settingsId="board-settings"
-          read={firstRead}
-          options={options}
-          initial={last.initial}
-          onView={last.onView}
-          workspaceId={project.workspace_id}
-          editable={editable}
-          focus={search.node}
-          focusConnection={search.connection}
-          focusComments={search.comments === true}
-          drafting={drafts > 0}
-          onHolding={setHolding}
-        />
-      )}
-      {!benching && (
-        <div className="mx-auto max-w-3xl">
-          <CommentDrafts.Provider value={holdDraft}>
+      <CommentDrafts.Provider value={holdDraft}>
+        {script ? (
+          <ScriptView
+            projectId={projectId}
+            board={board}
+            read={firstRead}
+            editable={editable}
+            focus={search.node}
+          />
+        ) : (
+          <BoardCanvas
+            projectId={projectId}
+            boardId={board.id}
+            boardName={board.name}
+            settingsId="board-settings"
+            read={firstRead}
+            options={options}
+            initial={last.initial}
+            onView={last.onView}
+            workspaceId={project.workspace_id}
+            editable={editable}
+            focus={search.node}
+            focusConnection={search.connection}
+            focusComments={search.comments === true}
+            drafting={drafts > 0}
+            onHolding={setHolding}
+          />
+        )}
+        {!benching && (
+          <div className="mx-auto max-w-3xl">
             <Comments
               projectId={projectId}
               target={{ type: "board", id: board.id }}
               headingId={boardCommentsId}
               level={2}
             />
-          </CommentDrafts.Provider>
-        </div>
-      )}
+          </div>
+        )}
+      </CommentDrafts.Provider>
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"

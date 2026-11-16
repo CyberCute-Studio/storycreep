@@ -240,8 +240,8 @@ export function commentsOn(role: ProjectBody["role"]): boolean {
  * the page, as every batch of the page's, but outside its history, which
  * Ctrl+Z and the history's buttons undo: a comment's action is no step of
  * the page's undo (plan item 74), and a deleted comment offers its own undo
- * in its place, which sends the undo that the server answered its batch
- * with (sendUndo). It resolves with that undo, empty where the batch
+ * where it was deleted, which sends the undo that the server answered its
+ * batch with (sendUndo). It resolves with that undo, empty where the batch
  * changed nothing.
  */
 export async function sendComments(

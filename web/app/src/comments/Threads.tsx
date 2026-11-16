@@ -10,11 +10,13 @@
 // Edit and Delete on the user's own comments, which only their author may
 // (the server refuses anyone else with author_required). A viewer, and every
 // role on an archived project, reads them with no form. A comment's actions
-// are no steps of the page's undo (sendComments): a deleted comment shows in
-// its place with an Undo of its own, which sends the undo that the server
-// answered its deletion with, until the next batch that the threads send,
-// their new thread's too, or until the list goes, whatever the threads read
-// meanwhile (Deleted). Each action expects the revision of what it changes
+// are no steps of the page's undo (sendComments): a deleted comment offers an
+// Undo of its own where it was deleted, a line of its thread, or of the
+// threads where the server no longer lists the thread, which sends the undo
+// that the server answered its deletion with, until the next batch that the
+// threads send, their new thread's too, or until the list goes, whatever the
+// threads read meanwhile (Deleted), while the threads show the comments as
+// the server lists them. Each action expects the revision of what it changes
 // that the list showed, or, of an edit, that the comment had as its field
 // opened, so that it is refused for a change made elsewhere since, which
 // the list says, read again, rather than write over it (PRD §7.10). A first
@@ -90,8 +92,8 @@ export const CommentDrafts = createContext<(() => () => void) | undefined>(
 /**
  * Returns how many forms of the threads under the CommentDrafts that it
  * gives hold what the user typed, unsent, and what it gives them, which
- * the board's page counts of its own threads, and the canvas of its
- * inspector's (plan item 74).
+ * the board's page counts of its threads, its own under the canvas and
+ * those of the canvas's inspector (plan item 74).
  */
 export function useCommentDrafts(): [number, () => () => void] {
   const [drafts, setDrafts] = useState(0);
@@ -318,7 +320,14 @@ export function ReadFailed({
   );
 }
 
-/** The form of a new thread on target, which empties once its comment is posted. */
+/**
+ * The form of a new thread on target, which empties once its comment is
+ * posted. The comment's ID is the form's until then, made anew once it is
+ * posted, so that Post pressed again once no answer came sends the same
+ * batch, which the document sends with the IDs of the first (enqueue), and
+ * the server answers as it did that one rather than post the comment twice,
+ * as the dialogs that create keep theirs.
+ */
 function NewThread({
   doc,
   target,
@@ -333,6 +342,7 @@ function NewThread({
 }) {
   const { t } = useTranslation();
   const [said, setSaid] = useState<string>();
+  const [id, setId] = useState(() => newId("comment"));
   return (
     <div className="space-y-2">
       <CommentForm
@@ -345,9 +355,10 @@ function NewThread({
           await sendComments(doc, [
             {
               type: "comment.create",
-              payload: { id: newId("comment"), target: target.id, body },
+              payload: { id, target: target.id, body },
             },
           ]);
+          setId(newId("comment"));
           setSaid(t("comments.posted"));
         }}
       />
@@ -357,92 +368,55 @@ function NewThread({
 }
 
 /**
- * The comment that the user deleted last in a list of threads, which shows
- * in its place with its own Undo, the undo that the server answered its
- * deletion with, until the next batch that the threads send, the list's or
- * their new thread's, or until the list goes: the Undo's own ends it once
- * it applies, or once the server refuses it for a change made elsewhere
- * since. No read of the threads ends it, as one that was under way as the
- * deletion was sent may be answered after it with the comment as it was.
+ * The comment that the user deleted last in a list of threads, whose Undo,
+ * the undo that the server answered its deletion with, is a line of its
+ * thread, or of the threads where the server no longer lists the thread,
+ * as once it was the thread's last comment that was not deleted, or once a
+ * filter keeps the thread no more, until the next batch that the threads
+ * send, the list's or their new thread's, or until the list goes: the
+ * Undo's own ends it once it applies, or once the server refuses it for a
+ * change made elsewhere since. No read of the threads ends it, as one that
+ * was under way as the deletion was sent may be answered after it with the
+ * comment as it was, which the threads then show, as the server listed it.
  */
 interface Deleted {
   comment: CommentBody;
-  /** The first comment of its thread as the list showed it as it was deleted: the comment itself, or the root of the thread that a reply was of. */
-  root: CommentBody;
   undo: UndoCommandBody[];
 }
 
 /** Sends a batch of the list's commands of comments, as sendComments does, which the list knows of (ThreadList's send). */
 type Send = (commands: Command[]) => Promise<UndoCommandBody[]>;
 
-/**
- * Returns when c was posted, in microseconds since the epoch, as the server
- * has it, to the microsecond, which Date.parse would cut to the millisecond.
- */
-function postedAt(c: CommentBody): number {
-  const fraction = /\.(\d+)/.exec(c.created_at)?.[1] ?? "";
+/** The line of a deletion's Undo (Deleted), which says what was deleted, with the Undo. */
+function UndoLine({
+  deleted,
+  id,
+  busy,
+  onUndo,
+}: {
+  deleted: Deleted;
+  /** The Undo's ID, by which it takes the focus that Delete had. */
+  id: string;
+  busy: boolean;
+  onUndo: () => void;
+}) {
+  const { t } = useTranslation();
   return (
-    Date.parse(c.created_at.replace(/\.\d+/, "")) * 1000 +
-    Number(fraction.slice(0, 6).padEnd(6, "0"))
-  );
-}
-
-/**
- * Compares two comments by when they were posted, to the microsecond, and
- * then by their IDs, whose text is in the order of their UUIDs, as the
- * server orders a thread's replies, and, the other way, its threads.
- */
-function byPosted(a: CommentBody, b: CommentBody): number {
-  return postedAt(a) - postedAt(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-}
-
-/** Returns threads with thread among them, where the server would list it, newest first. */
-function placed(threads: readonly Thread[], thread: Thread): Thread[] {
-  const at = threads.findIndex((th) => byPosted(th.root, thread.root) < 0);
-  return at < 0
-    ? [...threads, thread]
-    : [...threads.slice(0, at), thread, ...threads.slice(at)];
-}
-
-/**
- * Returns threads with the comment of deleted, if the server no longer
- * lists it, where it was, so that its Undo stays in its place: a reply in
- * its thread, or, where the server no longer lists the thread, as once its
- * first comment was deleted before and its other replies too, in a thread
- * of its own whose first comment shows as deleted; and a first comment of a
- * thread that the server no longer lists, as one whose replies were all
- * deleted, as a thread of its own.
- */
-function withDeleted(
-  threads: readonly Thread[],
-  deleted: Deleted | undefined,
-): readonly Thread[] {
-  if (deleted === undefined) {
-    return threads;
-  }
-  const { comment: c } = deleted;
-  if (
-    threads.some(
-      (th) => th.root.id === c.id || th.replies.some((r) => r.id === c.id),
-    )
-  ) {
-    return threads;
-  }
-  if (c.parent_id === undefined) {
-    return placed(threads, { root: c, replies: [] });
-  }
-  const at = threads.findIndex((th) => th.root.id === c.thread_id);
-  if (at < 0) {
-    const { body: _body, author: _author, ...root } = deleted.root;
-    return placed(threads, {
-      root: { ...root, deleted: true },
-      replies: [c],
-    });
-  }
-  return threads.map((th, i) =>
-    i === at
-      ? { root: th.root, replies: [...th.replies, c].sort(byPosted) }
-      : th,
+    <div className="flex flex-wrap items-center gap-2">
+      <p className="text-fg-muted italic">
+        {deleted.comment.parent_id === undefined
+          ? t("comments.deleted_line")
+          : t("comments.reply_deleted_line")}
+      </p>
+      <LastingButton
+        id={id}
+        unavailable={busy}
+        aria-label={t("comments.undo_delete")}
+        onClick={onUndo}
+      >
+        {t("comments.undo")}
+      </LastingButton>
+    </div>
   );
 }
 
@@ -476,10 +450,11 @@ function useFocusOnceShown(): (pressed: Element | null, id: string) => void {
 
 /**
  * The threads, each under the target that targetOf names, if given, as the
- * project's list does, or empty where there are none. reread reads them
- * again, as once a comment's undo has restored it, after which the list
- * shows it where its Undo was, and once the server refused an action for a
- * change made elsewhere, which the list then shows.
+ * project's list does, or empty where there are none, as the server lists
+ * them, with the line of the Undo of the deletion that the user made here
+ * last (Deleted). reread reads them again, as once a comment's undo has
+ * restored it, after which the list shows it, and once the server refused
+ * an action for a change made elsewhere, which the list then shows.
  */
 export function ThreadList({
   doc,
@@ -518,8 +493,16 @@ export function ThreadList({
   }
   const [said, setSaid] = useState<string>();
   // What failed of a thread's press that has no field, as Resolve, Delete,
-  // or Undo, which the thread says under its buttons, by the thread's ID.
-  const [failed, setFailed] = useState<{ thread: string; error: unknown }>();
+  // or Undo, which the thread says under its buttons, by the thread's ID, or
+  // the threads above them where the list no longer shows the thread, and
+  // whether it was an Undo's, whose refusal for a change made elsewhere
+  // since the deletion says that the deletion is no longer undone here, as
+  // the Undo ends then.
+  const [failed, setFailed] = useState<{
+    thread: string;
+    error: unknown;
+    undo?: boolean;
+  }>();
   const focusOnceShown = useFocusOnceShown();
   // A press of a thread's button, as a request of the page's, which the
   // app's query client records once it fails, but for a refusal of the
@@ -527,15 +510,26 @@ export function ThreadList({
   const press = useMutation({
     mutationFn: (run: () => Promise<void>) => run(),
   });
-  const act = async (thread: string, run: () => Promise<void>) => {
+  const act = async (
+    thread: string,
+    run: () => Promise<void>,
+    undo = false,
+  ) => {
     setSaid(undefined);
     setFailed(undefined);
     try {
       await press.mutateAsync(run);
     } catch (error) {
-      setFailed({ thread, error });
+      setFailed({ thread, error, undo });
     }
   };
+  // What a press failed with, in the threads' own words (refusalOfComment).
+  const failure =
+    failed === undefined
+      ? undefined
+      : failed.undo === true && conflictOf(failed.error)
+        ? t("comments.error.changed_undo")
+        : refusalOfComment(failed.error, t, false)?.message;
   // Reads the threads again once the server refused a batch for a change
   // made elsewhere since the list showed what it changes, so that the list
   // shows it as it is, and an edit saved again expects it (useExpected),
@@ -556,9 +550,36 @@ export function ThreadList({
       throw error;
     }
   };
-  const shown = withDeleted(threads, deleted);
   const idOf = (what: string, commentId: string) =>
     `${ids}-${what}-${commentId}`;
+  // The thread whose line the Undo shown is, where the list shows it, or
+  // else none, of which the threads' own line is (Deleted).
+  const undoThread =
+    deleted !== undefined &&
+    threads.some((th) => th.root.id === deleted.comment.thread_id)
+      ? deleted.comment.thread_id
+      : undefined;
+  // The Undo, which takes the focus that Delete had, keeps it as it moves
+  // between its thread's line and the threads' own, as a read shows the
+  // thread no more, or again: the Undo that it leaves takes the focus with
+  // it, which the browser leaves nowhere then (useFocusOnceShown).
+  const undoPlace = useRef<{ id: string; thread: string | undefined }>(
+    undefined,
+  );
+  useEffect(() => {
+    const was = undoPlace.current;
+    undoPlace.current =
+      deleted === undefined
+        ? undefined
+        : { id: deleted.comment.id, thread: undoThread };
+    if (
+      deleted !== undefined &&
+      was?.id === deleted.comment.id &&
+      was.thread !== undoThread
+    ) {
+      focusOnceShown(null, idOf("undo", deleted.comment.id));
+    }
+  });
   const remove = (thread: Thread, c: CommentBody) =>
     act(thread.root.id, async () => {
       const pressed = document.activeElement;
@@ -576,35 +597,39 @@ export function ThreadList({
         setSaid(t("comments.deleted"));
         return;
       }
-      setDeleted({ comment: c, root: thread.root, undo });
+      setDeleted({ comment: c, undo });
       setSaid(t("comments.deleted_status"));
       focusOnceShown(pressed, idOf("undo", c.id));
     });
   // The Undo ends once it applies, or once the server refuses it for a
   // change made elsewhere since the deletion, as the comment's restoration
   // in another session of the user's, which would refuse it again, and
-  // which the list, read again, then shows in its place; it stays where it
-  // failed otherwise, as where no answer came, to be pressed again. The
-  // comment shown in its place takes the focus that Undo had.
-  const restore = (thread: string, d: Deleted) =>
-    act(thread, async () => {
-      const pressed = document.activeElement;
-      const ended = async () => {
-        await reread().catch(() => undefined);
-        setDeleted(undefined);
-        focusOnceShown(pressed, idOf("comment", d.comment.id));
-      };
-      try {
-        await sendUndo(doc, d.undo);
-      } catch (error) {
-        if (conflictOf(error)) {
-          await ended();
+  // which the list, read again, then shows; it stays where it failed
+  // otherwise, as where no answer came, to be pressed again. The comment
+  // that the list then shows takes the focus that Undo had.
+  const restore = (d: Deleted) =>
+    act(
+      d.comment.thread_id,
+      async () => {
+        const pressed = document.activeElement;
+        const ended = async () => {
+          await reread().catch(() => undefined);
+          setDeleted(undefined);
+          focusOnceShown(pressed, idOf("comment", d.comment.id));
+        };
+        try {
+          await sendUndo(doc, d.undo);
+        } catch (error) {
+          if (conflictOf(error)) {
+            await ended();
+          }
+          throw error;
         }
-        throw error;
-      }
-      await ended();
-      setSaid(t("comments.restored"));
-    });
+        await ended();
+        setSaid(t("comments.restored"));
+      },
+      true,
+    );
   const resolve = (root: CommentBody, resolved: boolean) =>
     act(root.id, async () => {
       await send([
@@ -616,14 +641,31 @@ export function ThreadList({
       ]);
       setSaid(resolved ? t("comments.resolved") : t("comments.reopened"));
     });
+  const undoLine = (d: Deleted) => (
+    <UndoLine
+      deleted={d}
+      id={idOf("undo", d.comment.id)}
+      busy={press.isPending}
+      onUndo={() => void restore(d)}
+    />
+  );
+  // What a press of a thread that the list no longer shows failed with, as
+  // the Undo of the deletion of its last comment, which the threads say
+  // above them.
+  const failedElsewhere =
+    failed !== undefined && !threads.some((th) => th.root.id === failed.thread)
+      ? failure
+      : undefined;
   return (
     <div className="space-y-3">
       <Status message={said} />
-      {shown.length === 0 ? (
+      {deleted !== undefined && undoThread === undefined && undoLine(deleted)}
+      <Alert message={failedElsewhere} />
+      {threads.length === 0 ? (
         <p className="text-fg-muted">{empty}</p>
       ) : (
         <ol className="space-y-3">
-          {shown.map((thread) => (
+          {threads.map((thread) => (
             <ThreadItem
               key={thread.root.id}
               send={send}
@@ -631,15 +673,16 @@ export function ThreadList({
               writable={writable}
               userId={userId}
               busy={press.isPending}
-              deleted={deleted}
               idOf={idOf}
-              failed={
-                failed?.thread === thread.root.id ? failed.error : undefined
+              undo={
+                deleted !== undefined && undoThread === thread.root.id
+                  ? undoLine(deleted)
+                  : undefined
               }
+              failed={failed?.thread === thread.root.id ? failure : undefined}
               target={targetOf?.(thread.root)}
               heading={heading}
               onDelete={(c) => void remove(thread, c)}
-              onUndo={(d) => void restore(thread.root.id, d)}
               onResolve={(resolved) => void resolve(thread.root, resolved)}
             />
           ))}
@@ -649,20 +692,19 @@ export function ThreadList({
   );
 }
 
-/** A thread: what it is on, where the list names it, its comments, and its buttons. */
+/** A thread: what it is on, where the list names it, its comments, the line of the Undo of a deletion of one of them, and its buttons. */
 function ThreadItem({
   send,
   thread,
   writable,
   userId,
   busy,
-  deleted,
   idOf,
+  undo,
   failed,
   target,
   heading,
   onDelete,
-  onUndo,
   onResolve,
 }: {
   send: Send;
@@ -671,14 +713,14 @@ function ThreadItem({
   userId: string | undefined;
   /** Whether a press of the threads is under way, as a deletion. */
   busy: boolean;
-  deleted: Deleted | undefined;
   idOf: (what: string, commentId: string) => string;
-  /** What the thread's last press without a field failed with, if it did. */
-  failed: unknown;
+  /** The line of the Undo of the deletion of a comment of the thread that the user made here, if it is shown (Deleted). */
+  undo: ReactNode;
+  /** What the thread's last press without a field failed with, if it did, in the threads' own words. */
+  failed: string | undefined;
   target: ReactNode;
   heading: RefObject<HTMLElement | null>;
   onDelete: (c: CommentBody) => void;
-  onUndo: (d: Deleted) => void;
   onResolve: (resolved: boolean) => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -686,12 +728,6 @@ function ThreadItem({
   const [replying, setReplying] = useState(false);
   const replyButton = useRef<HTMLButtonElement>(null);
   const resolved = root.resolved === true;
-  const refusal = refusalOfComment(failed, t, false);
-  // A thread whose comments are all deleted, of which only a deletion's
-  // Undo stays, takes no reply, nor a resolve, as the server lists it no
-  // more.
-  const gone = (c: CommentBody) => c.deleted || deleted?.comment.id === c.id;
-  const live = !gone(root) || replies.some((r) => !gone(r));
   const comment = (c: CommentBody, reply: boolean) => (
     <CommentItem
       key={c.id}
@@ -699,11 +735,9 @@ function ThreadItem({
       comment={c}
       reply={reply}
       own={writable && c.author !== undefined && c.author.id === userId}
-      deleted={deleted?.comment.id === c.id ? deleted : undefined}
       busy={busy}
       idOf={idOf}
       onDelete={() => onDelete(c)}
-      onUndo={onUndo}
     />
   );
   return (
@@ -725,6 +759,7 @@ function ThreadItem({
           ))}
         </ol>
       )}
+      {undo}
       {resolved && (
         <p className="text-sm text-fg-muted">
           {root.resolved_by === undefined
@@ -744,24 +779,14 @@ function ThreadItem({
         </p>
       )}
       {writable &&
-        live &&
         (replying ? (
-          <CommentForm
-            label={t("comments.reply_label")}
-            submit={t("comments.reply_post")}
-            autoFocus
+          <ReplyForm
+            send={send}
+            rootId={root.id}
             onCancel={() => {
               setReplying(false);
               requestAnimationFrame(() => replyButton.current?.focus());
             }}
-            onSend={(body) =>
-              send([
-                {
-                  type: "comment.create",
-                  payload: { id: newId("comment"), parent_id: root.id, body },
-                },
-              ]).then(() => undefined)
-            }
             // The Reply button comes back as the form goes, which takes the
             // focus that the form had, rather than from where the user put
             // it meanwhile.
@@ -792,59 +817,78 @@ function ThreadItem({
             </LastingButton>
           </div>
         ))}
-      <Alert message={refusal?.message} />
+      <Alert message={failed} />
     </li>
   );
 }
 
-/** A comment: who wrote it and when, its body, and the user's own buttons of it, or, deleted, that it is, with its Undo where the user deleted it here. */
+/**
+ * The form of a reply to the thread whose first comment's ID is rootId,
+ * whose comment's ID is the form's while it is open, so that Post reply
+ * pressed again once no answer came sends the same batch, which the server
+ * answers as it did the first rather than post the reply twice (NewThread).
+ */
+function ReplyForm({
+  send,
+  rootId,
+  onCancel,
+  onDone,
+}: {
+  send: Send;
+  rootId: string;
+  onCancel: () => void;
+  onDone: (focused: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const [id] = useState(() => newId("comment"));
+  return (
+    <CommentForm
+      label={t("comments.reply_label")}
+      submit={t("comments.reply_post")}
+      autoFocus
+      onCancel={onCancel}
+      onSend={(body) =>
+        send([
+          {
+            type: "comment.create",
+            payload: { id, parent_id: rootId, body },
+          },
+        ]).then(() => undefined)
+      }
+      onDone={onDone}
+    />
+  );
+}
+
+/** A comment: who wrote it and when, its body, and the user's own buttons of it, or, deleted, that it is, as the server lists a thread's first comment that is deleted while a reply of it is not. */
 function CommentItem({
   send,
   comment: c,
   reply,
   own,
-  deleted,
   busy,
   idOf,
   onDelete,
-  onUndo,
 }: {
   send: Send;
   comment: CommentBody;
   reply: boolean;
   /** Whether the comment is the user's own, which they edit and delete. */
   own: boolean;
-  /** The deletion of the comment that the user made here, whose Undo it offers. */
-  deleted: Deleted | undefined;
   busy: boolean;
   idOf: (what: string, commentId: string) => string;
   onDelete: () => void;
-  onUndo: (d: Deleted) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const bylineId = idOf("byline", c.id);
-  if (deleted !== undefined || c.deleted || c.body === undefined) {
+  if (c.deleted || c.body === undefined) {
     return (
-      <div
-        id={idOf("comment", c.id)}
-        tabIndex={-1}
-        className="flex flex-wrap items-center gap-2"
-      >
+      <div id={idOf("comment", c.id)} tabIndex={-1}>
         <p id={bylineId} className="text-fg-muted italic">
           {reply ? t("comments.reply_deleted") : t("comments.deleted")}
         </p>
-        {deleted !== undefined && (
-          <LastingButton
-            id={idOf("undo", c.id)}
-            unavailable={busy}
-            aria-label={t("comments.undo_delete")}
-            onClick={() => onUndo(deleted)}
-          >
-            {t("comments.undo")}
-          </LastingButton>
-        )}
       </div>
     );
   }

@@ -67,7 +67,6 @@ import {
   useRegistry,
 } from "../commands/registry";
 import { commentCountsQuery } from "../comments/queries";
-import { CommentDrafts, useCommentDrafts } from "../comments/Threads";
 import { boardPart } from "../document/doc";
 import {
   useBoard,
@@ -457,20 +456,21 @@ interface BoardCanvasProps {
    */
   focusComments?: boolean;
   /**
-   * Whether the page holds what the user typed outside the canvas, unsent,
-   * as a comment on the board under it (plan item 74), which the page does
-   * not take away either as it follows play mode's flow, as it does not the
-   * canvas's own (onHolding), so that the panel keeps the focus where the
-   * flow is while the page waits for it.
+   * Whether the page holds what the user typed in a form of comments,
+   * unsent, as one of the inspector's or of the board's own under the
+   * canvas (plan item 74), which the page counts of the CommentDrafts that
+   * it gives them both, and does not take away either as it follows play
+   * mode's flow, as it does not the canvas's own (onHolding), so that the
+   * panel keeps the focus where the flow is while the page waits for it.
    */
   drafting?: boolean;
   /**
    * Tells whether the canvas has open what the user types in, which a page
    * change would take away unsaved: the inspector of a board that the user
-   * may change, a form of comments in the inspector that holds what was
-   * typed (plan item 74), or the editor of a text, as it opens and closes,
-   * which the board's page waits for to close before it follows play mode's
-   * flow to another board's page (plan note N78).
+   * may change, a form of comments that holds what was typed (drafting,
+   * plan item 74), or the editor of a text, as it opens and closes, which
+   * the board's page waits for to close before it follows play mode's flow
+   * to another board's page (plan note N78).
    */
   onHolding?: (holding: boolean) => void;
 }
@@ -1709,14 +1709,9 @@ function BoardCanvasOf({
   // (onHolding), while the panel keeps the focus where the flow is. The
   // inspector of a board that the user may not change, as a commenter's or
   // a viewer's, shows the comments of what is selected alone, which hold
-  // what was typed while one of their forms does (CommentDrafts), as the
-  // board's own under the canvas do (drafting, plan item 74).
-  const [inspectorDrafts, holdInspectorDraft] = useCommentDrafts();
-  const holding =
-    (inspecting && editable) ||
-    editing !== undefined ||
-    drafting ||
-    inspectorDrafts > 0;
+  // what was typed while one of their forms does, as the board's own under
+  // the canvas do, as the page counts them (drafting, plan item 74).
+  const holding = (inspecting && editable) || editing !== undefined || drafting;
   useEffect(() => {
     onHolding?.(holding);
   }, [onHolding, holding]);
@@ -2828,30 +2823,28 @@ function BoardCanvasOf({
           )}
         </div>
         {inspecting && (
-          <CommentDrafts.Provider value={holdInspectorDraft}>
-            <Inspector
-              projectId={projectId}
-              editable={editable}
-              selection={selection}
-              connection={connection}
-              actions={actions}
-              targets={targets}
-              onSelectConnection={(id) => controller.selectConnection(id)}
-              onSelectNode={(id) => controller.select([id], "replace")}
-              onFollow={follow}
-              // A sheet over the canvas closes to show the editor of the
-              // text, which it would else hold inert under it.
-              onEditText={(id) => {
-                openText(id);
-                if (!docked) {
-                  setInspecting(false);
-                }
-              }}
-              onClose={() => setInspecting(false)}
-              returnFocus={() => inspectorButton.current}
-              headingRef={inspectorHeading}
-            />
-          </CommentDrafts.Provider>
+          <Inspector
+            projectId={projectId}
+            editable={editable}
+            selection={selection}
+            connection={connection}
+            actions={actions}
+            targets={targets}
+            onSelectConnection={(id) => controller.selectConnection(id)}
+            onSelectNode={(id) => controller.select([id], "replace")}
+            onFollow={follow}
+            // A sheet over the canvas closes to show the editor of the text,
+            // which it would else hold inert under it.
+            onEditText={(id) => {
+              openText(id);
+              if (!docked) {
+                setInspecting(false);
+              }
+            }}
+            onClose={() => setInspecting(false)}
+            returnFocus={() => inspectorButton.current}
+            headingRef={inspectorHeading}
+          />
         )}
         {/* Play mode's panel, while play is under way, where the inspector,
         while it is open, is not (plan note N78), which gives the focus back
