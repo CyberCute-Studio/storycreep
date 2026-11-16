@@ -79,6 +79,27 @@ type BranchOutput struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type Comment struct {
+	ID           pgtype.UUID
+	WorkspaceID  pgtype.UUID
+	ProjectID    pgtype.UUID
+	ParentID     pgtype.UUID
+	ThreadID     pgtype.UUID
+	NodeID       pgtype.UUID
+	ConnectionID pgtype.UUID
+	BoardID      pgtype.UUID
+	VariableID   pgtype.UUID
+	Body         []byte
+	Rev          int64
+	ResolvedAt   pgtype.Timestamptz
+	ResolvedBy   pgtype.UUID
+	EditedAt     pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Component struct {
 	ID              pgtype.UUID
 	WorkspaceID     pgtype.UUID

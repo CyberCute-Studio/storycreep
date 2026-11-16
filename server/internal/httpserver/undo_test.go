@@ -320,7 +320,7 @@ func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 	creations := []string{"folder.create", "board.create", "node.create", "node.create", "node.create",
 		"connection.create", "connection.create", "variable.create", "variable.create", "component_type.create",
 		"attribute.create", "attribute.create", "component.create", "component.create", "branch_output.create",
-		"branch_output.create", "play_state.create"}
+		"branch_output.create", "play_state.create", "comment.create", "comment.create"}
 	for range 120 {
 		typ := creations[g.r.IntN(len(creations))]
 		if g.r.IntN(3) == 0 {
@@ -611,7 +611,7 @@ var undoTables = []struct{ table, live string }{
 	{"folder", "live_folder"}, {"board", "live_board"}, {"variable", "live_variable"},
 	{"component_type", "live_component_type"}, {"attribute_def", "live_attribute_def"},
 	{"component", "live_component"}, {"node", "live_node"}, {"branch_output", "live_branch_output"},
-	{"connection", "live_connection"}, {"play_state", "live_play_state"},
+	{"connection", "live_connection"}, {"play_state", "live_play_state"}, {"comment", "live_comment"},
 }
 
 // undoRevisions returns the revision of every entity of the project, by its
@@ -621,7 +621,7 @@ func undoRevisions(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]in
 	kinds := map[string]ids.Kind{"folder": ids.Folder, "board": ids.Board, "variable": ids.Variable,
 		"component_type": ids.ComponentType, "attribute_def": ids.AttributeDef, "component": ids.Component,
 		"node": ids.Node, "branch_output": ids.BranchOutput, "connection": ids.Connection,
-		"play_state": ids.PlayState}
+		"play_state": ids.PlayState, "comment": ids.Comment}
 	revs := map[string]int64{}
 	var rev int64
 	if err := conn.QueryRow(context.Background(), "SELECT rev FROM project WHERE id = $1", project).
@@ -647,8 +647,9 @@ func undoRevisions(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]in
 }
 
 // undoRow is a row of a project's content without its revision, timestamps,
-// and authors, with whether it is in the trash as deleted, and whether it is
-// outside the trash, as everything that reads the content sees it.
+// and authors, with whether it is in the trash as deleted, and a thread as
+// resolved, and whether it is outside the trash, as everything that reads the
+// content sees it.
 type undoRow struct {
 	content map[string]any
 	live    bool
@@ -679,6 +680,8 @@ func readUndoState(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]un
 					content["deleted"] = v != nil
 				case k == "archived_at":
 					content["archived"] = v != nil
+				case k == "resolved_at":
+					content["resolved"] = v != nil
 				}
 				if k == "rev" || k == "seq" || k == "hard_delete_after" || strings.HasSuffix(k, "_at") ||
 					strings.HasSuffix(k, "_by") {
@@ -742,6 +745,10 @@ type undoModel struct {
 	// owner.
 	mutes      []undoEntity
 	playStates []undoEntity
+	// comments are the comments, and threads the threads that are shown, by
+	// their first comments' IDs: those that live_comment holds a comment of.
+	comments []undoEntity
+	threads  map[string]bool
 }
 
 // undoEntity is an entity of an undoModel, with the fields that its kind's
@@ -754,10 +761,12 @@ type undoEntity struct {
 	// output's, or a connection's, node an output's, key a variable's, an
 	// attribute definition's, or a component's, componentType an attribute
 	// definition's or a component's, options an enum's, and runtime an
-	// attribute definition's.
-	kind, typ, scope, board, node, key, componentType string
-	options                                           []string
-	runtime                                           bool
+	// attribute definition's; thread is a comment's thread, its first
+	// comment's ID, which reply says that it is not, and resolved says
+	// whether a first comment's thread is resolved.
+	kind, typ, scope, board, node, key, componentType, thread string
+	options                                                   []string
+	runtime, reply, resolved                                  bool
 }
 
 // readUndoModel reads the project's content for the generators.
@@ -818,6 +827,16 @@ func readUndoModel(t *testing.T, conn *pgx.Conn, project ids.UUID) *undoModel {
 	})
 	read(ids.PlayState, common("play_state")+" FROM play_state t WHERE t.project_id = $1 ORDER BY t.id",
 		&m.playStates, none)
+	read(ids.Comment, common("comment")+", t.thread_id, t.parent_id IS NOT NULL, t.resolved_at IS NOT NULL "+
+		"FROM comment t WHERE t.project_id = $1 ORDER BY t.id", &m.comments, func(e *undoEntity) []any {
+		return []any{encoded(ids.Comment, &e.thread), &e.reply, &e.resolved}
+	})
+	m.threads = map[string]bool{}
+	for _, c := range m.comments {
+		if c.live {
+			m.threads[c.thread] = true
+		}
+	}
 	live := map[string]bool{}
 	for _, es := range [][]undoEntity{m.nodes, m.connections, m.outputs, m.variables, m.boards} {
 		for _, e := range es {
@@ -1439,6 +1458,50 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 	},
 	"play_state.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.playStates, true) },
 	"play_state.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.playStates, false) },
+
+	// The owner, who sends every batch, wrote every comment, so each may be
+	// edited, deleted, and restored.
+	"comment.create": func(g *undoGen) (map[string]any, bool) {
+		p := obj("id", g.id(ids.Comment), "body", g.commentBody())
+		if root, ok := g.pick(g.m.comments, func(c undoEntity) bool {
+			return !c.reply && g.m.threads[c.id]
+		}); ok && g.coin() {
+			p["parent_id"] = root.id
+			return p, true
+		}
+		var targets []undoEntity
+		for _, es := range [][]undoEntity{g.m.nodes, g.m.connections, g.m.boards, g.m.variables} {
+			targets = append(targets, es...)
+		}
+		t, ok := g.live(targets)
+		p["target"] = t.id
+		return p, ok
+	},
+	"comment.edit": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.m.comments, func(c undoEntity) map[string]any {
+			return obj("id", c.id, "body", g.commentBody())
+		})
+	},
+	// A comment of a thread whose target is in the trash is deleted too.
+	"comment.delete": func(g *undoGen) (map[string]any, bool) {
+		c, ok := g.pick(g.m.comments, func(c undoEntity) bool { return !c.deleted })
+		return obj("id", c.id), ok
+	},
+	"comment.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.comments, false) },
+	"comment.resolve": func(g *undoGen) (map[string]any, bool) {
+		c, ok := g.pick(g.m.comments, func(c undoEntity) bool { return !c.reply && !c.resolved && g.m.threads[c.id] })
+		return obj("id", c.id), ok
+	},
+	"comment.unresolve": func(g *undoGen) (map[string]any, bool) {
+		c, ok := g.pick(g.m.comments, func(c undoEntity) bool { return !c.reply && c.resolved && g.m.threads[c.id] })
+		return obj("id", c.id), ok
+	},
+}
+
+// commentBody returns a random comment's body: a paragraph of text, which a
+// comment holds no value reference or mention in.
+func (g *undoGen) commentBody() json.RawMessage {
+	return richText(textInline(g.text()))
 }
 
 // state returns a random save state of the project, as play mode saves one:

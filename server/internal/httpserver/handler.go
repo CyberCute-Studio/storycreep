@@ -19,6 +19,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/clipboard"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
@@ -101,6 +102,9 @@ type server struct {
 	// playStates reads the projects' saved play states, which their
 	// commands change (package playstate).
 	playStates *playstate.Service
+	// comments reads the projects' threaded comments, which their commands
+	// change (package comment).
+	comments *comment.Service
 	// clipboard copies nodes as a clipboard, and reports what of one a paste
 	// would resolve to nothing.
 	clipboard *clipboard.Service
@@ -137,6 +141,7 @@ func newCommandRegistry() *commands.Registry {
 	connection.Register(registry)
 	clipboard.Register(registry)
 	playstate.Register(registry)
+	comment.Register(registry)
 	expression.Register(registry)
 	dependency.Register(registry)
 	validation.Register(registry)
@@ -191,6 +196,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.statistics = statistics.New(readyDB{s.ready}, statistics.Options{Projects: s.projects})
 	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
 	s.playStates = playstate.New(readyDB{s.ready}, playstate.Options{Projects: s.projects})
+	s.comments = comment.New(readyDB{s.ready}, comment.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -285,6 +291,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)
 	registerPlayStates(s.main, s.playStates)
+	registerComments(s.main, s.comments)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)

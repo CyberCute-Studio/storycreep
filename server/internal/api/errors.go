@@ -36,6 +36,7 @@ const (
 	CodeInsufficientScope     Code = "insufficient_scope"
 	CodeSessionRequired       Code = "session_required"
 	CodeOwnerRequired         Code = "owner_required"
+	CodeAuthorRequired        Code = "author_required"
 	CodeOwnerNotGrantable     Code = "owner_not_grantable"
 	CodeSignupClosed          Code = "signup_closed"
 	CodeInviteRequired        Code = "invite_required"
@@ -176,6 +177,14 @@ var codes = []codeSpec{
 			"`owner`, by a role change or an invitation, send an invitation as `owner` anew, demote or remove an " +
 			"owner, or set or remove an owner's grant on a project, which would replace their role there (PRD §5.6, " +
 			"FR-TEN-03 AC4, FR-TEN-04)."},
+	{CodeAuthorRequired, http.StatusForbidden, i18n.K("error.author_required"),
+		"Only the author of a comment may edit it, delete it, or restore it, whatever their role, and the " +
+			"signed-in user is not its author (PRD FR-COMMENT-01): a batch of `POST " +
+			"/api/v1/projects/{project_id}/commands` with a `comment.edit`, `comment.delete`, or `comment.restore` " +
+			"of another user's comment, or of one whose author's account is deleted, which nobody changes. Nothing " +
+			"of the batch applies. Anyone whose role allows commenting may reply to any comment, and resolve or " +
+			"unresolve any thread. `details.errors` names the command's `id`, with its `location` and a " +
+			"`message`, as for `validation_failed`."},
 	{CodeOwnerNotGrantable, http.StatusBadRequest, i18n.K("error.owner_not_grantable"),
 		"A project grant was asked for with the role `owner`, which is a role of the workspace alone (PRD " +
 			"FR-TEN-04 AC5): a grant is `admin`, `editor`, `commenter`, or `viewer`. Nothing changes. " +

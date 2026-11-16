@@ -390,6 +390,16 @@ var Tables = []Table{
 		return Statement{id, "INSERT INTO play_state (id, workspace_id, project_id, name, state) " +
 			"VALUES ($1, $2, $3, 'After act 1', $4)", []any{id, w.ID, w.Rows["project"], state}}, nil
 	}},
+	{Name: "comment", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// The first comment of a thread on the workspace's node, with which
+		// it is in the trash while the node is, so the trash's tests delete
+		// it before they delete the node.
+		id := ids.New()
+		return Statement{id, "INSERT INTO comment (id, workspace_id, project_id, node_id, body, created_by) " +
+			`VALUES ($1, $2, $3, $4, '{"type": "doc", "content": [{"type": "paragraph", "content": ` +
+			`[{"type": "text", "text": "Does the lighthouse exist yet?"}]}]}', $5)`,
+			[]any{id, w.ID, w.Rows["project"], w.Rows["node"], w.UserID}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

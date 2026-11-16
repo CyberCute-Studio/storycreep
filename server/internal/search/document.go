@@ -28,17 +28,17 @@ const (
 
 // Source is what the document of an entity is made of, as its rows hold it
 // (queries.NodeSearchSources and the other kinds'): a node's title and text,
-// a connection's label, a variable's key and description, and a component's
-// name, key, description, and values of text.
+// a connection's label, a variable's key and description, a component's
+// name, key, description, and values of text, and a comment's body.
 type Source struct {
 	Kind Kind
 	ID   ids.UUID
 	// Title is a node's title, a variable's key, or a component's name, and
-	// "" for a connection, which has none.
+	// "" for a connection and a comment, which have none.
 	Title string
-	// Doc is the rich text of a node's text, a connection's label, or a
-	// component's description, as it is stored, or nil for a node that has
-	// none, a branch or a jumper, and for a variable.
+	// Doc is the rich text of a node's text, a connection's label, a
+	// component's description, or a comment's body, as it is stored, or nil
+	// for a node that has none, a branch or a jumper, and for a variable.
 	Doc []byte
 	// Key is a component's key.
 	Key string
@@ -60,12 +60,12 @@ type Document struct {
 	Kind Kind
 	ID   ids.UUID
 	// Title is a node's title, a variable's key, a component's name, or ""
-	// for a connection.
+	// for a connection and a comment.
 	Title string
-	// Body is the plain text of a node's text or a connection's label, a
-	// variable's description, or a component's key, the plain text of its
-	// description, and its values, each on a line of its own, but for those
-	// that are empty.
+	// Body is the plain text of a node's text, a connection's label, or a
+	// comment's body, a variable's description, or a component's key, the
+	// plain text of its description, and its values, each on a line of its
+	// own, but for those that are empty.
 	Body string
 }
 
@@ -83,7 +83,7 @@ type Document struct {
 func NewDocument(s Source) (Document, error) {
 	var parts []string
 	switch s.Kind {
-	case Node, Connection:
+	case Node, Connection, Comment:
 		text, err := plainText(s.Doc)
 		if err != nil {
 			return Document{}, fmt.Errorf("search: the text of the %s %s: %w", s.Kind, s.ID, err)

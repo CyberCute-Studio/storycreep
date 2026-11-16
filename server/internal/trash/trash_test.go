@@ -493,9 +493,10 @@ func TestRestorePurged(t *testing.T) {
 // a table whose rows it does not list. A table of a project's content with a
 // deleted_at must be one of them (TestTrashTables). A node of the
 // workspace's board is in the trash with it, so it is deleted before it, and
-// a connection and a branch output of the node are in the trash with the
-// node, so they are deleted before the node.
-var trashTables = []struct{ name, kind string }{{"folder", ""}, {"connection", ""}, {"branch_output", ""},
+// a connection, a branch output, and a comment of the node are in the trash
+// with the node, so they are deleted before the node.
+var trashTables = []struct{ name, kind string }{{"comment", ""}, {"folder", ""}, {"connection", ""},
+	{"branch_output", ""},
 	{"node", "node"},
 	{"board", "board"}, {"variable", "variable"}, {"attribute_def", ""}, {"component_type", ""},
 	{"component", "component"}, {"play_state", ""}}
@@ -766,7 +767,7 @@ func TestTrashIsolation(t *testing.T) {
 	}
 	for _, w := range []*isolationtest.Workspace{f.A, f.B} {
 		for _, table := range []string{"board", "node", "branch_output", "connection", "folder", "variable",
-			"component_type", "attribute_def", "component", "play_state"} {
+			"component_type", "attribute_def", "component", "play_state", "comment"} {
 			if _, err := f.Admin().Exec(ctx, "UPDATE "+table+" SET deleted_at = now() - interval '31 days' "+
 				"WHERE id = $1", w.Rows[table]); err != nil {
 				t.Fatal(err)
@@ -835,6 +836,10 @@ func TestTrashIsolation(t *testing.T) {
 				return nil, err
 			}
 			if _, err := q.PurgePlayStates(ctx, queries.PurgePlayStatesParams{WorkspaceID: uuid(target.ID),
+				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
+				return nil, err
+			}
+			if _, err := q.PurgeComments(ctx, queries.PurgeCommentsParams{WorkspaceID: uuid(target.ID),
 				ProjectID: uuid(target.Rows["project"]), Retention: retention, MaxRows: 10}); err != nil {
 				return nil, err
 			}

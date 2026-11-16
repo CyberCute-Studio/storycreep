@@ -14,6 +14,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ident"
@@ -300,7 +301,9 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). " +
 			"Each command is authorised " +
 			"by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and " +
-			"a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A " +
+			"a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a " +
+			"change of a comment that only its author may make, an edit, a deletion, or a restoration of it, " +
+			"that another user sends refuses its batch with 403 author_required, whatever their role. A " +
 			"batch with a command that only a session may apply, as deleting or restoring the project, which an " +
 			"API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04)." +
 			projectNotFoundDoc + tokenNotFoundDoc + " Every expected_rev of a batch is checked against the " +
@@ -617,6 +620,8 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 			"usage_count": inUse.Count, "counts": inUse.Counts}}
 	case errors.Is(r.Reason, commands.ErrInsufficientRole):
 		return &api.Error{Code: api.CodeInsufficientRole, Details: map[string]any{"errors": problems}}
+	case errors.Is(r.Reason, comment.ErrNotAuthor):
+		return &api.Error{Code: api.CodeAuthorRequired, Details: map[string]any{"errors": problems}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

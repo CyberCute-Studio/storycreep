@@ -2731,6 +2731,24 @@
             "$ref": "#/components/schemas/ClipboardPasteCommand"
           },
           {
+            "$ref": "#/components/schemas/CommentCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/CommentDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/CommentEditCommand"
+          },
+          {
+            "$ref": "#/components/schemas/CommentResolveCommand"
+          },
+          {
+            "$ref": "#/components/schemas/CommentRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/CommentUnresolveCommand"
+          },
+          {
             "$ref": "#/components/schemas/ComponentCreateCommand"
           },
           {
@@ -3029,6 +3047,491 @@
         },
         "required": [
           "results"
+        ],
+        "type": "object"
+      },
+      "CommentAuthor": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "The user's display name",
+            "type": "string"
+          },
+          "id": {
+            "description": "The user's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "CommentBody": {
+        "additionalProperties": false,
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/CommentAuthor",
+            "description": "The comment's author, the one user who may edit it or delete it. A deleted comment has none, and nor does one whose author's account is deleted, which nobody may change."
+          },
+          "board_id": {
+            "description": "The ID of the target's board: a node's, a connection's, or a board variable's, or the board itself. A global variable has none.",
+            "type": "string"
+          },
+          "board_name": {
+            "description": "The name of the target's board, which a comment has exactly when it has board_id",
+            "type": "string"
+          },
+          "body": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, without value references or mentions. A deleted comment has none."
+          },
+          "created_at": {
+            "description": "When the comment was posted",
+            "format": "date-time",
+            "type": "string"
+          },
+          "deleted": {
+            "description": "Whether the comment is deleted, which a list shows of the first comment of a thread whose replies are not all deleted, without its body and its author, as long as one of them is not",
+            "type": "boolean"
+          },
+          "deleted_at": {
+            "description": "When the comment went to the project's trash, if it is there, which only an answer of revision_conflict shows",
+            "format": "date-time",
+            "type": "string"
+          },
+          "edited_at": {
+            "description": "When the comment's body last changed after it was posted, if it ever did: its author's edit, or the undo of one",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The comment's ID",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none.",
+            "type": "string"
+          },
+          "node_title": {
+            "description": "The title of the target's node, which may be empty, and which a comment has exactly when it has node_id",
+            "type": "string"
+          },
+          "parent_id": {
+            "description": "The ID of the first comment of the thread that a reply replies to. A thread's first comment has none.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the comment's project",
+            "type": "string"
+          },
+          "resolved": {
+            "description": "Whether the thread is resolved, which its first comment alone holds. A reply has none.",
+            "type": "boolean"
+          },
+          "resolved_at": {
+            "description": "When the thread was resolved, if it is, which its first comment alone holds",
+            "format": "date-time",
+            "type": "string"
+          },
+          "resolved_by": {
+            "$ref": "#/components/schemas/CommentAuthor",
+            "description": "Who resolved the thread, if it is resolved, which its first comment alone holds, unless their account is deleted"
+          },
+          "rev": {
+            "description": "The comment's revision, which every change of it increments, its thread's resolution included, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target_id": {
+            "description": "The ID of the thread's target",
+            "type": "string"
+          },
+          "target_type": {
+            "description": "The kind of the thread's target, which every comment of the thread names: a node, a connection, a board, or a variable",
+            "enum": [
+              "node",
+              "connection",
+              "board",
+              "variable"
+            ],
+            "type": "string"
+          },
+          "thread_id": {
+            "description": "The ID of the comment's thread, its first comment's: the comment's own for a first comment, and its parent_id for a reply",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "When the comment's body last changed, as it was posted or edited",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "thread_id",
+          "target_type",
+          "target_id",
+          "deleted",
+          "created_at",
+          "updated_at",
+          "rev"
+        ],
+        "type": "object"
+      },
+      "CommentCount": {
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "description": "How many of the target's threads are open",
+            "format": "int64",
+            "type": "integer"
+          },
+          "resolved": {
+            "description": "How many of the target's threads are resolved",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target_id": {
+            "description": "The target's ID",
+            "type": "string"
+          },
+          "target_type": {
+            "description": "The kind of the target: a node, a connection, a board, or a variable",
+            "enum": [
+              "node",
+              "connection",
+              "board",
+              "variable"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_type",
+          "target_id",
+          "open",
+          "resolved"
+        ],
+        "type": "object"
+      },
+      "CommentCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.create.",
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."
+          },
+          "id": {
+            "description": "The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "parent_id": {
+            "description": "The ID of the first comment of the thread that the comment replies to. A thread is one level deep, so a reply to a reply is answered with 422 validation_failed, as one to a comment that the project does not have, or of a thread that is not shown: whose comments are all deleted, or whose target is in the project's trash. The first comment of a thread has none.",
+            "type": "string"
+          },
+          "target": {
+            "description": "The ID of the entity that the thread that the comment starts is on, a node, a connection, a board, or a variable of the project, as its prefix says: nd_, cn_, bd_, or var_. A reply has none, and a comment that has neither target nor parent_id, or both, is answered with 422 validation_failed, as one whose target the project does not have, or is in its trash, or is there with what is, as a node of a board in the trash.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "type": "object"
+      },
+      "CommentDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.delete.",
+        "properties": {
+          "id": {
+            "description": "The comment's ID: one of the user's own. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "CommentEditCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.edit.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentEditPayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.edit"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentEditPayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.edit.",
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/RichTextDoc",
+            "description": "The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."
+          },
+          "id": {
+            "description": "The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "body"
+        ],
+        "type": "object"
+      },
+      "CommentResolveCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.resolve.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentResolvePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.resolve"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentResolvePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.resolve.",
+        "properties": {
+          "id": {
+            "description": "The ID of the thread's first comment, of a thread that is shown, one of whose comments is not deleted, and whose target is not in the project's trash. A reply, whose thread its first comment names, is answered with 422 validation_failed.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "CommentRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.restore.",
+        "properties": {
+          "id": {
+            "description": "The comment's ID: one of the user's own. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "CommentUnresolveCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type comment.unresolve.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/CommentUnresolvePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "comment.unresolve"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "CommentUnresolvePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type comment.unresolve.",
+        "properties": {
+          "id": {
+            "description": "The ID of the thread's first comment, of a thread that is shown, one of whose comments is not deleted, and whose target is not in the project's trash. A reply, whose thread its first comment names, is answered with 422 validation_failed.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -7005,6 +7508,75 @@
         ],
         "type": "object"
       },
+      "PageCommentAuthor": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommentAuthor"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageCommentBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommentBody"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageCommentCount": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommentCount"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageComponentType": {
         "additionalProperties": false,
         "properties": {
@@ -8793,7 +9365,7 @@
         "additionalProperties": false,
         "properties": {
           "board_id": {
-            "description": "The ID of the entity's board: a node's, a connection's, or a board variable's. A global variable and a component have none.",
+            "description": "The ID of the entity's board: a node's, a connection's, or a board variable's, or a comment's target's, which may be the board itself. A global variable and a component have none, and nor does a comment on a global variable.",
             "type": "string"
           },
           "board_name": {
@@ -8805,7 +9377,7 @@
             "type": "string"
           },
           "node_id": {
-            "description": "The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none.",
+            "description": "The ID of the node that a client opens the result by: a node's own, the node that a connection leaves, or a comment's target's, a node target's own or the node that a connection target leaves. A variable and a component have none, and nor does a comment on a board or a variable.",
             "type": "string"
           },
           "node_title": {
@@ -8813,26 +9385,41 @@
             "type": "string"
           },
           "snippet": {
-            "description": "Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part.",
+            "description": "Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, a component's key, description, and values of text, each on a line of its own, or a comment's body. An empty body has no part.",
             "items": {
               "$ref": "#/components/schemas/Span"
             },
             "type": "array"
           },
+          "target_id": {
+            "description": "The ID of the target of a comment's thread, which a result has exactly when it has target_type",
+            "type": "string"
+          },
+          "target_type": {
+            "description": "The kind of the target of a comment's thread, by which a client opens the thread: a node, a connection, a board, or a variable. Only a comment has one.",
+            "enum": [
+              "node",
+              "connection",
+              "board",
+              "variable"
+            ],
+            "type": "string"
+          },
           "title": {
-            "description": "The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part.",
+            "description": "The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection and a comment have none, and an empty title no part.",
             "items": {
               "$ref": "#/components/schemas/Span"
             },
             "type": "array"
           },
           "type": {
-            "description": "The kind of the entity: a node, a connection, a variable, or a component",
+            "description": "The kind of the entity: a node, a connection, a variable, a component, or a comment",
             "enum": [
               "node",
               "connection",
               "variable",
-              "component"
+              "component",
+              "comment"
             ],
             "type": "string"
           }
@@ -15560,7 +16147,7 @@
     },
     "/api/v1/projects/{project_id}/commands": {
       "post": {
-        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
         "operationId": "applyCommands",
         "parameters": [
           {
@@ -15705,6 +16292,450 @@
         "summary": "Apply batches of commands to a project",
         "tags": [
           "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/comments": {
+      "get": {
+        "description": "Lists the comments of the project's threads that are shown and that the filters keep, thread by thread, the newest thread first, and within a thread its first comment, then its replies, oldest first (PRD FR-COMMENT-01). Each comment names its thread's target, and the target's board and node, by which a client opens it, and a thread's first comment whether the thread is resolved. A thread's first comment that is deleted while a reply of the thread is not is listed as deleted, without its body and its author, and a deleted reply is not listed. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An author, a board, or a target whose ID does not decode, or is of another kind, is answered with 400 invalid_id, and one that the project does not have keeps nothing. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listComments",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Whether the threads listed are open or resolved. Without it, both.",
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "description": "Whether the threads listed are open or resolved. Without it, both.",
+              "enum": [
+                "open",
+                "resolved"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a user: only the threads in which they wrote a comment that is not deleted are listed, as GET /api/v1/projects/{project_id}/comments/authors lists them. Without it, every thread.",
+            "explode": false,
+            "in": "query",
+            "name": "author",
+            "schema": {
+              "description": "The ID of a user: only the threads in which they wrote a comment that is not deleted are listed, as GET /api/v1/projects/{project_id}/comments/authors lists them. Without it, every thread.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a board: only the threads on the board, and on its nodes, its connections, and its variables, are listed. Without it, those of every board, and of the global variables.",
+            "explode": false,
+            "in": "query",
+            "name": "board",
+            "schema": {
+              "description": "The ID of a board: only the threads on the board, and on its nodes, its connections, and its variables, are listed. Without it, those of every board, and of the global variables.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a node, a connection, a board, or a variable: only the threads on it are listed, of a board those on the board itself, and not on its nodes. Another kind of ID is answered with 400 invalid_id. Without it, those of every target.",
+            "explode": false,
+            "in": "query",
+            "name": "target",
+            "schema": {
+              "description": "The ID of a node, a connection, a board, or a variable: only the threads on it are listed, of a board those on the board itself, and not on its nodes. Another kind of ID is answered with 400 invalid_id. Without it, those of every target.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageCommentBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's comments",
+        "tags": [
+          "Comments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/comments/authors": {
+      "get": {
+        "description": "Lists the users who wrote a comment of the project that is not deleted, of a thread that is shown, each with their display name, in the order of their IDs (PRD FR-COMMENT-01), by which the list of the project's comments is filtered, as a member who may not list the workspace's members, as a guest, sees them too. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listCommentAuthors",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageCommentAuthor"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the authors of a project's comments",
+        "tags": [
+          "Comments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/comments/counts": {
+      "get": {
+        "description": "Lists each node, connection, board, and variable of the project that a thread that is shown is on, with how many of its threads are open and how many resolved, in the order of the targets' kinds and IDs (PRD FR-COMMENT-01), as the canvas shows a node's, a connection's, or a board's, and the variables' panel a variable's. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board whose ID does not decode is answered with 400 invalid_id, and one that the project does not have keeps nothing. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "countComments",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The ID of a board: only the board, and its nodes, its connections, and its variables, are counted. Without it, every target of the project.",
+            "explode": false,
+            "in": "query",
+            "name": "board",
+            "schema": {
+              "description": "The ID of a board: only the board, and its nodes, its connections, and its variables, are counted. Without it, every target of the project.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageCommentCount"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Count the threads of a project's comments",
+        "tags": [
+          "Comments"
         ]
       }
     },
@@ -18453,7 +19484,7 @@
     },
     "/api/v1/projects/{project_id}/search": {
       "get": {
-        "description": "Lists the project's nodes, connections, variables, and components that are not in its trash whose titles or bodies hold a word that starts with each word of the query, compared without regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's key and description, and a component's name, key, description, and values of text, of the types string, text, and enum. A text is searched as its author wrote it, without what its value references show or its mentions name, which the usage lists find (GET /api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a body as far as its first 100,000 characters. Each result names its kind, its board and its node, by which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). The results are in the order of how well each word of the query matches them, a match in a title above one in a body, then of their kinds and IDs. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A query that holds a control character is answered with 422 validation_failed at query.q, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "description": "Lists the project's nodes, connections, variables, components, and comments that are not in its trash whose titles or bodies hold a word that starts with each word of the query, compared without regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's key and description, a component's name, key, description, and values of text, of the types string, text, and enum, and a comment's body, of a comment that is not deleted, of a thread whose target is not in the trash (FR-COMMENT-01). A text is searched as its author wrote it, without what its value references show or its mentions name, which the usage lists find (GET /api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a body as far as its first 100,000 characters. Each result names its kind, its board and its node, and a comment its thread's target, by which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). The results are in the order of how well each word of the query matches them, a match in a title above one in a body, then of their kinds and IDs. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A query that holds a control character is answered with 422 validation_failed at query.q, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
         "operationId": "searchProject",
         "parameters": [
           {
@@ -18490,7 +19521,8 @@
                 "node",
                 "connection",
                 "variable",
-                "component"
+                "component",
+                "comment"
               ],
               "type": "string"
             }

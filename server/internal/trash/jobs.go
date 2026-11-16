@@ -128,12 +128,13 @@ func purgeWorkspace(ctx context.Context, db sweep.DB, more func() bool, workspac
 // purgeProject deletes, in a transaction of the workspace, at most purgeRows
 // of the boards, the nodes, the branch outputs, the connections, the
 // variables, the components, the attribute definitions, the folders, the
-// component types, and the play states of the project that have been in its
-// trash for retention, the boards, the nodes, the outputs, the connections,
-// the variables, and the components first, which may leave a folder or a type
-// empty for the purge of the folders and of the types that follows, and
-// returns how many it deleted, or none if a transaction holds the project's
-// lock.
+// component types, the play states, and the comments of the project that
+// have been in its trash for retention, the boards, the nodes, the outputs,
+// the connections, the variables, and the components first, which may leave a
+// folder or a type empty for the purge of the folders and of the types that
+// follows, and a comment's root without a reply for the purge of the comments
+// that follows, as their purges delete the comments on them, and returns how
+// many it deleted, or none if a transaction holds the project's lock.
 func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, project pgtype.UUID,
 	retention pgtype.Interval) (int64, error) {
 	var n int64
@@ -201,6 +202,12 @@ func purgeProject(ctx context.Context, db sweep.DB, workspaceID ids.UUID, projec
 			return fmt.Errorf("purge the play states: %w", err)
 		}
 		n += states
+		comments, err := q.PurgeComments(ctx, queries.PurgeCommentsParams{WorkspaceID: ws, ProjectID: project,
+			Retention: retention, MaxRows: int32(purgeRows - n)})
+		if err != nil {
+			return fmt.Errorf("purge the comments: %w", err)
+		}
+		n += comments
 		// A text counts the names of what it mentions and shows, so the texts
 		// that named what the purge deleted, by its own statements or by the
 		// cascades of their foreign keys, as a board's variables go with it

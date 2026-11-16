@@ -460,6 +460,24 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, variablePath(p, f.variable(t, p)), nil, si.header(false))
 				}},
+			{name: "list a project's comments", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					f.comment(t, p, f.as["owner"])
+					return call(f.s.main, http.MethodGet, commentsPath(p), nil, si.header(false))
+				}},
+			{name: "count the threads of a project's comments", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					f.comment(t, p, f.as["owner"])
+					return call(f.s.main, http.MethodGet, commentCountsPath(p), nil, si.header(false))
+				}},
+			{name: "list the authors of a project's comments", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					f.comment(t, p, f.as["owner"])
+					return call(f.s.main, http.MethodGet, commentAuthorsPath(p), nil, si.header(false))
+				}},
 			{name: "list a project's play states", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					return call(f.s.main, http.MethodGet, playStatesPath(f.project(t, "")), nil, si.header(false))
@@ -725,6 +743,88 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "play_state.restore", Payload: map[string]string{"id": f.deletedPlayState(t, p)}}),
+						si.header(true))
+				}},
+		},
+	},
+	{
+		// Anyone whose role allows it replies to any thread and resolves any,
+		// but edits, deletes, and restores only their own comments, which
+		// package comment checks of the author (TestCommentAuthors).
+		row:     "Create/resolve comments",
+		op:      authz.Comment,
+		allowed: [5]bool{true, true, true, true, false},
+		ops: []matrixOp{
+			{name: "start a thread on a node", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.create", Payload: map[string]any{"id": newCommentID(), "target": f.node(t, p),
+							"body": paragraph("Does the lighthouse exist yet?")}}), si.header(true))
+				}},
+			{name: "start a thread on a connection", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.create", Payload: map[string]any{"id": newCommentID(),
+							"target": f.connection(t, p), "body": paragraph("Should this choice wait?")}}),
+						si.header(true))
+				}},
+			{name: "start a thread on a board", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.create", Payload: map[string]any{"id": newCommentID(), "target": f.board(t, p),
+							"body": paragraph("Too long for one scene.")}}), si.header(true))
+				}},
+			{name: "start a thread on a variable", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.create", Payload: map[string]any{"id": newCommentID(),
+							"target": f.variable(t, p), "body": paragraph("Who reads this?")}}), si.header(true))
+				}},
+			{name: "reply to another user's thread", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.create", Payload: map[string]any{"id": newCommentID(),
+							"parent_id": f.comment(t, p, f.as["owner"]), "body": paragraph("Not yet.")}}),
+						si.header(true))
+				}},
+			{name: "resolve another user's thread", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.resolve", Payload: map[string]string{"id": f.comment(t, p, f.as["owner"])}}),
+						si.header(true))
+				}},
+			{name: "unresolve another user's thread", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.unresolve", Payload: map[string]string{"id": f.resolvedComment(t, p,
+							f.as["owner"])}}), si.header(true))
+				}},
+			{name: "edit one's own comment", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.edit", Payload: map[string]any{"id": f.comment(t, p, si),
+							"body": paragraph("Does the lighthouse stand yet?")}}), si.header(true))
+				}},
+			{name: "delete one's own comment", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.delete", Payload: map[string]string{"id": f.comment(t, p, si)}}),
+						si.header(true))
+				}},
+			{name: "restore one's own comment", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "comment.restore", Payload: map[string]string{"id": f.deletedComment(t, p, si)}}),
 						si.header(true))
 				}},
 		},
