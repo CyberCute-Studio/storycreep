@@ -85,6 +85,7 @@ type Comment struct {
 	ProjectID    pgtype.UUID
 	ParentID     pgtype.UUID
 	ThreadID     pgtype.UUID
+	ThreadAt     pgtype.Timestamptz
 	NodeID       pgtype.UUID
 	ConnectionID pgtype.UUID
 	BoardID      pgtype.UUID

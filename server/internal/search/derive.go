@@ -23,14 +23,13 @@ const Name = "search_entries"
 // a batch has applied, the documents of the entities that the batch may have
 // changed the document of: each node, connection, variable, component, and
 // comment that a command of the batch changed, and each component of a type
-// that a
-// definition that a command changed is of, as deleting a definition, which
-// changes neither its type nor the components, takes their values of it out
-// of their documents; but for the changes that commands of neutral types
-// alone made, or, of a node or a connection, those of neutral and rewriting
-// types alone. It changes no entity's revision, as the index is no part of
-// what the API shows of one. Register it after expression.Register, whose
-// derivation's changes of the owners of expressions it passes over.
+// that a definition that a command changed is of, as deleting a definition,
+// which changes neither its type nor the components, takes their values of
+// it out of their documents; but for the changes that commands of neutral
+// types alone made, or, of a node or a connection, those of neutral and
+// rewriting types alone. It changes no entity's revision, as the index is no
+// part of what the API shows of one. Register it after expression.Register,
+// whose derivation's changes of the owners of expressions it passes over.
 func Register(r *commands.Registry) {
 	commands.RegisterDerivation(r, commands.Derivation{Name: Name, Derive: derive})
 }
@@ -41,10 +40,9 @@ func Register(r *commands.Registry) {
 // restoration, which the search reads of the entities themselves, a change
 // of a field that no document holds, as a variable's default, a definition's
 // key, or a thread's resolution, and the mutes of the validation's findings,
-// with the
-// name of the derivation that compiles expressions (expression.Name, which
-// this package does not import), which changes their owners' revisions
-// alone. A definition's move is neutral, since a component's document holds
+// with the name of the derivation that compiles expressions
+// (expression.Name, which this package does not import), which changes
+// their owners' revisions alone. A definition's move is neutral, since a component's document holds
 // its values in the order of their definitions' IDs, not of their places.
 // derive passes over a change that these alone made, so that moving a
 // selection of 2,000 nodes reads none of them. A type that is not here is

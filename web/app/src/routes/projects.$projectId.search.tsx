@@ -1,17 +1,12 @@
 import type { Result, Span } from "@storycreep/shared/api";
 import { useInfiniteQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-  type FormEvent,
-  Fragment,
-  type ReactNode,
-  useEffect,
-  useRef,
-} from "react";
+import { type FormEvent, Fragment, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useCommandHandlers } from "../commands/registry";
+import { ThreadTargetLink } from "../comments/TargetLink";
 import { projectQuery } from "../project/queries";
 import { takeSearchFocus } from "../search/focus";
 import { searchText } from "../search/query";
@@ -372,60 +367,32 @@ function CommentResult({
       ? t("boards.untitled_node")
       : result.node_title;
   const board = result.board_name ?? "";
-  const target = result.target_id;
-  let link: ReactNode;
-  switch (result.target_type) {
-    case "node":
-    case "connection":
-      link =
-        result.board_id === undefined || result.node_id === undefined ? (
-          node
-        ) : (
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: result.board_id }}
-            search={{
-              node: result.node_id,
-              ...(result.target_type === "connection" && target !== undefined
-                ? { connection: target }
-                : {}),
-              comments: true,
-            }}
-            className={textLink}
-          >
-            {result.target_type === "node"
-              ? t("search.comment_on_node", { node })
-              : t("search.comment_on_connection", { node })}
-          </Link>
-        );
-      break;
-    case "board":
-      link =
-        result.board_id === undefined ? (
-          board
-        ) : (
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: result.board_id }}
-            search={{ comments: true }}
-            className={textLink}
-          >
-            {t("search.comment_on_board", { board })}
-          </Link>
-        );
-      break;
-    default:
-      link = (
-        <Link
-          to="/projects/$projectId/variables"
-          params={{ projectId }}
-          search={target === undefined ? {} : { variable: target }}
-          className={textLink}
-        >
-          {t("search.comment_on_variable")}
-        </Link>
-      );
-  }
+  const label =
+    result.target_type === "node"
+      ? t("search.comment_on_node", { node })
+      : result.target_type === "connection"
+        ? t("search.comment_on_connection", { node })
+        : result.target_type === "board"
+          ? t("search.comment_on_board", { board })
+          : t("search.comment_on_variable");
+  // A comment's result names its thread's target, which the server gives
+  // every comment's.
+  const link =
+    result.target_type === undefined || result.target_id === undefined ? (
+      label
+    ) : (
+      <ThreadTargetLink
+        projectId={projectId}
+        place={{
+          target_type: result.target_type,
+          target_id: result.target_id,
+          board_id: result.board_id,
+          node_id: result.node_id,
+        }}
+      >
+        {label}
+      </ThreadTargetLink>
+    );
   return (
     <li className="space-y-1 break-words" data-result={result.id}>
       <p className="font-medium">{link}</p>

@@ -628,6 +628,23 @@ func TestCommentLists(t *testing.T) {
 	}
 	wantCode(t, "a board of the counts that is no board's ID", call(f.s.main, http.MethodGet,
 		commentCountsPath(p, "board", keeper), nil, owner.header(false)), http.StatusBadRequest, api.CodeInvalidID)
+	// A cursor of the list holds the times of its key in UTC, as the server
+	// writes them, and none other.
+	elsewhere := time.Date(2026, 11, 16, 10, 0, 0, 0, time.FixedZone("CET", 3600))
+	for name, cursor := range map[string]string{"not a cursor": "nope",
+		"a cursor without times": mustCursor(t, commentKey{Thread: ids.New().String(), ID: ids.New().String()}),
+		"a cursor of a time not in UTC": mustCursor(t, commentKey{ThreadAt: elsewhere, Thread: ids.New().String(),
+			At: elsewhere, ID: ids.New().String()})} {
+		wantCode(t, name, call(f.s.main, http.MethodGet, commentsPath(p, "cursor", cursor), nil, owner.header(false)),
+			http.StatusBadRequest, api.CodeInvalidCursor)
+	}
+	// A target of another kind is said to be one, with the kinds that a
+	// thread is on.
+	res := call(f.s.main, http.MethodGet, commentsPath(p, "target", onKeeper), nil, owner.header(false))
+	if body := string(res.body); !strings.Contains(body, "not a node, a connection, a board, or a variable") ||
+		!strings.Contains(body, `"reason":"wrong_prefix"`) {
+		t.Errorf("a target that is a comment's ID: %d %s", res.status, res.body)
+	}
 
 	// A thread started between two pages changes neither: it is newer than
 	// any that the first page held, so the pages after it do not hold it.
@@ -650,6 +667,31 @@ func TestCommentLists(t *testing.T) {
 	}
 	if want := []string{onPath, onGlobal, onPier, onHarbour, onKeeper, keeperReply}; !slices.Equal(got, want) {
 		t.Errorf("the pages around a thread started between them hold %v, want %v", got, want)
+	}
+
+	// The threads are in the order in which they were started, and their
+	// replies in the order in which they were posted, as the server's clock
+	// has it, whatever the times of the IDs that the clients made: a thread
+	// whose ID is of the year 2099 stays below those started after it, and a
+	// reply whose ID is of 1970 below those posted before it, page by page.
+	pinned := ids.Encode(ids.Comment, ids.NewV7(time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(),
+		[10]byte{1}))
+	resultFrom(t, postComment(t, f.s.main, owner, p, pinned, harbour, "", "Pinned?"))
+	pinnedReply, early := newCommentID(), ids.Encode(ids.Comment, ids.NewV7(1, [10]byte{2}))
+	resultFrom(t, postComment(t, f.s.main, editor, p, pinnedReply, "", pinned, "First"))
+	resultFrom(t, postComment(t, f.s.main, owner, p, early, "", pinned, "Early?"))
+	after := newCommentID()
+	resultFrom(t, postComment(t, f.s.main, owner, p, after, harbour, "", "After"))
+	if got, want := commentIDs(listComments(t, f.s.main, owner, p, "target", harbour)),
+		[]string{after, pinned, pinnedReply, early, onHarbour}; !slices.Equal(got, want) {
+		t.Errorf("the threads of IDs of other times are %v, want %v", got, want)
+	}
+	// They go, so that the counts below are of the threads above.
+	for _, c := range []struct {
+		author signedIn
+		id     string
+	}{{owner, pinned}, {editor, pinnedReply}, {owner, early}, {owner, after}} {
+		resultFrom(t, commentCommand(t, f.s.main, c.author, p, "comment.delete", c.id, nil))
 	}
 
 	type count struct {

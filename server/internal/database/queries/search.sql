@@ -166,13 +166,13 @@ SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, @que
 -- that reads its columns, which would compute them again where it names
 -- them.
 -- Each comes with its board, a node's, a connection's, or a variable's of a
--- board, or a comment's, its thread's target's, with the board's name, its
--- node, a node itself, the node that a connection leaves, or a comment's
--- target's, with the node's title, a comment's target, its kind and its
--- UUID, and its title and its body as ts_headline marks the matches of words
--- in them, between the characters
--- U+0002 and U+0003, which no document holds (search.Document): the whole
--- title, and of the body's first snippet_source characters
+-- board, or a comment's, its thread's target's (comment_thread_target), with
+-- the board's name, its node, a node itself, the node that a connection
+-- leaves, or a comment's target's, with the node's title, a comment's
+-- target, its kind and its UUID, and its title and its body as ts_headline
+-- marks the matches of words in them, between the characters U+0002 and
+-- U+0003, which no document holds (search.Document): the whole title, and of
+-- the body's first snippet_source characters
 -- (search.MaxSnippetSource), so that what ts_headline reads of each row,
 -- which it reads whole, is bounded however long the bodies are, from a match
 -- of one of the words on, up to 35 words, or, where fewer than 15 are left
@@ -212,18 +212,11 @@ WITH hits AS (
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'component'
         AND @kind::text IN ('', 'component') AND e.vector @@ @query::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, coalesce(n.board_id, cn.board_id, r.board_id, v.board_id),
-        coalesce(r.node_id, cn.from_node_id),
-        CASE WHEN r.node_id IS NOT NULL THEN 'node' WHEN r.connection_id IS NOT NULL THEN 'connection'
-            WHEN r.board_id IS NOT NULL THEN 'board' ELSE 'variable' END,
-        coalesce(r.node_id, r.connection_id, r.board_id, r.variable_id), e.vector
+    SELECT e.kind, e.entity_id, t.board_id, t.node_id, t.target_type, t.target_id, e.vector
     FROM search_entry e
     JOIN live_comment c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.entity_id
-    JOIN comment r ON r.workspace_id = c.workspace_id AND r.project_id = c.project_id AND r.id = c.thread_id
-    LEFT JOIN node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
-    LEFT JOIN connection cn ON cn.workspace_id = r.workspace_id AND cn.project_id = r.project_id
-        AND cn.id = r.connection_id
-    LEFT JOIN variable v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.variable_id
+    JOIN comment_thread_target t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id
+        AND t.thread_id = c.thread_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'comment'
         AND @kind::text IN ('', 'comment') AND e.vector @@ @query::tsquery
 ), title_words AS MATERIALIZED (

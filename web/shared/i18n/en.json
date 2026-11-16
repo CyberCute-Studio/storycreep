@@ -356,6 +356,8 @@
   "comments.edit_label": "Comment",
   "comments.edited": "(edited)",
   "comments.error.author_required": "Only the author of this comment may change it.",
+  "comments.error.changed": "This thread changed elsewhere since it was shown here, so it is shown again as it is now. Try again if you still mean it.",
+  "comments.error.changed_edit": "This comment changed elsewhere since you began to edit it, so it is shown again as it is now. Your text is kept: save again to keep it.",
   "comments.error.empty": "Write a comment.",
   "comments.error.long": "Use at most {max, number} characters.",
   "comments.new": "New comment",

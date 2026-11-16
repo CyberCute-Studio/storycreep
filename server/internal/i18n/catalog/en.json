@@ -37,6 +37,7 @@
   "error.invalid_id.character": "The identifier contains a character outside Crockford base32.",
   "error.invalid_id.length": "The part of the identifier after its prefix is not {length} characters long.",
   "error.invalid_id.missing_prefix": "The identifier has no type prefix.",
+  "error.invalid_id.not_target": "The identifier's prefix {prefix}_ is for type {got}, not a node, a connection, a board, or a variable, which a thread of comments is on.",
   "error.invalid_id.overflow": "The part of the identifier after its prefix does not fit in 128 bits.",
   "error.invalid_id.unknown_prefix": "The identifier's type prefix is unknown.",
   "error.invalid_id.wrong_prefix": "The identifier's prefix {prefix}_ is for type {got}, not {expected}.",

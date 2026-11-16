@@ -34,9 +34,12 @@ CREATE TABLE comment (
 	project_id uuid NOT NULL,
 	-- A reply's root, or null for a root.
 	parent_id uuid,
-	-- The comment's thread, its root's ID, by which a list orders threads and
-	-- their comments.
+	-- The comment's thread, its root's ID.
 	thread_id uuid GENERATED ALWAYS AS (coalesce(parent_id, id)) STORED,
+	-- When the comment's thread was started, its root's created_at, by which
+	-- a list orders the threads, newest first, as the server's clock has it
+	-- rather than the client's, which made the IDs.
+	thread_at timestamptz NOT NULL DEFAULT now(),
 	-- The thread's target, of a root alone.
 	node_id uuid,
 	connection_id uuid,
@@ -76,9 +79,14 @@ CREATE TABLE comment (
 	-- its thread's, as the root holds it.
 	CHECK (CASE WHEN parent_id IS NULL THEN num_nonnulls(node_id, connection_id, board_id, variable_id) = 1
 		ELSE num_nonnulls(node_id, connection_id, board_id, variable_id, resolved_at, resolved_by) = 0 END),
-	CHECK (resolved_at IS NOT NULL OR resolved_by IS NULL)
+	CHECK (resolved_at IS NOT NULL OR resolved_by IS NULL),
+	-- A root starts its thread.
+	CHECK (parent_id IS NOT NULL OR thread_at = created_at)
 );
 -- A project's comments in the order of their threads, which its list reads.
+CREATE INDEX comment_order ON comment (workspace_id, project_id, thread_at, thread_id);
+-- The comments of each thread, which the reads of whether a thread is shown
+-- read.
 CREATE INDEX comment_thread ON comment (workspace_id, project_id, thread_id, id);
 -- The replies of each root, which the purge of a root reads.
 CREATE INDEX comment_parent ON comment (workspace_id, project_id, parent_id) WHERE parent_id IS NOT NULL;
@@ -98,29 +106,53 @@ ALTER TABLE comment ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;
 CREATE POLICY workspace_isolation ON comment TO storycreep_app
 	USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 
+-- Each thread of a project's comments, by its root, whether or not it is
+-- deleted, with its resolution and its target, which everything that reads a
+-- thread's target reads it through, so that a new kind of target is a branch
+-- of this view alone: the target's kind and ID; its board, a node's, a
+-- connection's, a board variable's, or the board itself, or none of a global
+-- variable; its node, a node's own or the node that a connection leaves, by
+-- which a client opens it, as the reads of the API and the search's results
+-- name them; and whether it is outside the project's trash, nor there with
+-- what is, as its live view reads it.
+CREATE VIEW comment_thread_target WITH (security_invoker = true) AS
+	SELECT r.workspace_id, r.project_id, r.id AS thread_id, r.resolved_at,
+		(CASE WHEN r.node_id IS NOT NULL THEN 'node' WHEN r.connection_id IS NOT NULL THEN 'connection'
+			WHEN r.board_id IS NOT NULL THEN 'board' ELSE 'variable' END)::text AS target_type,
+		coalesce(r.node_id, r.connection_id, r.board_id, r.variable_id)::uuid AS target_id,
+		coalesce(n.board_id, cn.board_id, r.board_id, v.board_id)::uuid AS board_id,
+		coalesce(r.node_id, cn.from_node_id)::uuid AS node_id,
+		(EXISTS (SELECT 1 FROM live_node l WHERE l.workspace_id = r.workspace_id AND l.project_id = r.project_id
+				AND l.id = r.node_id)
+			OR EXISTS (SELECT 1 FROM live_connection l WHERE l.workspace_id = r.workspace_id
+				AND l.project_id = r.project_id AND l.id = r.connection_id)
+			OR EXISTS (SELECT 1 FROM live_board l WHERE l.workspace_id = r.workspace_id
+				AND l.project_id = r.project_id AND l.id = r.board_id)
+			OR EXISTS (SELECT 1 FROM live_variable l WHERE l.workspace_id = r.workspace_id
+				AND l.project_id = r.project_id AND l.id = r.variable_id))::boolean AS target_live
+	FROM comment r
+	LEFT JOIN node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
+	LEFT JOIN connection cn ON cn.workspace_id = r.workspace_id AND cn.project_id = r.project_id
+		AND cn.id = r.connection_id
+	LEFT JOIN variable v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.variable_id
+	WHERE r.parent_id IS NULL;
+
 -- The comments that are not deleted and whose thread's target is not in the
--- project's trash, nor with it, as its live view reads it, which everything
--- that reads them reads them through: a root's own target, and a reply's
--- through its root, whether or not the root is deleted. A thread is shown
--- while this view holds one of its comments.
+-- project's trash, nor with it, which everything that reads them reads them
+-- through: a root's own target, and a reply's through its root, whether or
+-- not the root is deleted. A thread is shown while this view holds one of
+-- its comments.
 CREATE VIEW live_comment WITH (security_invoker = true) AS
 	SELECT c.* FROM comment c
-	JOIN comment r ON r.workspace_id = c.workspace_id AND r.project_id = c.project_id AND r.id = c.thread_id
-	WHERE c.deleted_at IS NULL AND (
-		EXISTS (SELECT 1 FROM live_node n WHERE n.workspace_id = r.workspace_id AND n.project_id = r.project_id
-			AND n.id = r.node_id)
-		OR EXISTS (SELECT 1 FROM live_connection n WHERE n.workspace_id = r.workspace_id
-			AND n.project_id = r.project_id AND n.id = r.connection_id)
-		OR EXISTS (SELECT 1 FROM live_board n WHERE n.workspace_id = r.workspace_id AND n.project_id = r.project_id
-			AND n.id = r.board_id)
-		OR EXISTS (SELECT 1 FROM live_variable n WHERE n.workspace_id = r.workspace_id
-			AND n.project_id = r.project_id AND n.id = r.variable_id));
+	JOIN comment_thread_target t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id
+		AND t.thread_id = c.thread_id
+	WHERE c.deleted_at IS NULL AND t.target_live;
 
 -- The application adds the rows and changes them, deletes a comment to the
 -- trash by a change of its deleted_at, and for good in the trash's purge.
 GRANT SELECT, INSERT, UPDATE, DELETE ON comment TO storycreep_app;
 GRANT SELECT ON comment TO storycreep_maintenance;
-GRANT SELECT ON live_comment TO storycreep_app, storycreep_maintenance;
+GRANT SELECT ON comment_thread_target, live_comment TO storycreep_app, storycreep_maintenance;
 
 -- Project search finds comments too (FR-PROJ-03): a document of each comment,
 -- whose body is the plain text of the comment's body, without a title, in the

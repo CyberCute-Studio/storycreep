@@ -3,11 +3,13 @@ package httpserver
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
+	"github.com/CyberCute-Studio/storycreep/server/internal/i18n"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
@@ -45,12 +47,15 @@ type commentAuthorsOutput struct {
 }
 
 // commentKey is the key of a list of comments that its pages' cursors hold
-// (comment.Key): its thread's UUID and its own in their text form, and
-// whether it is a reply.
+// (comment.Key): when its thread was started, and when it was posted, in
+// UTC, as the trash's key holds a time (trashKey), its thread's UUID and its
+// own in their text form, and whether it is a reply.
 type commentKey struct {
-	Thread string `json:"thread"`
-	Reply  bool   `json:"reply"`
-	ID     string `json:"id"`
+	ThreadAt time.Time `json:"thread_at"`
+	Thread   string    `json:"thread"`
+	Reply    bool      `json:"reply"`
+	At       time.Time `json:"at"`
+	ID       string    `json:"id"`
 }
 
 // commentCountKey is the key of a list of the counts of threads that its
@@ -81,8 +86,9 @@ func registerComments(m *api.Mux, comments *comment.Service) {
 		Path:        "/api/v1/projects/{project_id}/comments",
 		Summary:     "List a project's comments",
 		Description: "Lists the comments of the project's threads that are shown and that the filters keep, thread " +
-			"by thread, the newest thread first, and within a thread its first comment, then its replies, oldest " +
-			"first (PRD FR-COMMENT-01). Each comment names its thread's target, and the target's board and node, by " +
+			"by thread, the newest thread first, by when its first comment was posted, and within a thread its " +
+			"first comment, then its replies, oldest first, by when each was posted, as the server's clock has it " +
+			"rather than the times of the IDs that the clients made (PRD FR-COMMENT-01). Each comment names its thread's target, and the target's board and node, by " +
 			"which a client opens it, and a thread's first comment whether the thread is resolved. A thread's first " +
 			"comment that is deleted while a reply of the thread is not is listed as deleted, without its body and " +
 			"its author, and a deleted reply is not listed." + commentsDoc + projectNotFoundDoc + tokenNotFoundDoc +
@@ -114,7 +120,8 @@ func registerComments(m *api.Mux, comments *comment.Service) {
 		}
 		page, err := api.NewPage(in.PageParams, list, func(c comment.CommentBody) commentKey {
 			k := c.Key()
-			return commentKey{Thread: k.Thread.String(), Reply: k.Reply, ID: k.ID.String()}
+			return commentKey{ThreadAt: k.ThreadAt.UTC(), Thread: k.Thread.String(), Reply: k.Reply, At: k.At.UTC(),
+				ID: k.ID.String()}
 		})
 		if err != nil {
 			return nil, err
@@ -197,7 +204,9 @@ func registerComments(m *api.Mux, comments *comment.Service) {
 
 // commentTarget returns the target that s, the ID of a node, a connection, a
 // board, or a variable, names, or none for the empty s. An ID that does not
-// decode, or is of another kind, is answered with invalid_id.
+// decode, or is of another kind, is answered with invalid_id, the latter
+// with the reason wrong_prefix and a message that names the kinds that a
+// target is of.
 func commentTarget(s string) (comment.Target, error) {
 	if s == "" {
 		return comment.Target{}, nil
@@ -208,7 +217,10 @@ func commentTarget(s string) (comment.Target, error) {
 	}
 	t := comment.TargetOf(kind)
 	if t == "" {
-		return comment.Target{}, &ids.DecodeError{Got: kind, Reason: ids.WrongPrefix}
+		return comment.Target{}, &api.Error{Code: api.CodeInvalidID,
+			Message: i18n.Message{Key: i18n.K("error.invalid_id.not_target"),
+				Args: i18n.Args{"prefix": kind.Prefix(), "got": kind.String()}},
+			Details: map[string]any{"reason": ids.WrongPrefix}}
 	}
 	return comment.Target{Type: t, ID: u}, nil
 }
@@ -216,8 +228,8 @@ func commentTarget(s string) (comment.Target, error) {
 // commentCursor returns the key that cursor, a next_cursor of a list of
 // comments, holds, or the zero key, before every comment, for the empty
 // cursor of the first page. A cursor that holds no key, or not in the form
-// that the server writes, each UUID in its canonical text, is answered with
-// invalid_cursor.
+// that the server writes, each UUID in its canonical text and each time in
+// UTC, is answered with invalid_cursor.
 func commentCursor(cursor string) (comment.Key, error) {
 	if cursor == "" {
 		return comment.Key{}, nil
@@ -226,7 +238,12 @@ func commentCursor(cursor string) (comment.Key, error) {
 	if err != nil {
 		return comment.Key{}, err
 	}
-	out := comment.Key{Reply: key.Reply}
+	for _, at := range []time.Time{key.ThreadAt, key.At} {
+		if at.IsZero() || at.Location() != time.UTC {
+			return comment.Key{}, api.NewError(api.CodeInvalidCursor)
+		}
+	}
+	out := comment.Key{ThreadAt: key.ThreadAt, Reply: key.Reply, At: key.At}
 	if err := cursorUUIDs(cursorUUID{key.Thread, &out.Thread}, cursorUUID{key.ID, &out.ID}); err != nil {
 		return comment.Key{}, err
 	}

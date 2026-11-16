@@ -183,12 +183,20 @@ type CommentBody struct {
 
 // Key is where a comment is in the list of a project's comments
 // (CommentBody.Key), by which a page of the list says where the next one
-// starts: its thread's UUID, whether it is a reply, and its UUID. The zero
-// Key is before every comment.
+// starts: when its thread was started, as the server's clock has it, and the
+// thread's UUID, whether it is a reply, and when it was posted, and its
+// UUID. The zero Key is before every comment.
 type Key struct {
-	Thread ids.UUID
-	Reply  bool
-	ID     ids.UUID
+	ThreadAt time.Time
+	Thread   ids.UUID
+	Reply    bool
+	At       time.Time
+	ID       ids.UUID
+}
+
+// IsZero reports whether k is the zero Key, before every comment.
+func (k Key) IsZero() bool {
+	return k.ThreadAt.IsZero() && k.Thread == ids.UUID{} && !k.Reply && k.At.IsZero() && k.ID == ids.UUID{}
 }
 
 // Key returns where c is in the list of its project's comments.
@@ -260,7 +268,8 @@ func bodyOf(r commentRow) (CommentBody, error) {
 		BoardID: encode(ids.Board, r.TargetBoardID), NodeID: encode(ids.Node, r.TargetNodeID),
 		Deleted: r.DeletedAt.Valid, CreatedAt: r.CreatedAt.Time, EditedAt: timeOf(r.EditedAt),
 		UpdatedAt: r.UpdatedAt.Time, Rev: r.Rev,
-		key: Key{Thread: r.ThreadID.Bytes, Reply: r.ParentID.Valid, ID: r.ID.Bytes}}
+		key: Key{ThreadAt: r.ThreadAt.Time, Thread: r.ThreadID.Bytes, Reply: r.ParentID.Valid, At: r.CreatedAt.Time,
+			ID: r.ID.Bytes}}
 	if r.TargetBoardID.Valid {
 		b.BoardName = &r.BoardName.String
 	}
@@ -350,9 +359,13 @@ func (s *Service) read(ctx context.Context, actor commands.Actor, projectID ids.
 
 // List returns at most limit of the comments of the project projectID's
 // threads that are shown and that f keeps, in the order of their keys
-// (Key): of their threads, newest first, and within a thread its first
-// comment, then its replies, oldest first, each in the order of their IDs;
-// the first, if after is zero, or else those after it. A thread is shown
+// (Key): of their threads, newest first, by when each was started, and
+// within a thread its first comment, then its replies, oldest first, by
+// when each was posted, as the server's clock has it rather than the UUIDv7
+// that a client made, which a client's clock that is off, or a client that
+// made its ID for a time to come, would order otherwise, and in the order of
+// their IDs where those times are the same; the first, if after is zero, or
+// else those after it. A thread is shown
 // while one of its comments is not deleted and its target is not in the
 // trash, nor with it, and of a thread it returns its first comment, deleted
 // or not, as a deleted comment is shown (CommentBody.Deleted), and its
@@ -369,9 +382,11 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID ids.
 	err := s.read(ctx, actor, projectID, func(q *queries.Queries, workspaceID pgtype.UUID) error {
 		rows, err := q.Comments(ctx, queries.CommentsParams{WorkspaceID: workspaceID, ProjectID: nullUUID(projectID),
 			Status: string(f.Status), Author: nullUUID(f.Author), Board: nullUUID(f.Board),
-			TargetType: string(f.Target.Type), TargetID: nullUUID(f.Target.ID), After: after != (Key{}),
-			AfterThread: pgtype.UUID{Bytes: after.Thread, Valid: true}, AfterReply: after.Reply,
-			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20))})
+			TargetType: string(f.Target.Type), TargetID: nullUUID(f.Target.ID), After: !after.IsZero(),
+			AfterThreadAt: pgtype.Timestamptz{Time: after.ThreadAt, Valid: true},
+			AfterThread:   pgtype.UUID{Bytes: after.Thread, Valid: true}, AfterReply: after.Reply,
+			AfterAt: pgtype.Timestamptz{Time: after.At, Valid: true}, AfterID: pgtype.UUID{Bytes: after.ID, Valid: true},
+			MaxRows: int32(min(limit, 1<<20))})
 		if err != nil {
 			return fmt.Errorf("comment: list the comments: %w", err)
 		}

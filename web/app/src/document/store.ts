@@ -449,6 +449,38 @@ const statisticsPause = 500;
  */
 const derivedPause = 1_000;
 
+/**
+ * How long, in milliseconds, the document waits after it has had the
+ * threads of comments read again before it has them read again for the
+ * operations that applied meanwhile (Follower): twice a second at most, as
+ * nearly any operation may change what they show of their targets, as a
+ * node's title or its board's name, while a run of them, as a drag's or
+ * another session's typing, has them read once each pause, rather than once
+ * for each.
+ */
+const commentsPause = 500;
+
+/**
+ * The prefixes of the types of command of what is no part of the project's
+ * draft, which the document holds none of, and which the page reads as
+ * queries of their own: the saved play states (play/queries.ts) and the
+ * threaded comments (comments/queries.ts). Their commands change none of
+ * the draft, nor what the trash lists, nor what the server derives of the
+ * draft, and the document reads their queries again as their operations
+ * apply (followed).
+ */
+const outsideDraft = ["play_state.", "comment."] as const;
+
+/** Reports whether command is of what is no part of the project's draft (outsideDraft), of the prefix of, if given. */
+function outside(
+  command: { readonly type: string },
+  of?: (typeof outsideDraft)[number],
+): boolean {
+  return of === undefined
+    ? outsideDraft.some((prefix) => command.type.startsWith(prefix))
+    : command.type.startsWith(of);
+}
+
 /** The fields of an entity that no command writes, which a conflict does not compare. */
 const meta = new Set(["rev", "created_at", "updated_at"]);
 
@@ -729,6 +761,8 @@ export class ProjectDocument {
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
   /** What has the reads that the server derives of the whole project read again as operations apply: the writing statistics, the validation report, and the dependency graph (followed). */
   private readonly followers: readonly Follower[];
+  /** What has the threads of comments read again as operations apply (followed). */
+  private readonly comments: Follower;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -748,6 +782,11 @@ export class ProjectDocument {
         derivedPause,
       ),
     ];
+    this.comments = new Follower(
+      options.queryClient,
+      commentsKey(projectId),
+      commentsPause,
+    );
     this.now = options.now ?? (() => new Date().toISOString());
     const userId = options.queryClient.getQueryData(
       sessionQuery.queryKey,
@@ -948,6 +987,7 @@ export class ProjectDocument {
     for (const follower of this.followers) {
       follower.dispose();
     }
+    this.comments.dispose();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.history.close();
@@ -1438,15 +1478,18 @@ export class ProjectDocument {
    * or, for none, what the project read anew may have, with the role that
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
-   * it, as an unarchive's archived_at, the trash, which a deletion or a
-   * restoration changes, but of a play state or a comment, the saved play
-   * states, which their commands change and the document holds none of
-   * (play/queries.ts), the threaded comments, which their commands change,
-   * and the deletion or the restoration of what they are on, whose threads
-   * are in the trash with it, though nothing writes them then
-   * (comments/queries.ts), and the reads that the server derives of the
-   * whole project, which any change of the draft may: the writing
-   * statistics, the validation report, and the dependency graph (Follower).
+   * it, as an unarchive's archived_at; the trash, which a deletion or a
+   * restoration of the draft's changes; the saved play states, which their
+   * commands change and the document holds none of (play/queries.ts); the
+   * threaded comments, which their commands change, and nearly any other
+   * operation may change what they show of, as the deletion or the
+   * restoration of what they are on, whose threads are in the trash with
+   * it, though nothing writes them then, a node's title, a board's name, or
+   * a connection's node, by which a link opens one (comments/queries.ts);
+   * and the reads that the server derives of the whole project, which any
+   * change of the draft may: the writing statistics, the validation report,
+   * and the dependency graph (Follower). What is no part of the draft
+   * (outsideDraft) changes neither the trash nor what the server derives.
    */
   private followed(
     op: Operation | undefined,
@@ -1455,53 +1498,34 @@ export class ProjectDocument {
     readAt?: number,
   ): void {
     this.projectFollowed(before, role, readAt);
-    // A command of a saved play state or of a comment changes none of the
-    // draft, and its deletion and its restoration none of what the trash
-    // lists, which lists neither.
-    const playState = (c: { readonly type: string }) =>
-      c.type.startsWith("play_state.");
-    const comment = (c: { readonly type: string }) =>
-      c.type.startsWith("comment.");
-    const trashed =
+    const commands = op?.commands ?? [];
+    // Reports whether the operation's commands are all of what is no part
+    // of the draft (outsideDraft), of the prefix of, if given, as those of
+    // the saved play states alone, which change nothing that the other
+    // reads show.
+    const only = (of?: (typeof outsideDraft)[number]) =>
+      op !== undefined &&
+      commands.length > 0 &&
+      commands.every((c) => outside(c, of));
+    if (
       op === undefined ||
-      op.commands.some(
-        (c) =>
-          !playState(c) &&
-          !comment(c) &&
-          /\.(delete|restore)(_many)?$/.test(c.type),
-      );
-    if (trashed) {
+      commands.some(
+        (c) => !outside(c) && /\.(delete|restore)(_many)?$/.test(c.type),
+      )
+    ) {
       void this.options.queryClient.invalidateQueries({
         queryKey: ["projects", this.projectId, "trash"],
       });
     }
-    if (op === undefined || op.commands.some(playState)) {
+    if (op === undefined || commands.some((c) => outside(c, "play_state."))) {
       void this.options.queryClient.invalidateQueries({
         queryKey: playStatesKey(this.projectId),
       });
     }
-    // A thread is shown while what it is on is out of the trash, so the
-    // deletion or the restoration of anything, as of a node, its board, or
-    // a folder of boards, may show or hide threads, as a command of a
-    // comment changes them.
-    if (op === undefined || trashed || op.commands.some(comment)) {
-      void this.options.queryClient.invalidateQueries({
-        queryKey: commentsKey(this.projectId),
-      });
+    if (!only("play_state.")) {
+      this.comments.follow();
     }
-    // The writing statistics, which nearly every command changes, as the
-    // server counts each text as a batch changes it (statistics/queries.ts),
-    // and the validation report and the dependency graph, which the server
-    // derives of the draft as each is read (validation/queries.ts,
-    // dependencies/queries.ts), but for an operation of the saved play
-    // states and the comments alone, which has a command of them at least.
-    if (
-      op === undefined ||
-      !(
-        op.commands.length > 0 &&
-        op.commands.every((c) => playState(c) || comment(c))
-      )
-    ) {
+    if (!only()) {
       for (const follower of this.followers) {
         follower.follow();
       }

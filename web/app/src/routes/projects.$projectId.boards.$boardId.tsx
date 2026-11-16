@@ -6,7 +6,14 @@ import {
   notFound,
   useNavigate,
 } from "@tanstack/react-router";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { sessionQuery } from "../api";
@@ -16,7 +23,7 @@ import type { RendererKind } from "../canvas/engine";
 import type { Rect } from "../canvas/viewport";
 import { useCommandHandlers } from "../commands/registry";
 import { commentCountsQuery, openOf } from "../comments/queries";
-import { Comments } from "../comments/Threads";
+import { CommentDrafts, Comments } from "../comments/Threads";
 import {
   ConflictNotice,
   changedOf,
@@ -296,10 +303,15 @@ function BoardContent({
   );
   const script = search.view === "script";
   // How many of the board's own threads of comments are open, which its
-  // header's link to them says (plan item 74), and a link to them, without
-  // a node to open, which brings them into view as the page shows.
+  // header's link to them says (plan item 74), but in a run of the
+  // benchmark, which measures the canvas alone (BoardCanvas), and a link to
+  // them, without a node to open, which brings them into view as the page
+  // shows.
   const openThreads = openOf(
-    useQuery(commentCountsQuery(doc, board.id)).data,
+    useQuery({
+      ...commentCountsQuery(doc, board.id),
+      enabled: search.bench === undefined,
+    }).data,
     board.id,
   );
   const toBoardComments = search.comments === true && search.node === undefined;
@@ -345,9 +357,10 @@ function BoardContent({
   // the snapshot still holds, is not opened, as its page is none: the page
   // shown stays, and its panel takes the turn (followsFlow). While the
   // canvas has open what the user types in, the inspector or the editor of
-  // a text, which the page change would take away unsaved, the page waits
-  // for it to close, and then follows the flow to where it is by then
-  // (BoardCanvas's onHolding).
+  // a text, which the page change would take away unsaved, or a form of the
+  // board's own comments holds what was typed in it, unsent (CommentDrafts),
+  // the page waits for it to close, or to be sent or emptied, and then
+  // follows the flow to where it is by then (BoardCanvas's onHolding).
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
     s.status === "playing" ? s.turn : 0,
@@ -356,9 +369,23 @@ function BoardContent({
     s.status === "playing" ? s.flow.board : "",
   );
   const [holding, setHolding] = useState(false);
+  // How many forms of the board's own comments, under the canvas, hold what
+  // the user typed, unsent, which the page waits for as it waits for the
+  // canvas's (CommentDrafts).
+  const [drafts, setDrafts] = useState(0);
+  const holdDraft = useCallback(() => {
+    setDrafts((n) => n + 1);
+    let held = true;
+    return () => {
+      if (held) {
+        held = false;
+        setDrafts((n) => n - 1);
+      }
+    };
+  }, []);
   const seenTurn = useRef(playTurn);
   useEffect(() => {
-    if (playTurn === seenTurn.current || holding) {
+    if (playTurn === seenTurn.current || holding || drafts > 0) {
       return;
     }
     seenTurn.current = playTurn;
@@ -370,7 +397,16 @@ function BoardContent({
           prev.renderer === undefined ? {} : { renderer: prev.renderer },
       });
     }
-  }, [playTurn, playBoard, board.id, navigate, projectId, doc, holding]);
+  }, [
+    playTurn,
+    playBoard,
+    board.id,
+    navigate,
+    projectId,
+    doc,
+    holding,
+    drafts,
+  ]);
   return (
     <div className="space-y-6">
       {/* The views' switch is beside the board's name, rather than under
@@ -451,16 +487,19 @@ function BoardContent({
           focus={search.node}
           focusConnection={search.connection}
           focusComments={search.comments === true}
+          drafting={drafts > 0}
           onHolding={setHolding}
         />
       )}
       <div className="mx-auto max-w-3xl">
-        <Comments
-          projectId={projectId}
-          target={{ type: "board", id: board.id }}
-          headingId={boardCommentsId}
-          level={2}
-        />
+        <CommentDrafts.Provider value={holdDraft}>
+          <Comments
+            projectId={projectId}
+            target={{ type: "board", id: board.id }}
+            headingId={boardCommentsId}
+            level={2}
+          />
+        </CommentDrafts.Provider>
       </div>
       <section
         aria-labelledby="board-settings"

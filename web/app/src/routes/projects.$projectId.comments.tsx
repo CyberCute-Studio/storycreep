@@ -4,7 +4,7 @@ import {
   useQuery,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -14,6 +14,7 @@ import {
   commentsOn,
   threadsOf,
 } from "../comments/queries";
+import { ThreadTargetLink } from "../comments/TargetLink";
 import { ReadFailed, ThreadList } from "../comments/Threads";
 import { collator } from "../content/textNames";
 import {
@@ -26,7 +27,7 @@ import { buildTree, itemsInOrder } from "../project/tree";
 import { searchId } from "../shell/found";
 import { MoreButton } from "../ui/Button";
 import { SelectField } from "../ui/Field";
-import { Page, Status, textLink } from "../ui/Page";
+import { Page, Status } from "../ui/Page";
 
 /**
  * The search of the page, its filters, which a link names, and Back goes
@@ -71,9 +72,10 @@ const any = "";
 // Reopen, for a role that comments, and the user's own comments' Edit and
 // Delete, filtered by their status, open unless the address says otherwise,
 // by an author of theirs, and by their board, which the address holds. The
-// project's document reads them again as an operation of a comment applies,
-// here or in another session, or as anything goes to the trash or comes
-// back from it, with whose threads.
+// project's document reads them again as operations apply, here or in
+// another session, of a comment, of anything that goes to the trash or
+// comes back from it, with whose threads, or of what a thread names of its
+// target (comments/queries.ts).
 function CommentsPage() {
   const { t } = useTranslation();
   const { projectId } = Route.useParams();
@@ -112,10 +114,10 @@ function CommentsPage() {
         ) as CommentsSearch;
       },
     });
-  // What each thread is on, as a link that opens it where it is edited: a
-  // node, and a connection by the node that it leaves, selected on its
-  // board's canvas with its inspector at its comments, a board's page at
-  // its own, and a variable's panel.
+  // What each thread is on, as a link that opens it where it is edited
+  // (ThreadTargetLink): a node, and a connection by the node that it
+  // leaves, selected on its board's canvas with its inspector at its
+  // comments, a board's page at its own, and a variable's panel.
   const targetOf = (root: CommentBody): ReactNode => {
     const untitled = t("boards.untitled_node");
     const node =
@@ -123,56 +125,19 @@ function CommentsPage() {
         ? untitled
         : root.node_title;
     const board = root.board_name ?? "";
-    switch (root.target_type) {
-      case "node":
-      case "connection":
-        return root.board_id === undefined || root.node_id === undefined ? (
-          node
-        ) : (
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: root.board_id }}
-            search={{
-              node: root.node_id,
-              ...(root.target_type === "connection"
-                ? { connection: root.target_id }
-                : {}),
-              comments: true,
-            }}
-            className={textLink}
-          >
-            {root.target_type === "node"
-              ? t("comments.on_node", { node, board })
-              : t("comments.on_connection", { node, board })}
-          </Link>
-        );
-      case "board":
-        return root.board_id === undefined ? (
-          board
-        ) : (
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: root.board_id }}
-            search={{ comments: true }}
-            className={textLink}
-          >
-            {t("comments.on_board", { board })}
-          </Link>
-        );
-      case "variable":
-        return (
-          <Link
-            to="/projects/$projectId/variables"
-            params={{ projectId }}
-            search={{ variable: root.target_id }}
-            className={textLink}
-          >
-            {t("comments.on_variable", {
-              key: variables.get(root.target_id)?.key ?? root.target_id,
-            })}
-          </Link>
-        );
-    }
+    return (
+      <ThreadTargetLink projectId={projectId} place={root}>
+        {root.target_type === "node"
+          ? t("comments.on_node", { node, board })
+          : root.target_type === "connection"
+            ? t("comments.on_connection", { node, board })
+            : root.target_type === "board"
+              ? t("comments.on_board", { board })
+              : t("comments.on_variable", {
+                  key: variables.get(root.target_id)?.key ?? root.target_id,
+                })}
+      </ThreadTargetLink>
+    );
   };
   const sortedAuthors = [...authors].sort((a, b) =>
     collator.compare(a.display_name, b.display_name),
@@ -274,6 +239,9 @@ function CommentsPage() {
         )}
         {list.data !== undefined && (
           <ThreadList
+            // Made anew for other filters, whose list has none of the Undo
+            // of a deletion made under these (Deleted).
+            key={`${filter.status ?? ""}/${filter.author ?? ""}/${filter.board ?? ""}`}
             doc={doc}
             threads={threads}
             writable={writable}

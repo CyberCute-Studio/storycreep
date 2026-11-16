@@ -542,7 +542,7 @@ describe("a target's threads", () => {
         body: paragraph("Is gold ever spent?"),
       },
     });
-    const id = create.payload.id;
+    const id = String(create.payload.id);
     expect(within(comments).getByText("Jo commented")).toBeDefined();
     expect(
       within(comments).getByText("1 open thread, 0 resolved."),
@@ -589,10 +589,12 @@ describe("a target's threads", () => {
     replaceIn(edit, paragraph("Is gold spent?"));
     await user.click(within(comments).getByRole("button", { name: "Save" }));
     expect(await within(comments).findByText("Is gold spent?")).toBeDefined();
+    // It expects the revision that the comment had as its field opened.
     expect(server.batches()[2]).toEqual([
       {
         type: "comment.edit",
         payload: { id, body: paragraph("Is gold spent?") },
+        expected_rev: { [id]: 1 },
       },
     ]);
     expect(within(comments).getByText("(edited)")).toBeDefined();
@@ -605,9 +607,16 @@ describe("a target's threads", () => {
     expect(within(comments).getByText(/^Resolved by Jo/)).toBeDefined();
     await user.click(within(comments).getByRole("button", { name: "Reopen" }));
     expect(await within(comments).findByText("Thread reopened.")).toBeDefined();
+    // Each expects the revision that the list showed.
     expect(server.batches().slice(3)).toEqual([
-      [{ type: "comment.resolve", payload: { id } }],
-      [{ type: "comment.unresolve", payload: { id } }],
+      [{ type: "comment.resolve", payload: { id }, expected_rev: { [id]: 2 } }],
+      [
+        {
+          type: "comment.unresolve",
+          payload: { id },
+          expected_rev: { [id]: 3 },
+        },
+      ],
     ]);
     // None of them is a step of the page's undo (plan item 74).
     expect(historyUndo().disabled).toBe(true);
@@ -635,7 +644,13 @@ describe("a target's threads", () => {
     // The Undo is in the Delete's place, with its focus.
     await waitFor(() => expect(document.activeElement).toBe(undo));
     expect(server.batches()).toEqual([
-      [{ type: "comment.delete", payload: { id: root.id } }],
+      [
+        {
+          type: "comment.delete",
+          payload: { id: root.id },
+          expected_rev: { [root.id]: 1 },
+        },
+      ],
     ]);
     // The server lists the first comment without its body and its author,
     // and the reply as it was.
@@ -688,6 +703,120 @@ describe("a target's threads", () => {
         name: "Undo the deletion of the comment",
       }),
     ).toBeNull();
+  });
+
+  it("keeps a deleted reply in its place with its Undo, in a thread whose first comment was deleted before, though the server no longer lists the thread, and offers the Undo until the list's next action", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Gone.", mira, {
+      deleted: true,
+    });
+    const mine = reply("cmt_02", root, "Still here.");
+    const other = thread("cmt_03", "variable", gold.id, "Another thread.");
+    commentProject([root, mine, other]);
+    const comments = await openGold();
+    expect(await within(comments).findByText("Still here.")).toBeDefined();
+    const theirs = within(comments)
+      .getByText("Still here.")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(theirs).getByRole("button", { name: "Delete" }));
+    const undo = await within(comments).findByRole("button", {
+      name: "Undo the deletion of the comment",
+    });
+    // The thread, which the server lists no more, stays with its first
+    // comment as deleted and the reply's Undo, but without its Reply.
+    await waitFor(() =>
+      expect(within(comments).getByText("1 open thread, 0 resolved.")),
+    );
+    const gone = undo.closest("li[data-thread]") as HTMLElement;
+    expect(within(gone).getByText("Comment deleted.")).toBeDefined();
+    expect(within(gone).getByText("Reply deleted.")).toBeDefined();
+    expect(within(gone).queryByRole("button", { name: "Reply" })).toBeNull();
+    await user.click(undo);
+    expect(await within(comments).findByText("Still here.")).toBeDefined();
+
+    // The list's next action ends the Undo shown.
+    const again = within(comments)
+      .getByText("Still here.")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(again).getByRole("button", { name: "Delete" }));
+    expect(
+      await within(comments).findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    const another = within(comments)
+      .getByText("Another thread.")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(another).getByRole("button", { name: "Resolve" }));
+    expect(await within(comments).findByText("Thread resolved.")).toBeDefined();
+    expect(
+      within(comments).queryByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeNull();
+  });
+
+  it("says that a comment changed elsewhere since its edit began, keeps what was typed, and expects the revision that it is read with then", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "First draft.");
+    let elsewhere = false;
+    const server = commentProject([root], {
+      refuse: (commands) => {
+        if (commands[0].type !== "comment.edit" || elsewhere) {
+          return undefined;
+        }
+        // The author's other tab saved an edit of the comment meanwhile.
+        elsewhere = true;
+        root.body = paragraph("Second draft, elsewhere.");
+        root.rev = 2;
+        return refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "comment.edit",
+                id: root.id,
+                expected_rev: 1,
+                exists: true,
+                current_rev: 2,
+              },
+            ],
+            states: { [root.id]: { id: root.id, rev: 2 } },
+          },
+        });
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("First draft.")).toBeDefined();
+    await user.click(within(comments).getByRole("button", { name: "Edit" }));
+    const edit = within(comments).getByRole("textbox", { name: "Comment" });
+    replaceIn(edit, paragraph("Third draft."));
+    await user.click(within(comments).getByRole("button", { name: "Save" }));
+    expect(
+      await within(comments).findByText(
+        "This comment changed elsewhere since you began to edit it, so it is shown again as it is now. Your text is kept: save again to keep it.",
+      ),
+    ).toBeDefined();
+    expect(edit.textContent).toBe("Third draft.");
+    expect(server.batches()[0]).toEqual([
+      {
+        type: "comment.edit",
+        payload: { id: root.id, body: paragraph("Third draft.") },
+        expected_rev: { [root.id]: 1 },
+      },
+    ]);
+    // Saved again, knowing, it expects the revision that the list read.
+    await user.click(within(comments).getByRole("button", { name: "Save" }));
+    expect(await within(comments).findByText("Third draft.")).toBeDefined();
+    expect(server.batches()[1]).toEqual([
+      {
+        type: "comment.edit",
+        payload: { id: root.id, body: paragraph("Third draft.") },
+        expected_rev: { [root.id]: 2 },
+      },
+    ]);
   });
 
   it("says a refusal of the server's under the comment's field, author_required among them, and keeps what was typed", async () => {
@@ -891,6 +1020,44 @@ describe("the project's comments", () => {
         author: mira.id,
       }),
     );
+  });
+
+  it("ends a deletion's Undo as its filters change, rather than show it under others", async () => {
+    const user = userEvent.setup();
+    const alone = thread("cmt_01", "variable", gold.id, "Mine alone.");
+    const done = thread("cmt_02", "board", harbour.id, "Rename it.", jo, {
+      resolved_at: at,
+      resolved_by: jo,
+    });
+    commentProject([alone, done]);
+    // The resolved threads, read first, which the list shows at once once
+    // its filter is set back to them, before it reads them again.
+    renderApp(`/projects/${testProject.id}/comments?status=resolved`, {
+      session: testSession,
+    });
+    expect(await screen.findByText("Rename it.")).toBeDefined();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Status" }),
+      "open",
+    );
+    expect(await screen.findByText("Mine alone.")).toBeDefined();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Status" }),
+      "resolved",
+    );
+    expect(await screen.findByText("Rename it.")).toBeDefined();
+    expect(screen.queryByText("Comment deleted.")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeNull();
   });
 
   it("reads its filters from the address, as a link names them", async () => {

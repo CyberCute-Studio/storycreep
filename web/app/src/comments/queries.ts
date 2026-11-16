@@ -2,9 +2,11 @@
 // server keeps them: a thread is a first comment on a node, a connection, a
 // board, or a variable, and its replies, one level deep. The page reads them
 // as queries of their own, each once the page's batches have been answered,
-// which the project's document reads again as an operation of a comment
-// applies, and as anything goes to the trash or comes back from it, whose
-// threads are in the trash with it (followed): the threads of one target,
+// which the project's document reads again, twice a second at most, as any
+// operation but one of saved play states alone applies, of a comment, of
+// anything that goes to the trash or comes back from it, whose threads are
+// in the trash with it, or of what a thread shows of its target, as a
+// node's title (followed): the threads of one target,
 // which its inspector or its panel shows, the project's list of them, a page
 // at a time, with its filters, the counts of each target's threads, which
 // the canvas marks its cards with, and the authors, whom the list's filter
@@ -197,12 +199,30 @@ export function threadsOf(comments: readonly CommentBody[]): Thread[] {
   return threads;
 }
 
-/** Returns the open threads of the target of id that counts have, 0 for none. */
+/** The open threads of each target that a read of the counts has, by the target's ID, made once for each read (openOf). */
+const openByTarget = new WeakMap<
+  readonly CommentCount[],
+  ReadonlyMap<string, number>
+>();
+
+/**
+ * Returns the open threads of the target of id that counts have, 0 for
+ * none, looked up in a map made once for each read of them, rather than
+ * through them, as a list of a thousand variables asks of each of its own.
+ */
 export function openOf(
   counts: readonly CommentCount[] | undefined,
   id: string,
 ): number {
-  return counts?.find((c) => c.target_id === id)?.open ?? 0;
+  if (counts === undefined) {
+    return 0;
+  }
+  let open = openByTarget.get(counts);
+  if (open === undefined) {
+    open = new Map(counts.map((c) => [c.target_id, c.open]));
+    openByTarget.set(counts, open);
+  }
+  return open.get(id) ?? 0;
 }
 
 /** Reports whether role starts, answers, and resolves threads: that of "Create/resolve comments" (PRD §5.6). */

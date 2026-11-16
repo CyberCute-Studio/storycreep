@@ -456,6 +456,14 @@ interface BoardCanvasProps {
    */
   focusComments?: boolean;
   /**
+   * Whether the page holds what the user typed outside the canvas, unsent,
+   * as a comment on the board under it (plan item 74), which the page does
+   * not take away either as it follows play mode's flow, as it does not the
+   * canvas's own (onHolding), so that the panel keeps the focus where the
+   * flow is while the page waits for it.
+   */
+  drafting?: boolean;
+  /**
    * Tells whether the canvas has open what the user types in, which a page
    * change would take away unsaved: the inspector, or the editor of a text,
    * as it opens and closes, which the board's page waits for to close before
@@ -493,6 +501,7 @@ function BoardCanvasOf({
   focus,
   focusConnection,
   focusComments = false,
+  drafting = false,
   onHolding,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
@@ -964,7 +973,9 @@ function BoardCanvasOf({
   // inspector would else come back once the archive is lifted.
   const opensInspector = useRef(false);
   // A link to a thread opens the inspector at its comments, whatever the
-  // user's role, and on a sheet too, as the thread is what it asked for.
+  // user's role, and on a sheet too, as the thread is what it asked for, as
+  // the link is followed, rather than as a later link on the page opens the
+  // node again while the address still says so.
   const opensComments = useRef(focusComments);
   useLayoutEffect(() => {
     opensInspector.current = editable && docked;
@@ -976,7 +987,7 @@ function BoardCanvasOf({
   // has since reconnected, leaves the node selected, rather than select a
   // connection elsewhere on the board while the canvas shows the node.
   const openNode = useCallback(
-    (id: string, connection?: string) =>
+    (id: string, connection?: string, comments = false) =>
       controller.focus(id, () => {
         if (
           connection !== undefined &&
@@ -985,7 +996,7 @@ function BoardCanvasOf({
         ) {
           controller.selectConnection(connection);
         }
-        if (opensComments.current) {
+        if (comments) {
           setInspecting(true);
           setCommentsAsked((n) => n + 1);
         } else if (opensInspector.current) {
@@ -996,7 +1007,7 @@ function BoardCanvasOf({
   );
   useEffect(() => {
     if (focus !== undefined) {
-      openNode(focus, focusConnection);
+      openNode(focus, focusConnection, opensComments.current);
     }
   }, [openNode, focus, focusConnection]);
   // A link on the page to a node of this board that the address names
@@ -1473,14 +1484,15 @@ function BoardCanvasOf({
   }, [controller, doc, boardId, t, sceneTags, targets, targetReads]);
 
   // The open threads of comments of the board's nodes and connections (plan
-  // item 74), which the canvas marks, and its tree says, read again as an
-  // operation of a comment applies, or as anything goes to the trash or
-  // comes back from it (followed), but in a run of the benchmark, which
-  // measures the canvas alone.
-  const commentCounts = useQuery({
+  // item 74), which the canvas marks, and its tree says, read again as
+  // operations apply (followed), but in a run of the benchmark, which
+  // measures the canvas alone: it neither reads them nor takes what another
+  // read of the page's, as the board's header's, holds of them.
+  const counts = useQuery({
     ...commentCountsQuery(doc, boardId),
-    enabled: options.bench === undefined,
+    enabled: !benching,
   }).data;
+  const commentCounts = benching ? undefined : counts;
   useEffect(() => {
     const open = new Map<string, number>();
     for (const c of commentCounts ?? []) {
@@ -1693,8 +1705,9 @@ function BoardCanvasOf({
   // follows play's flow to another board's page, but waits for to close
   // (onHolding), while the panel keeps the focus where the flow is. The
   // inspector is open on any board, of which a user who may not change it
-  // sees the comments alone, and may be writing one (plan item 74).
-  const holding = inspecting || editing !== undefined;
+  // sees the comments alone, and may be writing one, as on the board's own
+  // under the canvas (drafting, plan item 74).
+  const holding = inspecting || editing !== undefined || drafting;
   useEffect(() => {
     onHolding?.(holding);
   }, [onHolding, holding]);

@@ -32,6 +32,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -265,8 +266,8 @@ func resultOf(r queries.SearchRow) (Result, error) {
 		NodeID: encode(ids.Node, r.NodeID), Title: Spans(r.Title), Snippet: Spans(r.Snippet),
 		key: Key{Rank: r.Rank, Kind: Kind(r.Kind), ID: r.EntityID.Bytes}}
 	if r.TargetType.Valid {
-		target, ok := targetKinds[r.TargetType.String]
-		if !ok {
+		target := comment.TargetType(r.TargetType.String).Kind()
+		if target == 0 {
 			return Result{}, fmt.Errorf("search: a comment on a target of the kind %q", r.TargetType.String)
 		}
 		res.TargetType, res.TargetID = r.TargetType.String, encode(target, r.TargetID)
@@ -279,11 +280,6 @@ func resultOf(r queries.SearchRow) (Result, error) {
 	}
 	return res, nil
 }
-
-// targetKinds are the kinds of the IDs of the targets of comments' threads,
-// by the names that the search's query gives the kinds (queries.Search).
-var targetKinds = map[string]ids.Kind{"node": ids.Node, "connection": ids.Connection, "board": ids.Board,
-	"variable": ids.Variable}
 
 // The characters that ts_headline marks the start and the end of each match
 // with (queries.Search), which no document holds (NewDocument).
