@@ -1,9 +1,10 @@
 // The panel of a variable (PRD FR-VAR-01 to FR-VAR-04): its fields, which an
 // editor changes in one batch, expecting the revision that the form shows,
 // or reads; its rename, a refactor previewed first (rename.tsx); where it is
-// used, its reads and its writes (usages.tsx); and its deletion to the
-// trash, guarded by those usages (deletion.tsx). It shows the variable as
-// the project's document has it, so a change that another session makes
+// used, its reads and its writes (usages.tsx); its deletion to the trash,
+// guarded by those usages (deletion.tsx); and its threaded comments (plan
+// item 74), which a commenter starts and answers too. It shows the variable
+// as the project's document has it, so a change that another session makes
 // shows as it commits (FR-RT-02), but for what the user is editing, as the
 // board's page does (useHeld).
 
@@ -11,6 +12,7 @@ import type { Board, ProjectBody, Variable } from "@storycreep/shared/api";
 import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { refusalOf } from "../auth/refusal";
+import { Comments } from "../comments/Threads";
 import { DeleteContentDialog } from "../content/deletion";
 import {
   ConflictNotice,
@@ -80,6 +82,10 @@ export function VariablePanel(props: VariablePanelProps) {
             query: variableUsagesQuery(project.id, variable.id, "write"),
           },
         ]}
+      />
+      <Comments
+        projectId={project.id}
+        target={{ type: "variable", id: variable.id }}
       />
     </div>
   );

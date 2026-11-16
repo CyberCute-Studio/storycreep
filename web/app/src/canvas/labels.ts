@@ -25,6 +25,8 @@ export interface NodeLabels {
   body: string;
   /** Whether the node is a jumper whose target was deleted, which its card is drawn as broken for (FR-EDIT-05 AC1). */
   broken?: boolean;
+  /** How many open threads of comments the node has, which its card's badge counts, and the tree says (plan item 74); none for 0. */
+  comments?: number;
 }
 
 /** What labels read from the page: its messages, and the names of what a node refers to. */
@@ -300,7 +302,8 @@ export function sameLabels(a: NodeLabels, b: NodeLabels | undefined): boolean {
     a.title === b.title &&
     a.kind === b.kind &&
     a.body === b.body &&
-    (a.broken ?? false) === (b.broken ?? false)
+    (a.broken ?? false) === (b.broken ?? false) &&
+    (a.comments ?? 0) === (b.comments ?? 0)
   );
 }
 

@@ -1750,6 +1750,64 @@ describe("undo and redo (FR-EDIT-08)", () => {
     expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
   });
 
+  // A comment's actions are no steps of the page's undo (plan item 74): a
+  // batch of them, sent outside the history, leaves its undo and its redo
+  // as they were, whose redo then redoes what it did before, and resolves
+  // with its own undo, which the comment offers in its place.
+  it("sends a batch outside the history, as of a comment, which leaves the steps to undo and to redo as they were", async () => {
+    const deleteBack = {
+      type: "comment.restore",
+      payload: { id: "cmt_a" },
+      expected_rev: { cmt_a: 2 },
+    };
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        applied(
+          3,
+          [{ id: "bd_a", rev: 5 }],
+          [renameBack("bd_a", "Harbour at night", 5)],
+        ),
+        applied(4, [{ id: "cmt_a", rev: 2 }], [deleteBack]),
+        applied(
+          5,
+          [{ id: "bd_a", rev: 6 }],
+          [renameBack("bd_a", "Harbour", 6)],
+        ),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await doc.undo();
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 1 });
+    const version = doc.store.getState().historyVersion;
+    const answer = await doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    expect(answer.undo).toEqual([deleteBack]);
+    expect(doc.store.getState()).toMatchObject({
+      undoable: 0,
+      redoable: 1,
+      historyVersion: version,
+    });
+    // The redo is still the rename's, which the comment's batch kept.
+    await doc.redo();
+    expect(server.batches[3]).toEqual([
+      {
+        ...renameBack("bd_a", "Harbour at night", 5),
+        command_id: expect.any(String),
+      },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour at night" });
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
+  });
+
   it("moves what the other steps expect of an entity that an undo or a redo brought back to the revision that it left", async () => {
     const server = serve({
       ...tree([board("bd_a", "Harbour")]),

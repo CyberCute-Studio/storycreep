@@ -27,7 +27,15 @@ import {
   Texture,
 } from "pixi.js";
 import { type NodeLabels, sameLabels } from "./labels";
-import { type Curve, outputOffset, portPoint, sameCurve } from "./layout";
+import {
+  badgeText,
+  type Curve,
+  commentBadge,
+  curveMiddle,
+  outputOffset,
+  portPoint,
+  sameCurve,
+} from "./layout";
 import type { ConnectionItem, NodeItem, Scene } from "./scene";
 import {
   bodyLine,
@@ -83,6 +91,10 @@ export interface Frame {
   play?: PlayMarks;
   /** Counts the changes of play. */
   playVersion?: number;
+  /** Returns how many open threads of comments the connection of an ID has, whose line is marked in its middle where it has any (plan item 74), or undefined for none. A node's are its labels'. */
+  comments?: (id: string) => number;
+  /** Counts the changes of comments. */
+  commentsVersion?: number;
   theme: Theme;
 }
 
@@ -495,6 +507,12 @@ interface CardView {
    * that a board that is not played has no more objects than before.
    */
   trail?: NineSliceSprite;
+  /**
+   * The badge of the node's open threads of comments, and its count (plan
+   * item 74), made once the card first has one, so that a board without
+   * comments has no more objects than before.
+   */
+  badge?: { pill: Graphics; count: BitmapText };
   title: BitmapText;
   kind: BitmapText;
   body: BitmapText;
@@ -581,6 +599,7 @@ class PixiEngine implements Engine {
         labelsVersion: number;
         dimVersion: number;
         playVersion: number;
+        commentsVersion: number;
         theme: Theme;
         stats: Omit<FrameStats, "visible">;
         shown: NodeItem[];
@@ -973,6 +992,7 @@ class PixiEngine implements Engine {
       was.connectionsVersion !== scene.connectionsVersion ||
       was.connection !== f.connection ||
       was.playVersion !== (f.playVersion ?? 0) ||
+      was.commentsVersion !== (f.commentsVersion ?? 0) ||
       was.zoom !== zoom ||
       was.lod !== lod ||
       was.theme !== theme
@@ -986,6 +1006,7 @@ class PixiEngine implements Engine {
         theme,
         f.connection,
         f.play?.traversed,
+        f.comments,
       );
     }
     this.built = {
@@ -1001,6 +1022,7 @@ class PixiEngine implements Engine {
       labelsVersion: f.labelsVersion,
       dimVersion: f.dimVersion ?? 0,
       playVersion: f.playVersion ?? 0,
+      commentsVersion: f.commentsVersion ?? 0,
       theme,
       stats: {
         lod,
@@ -1220,14 +1242,65 @@ class PixiEngine implements Engine {
       t.tint = color;
       t.position.set(x, y);
     };
+    // The badge of the node's open threads of comments (plan item 74), at
+    // the card's top right, which the title leaves room for: a pill in the
+    // accent, of the count in the accent's foreground.
+    const comments = labels.comments ?? 0;
+    const badge = comments > 0 ? commentBadge(w, comments) : undefined;
     setText(
       view.title,
       fonts.bold,
-      cut(fonts.bold, titleSize, (room, m) => clip(labels.title, room, m)),
+      cut(fonts.bold, titleSize, (room, m) =>
+        clip(
+          labels.title,
+          badge === undefined
+            ? room
+            : Math.max(4 * averageLetter * titleSize, room - badge.width - 6),
+          m,
+        ),
+      ),
       theme.fg,
       12,
       12,
     );
+    if (badge !== undefined) {
+      let b = view.badge;
+      if (b === undefined) {
+        b = {
+          pill: new Graphics(),
+          count: new BitmapText({
+            text: "",
+            style: { fontFamily: fonts.bold, fontSize: kindSize },
+          }),
+        };
+        b.count.anchor.set(0.5);
+        view.badge = b;
+        view.root.addChild(b.pill, b.count);
+      }
+      b.pill.visible = true;
+      b.pill.clear();
+      b.pill
+        .roundRect(
+          badge.x,
+          badge.y,
+          badge.width,
+          badge.height,
+          badge.height / 2,
+        )
+        .fill({ color: theme.accent });
+      b.count.visible = true;
+      setText(
+        b.count,
+        fonts.bold,
+        badgeText(comments),
+        theme.accentFg,
+        badge.x + badge.width / 2,
+        badge.y + badge.height / 2,
+      );
+    } else if (view.badge !== undefined) {
+      view.badge.pill.visible = false;
+      view.badge.count.visible = false;
+    }
     setText(
       view.kind,
       fonts.regular,
@@ -1303,7 +1376,10 @@ class PixiEngine implements Engine {
    * renderer, each into the tile of the grid over region that the centre of
    * its curve is in, with the rectangle that the tile's lines take, by
    * which cull draws the tile or not. The connection of selected is drawn
-   * again over the rest, wider, in the selection's colour.
+   * again over the rest, wider, in the selection's colour, and each that
+   * has open threads of comments, as comments tells, is marked by a dot in
+   * the accent at its middle, ringed in the board's colour, where cards are
+   * drawn (plan item 74).
    */
   private drawLines(
     connections: readonly ConnectionItem[],
@@ -1314,6 +1390,7 @@ class PixiEngine implements Engine {
     theme: Theme,
     selected: string | undefined,
     traversed: ReadonlySet<string> | undefined,
+    comments: ((id: string) => number) | undefined,
   ): void {
     const grid = this.kind === "canvas" ? lineGrid : 1;
     while (this.lineTiles.length < grid * grid) {
@@ -1409,6 +1486,22 @@ class PixiEngine implements Engine {
           head(chosen);
           g.fill({ color: theme.accent });
         }
+      }
+      const commented =
+        comments === undefined || lod !== "detail"
+          ? []
+          : items.filter((item) => comments(item.connection.id) > 0);
+      for (const item of commented) {
+        const m = curveMiddle(item.curve);
+        g.circle(m.x - origin.x, m.y - origin.y, 7);
+      }
+      if (commented.length > 0) {
+        g.fill({ color: theme.accent });
+        for (const item of commented) {
+          const m = curveMiddle(item.curve);
+          g.circle(m.x - origin.x, m.y - origin.y, 7);
+        }
+        g.stroke({ width: 2, color: theme.canvas });
       }
     });
   }

@@ -29,6 +29,7 @@ const theme: Theme = {
   fg: 0x15171c,
   muted: 0x4b5260,
   accent: 0x2b50c8,
+  accentFg: 0xffffff,
   danger: 0xb3261e,
   play: 0x0d6b43,
   dark: false,

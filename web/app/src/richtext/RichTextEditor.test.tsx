@@ -1,7 +1,9 @@
 import type { RichTextDoc } from "@storycreep/shared/api";
+import { newId } from "@storycreep/shared/ids";
 import { MAX_CHARS } from "@storycreep/shared/richtext";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { EditorView } from "@tiptap/pm/view";
 import { I18nextProvider } from "react-i18next";
 import { describe, expect, test, vi } from "vitest";
 import { createAppI18n } from "../i18n";
@@ -594,6 +596,41 @@ describe("the rich-text editor", () => {
         },
       ],
       type: "paragraph",
+    });
+  });
+
+  // A comment's text (plan item 74) refers to nothing of the story's, which
+  // the server refuses it for: its { and @ are text, it has no button of a
+  // value's format, and a mention or a value reference pasted into it is
+  // the text that it shows, with its marks.
+  test("a text without references has no format of a value, and takes a mention or a value reference pasted into it as the text that it shows", () => {
+    const component = newId("component");
+    const variable = newId("variable");
+    const { textbox, last } = renderEditor({
+      references: false,
+      names: { mention: () => "Elara", value: () => "gold" },
+    });
+    expect(screen.queryByRole("button", { name: "Number format" })).toBeNull();
+    screen.getByRole("button", { name: "Bold" });
+    act(() => {
+      (
+        textbox as unknown as { editor: { view: EditorView } }
+      ).editor.view.pasteHTML(
+        `<p>Ask <span data-type="mention" data-id="${component}">@Elara</span> for <strong><span data-type="value-ref" data-ref="${variable}">{gold}</span></strong>.</p>`,
+      );
+    });
+    expect(last()?.doc).toEqual({
+      content: [
+        {
+          content: [
+            { text: "Ask @Elara for ", type: "text" },
+            { marks: [{ type: "bold" }], text: "{gold}", type: "text" },
+            { text: ".", type: "text" },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
     });
   });
 });

@@ -246,7 +246,14 @@ export const CanvasTree = memo(function CanvasTree({
   // board still has, read in one pass of the board's connections.
   // biome-ignore lint/correctness/useExhaustiveDependencies: seen counts the changes of what the canvas holds, which the connections are read from.
   const choices = useMemo(
-    () => treeChoices(controller.scene, doc.store.getState().view, expanded, t),
+    () =>
+      treeChoices(
+        controller.scene,
+        doc.store.getState().view,
+        expanded,
+        t,
+        controller.comments,
+      ),
     [controller, doc, expanded, t, seen],
   );
   // What the tree's focus was last on, and the nodes as the tree listed

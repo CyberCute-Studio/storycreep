@@ -26,6 +26,7 @@ import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projec
 import { Route as WorkspacesWorkspaceIdRouteImport } from './routes/workspaces.$workspaceId'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects.$projectId.index'
 import { Route as ProjectsProjectIdAccessRouteImport } from './routes/projects.$projectId.access'
+import { Route as ProjectsProjectIdCommentsRouteImport } from './routes/projects.$projectId.comments'
 import { Route as ProjectsProjectIdComponentTypesRouteImport } from './routes/projects.$projectId.component-types'
 import { Route as ProjectsProjectIdComponentsRouteImport } from './routes/projects.$projectId.components'
 import { Route as ProjectsProjectIdDependenciesRouteImport } from './routes/projects.$projectId.dependencies'
@@ -126,6 +127,12 @@ const ProjectsProjectIdAccessRoute = ProjectsProjectIdAccessRouteImport.update({
   path: '/access',
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdCommentsRoute =
+  ProjectsProjectIdCommentsRouteImport.update({
+    id: '/comments',
+    path: '/comments',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 const ProjectsProjectIdComponentTypesRoute =
   ProjectsProjectIdComponentTypesRouteImport.update({
     id: '/component-types',
@@ -226,6 +233,7 @@ export interface FileRoutesByFullPath {
   '/account/': typeof AccountIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/comments': typeof ProjectsProjectIdCommentsRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
@@ -256,6 +264,7 @@ export interface FileRoutesByTo {
   '/account': typeof AccountIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/comments': typeof ProjectsProjectIdCommentsRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
@@ -290,6 +299,7 @@ export interface FileRoutesById {
   '/account/': typeof AccountIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/projects/$projectId/access': typeof ProjectsProjectIdAccessRoute
+  '/projects/$projectId/comments': typeof ProjectsProjectIdCommentsRoute
   '/projects/$projectId/component-types': typeof ProjectsProjectIdComponentTypesRoute
   '/projects/$projectId/components': typeof ProjectsProjectIdComponentsRoute
   '/projects/$projectId/dependencies': typeof ProjectsProjectIdDependenciesRoute
@@ -325,6 +335,7 @@ export interface FileRouteTypes {
     | '/account/'
     | '/projects/'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/comments'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
     | '/projects/$projectId/dependencies'
@@ -355,6 +366,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/projects'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/comments'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
     | '/projects/$projectId/dependencies'
@@ -388,6 +400,7 @@ export interface FileRouteTypes {
     | '/account/'
     | '/projects/'
     | '/projects/$projectId/access'
+    | '/projects/$projectId/comments'
     | '/projects/$projectId/component-types'
     | '/projects/$projectId/components'
     | '/projects/$projectId/dependencies'
@@ -541,6 +554,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAccessRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/comments': {
+      id: '/projects/$projectId/comments'
+      path: '/comments'
+      fullPath: '/projects/$projectId/comments'
+      preLoaderRoute: typeof ProjectsProjectIdCommentsRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
     '/projects/$projectId/component-types': {
       id: '/projects/$projectId/component-types'
       path: '/component-types'
@@ -659,6 +679,7 @@ const AccountRouteWithChildren =
 
 interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdAccessRoute: typeof ProjectsProjectIdAccessRoute
+  ProjectsProjectIdCommentsRoute: typeof ProjectsProjectIdCommentsRoute
   ProjectsProjectIdComponentTypesRoute: typeof ProjectsProjectIdComponentTypesRoute
   ProjectsProjectIdComponentsRoute: typeof ProjectsProjectIdComponentsRoute
   ProjectsProjectIdDependenciesRoute: typeof ProjectsProjectIdDependenciesRoute
@@ -674,6 +695,7 @@ interface ProjectsProjectIdRouteChildren {
 
 const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdAccessRoute: ProjectsProjectIdAccessRoute,
+  ProjectsProjectIdCommentsRoute: ProjectsProjectIdCommentsRoute,
   ProjectsProjectIdComponentTypesRoute: ProjectsProjectIdComponentTypesRoute,
   ProjectsProjectIdComponentsRoute: ProjectsProjectIdComponentsRoute,
   ProjectsProjectIdDependenciesRoute: ProjectsProjectIdDependenciesRoute,

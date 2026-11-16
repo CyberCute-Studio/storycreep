@@ -142,6 +142,34 @@ export interface Curve {
 }
 
 /**
+ * Returns where the card of a node of width draws the badge of its count of
+ * open threads of comments (plan item 74), from the card's top-left corner,
+ * in units of the board: a pill at its top right, as wide as its digits,
+ * or 99+, need, which the card's title leaves room for, and a tap or a
+ * click on which opens the node's comments.
+ */
+export function commentBadge(width: number, count: number): Rect {
+  const w = count > 99 ? 40 : count > 9 ? 30 : 24;
+  return { x: width - 10 - w, y: 9, width: w, height: 22 };
+}
+
+/** Returns what the badge of count open threads says: the count, or 99+ past 99. */
+export function badgeText(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}
+
+/**
+ * Returns the middle of curve, where the canvas marks a connection that has
+ * open threads of comments (plan item 74).
+ */
+export function curveMiddle(c: Curve): Point {
+  return {
+    x: (c.p0.x + 3 * c.c1.x + 3 * c.c2.x + c.p3.x) / 8,
+    y: (c.p0.y + 3 * c.c1.y + 3 * c.c2.y + c.p3.y) / 8,
+  };
+}
+
+/**
  * Returns the curve of a connection from the port at from to the entry at
  * to, which leaves and enters horizontally, and loops above the nodes of a
  * connection that enters the node that it leaves (self).

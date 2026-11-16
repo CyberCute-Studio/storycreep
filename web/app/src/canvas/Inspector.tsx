@@ -10,7 +10,9 @@
 // node (InspectorFlow.tsx, plan note N69). Of several, it aligns,
 // distributes, colours, and tags them. Of either, it duplicates and deletes
 // what is selected. Of the connection selected, in place of nodes, it is
-// the connection's form.
+// the connection's form. Of one node, or of the connection, it shows their
+// threaded comments last (plan item 74), which are all that it shows on a
+// board that the user may not change, as a commenter's or a viewer's.
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { Comments } from "../comments/Threads";
 import { AssetImage } from "../content/AssetImage";
 import {
   ConflictNotice,
@@ -80,9 +83,14 @@ import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
 import type { TargetLookup } from "./targets";
 
+/** The ID of the heading of the comments of what the inspector shows, which the canvas's badge of a node's comments brings into view. */
+export const inspectorCommentsId = "inspector-comments";
+
 /** What the inspector is given. */
 export interface InspectorProps {
   projectId: string;
+  /** Whether the user may change the board, without which the inspector shows the comments of what is selected alone. */
+  editable: boolean;
   /** The selected nodes, as the canvas has them. */
   selection: ReadonlySet<string>;
   /** The connection selected, in place of nodes, if one is. */
@@ -107,6 +115,7 @@ export interface InspectorProps {
 /** The inspector of what is selected on the canvas. */
 export function Inspector({
   projectId,
+  editable,
   selection,
   connection: connectionId,
   actions,
@@ -196,23 +205,44 @@ export function Inspector({
       headingRef={heading}
     >
       {connection !== undefined ? (
-        <ConnectionInspector
-          // The parts of one connection, made anew for another.
-          key={connection.id}
-          projectId={projectId}
-          connection={connection}
-          actions={actions}
-          onSelectNode={(id) => {
-            onSelectNode(id);
-            toHeading();
-          }}
-          onDelete={() => {
-            void actions.removeConnection(connection.id);
-            toHeading();
-          }}
-        />
+        // The parts of one connection, made anew for another.
+        <div key={connection.id} className="space-y-6">
+          {editable && (
+            <ConnectionInspector
+              projectId={projectId}
+              connection={connection}
+              actions={actions}
+              onSelectNode={(id) => {
+                onSelectNode(id);
+                toHeading();
+              }}
+              onDelete={() => {
+                void actions.removeConnection(connection.id);
+                toHeading();
+              }}
+            />
+          )}
+          <Comments
+            projectId={projectId}
+            target={{ type: "connection", id: connection.id }}
+            headingId={inspectorCommentsId}
+          />
+        </div>
       ) : nodes.length === 0 ? (
-        <p className="text-fg-muted">{t("inspector.empty")}</p>
+        <p className="text-fg-muted">
+          {editable ? t("inspector.empty") : t("inspector.empty_comments")}
+        </p>
+      ) : !editable ? (
+        single === undefined ? (
+          <p className="text-fg-muted">{t("inspector.one_for_comments")}</p>
+        ) : (
+          <Comments
+            key={single.id}
+            projectId={projectId}
+            target={{ type: "node", id: single.id }}
+            headingId={inspectorCommentsId}
+          />
+        )
       ) : (
         <div className="space-y-6">
           {single !== undefined && (
@@ -313,6 +343,16 @@ export function Inspector({
               </Button>
             </div>
           </section>
+          {single !== undefined && (
+            // Made anew for another node, under a key of its own, which the
+            // node's parts above have.
+            <Comments
+              key={`comments-${single.id}`}
+              projectId={projectId}
+              target={{ type: "node", id: single.id }}
+              headingId={inspectorCommentsId}
+            />
+          )}
         </div>
       )}
     </Panel>

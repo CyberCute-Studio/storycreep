@@ -27,7 +27,12 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import { Strike } from "@tiptap/extension-strike";
 import { Text } from "@tiptap/extension-text";
 import { Placeholder, UndoRedo } from "@tiptap/extensions";
-import type { MarkType, Node as PMNode, Slice } from "@tiptap/pm/model";
+import {
+  Fragment,
+  type MarkType,
+  type Node as PMNode,
+  Slice,
+} from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { typedHref } from "./link";
@@ -97,6 +102,31 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
       );
   }
   return undefined;
+}
+
+/**
+ * Returns slice with each mention and value reference in it as the text
+ * that it shows of labels, with its marks, as @Elara or {gold}, as what is
+ * pasted or dropped into a text that holds neither, as a comment, becomes
+ * (RichTextEditor's references): a comment names nothing of the story's,
+ * which the server refuses it for.
+ */
+export function withoutReferences(slice: Slice, labels: ChipLabels): Slice {
+  const strip = (fragment: Fragment): Fragment => {
+    const nodes: PMNode[] = [];
+    fragment.forEach((node) => {
+      const text = chipText(node, labels);
+      if (text !== undefined) {
+        nodes.push(node.type.schema.text(text, node.marks));
+      } else {
+        nodes.push(node.isLeaf ? node : node.copy(strip(node.content)));
+      }
+    });
+    // Neighbouring texts of the same marks are one, as ProseMirror keeps
+    // them.
+    return Fragment.fromArray(nodes);
+  };
+  return new Slice(strip(slice.content), slice.openStart, slice.openEnd);
 }
 
 /**

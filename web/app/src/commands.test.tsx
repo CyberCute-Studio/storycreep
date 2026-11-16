@@ -828,7 +828,7 @@ describe("the project's search", () => {
     renderApp(`/projects/${testProject.id}/search`, { session: testSession });
     expect(
       await screen.findByText(
-        "Search the project's nodes, connections, variables, and components.",
+        "Search the project's nodes, connections, variables, components, and comments.",
       ),
     ).toBeDefined();
     const field = screen.getByRole("searchbox", { name: "Search for" });
