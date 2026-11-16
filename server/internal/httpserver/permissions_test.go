@@ -750,7 +750,7 @@ var permissionMatrix = []struct {
 	{
 		// Anyone whose role allows it replies to any thread and resolves any,
 		// but edits, deletes, and restores only their own comments, which
-		// package comment checks of the author (TestCommentAuthors).
+		// package comment checks of the author (TestCommentThreads).
 		row:     "Create/resolve comments",
 		op:      authz.Comment,
 		allowed: [5]bool{true, true, true, true, false},
