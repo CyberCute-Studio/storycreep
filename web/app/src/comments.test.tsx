@@ -174,9 +174,10 @@ type Sent = { type: string; payload: Record<string, unknown> }[];
  * first comment of a thread that is shown is listed without its body and
  * its author; each command of a comment has its undo; refuse throws its
  * refusal of a batch, if any, before it applies; held holds a batch, if it
- * gives a promise, until that resolves, as the batch then applies; and
- * listed answers each read of the list with what it makes of the comments
- * listed, as late as it resolves.
+ * gives a promise, until that resolves, as the batch then applies; listed
+ * answers each read of the list with what it makes of the comments listed,
+ * as late as it resolves; and archived tells whether a read of the project
+ * finds it archived.
  */
 function commentProject(
   stored: Stored[],
@@ -186,6 +187,7 @@ function commentProject(
     search?: (query: Record<string, unknown>) => unknown;
     listed?: (items: CommentBody[]) => Promise<CommentBody[]>;
     held?: (commands: Sent) => Promise<void> | undefined;
+    archived?: () => boolean;
   } = {},
 ) {
   const comments = [...stored];
@@ -415,7 +417,12 @@ function commentProject(
     };
     switch (operation) {
       case "getProject":
-        return { ...testProject, role: options.role ?? "owner", seq };
+        return {
+          ...testProject,
+          role: options.role ?? "owner",
+          seq,
+          ...(options.archived?.() === true ? { archived_at: at } : {}),
+        };
       case "listFolders":
       case "listBoardConnections":
       case "listComponentTypes":
@@ -869,7 +876,12 @@ describe("a target's threads", () => {
       }),
     ).toBeDefined();
 
-    // A new thread is the threads' next action, which ends the Undo.
+    expect(
+      within(comments).getByText("Comment deleted. Undo brings it back."),
+    ).toBeDefined();
+
+    // A new thread is the threads' next action, which ends the Undo, and
+    // what they said of it.
     typeInto(
       within(comments).getByRole("textbox", { name: "New comment" }),
       "A better one.",
@@ -885,9 +897,108 @@ describe("a target's threads", () => {
         }),
       ).toBeNull(),
     );
+    expect(
+      within(comments).queryByText("Comment deleted. Undo brings it back."),
+    ).toBeNull();
     await waitFor(() =>
       expect(within(comments).queryByText("A stray thought.")).toBeNull(),
     );
+  });
+
+  it("ends what the threads said of their last press, a deletion's Undo or a refusal, with the Undo, as a reply or an edit is sent", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Lanterns?");
+    const mine = reply("cmt_02", root, "Two of them.");
+    const other = thread("cmt_03", "variable", gold.id, "Torches?", mira);
+    commentProject([root, mine, other], {
+      refuse: (commands) => {
+        if (commands[0].type !== "comment.resolve") {
+          return undefined;
+        }
+        // Mira edited her comment meanwhile.
+        other.rev = 2;
+        return refused(409, {
+          code: "revision_conflict",
+          details: {
+            conflicts: [
+              {
+                command: 0,
+                command_id: "00000000-0000-7000-8000-000000000001",
+                type: "comment.resolve",
+                id: other.id,
+                expected_rev: 1,
+                exists: true,
+                current_rev: 2,
+              },
+            ],
+            states: { [other.id]: { id: other.id, rev: 2 } },
+          },
+        });
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("Two of them.")).toBeDefined();
+    const lanterns = () =>
+      within(comments)
+        .getByText(/^Lanterns/)
+        .closest("li[data-thread]") as HTMLElement;
+    const replies = within(lanterns()).getByRole("list", { name: "1 reply" });
+    await user.click(within(replies).getByRole("button", { name: "Delete" }));
+    expect(
+      await within(comments).findByText(
+        "Comment deleted. Undo brings it back.",
+      ),
+    ).toBeDefined();
+
+    // A reply is the threads' next action, which ends the Undo, and what
+    // they said of it, which would else offer an Undo that has gone.
+    await user.click(within(lanterns()).getByRole("button", { name: "Reply" }));
+    typeInto(
+      within(lanterns()).getByRole("textbox", { name: "Reply" }),
+      "Three.",
+    );
+    await user.click(
+      within(lanterns()).getByRole("button", { name: "Post reply" }),
+    );
+    await waitFor(() =>
+      expect(
+        within(lanterns()).queryByRole("textbox", { name: "Reply" }),
+      ).toBeNull(),
+    );
+    expect(await within(comments).findByText("Three.")).toBeDefined();
+    expect(
+      within(comments).queryByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeNull();
+    expect(
+      within(comments).queryByText("Comment deleted. Undo brings it back."),
+    ).toBeNull();
+
+    // So is an edit, which ends what a press's refusal said.
+    const torches = within(comments)
+      .getByText("Torches?")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(torches).getByRole("button", { name: "Resolve" }));
+    const changed =
+      "This thread changed elsewhere since it was shown here, so it is shown again as it is now. Try again if you still mean it.";
+    expect(await within(torches).findByText(changed)).toBeDefined();
+    const own = within(lanterns()).getAllByRole("button", { name: "Edit" })[0];
+    await user.click(own);
+    replaceIn(
+      within(lanterns()).getByRole("textbox", { name: "Comment" }),
+      paragraph("Lanterns, or torches?"),
+    );
+    await user.click(within(lanterns()).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(
+        within(lanterns()).queryByRole("textbox", { name: "Comment" }),
+      ).toBeNull(),
+    );
+    expect(
+      await within(comments).findByText("Lanterns, or torches?"),
+    ).toBeDefined();
+    expect(within(comments).queryByText(changed)).toBeNull();
   });
 
   it("ends a deletion's Undo that the server refuses for the comment's restoration elsewhere, and shows the comment as it is", async () => {
@@ -1200,6 +1311,56 @@ describe("a target's threads", () => {
       "comment.create",
       "comment.create",
     ]);
+  });
+
+  it("closes an edit open while its author may no longer change the comment, and opens it again with what it held once they may, though its form was made again meanwhile", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "Lanterns?");
+    let archived = false;
+    const server = commentProject([root], { archived: () => archived });
+    const { queryClient } = renderApp(
+      `/projects/${testProject.id}/variables?variable=${gold.id}`,
+      { session: testSession },
+    );
+    let comments = await screen.findByRole("region", { name: "Comments" });
+    expect(await within(comments).findByText("Lanterns?")).toBeDefined();
+    await user.click(within(comments).getByRole("button", { name: "Edit" }));
+    replaceIn(
+      within(comments).getByRole("textbox", { name: "Comment" }),
+      paragraph("Lanterns, or torches?"),
+    );
+    // The project is archived elsewhere, and read again.
+    const archive = async (now: boolean) => {
+      archived = now;
+      await act(() =>
+        queryClient.invalidateQueries({
+          queryKey: ["projects", testProject.id],
+          exact: true,
+        }),
+      );
+    };
+    await archive(true);
+    await waitFor(() =>
+      expect(
+        within(comments).queryByRole("textbox", { name: "Comment" }),
+      ).toBeNull(),
+    );
+    expect(within(comments).getByText("Lanterns?")).toBeDefined();
+    // The panel goes and shows again while the project is archived, and the
+    // archive is lifted: the edit opens again with what it held.
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(itemButton(gold.id) as HTMLElement);
+    comments = await screen.findByRole("region", { name: "Comments" });
+    expect(await within(comments).findByText("Lanterns?")).toBeDefined();
+    expect(
+      within(comments).queryByRole("textbox", { name: "Comment" }),
+    ).toBeNull();
+    await archive(false);
+    const edit = await within(comments).findByRole("textbox", {
+      name: "Comment",
+    });
+    expect(edit.textContent).toBe("Lanterns, or torches?");
+    expect(server.batches()).toEqual([]);
   });
 
   it("shows the threads as the server lists them once a deletion takes a thread out of the list's filter, with the deletion's Undo above them", async () => {

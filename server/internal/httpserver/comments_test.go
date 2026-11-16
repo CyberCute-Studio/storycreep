@@ -333,10 +333,11 @@ func TestCommentThreads(t *testing.T) {
 	}
 }
 
-// TestCommentTimesOfOneBatch checks that a comment's edit and its thread's
-// resolution in the batch that posted it are dated as the batch applies, as
-// its posting is, rather than as the batch's transaction began, before the
-// comment was posted: none is before the comment's created_at.
+// TestCommentTimesOfOneBatch checks that a comment's edit, its thread's
+// resolution, and a reply's deletion in the batch that posted it are dated as
+// the batch applies, as its posting is, rather than as the batch's
+// transaction began, before the comment was posted: none is before the
+// comment's created_at.
 func TestCommentTimesOfOneBatch(t *testing.T) {
 	t.Parallel()
 	f := newRolesFixture(t)
@@ -358,6 +359,34 @@ func TestCommentTimesOfOneBatch(t *testing.T) {
 		c.UpdatedAt.Before(c.CreatedAt) || !c.UpdatedAt.Equal(*c.EditedAt) || c.ResolvedAt.Before(c.CreatedAt) {
 		t.Errorf("the comment posted, edited, and resolved in one batch is %+v, want it edited and resolved at or "+
 			"after it was posted, at %v", c, c.CreatedAt)
+	}
+
+	// A reply posted and deleted in one batch, whose deletion's time only an
+	// answer of revision_conflict shows, as of a restore that expects the
+	// revision that it was posted with.
+	reply := newCommentID()
+	resultFrom(t, call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "comment.create", Payload: map[string]any{"id": reply, "parent_id": root,
+			"body": paragraph("Since yesterday.")}},
+		wireCommand{Type: "comment.delete", Payload: map[string]any{"id": reply}}), editor.header(true)))
+	res := call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t,
+		wireCommand{Type: "comment.restore", Payload: map[string]any{"id": reply},
+			ExpectedRev: map[string]int64{reply: 1}}), editor.header(true))
+	if res.status != http.StatusConflict {
+		t.Fatalf("the restore that expects the revision that the reply was posted with: %d %s", res.status, res.body)
+	}
+	states, _ := res.details(t)["states"].(map[string]any)
+	state, _ := states[reply].(map[string]any)
+	createdAt, _ := state["created_at"].(string)
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		t.Fatalf("the reply's state: %v (%v)", state, err)
+	}
+	deletedAt, _ := state["deleted_at"].(string)
+	deleted, err := time.Parse(time.RFC3339Nano, deletedAt)
+	if err != nil || deleted.Before(created) {
+		t.Errorf("the reply posted and deleted in one batch is %v, want it deleted at or after it was posted (%v)",
+			state, err)
 	}
 }
 

@@ -482,9 +482,10 @@ function NewThread({
  * thread, or of the threads where the server no longer lists the thread,
  * as once it was the thread's last comment that was not deleted, or once a
  * filter keeps the thread no more, until the next batch that the threads
- * send, the list's or their new thread's, or until the list goes: the
- * Undo's own ends it once it applies, or once the server refuses it for a
- * change made elsewhere since. No read of the threads ends it, as one that
+ * send, the list's or their new thread's, which ends what the threads said
+ * of it with it, or until the list goes: the Undo's own ends it once it
+ * applies, or once the server refuses it for a change made elsewhere
+ * since. No read of the threads ends it, as one that
  * was under way as the deletion was sent may be answered after it with the
  * comment as it was, which the threads then show, as the server listed it.
  */
@@ -629,25 +630,30 @@ export function ThreadList({
   const userId = useQuery(sessionQuery).data?.user_id;
   const ids = useId();
   const [deleted, setDeleted] = useState<Deleted>();
-  // A batch of the threads' outside the list ends the Undo shown, as the
-  // list's own do (send).
-  const [sentSeen, setSentSeen] = useState(sent);
-  if (sent !== sentSeen) {
-    setSentSeen(sent);
-    setDeleted(undefined);
-  }
+  // What the threads say of their last press, as that a deletion has an
+  // Undo, until their next action.
   const [said, setSaid] = useState<string>();
   // What failed of a thread's press that has no field, as Resolve, Delete,
   // or Undo, which the thread says under its buttons, by the thread's ID, or
   // the threads above them where the list no longer shows the thread, and
   // whether it was an Undo's, whose refusal for a change made elsewhere
   // since the deletion says that the deletion is no longer undone here, as
-  // the Undo ends then.
+  // the Undo ends then, until the threads' next action.
   const [failed, setFailed] = useState<{
     thread: string;
     error: unknown;
     undo?: boolean;
   }>();
+  // A batch of the threads' outside the list, as their new thread's, is
+  // their next action, as the list's own are (send): it ends the Undo
+  // shown, and what the threads said of their last press.
+  const [sentSeen, setSentSeen] = useState(sent);
+  if (sent !== sentSeen) {
+    setSentSeen(sent);
+    setDeleted(undefined);
+    setSaid(undefined);
+    setFailed(undefined);
+  }
   const pressFocus = usePressFocus(heading);
   const drafts = draftsOf(doc);
   // A press of a thread's button, as a request of the page's, which the
@@ -686,10 +692,15 @@ export function ThreadList({
       await reread().catch(() => undefined);
     }
   };
-  // Every batch of the list's but an Undo's ends the Undo shown, as the
-  // list's next action (Deleted).
+  // Every batch of the list's but an Undo's, a press's or a form's, as a
+  // reply's or an edit's, is the threads' next action, which ends the Undo
+  // shown (Deleted), and what the threads said of their last press, or its
+  // failure, as a press's own start does (act), so that neither says what
+  // is no longer so, as that an Undo that has gone brings the comment back.
   const send: Send = async (commands) => {
     setDeleted(undefined);
+    setSaid(undefined);
+    setFailed(undefined);
     try {
       return await sendComments(doc, commands);
     } catch (error) {
@@ -1044,10 +1055,13 @@ function CommentItem({
 }) {
   const { t, i18n } = useTranslation();
   // The edit's form is open while its draft is (draftsOf), as it was made
-  // last, of the user's own comment; Edit's press alone gives its field the
-  // focus (opened).
+  // last, and shows while the comment is the user's own to change (own),
+  // though it was not as the form was made again, as while the project was
+  // archived; Edit's press alone gives its field the focus (opened). A
+  // draft is only ever of the user's own comment, as the page's document
+  // goes with the account.
   const editKey = draftKey("edit", c.id);
-  const [editing, setEditing] = useState(() => own && drafts.has(editKey));
+  const [editing, setEditing] = useState(() => drafts.has(editKey));
   const [opened, setOpened] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const bylineId = idOf("byline", c.id);

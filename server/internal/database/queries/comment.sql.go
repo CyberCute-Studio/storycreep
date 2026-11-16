@@ -669,7 +669,7 @@ func (q *Queries) RestoreComment(ctx context.Context, arg RestoreCommentParams) 
 }
 
 const trashComment = `-- name: TrashComment :one
-UPDATE comment SET deleted_at = now(), rev = rev + 1
+UPDATE comment SET deleted_at = clock_timestamp(), rev = rev + 1
 WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
 RETURNING rev
 `
@@ -684,7 +684,10 @@ type TrashCommentParams struct {
 // there already, and returns its new revision, or no row if it is. It leaves
 // when the comment last changed, and when it was edited, as they were, as
 // RestoreComment does, since neither changes its body: a comment restored by
-// the undo of its deletion is shown as it was before.
+// the undo of its deletion is shown as it was before. It is deleted as the
+// server's clock has it as the batch applies, as InsertComment posts a
+// comment, so that a comment deleted in the batch that posted it is not
+// deleted before it was posted.
 func (q *Queries) TrashComment(ctx context.Context, arg TrashCommentParams) (int64, error) {
 	row := q.db.QueryRow(ctx, trashComment, arg.WorkspaceID, arg.ProjectID, arg.ID)
 	var rev int64

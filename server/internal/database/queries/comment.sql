@@ -190,8 +190,11 @@ RETURNING rev;
 -- there already, and returns its new revision, or no row if it is. It leaves
 -- when the comment last changed, and when it was edited, as they were, as
 -- RestoreComment does, since neither changes its body: a comment restored by
--- the undo of its deletion is shown as it was before.
-UPDATE comment SET deleted_at = now(), rev = rev + 1
+-- the undo of its deletion is shown as it was before. It is deleted as the
+-- server's clock has it as the batch applies, as InsertComment posts a
+-- comment, so that a comment deleted in the batch that posted it is not
+-- deleted before it was posted.
+UPDATE comment SET deleted_at = clock_timestamp(), rev = rev + 1
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND deleted_at IS NULL
 RETURNING rev;
 
