@@ -290,7 +290,7 @@ func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	p := createProject(t, s.main, owner, ws, "Harbour").ID
 	g := &undoGen{r: rand.New(rand.NewPCG(seed, 0x37)), ms: 1_700_000_000_000,
-		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID}
+		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID, project: p}
 	conn := d.Admin(t)
 	project := decode(t, ids.Project, p)
 	seen := map[string]bool{}
@@ -320,7 +320,7 @@ func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 	creations := []string{"folder.create", "board.create", "node.create", "node.create", "node.create",
 		"connection.create", "connection.create", "variable.create", "variable.create", "component_type.create",
 		"attribute.create", "attribute.create", "component.create", "component.create", "branch_output.create",
-		"branch_output.create"}
+		"branch_output.create", "play_state.create"}
 	for range 120 {
 		typ := creations[g.r.IntN(len(creations))]
 		if g.r.IntN(3) == 0 {
@@ -611,7 +611,7 @@ var undoTables = []struct{ table, live string }{
 	{"folder", "live_folder"}, {"board", "live_board"}, {"variable", "live_variable"},
 	{"component_type", "live_component_type"}, {"attribute_def", "live_attribute_def"},
 	{"component", "live_component"}, {"node", "live_node"}, {"branch_output", "live_branch_output"},
-	{"connection", "live_connection"},
+	{"connection", "live_connection"}, {"play_state", "live_play_state"},
 }
 
 // undoRevisions returns the revision of every entity of the project, by its
@@ -620,7 +620,8 @@ func undoRevisions(t *testing.T, conn *pgx.Conn, project ids.UUID) map[string]in
 	t.Helper()
 	kinds := map[string]ids.Kind{"folder": ids.Folder, "board": ids.Board, "variable": ids.Variable,
 		"component_type": ids.ComponentType, "attribute_def": ids.AttributeDef, "component": ids.Component,
-		"node": ids.Node, "branch_output": ids.BranchOutput, "connection": ids.Connection}
+		"node": ids.Node, "branch_output": ids.BranchOutput, "connection": ids.Connection,
+		"play_state": ids.PlayState}
 	revs := map[string]int64{}
 	var rev int64
 	if err := conn.QueryRow(context.Background(), "SELECT rev FROM project WHERE id = $1", project).
@@ -739,7 +740,8 @@ type undoModel struct {
 	// mutes are the mutes of the validation's findings, each as an entity
 	// whose id is its owner's, and key its code, outside the trash with its
 	// owner.
-	mutes []undoEntity
+	mutes      []undoEntity
+	playStates []undoEntity
 }
 
 // undoEntity is an entity of an undoModel, with the fields that its kind's
@@ -814,6 +816,8 @@ func readUndoModel(t *testing.T, conn *pgx.Conn, project ids.UUID) *undoModel {
 		"ORDER BY t.id", &m.components, func(e *undoEntity) []any {
 		return []any{encoded(ids.ComponentType, &e.componentType), &e.key}
 	})
+	read(ids.PlayState, common("play_state")+" FROM play_state t WHERE t.project_id = $1 ORDER BY t.id",
+		&m.playStates, none)
 	live := map[string]bool{}
 	for _, es := range [][]undoEntity{m.nodes, m.connections, m.outputs, m.variables, m.boards} {
 		for _, e := range es {
@@ -874,6 +878,8 @@ type undoGen struct {
 	// asset is an asset of the project, which a node's cover and a
 	// component's image name.
 	asset string
+	// project is the project's ID, which a play state's state names.
+	project string
 }
 
 // anyType returns a random type of command that has an inverse.
@@ -1419,6 +1425,44 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 		owner, code, ok := g.muteOf()
 		return obj("entity_id", owner, "code", code), ok
 	},
+
+	"play_state.create": func(g *undoGen) (map[string]any, bool) {
+		return obj("id", g.id(ids.PlayState), "name", g.name(), "state", g.state()), true
+	},
+	"play_state.rename": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.m.playStates, func(s undoEntity) map[string]any { return obj("id", s.id, "name", g.name()) })
+	},
+	"play_state.set_state": func(g *undoGen) (map[string]any, bool) {
+		return g.onLive(g.m.playStates, func(s undoEntity) map[string]any {
+			return obj("id", s.id, "state", g.state())
+		})
+	},
+	"play_state.delete":  func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.playStates, true) },
+	"play_state.restore": func(g *undoGen) (map[string]any, bool) { return g.idOf(g.m.playStates, false) },
+}
+
+// state returns a random save state of the project, as play mode saves one:
+// values of some of its variables, visit counts of some of its nodes, and,
+// half the time, a cursor at one of them. The server does not check a
+// state's entities against the draft, so they may be in the trash.
+func (g *undoGen) state() map[string]any {
+	vars, visits := map[string]any{}, map[string]any{}
+	for _, v := range g.m.variables {
+		if g.coin() {
+			vars[v.id] = g.value(v.typ, nil)
+		}
+	}
+	for _, n := range g.m.nodes {
+		if n.typ != "jumper" && g.coin() {
+			visits[n.id] = 1 + g.r.IntN(3)
+		}
+	}
+	st := obj("attributes", map[string]any{}, "projectId", g.project, "schemaVersion", 1, "stateVersion", 1,
+		"variables", vars, "visits", visits)
+	if n, ok := g.pick(g.m.nodes, func(n undoEntity) bool { return n.typ == "element" }); ok && g.coin() {
+		st["cursor"] = obj("boardId", n.board, "nodeId", n.id, "phase", "ended")
+	}
+	return st
 }
 
 // muteOf returns a random entity outside the trash that a mute may be of, a

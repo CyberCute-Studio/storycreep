@@ -55,7 +55,9 @@ WHERE p.workspace_id = $1 AND (
     OR EXISTS (SELECT 1 FROM attribute_def a WHERE a.workspace_id = p.workspace_id AND a.project_id = p.id
         AND a.deleted_at <= now() - $2::interval)
     OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
-        AND t.deleted_at <= now() - $2::interval))
+        AND t.deleted_at <= now() - $2::interval)
+    OR EXISTS (SELECT 1 FROM play_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
+        AND s.deleted_at <= now() - $2::interval))
 ORDER BY p.id
 `
 
@@ -403,6 +405,40 @@ func (q *Queries) PurgeNodes(ctx context.Context, arg PurgeNodesParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const purgePlayStates = `-- name: PurgePlayStates :execrows
+DELETE FROM play_state d
+WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
+    SELECT s.id FROM play_state s
+    WHERE s.workspace_id = $1 AND s.project_id = $2
+        AND s.deleted_at <= now() - $3::interval
+    ORDER BY s.deleted_at, s.id
+    LIMIT $4
+)
+`
+
+type PurgePlayStatesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Retention   pgtype.Interval
+	MaxRows     int32
+}
+
+// PurgePlayStates deletes at most max_rows of the project's play states that
+// have been in its trash for retention, those that have been there longest
+// first, and returns how many it deleted.
+func (q *Queries) PurgePlayStates(ctx context.Context, arg PurgePlayStatesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, purgePlayStates,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Retention,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeVariables = `-- name: PurgeVariables :execrows
 DELETE FROM variable d
 WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.id IN (
@@ -481,16 +517,16 @@ type TrashItemsRow struct {
 // with deleted_at, which the live views leave out (migration 00019). The
 // tables whose rows the trash lists are its boards', its nodes', its
 // variables', and its components'; its folders', its component types', its
-// attribute definitions', its branch outputs', and its connections' rows go
-// to the trash too, but are not listed. Each such table has a branch here,
-// in the list and in the purge, which package trash's tests hold it to. A
-// row that belongs to a board, as a board's node or variable, is in the trash
-// with its board too, which lists the board alone, and is purged with it, by
-// the cascade of its foreign key to the board, even one deleted on its own,
-// before its board, which the list holds, and whose own time in the trash
-// ends first. A branch output is in the trash with its node alike, and a
-// connection with either of its nodes, and with the output that it leaves,
-// and each is purged with it.
+// attribute definitions', its branch outputs', its connections', and its play
+// states' rows go to the trash too, but are not listed. Each such table has a
+// branch here, in the list and in the purge, which package trash's tests hold
+// it to. A row that belongs to a board, as a board's node or variable, is in
+// the trash with its board too, which lists the board alone, and is purged
+// with it, by the cascade of its foreign key to the board, even one deleted on
+// its own, before its board, which the list holds, and whose own time in the
+// trash ends first. A branch output is in the trash with its node alike, and a
+// connection with either of its nodes, and with the output that it leaves, and
+// each is purged with it.
 // TrashItems returns the entities in the project's trash that it lists, the
 // most recently deleted first, then by their kinds and their IDs, after the
 // entity whose deletion, kind, and ID are after_deleted_at, after_kind, and

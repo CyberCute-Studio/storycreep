@@ -29,6 +29,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/playstate"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/realtime"
@@ -97,6 +98,9 @@ type server struct {
 	// statistics reads the projects' writing statistics, which their
 	// commands keep (package statistics).
 	statistics *statistics.Service
+	// playStates reads the projects' saved play states, which their
+	// commands change (package playstate).
+	playStates *playstate.Service
 	// clipboard copies nodes as a clipboard, and reports what of one a paste
 	// would resolve to nothing.
 	clipboard *clipboard.Service
@@ -132,6 +136,7 @@ func newCommandRegistry() *commands.Registry {
 	node.Register(registry)
 	connection.Register(registry)
 	clipboard.Register(registry)
+	playstate.Register(registry)
 	expression.Register(registry)
 	dependency.Register(registry)
 	validation.Register(registry)
@@ -185,6 +190,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.search = search.New(readyDB{s.ready}, search.Options{Projects: s.projects})
 	s.statistics = statistics.New(readyDB{s.ready}, statistics.Options{Projects: s.projects})
 	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
+	s.playStates = playstate.New(readyDB{s.ready}, playstate.Options{Projects: s.projects})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -278,6 +284,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)
+	registerPlayStates(s.main, s.playStates)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)

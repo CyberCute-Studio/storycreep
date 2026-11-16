@@ -4,6 +4,7 @@ import type {
   ComponentType,
   Connection,
   Node,
+  PlayStateBody,
 } from "@storycreep/shared/api";
 import {
   act,
@@ -13,9 +14,18 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import type { Engine, Frame } from "../canvas/engine";
 import type { ComponentEntry } from "../document/doc";
+import { focusIsNowhere } from "../shell/focus";
 import { renderApp, testSession } from "../test/app";
 import { testConnection, testNode } from "../test/canvas";
 import "../test/editor";
@@ -28,6 +38,7 @@ import {
   text,
 } from "../test/play";
 import { fakeRealtime } from "../test/realtime";
+import { PlaySession } from "./session";
 
 // Play mode on a board's page (PRD FR-PLAY-01, plan note N78): started from
 // the canvas, its panel beside it, which takes the choices, the canvas's
@@ -235,9 +246,14 @@ const connections: Connection[] = [
 function playProject(
   boards: () => Board[] = () => [harbour, elara],
   refuse: (operation: string) => void = () => {},
+  extra: (operation: string, input: unknown) => unknown = () => undefined,
 ) {
   return fakeApi((operation, input) => {
     refuse(operation);
+    const answered = extra(operation, input);
+    if (answered !== undefined) {
+      return answered;
+    }
     const path = (input as { path?: Record<string, string> } | undefined)?.path;
     switch (operation) {
       case "getProject":
@@ -272,6 +288,8 @@ function playProject(
         return { items: [] };
       case "listNodeReferrers":
         return { items: [], next_cursor: null };
+      case "listPlayStates":
+        return { items: [], next_cursor: null };
     }
     const answer = startPage(operation);
     if (answer === undefined) {
@@ -279,6 +297,14 @@ function playProject(
     }
     return answer;
   });
+}
+
+/** The text of every alert of the panel, the halt's and the saved states', joined. */
+function alerts(panel: HTMLElement): string {
+  return within(panel)
+    .getAllByRole("alert")
+    .map((a) => a.textContent ?? "")
+    .join("\n");
 }
 
 /** The reads of the project's content that calls holds. */
@@ -711,7 +737,7 @@ describe("play mode", () => {
     // which reads the draft anew; but no Step back, as play halted in the
     // start's step, which has none to step back from, and Step back is
     // disabled; nor does the inspector name it.
-    expect(within(panel).getByRole("alert").textContent).toContain(
+    expect(alerts(panel)).toContain(
       "Play stopped at a runtime error, as strict mode does. Reset or restart to play again.",
     );
     expect(
@@ -1139,7 +1165,7 @@ describe("play mode's state", () => {
       within(panel).getByRole("button", { name: "Open the ledger" }),
     );
     await waitFor(() =>
-      expect(within(panel).getByRole("alert").textContent).toContain(
+      expect(alerts(panel)).toContain(
         "Play stopped at a runtime error, as strict mode does. Step back, reset, or restart to play again.",
       ),
     );
@@ -1377,5 +1403,1221 @@ describe("play mode's state", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+  });
+});
+
+// The saved play states of the project, as the fake server keeps them,
+// which its list, its read, and its commands answer of.
+function savedStates(initial: PlayStateBody[] = []) {
+  const states = [...initial];
+  let seq = 1;
+  const answer = (operation: string, input: unknown): unknown => {
+    switch (operation) {
+      case "listPlayStates":
+        return {
+          items: states.map(
+            ({ state: _, names: __, deleted_at: ___, ...summary }) => summary,
+          ),
+          next_cursor: null,
+        };
+      case "getPlayState": {
+        const path = (input as { path: { play_state_id: string } }).path;
+        return states.find((s) => s.id === path.play_state_id);
+      }
+      case "applyCommands": {
+        const { commands } = (
+          input as {
+            body: {
+              commands: {
+                type: string;
+                payload: PlayStateBody & { id: string };
+              }[];
+            };
+          }
+        ).body;
+        for (const c of commands) {
+          const i = states.findIndex((s) => s.id === c.payload.id);
+          switch (c.type) {
+            case "play_state.create":
+              states.push({
+                id: c.payload.id,
+                project_id: project.id,
+                name: c.payload.name,
+                rev: 1,
+                created_by: testSession.user_id,
+                updated_by: testSession.user_id,
+                created_at: at,
+                updated_at: at,
+                state: c.payload.state,
+                names: c.payload.names,
+              });
+              break;
+            case "play_state.rename":
+              states[i] = { ...states[i], name: c.payload.name };
+              break;
+            case "play_state.delete":
+              states.splice(i, 1);
+              break;
+          }
+        }
+        seq++;
+        return {
+          status: "applied",
+          seq,
+          revisions: commands.map((c) => ({ id: c.payload.id, rev: 2 })),
+          not_reconnected: [],
+          undo: [],
+        };
+      }
+    }
+    return undefined;
+  };
+  return { states, answer };
+}
+
+/** Returns the commands of the batches that calls sent, without their IDs. */
+function sentBatches(calls: ReturnType<typeof playProject>) {
+  return calls.mock.calls
+    .filter(([operation]) => operation === "applyCommands")
+    .map(([, input]) =>
+      (
+        input as {
+          body: {
+            commands: { command_id: string; type: string; payload: unknown }[];
+          };
+        }
+      ).body.commands.map(({ command_id: _, ...command }) => command),
+    );
+}
+
+describe("saved play states", () => {
+  // The flow at the end of Wait here, as play saved it, its trust raised
+  // by the quay's on-exit, which Reset takes back, and the load brings
+  // back, at the node where the flow ended.
+  // Verifies: FR-PLAY-05/AC1
+  it("saves the flow's state under a name, lists it, and loads it as play's start", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    const calls = playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await within(panel).findByText("You wait.");
+    const name = within(panel).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    // A name of white space alone is none.
+    await user.type(name, "   ");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    expect(within(panel).getByText("Enter a name.")).toBeDefined();
+    await user.clear(name);
+    await user.type(name, " After the wait ");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByText("Saved “After the wait”.");
+    expect(sentBatches(calls)).toEqual([
+      [
+        {
+          type: "play_state.create",
+          payload: {
+            id: expect.stringMatching(/^pst_/),
+            name: "After the wait",
+            state: expect.objectContaining({
+              cursor: {
+                boardId: harbour.id,
+                nodeId: id("nd", "B"),
+                phase: "ended",
+              },
+              attributes: { [elaraComponent.id]: { [trust.id]: 2 } },
+              variables: { [gold.id]: 3 },
+            }),
+            names: {
+              variables: { [gold.id]: "gold" },
+              attributes: {
+                [elaraComponent.id]: { [trust.id]: "elara.trust" },
+              },
+            },
+          },
+        },
+      ],
+    ]);
+    expect((name as HTMLInputElement).value).toBe("");
+    const item = await within(panel).findByText("After the wait");
+    expect(item.closest("li")?.textContent).toContain("Last changed by you");
+    await user.click(within(panel).getByRole("button", { name: "Reset" }));
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      within(panel).getByRole("button", { name: "Load “After the wait”" }),
+    );
+    await within(panel).findByText("You wait.");
+    expect(
+      within(panel).getByText("Loaded “After the wait” as it was saved."),
+    ).toBeDefined();
+    const report = within(panel).getByRole("region", {
+      name: "What loading the saved state kept",
+    });
+    expect(report.textContent).toContain(
+      "Every value, and where the flow is, loaded as they were saved.",
+    );
+    // The load is a turn, after which the current node's heading has the
+    // focus, as after a start.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Wait" }),
+      ),
+    );
+    // The flow had ended where it was saved, which the state does not say
+    // why of, and which the panel and the history's start say.
+    expect(
+      within(
+        within(panel).getByRole("region", { name: "Where the flow is" }),
+      ).getByText("The flow had ended here when the state was saved."),
+    ).toBeDefined();
+    // The history's start is the load.
+    const history = within(panel).getByRole("region", {
+      name: "History",
+    }).textContent;
+    expect(history).toContain("Loaded “After the wait”");
+    expect(history).toContain(
+      "The flow had ended here when the state was saved.",
+    );
+  });
+
+  // A save that the server refuses keeps the name typed, under which it says
+  // why, while the field holds it, and the rest of the refusal, of the state,
+  // beside it; and a rename's refusal is said under the rename's field, not
+  // the save's.
+  it("keeps the name of a refused save, and says a refusal under the field of its own form", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    let refuse = false;
+    let refusals = 0;
+    playProject(undefined, undefined, (operation, input) => {
+      if (operation === "applyCommands" && refuse) {
+        refusals++;
+        throw refused(422, {
+          code: "validation_failed",
+          details: {
+            errors: [
+              {
+                location: "body.commands[0].payload.name",
+                message: "has a control character",
+              },
+              // The save's state too, which no field of the form shows.
+              ...(refusals === 1
+                ? [
+                    {
+                      location: "body.commands[0].payload.state",
+                      message: "takes too many bytes",
+                    },
+                  ]
+                : []),
+            ],
+          },
+        });
+      }
+      return saved.answer(operation, input);
+    });
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const name = within(panel).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    await user.type(name, "Quay");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByRole("button", { name: "Rename “Quay”" });
+    refuse = true;
+    await user.type(name, "Storm");
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
+    expect((name as HTMLInputElement).value).toBe("Storm");
+    expect(within(panel).getByText("Has a control character.")).toBeDefined();
+    expect(within(panel).getByText("Takes too many bytes.")).toBeDefined();
+    // The refusal is of the name as it was sent, which the field says no
+    // more once the name is changed, and again once it is that name.
+    await user.type(name, "y");
+    expect(name.getAttribute("aria-invalid")).not.toBe("true");
+    await user.type(name, "{Backspace}");
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “Quay”",
+    });
+    await user.clear(field);
+    await user.type(field, "Harbour");
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(field.getAttribute("aria-invalid")).toBe("true"),
+    );
+    expect(name.getAttribute("aria-invalid")).not.toBe("true");
+    expect(within(panel).getAllByText("Has a control character.")).toHaveLength(
+      1,
+    );
+    expect(saved.states.map((s) => s.name)).toEqual(["Quay"]);
+  });
+
+  // A load whose read is answered once play has gone on, as by a choice, or
+  // by a value set by hand, which is no turn, does nothing, rather than undo
+  // it, and says so.
+  it("does not load a state whose read is answered once play went on", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 4 } },
+          cursor: {
+            boardId: harbour.id,
+            nodeId: id("nd", "A"),
+            phase: "awaiting_choice",
+          },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3 },
+          visits: { [id("nd", "A")]: 1 },
+        },
+        names: {},
+      },
+    ]);
+    // Each read of the state is answered once release is called.
+    let release = () => {};
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getPlayState"
+        ? new Promise<void>((resolve) => {
+            release = resolve;
+          }).then(() => saved.answer(operation, input))
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “Romance path”",
+      }),
+    );
+    await user.click(within(panel).getByRole("button", { name: "Wait here" }));
+    await within(panel).findByText("You wait.");
+    await act(async () => release());
+    await within(panel).findByText(
+      "“Romance path” was not loaded, as play went on while it was read. Load it again to start there.",
+    );
+    expect(within(panel).getByText("You wait.")).toBeDefined();
+    expect(
+      within(panel).queryByRole("region", {
+        name: "What loading the saved state kept",
+      }),
+    ).toBeNull();
+    // A value set by hand while the state is read.
+    const load = within(panel).getByRole("button", {
+      name: "Load “Romance path”",
+    }) as HTMLButtonElement;
+    await user.click(load);
+    const field = within(panel).getByRole("textbox", { name: "gold" });
+    await user.clear(field);
+    await user.type(field, "8{Enter}");
+    await act(async () => release());
+    await waitFor(() => expect(load.disabled).toBe(false));
+    expect(
+      (within(panel).getByRole("textbox", { name: "gold" }) as HTMLInputElement)
+        .value,
+    ).toBe("8");
+    expect(
+      within(panel).queryByRole("region", {
+        name: "What loading the saved state kept",
+      }),
+    ).toBeNull();
+    expect(
+      within(panel).getByText(
+        "“Romance path” was not loaded, as play went on while it was read. Load it again to start there.",
+      ),
+    ).toBeDefined();
+  });
+
+  // A viewer loads a saved state, of a variable deleted since, which the
+  // report names as it was saved, but saves, renames, and deletes none.
+  // Verifies: FR-PLAY-05/AC2
+  it("loads a state of a deleted variable for a viewer, with what it dropped, and offers no change", async () => {
+    const user = userEvent.setup();
+    const gone = id("var", "9");
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 4 } },
+          cursor: {
+            boardId: harbour.id,
+            nodeId: id("nd", "A"),
+            phase: "awaiting_choice",
+          },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3, [gone]: true },
+          visits: { [id("nd", "A")]: 1 },
+        },
+        names: { variables: { [gold.id]: "gold", [gone]: "rumours" } },
+      },
+    ]);
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getProject"
+        ? { ...project, role: "viewer" }
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const item = (await within(panel).findByText("Romance path")).closest("li");
+    expect(item?.textContent).not.toContain("by you");
+    expect(
+      within(panel).queryByRole("textbox", {
+        name: "Name of the state to save",
+      }),
+    ).toBeNull();
+    for (const label of ["Replace", "Rename", "Delete"]) {
+      expect(
+        within(panel).queryByRole("button", {
+          name: `${label} “Romance path”`,
+        }),
+      ).toBeNull();
+    }
+    await user.click(
+      within(panel).getByRole("button", { name: "Load “Romance path”" }),
+    );
+    await within(panel).findByText("Trust 4.");
+    const report = within(panel).getByRole("region", {
+      name: "What loading the saved state kept",
+    });
+    expect(report.textContent).toContain(
+      "rumours is no longer a variable or a runtime attribute of the project, so its saved value was dropped.",
+    );
+    expect(
+      within(panel).getByText(
+        "Loaded “Romance path”: 1 thing could not be kept as it was saved, which play lists above where the flow is.",
+      ),
+    ).toBeDefined();
+  });
+
+  // Each change is a command of the page's history, which expects the
+  // revision that the list read.
+  it("renames and deletes a saved state, each a command that expects its revision", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates();
+    const calls = playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.type(
+      within(panel).getByRole("textbox", { name: "Name of the state to save" }),
+      "Quay",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Save state" }));
+    await within(panel).findByRole("button", { name: "Rename “Quay”" });
+    const pst = saved.states[0].id;
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “Quay”",
+    });
+    expect(document.activeElement).toBe(field);
+    // Escape cancels the rename, and leaves play playing.
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("region", { name: "Play" })).toBeDefined();
+    await user.click(
+      within(panel).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    await user.clear(
+      within(panel).getByRole("textbox", { name: "New name of “Quay”" }),
+    );
+    await user.type(
+      within(panel).getByRole("textbox", { name: "New name of “Quay”" }),
+      "At the quay",
+    );
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await within(panel).findByText("Renamed “Quay” to “At the quay”.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Delete “At the quay”",
+      }),
+    );
+    await within(panel).findByText(
+      "Deleted “At the quay”. Undo brings it back.",
+    );
+    expect(sentBatches(calls).slice(1)).toEqual([
+      [
+        {
+          type: "play_state.rename",
+          payload: { id: pst, name: "At the quay" },
+          expected_rev: { [pst]: 1 },
+        },
+      ],
+      [
+        {
+          type: "play_state.delete",
+          payload: { id: pst },
+          expected_rev: { [pst]: 2 },
+        },
+      ],
+    ]);
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+  });
+
+  // A rename expects the revision that the state had once its field opened,
+  // so that another session's rename meanwhile, which the list shows as it
+  // reads it again, is refused rather than written over unasked (PRD
+  // §7.10), after which the list is read again, and the rename pressed
+  // again expects the revision that it has then; while the rename is under
+  // way, neither Cancel nor Escape takes away its field, under which a
+  // refusal of its name is said.
+  it("refuses a rename over another session's rename made since its field opened, and keeps the field while the rename is under way", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "After act 1",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    // The first rename is answered once refuse is called, with the
+    // server's refusal for the revision that the other session's left.
+    let refuse = () => {};
+    let renames = 0;
+    const calls = playProject(undefined, undefined, (operation, input) => {
+      if (operation === "applyCommands" && renames++ === 0) {
+        return new Promise((_, reject) => {
+          refuse = () =>
+            reject(
+              refused(409, {
+                code: "revision_conflict",
+                message: "Someone else changed it meanwhile.",
+                details: {
+                  conflicts: [
+                    {
+                      command: 0,
+                      command_id: "00000000-0000-7000-8000-000000000001",
+                      type: "play_state.rename",
+                      id: pst,
+                      expected_rev: 1,
+                      exists: true,
+                      current_rev: 2,
+                    },
+                  ],
+                  states: { [pst]: saved.states[0] },
+                },
+              }),
+            );
+        });
+      }
+      return saved.answer(operation, input);
+    });
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “After act 1”",
+      }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “After act 1”",
+    });
+    await user.clear(field);
+    await user.type(field, "Storm");
+    saved.states[0] = { ...saved.states[0], name: "Romance path", rev: 2 };
+    act(() =>
+      realtime.send(
+        project.id,
+        [
+          {
+            type: "play_state.rename",
+            payload: { id: pst, name: "Romance path" },
+          },
+        ],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByRole("textbox", {
+      name: "New name of “Romance path”",
+    });
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    const cancel = within(panel).getByRole("button", {
+      name: "Cancel",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(cancel.disabled).toBe(true));
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(field.isConnected).toBe(true);
+    await act(async () => refuse());
+    await within(panel).findByText("Someone else changed it meanwhile.");
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+    await user.click(within(panel).getByRole("button", { name: "Rename" }));
+    await within(panel).findByText("Renamed “Romance path” to “Storm”.");
+    expect(
+      sentBatches(calls).map((batch) =>
+        batch.map((c) => (c as { expected_rev?: unknown }).expected_rev),
+      ),
+    ).toEqual([[{ [pst]: 1 }], [{ [pst]: 2 }]]);
+  });
+
+  // A load that leaves the flow on another board, whose page the board's
+  // page follows the flow to, says what it kept in that page's section's
+  // status, as the page that loaded it goes.
+  it("says a load's status on the page of the board that the load left the flow on", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "At the meeting",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: { [elaraComponent.id]: { [trust.id]: 2 } },
+          cursor: { boardId: elara.id, nodeId: id("nd", "E"), phase: "ended" },
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: { [gold.id]: 3 },
+          visits: { [id("nd", "A")]: 1, [id("nd", "E")]: 1 },
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “At the meeting”",
+      }),
+    );
+    await openBoard(elara);
+    const there = await screen.findByRole("region", { name: "Play" });
+    await within(there).findByText("Elara trusts you 2.");
+    expect(panel.isConnected).toBe(false);
+    await within(there).findByText("Loaded “At the meeting” as it was saved.");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(there).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+  });
+
+  // A deletion gives the section's heading the focus that its button had,
+  // once it is done, as the button goes with the state, but not from where
+  // the user has put the focus while it was under way, as on the canvas,
+  // whose keys would else go to the heading (plan note N80).
+  it("gives the saved states' heading the focus after a deletion, but not from where the user put it while the deletion was under way", async () => {
+    const user = userEvent.setup();
+    const state = (n: string, name: string): PlayStateBody => ({
+      id: id("pst", n),
+      project_id: project.id,
+      name,
+      rev: 1,
+      created_by: "usr_other",
+      updated_by: "usr_other",
+      created_at: at,
+      updated_at: at,
+      state: {
+        attributes: {},
+        projectId: project.id,
+        schemaVersion: 1,
+        stateVersion: 1,
+        variables: {},
+        visits: {},
+      },
+      names: {},
+    });
+    const saved = savedStates([
+      state("1", "Romance path"),
+      state("2", "Storm"),
+    ]);
+    // The first deletion is answered once release is called.
+    let release = () => {};
+    let batches = 0;
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "applyCommands" && batches++ === 0
+        ? new Promise<void>((resolve) => {
+            release = resolve;
+          }).then(() => saved.answer(operation, input))
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Delete “Romance path”",
+      }),
+    );
+    act(() => canvas.focus());
+    await act(async () => release());
+    await within(panel).findByText(
+      "Deleted “Romance path”. Undo brings it back.",
+    );
+    await waitFor(() =>
+      expect(
+        within(panel).queryByRole("button", { name: "Load “Romance path”" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement).toBe(canvas);
+    await user.click(
+      within(panel).getByRole("button", { name: "Delete “Storm”" }),
+    );
+    await within(panel).findByText("Deleted “Storm”. Undo brings it back.");
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("heading", { name: "Saved states" }),
+    );
+  });
+
+  // Another session's deletion of the state whose Load has the focus takes
+  // the button away, which leaves the focus where the browser leaves it,
+  // nowhere, as the page's content has it then (focusIsNowhere), rather than
+  // give it to the section's heading, which the section's own presses alone
+  // do (plan note N80).
+  it("leaves the focus where the browser leaves it once another session deleted the state whose button had it", async () => {
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const load = await within(panel).findByRole("button", {
+      name: "Load “Romance path”",
+    });
+    act(() => load.focus());
+    saved.states.splice(0, 1);
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.delete", payload: { id: pst } }],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(document.activeElement).not.toBe(
+      within(panel).getByRole("heading", { name: "Saved states" }),
+    );
+    expect(focusIsNowhere(document)).toBe(true);
+  });
+
+  // A read of the list again that fails, as once another session saved a
+  // state, says why beside the states that the list read last, with Try
+  // again, rather than take them away, with a rename under way, whose field
+  // keeps what was typed in it, and the focus; Try again reads the list.
+  it("keeps the list, and a rename under way, once a read of the list again fails, and reads it by Try again", async () => {
+    const user = userEvent.setup();
+    const state = (n: string, name: string): PlayStateBody => ({
+      id: id("pst", n),
+      project_id: project.id,
+      name,
+      rev: 1,
+      created_by: "usr_other",
+      updated_by: "usr_other",
+      created_at: at,
+      updated_at: at,
+      state: {
+        attributes: {},
+        projectId: project.id,
+        schemaVersion: 1,
+        stateVersion: 1,
+        variables: {},
+        visits: {},
+      },
+      names: {},
+    });
+    const saved = savedStates([state("1", "After act 1")]);
+    let failing = false;
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "listPlayStates" && failing
+        ? Promise.reject(
+            refused(429, { code: "rate_limited", message: "Slow down." }),
+          )
+        : saved.answer(operation, input),
+    );
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “After act 1”",
+      }),
+    );
+    const field = within(panel).getByRole("textbox", {
+      name: "New name of “After act 1”",
+    });
+    await user.clear(field);
+    await user.type(field, "Storm");
+    failing = true;
+    const other = state("2", "Romance path");
+    saved.states.push(other);
+    act(() =>
+      realtime.send(
+        project.id,
+        [
+          {
+            type: "play_state.create",
+            payload: { id: other.id, name: other.name },
+          },
+        ],
+        [{ id: other.id, rev: 1 }],
+      ),
+    );
+    await waitFor(() =>
+      expect(alerts(panel)).toContain("The saved states could not be read."),
+    );
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+    expect(document.activeElement).toBe(field);
+    expect(within(panel).queryByText("Romance path")).toBeNull();
+    failing = false;
+    await user.click(within(panel).getByRole("button", { name: "Try again" }));
+    await within(panel).findByText("Romance path");
+    expect(alerts(panel)).not.toContain("The saved states could not be read.");
+    expect(field.isConnected).toBe(true);
+    expect((field as HTMLInputElement).value).toBe("Storm");
+  });
+
+  // A fault of the app's as a state loads, rather than the runtime's refusal
+  // of a state that it does not load, is said as one, which the error console
+  // records, rather than as a state that could not be loaded.
+  it("says a fault of the app's as a state loads as one, which the error console records", async () => {
+    const user = userEvent.setup();
+    const saved = savedStates([
+      {
+        id: id("pst", "1"),
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const { log } = renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const fault = vi
+      .spyOn(PlaySession.prototype, "load")
+      .mockImplementation(() => {
+        throw new TypeError("a fault");
+      });
+    onTestFinished(() => fault.mockRestore());
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Load “Romance path”",
+      }),
+    );
+    await waitFor(() =>
+      expect(alerts(panel)).toContain(
+        "Something went wrong. The error console has the details.",
+      ),
+    );
+    expect(alerts(panel)).not.toContain("could not be loaded");
+    expect(log.entries()).toMatchObject([{ message: "a fault" }]);
+  });
+
+  // A rename whose state another session deletes ends with its field, whose
+  // focus is then where the browser leaves it, nowhere (focusIsNowhere), so
+  // that the undo of the deletion brings the state back with its buttons,
+  // rather than with the rename's field open again, taking the focus from
+  // where the user has put it since.
+  it("ends a rename whose state another session deleted, so that its field does not open again, taking the focus, as the state comes back", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, saved.answer);
+    const realtime = fakeRealtime();
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+      realtime,
+    });
+    const canvas = await openBoard(harbour);
+    await waitFor(() => expect(realtime.subscribed(project.id)).toBe(true));
+    act(() => realtime.hold(project.id));
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "Rename “Romance path”",
+      }),
+    );
+    expect(document.activeElement).toBe(
+      within(panel).getByRole("textbox", {
+        name: "New name of “Romance path”",
+      }),
+    );
+    const [state] = saved.states.splice(0, 1);
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.delete", payload: { id: pst } }],
+        [{ id: pst, rev: 2 }],
+      ),
+    );
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(focusIsNowhere(document)).toBe(true);
+    act(() => canvas.focus());
+    saved.states.push({ ...state, rev: 3 });
+    act(() =>
+      realtime.send(
+        project.id,
+        [{ type: "play_state.restore", payload: { id: pst } }],
+        [{ id: pst, rev: 3 }],
+      ),
+    );
+    await within(panel).findByRole("button", {
+      name: "Rename “Romance path”",
+    });
+    expect(
+      within(panel).queryByRole("textbox", {
+        name: "New name of “Romance path”",
+      }),
+    ).toBeNull();
+    expect(document.activeElement).toBe(canvas);
+  });
+
+  // A load of a state that another session deleted while the page did not
+  // hear of it, as while its channel was down, is refused, which the
+  // section says, after which it reads the list again, which no longer
+  // holds the state, rather than offer its buttons, each refused alike.
+  it("reads the list again once the server refuses a press, as a load of a state that another session deleted unheard", async () => {
+    const user = userEvent.setup();
+    const pst = id("pst", "1");
+    const saved = savedStates([
+      {
+        id: pst,
+        project_id: project.id,
+        name: "Romance path",
+        rev: 1,
+        created_by: "usr_other",
+        updated_by: "usr_other",
+        created_at: at,
+        updated_at: at,
+        state: {
+          attributes: {},
+          projectId: project.id,
+          schemaVersion: 1,
+          stateVersion: 1,
+          variables: {},
+          visits: {},
+        },
+        names: {},
+      },
+    ]);
+    playProject(undefined, undefined, (operation, input) =>
+      operation === "getPlayState" && saved.states.length === 0
+        ? Promise.reject(
+            refused(404, {
+              code: "not_found",
+              message: "There is no such play state.",
+            }),
+          )
+        : saved.answer(operation, input),
+    );
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const load = await within(panel).findByRole("button", {
+      name: "Load “Romance path”",
+    });
+    saved.states.splice(0, 1);
+    await user.click(load);
+    await within(panel).findByText(
+      "The project has no saved states yet. Name the flow's state above to save it.",
+    );
+    expect(alerts(panel)).toContain("There is no such play state.");
+  });
+
+  // On a sheet, Escape in the saved states empties the name or cancels a
+  // rename, after which the section's heading has the focus that the
+  // rename's field or its Cancel had, and none there, as one pressed once
+  // more than there was to empty or to cancel, closes the sheet, which would
+  // stop play, as none in the inspector does; each state's buttons, named
+  // by its name alone, are described by when it last changed, which tells
+  // two of a name apart.
+  it("keeps the play sheet open by Escape in the saved states, and gives their heading the focus once a rename is cancelled", async () => {
+    windowOf(800);
+    const user = userEvent.setup();
+    playProject(undefined, undefined, savedStates().answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const sheet = await screen.findByRole("dialog", { name: "Play" });
+    await within(sheet).findByText("Trust 1.");
+    const name = within(sheet).getByRole("textbox", {
+      name: "Name of the state to save",
+    });
+    await user.type(name, "Quay");
+    await user.keyboard("{Escape}");
+    expect((name as HTMLInputElement).value).toBe("");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    await user.type(name, "Quay{Enter}");
+    const rename = await within(sheet).findByRole("button", {
+      name: "Rename “Quay”",
+      description: /^Last changed by you, /,
+    });
+    expect(
+      within(sheet).getByRole("button", {
+        name: "Load “Quay”",
+        description: /^Last changed by you, /,
+      }),
+    ).toBeDefined();
+    const heading = within(sheet).getByRole("heading", {
+      name: "Saved states",
+    });
+    await user.click(rename);
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(heading);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Play" })).toBe(sheet);
+    await user.click(
+      within(sheet).getByRole("button", { name: "Rename “Quay”" }),
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(heading);
+    // Outside the section, Escape closes the sheet, which stops play.
+    within(sheet).getByRole("button", { name: "Reset" }).focus();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Play" })).toBeNull(),
+    );
+  });
+
+  // The palette's commands of the saved states go to what the panel shows,
+  // while the page shows it, rather than to nothing while the inspector is
+  // open in its place (plan note N78).
+  it("goes to the saved states from the palette while the page shows the panel, and not while the inspector is open in its place", async () => {
+    windowOf(1200);
+    const user = userEvent.setup();
+    playProject(undefined, undefined, savedStates().answer);
+    renderApp(`/projects/${project.id}/boards/${harbour.id}`, {
+      session: testSession,
+    });
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    // saving opens the palette from the canvas, and returns its option of
+    // Save play state.
+    const saving = async () => {
+      canvas.focus();
+      await user.keyboard("{Control>}k{/Control}");
+      const palette = await screen.findByRole("dialog", { name: "Commands" });
+      await user.type(within(palette).getByRole("combobox"), "saved play");
+      const options = within(palette).getAllByRole("option");
+      const disabled = Object.fromEntries(
+        options.map((o) => [
+          o.dataset.command,
+          o.getAttribute("aria-disabled") === "true",
+        ]),
+      );
+      return {
+        option: options.find((o) => o.dataset.command === "play.save_state"),
+        disabled,
+      };
+    };
+    const edit = screen.getByRole("group", { name: "Edit the board" });
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Play" })).toBeNull(),
+    );
+    const hidden = await saving();
+    expect(hidden.disabled["play.save_state"]).toBe(true);
+    expect(hidden.disabled["play.saved_states"]).toBe(true);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Commands" })).toBeNull(),
+    );
+    await user.click(within(edit).getByRole("button", { name: "Inspector" }));
+    const shown = await screen.findByRole("region", { name: "Play" });
+    const { option, disabled } = await saving();
+    expect(disabled["play.save_state"]).toBe(false);
+    expect(disabled["play.saved_states"]).toBe(false);
+    await user.click(option as HTMLElement);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(shown).getByRole("textbox", {
+          name: "Name of the state to save",
+        }),
+      ),
+    );
   });
 });

@@ -268,6 +268,18 @@ func TestNumberForms(t *testing.T) {
 		if got := formProblem(raw, true) == ""; got != within {
 			t.Errorf("%s is within the bounds: %t, want %t", raw, got, within)
 		}
+		// FormProblem, which a save state's values are held to, whose types
+		// the server does not read, says so of a value of the number.
+		if got := FromJSON([]byte(raw)).FormProblem() == ""; got != within {
+			t.Errorf("FormProblem of %s: within the bounds %t, want %t", raw, got, within)
+		}
+	}
+	// What is no number has no problem of its form, a string of a number's
+	// characters among them.
+	for _, raw := range []string{"", "true", `"1e1000"`, `"` + strings.Repeat("9", 400) + `"`, "null"} {
+		if problem := FromJSON([]byte(raw)).FormProblem(); problem != "" {
+			t.Errorf("FormProblem of %q is %q, want none", raw, problem)
+		}
 	}
 }
 

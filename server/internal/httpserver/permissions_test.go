@@ -460,6 +460,15 @@ var permissionMatrix = []struct {
 					p := f.project(t, "")
 					return call(f.s.main, http.MethodGet, variablePath(p, f.variable(t, p)), nil, si.header(false))
 				}},
+			{name: "list a project's play states", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodGet, playStatesPath(f.project(t, "")), nil, si.header(false))
+				}},
+			{name: "read a play state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodGet, playStatePath(p, f.playState(t, p)), nil, si.header(false))
+				}},
 			{name: "list a variable's usages", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					p := f.project(t, "")
@@ -680,6 +689,43 @@ var permissionMatrix = []struct {
 					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
 						Type: "validation.unmute", Payload: map[string]string{"entity_id": f.node(t, p),
 							"code": "dead_end"}}), si.header(true))
+				}},
+			{name: "save a play state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "play_state.create", Payload: map[string]any{"id": newPlayStateID(),
+							"name": "After act 1", "state": emptyState(p)}}), si.header(true))
+				}},
+			{name: "rename a play state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "play_state.rename", Payload: map[string]string{"id": f.playState(t, p),
+							"name": "Romance path"}}), si.header(true))
+				}},
+			{name: "replace a play state's state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					st := emptyState(p)
+					st["visits"] = map[string]int{f.node(t, p): 1}
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "play_state.set_state", Payload: map[string]any{"id": f.playState(t, p),
+							"state": st}}), si.header(true))
+				}},
+			{name: "delete a play state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "play_state.delete", Payload: map[string]string{"id": f.playState(t, p)}}),
+						si.header(true))
+				}},
+			{name: "restore a play state", project: true, success: http.StatusOK,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					p := f.project(t, "")
+					return call(f.s.main, http.MethodPost, commandsPath(p), commandBatch(t, wireCommand{
+						Type: "play_state.restore", Payload: map[string]string{"id": f.deletedPlayState(t, p)}}),
+						si.header(true))
 				}},
 		},
 	},
@@ -1230,6 +1276,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"component_id":      f.component(t, p, ct),
 		"node_id":           f.node(t, p),
 		"connection_id":     f.connection(t, p),
+		"play_state_id":     f.playState(t, p),
 		"from_board_id":     f.board(t, p),
 		"to_board_id":       f.board(t, p),
 	}

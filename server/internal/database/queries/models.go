@@ -306,6 +306,21 @@ type LiveNode struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type LivePlayState struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Name        string
+	State       []byte
+	Names       []byte
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type LiveVariable struct {
 	ID           pgtype.UUID
 	WorkspaceID  pgtype.UUID
@@ -354,6 +369,21 @@ type Node struct {
 	UpdatedBy          pgtype.UUID
 	CreatedAt          pgtype.Timestamptz
 	UpdatedAt          pgtype.Timestamptz
+}
+
+type PlayState struct {
+	ID          pgtype.UUID
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Name        string
+	State       []byte
+	Names       []byte
+	Rev         int64
+	DeletedAt   pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	UpdatedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type Project struct {

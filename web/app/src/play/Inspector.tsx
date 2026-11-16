@@ -30,6 +30,7 @@ import {
   TextField,
 } from "../ui/Field";
 import { foldWords, wordsMatcher } from "../ui/match";
+import { escaped, keepSheetOpen } from "./keys";
 import type { ProjectedValue } from "./projection";
 import { type PlaySession, type PlayState, steppedSinceStart } from "./session";
 import { type GroupNames, typedValue, valueGroups } from "./values";
@@ -76,15 +77,12 @@ export function Inspector({
     // the panel is, which would stop play and lose its history, as one
     // pressed once more than there was to empty or to go back from, or after
     // a value set by Enter, would: each empties the filter or goes back to
-    // the value alone (plan note N79).
+    // the value alone (plan note N79), as none in the saved states does
+    // (keepSheetOpen).
     <section
       aria-labelledby={titleId}
       className="space-y-3"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-        }
-      }}
+      onKeyDown={keepSheetOpen}
     >
       <h3 id={titleId} className="font-semibold">
         {t("play.inspector.title")}
@@ -103,18 +101,10 @@ export function Inspector({
             onChange={(event) =>
               session.view.setState({ filter: event.currentTarget.value })
             }
-            onKeyDown={(event) => {
-              // Escape empties the filter, as a search box's does, but for
-              // one that cancels what an input method was composing, which
-              // is the input method's, and empties no filter
-              // (inputMethodTook).
-              if (
-                event.key === "Escape" &&
-                !inputMethodTook(event.nativeEvent)
-              ) {
-                session.view.setState({ filter: "" });
-              }
-            }}
+            // Escape empties the filter, as a search box's does, but for one
+            // that cancels what an input method was composing, which is the
+            // input method's, and empties no filter (escaped).
+            onKeyDown={escaped(() => session.view.setState({ filter: "" }))}
           />
           {/* A flow that has taken no step since its start's, as one that
               halted or ended in it, has no step to step back from, as Step

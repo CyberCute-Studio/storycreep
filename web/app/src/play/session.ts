@@ -13,7 +13,10 @@
 // by hand (FR-PLAY-02), the choices that the flow hides, with why
 // (FR-PLAY-03), and the history of its steps, of which Step back restores
 // the state before the last, exactly, and Reset starts anew with the
-// snapshot's values (FR-PLAY-04, plan note N79).
+// snapshot's values (FR-PLAY-04, plan note N79). Play starts at a saved play
+// state too, which it loads as the start's step, with what loading it could
+// not keep, as the draft changed since it was saved (FR-PLAY-05, N80), and
+// gives what the flow holds as a state to save.
 
 import {
   type Node as ExprNode,
@@ -38,26 +41,63 @@ import { equal } from "../document/reconcile";
 import { inTurns, type ProjectDocument } from "../document/store";
 import type { FailedPart } from "./explain";
 import type { ExpressionOwner, ProjectedValue, Projection } from "./projection";
+import type { LoadReport, SavedNames } from "./saved";
 
 // What play runs a draft with, the projection, the shared flow's loader,
 // and its runtime, with the JSON Schemas that the loader checks a snapshot
-// against, and the evaluator that explains a hidden choice, read once play
-// starts, rather than with the board's page, whose first frame they would
-// else make later.
+// against, the evaluator that explains a hidden choice, and what reads a
+// saved play state onto the snapshot, read once play starts, rather than
+// with the board's page, whose first frame they would else make later.
 const engine = () =>
   Promise.all([
     import("./projection"),
     import("@storycreep/shared/flow"),
     import("./explain"),
+    import("./saved"),
   ]);
 
 // What engine reads.
 type Engine = Awaited<ReturnType<typeof engine>>;
 
-/** Where play starts: a node of a board, or the board's entry node where node is "". */
+/** Where play starts: a node of a board, or the board's entry node where node is "", or a saved play state. */
 export interface PlayStart {
   readonly board: string;
   readonly node: string;
+  /**
+   * The saved play state that play loads as it starts, rather than start
+   * at the node (FR-PLAY-05): where play started before it loaded it, of
+   * board and node, is kept, which the panel says nothing of.
+   */
+  readonly saved?: SavedStart;
+}
+
+/**
+ * A saved play state that play starts at, as the server kept it when play
+ * read it (FR-PLAY-05), of which play keeps a copy, rather than which of the
+ * project's play states it is, which may change or go meanwhile.
+ */
+export interface SavedStart {
+  readonly name: string;
+  /** Its state, a save state of the draft as it was when it was saved (§8.5). */
+  readonly state: SaveState;
+  /** The names of its values, as play named them as it saved it. */
+  readonly names: SavedNames;
+}
+
+/**
+ * Why the flow ended (§5.8.5), as the runtime reported it, or "saved" where
+ * play started at a saved play state whose flow had ended at its node, which
+ * loading leaves it ended at without an end, since a save state does not say
+ * why it ended (§8.5).
+ */
+export type PlayEnd = Reason | "saved";
+
+/** What the start's step of a saved play state loaded (FR-PLAY-05 AC2). */
+export interface PlayLoaded {
+  /** The saved play state's name. */
+  readonly name: string;
+  /** What loading it could not keep as it was saved, as the draft changed since. */
+  readonly report: LoadReport;
 }
 
 /** A runtime error that the flow reported (§5.8.7), with where it is, as the error panel shows it. */
@@ -120,10 +160,12 @@ export interface PlayPlace {
 export interface PlayStep {
   /** The choice that the step took, as it was offered, absent for the start's step. */
   readonly choice?: Choice;
+  /** Of the start's step of a saved play state, what it loaded. */
+  readonly loaded?: PlayLoaded;
   /** The nodes that the flow entered in the step, in order: the branches that it passed on by, and then the node that it came to. */
   readonly entered: readonly PlayPlace[];
-  /** Why the flow ended in the step, if it did. */
-  readonly ended?: Reason;
+  /** Why the flow ended in the step, if it did, or, of the start's step of a saved play state whose flow had ended, that it had. */
+  readonly ended?: PlayEnd;
   /** The values that the author set by hand after the step, before the next, in order. */
   readonly edits: readonly PlayEdit[];
 }
@@ -143,7 +185,7 @@ export interface PlayFlow {
   /** Its choices, in their author's order, whose conditions held (FR-EDIT-03 AC1). */
   readonly choices: readonly Choice[];
   /** Why the flow ended, once it has (§5.8.5). */
-  readonly ended: Reason | undefined;
+  readonly ended: PlayEnd | undefined;
   /** Whether strict mode halted the flow at a runtime error. */
   readonly halted: boolean;
   /** The nodes that the flow entered, in the order that it first entered them, and the connections that it took, which the canvas highlights. */
@@ -461,9 +503,10 @@ export class PlaySession {
 
   /**
    * Starts the flow anew where play started, with the snapshot's values and
-   * no node visited, on the snapshot that play runs, rather than on the
-   * draft projected anew, as Restart does, and clears the history
-   * (FR-PLAY-04). It is a turn, as a start is.
+   * no node visited, or with the saved play state that it started at, loaded
+   * again, on the snapshot that play runs, rather than on the draft projected
+   * anew, as Restart does, and clears the history (FR-PLAY-04). It is a
+   * turn, as a start is.
    */
   reset(): void {
     const s = this.state;
@@ -569,6 +612,59 @@ export class PlaySession {
       },
     });
     return true;
+  }
+
+  /**
+   * Starts the flow at the saved play state saved, which play loads on the
+   * snapshot that it runs, as the start's step, with what loading it could
+   * not keep (FR-PLAY-05): the values that it holds, those that the author
+   * set by hand before saving it among them, its visit counts, and the node
+   * where its flow was, whose choices loading builds again, so that what
+   * Reset starts anew and Restart projects anew loads it again. It is a turn,
+   * as a start is. It returns false, and changes nothing, while play does
+   * not play; of a state that the runtime does not load, as one of a newer
+   * stateVersion, it throws the runtime's StateError, and changes nothing.
+   */
+  load(saved: SavedStart): boolean {
+    const s = this.state;
+    if (s.status !== "playing" || this.runtime === undefined) {
+      return false;
+    }
+    const start = { ...s.start, saved };
+    const flow = this.startFlow(s.projection, start);
+    this.store.setState({ ...s, start, flow, turn: ++this.turns });
+    return true;
+  }
+
+  /**
+   * Returns what the flow holds as a play state to save (FR-PLAY-05): its
+   * save state, of the values as the runtime holds them now, those set by
+   * hand among them, its visit counts, and its cursor, and the names of its
+   * values, as the inspector names them, which the report of a later load
+   * names a value that it drops by; or undefined while play does not play.
+   */
+  saving():
+    | { readonly state: SaveState; readonly names: SavedNames }
+    | undefined {
+    const s = this.state;
+    const r = this.runtime;
+    if (s.status !== "playing" || r === undefined) {
+      return undefined;
+    }
+    const state = r.saveState();
+    const variables: Record<string, string> = {};
+    const attributes: Record<string, Record<string, string>> = {};
+    for (const v of s.projection.values) {
+      if (v.kind === "variable") {
+        if (state.variables[v.variable] !== undefined) {
+          variables[v.variable] = v.name;
+        }
+      } else if (state.attributes[v.component]?.[v.attribute] !== undefined) {
+        attributes[v.component] ??= {};
+        attributes[v.component][v.attribute] = v.name;
+      }
+    }
+    return { state, names: { variables, attributes } };
   }
 
   /** Ends play. */
@@ -707,14 +803,21 @@ export class PlaySession {
 
   // startFlow makes a new runtime of the snapshot that play runs, which
   // tells the session of the choices that it hides, and returns the flow of
-  // its start at start, with no step before it.
+  // its start at start, with no step before it: of a saved play state, the
+  // state loaded, as it reads onto the snapshot (adapt), and the flow
+  // started where its cursor did not load, as a board entry, as any start
+  // there is, which resets the board's resetOnEnter variables of what the
+  // state held and runs the entry's on-enter. Where the start throws, as a
+  // load does of a state that the runtime does not load, it keeps the
+  // runtime and the states kept before the steps that the session had, and
+  // throws.
   private startFlow(played: PlayedProjection, start: PlayStart): PlayFlow {
     const m = this.modules;
     const snapshot = this.snapshot;
     if (m === undefined || snapshot === undefined) {
       return emptyFlow(new Map());
     }
-    const [, { Runtime }, { failedParts }] = m;
+    const [, { Runtime }, { failedParts }, { adapt }] = m;
     // hide explains each choice that the runtime r hid, as it builds them,
     // while what r holds is what their conditions read, with its text as
     // the runtime renders a choice's.
@@ -733,13 +836,42 @@ export class PlaySession {
         this.hidden = hidden.map((c) => hide(r, c));
       },
     });
+    const was = { runtime: this.runtime, back: this.back };
     this.runtime = r;
     this.back = [];
     const before = valuesOf(r, played);
-    const { result: events, hidden } = this.observed(() =>
-      r.start(start.board, start.node),
-    );
-    return this.flowAfter(emptyFlow(before), played, events, hidden, undefined);
+    const saved = start.saved;
+    try {
+      // The start's call of r, at the node, or, of a saved play state, its
+      // load, and the start where its cursor did not load, with what it
+      // loaded.
+      let call: () => readonly Event[] = () => r.start(start.board, start.node);
+      let loaded: PlayLoaded | undefined;
+      if (saved !== undefined) {
+        const adapted = adapt(saved.state, saved.names, snapshot);
+        call = () => {
+          const events = r.loadState(adapted.state);
+          const at = adapted.start;
+          return at === undefined
+            ? events
+            : [...events, ...r.start(at.board, at.node)];
+        };
+        loaded = { name: saved.name, report: adapted.report };
+      }
+      const { result: events, hidden } = this.observed(call);
+      return this.flowAfter(
+        emptyFlow(before),
+        played,
+        events,
+        hidden,
+        undefined,
+        loaded,
+      );
+    } catch (error) {
+      this.runtime = was.runtime;
+      this.back = was.back;
+      throw error;
+    }
   }
 
   // observed runs call, a call of the runtime that may build the current
@@ -761,26 +893,29 @@ export class PlaySession {
   }
 
   // flowAfter returns flow after the events of a call of the runtime that
-  // is a step, a start's, or a choice's of the choice chosen, of which the
-  // runtime hid the choices hidden (observed).
+  // is a step, a start's, or a choice's of choice, of which the runtime hid
+  // the choices hidden (observed): a start's that loaded a saved play state
+  // where loaded is what it loaded, whose step came to the node where the
+  // loaded flow is, which it entered no more than once.
   private flowAfter(
     flow: PlayFlow,
     projection: PlayedProjection,
     events: readonly Event[],
     hidden: readonly HiddenChoice[] | undefined,
-    chosen: Choice | undefined,
+    choice: Choice | undefined,
+    loaded?: PlayLoaded,
   ): PlayFlow {
     const r = this.runtime;
     const s = this.snapshot;
     if (r === undefined || s === undefined) {
       return flow;
     }
-    const step = chosen === undefined ? 0 : flow.history.length;
+    const step = choice === undefined ? 0 : flow.history.length;
     const visited = new Set(flow.visited);
     const traversed = new Set(flow.traversed);
     const errors = [...flow.errors];
     const entered: PlayPlace[] = [];
-    let ended: Reason | undefined;
+    let ended: PlayEnd | undefined;
     // The connections that the call took: the one chosen, and the one of
     // each branch that the flow passed on by.
     for (const c of r.taken()) {
@@ -809,6 +944,20 @@ export class PlaySession {
     }
     const { node, phase } = r.current();
     const board = node === "" ? "" : (s.nodes.get(node)?.board ?? "");
+    // A loaded state's node, which the flow entered before it was saved, is
+    // where the step came to, as the history says, and the canvas's path
+    // holds, unless the step entered it anew, as a board's entry.
+    if (loaded !== undefined && node !== "" && entered.length === 0) {
+      entered.push({ board, node });
+      visited.add(node);
+    }
+    // A loaded state's flow that had ended at its node, which loading leaves
+    // it ended at without an end, ended before it was saved, as the panel
+    // and the history say, rather than say nothing of why it offers no
+    // choice.
+    if (loaded !== undefined && phase === "ended" && ended === undefined) {
+      ended = "saved";
+    }
     const shown = projection.nodes.get(node);
     const values = valuesOf(r, projection, flow.values);
     const changes = new Set<string>();
@@ -818,7 +967,8 @@ export class PlaySession {
       }
     }
     const taken: PlayStep = {
-      ...(chosen === undefined ? {} : { choice: chosen }),
+      ...(choice === undefined ? {} : { choice }),
+      ...(loaded === undefined ? {} : { loaded }),
       entered,
       ...(ended === undefined ? {} : { ended }),
       edits: [],

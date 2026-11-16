@@ -2,16 +2,16 @@
 -- with deleted_at, which the live views leave out (migration 00019). The
 -- tables whose rows the trash lists are its boards', its nodes', its
 -- variables', and its components'; its folders', its component types', its
--- attribute definitions', its branch outputs', and its connections' rows go
--- to the trash too, but are not listed. Each such table has a branch here,
--- in the list and in the purge, which package trash's tests hold it to. A
--- row that belongs to a board, as a board's node or variable, is in the trash
--- with its board too, which lists the board alone, and is purged with it, by
--- the cascade of its foreign key to the board, even one deleted on its own,
--- before its board, which the list holds, and whose own time in the trash
--- ends first. A branch output is in the trash with its node alike, and a
--- connection with either of its nodes, and with the output that it leaves,
--- and each is purged with it.
+-- attribute definitions', its branch outputs', its connections', and its play
+-- states' rows go to the trash too, but are not listed. Each such table has a
+-- branch here, in the list and in the purge, which package trash's tests hold
+-- it to. A row that belongs to a board, as a board's node or variable, is in
+-- the trash with its board too, which lists the board alone, and is purged
+-- with it, by the cascade of its foreign key to the board, even one deleted on
+-- its own, before its board, which the list holds, and whose own time in the
+-- trash ends first. A branch output is in the trash with its node alike, and a
+-- connection with either of its nodes, and with the output that it leaves, and
+-- each is purged with it.
 
 -- name: TrashItems :many
 -- TrashItems returns the entities in the project's trash that it lists, the
@@ -68,7 +68,9 @@ WHERE p.workspace_id = @workspace_id AND (
     OR EXISTS (SELECT 1 FROM attribute_def a WHERE a.workspace_id = p.workspace_id AND a.project_id = p.id
         AND a.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
-        AND t.deleted_at <= now() - @retention::interval))
+        AND t.deleted_at <= now() - @retention::interval)
+    OR EXISTS (SELECT 1 FROM play_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
+        AND s.deleted_at <= now() - @retention::interval))
 ORDER BY p.id;
 
 -- name: LockProjectToPurge :one
@@ -154,6 +156,19 @@ WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN 
     WHERE v.workspace_id = @workspace_id AND v.project_id = @project_id
         AND v.deleted_at <= now() - @retention::interval
     ORDER BY v.deleted_at, v.id
+    LIMIT @max_rows
+);
+
+-- name: PurgePlayStates :execrows
+-- PurgePlayStates deletes at most max_rows of the project's play states that
+-- have been in its trash for retention, those that have been there longest
+-- first, and returns how many it deleted.
+DELETE FROM play_state d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (
+    SELECT s.id FROM play_state s
+    WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id
+        AND s.deleted_at <= now() - @retention::interval
+    ORDER BY s.deleted_at, s.id
     LIMIT @max_rows
 );
 

@@ -231,7 +231,14 @@ export async function atStart(page: Page, name: string): Promise<void> {
  * in the window, as the context menu covers the handles of the node that it
  * opens over, which a tap there does not press, as it presses the menu's
  * item (plan note N71); one that anything else covers is a control still,
- * and so is one beyond the window, as below the page's fold.
+ * and so is one beyond the window, as below the page's fold. One that an
+ * element that scrolls, or clips what it holds, shows none of, as a docked
+ * panel's choices once it has scrolled past them, is beside nothing that it
+ * is shown beside, though its size is measured all the same, as the panel
+ * shows it once scrolled back to it; what clips a control is what holds the
+ * box that it is placed in, which for one placed absolutely is its nearest
+ * positioned holder, and for one that is fixed the window, and neither the
+ * body nor the root, which the window scrolls.
  */
 export async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -241,7 +248,14 @@ export async function smallTargets(page: Page): Promise<string[]> {
     const surface = '[role="application"]';
     // A menu, which covers what it opens over.
     const menu = '[role="menu"]';
-    const found: { el: Element; box: DOMRect; name: string }[] = [];
+    // Each control, and whether the page shows it where it is placed,
+    // beside the controls placed near it, rather than clips it away.
+    const found: {
+      el: Element;
+      box: DOMRect;
+      name: string;
+      shown: boolean;
+    }[] = [];
     for (const el of document.querySelectorAll(controls)) {
       if (
         !(el instanceof HTMLElement) ||
@@ -264,11 +278,51 @@ export async function smallTargets(page: Page): Promise<string[]> {
       if (box.width === 0 || box.height === 0) {
         continue;
       }
+      // A control that an element of the page that scrolls, or clips what
+      // it holds, shows none of, as a docked panel's choices once the panel
+      // has scrolled past them, is pressed nowhere there, and so is beside
+      // nothing, though it is as large as it is once scrolled to. What clips
+      // an element is what holds the box that it is placed in, its
+      // containing block, and what holds that: one placed absolutely is
+      // placed in its nearest positioned holder (offsetParent), past what is
+      // between, and one that is fixed in the window, past every holder. The
+      // body and the root clip nothing, as the window scrolls what they
+      // hold, and a control beyond the window is a control still.
+      let clipped = false;
+      for (let placed: Element = pressed; !clipped; ) {
+        const position = getComputedStyle(placed).position;
+        const holder =
+          position === "fixed"
+            ? null
+            : position === "absolute"
+              ? placed instanceof HTMLElement
+                ? placed.offsetParent
+                : null
+              : placed.parentElement;
+        if (
+          holder === null ||
+          holder === document.body ||
+          holder === document.documentElement
+        ) {
+          break;
+        }
+        const held = getComputedStyle(holder);
+        if (held.overflowX !== "visible" || held.overflowY !== "visible") {
+          const view = holder.getBoundingClientRect();
+          clipped =
+            box.bottom <= view.top ||
+            box.top >= view.bottom ||
+            box.right <= view.left ||
+            box.left >= view.right;
+        }
+        placed = holder;
+      }
       const middle = {
         x: box.left + box.width / 2,
         y: box.top + box.height / 2,
       };
       if (
+        !clipped &&
         middle.x >= 0 &&
         middle.y >= 0 &&
         middle.x < innerWidth &&
@@ -291,6 +345,7 @@ export async function smallTargets(page: Page): Promise<string[]> {
         el: pressed,
         box,
         name: `${el.tagName.toLowerCase()} "${name}"`,
+        shown: !clipped,
       });
     }
     const missed: string[] = [];
@@ -302,6 +357,8 @@ export async function smallTargets(page: Page): Promise<string[]> {
       }
       for (const b of found.slice(i + 1)) {
         if (
+          !a.shown ||
+          !b.shown ||
           a.el.contains(b.el) ||
           b.el.contains(a.el) ||
           (a.el.matches("[data-canvas]") && b.el.matches("[data-canvas]")) ||

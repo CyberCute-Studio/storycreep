@@ -70,6 +70,7 @@ import {
   useProjectDocument,
 } from "../document/react";
 import { PlayPanel } from "../play/PlayPanel";
+import { goToSaved } from "../play/SavedStates";
 import {
   type PlayStart,
   playSessionOf,
@@ -1615,6 +1616,13 @@ function BoardCanvasOf({
   useEffect(() => {
     onHolding?.(holding);
   }, [onHolding, holding]);
+  // Whether the page shows play's panel: while play is under way, where the
+  // inspector, while it is open, is not (plan note N78), and, as a sheet
+  // over the canvas, not while the editor of a text is open, which it would
+  // else hold inert under it. The palette's commands that go to what the
+  // panel shows are of the panel shown alone.
+  const playShown =
+    playing && !(inspecting && editable) && (docked || editing === undefined);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -1840,6 +1848,19 @@ function BoardCanvasOf({
     "play.reset": {
       enabled: playFlow !== undefined,
       run: () => session.reset(),
+    },
+    // The panel's saved play states, which the palette goes to, as their
+    // name's field for a save, which only the user who may edit does
+    // (FR-PLAY-05), while the page shows the panel, rather than go to
+    // nothing while the inspector or the editor of a text is open in its
+    // place.
+    "play.save_state": {
+      enabled: playFlow !== undefined && playShown && editable,
+      run: () => goToSaved(document, "save"),
+    },
+    "play.saved_states": {
+      enabled: playFlow !== undefined && playShown,
+      run: () => goToSaved(document, "list"),
     },
     ...(editable
       ? {
@@ -2724,19 +2745,18 @@ function BoardCanvasOf({
         without taking the focus while the editor is open, as once a
         tablet's turn makes room for it, which leaves the focus in the
         editor's text. */}
-        {playing &&
-          !(inspecting && editable) &&
-          (docked || editing === undefined) && (
-            <PlayPanel
-              projectId={projectId}
-              boardId={boardId}
-              doc={doc}
-              session={session}
-              returnFocus={() => hostRef.current}
-              focusOnOpen={editing === undefined}
-              holding={holding}
-            />
-          )}
+        {playShown && (
+          <PlayPanel
+            projectId={projectId}
+            boardId={boardId}
+            doc={doc}
+            session={session}
+            returnFocus={() => hostRef.current}
+            focusOnOpen={editing === undefined}
+            holding={holding}
+            editable={editable}
+          />
+        )}
       </div>
       <p id={helpId} className="text-sm text-fg-muted">
         {editable

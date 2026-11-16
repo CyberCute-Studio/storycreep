@@ -2833,6 +2833,21 @@
             "$ref": "#/components/schemas/NodeUpdateCommand"
           },
           {
+            "$ref": "#/components/schemas/PlayStateCreateCommand"
+          },
+          {
+            "$ref": "#/components/schemas/PlayStateDeleteCommand"
+          },
+          {
+            "$ref": "#/components/schemas/PlayStateRenameCommand"
+          },
+          {
+            "$ref": "#/components/schemas/PlayStateRestoreCommand"
+          },
+          {
+            "$ref": "#/components/schemas/PlayStateSetStateCommand"
+          },
+          {
             "$ref": "#/components/schemas/ProjectArchiveCommand"
           },
           {
@@ -4907,6 +4922,32 @@
           "name",
           "scopes",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "Cursor": {
+        "additionalProperties": false,
+        "properties": {
+          "boardId": {
+            "type": "string"
+          },
+          "nodeId": {
+            "description": "The current node, a node of the board that is no jumper.",
+            "type": "string"
+          },
+          "phase": {
+            "description": "awaiting_choice when the node's choices are built and the game chooses one, or advances; ended when the flow ended at the node, after its on-exit ran (PRD §5.8.5).",
+            "enum": [
+              "awaiting_choice",
+              "ended"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "boardId",
+          "nodeId",
+          "phase"
         ],
         "type": "object"
       },
@@ -7171,6 +7212,29 @@
         ],
         "type": "object"
       },
+      "PagePlayStateSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PlayStateSummary"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageProject": {
         "additionalProperties": false,
         "properties": {
@@ -7432,6 +7496,422 @@
         },
         "required": [
           "email"
+        ],
+        "type": "object"
+      },
+      "PlayStateBody": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the play state was saved",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "description": "The ID of the user who saved the play state, whom it no longer names once their account is deleted",
+            "type": "string"
+          },
+          "deleted_at": {
+            "description": "When the play state went to the project's trash, if it is there",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The play state's name, which need not be unique among the project's play states",
+            "type": "string"
+          },
+          "names": {
+            "$ref": "#/components/schemas/PlayStateNames",
+            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's"
+          },
+          "project_id": {
+            "description": "The ID of the play state's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The play state's revision, which every change of it increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SaveState",
+            "description": "The play state's state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key, as the project's entities were when it was saved, which they may no longer be (PRD FR-PLAY-05 AC2)."
+          },
+          "updated_at": {
+            "description": "When the play state last changed, its name or its state",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "description": "The ID of the user who changed the play state last, its name or its state, whom it no longer names once their account is deleted",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "names",
+          "id",
+          "project_id",
+          "name",
+          "rev",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "PlayStateCreateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type play_state.create.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PlayStateCreatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "play_state.create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PlayStateCreatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type play_state.create.",
+        "properties": {
+          "id": {
+            "description": "The new play state's ID, a pst_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
+            "type": "string"
+          },
+          "name": {
+            "description": "The play state's name, of 1 to 100 characters, without white space around it, and without control characters, which need not be unique among the project's play states",
+            "maxLength": 100,
+            "type": "string"
+          },
+          "names": {
+            "$ref": "#/components/schemas/PlayStateNames",
+            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SaveState",
+            "description": "The play state's state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps its values as the client sent them, but for each number, which it keeps as a double reads it, and a read returns written as a runtime writes it, in its shortest form, and it reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2)."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PlayStateDeleteCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type play_state.delete.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PlayStateDeletePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "play_state.delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PlayStateDeletePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type play_state.delete.",
+        "properties": {
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "PlayStateNames": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "description": "Each runtime attribute's name, by its component's ID and its attribute definition's, as elara.trust",
+            "type": "object"
+          },
+          "variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Each variable's name, by its ID, as met_elara",
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "PlayStateRenameCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type play_state.rename.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PlayStateRenamePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "play_state.rename"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PlayStateRenamePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type play_state.rename.",
+        "properties": {
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The play state's new name, of 1 to 100 characters, without white space around it, and without control characters, which need not be unique among the project's play states",
+            "maxLength": 100,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "PlayStateRestoreCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type play_state.restore.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PlayStateRestorePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "play_state.restore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PlayStateRestorePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type play_state.restore.",
+        "properties": {
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "PlayStateSetStateCommand": {
+        "additionalProperties": false,
+        "description": "A command of the type play_state.set_state.",
+        "properties": {
+          "command_id": {
+            "description": "The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_rev": {
+            "additionalProperties": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            },
+            "description": "The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision.",
+            "type": "object"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PlayStateSetStatePayload"
+          },
+          "type": {
+            "description": "The command's type.",
+            "enum": [
+              "play_state.set_state"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "type",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PlayStateSetStatePayload": {
+        "additionalProperties": false,
+        "description": "The payload of a command of the type play_state.set_state.",
+        "properties": {
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          },
+          "names": {
+            "$ref": "#/components/schemas/PlayStateNames",
+            "description": "The names of the state's values, as play mode named them when it saved the state, which it names a value that a load of the state drops by once its entity is deleted (PRD FR-PLAY-05 AC2): a variable's by its ID, and a runtime attribute's by its component's ID and its attribute definition's, each of a value that the state holds, of 1 to 200 characters, without white space around it, and without control characters. A name of a value that the state does not hold is answered with 422 validation_failed, as names of more than 1048576 bytes are, as JSON. Without it, none."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SaveState",
+            "description": "The play state's new state: a save state of the project's flow, as a runtime's save_state() returns it (PRD §8.5), whose JSON Schema is /schema/save-state/v1/save-state.schema.json: where the flow is, and the values of the variables and of the components' runtime attributes, and the nodes' visit counts, by ID, never by key. Its stateVersion is 1, its projectId the project's ID, and each ID, as the keys of its variables, attributes, and visits, a canonical ID of its kind, as the schema's patterns say; one that is not is answered with 422 validation_failed, as a state of more than 1048576 bytes is, as JSON. The server keeps its values as the client sent them, but for each number, which it keeps as a double reads it, and a read returns written as a runtime writes it, in its shortest form, and it reads nothing of the project's content in it: what its entities have become since it was saved is play mode's to read as it loads it (PRD FR-PLAY-05 AC2)."
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PlayStateSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "description": "When the play state was saved",
+            "format": "date-time",
+            "type": "string"
+          },
+          "created_by": {
+            "description": "The ID of the user who saved the play state, whom it no longer names once their account is deleted",
+            "type": "string"
+          },
+          "id": {
+            "description": "The play state's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The play state's name, which need not be unique among the project's play states",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "The ID of the play state's project",
+            "type": "string"
+          },
+          "rev": {
+            "description": "The play state's revision, which every change of it increments, and which a change expects with expected_rev",
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "When the play state last changed, its name or its state",
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_by": {
+            "description": "The ID of the user who changed the play state last, its name or its state, whom it no longer names once their account is deleted",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "rev",
+          "created_at",
+          "updated_at"
         ],
         "type": "object"
       },
@@ -8750,6 +9230,94 @@
         "description": "A variable's ID.",
         "pattern": "^[Vv][Aa][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
         "type": "string"
+      },
+      "SaveState": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "description": "The values of the components' runtime attributes, by the component's ID and the attribute definition's.",
+            "type": "object"
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor",
+            "description": "Where the flow is. Without it, the flow has not started."
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "description": "The version of the published format of the snapshot that the state was saved against.",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "snapshotId": {
+            "description": "The snapshot that the state was saved against, a release, which is there exactly when snapshotVersion is. Without them, the state was saved against a draft (PRD §7.8).",
+            "type": "string"
+          },
+          "snapshotVersion": {
+            "description": "The release's version, which is there exactly when snapshotId is. Without them, the state was saved against a draft.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "stateVersion": {
+            "const": 1,
+            "description": "The version of the save-state format, 1, which a runtime of an older one refuses (PRD §8.5).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "variables": {
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "The values of the variables, global and of each board, by their IDs, each of its variable's type.",
+            "type": "object"
+          },
+          "visits": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "How many times the flow has entered each node that it has entered, by the node's ID; a node that it has not entered has none.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "attributes",
+          "projectId",
+          "schemaVersion",
+          "stateVersion",
+          "variables",
+          "visits"
+        ],
+        "type": "object"
       },
       "SessionBody": {
         "additionalProperties": false,
@@ -17520,6 +18088,251 @@
         "summary": "Get a node's writing statistics",
         "tags": [
           "Statistics"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/play-states": {
+      "get": {
+        "description": "Lists the project's saved play states that are not in its trash, each without its state, which GET /api/v1/projects/{project_id}/play-states/{play_state_id} returns, in the order of their IDs, oldest first (PRD FR-PLAY-05). Every member who reads the project sees them all, whoever saved them. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type play_state.* save, rename, replace the state of, delete, and restore them, which an owner, an admin, or an editor of the project may send. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listPlayStates",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagePlayStateSummary"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List a project's saved play states",
+        "tags": [
+          "Play states"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/play-states/{play_state_id}": {
+      "get": {
+        "description": "Returns a saved play state of the project, with its state, a save state of the project's flow (PRD §8.5), as it was saved, each number written in its shortest form, as a runtime writes it, which play mode loads as a starting point (PRD FR-PLAY-05). They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type play_state.* save, rename, replace the state of, delete, and restore them, which an owner, an admin, or an editor of the project may send. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A play state that the project does not have, or that is in its trash, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "getPlayState",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The play state's ID",
+            "in": "path",
+            "name": "play_state_id",
+            "required": true,
+            "schema": {
+              "description": "The play state's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayStateBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a saved play state",
+        "tags": [
+          "Play states"
         ]
       }
     },

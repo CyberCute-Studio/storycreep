@@ -381,6 +381,15 @@ var Tables = []Table{
 		return Statement{row, "INSERT INTO text_statistic_state (id, workspace_id, project_id, version) " +
 			"VALUES ($1, $2, $3, 1)", []any{row, w.ID, id}}, nil
 	}},
+	{Name: "play_state", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A play state of the workspace's project, whose state is one of
+		// that project's, as the commands store it.
+		id := ids.New()
+		state := `{"attributes":{},"projectId":"` + ids.Encode(ids.Project, w.Rows["project"]) +
+			`","schemaVersion":1,"stateVersion":1,"variables":{},"visits":{}}`
+		return Statement{id, "INSERT INTO play_state (id, workspace_id, project_id, name, state) " +
+			"VALUES ($1, $2, $3, 'After act 1', $4)", []any{id, w.ID, w.Rows["project"], state}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

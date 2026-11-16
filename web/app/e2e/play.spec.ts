@@ -2,14 +2,23 @@ import type { Locator, Page } from "@playwright/test";
 import { newId } from "@storycreep/shared/ids";
 import { canvasOf, drawn, makeProject, test } from "./boards.ts";
 import { apply, signedIn } from "./content.ts";
-import { en, expect, press, smallTargets, violations } from "./fixtures.ts";
+import {
+  type ApiSession,
+  en,
+  expect,
+  press,
+  smallTargets,
+  violations,
+} from "./fixtures.ts";
 
 // Play mode (PRD FR-PLAY-01, plan notes N78 and N79), in the browser,
 // against the server: started from a board's canvas, its panel beside it on
 // the desktop, or a sheet over it on the tablet, a choice that a jumper
 // takes to another board's page, with the state that the flow had, and its
-// stop; and a value set in its inspector, which offers a hidden choice at
-// once, the author view of that choice, and a step back.
+// stop; a value set in its inspector, which offers a hidden choice at
+// once, the author view of that choice, and a step back; and a saved play
+// state, which loads after the draft changed, with what it dropped (plan
+// note N80).
 
 /** A rich text of one paragraph of inline nodes. */
 function paragraph(...content: unknown[]) {
@@ -19,9 +28,11 @@ function paragraph(...content: unknown[]) {
 const text = (t: string) => ({ type: "text", text: t });
 
 interface Story {
+  session: ApiSession;
   projectId: string;
   harbour: string;
   elara: string;
+  gold: string;
 }
 
 /**
@@ -121,7 +132,7 @@ async function makeStory(page: Page, name: string): Promise<Story> {
     { type: "board.set_entry_node", payload: { id: harbour, node_id: quay } },
     { type: "board.set_entry_node", payload: { id: elara, node_id: meeting } },
   ]);
-  return { projectId, harbour, elara };
+  return { session, projectId, harbour, elara, gold };
 }
 
 /** Play's panel: a region beside the canvas on the desktop, and a sheet over it on the tablet. */
@@ -221,5 +232,61 @@ test.describe("play mode", () => {
     await expect(gold).toHaveValue("9");
     await expect(play.getByRole("heading", { name: "Quay" })).toBeFocused();
     expect(await violations(page)).toEqual([]);
+  });
+
+  // Verifies: FR-PLAY-05/AC1, FR-PLAY-05/AC2
+  test("saves the flow's state, and loads it, once the draft no longer has a variable of it, with what it dropped", async ({
+    page,
+  }) => {
+    const story = await makeStory(page, "Saver");
+    await page.goto(`/app/projects/${story.projectId}/boards/${story.harbour}`);
+    await drawn(canvasOf(page, "Harbour"));
+    await press(page.getByRole("button", { name: en["shell.commands"] }));
+    const palette = page.getByRole("dialog", { name: en["palette.title"] });
+    await press(
+      palette.getByRole("option", { name: en["command.play.start"] }),
+    );
+    const play = playOf(page);
+    await expect(play.getByText("Gold 0.")).toBeVisible();
+    const gold = play.getByRole("textbox", { name: "gold" });
+    await gold.fill("9");
+    await gold.press("Enter");
+    await expect(play.getByText("Gold 9.")).toBeVisible();
+    const name = play.getByRole("textbox", { name: en["play.saved.name"] });
+    await name.fill("Rich");
+    await press(play.getByRole("button", { name: en["play.saved.save"] }));
+    await expect(play.getByText("Saved “Rich”.")).toBeVisible();
+    await expect(
+      play.getByRole("button", { name: "Load “Rich”" }),
+    ).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    // Filling the name's field scrolled the page, after which the canvas
+    // lays its targets out again, a frame or more later on a loaded runner;
+    // the targets are measured once it has. It scrolled the panel too, past
+    // its choices, which it then shows none of, beside nothing (smallTargets).
+    await expect.poll(() => smallTargets(page)).toEqual([]);
+
+    // The variable goes, and play the draft as it is now.
+    await apply(page.request, story.session, story.projectId, [
+      { type: "variable.delete", payload: { id: story.gold, force: true } },
+    ]);
+    await expect(play.getByText(en["play.changed"])).toBeVisible();
+    await press(play.getByRole("button", { name: en["play.restart"] }));
+    await expect(play.getByRole("heading", { name: "Quay" })).toBeFocused();
+    await press(play.getByRole("button", { name: "Load “Rich”" }));
+    const report = play.getByRole("region", { name: en["play.saved.report"] });
+    await expect(
+      report.getByText(
+        "gold is no longer a variable or a runtime attribute of the project, so its saved value was dropped.",
+      ),
+    ).toBeVisible();
+    await expect(play.getByRole("heading", { name: "Quay" })).toBeFocused();
+    expect(await violations(page)).toEqual([]);
+
+    await press(play.getByRole("button", { name: "Delete “Rich”" }));
+    await expect(
+      play.getByText("Deleted “Rich”. Undo brings it back."),
+    ).toBeVisible();
+    await expect(play.getByText(en["play.saved.none_editable"])).toBeVisible();
   });
 });
