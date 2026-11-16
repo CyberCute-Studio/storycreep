@@ -1,11 +1,25 @@
 // The link to where the threads of a target of comments show (PRD
 // FR-COMMENT-01, plan item 74), which the project's list of comments names
-// each thread by, and the search each comment that it finds.
+// each thread by, and the search each comment that it finds, and what names
+// the node of a thread's target in both.
 
 import type { CommentBody } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
+import type { TFunction } from "i18next";
 import type { ReactNode } from "react";
 import { textLink } from "../ui/Page";
+
+/**
+ * Returns what names the node of a thread's target, as the project's list
+ * of comments and the search name it, title, the node's title, as a comment
+ * and a result of the search give it, or, where it is empty, what the
+ * canvas calls a node without a title.
+ */
+export function placeNodeTitle(t: TFunction, title: string | undefined) {
+  return title === undefined || title === ""
+    ? t("boards.untitled_node")
+    : title;
+}
 
 /** What a thread is on, as a comment and a result of the search name it: the target's kind and ID, and its board and node, by which a link opens it. */
 export interface ThreadPlace {

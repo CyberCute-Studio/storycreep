@@ -2768,6 +2768,21 @@ export class ProjectDocument {
         parts.add(part);
       }
     }
+    // A command of what is no part of the draft (outsideDraft), as a
+    // comment's, changes none of it, but changes what it expects, at the
+    // revision that it expects, so that the batches queued behind it that
+    // were made on top of that revision, as a thread's resolution behind
+    // its first comment's edit, expect what its answer leaves, rather than
+    // be refused for the page's own change (moveQueued).
+    for (const command of withIds) {
+      if (outside(command)) {
+        for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
+          if (!before.has(canonical(id))) {
+            before.set(canonical(id), rev);
+          }
+        }
+      }
+    }
     return new Promise<Sent>((resolve, reject) => {
       const entry: Entry = {
         commands: withIds,
@@ -3368,14 +3383,15 @@ function withParts(
 }
 
 /** A conflict of a refusal for a revision (revision_conflict). */
-interface Conflict {
+export interface Conflict {
   id: string;
   expected_rev: number;
   exists: boolean;
   current_rev?: number;
 }
 
-function conflictsOf(error: ApiError): Conflict[] {
+/** Returns the conflicts of error, a refusal for a revision, each of an entity whose revision changed elsewhere, or none of another error. */
+export function conflictsOf(error: ApiError): Conflict[] {
   const conflicts = (error.error?.details as { conflicts?: unknown })
     ?.conflicts;
   return Array.isArray(conflicts) ? (conflicts as Conflict[]) : [];

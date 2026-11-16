@@ -145,8 +145,9 @@ export interface Curve {
  * Returns where the card of a node of width draws the badge of its count of
  * open threads of comments (plan item 74), from the card's top-left corner,
  * in units of the board: a pill at its top right, as wide as its digits,
- * or 99+, need, which the card's title leaves room for, and a tap or a
- * click on which opens the node's comments.
+ * or 99+, need, which the card's title leaves room for. It shows the count
+ * alone, which a press on it takes as one on the card: the inspector and
+ * the canvas's tree are the way to the node's threads.
  */
 export function commentBadge(width: number, count: number): Rect {
   const w = count > 99 ? 40 : count > 9 ? 30 : 24;

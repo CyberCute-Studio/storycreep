@@ -34,14 +34,7 @@ import {
   type SelectHow,
 } from "./gestures";
 import type { NodeLabels } from "./labels";
-import {
-  type Curve,
-  commentBadge,
-  curveOf,
-  entryPoint,
-  portPoint,
-  portsOf,
-} from "./layout";
+import { type Curve, curveOf, entryPoint, portPoint, portsOf } from "./layout";
 import type { Minimap } from "./minimap";
 import { type NodeItem, Scene } from "./scene";
 import { sameTheme, type Theme } from "./theme";
@@ -163,12 +156,6 @@ export interface CanvasEvents {
    * once in each frame at most, as each frame of a pan's or an animation's.
    */
   view(view: CanvasView): void;
-  /**
-   * The comments of the node of id were asked for, by a tap or a click on
-   * its card's badge of its open threads (plan item 74), which selected
-   * the node first.
-   */
-  comments?(id: string): void;
 }
 
 /** A port that connections leave: port of the node of node, out of an element, or the ID of a branch's output. */
@@ -801,34 +788,6 @@ export class CanvasController implements GestureHost {
   recount(): void {
     this.commentsVersion++;
     this.relabel();
-  }
-
-  /**
-   * Reports whether at of the board is on the badge of the open threads of
-   * the node of id, within slop units, as a tap that opens its comments
-   * finds it, of a node that has any, drawn as a card, as the badge is not
-   * of a block.
-   */
-  badgeAt(id: string, at: Point, slop: number): boolean {
-    const item = this.scene.nodes.get(id);
-    const count = this.comments(id);
-    if (item === undefined || count === 0 || this.lod === "blocks") {
-      return false;
-    }
-    const b = commentBadge(item.rect.width, count);
-    const x = item.rect.x + b.x;
-    const y = item.rect.y + b.y;
-    return (
-      at.x >= x - slop &&
-      at.x <= x + b.width + slop &&
-      at.y >= y - slop &&
-      at.y <= y + b.height + slop
-    );
-  }
-
-  /** Tells the page that the comments of the node of id were asked for, as by a tap on its badge. */
-  openComments(id: string): void {
-    this.events.comments?.(id);
   }
 
   /**

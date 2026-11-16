@@ -459,18 +459,19 @@ interface BoardCanvasProps {
    * Whether the page holds what the user typed in a form of comments,
    * unsent, as one of the inspector's or of the board's own under the
    * canvas (plan item 74), which the page counts of the CommentDrafts that
-   * it gives them both, and does not take away either as it follows play
-   * mode's flow, as it does not the canvas's own (onHolding), so that the
-   * panel keeps the focus where the flow is while the page waits for it.
+   * it gives them both, and waits for itself, as it does not take it away
+   * as it follows play mode's flow, as it does not the canvas's own
+   * (onHolding), so that play's panel keeps the focus where the flow is
+   * while the page waits for it.
    */
   drafting?: boolean;
   /**
    * Tells whether the canvas has open what the user types in, which a page
    * change would take away unsaved: the inspector of a board that the user
-   * may change, a form of comments that holds what was typed (drafting,
-   * plan item 74), or the editor of a text, as it opens and closes, which
-   * the board's page waits for to close before it follows play mode's flow
-   * to another board's page (plan note N78).
+   * may change, or the editor of a text, as it opens and closes, which the
+   * board's page waits for to close before it follows play mode's flow to
+   * another board's page (plan note N78), as it waits for the forms of
+   * comments that it counts (drafting, plan item 74).
    */
   onHolding?: (holding: boolean) => void;
 }
@@ -575,8 +576,8 @@ function BoardCanvasOf({
     inspectorHeading.current?.focus();
   }, []);
   // The asks for the comments of what is selected (plan item 74), counted,
-  // as a tap on a card's badge of its open threads, or a link to a thread,
-  // makes: the inspector opens, and its comments' heading takes the focus,
+  // as a link to a thread makes them, once the canvas has opened on its
+  // node: the inspector opens, and its comments' heading takes the focus,
   // brought into view, once it shows, within the inspector, as it scrolls,
   // and the page no more than it must, so that the canvas beside a docked
   // inspector stays where it is.
@@ -691,10 +692,6 @@ function BoardCanvasOf({
         }
       },
       view: (view) => onViewRef.current?.(view),
-      comments: () => {
-        setInspecting(true);
-        setCommentsAsked((n) => n + 1);
-      },
     });
     if (initial !== undefined) {
       c.restore(initial);
@@ -1710,8 +1707,9 @@ function BoardCanvasOf({
   // inspector of a board that the user may not change, as a commenter's or
   // a viewer's, shows the comments of what is selected alone, which hold
   // what was typed while one of their forms does, as the board's own under
-  // the canvas do, as the page counts them (drafting, plan item 74).
-  const holding = (inspecting && editable) || editing !== undefined || drafting;
+  // the canvas do, which the page counts and waits for itself (drafting,
+  // plan item 74), and which the panel waits for too.
+  const holding = (inspecting && editable) || editing !== undefined;
   useEffect(() => {
     onHolding?.(holding);
   }, [onHolding, holding]);
@@ -2863,7 +2861,7 @@ function BoardCanvasOf({
             session={session}
             returnFocus={() => hostRef.current}
             focusOnOpen={editing === undefined}
-            holding={holding}
+            holding={holding || drafting}
             editable={editable}
           />
         )}

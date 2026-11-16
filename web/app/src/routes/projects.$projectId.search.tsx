@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useCommandHandlers } from "../commands/registry";
-import { ThreadTargetLink } from "../comments/TargetLink";
+import { placeNodeTitle, ThreadTargetLink } from "../comments/TargetLink";
 import { projectQuery } from "../project/queries";
 import { takeSearchFocus } from "../search/focus";
 import { searchText } from "../search/query";
@@ -362,10 +362,7 @@ function CommentResult({
   result: Result;
 }) {
   const { t } = useTranslation();
-  const node =
-    result.node_title === undefined || result.node_title === ""
-      ? t("boards.untitled_node")
-      : result.node_title;
+  const node = placeNodeTitle(t, result.node_title);
   const board = result.board_name ?? "";
   const label =
     result.target_type === "node"

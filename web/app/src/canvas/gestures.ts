@@ -200,10 +200,6 @@ export interface GestureHost {
   after(ms: number, then: () => void): () => void;
   /** Opens the context menu of target, as a long press on it asks, where held says so, or a right click. */
   menu(target: MenuTarget, held: boolean): void;
-  /** Reports whether p of the board is on the badge of the open comments of the node of id, within slop units (plan item 74); none where the host draws no badges. */
-  badgeAt?(id: string, p: Point, slop: number): boolean;
-  /** Opens the comments of the node of id, as a tap on its badge asks, once it is selected. */
-  openComments?(id: string): void;
 }
 
 /**
@@ -902,9 +898,7 @@ export class Gestures {
    * without them, or clears the selection on the empty board; a second tap
    * on the same node soon after the first, last, the tap right before it,
    * without them, opens it, as for its text, which nothing needs: the
-   * inspector and Enter open it too (NFR-TOUCH-02). A tap on the badge of a
-   * node's open comments, without them, selects the node and opens its
-   * comments (plan item 74), which its inspector shows too.
+   * inspector and Enter open it too (NFR-TOUCH-02).
    */
   private tap(
     at: PointerInput,
@@ -919,16 +913,6 @@ export class Gestures {
     const now = this.host.now();
     this.lastTap =
       id === undefined || additive ? undefined : { node: id, time: now };
-    if (
-      id !== undefined &&
-      !additive &&
-      this.host.badgeAt?.(id, where, slop) === true
-    ) {
-      this.lastTap = undefined;
-      this.host.select([id], "replace");
-      this.host.openComments?.(id);
-      return;
-    }
     if (id !== undefined) {
       this.host.select([id], additive ? "toggle" : "replace");
       if (

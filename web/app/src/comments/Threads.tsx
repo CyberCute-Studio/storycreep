@@ -21,7 +21,10 @@
 // opened, so that it is refused for a change made elsewhere since, which
 // the list says, read again, rather than write over it (PRD §7.10). A first
 // comment deleted while its thread has replies shows as deleted, without
-// its body and its author, as the server lists it.
+// its body and its author, as the server lists it. The threads move the
+// focus after their own presses alone (usePressFocus): to the Undo that a
+// deletion gives, and to their heading once the control that a press left
+// the focus on goes.
 
 import type {
   CommentBody,
@@ -49,8 +52,13 @@ import { useTranslation } from "react-i18next";
 import { sessionQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { hasPrintedIn } from "../canvas/edit";
+import { canonical } from "../document/apply";
 import { useProjectDocument } from "../document/react";
-import type { Command, ProjectDocument } from "../document/store";
+import {
+  type Command,
+  conflictsOf,
+  type ProjectDocument,
+} from "../document/store";
 import { conflictOf, projectQuery } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
@@ -321,12 +329,39 @@ export function ReadFailed({
 }
 
 /**
- * The form of a new thread on target, which empties once its comment is
- * posted. The comment's ID is the form's until then, made anew once it is
- * posted, so that Post pressed again once no answer came sends the same
+ * Returns what gives the ID of the comment that a form posts with a body:
+ * the one that the form last sent that body under, until an answer says
+ * that it is posted (posted), or else one made anew, so that Post pressed
+ * again once no answer came, with the text as it was, sends the same
  * batch, which the document sends with the IDs of the first (enqueue), and
- * the server answers as it did that one rather than post the comment twice,
- * as the dialogs that create keep theirs.
+ * which the server answers as it did that one rather than post the comment
+ * twice, as the dialogs that create keep theirs; and that Post pressed with
+ * the text changed since posts a comment of its own, under its own ID,
+ * rather than one that the server refuses for the ID of the first, which
+ * may have been posted (NewThread, ReplyForm).
+ */
+function useKeptId(): {
+  idFor: (body: RichTextDoc) => string;
+  posted: () => void;
+} {
+  const kept = useRef<{ id: string; body: string }>(undefined);
+  return {
+    idFor: (body) => {
+      const sent = JSON.stringify(body);
+      if (kept.current?.body !== sent) {
+        kept.current = { id: newId("comment"), body: sent };
+      }
+      return kept.current.id;
+    },
+    posted: () => {
+      kept.current = undefined;
+    },
+  };
+}
+
+/**
+ * The form of a new thread on target, which empties once its comment is
+ * posted, whose ID is the one that the form keeps for its body (useKeptId).
  */
 function NewThread({
   doc,
@@ -342,7 +377,7 @@ function NewThread({
 }) {
   const { t } = useTranslation();
   const [said, setSaid] = useState<string>();
-  const [id, setId] = useState(() => newId("comment"));
+  const kept = useKeptId();
   return (
     <div className="space-y-2">
       <CommentForm
@@ -355,10 +390,10 @@ function NewThread({
           await sendComments(doc, [
             {
               type: "comment.create",
-              payload: { id, target: target.id, body },
+              payload: { id: kept.idFor(body), target: target.id, body },
             },
           ]);
-          setId(newId("comment"));
+          kept.posted();
           setSaid(t("comments.posted"));
         }}
       />
@@ -421,31 +456,67 @@ function UndoLine({
 }
 
 /**
- * Gives the element of an ID the focus once it shows, as the control that
- * takes the place of one pressed, as a deleted comment's Undo that of its
- * Delete: from where the press left it, the control pressed, or nowhere, as
- * once it went with what it did, but not from where the user has put it
- * meanwhile. It returns what asks for it.
+ * The focus of the presses of a list of threads, which the list moves
+ * after its own presses alone: a press leaves the focus where it was, on
+ * the control pressed (pressing), or gives it to the control that takes
+ * that one's place once it shows, as a deleted comment's Undo that of its
+ * Delete (focusOnceShown), from where the press left it, the control
+ * pressed, or nowhere, as once it went with what it did, but not from where
+ * the user has put it meanwhile; and once the control that a press left the
+ * focus on goes while it has it, as a resolved thread's Reopen out of a
+ * list of open threads, read again, a deletion's Undo out of its thread
+ * once the server lists the thread no more, or the Undo itself once it has
+ * restored the comment, heading, the threads' heading, takes it, until the
+ * next press, or until the focus leaves that control. What another
+ * session's change takes away otherwise leaves the focus where the browser
+ * leaves it.
  */
-function useFocusOnceShown(): (pressed: Element | null, id: string) => void {
+function usePressFocus(heading: RefObject<HTMLElement | null>): {
+  pressing: () => void;
+  focusOnceShown: (pressed: Element | null, id: string) => void;
+} {
+  // The control that the last press left the focus on, while it has it.
+  const left = useRef<Element | null>(null);
   const [asked, setAsked] = useState<{
     pressed: Element | null;
     id: string;
   }>();
   useEffect(() => {
-    if (asked === undefined) {
+    if (asked !== undefined) {
+      const element = document.getElementById(asked.id);
+      if (element !== null) {
+        setAsked(undefined);
+        if (
+          document.activeElement === asked.pressed ||
+          focusIsNowhere(document)
+        ) {
+          element.focus();
+          left.current = element;
+        }
+      }
+    }
+    const control = left.current;
+    if (control === null) {
       return;
     }
-    const element = document.getElementById(asked.id);
-    if (element === null) {
-      return;
-    }
-    setAsked(undefined);
-    if (document.activeElement === asked.pressed || focusIsNowhere(document)) {
-      element.focus();
+    if (!control.isConnected) {
+      left.current = null;
+      if (focusIsNowhere(document)) {
+        heading.current?.focus();
+      }
+    } else if (
+      document.activeElement !== control &&
+      !focusIsNowhere(document)
+    ) {
+      left.current = null;
     }
   });
-  return (pressed, id) => setAsked({ pressed, id });
+  return {
+    pressing: () => {
+      left.current = focusIsNowhere(document) ? null : document.activeElement;
+    },
+    focusOnceShown: (pressed, id) => setAsked({ pressed, id }),
+  };
 }
 
 /**
@@ -471,7 +542,7 @@ export function ThreadList({
   /** Whether the user starts, answers, and resolves threads, and edits and deletes their own comments. */
   writable: boolean;
   reread: () => Promise<unknown>;
-  /** The heading of the threads, which takes the focus once a press of a thread leaves it nowhere. */
+  /** The heading of the threads, which takes the focus once the control that a press of theirs left it on goes (usePressFocus). */
   heading: RefObject<HTMLElement | null>;
   /** What the list says where it has no thread. */
   empty: string;
@@ -503,7 +574,7 @@ export function ThreadList({
     error: unknown;
     undo?: boolean;
   }>();
-  const focusOnceShown = useFocusOnceShown();
+  const pressFocus = usePressFocus(heading);
   // A press of a thread's button, as a request of the page's, which the
   // app's query client records once it fails, but for a refusal of the
   // server's, which the thread says.
@@ -515,6 +586,7 @@ export function ThreadList({
     run: () => Promise<void>,
     undo = false,
   ) => {
+    pressFocus.pressing();
     setSaid(undefined);
     setFailed(undefined);
     try {
@@ -559,27 +631,9 @@ export function ThreadList({
     threads.some((th) => th.root.id === deleted.comment.thread_id)
       ? deleted.comment.thread_id
       : undefined;
-  // The Undo, which takes the focus that Delete had, keeps it as it moves
-  // between its thread's line and the threads' own, as a read shows the
-  // thread no more, or again: the Undo that it leaves takes the focus with
-  // it, which the browser leaves nowhere then (useFocusOnceShown).
-  const undoPlace = useRef<{ id: string; thread: string | undefined }>(
-    undefined,
-  );
-  useEffect(() => {
-    const was = undoPlace.current;
-    undoPlace.current =
-      deleted === undefined
-        ? undefined
-        : { id: deleted.comment.id, thread: undoThread };
-    if (
-      deleted !== undefined &&
-      was?.id === deleted.comment.id &&
-      was.thread !== undoThread
-    ) {
-      focusOnceShown(null, idOf("undo", deleted.comment.id));
-    }
-  });
+  // The Undo takes the focus that Delete had (usePressFocus), which the
+  // threads' heading takes once it goes, as from its thread's line once
+  // the server lists the thread no more.
   const remove = (thread: Thread, c: CommentBody) =>
     act(thread.root.id, async () => {
       const pressed = document.activeElement;
@@ -599,23 +653,21 @@ export function ThreadList({
       }
       setDeleted({ comment: c, undo });
       setSaid(t("comments.deleted_status"));
-      focusOnceShown(pressed, idOf("undo", c.id));
+      pressFocus.focusOnceShown(pressed, idOf("undo", c.id));
     });
   // The Undo ends once it applies, or once the server refuses it for a
   // change made elsewhere since the deletion, as the comment's restoration
   // in another session of the user's, which would refuse it again, and
   // which the list, read again, then shows; it stays where it failed
-  // otherwise, as where no answer came, to be pressed again. The comment
-  // that the list then shows takes the focus that Undo had.
+  // otherwise, as where no answer came, to be pressed again. The threads'
+  // heading takes the focus that it had as it ends (usePressFocus).
   const restore = (d: Deleted) =>
     act(
       d.comment.thread_id,
       async () => {
-        const pressed = document.activeElement;
         const ended = async () => {
           await reread().catch(() => undefined);
           setDeleted(undefined);
-          focusOnceShown(pressed, idOf("comment", d.comment.id));
         };
         try {
           await sendUndo(doc, d.undo);
@@ -824,9 +876,10 @@ function ThreadItem({
 
 /**
  * The form of a reply to the thread whose first comment's ID is rootId,
- * whose comment's ID is the form's while it is open, so that Post reply
- * pressed again once no answer came sends the same batch, which the server
- * answers as it did the first rather than post the reply twice (NewThread).
+ * whose comment's ID is the one that the form keeps for its body while it
+ * is open (useKeptId), so that Post reply pressed again once no answer
+ * came, with the text as it was, sends the same batch, which the server
+ * answers as it did the first rather than post the reply twice.
  */
 function ReplyForm({
   send,
@@ -840,21 +893,22 @@ function ReplyForm({
   onDone: (focused: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [id] = useState(() => newId("comment"));
+  const kept = useKeptId();
   return (
     <CommentForm
       label={t("comments.reply_label")}
       submit={t("comments.reply_post")}
       autoFocus
       onCancel={onCancel}
-      onSend={(body) =>
-        send([
+      onSend={async (body) => {
+        await send([
           {
             type: "comment.create",
-            payload: { id, parent_id: rootId, body },
+            payload: { id: kept.idFor(body), parent_id: rootId, body },
           },
-        ]).then(() => undefined)
-      }
+        ]);
+        kept.posted();
+      }}
       onDone={onDone}
     />
   );
@@ -885,7 +939,7 @@ function CommentItem({
   const bylineId = idOf("byline", c.id);
   if (c.deleted || c.body === undefined) {
     return (
-      <div id={idOf("comment", c.id)} tabIndex={-1}>
+      <div>
         <p id={bylineId} className="text-fg-muted italic">
           {reply ? t("comments.reply_deleted") : t("comments.deleted")}
         </p>
@@ -895,7 +949,7 @@ function CommentItem({
   const posted = new Date(c.created_at);
   const name = c.author?.display_name ?? t("comments.no_author");
   return (
-    <div id={idOf("comment", c.id)} tabIndex={-1} className="space-y-2">
+    <div className="space-y-2">
       <p id={bylineId} className="text-sm">
         <span className="font-medium">
           {reply
@@ -970,16 +1024,8 @@ function currentRev(error: unknown, id: string): number | undefined {
   if (!conflictOf(error)) {
     return undefined;
   }
-  const conflicts = (error.error?.details as { conflicts?: unknown })
-    ?.conflicts;
-  const conflict = Array.isArray(conflicts)
-    ? (conflicts as { id?: unknown; current_rev?: unknown }[]).find(
-        (c) => c.id === id,
-      )
-    : undefined;
-  return typeof conflict?.current_rev === "number"
-    ? conflict.current_rev
-    : undefined;
+  return conflictsOf(error).find((c) => canonical(c.id) === canonical(id))
+    ?.current_rev;
 }
 
 /**

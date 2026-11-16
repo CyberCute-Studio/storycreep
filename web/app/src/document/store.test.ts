@@ -6,6 +6,7 @@ import {
   type Folder,
   NetworkError,
   type Node,
+  type RichTextDoc,
   type UndoCommandBody,
   type Variable,
 } from "@storycreep/shared/api";
@@ -1003,6 +1004,57 @@ describe("the page's own batches", () => {
       name: "Harbour at night",
       rev: 5,
     });
+  });
+
+  // A comment is no part of the draft, whose batches change none of it
+  // (plan item 74), so what a batch of one changes is what it expects.
+  it("moves what a batch of a comment expects past the page's batch of the same comment that it was queued behind, though the document holds no comment", async () => {
+    const first = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        first.promise,
+        applied(3, [{ id: "cmt_a", rev: 5 }]),
+      ),
+    });
+    const { doc } = await open();
+    const body: RichTextDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Lit." }] },
+      ],
+    };
+    // The edit of a thread's first comment, and its resolution, which the
+    // page made on top of the revision that the list showed, before the
+    // edit's answer came.
+    const edit = doc.send(
+      [
+        {
+          type: "comment.edit",
+          payload: { id: "cmt_a", body },
+          expected_rev: { cmt_a: 3 },
+        },
+      ],
+      { history: false },
+    );
+    const resolve = doc.send(
+      [
+        {
+          type: "comment.resolve",
+          payload: { id: "cmt_a" },
+          expected_rev: { cmt_a: 3 },
+        },
+      ],
+      { history: false },
+    );
+    await vi.waitFor(() => expect(server.batches).toHaveLength(1));
+    first.resolve(applied(2, [{ id: "cmt_a", rev: 4 }]));
+    await edit;
+    await resolve;
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { cmt_a: 3 },
+      { cmt_a: 4 },
+    ]);
   });
 
   it("moves what a batch expects past the page's own batch that applied on top of that revision, as a dialog's that opened before the answer to it came, rather than be refused for the page's own change", async () => {

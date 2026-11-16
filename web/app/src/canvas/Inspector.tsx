@@ -83,7 +83,7 @@ import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
 import type { TargetLookup } from "./targets";
 
-/** The ID of the heading of the comments of what the inspector shows, which the canvas's badge of a node's comments brings into view. */
+/** The ID of the heading of the comments of what the inspector shows, which a link to a thread on a node, or on a connection, brings into view. */
 export const inspectorCommentsId = "inspector-comments";
 
 /** What the inspector is given. */

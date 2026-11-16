@@ -14,7 +14,7 @@ import {
   commentsOn,
   threadsOf,
 } from "../comments/queries";
-import { ThreadTargetLink } from "../comments/TargetLink";
+import { placeNodeTitle, ThreadTargetLink } from "../comments/TargetLink";
 import { ReadFailed, ThreadList } from "../comments/Threads";
 import { collator } from "../content/textNames";
 import {
@@ -119,11 +119,7 @@ function CommentsPage() {
   // leaves, selected on its board's canvas with its inspector at its
   // comments, a board's page at its own, and a variable's panel.
   const targetOf = (root: CommentBody): ReactNode => {
-    const untitled = t("boards.untitled_node");
-    const node =
-      root.node_title === undefined || root.node_title === ""
-        ? untitled
-        : root.node_title;
+    const node = placeNodeTitle(t, root.node_title);
     const board = root.board_name ?? "";
     return (
       <ThreadTargetLink projectId={projectId} place={root}>

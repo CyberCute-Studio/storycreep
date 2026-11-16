@@ -704,21 +704,43 @@ describe("a target's threads", () => {
     expect(historyUndo().disabled).toBe(true);
   });
 
-  it("offers the Undo of a thread's only comment above the threads once the server no longer lists the thread, with the focus that Delete had", async () => {
+  it("offers the Undo of a thread's only comment above the threads once the server no longer lists the thread, and gives the threads' heading the focus that the Undo had in the thread", async () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
-    commentProject([root]);
+    // The reads of the list after the deletion, which wait until the test
+    // lets them be answered, so that the thread shows the Undo first.
+    let deleting = false;
+    const held = Promise.withResolvers<void>();
+    commentProject([root], {
+      refuse: (commands) => {
+        deleting ||= commands[0].type === "comment.delete";
+        return undefined;
+      },
+      listed: async (items) => {
+        if (deleting) {
+          await held.promise;
+        }
+        return items;
+      },
+    });
     const comments = await openGold();
+    const heading = within(comments).getByRole("heading", { name: "Comments" });
     expect(await within(comments).findByText("A stray thought.")).toBeDefined();
     await user.click(within(comments).getByRole("button", { name: "Delete" }));
-    await within(comments).findByRole("button", {
+    const inThread = await within(comments).findByRole("button", {
       name: "Undo the deletion of the comment",
     });
+    // The Undo, a line of the thread while the list shows it still, takes
+    // the focus that Delete had.
+    expect(inThread.closest("li[data-thread]")).not.toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(inThread));
+    held.resolve();
     await waitFor(() =>
       expect(within(comments).getByText("0 open threads, 0 resolved.")),
     );
     // The threads show none, as the server lists none, and the Undo is a
-    // line of their own, which keeps the focus as it leaves the thread.
+    // line of their own; the one that had the focus went with the thread,
+    // and the threads' heading takes it.
     expect(within(comments).getByText("No comments yet.")).toBeDefined();
     expect(within(comments).queryByText("A stray thought.")).toBeNull();
     expect(within(comments).queryByText("Comment deleted.")).toBeNull();
@@ -729,7 +751,7 @@ describe("a target's threads", () => {
       name: "Undo the deletion of the comment",
     });
     expect(undo.closest("li[data-thread]")).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(undo));
+    await waitFor(() => expect(document.activeElement).toBe(heading));
     await user.click(undo);
     expect(await within(comments).findByText("A stray thought.")).toBeDefined();
     expect(
@@ -737,6 +759,8 @@ describe("a target's threads", () => {
         name: "Undo the deletion of the comment",
       }),
     ).toBeNull();
+    // The Undo, gone once it applied, gives the heading the focus too.
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it("offers the Undo of a reply above the threads once the server no longer lists its thread, whose first comment was deleted before, until the list's next action", async () => {
@@ -966,6 +990,39 @@ describe("a target's threads", () => {
     expect(created[1]).toBe(created[0]);
     expect(created[3]).toBe(created[2]);
     expect(created[2]).not.toBe(created[0]);
+  });
+
+  it("posts a comment under an ID of its own once its text changed since a Post that no answer came to, which the server may have posted, rather than one that it refuses for that one's ID", async () => {
+    const user = userEvent.setup();
+    let lost = false;
+    const server = commentProject([], {
+      refuse: (commands) => {
+        if (commands[0].type !== "comment.create" || lost) {
+          return undefined;
+        }
+        lost = true;
+        return new TypeError("Failed to fetch");
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("No comments yet.")).toBeDefined();
+    const field = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    typeInto(field, "A new one.");
+    const post = within(comments).getByRole("button", {
+      name: "Post comment",
+    });
+    await user.click(post);
+    await waitFor(() => expect(server.batches()).toHaveLength(1));
+    replaceIn(field, paragraph("Two new ones."));
+    await user.click(post);
+    expect(await within(comments).findByText("Two new ones.")).toBeDefined();
+    expect(within(comments).getByText("Comment posted.")).toBeDefined();
+    const [first, second] = server
+      .batches()
+      .map((batch) => String(batch[0].payload.id));
+    expect(second).not.toBe(first);
   });
 
   it("shows the threads as the server lists them once a deletion takes a thread out of the list's filter, with the deletion's Undo above them", async () => {
@@ -1261,6 +1318,30 @@ describe("the project's comments", () => {
     );
   });
 
+  it("gives the threads' heading the focus that Resolve had once the thread that it resolved leaves the list of open threads", async () => {
+    const user = userEvent.setup();
+    commentProject([
+      thread("cmt_02", "variable", gold.id, "Still open."),
+      thread("cmt_01", "variable", gold.id, "Done soon."),
+    ]);
+    renderApp(`/projects/${testProject.id}/comments`, {
+      session: testSession,
+    });
+    expect(await screen.findByText("Done soon.")).toBeDefined();
+    const item = screen
+      .getByText("Done soon.")
+      .closest("li[data-thread]") as HTMLElement;
+    await user.click(within(item).getByRole("button", { name: "Resolve" }));
+    expect(await screen.findByText("Thread resolved.")).toBeDefined();
+    await waitFor(() => expect(screen.queryByText("Done soon.")).toBeNull());
+    expect(screen.getByText("Still open.")).toBeDefined();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "Threads" }),
+      ),
+    );
+  });
+
   it("ends a deletion's Undo as its filters change, rather than show it under others", async () => {
     const user = userEvent.setup();
     const alone = thread("cmt_01", "variable", gold.id, "Mine alone.");
@@ -1368,7 +1449,7 @@ describe("the project's comments", () => {
 });
 
 describe("the canvas's marks of comments", () => {
-  it("counts a node's open threads on its card's badge and in its name in the tree, and opens them in the inspector from the badge", async () => {
+  it("counts a node's open threads on its card's badge and in its name in the tree, whose press is one on the card", async () => {
     const open = [
       thread("cmt_01", "node", quay.id, "The quay is dark.", mira),
       thread("cmt_02", "node", quay.id, "And cold."),
@@ -1400,8 +1481,10 @@ describe("the canvas's marks of comments", () => {
         name: "Quay, Narration; 2 open comments",
       }),
     ).toBeDefined();
-    // A click on the badge, at the card's top right, selects the node and
-    // opens its comments in the inspector, whose heading takes the focus.
+    // A click on the badge, at the card's top right, is one on the card,
+    // which selects the node and opens nothing: the badge says the count
+    // alone, and takes none of the canvas's gestures. The inspector is the
+    // way to the node's threads.
     const zoom = Number(canvas.dataset.zoom);
     const badge = {
       clientX: (218 - Number(canvas.dataset.x)) * zoom,
@@ -1411,12 +1494,12 @@ describe("the canvas's marks of comments", () => {
     fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...badge });
     fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...badge });
     await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    expect(screen.queryByRole("region", { name: "Quay" })).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Inspector" }));
     const inspector = await screen.findByRole("region", { name: "Quay" });
-    const heading = within(inspector).getByRole("heading", {
-      name: "Comments",
-    });
-    await waitFor(() => expect(document.activeElement).toBe(heading));
-    expect(within(inspector).getByText("And cold.")).toBeDefined();
+    expect(await within(inspector).findByText("And cold.")).toBeDefined();
   });
 });
 
