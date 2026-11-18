@@ -114,7 +114,7 @@ import {
 import { hasTagOf, tagKey, tagsOf } from "./edit";
 import type { Engine, RendererKind } from "./engine";
 import type { Handle, MenuTarget, Mode, PointerInput } from "./gestures";
-import { Inspector, inspectorCommentsId } from "./Inspector";
+import { Inspector } from "./Inspector";
 import {
   type ClipboardAsk,
   canvasKey,
@@ -575,40 +575,20 @@ function BoardCanvasOf({
     setInspecting(true);
     inspectorHeading.current?.focus();
   }, []);
-  // The asks for the comments of what is selected (plan item 74), counted,
-  // as a link to a thread makes them, once the canvas has opened on its
-  // node: the inspector opens, and its comments' heading takes the focus,
-  // brought into view, once it shows, within the inspector, as it scrolls,
-  // and the page no more than it must, so that the canvas beside a docked
-  // inspector stays where it is.
-  const [commentsAsked, setCommentsAsked] = useState(0);
-  useEffect(() => {
-    if (commentsAsked === 0) {
-      return;
-    }
-    const frame = requestAnimationFrame(() => {
-      const heading = document.getElementById(inspectorCommentsId);
-      if (heading === null) {
-        return;
-      }
-      // The inspector scrolls what it holds, the docked one's and the
-      // sheet's alike, which brings the heading to its top.
-      let panel = heading.parentElement;
-      while (
-        panel !== null &&
-        !/(auto|scroll)/.test(getComputedStyle(panel).overflowY)
-      ) {
-        panel = panel.parentElement;
-      }
-      if (panel !== null) {
-        panel.scrollTop +=
-          heading.getBoundingClientRect().top -
-          panel.getBoundingClientRect().top;
-      }
-      heading.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [commentsAsked]);
+  // Whether a link to a thread asks for the comments of what is selected
+  // (plan item 74), once the canvas has opened on its node: the inspector
+  // opens, and the section of its comments, once they are read, brings
+  // their heading to the inspector's top, with the threads under it, and
+  // the inspector into view, as far as it must be, and gives the heading
+  // the focus (Comments' asked), which answers the ask, so that the section
+  // made anew for what is selected next takes no focus. The ask goes with
+  // the inspector, as once it is closed before the comments are read, so
+  // that the inspector opened later takes none either.
+  const [commentsAsked, setCommentsAsked] = useState(false);
+  if (commentsAsked && !inspecting) {
+    setCommentsAsked(false);
+  }
+  const commentsShown = useCallback(() => setCommentsAsked(false), []);
   // The element whose text the canvas's editor shows over it, if any.
   const [editing, setEditing] = useState<string>();
   // The last bulk move, once it joined the history, which the canvas offers
@@ -998,7 +978,7 @@ function BoardCanvasOf({
         }
         if (comments) {
           setInspecting(true);
-          setCommentsAsked((n) => n + 1);
+          setCommentsAsked(true);
         } else if (opensInspector.current) {
           setInspecting(true);
         }
@@ -2842,6 +2822,8 @@ function BoardCanvasOf({
             onClose={() => setInspecting(false)}
             returnFocus={() => inspectorButton.current}
             headingRef={inspectorHeading}
+            commentsAsked={commentsAsked}
+            onCommentsShown={commentsShown}
           />
         )}
         {/* Play mode's panel, while play is under way, where the inspector,

@@ -110,6 +110,10 @@ export interface InspectorProps {
   returnFocus: () => HTMLElement | null;
   /** The inspector's heading, which the canvas gives the focus as the user asks again for the inspector that is open (Panel's headingRef). */
   headingRef?: RefObject<HTMLHeadingElement | null>;
+  /** Whether a link to a thread asks for the comments of what is selected, which their section, once they are read, brings into view with the focus on their heading (Comments' asked). */
+  commentsAsked?: boolean;
+  /** Called as the comments have answered the ask (Comments' onShown). */
+  onCommentsShown?: () => void;
 }
 
 /** The inspector of what is selected on the canvas. */
@@ -127,6 +131,8 @@ export function Inspector({
   onClose,
   returnFocus,
   headingRef,
+  commentsAsked = false,
+  onCommentsShown,
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -226,6 +232,8 @@ export function Inspector({
             projectId={projectId}
             target={{ type: "connection", id: connection.id }}
             headingId={inspectorCommentsId}
+            asked={commentsAsked}
+            onShown={onCommentsShown}
           />
         </div>
       ) : nodes.length === 0 ? (
@@ -241,6 +249,8 @@ export function Inspector({
             projectId={projectId}
             target={{ type: "node", id: single.id }}
             headingId={inspectorCommentsId}
+            asked={commentsAsked}
+            onShown={onCommentsShown}
           />
         )
       ) : (
@@ -351,6 +361,8 @@ export function Inspector({
               projectId={projectId}
               target={{ type: "node", id: single.id }}
               headingId={inspectorCommentsId}
+              asked={commentsAsked}
+              onShown={onCommentsShown}
             />
           )}
         </div>

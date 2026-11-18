@@ -359,10 +359,13 @@ func checkCreate(p createPayload) input.FieldErrors {
 // document, of which a comment holds none, so that it names nothing that
 // the story reads, and @ is left to the mentions of members (PRD
 // FR-COMMENT-02); and, of a body without them, more than MaxBodyLength
-// characters of text, or none that is printed, as one of white space alone.
-// The location of a node is in the document's canonical form (richtext.Parse),
-// whose neighbouring texts with the same marks are one, as an editor writes
-// them. It reads nothing but body.
+// characters of text, or none that is printed, as one of white space alone,
+// or of a list whose items are empty, both counted as the characters of its
+// texts, which CharacterCount counts, without the bullets and the numbers
+// that its lists show, which its author did not type. The location of a
+// node is in the document's canonical form (richtext.Parse), whose
+// neighbouring texts with the same marks are one, as an editor writes them.
+// It reads nothing but body.
 func checkBody(body richtext.Doc) input.FieldErrors {
 	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
 		return errs
@@ -372,10 +375,23 @@ func checkBody(body richtext.Doc) input.FieldErrors {
 		return field("body", fmt.Sprintf("holds %d characters of text, more than the %d that a comment may hold",
 			n, MaxBodyLength))
 	}
-	if strings.IndexFunc(richtext.PlainText(segs), input.Printed) < 0 {
+	if !printed(segs) {
 		return field("body", "is empty: a comment holds at least one character that is not white space")
 	}
 	return nil
+}
+
+// printed reports whether a character of the texts of segs, the segments of
+// a body without value references and mentions, is printed (input.Printed),
+// rather than one of the bullets and the numbers that richtext.PlainText
+// writes of its lists' items, so that a list of empty items is no text.
+func printed(segs []richtext.Segment) bool {
+	for _, s := range segs {
+		if s.Kind == richtext.SegmentText && strings.IndexFunc(s.Value, input.Printed) >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // foreign returns the problems of the value references and the mentions of

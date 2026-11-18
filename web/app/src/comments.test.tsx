@@ -1906,6 +1906,81 @@ describe("the canvas's marks of comments", () => {
   });
 });
 
+describe("a link to a node's threads", () => {
+  it("opens the inspector at them, whose heading takes the focus once they are read, and not again as the inspector opens later", async () => {
+    const user = userEvent.setup();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    commentProject(
+      [thread("cmt_01", "node", quay.id, "The quay is dark.", mira)],
+      { listed: async (items) => gate.then(() => items) },
+    );
+    renderApp(
+      `/projects/${testProject.id}/boards/${harbour.id}?node=nd_1&comments=true`,
+      { session: testSession },
+    );
+    const inspector = await screen.findByRole("region", { name: "Quay" });
+    const heading = within(inspector).getByRole("heading", {
+      name: "Comments",
+    });
+    expect(within(inspector).getByText("Reading the comments…")).toBeDefined();
+    // Brought into view before the threads are read, the heading would stop
+    // short of the inspector's top, with nothing under it to scroll it to.
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).not.toBe(heading);
+    release();
+    expect(
+      await within(inspector).findByText("The quay is dark."),
+    ).toBeDefined();
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    // The ask is answered: the inspector opened again gives its own heading
+    // the focus, as it does as it opens, and not its comments'.
+    await user.click(within(inspector).getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Inspector" }));
+    const again = await screen.findByRole("region", { name: "Quay" });
+    expect(await within(again).findByText("The quay is dark.")).toBeDefined();
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).toBe(
+      within(again).getByRole("heading", { name: "Quay" }),
+    );
+  });
+
+  it("leaves the focus where the user has put it while the threads were read", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    commentProject(
+      [thread("cmt_01", "node", quay.id, "The quay is dark.", mira)],
+      { listed: async (items) => gate.then(() => items) },
+    );
+    renderApp(
+      `/projects/${testProject.id}/boards/${harbour.id}?node=nd_1&comments=true`,
+      { session: testSession },
+    );
+    const inspector = await screen.findByRole("region", { name: "Quay" });
+    const field = within(inspector).getAllByRole("textbox")[0];
+    act(() => field.focus());
+    release();
+    expect(
+      await within(inspector).findByText("The quay is dark."),
+    ).toBeDefined();
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).toBe(field);
+  });
+});
+
 describe("the project's search of comments", () => {
   it("lists a comment found by what its thread is on, which links to where its comments show, and names a board's own thread's board once", async () => {
     commentProject([], {

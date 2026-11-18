@@ -512,9 +512,10 @@ func TestCommentsInTheTrash(t *testing.T) {
 // TestCommentRefusals checks how the API answers a command of a comment
 // that refuses its batch, at the location of the payload's field: a reply to
 // a reply; a resolve of a reply; a body that holds a value reference or a
-// mention, at its location; an empty one, or one of white space alone; one
-// of more than 10,000 characters of text; a comment with neither a target
-// nor a parent, or both, or a target of another kind; a target in the trash,
+// mention, at its location; an empty one, one of white space alone, or one
+// of a list of empty items, whose bullets and numbers are no text; one of
+// more than 10,000 characters of text; a comment with neither a target nor
+// a parent, or both, or a target of another kind; a target in the trash,
 // or another project's; a reply to a thread whose comments are all deleted;
 // an ID that a comment has already, of the project or of another; and any
 // command of a comment of an archived project. Nothing of a refused batch
@@ -563,6 +564,14 @@ func TestCommentRefusals(t *testing.T) {
 		{create(node, "", json.RawMessage(`{"type":"doc","content":[{"type":"paragraph"}]}`)),
 			"body.commands[0].payload.body"},
 		{create(node, "", paragraph(" \t ")), "body.commands[0].payload.body"},
+		// A list of empty items, whose bullets and numbers are no text that
+		// its author typed.
+		{create(node, "", json.RawMessage(`{"type":"doc","content":[{"type":"bulletList","content":[`+
+			`{"type":"listItem","content":[{"type":"paragraph"}]}]}]}`)), "body.commands[0].payload.body"},
+		{wireCommand{Type: "comment.edit", Payload: map[string]any{"id": root, "body": json.RawMessage(
+			`{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[` +
+				`{"type":"paragraph","content":[{"type":"text","text":" "}]}]}]}]}`)}},
+			"body.commands[0].payload.body"},
 		{create(node, "", paragraph(strings.Repeat("a", comment.MaxBodyLength+1))), "body.commands[0].payload.body"},
 		{create("", "", paragraph("Nowhere")), "body.commands[0].payload.target"},
 		{create(node, root, paragraph("Both")), "body.commands[0].payload.parent_id"},

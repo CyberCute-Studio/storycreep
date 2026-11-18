@@ -66,7 +66,7 @@ import { conflictOf, projectQuery } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { RichText } from "../script/RichText";
-import { focusIsNowhere } from "../shell/focus";
+import { focusIsNowhere, showInPanel } from "../shell/focus";
 import { Button, LastingButton } from "../ui/Button";
 import { useFocusRefusal } from "../ui/Field";
 import { Alert, Status } from "../ui/Page";
@@ -214,15 +214,17 @@ function focusHere(form: HTMLElement | null): boolean {
 
 /**
  * The section of the threads on target, under its heading, which a link to
- * them gives the focus (headingId): a form of a new thread at its top, for
- * a role that comments on a project that is not archived, and the threads,
- * newest first.
+ * them gives the focus (headingId, asked): a form of a new thread at its
+ * top, for a role that comments on a project that is not archived, and the
+ * threads, newest first.
  */
 export function Comments({
   projectId,
   target,
   headingId,
   level = 3,
+  asked = false,
+  onShown,
 }: {
   projectId: string;
   target: CommentTarget;
@@ -230,6 +232,23 @@ export function Comments({
   headingId?: string;
   /** The level of the section's heading: 3 in a panel, under its title, and 2 on a board's page, under its name. */
   level?: 2 | 3;
+  /**
+   * Whether a link to the threads asks for them, as one to a thread on a
+   * node or a connection asks the canvas's inspector for theirs (plan item
+   * 74): once they are read, or their read failed, which says so, in the
+   * frame after, their heading is brought to the top of the panel that
+   * scrolls it, with the threads under it, the panel into view in the
+   * window, as far as it must be, and the heading takes the focus
+   * (showInPanel), from where it was as the ask came, or from nowhere, but
+   * not from where the user has put it meanwhile, whose place none of it
+   * moves; and onShown is called, so that the ask is answered once,
+   * and not again by the section made anew for what is selected next.
+   * Brought into view before they are read, the heading would stop short of
+   * the top, where the panel had too little under it to scroll it to.
+   */
+  asked?: boolean;
+  /** Called as the section has answered the ask (asked). */
+  onShown?: () => void;
 }) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -245,6 +264,34 @@ export function Comments({
   const [sent, setSent] = useState(0);
   const threads = threadsOf(list.data ?? []);
   const open = threads.filter((thread) => thread.root.resolved !== true).length;
+  // Where the focus was as the ask came, as on the inspector's heading,
+  // which takes it as it opens, from where alone the ask takes it, or from
+  // nowhere, and not from where the user has put it meanwhile, as in a
+  // field of the inspector while the threads were read, whose place it then
+  // leaves as it is too.
+  const askedFrom = useRef<Element | null>(null);
+  useEffect(() => {
+    if (asked) {
+      askedFrom.current = document.activeElement;
+    }
+  }, [asked]);
+  const read = list.data !== undefined || list.isError;
+  useEffect(() => {
+    if (!asked || !read) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      if (
+        heading.current !== null &&
+        (document.activeElement === askedFrom.current ||
+          focusIsNowhere(document))
+      ) {
+        showInPanel(heading.current);
+      }
+      onShown?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [asked, read, onShown]);
   const Heading = level === 2 ? "h2" : "h3";
   return (
     <section aria-labelledby={titleId} className="space-y-3">

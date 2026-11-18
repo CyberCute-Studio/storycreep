@@ -8,9 +8,10 @@ import { en, expect, press, smallTargets, violations } from "./fixtures.ts";
 // browser, against the server, on the desktop and the tablet: a thread
 // posted on a node in its inspector, a reply, the canvas's badge of the
 // node's open threads, which its tree says too, the thread resolved, and
-// the project's list of its threads, filtered by their status; and the
-// list's link to a board's own thread, which opens the board's page at its
-// threads, in view under the canvas.
+// the project's list of its threads, filtered by their status; the list's
+// link to a node's thread, which opens the node's inspector at its threads,
+// in view at its top; and the list's link to a board's own thread, which
+// opens the board's page at its threads, in view under the canvas.
 
 /** The inspector: a region beside the canvas on the desktop, and a sheet over it on the tablet. */
 function inspectorOf(page: Page, title: string): Locator {
@@ -141,6 +142,60 @@ test.describe("threaded comments", () => {
     ).toBeVisible();
     expect(await violations(page)).toEqual([]);
     expect(await smallTargets(page)).toEqual([]);
+  });
+
+  test("opens a node's inspector at its threads, in view at its top, as a link to one of them asks", async ({
+    page,
+  }) => {
+    const session = await signedIn(page, "Critic");
+    const projectId = await makeProject(page.request, session, "Lighthouse");
+    const boardId = newId("board");
+    const quay = newId("node");
+    await apply(page.request, session, projectId, [
+      { type: "board.create", payload: { id: boardId, name: "Harbour" } },
+      {
+        type: "node.create",
+        payload: {
+          id: quay,
+          board_id: boardId,
+          type: "element",
+          kind: "narration",
+          title: "Quay",
+          position: { x: 0, y: 0 },
+        },
+      },
+      {
+        type: "comment.create",
+        payload: {
+          id: newId("comment"),
+          target: quay,
+          body: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "The lamp is out." }],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    await page.goto(`/app/projects/${projectId}/comments`);
+    await press(page.getByRole("link", { name: "On “Quay”, Harbour" }));
+    await drawn(canvasOf(page, "Harbour"));
+    // The inspector's comments are its last section, under the node's own,
+    // which the inspector brings to its top, once they are read, with the
+    // focus on their heading, and the thread under it in view.
+    const comments = inspectorOf(page, "Quay").getByRole("region", {
+      name: en["comments.title"],
+    });
+    const heading = comments.getByRole("heading", {
+      name: en["comments.title"],
+    });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect(comments.getByText("The lamp is out.")).toBeInViewport();
   });
 
   test("opens a board's page at its own threads, in view under the canvas, as a link to one of them asks", async ({
