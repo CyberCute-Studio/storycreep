@@ -66,7 +66,7 @@ import { conflictOf, projectQuery } from "../project/queries";
 import type { RichTextValue } from "../richtext/convert";
 import { RichTextEditor } from "../richtext/RichTextEditor";
 import { RichText } from "../script/RichText";
-import { focusIsNowhere, showInPanel } from "../shell/focus";
+import { focusIsNowhere } from "../shell/focus";
 import { Button, LastingButton } from "../ui/Button";
 import { useFocusRefusal } from "../ui/Field";
 import { Alert, Status } from "../ui/Page";
@@ -234,17 +234,15 @@ export function Comments({
   level?: 2 | 3;
   /**
    * Whether a link to the threads asks for them, as one to a thread on a
-   * node or a connection asks the canvas's inspector for theirs (plan item
-   * 74): once they are read, or their read failed, which says so, in the
-   * frame after, their heading is brought to the top of the panel that
-   * scrolls it, with the threads under it, the panel into view in the
-   * window, as far as it must be, and the heading takes the focus
-   * (showInPanel), from where it was as the ask came, or from nowhere, but
-   * not from where the user has put it meanwhile, whose place none of it
-   * moves; and onShown is called, so that the ask is answered once,
-   * and not again by the section made anew for what is selected next.
-   * Brought into view before they are read, the heading would stop short of
-   * the top, where the panel had too little under it to scroll it to.
+   * node or a connection asks the canvas's inspector for theirs, and one to
+   * a board's own threads the board's page (plan item 74): once they are
+   * read, or their read failed, which says so, in the frame after, as once
+   * the canvas above a board's own has taken its height, their heading takes
+   * the focus, which the browser brings into view as it brings any control
+   * that takes it, from where the focus was as the ask came, or from
+   * nowhere, but not from where the user has put it meanwhile, which it
+   * leaves where it is; and onShown is called, so that the ask is answered
+   * once.
    */
   asked?: boolean;
   /** Called as the section has answered the ask (asked). */
@@ -282,11 +280,10 @@ export function Comments({
     }
     const frame = requestAnimationFrame(() => {
       if (
-        heading.current !== null &&
-        (document.activeElement === askedFrom.current ||
-          focusIsNowhere(document))
+        document.activeElement === askedFrom.current ||
+        focusIsNowhere(document)
       ) {
-        showInPanel(heading.current);
+        heading.current?.focus();
       }
       onShown?.();
     });
@@ -1122,11 +1119,14 @@ function CommentItem({
     drafts.delete(editKey);
     setEditing(false);
   };
+  // A deleted comment that the server lists is a thread's first, while a
+  // reply of the thread is not deleted, which shows in its place, without
+  // its body and its author; the server lists no deleted reply.
   if (c.deleted || c.body === undefined) {
     return (
       <div>
         <p id={bylineId} className="text-fg-muted italic">
-          {reply ? t("comments.reply_deleted") : t("comments.deleted")}
+          {t("comments.deleted")}
         </p>
       </div>
     );

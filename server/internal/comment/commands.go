@@ -47,13 +47,13 @@ type createPayload struct {
 	ID       string       `json:"id" doc:"The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Target   string       `json:"target,omitempty" doc:"The ID of the entity that the thread that the comment starts is on, a node, a connection, a board, or a variable of the project, as its prefix says: nd_, cn_, bd_, or var_. A reply has none, and a comment that has neither target nor parent_id, or both, is answered with 422 validation_failed, as one whose target the project does not have, or is in its trash, or is there with what is, as a node of a board in the trash."`
 	ParentID string       `json:"parent_id,omitempty" doc:"The ID of the first comment of the thread that the comment replies to. A thread is one level deep, so a reply to a reply is answered with 422 validation_failed, as one to a comment that the project does not have, or of a thread that is not shown: whose comments are all deleted, or whose target is in the project's trash. The first comment of a thread has none."`
-	Body     richtext.Doc `json:"body" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
+	Body     richtext.Doc `json:"body" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
 }
 
 // editPayload is Edit's payload.
 type editPayload struct {
 	ID   string       `json:"id" doc:"The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required."`
-	Body richtext.Doc `json:"body" doc:"The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
+	Body richtext.Doc `json:"body" doc:"The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
 }
 
 // ownPayload is the payload of a command of a comment that only its author
@@ -376,7 +376,8 @@ func checkBody(body richtext.Doc) input.FieldErrors {
 			n, MaxBodyLength))
 	}
 	if !printed(segs) {
-		return field("body", "is empty: a comment holds at least one character that is not white space")
+		return field("body", "is empty: a comment holds at least one character that is not blank, as white space and U+200B "+
+			"ZERO WIDTH SPACE are")
 	}
 	return nil
 }

@@ -30,7 +30,7 @@ import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
-import { Comments } from "../comments/Threads";
+import { Comments, type CommentTarget } from "../comments/Threads";
 import { AssetImage } from "../content/AssetImage";
 import {
   ConflictNotice,
@@ -110,7 +110,7 @@ export interface InspectorProps {
   returnFocus: () => HTMLElement | null;
   /** The inspector's heading, which the canvas gives the focus as the user asks again for the inspector that is open (Panel's headingRef). */
   headingRef?: RefObject<HTMLHeadingElement | null>;
-  /** Whether a link to a thread asks for the comments of what is selected, which their section, once they are read, brings into view with the focus on their heading (Comments' asked). */
+  /** Whether a link to a thread asks for the comments of what is selected, whose section, once they are read, gives their heading the focus (Comments' asked). */
   commentsAsked?: boolean;
   /** Called as the comments have answered the ask (Comments' onShown). */
   onCommentsShown?: () => void;
@@ -186,6 +186,19 @@ export function Inspector({
   );
   const single = nodes.length === 1 ? nodes[0] : undefined;
   const tooMany = nodes.length > maxEdited;
+  // The section of the comments of target, the inspector's last, under one
+  // heading's ID, which a link to a thread asks for (commentsAsked), made
+  // anew under key, where it is given, for another target.
+  const comments = (target: CommentTarget, key?: string) => (
+    <Comments
+      key={key}
+      projectId={projectId}
+      target={target}
+      headingId={inspectorCommentsId}
+      asked={commentsAsked}
+      onShown={onCommentsShown}
+    />
+  );
   const untitled = t("boards.untitled_node");
   const title =
     connection !== undefined
@@ -228,13 +241,7 @@ export function Inspector({
               }}
             />
           )}
-          <Comments
-            projectId={projectId}
-            target={{ type: "connection", id: connection.id }}
-            headingId={inspectorCommentsId}
-            asked={commentsAsked}
-            onShown={onCommentsShown}
-          />
+          {comments({ type: "connection", id: connection.id })}
         </div>
       ) : nodes.length === 0 ? (
         <p className="text-fg-muted">
@@ -244,14 +251,7 @@ export function Inspector({
         single === undefined ? (
           <p className="text-fg-muted">{t("inspector.one_for_comments")}</p>
         ) : (
-          <Comments
-            key={single.id}
-            projectId={projectId}
-            target={{ type: "node", id: single.id }}
-            headingId={inspectorCommentsId}
-            asked={commentsAsked}
-            onShown={onCommentsShown}
-          />
+          comments({ type: "node", id: single.id }, single.id)
         )
       ) : (
         <div className="space-y-6">
@@ -353,18 +353,10 @@ export function Inspector({
               </Button>
             </div>
           </section>
-          {single !== undefined && (
+          {single !== undefined &&
             // Made anew for another node, under a key of its own, which the
             // node's parts above have.
-            <Comments
-              key={`comments-${single.id}`}
-              projectId={projectId}
-              target={{ type: "node", id: single.id }}
-              headingId={inspectorCommentsId}
-              asked={commentsAsked}
-              onShown={onCommentsShown}
-            />
-          )}
+            comments({ type: "node", id: single.id }, `comments-${single.id}`)}
         </div>
       )}
     </Panel>

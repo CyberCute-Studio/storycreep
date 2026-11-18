@@ -39,7 +39,7 @@ import {
   readBoard,
 } from "../project/queries";
 import { ScriptView } from "../script/ScriptView";
-import { followInPage, showInPage } from "../shell/focus";
+import { followInPage } from "../shell/focus";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
 import { Button, buttonClass, currentClass } from "../ui/Button";
@@ -299,13 +299,12 @@ function BoardContent({
   // them are open, which its header's link to them says (plan item 74), but
   // in a run of the benchmark, which measures the canvas alone
   // (BoardCanvas), and so shows and reads no comments, as their reads again
-  // as each of its edits applies (followed) would land in its frames; and a
-  // link to them, without a node to open, which brings them into view as
-  // the page shows: in the frame after its first, once the canvas above
-  // them has taken the window's height below where it starts, which it
-  // measures as it is laid out and takes in a render after the page's
-  // first effects have run, and which would else push them out of view
-  // (BoardCanvas).
+  // as each of its edits applies (followed) would land in its frames; and
+  // whether a link to them, without a node to open, asks for them, whose
+  // heading takes the focus once they are read (Comments' asked), in the
+  // frame after, once the canvas above them has taken the window's height
+  // below where it starts, which it measures as it is laid out and takes in
+  // a render after the page's first effects have run.
   const benching = search.bench !== undefined;
   const openThreads = openOf(
     useQuery({
@@ -315,15 +314,6 @@ function BoardContent({
     board.id,
   );
   const toBoardComments = search.comments === true && search.node === undefined;
-  useEffect(() => {
-    if (!toBoardComments) {
-      return;
-    }
-    const frame = requestAnimationFrame(() =>
-      showInPage(document, boardCommentsId),
-    );
-    return () => cancelAnimationFrame(frame);
-  }, [toBoardComments]);
   // The loader's read, which the view that mounts takes as its first, as
   // the canvas and the script view do, but once the document holds the
   // board's content of a read since, as Try again's in one view after the
@@ -499,6 +489,7 @@ function BoardContent({
               target={{ type: "board", id: board.id }}
               headingId={boardCommentsId}
               level={2}
+              asked={toBoardComments}
             />
           </div>
         )}

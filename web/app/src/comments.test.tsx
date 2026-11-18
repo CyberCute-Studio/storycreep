@@ -803,7 +803,6 @@ describe("a target's threads", () => {
       expect(within(comments).getByText("1 open thread, 0 resolved.")),
     );
     expect(within(comments).queryByText("Comment deleted.")).toBeNull();
-    expect(within(comments).queryByText("Reply deleted.")).toBeNull();
     expect(within(comments).getByText("Your reply was deleted.")).toBeDefined();
     const undo = within(comments).getByRole("button", {
       name: "Undo the deletion of the comment",
@@ -1926,8 +1925,7 @@ describe("a link to a node's threads", () => {
       name: "Comments",
     });
     expect(within(inspector).getByText("Reading the comments…")).toBeDefined();
-    // Brought into view before the threads are read, the heading would stop
-    // short of the inspector's top, with nothing under it to scroll it to.
+    // The heading takes the focus once the threads are read, and not before.
     await act(
       () =>
         new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
@@ -1950,6 +1948,52 @@ describe("a link to a node's threads", () => {
     );
     expect(document.activeElement).toBe(
       within(again).getByRole("heading", { name: "Quay" }),
+    );
+  });
+
+  it("gives the focus to the threads of what it selected alone, as the user selects something else before they are read", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    commentProject(
+      [thread("cmt_01", "node", quay.id, "The quay is dark.", mira)],
+      { listed: async (items) => gate.then(() => items) },
+    );
+    renderApp(
+      `/projects/${testProject.id}/boards/${harbour.id}?node=nd_1&comments=true`,
+      { session: testSession },
+    );
+    await screen.findByRole("region", { name: "Quay" });
+    const canvas = screen.getByRole("application", {
+      name: "Nodes of Harbour",
+    });
+    const zoom = Number(canvas.dataset.zoom);
+    const tap = (x: number, y: number) => {
+      const at = {
+        clientX: (x - Number(canvas.dataset.x)) * zoom,
+        clientY: (y - Number(canvas.dataset.y)) * zoom,
+      };
+      const mouse = { pointerId: 1, pointerType: "mouse", button: 0 };
+      fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, ...at });
+      fireEvent.pointerUp(canvas, { ...mouse, buttons: 0, ...at });
+    };
+    // A tap on the empty board, before the threads are read, selects
+    // nothing, which ends the link's ask; the node selected again, once
+    // they are read, shows them without taking the focus.
+    tap(320, 64);
+    await waitFor(() => expect(canvas.dataset.selected).toBe("0"));
+    release();
+    tap(120, 64);
+    await waitFor(() => expect(canvas.dataset.selected).toBe("1"));
+    const again = await screen.findByRole("region", { name: "Quay" });
+    expect(await within(again).findByText("The quay is dark.")).toBeDefined();
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).not.toBe(
+      within(again).getByRole("heading", { name: "Comments" }),
     );
   });
 
@@ -1978,6 +2022,37 @@ describe("a link to a node's threads", () => {
         new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     );
     expect(document.activeElement).toBe(field);
+  });
+});
+
+describe("a link to a board's own threads", () => {
+  it("opens the board's page, whose threads' heading takes the focus once they are read", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    commentProject(
+      [thread("cmt_01", "board", harbour.id, "Rename it.", mira)],
+      { listed: async (items) => gate.then(() => items) },
+    );
+    renderApp(
+      `/projects/${testProject.id}/boards/${harbour.id}?comments=true`,
+      {
+        session: testSession,
+      },
+    );
+    const heading = await screen.findByRole("heading", {
+      name: "Comments",
+      level: 2,
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
+    expect(document.activeElement).not.toBe(heading);
+    release();
+    expect(await screen.findByText("Rename it.")).toBeDefined();
+    await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 });
 

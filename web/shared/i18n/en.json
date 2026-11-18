@@ -400,7 +400,6 @@
   "comments.replies": "{count, plural, one {# reply} other {# replies}}",
   "comments.reply": "Reply",
   "comments.reply_byline": "{name} replied",
-  "comments.reply_deleted": "Reply deleted.",
   "comments.reply_deleted_line": "Your reply was deleted.",
   "comments.reply_label": "Reply",
   "comments.reply_post": "Post reply",

@@ -153,35 +153,6 @@ export function showInPage(doc: Document, id: string): void {
 }
 
 /**
- * Brings element to the top of the panel that scrolls it, its nearest
- * ancestor whose content scrolls, as the canvas's inspector, docked or a
- * sheet, with what follows it under it, as far as the panel scrolls; brings
- * the panel into view in the window, as far as it must be, as a docked
- * panel whose bottom is under the window's, rather than to the window's
- * top, which would scroll what is beside the panel as far as element is
- * down it, as showInPage would; and gives element the focus. Of an element
- * that no panel scrolls, it brings element into view as far as it must be.
- * jsdom lays nothing out, nor scrolls.
- */
-export function showInPanel(element: HTMLElement): void {
-  let panel = element.parentElement;
-  while (
-    panel !== null &&
-    !/(auto|scroll)/.test(getComputedStyle(panel).overflowY)
-  ) {
-    panel = panel.parentElement;
-  }
-  if (panel === null) {
-    element.scrollIntoView?.({ block: "nearest" });
-  } else {
-    panel.scrollTop +=
-      element.getBoundingClientRect().top - panel.getBoundingClientRect().top;
-    panel.scrollIntoView?.({ block: "nearest" });
-  }
-  element.focus({ preventScroll: true });
-}
-
-/**
  * Follows the skip link: gives the page's content the focus, as
  * followInPage does, whatever key the click is with, since the skip link
  * leads to the content of the page that it is on, and is no link to open

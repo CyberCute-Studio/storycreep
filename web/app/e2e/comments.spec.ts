@@ -9,9 +9,10 @@ import { en, expect, press, smallTargets, violations } from "./fixtures.ts";
 // posted on a node in its inspector, a reply, the canvas's badge of the
 // node's open threads, which its tree says too, the thread resolved, and
 // the project's list of its threads, filtered by their status; the list's
-// link to a node's thread, which opens the node's inspector at its threads,
-// in view at its top; and the list's link to a board's own thread, which
-// opens the board's page at its threads, in view under the canvas.
+// link to a node's thread, which opens the node's inspector with the focus
+// on the heading of its threads, in view; and the list's link to a board's
+// own thread, which opens the board's page with the focus on the heading of
+// its threads, in view under the canvas.
 
 /** The inspector: a region beside the canvas on the desktop, and a sheet over it on the tablet. */
 function inspectorOf(page: Page, title: string): Locator {
@@ -144,7 +145,7 @@ test.describe("threaded comments", () => {
     expect(await smallTargets(page)).toEqual([]);
   });
 
-  test("opens a node's inspector at its threads, in view at its top, as a link to one of them asks", async ({
+  test("opens a node's inspector with the focus on its threads' heading, in view, as a link to one of them asks", async ({
     page,
   }) => {
     const session = await signedIn(page, "Critic");
@@ -185,8 +186,8 @@ test.describe("threaded comments", () => {
     await press(page.getByRole("link", { name: "On “Quay”, Harbour" }));
     await drawn(canvasOf(page, "Harbour"));
     // The inspector's comments are its last section, under the node's own,
-    // which the inspector brings to its top, once they are read, with the
-    // focus on their heading, and the thread under it in view.
+    // whose heading takes the focus once they are read, which the browser
+    // brings into view, wherever in the inspector it then is.
     const comments = inspectorOf(page, "Quay").getByRole("region", {
       name: en["comments.title"],
     });
@@ -195,10 +196,10 @@ test.describe("threaded comments", () => {
     });
     await expect(heading).toBeFocused();
     await expect(heading).toBeInViewport();
-    await expect(comments.getByText("The lamp is out.")).toBeInViewport();
+    await expect(comments.getByText("The lamp is out.")).toBeVisible();
   });
 
-  test("opens a board's page at its own threads, in view under the canvas, as a link to one of them asks", async ({
+  test("opens a board's page with the focus on its own threads' heading, in view under the canvas, as a link to one of them asks", async ({
     page,
   }) => {
     const session = await signedIn(page, "Critic");
@@ -227,8 +228,8 @@ test.describe("threaded comments", () => {
     await press(page.getByRole("link", { name: "On the board Harbour" }));
     await drawn(canvasOf(page, "Harbour"));
     // The canvas takes the window's height below where it starts, under
-    // which the board's own threads are, which the page brings into view
-    // with the focus on their heading.
+    // which the board's own threads are, whose heading takes the focus once
+    // they are read, which the browser brings into view.
     const heading = page.getByRole("heading", {
       name: en["comments.title"],
       level: 2,

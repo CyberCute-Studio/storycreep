@@ -577,13 +577,13 @@ function BoardCanvasOf({
   }, []);
   // Whether a link to a thread asks for the comments of what is selected
   // (plan item 74), once the canvas has opened on its node: the inspector
-  // opens, and the section of its comments, once they are read, brings
-  // their heading to the inspector's top, with the threads under it, and
-  // the inspector into view, as far as it must be, and gives the heading
-  // the focus (Comments' asked), which answers the ask, so that the section
-  // made anew for what is selected next takes no focus. The ask goes with
-  // the inspector, as once it is closed before the comments are read, so
-  // that the inspector opened later takes none either.
+  // opens, and the section of its comments, once they are read, gives their
+  // heading the focus (Comments' asked), which answers the ask. The ask is
+  // of what the link selected alone: it goes as the selection changes, as
+  // once the user selects another node, or more, before the comments are
+  // read, so that the section of what is selected then takes no focus, and
+  // with the inspector, as once it is closed before, so that the inspector
+  // opened later takes none either.
   const [commentsAsked, setCommentsAsked] = useState(false);
   if (commentsAsked && !inspecting) {
     setCommentsAsked(false);
@@ -640,10 +640,12 @@ function BoardCanvasOf({
       selection: (ids) => {
         setSelection(ids);
         setSelections((n) => n + 1);
+        setCommentsAsked(false);
       },
       connection: (id) => {
         setConnection(id);
         setSelections((n) => n + 1);
+        setCommentsAsked(false);
       },
       offer: (o) => setOffer(o),
       menu: (target, held) => {
@@ -977,6 +979,7 @@ function BoardCanvasOf({
           controller.selectConnection(connection);
         }
         if (comments) {
+          // After the selection that the link made, which the ask is of.
           setInspecting(true);
           setCommentsAsked(true);
         } else if (opensInspector.current) {

@@ -964,7 +964,7 @@ export interface CommentCreateCommand {
 
 /** The payload of a command of the type comment.create. */
 export interface CommentCreatePayload {
-  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
   body: RichTextDoc;
   /** The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
   id: string;
@@ -1004,7 +1004,7 @@ export interface CommentEditCommand {
 
 /** The payload of a command of the type comment.edit. */
 export interface CommentEditPayload {
-  /** The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not white space, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  /** The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
   body: RichTextDoc;
   /** The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required. */
   id: string;
