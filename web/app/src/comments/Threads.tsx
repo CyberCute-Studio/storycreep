@@ -719,7 +719,12 @@ export function ThreadList({
       : undefined;
   // The Undo takes the focus that Delete had (usePressFocus), which the
   // threads' heading takes once it goes, as from its thread's line once
-  // the server lists the thread no more.
+  // the server lists the thread no more. The press ends once the list is
+  // read again, as the Undo's does, so that the list no longer shows the
+  // comment, whose Delete, pressed again before, as a double click presses
+  // it, would be the threads' next batch, which ends the Undo, and would
+  // change nothing, as the comment is deleted already, so that nothing
+  // would offer to bring the comment back.
   const remove = (thread: Thread, c: CommentBody) =>
     act(thread.root.id, async () => {
       const pressed = document.activeElement;
@@ -740,6 +745,7 @@ export function ThreadList({
       setDeleted({ comment: c, undo });
       setSaid(t("comments.deleted_status"));
       pressFocus.focusOnceShown(pressed, idOf("undo", c.id));
+      await reread().catch(() => undefined);
     });
   // The Undo ends once it applies, or once the server refuses it for a
   // change made elsewhere since the deletion, as the comment's restoration

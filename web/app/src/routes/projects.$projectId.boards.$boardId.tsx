@@ -301,7 +301,11 @@ function BoardContent({
   // (BoardCanvas), and so shows and reads no comments, as their reads again
   // as each of its edits applies (followed) would land in its frames; and a
   // link to them, without a node to open, which brings them into view as
-  // the page shows.
+  // the page shows: in the frame after its first, once the canvas above
+  // them has taken the window's height below where it starts, which it
+  // measures as it is laid out and takes in a render after the page's
+  // first effects have run, and which would else push them out of view
+  // (BoardCanvas).
   const benching = search.bench !== undefined;
   const openThreads = openOf(
     useQuery({
@@ -312,9 +316,13 @@ function BoardContent({
   );
   const toBoardComments = search.comments === true && search.node === undefined;
   useEffect(() => {
-    if (toBoardComments) {
-      showInPage(document, boardCommentsId);
+    if (!toBoardComments) {
+      return;
     }
+    const frame = requestAnimationFrame(() =>
+      showInPage(document, boardCommentsId),
+    );
+    return () => cancelAnimationFrame(frame);
   }, [toBoardComments]);
   // The loader's read, which the view that mounts takes as its first, as
   // the canvas and the script view do, but once the document holds the

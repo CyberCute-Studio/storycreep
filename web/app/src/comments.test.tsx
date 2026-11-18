@@ -364,7 +364,9 @@ function commentProject(
           break;
         case "comment.delete":
         case "comment.restore":
-          if (c !== undefined) {
+          // Deleting a deleted comment, or restoring one that is not,
+          // changes nothing, and has no undo.
+          if (c !== undefined && c.deleted !== (type === "comment.delete")) {
             c.deleted = type === "comment.delete";
             changed(c, {
               type:
@@ -837,13 +839,16 @@ describe("a target's threads", () => {
     const user = userEvent.setup();
     const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
     // What the list was read with before the deletion, which a read that
-    // was under way as it was sent is answered with after it.
+    // was under way as it was sent is answered with after it, as each read
+    // after it is here, until the next batch, though the deletion's own
+    // read again of the list, which it waits for, would else cancel that
+    // one.
     let before: CommentBody[] = [];
     let deleting = false;
     let answeredLate = false;
     commentProject([root], {
       refuse: (commands) => {
-        deleting ||= commands[0].type === "comment.delete";
+        deleting = commands[0].type === "comment.delete";
         return undefined;
       },
       listed: async (items) => {
@@ -851,7 +856,6 @@ describe("a target's threads", () => {
           before = items;
           return items;
         }
-        deleting = false;
         await new Promise((resolve) => setTimeout(resolve, 20));
         answeredLate = true;
         return before;
@@ -1056,6 +1060,67 @@ describe("a target's threads", () => {
         payload: { id: root.id },
         expected_rev: { [root.id]: 2 },
       },
+    ]);
+  });
+
+  it("keeps a deletion's Undo though Delete is pressed again before the list is read again, as a double click presses it", async () => {
+    const user = userEvent.setup();
+    const root = thread("cmt_01", "variable", gold.id, "A stray thought.");
+    // The reads of the list once the comment is deleted, held until the
+    // test lets them answer.
+    let deleted = false;
+    let answer = () => {};
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const server = commentProject([root], {
+      refuse: (commands) => {
+        deleted ||= commands[0].type === "comment.delete";
+        return undefined;
+      },
+      listed: async (items) => {
+        if (deleted) {
+          await answered;
+        }
+        return items;
+      },
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("A stray thought.")).toBeDefined();
+    const remove = within(comments).getByRole("button", { name: "Delete" });
+    await user.click(remove);
+    expect(
+      await within(comments).findByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    // The list, not read again yet, shows the comment still, whose Delete,
+    // pressed again, sends nothing, rather than a deletion that changes
+    // nothing and ends the Undo, after which nothing would bring the
+    // comment back.
+    expect(within(comments).getByText("A stray thought.")).toBeDefined();
+    await user.click(remove);
+    await act(async () => {});
+    answer();
+    await waitFor(() =>
+      expect(within(comments).queryByText("A stray thought.")).toBeNull(),
+    );
+    expect(
+      within(comments).getByRole("button", {
+        name: "Undo the deletion of the comment",
+      }),
+    ).toBeDefined();
+    expect(
+      within(comments).getByText("Comment deleted. Undo brings it back."),
+    ).toBeDefined();
+    expect(server.batches()).toEqual([
+      [
+        {
+          type: "comment.delete",
+          payload: { id: root.id },
+          expected_rev: { [root.id]: 1 },
+        },
+      ],
     ]);
   });
 

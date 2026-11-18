@@ -8,7 +8,9 @@ import { en, expect, press, smallTargets, violations } from "./fixtures.ts";
 // browser, against the server, on the desktop and the tablet: a thread
 // posted on a node in its inspector, a reply, the canvas's badge of the
 // node's open threads, which its tree says too, the thread resolved, and
-// the project's list of its threads, filtered by their status.
+// the project's list of its threads, filtered by their status; and the
+// list's link to a board's own thread, which opens the board's page at its
+// threads, in view under the canvas.
 
 /** The inspector: a region beside the canvas on the desktop, and a sheet over it on the tablet. */
 function inspectorOf(page: Page, title: string): Locator {
@@ -139,5 +141,45 @@ test.describe("threaded comments", () => {
     ).toBeVisible();
     expect(await violations(page)).toEqual([]);
     expect(await smallTargets(page)).toEqual([]);
+  });
+
+  test("opens a board's page at its own threads, in view under the canvas, as a link to one of them asks", async ({
+    page,
+  }) => {
+    const session = await signedIn(page, "Critic");
+    const projectId = await makeProject(page.request, session, "Lighthouse");
+    const boardId = newId("board");
+    await apply(page.request, session, projectId, [
+      { type: "board.create", payload: { id: boardId, name: "Harbour" } },
+      {
+        type: "comment.create",
+        payload: {
+          id: newId("comment"),
+          target: boardId,
+          body: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: "Rename it." }],
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    await page.goto(`/app/projects/${projectId}/comments`);
+    await press(page.getByRole("link", { name: "On the board Harbour" }));
+    await drawn(canvasOf(page, "Harbour"));
+    // The canvas takes the window's height below where it starts, under
+    // which the board's own threads are, which the page brings into view
+    // with the focus on their heading.
+    const heading = page.getByRole("heading", {
+      name: en["comments.title"],
+      level: 2,
+    });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect(page.getByText("Rename it.")).toBeVisible();
   });
 });
