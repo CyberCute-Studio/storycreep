@@ -1,7 +1,10 @@
 // Package richtext keeps the rich text of a project's content: the bodies of
 // nodes, the labels of connections, and the descriptions of components (PRD
-// FR-TEXT-01, ADR-020). A document is a ProseMirror document of a constrained
-// schema, the one that the editor's TipTap extensions use, stored as JSON.
+// FR-TEXT-01, ADR-020), and the bodies of its comments (FR-COMMENT-01), which
+// alone may mention a member of the project (Member, FR-COMMENT-02), as the
+// command pipeline holds every other text to (commands.Spec.MemberMentions).
+// A document is a ProseMirror document of a constrained schema, the one that
+// the editor's TipTap extensions use, stored as JSON.
 // Parse checks a document against the schema and its limits (NFR-SEC-07) and
 // returns it in its canonical form, and a document derives the segments of
 // the published format, its plain text, a preview, a word count, and a hash
@@ -115,7 +118,8 @@ func (*List) block()      {}
 // Inlines returns the inline nodes of the document, in its order, those of
 // its lists' items among them, as package dependency reads the value
 // references and mentions of a text, and package clipboard writes them anew,
-// which may change a node that it yields in place.
+// which may change a node that it yields in place. Members yields the
+// mentions of members alone, with where each is.
 func (d *Doc) Inlines() iter.Seq[Inline] {
 	return func(yield func(Inline) bool) {
 		var blocks func([]Block) bool
@@ -142,8 +146,52 @@ func (d *Doc) Inlines() iter.Seq[Inline] {
 	}
 }
 
-// Inline is the content of a paragraph: a *Text, a *Break, a *Mention, or a
-// *Value.
+// Members returns each mention of a member of the document, in its order,
+// with its location in the document's canonical form, as the API locates a
+// problem within a request's body or a command's payload (Error.Location),
+// as .content[0].content[1]: a paragraph's inline nodes counted as its
+// canonical form holds them, its neighbouring texts with the same marks one
+// (canonicalInlines), so that a Doc that a program built locates them where
+// they are once it is stored. A Member that it yields is the document's own,
+// or a copy of it with its ID in its canonical spelling, and is not to be
+// changed. A nil node is passed over.
+func (d *Doc) Members() iter.Seq2[string, *Member] {
+	return func(yield func(string, *Member) bool) {
+		var blocks func(at string, bs []Block) bool
+		blocks = func(at string, bs []Block) bool {
+			for i, b := range bs {
+				loc := at + ".content[" + strconv.Itoa(i) + "]"
+				switch b := b.(type) {
+				case *Paragraph:
+					if b == nil {
+						continue
+					}
+					for j, in := range canonicalInlines(b.Inlines) {
+						if m, ok := in.(*Member); ok && m != nil {
+							if !yield(loc+".content["+strconv.Itoa(j)+"]", m) {
+								return false
+							}
+						}
+					}
+				case *List:
+					if b == nil {
+						continue
+					}
+					for k, item := range b.Items {
+						if !blocks(loc+".content["+strconv.Itoa(k)+"]", item.Blocks) {
+							return false
+						}
+					}
+				}
+			}
+			return true
+		}
+		blocks("", d.Blocks)
+	}
+}
+
+// Inline is the content of a paragraph: a *Text, a *Break, a *Mention, a
+// *Member, or a *Value.
 type Inline interface {
 	// marked returns the node's marks, which every inline node has, for the
 	// parser to set.
@@ -171,6 +219,20 @@ type Mention struct {
 	Marks     Marks
 }
 
+// Member is a mention of a member of the project, a user who reads it, which
+// a client shows as @ and the member's display name (PRD FR-COMMENT-02), and
+// which tells the member of the comment that mentions them. Only a comment's
+// body holds one: the command pipeline refuses one in any other text
+// (commands.Spec.MemberMentions). It is no word of the text, which says
+// nothing of the story: no segment, plain text, preview, or count derives
+// anything of it (Doc.Segments), and what shows it reads the member's name
+// where it shows it (WithMembers).
+type Member struct {
+	// User is the member's public ID, a user's, in its canonical spelling.
+	User  string
+	Marks Marks
+}
+
 // Value is a reference to a value, which the text shows as the runtime
 // renders it (FR-TEXT-02): a variable's, or a runtime attribute's of a
 // component.
@@ -192,6 +254,7 @@ type Value struct {
 func (t *Text) marked() *Marks    { return &t.Marks }
 func (b *Break) marked() *Marks   { return &b.Marks }
 func (m *Mention) marked() *Marks { return &m.Marks }
+func (m *Member) marked() *Marks  { return &m.Marks }
 func (v *Value) marked() *Marks   { return &v.Marks }
 
 // Marks are the marks of an inline node: its formatting, and the link that it
@@ -241,6 +304,7 @@ const (
 	nodeText        = "text"
 	nodeHardBreak   = "hardBreak"
 	nodeMention     = "mention"
+	nodeMember      = "memberMention"
 	nodeValueRef    = "valueRef"
 
 	markBold   = "bold"
@@ -263,6 +327,7 @@ var nodeFields = map[string][]string{
 	nodeText:        {"marks", "text", "type"},
 	nodeHardBreak:   {"marks", "type"},
 	nodeMention:     {"attrs", "marks", "type"},
+	nodeMember:      {"attrs", "marks", "type"},
 	nodeValueRef:    {"attrs", "marks", "type"},
 }
 
@@ -644,7 +709,8 @@ func (w where) holds(typ string) bool {
 	case inList:
 		return typ == nodeListItem
 	case inParagraph:
-		return typ == nodeText || typ == nodeHardBreak || typ == nodeMention || typ == nodeValueRef
+		return typ == nodeText || typ == nodeHardBreak || typ == nodeMention || typ == nodeMember ||
+			typ == nodeValueRef
 	}
 	return false
 }
@@ -662,7 +728,7 @@ func (w where) holdsWhat() string {
 	case inList:
 		return "a list holds list items"
 	}
-	return "a paragraph holds text, line breaks, mentions, and value references"
+	return "a paragraph holds text, line breaks, mentions, mentions of members, and value references"
 }
 
 // node reads the object of a node at w, and returns it with its type, once
@@ -928,6 +994,14 @@ func canonicalInlines(inlines []Inline) []Inline {
 					in = &m
 				}
 			}
+		case *Member:
+			if n != nil {
+				if id := canonicalID(n.User); id != n.User {
+					m := *n
+					m.User = id
+					in = &m
+				}
+			}
 		case *Value:
 			if n != nil {
 				ref, attribute := canonicalID(n.Ref), canonicalID(n.Attribute)
@@ -985,6 +1059,8 @@ func (p *parser) inline(v any) (Inline, error) {
 		in = &Break{}
 	case nodeMention:
 		in, err = p.mention(o)
+	case nodeMember:
+		in, err = p.member(o)
 	case nodeValueRef:
 		in, err = p.value(o)
 	}
@@ -1066,6 +1142,22 @@ func (p *parser) mention(o map[string]any) (*Mention, error) {
 	return &Mention{Component: id}, nil
 }
 
+func (p *parser) member(o map[string]any) (*Member, error) {
+	attrs, err := p.attrs(o, nodeMember, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.fields(attrs, "the memberMention's attrs", "id"); err != nil {
+		return nil, err
+	}
+	_, id, err := p.id(attrs, "id", "a member mention", ids.User)
+	if err != nil {
+		return nil, err
+	}
+	p.pop()
+	return &Member{User: id}, nil
+}
+
 func (p *parser) value(o map[string]any) (*Value, error) {
 	attrs, err := p.attrs(o, nodeValueRef, true)
 	if err != nil {
@@ -1144,11 +1236,11 @@ func kindName(k ids.Kind) string {
 }
 
 // article returns name after the indefinite article that it takes, as "an
-// orderedList": the names of the schema's nodes and of the kinds of entity
-// that a document refers to each take "an" exactly when they start with a
-// vowel letter.
+// orderedList" and "a user": the names of the schema's nodes and of the
+// kinds of entity that a document refers to each take "an" exactly when they
+// start with a vowel letter, but for user, whose u is said as you.
 func article(name string) string {
-	if name != "" && strings.ContainsRune("aeiouAEIOU", rune(name[0])) {
+	if name != "" && strings.ContainsRune("aeiouAEIOU", rune(name[0])) && !strings.HasPrefix(name, "user") {
 		return "an " + name
 	}
 	return "a " + name
@@ -1727,6 +1819,11 @@ func wireInlines(inlines []Inline) ([]wireNode, error) {
 				return nil, errors.New("richtext: a mention is nil")
 			}
 			nodes[i], own[0] = wireNode{Type: nodeMention, Attrs: wireMention{n.Component}}, n.Component
+		case *Member:
+			if n == nil {
+				return nil, errors.New("richtext: a mention of a member is nil")
+			}
+			nodes[i], own[0] = wireNode{Type: nodeMember, Attrs: wireMention{n.User}}, n.User
 		case *Value:
 			if n == nil {
 				return nil, errors.New("richtext: a value reference is nil")

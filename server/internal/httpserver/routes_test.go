@@ -56,6 +56,8 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/comments"}:         scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/comments/authors"}: scope.ProjectRead,
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/comments/counts"}:  scope.ProjectRead,
+	// So are the members whom its comments may mention.
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/members"}: scope.ProjectRead,
 	// So are its component types and components, which change through its
 	// commands.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/component-types"}:                     scope.ProjectRead,

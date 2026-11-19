@@ -20,6 +20,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 )
@@ -244,8 +245,10 @@ func TestCommentPurge(t *testing.T) {
 	}
 }
 
-// TestTargetEnums checks the enums of a target's kind that the API declares
-// against the kinds of target, in their order.
+// TestTargetEnums checks the enums of a target's kind that the API declares,
+// of the comments' and of the notifications', against the kinds of target, in
+// their order, and the kinds of IDs that the notifications encode a target's
+// with against the comments'.
 func TestTargetEnums(t *testing.T) {
 	t.Parallel()
 	var kinds []string
@@ -256,10 +259,17 @@ func TestTargetEnums(t *testing.T) {
 				comment.TargetOf(k.Kind()))
 		}
 	}
-	for _, v := range []any{comment.CommentBody{}, comment.CommentCount{}} {
+	for _, v := range []any{comment.CommentBody{}, comment.CommentCount{}, notification.NotificationBody{}} {
 		f, ok := reflect.TypeOf(v).FieldByName("TargetType")
 		if got := strings.Split(f.Tag.Get("enum"), ","); !ok || !slices.Equal(got, kinds) {
 			t.Errorf("the enum of %T's target_type is %q, want %q", v, got, kinds)
+		}
+	}
+	// The notifications name a thread's target by its kind's IDs as the
+	// comments do.
+	for _, k := range comment.TargetTypes() {
+		if got := notification.TargetKind(string(k)); got != k.Kind() {
+			t.Errorf("a notification's target of the kind %s has IDs of the kind %s, want %s", k, got, k.Kind())
 		}
 	}
 }

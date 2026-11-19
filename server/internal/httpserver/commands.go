@@ -317,7 +317,10 @@ func registerCommands(m *api.Mux, pipeline *commands.Pipeline) {
 			"the project too, or they apply to an archived project; so the undo of a batch that archived or " +
 			"deleted the project with others applies. A batch that " +
 			"its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose " +
-			"details locate each problem, as body.commands[2].payload.name. A command may also " +
+			"details locate each problem, as body.commands[2].payload.name, as is a rich text of a payload that " +
+			"mentions a member (memberMention), which only a comment's body may, at the mention, as " +
+			"body.commands[0].payload.text.content[0].content[1]; a comment's body that mentions a user who cannot " +
+			"read the project is answered with 422 mention_no_access at the mention. A command may also " +
 			"refuse its batch for what the project's state makes of its payload, at the payload's field, as " +
 			"body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not " +
 			"take, as the ID of a folder that the project does not have, or that is deleted, or with the code that " +
@@ -622,6 +625,8 @@ func refusalError(r *commands.RefusedError, loc string) *api.Error {
 		return &api.Error{Code: api.CodeInsufficientRole, Details: map[string]any{"errors": problems}}
 	case errors.Is(r.Reason, comment.ErrNotAuthor):
 		return &api.Error{Code: api.CodeAuthorRequired, Details: map[string]any{"errors": problems}}
+	case errors.Is(r.Reason, comment.ErrMentionNoAccess):
+		return &api.Error{Code: api.CodeMentionNoAccess, Details: map[string]any{"errors": problems}}
 	}
 	return &api.Error{Code: api.CodeValidationFailed, Details: map[string]any{"errors": problems}}
 }

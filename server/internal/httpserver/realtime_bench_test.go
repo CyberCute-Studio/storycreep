@@ -151,15 +151,23 @@ func idleSocket(b *testing.B, addr, cookie, project string) net.Conn {
 		return conn
 	}
 	// The server's frames are not masked, and its answer is shorter than
-	// 126 bytes too.
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(br, header); err != nil {
-		b.Error(err)
+	// 126 bytes too. A socket of a session may be told of its account's
+	// notifications before, as the first is once the hub LISTENs, which the
+	// socket reads past.
+	for {
+		header := make([]byte, 2)
+		if _, err := io.ReadFull(br, header); err != nil {
+			b.Error(err)
+			return conn
+		}
+		answer := make([]byte, header[1]&0x7f)
+		_, err := io.ReadFull(br, answer)
+		if err == nil && strings.Contains(string(answer), `"notifications"`) {
+			continue
+		}
+		if err != nil || !strings.Contains(string(answer), `"subscribed"`) {
+			b.Errorf("the subscription was answered with %q: %v", answer, err)
+		}
 		return conn
 	}
-	answer := make([]byte, header[1]&0x7f)
-	if _, err := io.ReadFull(br, answer); err != nil || !strings.Contains(string(answer), `"subscribed"`) {
-		b.Errorf("the subscription was answered with %q: %v", answer, err)
-	}
-	return conn
 }

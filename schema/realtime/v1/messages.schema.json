@@ -51,6 +51,22 @@
       ],
       "type": "object"
     },
+    "NotificationsMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "description": "notifications",
+          "enum": [
+            "notifications"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
     "OperationCommand": {
       "additionalProperties": true,
       "properties": {
@@ -201,6 +217,9 @@
         },
         {
           "$ref": "#/$defs/HeartbeatMessage"
+        },
+        {
+          "$ref": "#/$defs/NotificationsMessage"
         }
       ]
     },
@@ -351,7 +370,7 @@
   },
   "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/schema/realtime/v1/messages.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The messages of the WebSocket of GET /api/v1/ws (PRD FR-RT-01): each a JSON object in a text message of its own, whose type its type field names. A client subscribes to the projects that it reads, and is sent the operations of each that it missed, and then each that commits, in the order of their seqs.",
+  "description": "The messages of the WebSocket of GET /api/v1/ws (PRD FR-RT-01): each a JSON object in a text message of its own, whose type its type field names. A client subscribes to the projects that it reads, and is sent the operations of each that it missed, and then each that commits, in the order of their seqs, and a socket of a session is told when its account's notifications change.",
   "oneOf": [
     {
       "$ref": "#/$defs/ClientMessage"

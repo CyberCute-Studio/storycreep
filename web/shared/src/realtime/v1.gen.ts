@@ -16,6 +16,11 @@ export interface HeartbeatMessage {
   type: "heartbeat";
 }
 
+export interface NotificationsMessage {
+  /** notifications */
+  type: "notifications";
+}
+
 export interface OperationCommand {
   /** The command's ID, which its client gave it */
   command_id: string;
@@ -57,7 +62,7 @@ export interface ResyncRequiredMessage {
 }
 
 /** A message that the server sends. */
-export type ServerMessage = SubscribedMessage | ResyncRequiredMessage | OperationMessage | UnsubscribedMessage | SubscriptionFailedMessage | ErrorMessage | HeartbeatMessage;
+export type ServerMessage = SubscribedMessage | ResyncRequiredMessage | OperationMessage | UnsubscribedMessage | SubscriptionFailedMessage | ErrorMessage | HeartbeatMessage | NotificationsMessage;
 
 export interface SubscribeMessage {
   /** The project's ID, as prj_… */

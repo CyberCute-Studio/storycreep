@@ -176,6 +176,11 @@ func TextUses(doc richtext.Doc) ([]Use, error) {
 			u, e = textUse("mention", in.Component, "")
 		case *richtext.Value:
 			u, e = textUse("valueRef", in.Ref, in.Attribute)
+		case *richtext.Member:
+			// A mention of a member names a user, who is nothing of the
+			// story's, and only a comment's body, which the index does not
+			// read, holds one.
+			continue
 		default:
 			continue
 		}

@@ -44,6 +44,7 @@ const (
 	Asset
 	Job
 	PlayState
+	Notification
 )
 
 var kinds = [...]struct{ name, prefix string }{
@@ -69,6 +70,7 @@ var kinds = [...]struct{ name, prefix string }{
 	Asset:         {"asset", "ast"},
 	Job:           {"job", "job"},
 	PlayState:     {"play_state", "pst"},
+	Notification:  {"notification", "ntf"},
 }
 
 // Kinds returns every entity type, in declaration order.

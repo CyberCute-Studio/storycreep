@@ -1152,7 +1152,8 @@ func TestMessages(t *testing.T) {
 		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":{` + cmp + `,"attribute":""}}]}]}`:   "a value reference's attribute is not the ID of an attribute definition",
 		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"valueRef","attrs":{"ref":"x"}}]}]}`:                    "a value reference's ref is not the ID of a variable or a component",
 		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"id":"x"}}]}]}`:                      "a mention's id is not the ID of a component",
-		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"orderedList","content":[]}]}]}`:                        "a paragraph holds text, line breaks, mentions, and value references, not an orderedList",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"memberMention","attrs":{"id":"x"}}]}]}`:                "a member mention's id is not the ID of a user",
+		`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"orderedList","content":[]}]}]}`:                        "a paragraph holds text, line breaks, mentions, mentions of members, and value references, not an orderedList",
 		`{"type":"doc","content":[{"type":"bulletList","content":[{"type":"paragraph"}]}]}`:                                      "a list holds list items, not a paragraph",
 	} {
 		_, err := Parse([]byte(doc))
@@ -1388,4 +1389,72 @@ func uncanonical(blocks []Block) []Block {
 		}
 	}
 	return out
+}
+
+// TestMembers checks that Members yields each mention of a member of a
+// document, in its order, those of its lists' items among them, at its
+// location in the document's canonical form, whose neighbouring texts with
+// the same marks are one, as the API locates a problem in a payload, with its
+// ID in its canonical spelling, and that it stops when its caller does.
+func TestMembers(t *testing.T) {
+	a, b := ids.Encode(ids.User, ids.New()), ids.Encode(ids.User, ids.New())
+	built := Doc{Blocks: []Block{
+		&Paragraph{Inlines: []Inline{&Text{Text: "x"}, &Text{Text: "y"}, &Member{User: strings.ToLower(a)}}},
+		&List{Items: []Item{{Blocks: []Block{&Paragraph{}}}, {Blocks: []Block{
+			&Paragraph{Inlines: []Inline{&Member{User: b, Marks: Marks{Bold: true}}, &Text{Text: "z"}}},
+		}}}},
+	}}
+	type found struct{ at, user string }
+	var got []found
+	for at, m := range built.Members() {
+		got = append(got, found{at, m.User})
+	}
+	want := []found{{".content[0].content[1]", a}, {".content[1].content[1].content[0].content[0]", b}}
+	if !slices.Equal(got, want) {
+		t.Errorf("Members yields %v, want %v", got, want)
+	}
+	stored, err := Parse(marshal(t, built))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	for at, m := range stored.Members() {
+		got = append(got, found{at, m.User})
+		break
+	}
+	if !slices.Equal(got, want[:1]) {
+		t.Errorf("Members of the stored document, stopped after one, yields %v, want %v", got, want[:1])
+	}
+	if built.Blocks[0].(*Paragraph).Inlines[2].(*Member).User != strings.ToLower(a) {
+		t.Error("Members changed the built Doc")
+	}
+}
+
+// TestWithMembers checks that WithMembers writes each mention of a member as
+// the text that its name gives, with the mention's marks, joined with the
+// texts beside it of the same marks as a stored document's are, in a list's
+// items too, leaves out one whose name is empty, and changes nothing of the
+// document.
+func TestWithMembers(t *testing.T) {
+	a, b := ids.Encode(ids.User, ids.New()), ids.Encode(ids.User, ids.New())
+	doc, err := Parse([]byte(`{"type":"doc","content":[{"type":"paragraph","content":[` +
+		`{"type":"memberMention","attrs":{"id":"` + strings.ToLower(a) + `"}},{"type":"text","text":", ask "},` +
+		`{"type":"memberMention","attrs":{"id":"` + b + `"},"marks":[{"type":"bold"}]},{"type":"text","text":"."}]},` +
+		`{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[` +
+		`{"type":"memberMention","attrs":{"id":"` + a + `"}}]}]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{a: "@Elara", b: ""}
+	named := doc.WithMembers(func(user string) string { return names[user] })
+	d := named.Derive(mapNames{})
+	if d.Text != "@Elara, ask .\n• @Elara" || d.Preview != "@Elara, ask . • @Elara" {
+		t.Errorf("WithMembers derives the text %q and the preview %q", d.Text, d.Preview)
+	}
+	if segs := named.Segments(mapNames{}); len(segs) != 3 || segs[0].Value != "@Elara, ask ." {
+		t.Errorf("WithMembers derives the segments %s", marshal(t, segs))
+	}
+	if got := doc.Derive(mapNames{}).Text; got != ", ask .\n• " {
+		t.Errorf("the document derives %q once WithMembers has read it", got)
+	}
 }

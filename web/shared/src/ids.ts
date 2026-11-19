@@ -33,6 +33,7 @@ export const ID_PREFIXES = {
   asset: "ast",
   job: "job",
   play_state: "pst",
+  notification: "ntf",
 } as const;
 
 /** An entity type that has a public identifier. */

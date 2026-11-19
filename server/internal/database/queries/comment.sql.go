@@ -616,6 +616,151 @@ func (q *Queries) InsertComment(ctx context.Context, arg InsertCommentParams) er
 	return err
 }
 
+const mentionAccess = `-- name: MentionAccess :many
+SELECT u.id, u.status, m.role AS membership_role, g.role AS grant_role
+FROM "user" u
+LEFT JOIN membership m ON m.workspace_id = $1 AND m.user_id = u.id
+LEFT JOIN project_grant g ON g.workspace_id = m.workspace_id AND g.membership_id = m.id
+    AND g.project_id = $2
+WHERE u.id = ANY($3::uuid[])
+`
+
+type MentionAccessParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	UserIds     []pgtype.UUID
+}
+
+type MentionAccessRow struct {
+	ID             pgtype.UUID
+	Status         string
+	MembershipRole pgtype.Text
+	GrantRole      pgtype.Text
+}
+
+// MentionAccess returns, of each user among user_ids that has an account,
+// what whether a comment of the project may mention them is resolved from
+// (package comment): the account's status, the role of the user's membership
+// of the workspace, or null if they are not a member, and the role of the
+// membership's grant on the project, or null if it has none. A user without
+// an account has no row.
+func (q *Queries) MentionAccess(ctx context.Context, arg MentionAccessParams) ([]MentionAccessRow, error) {
+	rows, err := q.db.Query(ctx, mentionAccess, arg.WorkspaceID, arg.ProjectID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MentionAccessRow
+	for rows.Next() {
+		var i MentionAccessRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.MembershipRole,
+			&i.GrantRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const mentionableMembers = `-- name: MentionableMembers :many
+SELECT u.id, u.display_name
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+LEFT JOIN project_grant g ON g.workspace_id = m.workspace_id AND g.membership_id = m.id
+    AND g.project_id = $1
+WHERE m.workspace_id = $2 AND u.status = 'active'
+    AND (g.role = ANY($3::text[]) OR g.role IS NULL AND m.role = ANY($4::text[]))
+    AND ($5::uuid IS NULL OR u.id > $5::uuid)
+ORDER BY u.id
+LIMIT $6
+`
+
+type MentionableMembersParams struct {
+	ProjectID   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	GrantRoles  []string
+	MemberRoles []string
+	After       pgtype.UUID
+	MaxRows     int32
+}
+
+type MentionableMembersRow struct {
+	ID          pgtype.UUID
+	DisplayName string
+}
+
+// MentionableMembers returns at most max_rows of the users whom a comment of
+// the project may mention, with their display names, in the order of their
+// IDs, after the user after, or from the first if after is null: the members
+// of the workspace whose accounts are active, and who read the project, by
+// the role of their membership, member_roles being those that read a project
+// without a grant, or of its grant on the project, grant_roles being those
+// that read it, as package role resolves them (role.Readers).
+func (q *Queries) MentionableMembers(ctx context.Context, arg MentionableMembersParams) ([]MentionableMembersRow, error) {
+	rows, err := q.db.Query(ctx, mentionableMembers,
+		arg.ProjectID,
+		arg.WorkspaceID,
+		arg.GrantRoles,
+		arg.MemberRoles,
+		arg.After,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MentionableMembersRow
+	for rows.Next() {
+		var i MentionableMembersRow
+		if err := rows.Scan(&i.ID, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const mentionedUsers = `-- name: MentionedUsers :many
+SELECT id, display_name FROM "user" WHERE id = ANY($1::uuid[])
+`
+
+type MentionedUsersRow struct {
+	ID          pgtype.UUID
+	DisplayName string
+}
+
+// MentionedUsers returns the display names of the users among user_ids that
+// have an account, which a comment's mentions of them show.
+func (q *Queries) MentionedUsers(ctx context.Context, userIds []pgtype.UUID) ([]MentionedUsersRow, error) {
+	rows, err := q.db.Query(ctx, mentionedUsers, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MentionedUsersRow
+	for rows.Next() {
+		var i MentionedUsersRow
+		if err := rows.Scan(&i.ID, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveComment = `-- name: ResolveComment :one
 UPDATE comment SET resolved_at = clock_timestamp(), resolved_by = $1, rev = rev + 1
 WHERE workspace_id = $2 AND project_id = $3 AND id = $4 AND parent_id IS NULL

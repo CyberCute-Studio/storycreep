@@ -16,6 +16,19 @@
 // once it has LISTENed again, and every 30 seconds, the hub reads the seq of
 // each project that its sessions subscribe to, and sends what it missed.
 //
+// The hub also tells each socket opened with the session cookie that its
+// account's notifications changed (PRD FR-COMMENT-02, package
+// notification), whatever it subscribes to: the transaction that changes an
+// account's notifications sends a notification of the account's UUID on
+// notification.Channel, which the LISTEN connection LISTENs on too, and the
+// hub marks each of the account's sockets in the process (Hub.inform), which
+// sends {"type": "notifications"} once, however many marks came meanwhile,
+// once it has checked its credential again. A notification is missed only
+// while the LISTEN connection does not LISTEN, so once it LISTENs again, the
+// hub marks every socket of a session, which reads its account's
+// notifications again. A socket of an API token is never told, as the
+// notifications' routes take a session alone (FR-AUTH-04).
+//
 // A session subscribes to a project with the seq of the latest operation
 // that it has, and is sent the operations after it, or, when the log no
 // longer has them all, or more than MaxCatchUp follow it, told to reload the
@@ -189,12 +202,17 @@ type Hub struct {
 	mu     sync.Mutex
 	closed bool
 	// started is whether the LISTEN connection and the poller have started,
-	// which the first subscription does.
+	// which the first subscription, or the first socket of a session, does
+	// (start).
 	started bool
 	// channels are the projects that sockets subscribe to, by ID, and users
 	// counts each user's open sockets.
 	channels map[ids.UUID]*channel
 	users    map[ids.UUID]int
+	// inboxes are the sockets of the sessions that the hub serves, which it
+	// tells of their accounts' notifications, by their users' IDs
+	// (Client.Inbox).
+	inboxes map[ids.UUID]map[*conn]struct{}
 	// running counts the sockets being served, the listener, and the poller,
 	// which Shutdown waits for.
 	running sync.WaitGroup
@@ -214,7 +232,8 @@ type channel struct {
 	subs   map[*subscription]struct{}
 }
 
-// New returns a hub, which listens once its first socket subscribes.
+// New returns a hub, which listens once its first socket subscribes, or its
+// first socket of a session opens.
 func New(opts Options) *Hub {
 	log := opts.Log
 	if log == nil {
@@ -225,7 +244,7 @@ func New(opts Options) *Hub {
 		silenceTimeout: opts.SilenceTimeout, writeTimeout: opts.WriteTimeout, pollInterval: opts.PollInterval,
 		maxConnectionsPerUser: opts.MaxConnectionsPerUser, ctx: ctx, cancel: cancel,
 		reads: make(chan struct{}, readSlots), pollNow: make(chan struct{}, 1), channels: map[ids.UUID]*channel{},
-		users: map[ids.UUID]int{},
+		users: map[ids.UUID]int{}, inboxes: map[ids.UUID]map[*conn]struct{}{},
 		connections: prometheus.NewGauge(prometheus.GaugeOpts{Name: "storycreep_websocket_connections",
 			Help: "The WebSocket connections that the process has open."}),
 		subscriptions: prometheus.NewGauge(prometheus.GaugeOpts{Name: "storycreep_websocket_subscriptions",
@@ -364,11 +383,73 @@ func (h *Hub) join(sub *subscription) {
 	ch.subs[sub] = struct{}{}
 	sub.heard.Store(ch.latest)
 	h.subscriptions.Inc()
+	h.start()
+}
+
+// start starts the LISTEN connection and the poller, unless they have
+// started, or the hub has shut down, as the first subscription (join), or
+// the first socket of a session (enter), does. h.mu is held.
+func (h *Hub) start() {
 	if !h.started && !h.closed {
 		h.started = true
 		h.running.Add(2)
 		go h.listen()
 		go h.poll()
+	}
+}
+
+// enter adds c, a socket of a session (Client.Inbox), to its user's inbox,
+// which the hub tells of the user's notifications from now on (inform), and
+// starts the LISTEN connection, unless it has, so that the socket hears of
+// the notifications that a transaction of any process sends. The socket's
+// client reads its notifications as the socket opens, and once the LISTEN
+// connection LISTENs, every socket of the inboxes is marked (markAll), so
+// that one whose client read them before the LISTEN still reads what came
+// between the two.
+func (h *Hub) enter(c *conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	inbox := h.inboxes[c.client.UserID]
+	if inbox == nil {
+		inbox = map[*conn]struct{}{}
+		h.inboxes[c.client.UserID] = inbox
+	}
+	inbox[c] = struct{}{}
+	h.start()
+}
+
+// exit removes c from its user's inbox, and the inbox once it has no socket.
+func (h *Hub) exit(c *conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	inbox := h.inboxes[c.client.UserID]
+	delete(inbox, c)
+	if len(inbox) == 0 {
+		delete(h.inboxes, c.client.UserID)
+	}
+}
+
+// inform marks each socket of the sessions of the user userID that the hub
+// serves, which tells its client that the user's notifications changed, once
+// (conn.deliverHeard).
+func (h *Hub) inform(userID ids.UUID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.inboxes[userID] {
+		c.mark()
+	}
+}
+
+// markAll marks every socket of a session that the hub serves, as once the
+// LISTEN connection LISTENs again, before which a change of any user's
+// notifications may have been missed.
+func (h *Hub) markAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, inbox := range h.inboxes {
+		for c := range inbox {
+			c.mark()
+		}
 	}
 }
 

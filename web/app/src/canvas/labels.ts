@@ -404,6 +404,10 @@ function inline(
       return "\n";
     case "mention":
       return `@${c.componentName(i.attrs.id) ?? "…"}`;
+    case "memberMention":
+      // Only a comment's body mentions a member, which the server refuses
+      // in a node's text and a connection's label.
+      return "";
     case "valueRef":
       return `{${c.valueName(i.attrs.ref, "attribute" in i.attrs ? i.attrs.attribute : undefined) ?? "…"}}`;
   }

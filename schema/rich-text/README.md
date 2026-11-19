@@ -1,6 +1,6 @@
 # Rich text
 
-The rich text of a project's content, node bodies, connection labels, and component descriptions, is a ProseMirror document of a constrained schema, stored as JSON (PRD FR-TEXT-01, ADR-020, plan note N40). The schema's nodes and marks are TipTap's, so that the editor's extensions, with only the attributes that the table below gives them, write the documents that the server stores. ProseMirror writes every attribute of a node, `null` when it is not set, as a value reference's `decimals`; the editor leaves such an attribute out before it sends a document, since the server refuses a `null` wherever it is in a document.
+The rich text of a project's content, node bodies, connection labels, and component descriptions, and of its comments' bodies, is a ProseMirror document of a constrained schema, stored as JSON (PRD FR-TEXT-01, ADR-020, plan note N40). The schema's nodes and marks are TipTap's, so that the editor's extensions, with only the attributes that the table below gives them, write the documents that the server stores. ProseMirror writes every attribute of a node, `null` when it is not set, as a value reference's `decimals`; the editor leaves such an attribute out before it sends a document, since the server refuses a `null` wherever it is in a document.
 
 | File | Contents |
 | --- | --- |
@@ -12,13 +12,14 @@ The rich text of a project's content, node bodies, connection labels, and compon
 | Node | Fields | Holds |
 | --- | --- | --- |
 | `doc` | `content` | At least one block: `paragraph`, `bulletList`, or `orderedList`. The editor's empty document is one empty paragraph. |
-| `paragraph` | `content`, optional | Inline nodes: `text`, `hardBreak`, `mention`, and `valueRef`. |
+| `paragraph` | `content`, optional | Inline nodes: `text`, `hardBreak`, `mention`, `memberMention`, and `valueRef`. |
 | `bulletList` | `content` | At least one `listItem`. |
 | `orderedList` | `attrs.start`, optional, from 0 to 999,999, 1 when it is not given; `content` | At least one `listItem`. |
 | `listItem` | `content` | A `paragraph`, then any blocks. |
 | `text` | `text`, at least one character; `marks`, optional | Text, without a control character (Unicode's `Cc`) but a tab, a bidirectional control (`Bidi_Control`, as U+202E RIGHT-TO-LEFT OVERRIDE, which reverses the text after it, or U+200F RIGHT-TO-LEFT MARK), or a line or paragraph separator (U+2028, U+2029): a line break is a `hardBreak`, and a paragraph a `paragraph`. These are the characters that the other texts that people enter in Storycreep, as a project's description, may not hold, but for a line feed, so that no text changes how the text around it shows, as a node's preview beside its title; the editor takes them out of text that is typed or pasted before it sends a document, so that none of them, as a U+200F RIGHT-TO-LEFT MARK that a writer of Hebrew or Arabic inserts, has the document refused. A tab, which ProseMirror keeps in text that is pasted as plain text, is white space, as a space is. |
 | `hardBreak` | `marks`, optional | A line break within a paragraph. |
 | `mention` | `attrs.id`; `marks`, optional | A component (`cmp_…`), which the text shows by its name (FR-TEXT-03). |
+| `memberMention` | `attrs.id`; `marks`, optional | A member of the project, a user (`usr_…`) who reads it, which a client shows as `@` and the member's display name, and which tells the member of the comment that mentions them (FR-COMMENT-02). Only a comment's body holds one: the server refuses one in any other text, a node's body, a connection's label, a component's description, or a pasted clipboard's text, at its location, beyond the schema, which every text shares. It is no word of the text, so nothing is derived of it (see Segments, below). |
 | `valueRef` | `attrs.ref`, `attrs.attribute`, `attrs.decimals`; `marks`, optional | A value, which the text shows as the runtime renders it (FR-TEXT-02): a variable's (`ref` is a `var_…`, and there is no `attribute`), or a component's runtime attribute's (`ref` is a `cmp_…` and `attribute` the attribute definition's `atr_…`). `decimals`, from 0 to 6, shows a number with that many digits after the point, the decimal that `to_string` writes rounded half away from zero, as the expression corpus's `interpolate` cases show ([`../expr-corpus/`](../expr-corpus/), PRD §5.8.9); a value that is not a number is shown as it is. |
 
 The marks are `bold`, `italic`, `strike`, `code`, and `link`, whose `attrs.href` is the URL. A node has each mark at most once, and the code mark with no other, as the editor's code mark excludes the others. Every node and mark is an object with a `type`, and has no field that the table does not give it, so `attrs` on a paragraph or on a bulleted list, or a link's `target`, is refused, and no field is `null`, which is refused with `wrong_type`. An ID is read regardless of case, as [`../ids/README.md`](../ids/README.md) says. A number is read as `JSON.parse` reads it, as the nearest double: `3.0` and `3e0` are 3, and so is `2.99999999999999999999`, which has more digits than a double holds; a number too large for a double, as `1e400`, which `JSON.parse` reads as `Infinity`, is `out_of_range`.
@@ -44,7 +45,7 @@ Every document that the server accepts validates against the JSON Schema. The se
 - An `http` or `https` link that the rules above refuse beyond the schema's pattern, which checks its scheme and refuses ASCII white space and control characters: one with white space beyond ASCII, a format character, or another character that a renderer shows nothing of, a `%` that starts no escape, an authority without a host or with a character that it may not hold, as an `@` or a character beyond ASCII, a name with an empty label or that a browser reads as an IPv4 address that is not one, brackets that hold no IPv6 address, or a port that is not a number or is above 65,535. The pattern refuses every `mailto:` link that the rules above refuse.
 - A string that escapes a lone surrogate, as `"a\ud800b"`, which is no character and which no UTF-8 holds. `JSON.parse` keeps it in the string, where Go would read U+FFFD, so the server refuses the document with `invalid_json`, and so does the client.
 
-The vectors mark each document of these that the schema accepts with `schema_accepts`.
+The vectors mark each document of these that the schema accepts with `schema_accepts`. The server also refuses a `memberMention` in a text other than a comment's body, where its commands read the document, as the schema and the vectors, which every text shares, do not.
 
 ### The canonical form
 
@@ -94,7 +95,7 @@ The published format holds a document as its segments, which a runtime walks ins
 | `paragraph` | `depth` | A paragraph begins. It belongs to the list item at `depth`, or to none when there is no `depth`. |
 | `item` | `depth`, `list`, `number` | A list item begins: an item of a `bullet` or an `ordered` list, at `depth`, from 1, and an ordered list's item has its `number`. |
 
-`marks` lists an inline segment's marks in alphabetical order, and is there, empty, when it has none. `href` is the URL of the link that an inline segment is part of. A `hardBreak`'s marks are in no segment.
+`marks` lists an inline segment's marks in alphabetical order, and is there, empty, when it has none. `href` is the URL of the link that an inline segment is part of. A `hardBreak`'s marks are in no segment. A `memberMention` has no segment at all: what it names is not the text's words, as the search of comments reads them, and no published text holds one, so the texts beside it are segments of their own, as they would be beside any other node, and a paragraph of nothing but one has no segment, as an empty one has none. What shows a comment reads the member's name where it shows it, as `@` and the display name.
 
 ```json
 [

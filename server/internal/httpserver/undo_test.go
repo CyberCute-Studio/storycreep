@@ -290,7 +290,8 @@ func undoRoundTrip(t *testing.T, seed uint64) (applied, uses []string) {
 	s.limits = ratelimit.New(readyDB{s.ready}, policy)
 	p := createProject(t, s.main, owner, ws, "Harbour").ID
 	g := &undoGen{r: rand.New(rand.NewPCG(seed, 0x37)), ms: 1_700_000_000_000,
-		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID, project: p}
+		asset: upload(t, s.main, owner, p, testPNG(t, 8, 8), http.StatusCreated).ID, project: p,
+		actor: owner.body.UserID}
 	conn := d.Admin(t)
 	project := decode(t, ids.Project, p)
 	seen := map[string]bool{}
@@ -899,6 +900,9 @@ type undoGen struct {
 	asset string
 	// project is the project's ID, which a play state's state names.
 	project string
+	// actor is the ID of the user who sends the batches, whom a comment's
+	// body may mention, which notifies nobody.
+	actor string
 }
 
 // anyType returns a random type of command that has an inverse.
@@ -1499,9 +1503,17 @@ var undoGenerators = map[string]func(g *undoGen) (map[string]any, bool){
 }
 
 // commentBody returns a random comment's body: a paragraph of text, which a
-// comment holds no value reference or mention in.
+// comment holds no value reference or mention of a component in, and which
+// mentions the actor about half the time, a member whom a comment may
+// mention, and whom it notifies of nothing. Whether it does is read from the
+// text, rather than drawn, so that the seeds' batches stay those that cover
+// every type of command.
 func (g *undoGen) commentBody() json.RawMessage {
-	return richText(textInline(g.text()))
+	text := g.text()
+	if len(text)%2 == 0 {
+		return richText(memberInline(g.actor), textInline(", "+text))
+	}
+	return richText(textInline(text))
 }
 
 // state returns a random save state of the project, as play mode saves one:

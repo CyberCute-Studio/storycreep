@@ -13,6 +13,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 )
 
 // Payload returns the payload of the notification of the operation of the
@@ -114,33 +115,43 @@ func (h *Hub) listen() {
 	}
 }
 
-// listenOnce LISTENs on a connection of its own, and dispatches the
-// notifications that it hears, until the connection fails or the hub shuts
-// down, and reports whether it got as far as LISTENing. Once it has heard
-// nothing for PollInterval, it LISTENs again, which the connection does
-// already, and so changes nothing, as a ping that the database must answer
-// within listenPingTimeout, so that a connection whose database went away
-// without a word, as one that failed over, which only waits otherwise,
-// until the system gives up on the connection minutes later, while the hub
-// hears of each batch only as it polls, is found gone, and opened anew. The
-// notifications that come meanwhile wait in the connection for the next
-// wait.
+// listenOnce LISTENs on a connection of its own, on Channel and on
+// notification.Channel, and dispatches the notifications that it hears, a
+// batch's to its project's subscriptions (Hub.dispatch) and a change of an
+// account's notifications to the account's sockets (Hub.inform), until the
+// connection fails or the hub shuts down, and reports whether it got as far
+// as LISTENing. Once it LISTENs, it marks every socket of a session
+// (Hub.markAll), since a change of the notifications that came before was
+// not heard. Once it has heard nothing for PollInterval, it LISTENs again,
+// which the connection does already, and so changes nothing, as a ping that
+// the database must answer within listenPingTimeout, so that a connection
+// whose database went away without a word, as one that failed over, which
+// only waits otherwise, until the system gives up on the connection minutes
+// later, while the hub hears of each batch only as it polls, is found gone,
+// and opened anew. The notifications that come meanwhile wait in the
+// connection for the next wait.
 func (h *Hub) listenOnce() (bool, error) {
 	conn, err := h.db.Dedicated(h.ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(h.ctx)) }()
-	listen := "LISTEN " + pgx.Identifier{Channel}.Sanitize()
+	listen := "LISTEN " + pgx.Identifier{Channel}.Sanitize() + "; LISTEN " +
+		pgx.Identifier{notification.Channel}.Sanitize()
 	if _, err := conn.Exec(h.ctx, listen); err != nil {
 		return false, err
 	}
 	h.pollSoon()
+	h.markAll()
 	for {
 		wait, cancel := context.WithTimeout(h.ctx, h.pollInterval)
 		n, err := conn.WaitForNotification(wait)
 		cancel()
 		switch {
+		case err == nil && n.Channel == notification.Channel:
+			if user, err := ids.ParseUUID(n.Payload); err == nil {
+				h.inform(user)
+			}
 		case err == nil:
 			if project, seq, ok := parsePayload(n.Payload); ok {
 				h.dispatch(project, seq)

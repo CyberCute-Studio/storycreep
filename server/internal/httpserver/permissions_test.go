@@ -1379,6 +1379,9 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"play_state_id":     f.playState(t, p),
 		"from_board_id":     f.board(t, p),
 		"to_board_id":       f.board(t, p),
+		// No account has the notification, which the routes of the
+		// notification centre answer with 404.
+		"notification_id": ids.Encode(ids.Notification, ids.New()),
 	}
 }
 

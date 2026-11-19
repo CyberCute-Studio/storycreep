@@ -306,6 +306,11 @@ export function createRealtime(options: RealtimeOptions): Realtime {
     if (message.type === "heartbeat") {
       return;
     }
+    if (message.type === "notifications") {
+      // The account's notifications changed, which no project's subscriber
+      // reads.
+      return;
+    }
     if (message.type === "error") {
       options.log.record(
         "error",

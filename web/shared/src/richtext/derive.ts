@@ -7,7 +7,12 @@
 // schema/rich-text/vectors.json, so that play mode's projection of a draft
 // (plan item 71) holds the segments that the server's serializer writes.
 
-import type { RichTextBlock, RichTextDoc, RichTextInline } from "../api";
+import type {
+  RichTextBlock,
+  RichTextDoc,
+  RichTextInline,
+  RichTextMemberMention,
+} from "../api";
 import { render } from "../flow/text";
 import type { Segment, SegmentMarks } from "../published";
 
@@ -36,7 +41,9 @@ export interface Names {
  * but one that is the first block of the document, which the document's
  * start begins, or of a list item, which the item's segment begins, so that
  * a paragraph after a list has one, even when the list is the document's
- * first block. A document whose only block is an empty paragraph has none.
+ * first block. A document whose only block is an empty paragraph has none,
+ * and a mention of a member, which only a comment's body holds, has none
+ * either: it is no word of the text, and no published text holds one.
  */
 export function segmentsOf(doc: RichTextDoc, names: Names): Segment[] {
   const out: Segment[] = [];
@@ -61,7 +68,9 @@ function blocks(
         );
       }
       for (const inline of b.content ?? []) {
-        out.push(segmentOf(inline, names));
+        if (inline.type !== "memberMention") {
+          out.push(segmentOf(inline, names));
+        }
       }
     } else {
       const start = b.type === "orderedList" ? (b.attrs?.start ?? 1) : 0;
@@ -84,8 +93,11 @@ function blocks(
 }
 
 // segmentOf returns the segment of an inline node of a paragraph in its
-// canonical form.
-function segmentOf(inline: RichTextInline, names: Names): Segment {
+// canonical form, but for a mention of a member, which has none.
+function segmentOf(
+  inline: Exclude<RichTextInline, RichTextMemberMention>,
+  names: Names,
+): Segment {
   if (inline.type === "hardBreak") {
     return { kind: "break" };
   }

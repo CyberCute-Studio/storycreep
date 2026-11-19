@@ -201,6 +201,50 @@ func registerComments(m *api.Mux, comments *comment.Service) {
 		}
 		return &commentAuthorsOutput{Body: page}, nil
 	}, api.TokenScope(scope.ProjectRead))
+
+	api.Register(m, api.ReadProject, huma.Operation{
+		OperationID: "listProjectMembers",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project_id}/members",
+		Summary:     "List the members whom a project's comments may mention",
+		Description: "Lists the users whom a comment of the project may mention (PRD FR-COMMENT-02), each with " +
+			"their display name, in the order of their IDs, by which a client offers whom to mention: the members of " +
+			"the project's workspace who read the project, by any role of their membership, or by a grant of the " +
+			"project, a viewer's and a guest's with a grant too, whose accounts are active. A comment's body that " +
+			"mentions anyone else is refused with 422 mention_no_access. Reading it is reading the project, which " +
+			"every role does, a member who may not list the workspace's members, as a guest, too." +
+			projectNotFoundDoc + tokenNotFoundDoc + tokenAuthDoc(scope.ProjectRead),
+		Tags: []string{"Comments"},
+	}, func(ctx context.Context, in *projectMembersInput) (*projectMembersOutput, error) {
+		id, actor, err := projectActor(ctx, in.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		after, err := cursorID(in.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		list, err := comments.Members(ctx, actor, id, after, in.Fetch())
+		if err != nil {
+			return nil, projectError(err)
+		}
+		page, err := api.NewPage(in.PageParams, list, func(m comment.MentionableMember) idKey {
+			return uuidKey(ids.User, m.ID)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &projectMembersOutput{Body: page}, nil
+	}, api.TokenScope(scope.ProjectRead))
+}
+
+type projectMembersInput struct {
+	ProjectID string `path:"project_id" doc:"The project's ID"`
+	api.PageParams
+}
+
+type projectMembersOutput struct {
+	Body api.Page[comment.MentionableMember]
 }
 
 // commentTarget returns the target that s, the ID of a node, a connection, a

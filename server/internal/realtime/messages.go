@@ -12,9 +12,10 @@ import (
 // a JSON object in a text message of its own, whose type its type field
 // names. A client subscribes to a project and unsubscribes from it; the
 // server answers each subscription, sends the operations of the projects
-// subscribed to, and a heartbeat every 25 seconds, so that a client that
-// hears nothing for a minute knows that the connection is gone, and connects
-// again. Schema describes them all, and a client ignores a field that it
+// subscribed to, tells a socket of a session that the account's
+// notifications changed (FR-COMMENT-02), and sends a heartbeat every 25
+// seconds, so that a client that hears nothing for a minute knows that the
+// connection is gone, and connects again. Schema describes them all, and a client ignores a field that it
 // does not know, which a later server may add: the schema of a server's
 // message takes properties that it does not name, and a client's does not,
 // since the server refuses them.
@@ -30,6 +31,7 @@ const (
 	typeSubscriptionFailed = "subscription_failed"
 	typeError              = "error"
 	typeHeartbeat          = "heartbeat"
+	typeNotifications      = "notifications"
 )
 
 // SubscribeMessage subscribes the socket to a project.
@@ -120,6 +122,20 @@ type ErrorMessage struct {
 	Code string   `json:"code" enum:"invalid_message" doc:"invalid_message: the message is not a JSON object of one of the client's types, with their fields"`
 }
 
+// NotificationsMessage tells a socket opened with the session cookie that
+// its account's notifications changed (PRD FR-COMMENT-02), as a comment that
+// mentions the account, a deletion or a restoration of one, or a change of
+// their read state in another session: its client reads them again (GET
+// /api/v1/notifications). It is sent once however many changes came while
+// the socket sent it nothing, and also once the server listens again after
+// it could not, when it may have missed some; a socket opened with an API
+// token is never sent one, as the notifications' routes take a session
+// alone.
+type NotificationsMessage struct {
+	_    struct{} `additionalProperties:"true"`
+	Type string   `json:"type" enum:"notifications" doc:"notifications"`
+}
+
 // HeartbeatMessage is sent every 25 seconds.
 type HeartbeatMessage struct {
 	_    struct{} `additionalProperties:"true"`
@@ -140,7 +156,7 @@ var (
 	serverMessages = []reflect.Type{reflect.TypeFor[SubscribedMessage](), reflect.TypeFor[ResyncRequiredMessage](),
 		reflect.TypeFor[OperationMessage](), reflect.TypeFor[UnsubscribedMessage](),
 		reflect.TypeFor[SubscriptionFailedMessage](), reflect.TypeFor[ErrorMessage](),
-		reflect.TypeFor[HeartbeatMessage]()}
+		reflect.TypeFor[HeartbeatMessage](), reflect.TypeFor[NotificationsMessage]()}
 )
 
 // clientSchemas holds the schemas of the client's messages, as Schema writes
@@ -196,7 +212,7 @@ func Schema() []byte {
 		"description": "The messages of the WebSocket of GET /api/v1/ws (PRD FR-RT-01): each a JSON object in a " +
 			"text message of its own, whose type its type field names. A client subscribes to the projects that it " +
 			"reads, and is sent the operations of each that it missed, and then each that commits, in the order " +
-			"of their seqs.",
+			"of their seqs, and a socket of a session is told when its account's notifications change.",
 		"oneOf": []map[string]string{{"$ref": "#/$defs/ClientMessage"}, {"$ref": "#/$defs/ServerMessage"}},
 		"$defs": defs,
 	}

@@ -191,17 +191,26 @@ func checkNode(at string, n ClipboardNode) input.FieldErrors {
 }
 
 // checkText returns what is wrong with the text t at at: a document that
-// richtext.Parse does not take, at where in it the value that is wrong is.
+// richtext.Parse does not take, at where in it the value that is wrong is,
+// or one that mentions a member of the project (richtext.Member), which only
+// a comment's body may, as the pipeline refuses one in a node's text or a
+// connection's label (commands.Spec.MemberMentions), at the mention's
+// location; a Text is no richtext.Doc, which the pipeline would read.
 func checkText(at string, t Text) input.FieldErrors {
 	if len(t) == 0 {
 		return nil
 	}
-	if _, err := richtext.Parse(t); err != nil {
-		var doc *richtext.Error
-		if errors.As(err, &doc) {
-			at += doc.Location()
+	doc, err := richtext.Parse(t)
+	if err != nil {
+		var e *richtext.Error
+		if errors.As(err, &e) {
+			at += e.Location()
 		}
 		return input.FieldErrors{{Field: at, Message: err.Error()}}
+	}
+	for loc := range doc.Members() {
+		return input.FieldErrors{{Field: at + loc, Message: "mentions a member of the project, which only a comment's " +
+			"body may: no text of the story names a member"}}
 	}
 	return nil
 }

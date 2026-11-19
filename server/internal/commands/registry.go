@@ -73,6 +73,17 @@ type Spec[P any] struct {
 	// route lets it do. A batch with such a command applied with a token is
 	// refused with ErrSessionRequired.
 	SessionOnly bool
+	// MemberMentions says that the payload's rich-text documents may mention
+	// a member of the project (richtext.Member), as only a comment's body may
+	// (PRD FR-COMMENT-02). Every other type of command is refused one: the
+	// pipeline refuses a payload that holds one in any of its richtext.Doc or
+	// *richtext.Doc fields, of a command or of a step of an inverse, or of a
+	// part (Tx.ApplyPart), at the field, joined with the mention's location
+	// in the document's canonical form (richtext.Doc.Members), as
+	// payload.text.content[0].content[1], whatever its Check says, so that no
+	// text of the story, which its published format holds, names a member,
+	// and a new type of command holds none unless it says so.
+	MemberMentions bool
 	// Touches are the kinds of entity that the command changes or refers to,
 	// each registered with RegisterEntity. A command's ExpectedRev may name
 	// an entity of these kinds only, and Apply reports a change of these
@@ -485,7 +496,8 @@ type spec struct {
 // that a command that needs it checks authz.CheckPublish in its Apply, as a
 // forced deletion does, a Scope that is not a scope, no Touches, a kind
 // touched twice, a limit that the plan file does not check or twice, both Inverse and NonUndoable or neither, an UndoField without
-// Inverse or that is no field of the payload's, Trashed without Archived, no
+// Inverse or that is no field of the payload's, MemberMentions on a payload
+// without a rich-text document, Trashed without Archived, no
 // Apply, or a payload that is not a struct, or that has a field with a
 // default or a type that resolves itself, or that holds a rich-text document
 // other than as a field of its own. A touched kind that is not registered
@@ -536,6 +548,8 @@ func Register[P any](r *Registry, s Spec[P]) {
 		fail("a command without an inverse has no UndoField")
 	case s.UndoField != "" && !slices.Contains(jsonFields(pt), s.UndoField):
 		fail("the UndoField %q is not a field of the payload", s.UndoField)
+	case s.MemberMentions && len(docFields(pt)) == 0:
+		fail("MemberMentions is set on a payload that holds no rich-text document")
 	}
 	if at := nestedDoc(pt); at != "" {
 		fail("the payload's %s holds a rich-text document, which a payload holds only as a field of its own, a "+
@@ -568,7 +582,7 @@ func Register[P any](r *Registry, s Spec[P]) {
 			}
 		}
 	}
-	docs := docFields(pt)
+	docs, docIndexes := docFields(pt), docFieldIndexes(pt)
 	sp.decode = func(raw []byte, step bool) (any, input.FieldErrors) {
 		var p P
 		d := json.NewDecoder(bytes.NewReader(raw))
@@ -586,6 +600,12 @@ func Register[P any](r *Registry, s Spec[P]) {
 			// the schema cannot describe, such as an integer out of its
 			// type's range.
 			return nil, input.FieldErrors{{Message: "does not decode: " + err.Error()}}
+		}
+		if !s.MemberMentions {
+			if at := memberAt(reflect.ValueOf(p), docIndexes); at != "" {
+				return nil, input.FieldErrors{{Field: at, Message: "mentions a member of the project, which only a " +
+					"comment's body may: no text of the story names a member"}}
+			}
 		}
 		var problems input.FieldErrors
 		if s.Check != nil {
@@ -620,6 +640,44 @@ func docFields(t reflect.Type) []string {
 		}
 	}
 	return out
+}
+
+// docFieldIndexes returns the indexes of the fields of the payload's type t
+// that hold a rich-text document, a richtext.Doc or a pointer to one, in
+// their order, as docFields names them.
+func docFieldIndexes(t reflect.Type) []int {
+	var out []int
+	for i := range t.NumField() {
+		if f := t.Field(i); f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]() {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// memberAt returns where the payload v, whose fields of the indexes fields
+// hold its rich-text documents (docFieldIndexes), first mentions a member of
+// the project (richtext.Member), in the order of its fields: the field's name
+// in its JSON joined with the mention's location in the document, as
+// text.content[0].content[1], or "" if none of them mentions one, as a nil
+// *richtext.Doc does not.
+func memberAt(v reflect.Value, fields []int) string {
+	for _, i := range fields {
+		var doc *richtext.Doc
+		switch f := v.Field(i).Interface().(type) {
+		case richtext.Doc:
+			doc = &f
+		case *richtext.Doc:
+			doc = f
+		}
+		if doc == nil {
+			continue
+		}
+		for at := range doc.Members() {
+			return jsonName(v.Type().Field(i)) + at
+		}
+	}
+	return ""
 }
 
 // jsonFields returns the names, in a payload's JSON, of the exported fields

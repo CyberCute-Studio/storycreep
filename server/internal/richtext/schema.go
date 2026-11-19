@@ -57,8 +57,10 @@ func Schema() []byte {
 		"$id":     SchemaID,
 		"title":   "Storycreep rich text",
 		"description": "A rich-text document of Storycreep, version 1: a ProseMirror document of a constrained schema, " +
-			"which node bodies, connection labels, and component descriptions hold. schema/rich-text/README.md in the " +
-			"repository describes it, the limits that the server checks beyond this schema, and what is derived from it.",
+			"which node bodies, connection labels, component descriptions, and comments' bodies hold, of which a " +
+			"comment's body alone may mention a member (memberMention), as the server checks beyond this schema. " +
+			"schema/rich-text/README.md in the repository describes it, the limits that the server checks beyond this " +
+			"schema, and what is derived from it.",
 		"$ref":     defsPrefix + "doc",
 		"$defs":    definitions(defsPrefix),
 		"examples": examples,
@@ -322,7 +324,8 @@ func definitions(prefix string) obj {
 			"type":    typ(nodeListItem),
 		}, "content", "type"), "A list item: a paragraph, then any paragraphs and lists. That it starts with a "+
 			"paragraph is checked by the server, beyond this schema."),
-		"inline": obj{"oneOf": []obj{ref("text"), ref("hardBreak"), ref("mention"), ref("valueRef")}},
+		"inline": obj{"oneOf": []obj{ref("text"), ref("hardBreak"), ref("mention"), ref("memberMention"),
+			ref("valueRef")}},
 		"text": describe(object(obj{
 			"marks": ref("marks"),
 			"text":  obj{"type": "string", "minLength": 1, "pattern": textPattern},
@@ -338,6 +341,13 @@ func definitions(prefix string) obj {
 			"marks": ref("marks"),
 			"type":  typ(nodeMention),
 		}, "attrs", "type"), "A mention of a component, which the text shows by the component's name."),
+		"memberMention": describe(object(obj{
+			"attrs": object(obj{"id": ref("userId")}, "id"),
+			"marks": ref("marks"),
+			"type":  typ(nodeMember),
+		}, "attrs", "type"), "A mention of a member of the project, a user who reads it, which a client shows as @ "+
+			"and the member's display name, and which tells the member of the comment. Only a comment's body holds "+
+			"one, which the server checks beyond this schema, and nothing is derived of it: it is no word of the text."),
 		"valueRef": describe(object(obj{
 			"attrs": obj{"oneOf": []obj{
 				object(obj{"decimals": ref("decimals"), "ref": ref("variableId")}, "ref"),
@@ -370,6 +380,7 @@ func definitions(prefix string) obj {
 		"componentId": id(ids.Component, "A component's ID."),
 		"variableId":  id(ids.Variable, "A variable's ID."),
 		"attributeId": id(ids.AttributeDef, "A component type's attribute definition's ID."),
+		"userId":      id(ids.User, "A user's ID."),
 	}
 }
 
@@ -420,6 +431,9 @@ var schemaExamples = []string{
 		`{"attrs":{"ref":"var_01HQ8Z5C2K8W1D5J9NTQZR4YBE"},"type":"valueRef"},{"text":" rumours.","type":"text"},{"type":"hardBreak"},` +
 		`{"text":"Trust: ","type":"text"},{"attrs":{"attribute":"atr_01HQ8Z8M4K7R2W9XTVNPQ5DCBF","decimals":1,"ref":"cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"},` +
 		`"marks":[{"type":"bold"}],"type":"valueRef"}],"type":"paragraph"}],"type":"doc"}`,
+	// A comment's body that mentions a member.
+	`{"content":[{"content":[{"attrs":{"id":"usr_01HQ8Z9N5R3T7W2XKDPVQ6MBCF"},"type":"memberMention"},` +
+		`{"text":", does the lighthouse exist yet?","type":"text"}],"type":"paragraph"}],"type":"doc"}`,
 	// Lists, one in the other.
 	`{"content":[{"content":[{"text":"Pack for the climb:","type":"text"}],"type":"paragraph"},{"content":[` +
 		`{"content":[{"content":[{"text":"Rope","type":"text"}],"type":"paragraph"}],"type":"listItem"},` +

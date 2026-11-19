@@ -1,5 +1,7 @@
 // The rich text of a project's content, the bodies of nodes, the labels of
-// connections, and the descriptions of components (PRD FR-TEXT-01, ADR-020):
+// connections, and the descriptions of components (PRD FR-TEXT-01, ADR-020),
+// and of its comments' bodies, which alone may mention a member
+// (memberMention, FR-COMMENT-02), as the server checks of every other text:
 // a ProseMirror document of a constrained schema, stored as JSON.
 // parseRichText checks a document against the schema and its limits
 // (NFR-SEC-07) and returns it in its canonical form, as the server does, so
@@ -128,6 +130,7 @@ const NODE_FIELDS: Readonly<Record<string, readonly string[]>> = {
   text: ["marks", "text", "type"],
   hardBreak: ["marks", "type"],
   mention: ["attrs", "marks", "type"],
+  memberMention: ["attrs", "marks", "type"],
   valueRef: ["attrs", "marks", "type"],
 };
 
@@ -152,6 +155,7 @@ function holds(where: Where, type: string): boolean {
         type === "text" ||
         type === "hardBreak" ||
         type === "mention" ||
+        type === "memberMention" ||
         type === "valueRef"
       );
   }
@@ -170,13 +174,15 @@ function holdsWhat(where: Where): string {
     case "list":
       return "a list holds list items";
     case "paragraph":
-      return "a paragraph holds text, line breaks, mentions, and value references";
+      return "a paragraph holds text, line breaks, mentions, mentions of members, and value references";
   }
 }
 
-/** Returns name after the indefinite article that it takes, as "an orderedList". */
+/** Returns name after the indefinite article that it takes, as "an orderedList" and "a user", whose u is said as you. */
 function article(name: string): string {
-  return /^[aeiou]/i.test(name) ? `an ${name}` : `a ${name}`;
+  return /^[aeiou]/i.test(name) && !name.startsWith("user")
+    ? `an ${name}`
+    : `a ${name}`;
 }
 
 /** Compares two strings in the order of their code points, as Go compares them, rather than of their UTF-16 code units, as sort does. */
@@ -241,6 +247,7 @@ type Inline =
   | { kind: "text"; text: string; marks: Marks }
   | { kind: "break"; marks: Marks }
   | { kind: "mention"; id: string; marks: Marks }
+  | { kind: "member"; id: string; marks: Marks }
   | {
       kind: "value";
       ref: string;
@@ -282,6 +289,13 @@ function wireInlines(inlines: readonly Inline[]): RichTextInline[] {
           attrs: { id: canonicalAnyId(n.id) },
           ...withMarks,
           type: "mention",
+        });
+        break;
+      case "member":
+        out.push({
+          attrs: { id: canonicalAnyId(n.id) },
+          ...withMarks,
+          type: "memberMention",
         });
         break;
       case "value":
@@ -549,6 +563,9 @@ class Parser {
       case "mention":
         inline = this.mention(o);
         break;
+      case "memberMention":
+        inline = this.member(o);
+        break;
       default:
         inline = this.value(o);
         break;
@@ -594,6 +611,14 @@ class Parser {
     const { id } = this.id(attrs, "id", "a mention", ["component"]);
     this.pop();
     return { kind: "mention", id, marks: noMarks() };
+  }
+
+  private member(o: Json): Inline {
+    const attrs = this.attrs(o, "memberMention", true) as Json;
+    this.fields(attrs, "the memberMention's attrs", ["id"]);
+    const { id } = this.id(attrs, "id", "a member mention", ["user"]);
+    this.pop();
+    return { kind: "member", id, marks: noMarks() };
   }
 
   private value(o: Json): Inline {

@@ -108,6 +108,10 @@ func ReadNames(ctx context.Context, q *queries.Queries, workspaceID, projectID i
 				if err = add(&components, ids.Component, in.Ref); err == nil {
 					err = add(&attributes, ids.AttributeDef, in.Attribute)
 				}
+			case *richtext.Member:
+				// A mention of a member is counted as nothing, which no text
+				// that the statistics count holds (commands.Spec.MemberMentions),
+				// and whose name no count reads (richtext.Member).
 			}
 			if err != nil {
 				return Names{}, err

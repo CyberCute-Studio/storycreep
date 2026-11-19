@@ -20,6 +20,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/api"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
 	"github.com/CyberCute-Studio/storycreep/server/internal/realtime"
@@ -52,9 +53,15 @@ type socketMessage struct {
 type testSocket struct {
 	t  *testing.T
 	ws *websocket.Conn
-	// received are the server's messages but the heartbeats, in order, and
-	// then the error that ended the socket.
+	// received are the server's messages but the heartbeats and those that
+	// tell of the account's notifications, in order, and then the error that
+	// ended the socket.
 	received chan received
+	// notified receives each message that tells of the account's
+	// notifications, of a socket of a session (realtime.NotificationsMessage),
+	// which the server sends whatever the socket subscribes to, as once its
+	// hub LISTENs, so that the tests of the subscriptions read past them.
+	notified chan time.Time
 }
 
 // received is a message that a testSocket read, or the error that ended it.
@@ -96,7 +103,7 @@ func openSocket(t *testing.T, srv *httptest.Server, header http.Header) *testSoc
 	}
 	ws.SetReadLimit(16 << 20)
 	t.Cleanup(func() { _ = ws.CloseNow() })
-	return &testSocket{t: t, ws: ws, received: make(chan received, 1024)}
+	return &testSocket{t: t, ws: ws, received: make(chan received, 1024), notified: make(chan time.Time, 1024)}
 }
 
 // start reads the socket's messages, in a goroutine of its own, from now on.
@@ -119,7 +126,11 @@ func (s *testSocket) start() {
 				close(s.received)
 				return
 			}
-			if m.Type != "heartbeat" {
+			switch m.Type {
+			case "heartbeat":
+			case "notifications":
+				s.notified <- time.Now()
+			default:
 				s.received <- received{msg: m, raw: string(data)}
 			}
 		}
@@ -379,6 +390,11 @@ func TestRealtimeSubscriptionRefusedAlike(t *testing.T) {
 	viewer.next("subscribed")
 }
 
+// listenStatement is the statement of the hub's LISTEN connection, which
+// LISTENs on the channel of the batches and on that of the accounts'
+// notifications, as pg_stat_activity shows it.
+const listenStatement = `LISTEN "` + realtime.Channel + `"; LISTEN "` + notification.Channel + `"`
+
 // TestRealtimeListenerReconnects checks that the operations that commit while
 // the hub's LISTEN connection is gone, whose notifications nobody hears, are
 // sent all the same once it LISTENs again, in order, whether or not another
@@ -404,7 +420,7 @@ func TestRealtimeListenerReconnects(t *testing.T) {
 	ctx := context.Background()
 	var ended int
 	if err := d.Admin(t).QueryRow(ctx, `SELECT count(*) FROM (SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		WHERE datname = current_database() AND query = $1) t`, `LISTEN "`+realtime.Channel+`"`).Scan(&ended); err != nil {
+		WHERE datname = current_database() AND query = $1) t`, listenStatement).Scan(&ended); err != nil {
 		t.Fatal(err)
 	}
 	if ended != 1 {
@@ -452,7 +468,7 @@ func TestRealtimeListenerPings(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for {
 			err := admin.QueryRow(ctx, `SELECT pid, query_start FROM pg_stat_activity
-				WHERE datname = current_database() AND query = $1`, `LISTEN "`+realtime.Channel+`"`).Scan(&pid, &started)
+				WHERE datname = current_database() AND query = $1`, listenStatement).Scan(&pid, &started)
 			switch {
 			case err == nil:
 				return pid, started

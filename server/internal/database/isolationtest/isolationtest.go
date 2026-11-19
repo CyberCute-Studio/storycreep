@@ -400,6 +400,18 @@ var Tables = []Table{
 			`[{"type": "text", "text": "Does the lighthouse exist yet?"}]}]}', $5)`,
 			[]any{id, w.ID, w.Rows["project"], w.Rows["node"], w.UserID}}, nil
 	}},
+	{Name: "notification", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A notification of the workspace's comment, by its author, to a user
+		// of its own, since a comment notifies a user once.
+		user, err := NewUser(ctx, admin)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO notification (id, workspace_id, project_id, user_id, comment_id, actor_id, " +
+			"kind) VALUES ($1, $2, $3, $4, $5, $6, 'mention')",
+			[]any{id, w.ID, w.Rows["project"], user, w.Rows["comment"], w.UserID}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()

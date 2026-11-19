@@ -3085,7 +3085,7 @@
           },
           "body": {
             "$ref": "#/components/schemas/RichTextDoc",
-            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, without value references or mentions. A deleted comment has none."
+            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members (memberMention), and text that may be bold, italic, struck through, code, or a link, without value references or mentions of components. A deleted comment has none."
           },
           "created_at": {
             "description": "When the comment was posted",
@@ -3109,6 +3109,16 @@
           "id": {
             "description": "The comment's ID",
             "type": "string"
+          },
+          "mentions": {
+            "description": "The members that the comment's body mentions, each once, in the order of their first mentions, with their display names as they are now, by which a client shows each mention as @ and the name (PRD FR-COMMENT-02). A comment whose body mentions nobody, and a deleted comment, have none.",
+            "items": {
+              "$ref": "#/components/schemas/CommentMention"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "node_id": {
             "description": "The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none.",
@@ -3259,7 +3269,7 @@
         "properties": {
           "body": {
             "$ref": "#/components/schemas/RichTextDoc",
-            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."
+            "description": "The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members of the project (memberMention), and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, or a mention, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists, mentioning at most 50 members. One that is not, or that holds a value reference or a mention of a component, is answered with 422 validation_failed, a value reference, a mention of a component, or the mention of a 51st member at its location in the document's canonical form, as payload.body.content[0].content[1]. Each member that it mentions is notified of it (PRD FR-COMMENT-02): a mention of a user who cannot read the project, who is not a member of its workspace, a guest without a grant of the project, or whose account is not active, is answered with 422 mention_no_access at the mention's location, which does not name the user."
           },
           "id": {
             "description": "The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)",
@@ -3372,7 +3382,7 @@
         "properties": {
           "body": {
             "$ref": "#/components/schemas/RichTextDoc",
-            "description": "The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."
+            "description": "The comment's new body, a rich-text document (PRD FR-TEXT-01) as a new comment's is. A mention of a member that the comment's body does not mention yet is held to whether the member may be mentioned, as a new comment's, and notifies the member, once: one that the comment mentions already is not, so that the comment of a member who has since lost the project's access keeps the mention. A mention that an edit takes out leaves its notification as it was."
           },
           "id": {
             "description": "The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required.",
@@ -3382,6 +3392,23 @@
         "required": [
           "id",
           "body"
+        ],
+        "type": "object"
+      },
+      "CommentMention": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "The user's display name as it is now. A user whose account is deleted has none.",
+            "type": "string"
+          },
+          "id": {
+            "description": "The user's ID, as the mention's attrs.id spells it canonically",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -6534,6 +6561,24 @@
         ],
         "type": "object"
       },
+      "MentionableMember": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "The user's display name",
+            "type": "string"
+          },
+          "id": {
+            "description": "The user's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "type": "object"
+      },
       "MeteredUsageBody": {
         "additionalProperties": false,
         "properties": {
@@ -7462,6 +7507,127 @@
         ],
         "type": "object"
       },
+      "NotificationActor": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "description": "The user's display name",
+            "type": "string"
+          },
+          "id": {
+            "description": "The user's ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "NotificationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/NotificationActor",
+            "description": "Who mentioned the account, the comment's author, unless their account is deleted"
+          },
+          "board_id": {
+            "description": "The ID of the target's board: a node's, a connection's, or a board variable's, or the board itself. A global variable has none.",
+            "type": "string"
+          },
+          "comment_id": {
+            "description": "The ID of the comment that mentions the account",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "When the comment mentioned the account: when it was posted, or edited to mention it",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "description": "The notification's ID",
+            "type": "string"
+          },
+          "kind": {
+            "description": "What the notification tells of: mention, a comment that mentions the account",
+            "enum": [
+              "mention"
+            ],
+            "type": "string"
+          },
+          "node_id": {
+            "description": "The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none.",
+            "type": "string"
+          },
+          "preview": {
+            "description": "The preview of the comment's body as it is now, as a rich text's preview is derived (PRD FR-TEXT-01), with each member that it mentions written as @ and the member's display name as it is now, or as @… once the member's account is deleted",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/NotificationProject",
+            "description": "The comment's project"
+          },
+          "read_at": {
+            "description": "When the account marked the notification read, if it did. An unread one has none.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "The ID of the thread's target",
+            "type": "string"
+          },
+          "target_type": {
+            "description": "The kind of the thread's target: a node, a connection, a board, or a variable",
+            "enum": [
+              "node",
+              "connection",
+              "board",
+              "variable"
+            ],
+            "type": "string"
+          },
+          "thread_id": {
+            "description": "The ID of the comment's thread, its first comment's",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "The ID of the workspace of the comment's project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "workspace_id",
+          "project",
+          "comment_id",
+          "thread_id",
+          "target_type",
+          "target_id",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "NotificationProject": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The project's ID",
+            "type": "string"
+          },
+          "name": {
+            "description": "The project's name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "type": "object"
+      },
       "PageAPITokenBody": {
         "additionalProperties": false,
         "properties": {
@@ -7761,12 +7927,58 @@
         ],
         "type": "object"
       },
+      "PageMentionableMember": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MentionableMember"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
       "PageNode": {
         "additionalProperties": false,
         "properties": {
           "items": {
             "items": {
               "$ref": "#/components/schemas/Node"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "The cursor of the next page, or null if this is the last page",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "PageNotificationBody": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationBody"
             },
             "type": "array"
           },
@@ -9133,6 +9345,19 @@
         },
         "type": "object"
       },
+      "ReadAllBody": {
+        "additionalProperties": false,
+        "properties": {
+          "through": {
+            "description": "The ID of the newest notification that the client shows, as the first of the list's first page: it and every notification of the account before it are marked read, so that one that arrived after the client read the list stays unread",
+            "type": "string"
+          }
+        },
+        "required": [
+          "through"
+        ],
+        "type": "object"
+      },
       "RegisterBody": {
         "additionalProperties": false,
         "properties": {
@@ -9547,6 +9772,9 @@
             "$ref": "#/components/schemas/RichTextMention"
           },
           {
+            "$ref": "#/components/schemas/RichTextMemberMention"
+          },
+          {
             "$ref": "#/components/schemas/RichTextValueRef"
           }
         ]
@@ -9675,6 +9903,35 @@
         "maxItems": 5,
         "type": "array"
       },
+      "RichTextMemberMention": {
+        "additionalProperties": false,
+        "description": "A mention of a member of the project, a user who reads it, which a client shows as @ and the member's display name, and which tells the member of the comment. Only a comment's body holds one, which the server checks beyond this schema, and nothing is derived of it: it is no word of the text.",
+        "properties": {
+          "attrs": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/RichTextUserId"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "marks": {
+            "$ref": "#/components/schemas/RichTextMarks"
+          },
+          "type": {
+            "const": "memberMention"
+          }
+        },
+        "required": [
+          "attrs",
+          "type"
+        ],
+        "type": "object"
+      },
       "RichTextMention": {
         "additionalProperties": false,
         "description": "A mention of a component, which the text shows by the component's name.",
@@ -9757,6 +10014,11 @@
           "type"
         ],
         "type": "object"
+      },
+      "RichTextUserId": {
+        "description": "A user's ID.",
+        "pattern": "^[Uu][Ss][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+        "type": "string"
       },
       "RichTextValueRef": {
         "additionalProperties": false,
@@ -10469,6 +10731,21 @@
           "type",
           "payload",
           "expected_rev"
+        ],
+        "type": "object"
+      },
+      "UnreadBody": {
+        "additionalProperties": false,
+        "properties": {
+          "unread": {
+            "description": "How many of the account's notifications that are shown are unread, across its workspaces",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread"
         ],
         "type": "object"
       },
@@ -13794,6 +14071,435 @@
         ]
       }
     },
+    "/api/v1/notifications": {
+      "get": {
+        "description": "Lists the signed-in account's notifications that are shown, newest first, by when each was made, as the server's clock has it, a page at a time across the account's workspaces. Each names the comment that mentions the account, its thread, and the thread's target, with the target's board and node, as the list of a project's comments names them, by which a client opens it, its project, who mentioned the account, and a preview of the comment's body as it is now, with each member that it mentions written as @ and their display name, and whether, and when, the account read it. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, a deletion or a restoration of a comment that it has one of, and a change of their read state, sends {\"type\": \"notifications\"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listNotifications",
+        "parameters": [
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageNotificationBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the signed-in account's notifications",
+        "tags": [
+          "Notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/read-all": {
+      "post": {
+        "description": "Marks read the signed-in account's notifications that are unread, shown or not, in every workspace of the account, that were made at or before the notification through, by when each was made and by their IDs, as the list orders them, so that one that arrived after the client read the list stays unread. A through that is not one of the account's notifications, in any of its workspaces, is answered with 404 not_found, and marks nothing; one that does not decode as a notification's ID with 400 invalid_id. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, a deletion or a restoration of a comment that it has one of, and a change of their read state, sends {\"type\": \"notifications\"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "readAllNotifications",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReadAllBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Mark the signed-in account's notifications read",
+        "tags": [
+          "Notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/unread": {
+      "get": {
+        "description": "Returns how many of the signed-in account's notifications that are shown are unread, across its workspaces, as a client's badge of the centre shows them. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, a deletion or a restoration of a comment that it has one of, and a change of their read state, sends {\"type\": \"notifications\"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "countUnreadNotifications",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnreadBody"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Count the signed-in account's unread notifications",
+        "tags": [
+          "Notifications"
+        ]
+      }
+    },
+    "/api/v1/notifications/{notification_id}/read": {
+      "post": {
+        "description": "Marks one of the signed-in account's notifications read, shown or not, which a notification read already stays as it is. A notification that the account does not have, in any of its workspaces, is answered with 404 not_found. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, a deletion or a restoration of a comment that it has one of, and a change of their read state, sends {\"type\": \"notifications\"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "readNotification",
+        "parameters": [
+          {
+            "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "description": "The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The notification's ID",
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "description": "The notification's ID",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Mark a notification read",
+        "tags": [
+          "Notifications"
+        ]
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "description": "The OpenAPI 3.1 document of the server's operations, this one included. It is the same for every server of a release, and is committed to the repository as schema/api/v1/openapi.json. Requests that read share a rate limit of 1,200 a minute for each IP address. The RateLimit headers say how much is left of the limit of the IP address, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
@@ -16147,7 +16853,7 @@
     },
     "/api/v1/projects/{project_id}/commands": {
       "post": {
-        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
+        "description": "Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {\"commands\": [...]}, or a list of batches, {\"batches\": [{\"commands\": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name, as is a rich text of a payload that mentions a member (memberMention), which only a comment's body may, at the mention, as body.commands[0].payload.text.content[0].content[1]; a comment's body that mentions a user who cannot read the project is answered with 422 mention_no_access at the mention. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.\n\nA command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.\n\nA request of a list of batches applies each, in its own transaction, in the order of the list, and is answered with 200 and a result of each, applied or rejected with its error, so that a rejected batch, of any of the refusals above, never keeps the later ones from applying. A body that is neither form, or has more than 100 batches, is answered with 422 validation_failed, and a batch of more than 1000 commands is rejected so. A body that is not one strict JSON value, as one with a key twice in an object, anywhere in it, is answered with 400 invalid_request, as on every route. The body is at most 5 MB, as every route's, and a larger one is answered with 413 request_too_large, so that a request of many large batches may need to be split. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:write, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.",
         "operationId": "applyCommands",
         "parameters": [
           {
@@ -18749,6 +19455,136 @@
         "summary": "Set a member's grant on a project",
         "tags": [
           "Grants"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/members": {
+      "get": {
+        "description": "Lists the users whom a comment of the project may mention (PRD FR-COMMENT-02), each with their display name, in the order of their IDs, by which a client offers whom to mention: the members of the project's workspace who read the project, by any role of their membership, or by a grant of the project, a viewer's and a guest's with a grant too, whose accounts are active. A comment's body that mentions anyone else is refused with 422 mention_no_access. Reading it is reading the project, which every role does, a member who may not list the workspace's members, as a guest, too. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.",
+        "operationId": "listProjectMembers",
+        "parameters": [
+          {
+            "description": "The project's ID",
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The project's ID",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The next_cursor of the previous page; empty for the first page",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "The next_cursor of the previous page; empty for the first page",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many items the page holds at most",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "description": "How many items the page holds at most",
+              "format": "int64",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageMentionableMember"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "How many requests of the operation's kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "How many more it may make in the current window",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "How many seconds until the current window ends, and the limit is whole again",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "An error, in the error envelope; docs/error-codes.md lists the codes",
+            "headers": {
+              "Content-Language": {
+                "schema": {
+                  "description": "The language of the envelope's message, as a BCP 47 tag, such as en",
+                  "type": "string"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, as every operation of the API is, how many requests of its kind the client may make in a window of time, for its IP address, its account, or the API token that it makes the request with, whichever has the fewest left, or, with 429 rate_limited whose details.reason is rate, for the one that used up its limit, which may be the email address that the request names. With details.reason locked, no limit is used up: the email address is locked, and the headers report the IP address or the account as on any other answer. An answer to a request refused before the rate limit counts it has none of the RateLimit headers: one without valid credentials, a CSRF token, or an API token's scope where the operation needs them, one that the signup policy or another check of the operation refuses before it counts, one made while the server is not ready, and one whose count failed, with internal_error",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many more requests of its kind the client may make in the current window, for the same key as RateLimit-Limit",
+                  "type": "integer"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "description": "On an operation that a rate limit counts, how many seconds until the current window ends, and the limit is whole again",
+                  "type": "integer"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "description": "How many seconds to wait before trying again, with 429 rate_limited and 503 not_ready",
+                  "type": "integer"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "description": "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a route that takes an API token, and to a request whose API token is not valid, with error=\"invalid_token\", and with 403 insufficient_scope, with error=\"insufficient_scope\" and the scope that the route needs",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the members whom a project's comments may mention",
+        "tags": [
+          "Comments"
         ]
       }
     },
@@ -23720,7 +24556,7 @@
     },
     "/api/v1/ws": {
       "get": {
-        "description": "Upgrades to a WebSocket (RFC 6455), over which the client subscribes to the projects that it reads, and is sent each batch of commands that commits to them, from every server of the instance, in the order of their seqs (PRD FR-RT-01, FR-RT-02). The operation log is the source of truth, and the socket only a way to be told of it sooner: a client that connects again subscribes with the seq of the latest operation that it has, and is sent those that it missed, or told to reload the project (resync_required) when the log no longer has them, or more than 10,000 follow. The messages are JSON, each in a text message of its own, as schema/realtime/v1/messages.schema.json describes them: a client sends {\"type\": \"subscribe\", \"project_id\", \"since\"} and {\"type\": \"unsubscribe\", \"project_id\"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or subscription_failed, whose code is not_found for a project that does not exist and one that the user cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, neither a message nor a pong, and drops the connection without a close, which the client sees as 1006, once a message to it takes longer than 30 seconds to write. A socket subscribes to 100 projects at most, each subscription counts in the rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, and the user's access to each project, are checked again before each subscription and each page of operations that it is sent, and not while it is sent nothing: a check that finds that the session has ended, or has a new secret, as a change of the password gives the session that made it, or that the token no longer holds, closes the socket with 4001, after which a client connects again if a request with the credential that it holds now, as GET /api/v1/auth/session with the cookie, is answered, and signs in again, or takes another token, if it is refused with 401; one that finds that the project can no longer be read ends its subscription, at the project's next operation. It closes with 1001 as the server stops, and 1011 when the server fails, as when it cannot read the database, after either of which, as after a connection dropped, a client connects again, with exponential backoff and jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the request's host by that URL's scheme is refused with 403 csrf_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Openings of the real-time channel's WebSocket share a rate limit of 60 a minute for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is connect, and whose Retry-After header says how many seconds to wait.",
+        "description": "Upgrades to a WebSocket (RFC 6455), over which the client subscribes to the projects that it reads, and is sent each batch of commands that commits to them, from every server of the instance, in the order of their seqs (PRD FR-RT-01, FR-RT-02). The operation log is the source of truth, and the socket only a way to be told of it sooner: a client that connects again subscribes with the seq of the latest operation that it has, and is sent those that it missed, or told to reload the project (resync_required) when the log no longer has them, or more than 10,000 follow. The messages are JSON, each in a text message of its own, as schema/realtime/v1/messages.schema.json describes them: a client sends {\"type\": \"subscribe\", \"project_id\", \"since\"} and {\"type\": \"unsubscribe\", \"project_id\"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or subscription_failed, whose code is not_found for a project that does not exist and one that the user cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, unsubscribed once a check finds that the project can no longer be read, a socket opened with the session cookie {\"type\": \"notifications\"} once the account's notifications change, whatever it subscribes to, after which it reads them again (GET /api/v1/notifications), and once the server listens again after it could not, when it may have missed some, which a socket of an API token is never sent, and a heartbeat every 25 seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, neither a message nor a pong, and drops the connection without a close, which the client sees as 1006, once a message to it takes longer than 30 seconds to write. A socket subscribes to 100 projects at most, each subscription counts in the rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, and the user's access to each project, are checked again before each subscription and each page of operations that it is sent, and not while it is sent nothing: a check that finds that the session has ended, or has a new secret, as a change of the password gives the session that made it, or that the token no longer holds, closes the socket with 4001, after which a client connects again if a request with the credential that it holds now, as GET /api/v1/auth/session with the cookie, is answered, and signs in again, or takes another token, if it is refused with 401; one that finds that the project can no longer be read ends its subscription, at the project's next operation. It closes with 1001 as the server stops, and 1011 when the server fails, as when it cannot read the database, after either of which, as after a connection dropped, a client connects again, with exponential backoff and jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the request's host by that URL's scheme is refused with 403 csrf_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer \u003ctoken\u003e; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Openings of the real-time channel's WebSocket share a rate limit of 60 a minute for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is connect, and whose Retry-After header says how many seconds to wait.",
         "operationId": "openRealtimeSocket",
         "responses": {
           "101": {

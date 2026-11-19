@@ -31,6 +31,12 @@ type Client struct {
 	// longer holds is sent nothing more, and closes the socket with
 	// CloseUnauthenticated then.
 	Check func(ctx context.Context) (commands.Actor, error)
+	// Inbox says whether the socket is a session's, opened with the session
+	// cookie, which the hub tells of its user's notifications
+	// (NotificationsMessage), whatever it subscribes to: a socket of an API
+	// token is not, as the notifications' routes take a session alone (PRD
+	// FR-AUTH-04).
+	Inbox bool
 	// Limit counts a subscription in the rate limit of reads of the socket's
 	// client, its IP address, its user, and its API token, if it has one,
 	// which are the socket's for its life, and returns a *LimitedError if it
@@ -112,8 +118,13 @@ type conn struct {
 	// subs are the socket's subscriptions, by project, which only the loop
 	// (run) reads and changes.
 	subs map[ids.UUID]*subscription
-	// wake tells the loop that a subscription has heard of a seq.
+	// wake tells the loop that a subscription has heard of a seq, or that the
+	// socket is marked (notified).
 	wake chan struct{}
+	// notified is whether the hub has marked the socket, of a session, since
+	// its loop last told its client that its account's notifications changed
+	// (Hub.inform), until the loop takes it.
+	notified atomic.Bool
 	// messages are the client's messages that the loop has not handled yet,
 	// at most maxQueued, past which the reader waits for the loop.
 	messages chan queuedMessage
@@ -204,11 +215,20 @@ func (h *Hub) Serve(ctx context.Context, ws *websocket.Conn, client Client) {
 		defer close(read)
 		c.read(readCtx)
 	}()
+	// A session's socket hears of its account's notifications from now on,
+	// for as long as it is served.
+	if client.Inbox {
+		h.enter(c)
+	}
 	// The socket's end is deferred, so that a panic of its loop, which the
-	// server recovers from, still takes its subscriptions from the hub,
-	// closes its connection, with 1011, and stops its reader.
+	// server recovers from, still takes its subscriptions from the hub, and
+	// the socket from its user's inbox, closes its connection, with 1011, and
+	// stops its reader.
 	code, reason := websocket.StatusInternalError, "internal error"
 	defer func() {
+		if client.Inbox {
+			h.exit(c)
+		}
 		for _, sub := range c.subs {
 			h.leave(sub)
 		}
@@ -346,6 +366,13 @@ func (c *conn) hear() {
 // silence returns how long the socket has heard nothing from its client.
 func (c *conn) silence() time.Duration {
 	return time.Since(c.born) - time.Duration(c.heard.Load())
+}
+
+// mark marks the socket, whose loop tells its client that its account's
+// notifications changed, once, however often it is marked meanwhile.
+func (c *conn) mark() {
+	c.notified.Store(true)
+	c.signal()
 }
 
 // signal wakes the loop to send the subscriptions what they heard of.
@@ -670,12 +697,24 @@ func (c *conn) drop(sub *subscription) {
 	c.hub.leave(sub)
 }
 
-// deliverHeard sends each subscription the operations after the last that
-// it was sent, if it has heard of a later seq, tells one to reload the
-// project if the hub has found the project's seq gone back behind what it
-// was sent (Hub.rewind), and reads one whose project the hub has found gone
-// (Hub.vanish), which ends it.
+// deliverHeard tells the client that its account's notifications changed, if
+// the hub has marked the socket since it last did (Hub.inform), once it has
+// checked the socket's credential again, so that a session that has ended is
+// told nothing more, but closed with CloseUnauthenticated; and sends each
+// subscription the operations after the last that it was sent, if it has
+// heard of a later seq, tells one to reload the project if the hub has found
+// the project's seq gone back behind what it was sent (Hub.rewind), and
+// reads one whose project the hub has found gone (Hub.vanish), which ends
+// it.
 func (c *conn) deliverHeard() error {
+	if c.notified.Swap(false) {
+		if _, err := c.check(); err != nil {
+			return err
+		}
+		if err := c.send(NotificationsMessage{Type: typeNotifications}); err != nil {
+			return err
+		}
+	}
 	for _, sub := range c.subs {
 		to := sub.rewound.Swap(nil)
 		reload := to != nil && *to < sub.sent
