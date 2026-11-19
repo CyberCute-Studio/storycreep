@@ -2097,11 +2097,13 @@ describe("the canvas's marks of comments", () => {
     expect(item === undefined ? undefined : frame.labels(item).comments).toBe(
       2,
     );
-    const tree = screen.getByRole("tree", {
+    // The tree is made again once the canvas tells that the board's content
+    // changed, which may be after the canvas's marks, as on a slow runner.
+    const tree = await screen.findByRole("tree", {
       name: "Nodes and connections of Harbour",
     });
     expect(
-      within(tree).getByRole("treeitem", {
+      await within(tree).findByRole("treeitem", {
         name: "Quay, Narration; 2 open comments",
       }),
     ).toBeDefined();

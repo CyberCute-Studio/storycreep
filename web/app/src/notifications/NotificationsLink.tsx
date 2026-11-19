@@ -16,9 +16,28 @@ export function NotificationsLink() {
   return (
     <Link
       to="/notifications"
-      className="flex min-h-11 items-center gap-2 rounded-md px-2 text-fg underline-offset-2 hover:underline data-[status=active]:font-semibold"
+      className="flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-md px-2 text-fg underline-offset-2 hover:underline data-[status=active]:font-semibold"
     >
-      <span>{t("shell.notifications")}</span>
+      {/* Below the md breakpoint, as on the reference tablet in portrait
+          (640 px), the link shows its bell alone, and the error console's
+          button its sign alone, so that the header holds one line there, as
+          it did before this link joined it, and leaves the canvas its
+          height; the label stays the start of the link's name all the
+          same. */}
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="size-5 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2z" />
+        <path d="M10 21h4" />
+      </svg>
+      <span className="sr-only md:not-sr-only">{t("shell.notifications")}</span>
       {unread > 0 && (
         <>
           {/* The space between the parts of the link's name, which the

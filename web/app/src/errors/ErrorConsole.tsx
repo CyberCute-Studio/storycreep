@@ -119,7 +119,9 @@ export function ErrorConsoleButton() {
           <path d="M12 3 2 21h20L12 3z" />
           <path d="M12 10v5M12 18h.01" />
         </svg>
-        <span className="hidden sm:inline">{t("error_console.button")}</span>
+        {/* Its sign alone below md, as the header's link to the
+            notifications shows its bell alone there (NotificationsLink). */}
+        <span className="hidden md:inline">{t("error_console.button")}</span>
         {/* The space keeps the label and the number apart in the button's
             text, as they are in its name, which the gap between them does
             not. */}
