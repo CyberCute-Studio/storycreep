@@ -827,7 +827,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 **Done when:** FR-SNAP-03 AC1 and AC3, FR-EXPR-03 AC1 and AC2 (a rename changes only the debug `name` fields), FR-TEXT-03 AC2 (a mention exports as the component's name plus its ID), FR-EDIT-03 AC1 and FR-EDIT-04 AC2 (exported order matches the author's order, and reordering outputs changes evaluation order in the conformance runner) pass, with identical bytes on Linux, Windows ARM64, and macOS.
 
 ### 77. Schema versioning and migration framework
-**Status:** todo · **Depends on:** 76
+**Status:** done ([#91](https://github.com/CyberCute-Studio/storycreep/pull/91)) · **Depends on:** 76
 **PRD:** FR-DATA-03, §6.4, FR-SYNC-07 (server range)
 - Pure forward migrations of stored content, one version at a time. Each step reports every value that the next version cannot hold as it was (`Version.Up`, `Migrate`, `Step`, `Entry`). Down-rendering to the previous schema version names each construct that version cannot express (`Version.Down`, `Render`, `UnrepresentableError`). Whatever a migration or a renderer takes and returns validates against its version: each file against its JSON Schema, the manifest's hashes, and the reference runtime (`Validate`, `Sealed`, `RuntimeLoads`) (`server/internal/schemaversion`, N84).
 - A migration log stored with the project: the tenant table `schema_migration_log` (migration 00034), one row for each snapshot and step. `Record` writes it in the transaction that stores what the migration wrote, and `Log` reads it (`queries/schema_migration_log.sql`, N84).
