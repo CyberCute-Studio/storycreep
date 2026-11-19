@@ -56,7 +56,8 @@ const (
 // names ("board"), is an attribute that is not runtime ("runtime"), or is a
 // jumper ("jumper"); and a connection leaves by a port that its node does
 // not have ("port"), or enters a node that its board does not hold
-// ("target").
+// ("target"). And, of a release alone, which the projection never writes, a
+// jumper has no target ("none"), as the validation names it.
 const (
 	ReasonGone    = "gone"
 	ReasonBoard   = "board"
@@ -64,6 +65,7 @@ const (
 	ReasonJumper  = "jumper"
 	ReasonPort    = "port"
 	ReasonTarget  = "target"
+	ReasonNone    = "none"
 )
 
 // StandIn is what a draft held that no snapshot may, and what Serialize
@@ -84,7 +86,9 @@ const (
 //     of its text, whose texts on either side join.
 //   - StandInSpeaker: an element's speaker, Ref, left out.
 //   - StandInTarget: a jumper's target, Ref, left out, so that the flow
-//     reports jumper_broken there (§5.8.5).
+//     reports jumper_broken there (§5.8.5); or, of a release alone, a jumper
+//     without a target, Ref "", of the reason ReasonNone, which a draft's
+//     may lack, and which a draft's files therefore do not list.
 //   - StandInBoardEntry: a board's entry node, Ref, left out.
 //   - StandInEntry: the project's entry, of the board or the node Ref, left
 //     out.
@@ -121,15 +125,19 @@ func (s StandIn) String() string {
 }
 
 // UnpublishableError is Serialize's error for a release of a draft that
-// holds what no snapshot may: what it would have stood in for, which a
-// draft's files stand in for, but which no release holds (FR-EXPR-03 AC1).
-// The validation reports each as an error (FR-DEP-03), which blocks
-// publishing before a snapshot is built (FR-DEP-04).
+// holds what no release may: what it would have stood in for, which a
+// draft's files stand in for, but which no release holds (FR-EXPR-03 AC1),
+// and its jumpers without a target (ReasonNone). The validation reports each
+// as an error (FR-DEP-03), which blocks publishing before a snapshot is
+// built (FR-DEP-04).
 type UnpublishableError struct {
 	StandIns []StandIn
 }
 
 func (e *UnpublishableError) Error() string {
+	if len(e.StandIns) == 0 {
+		return "serializer: the draft holds what no release may hold"
+	}
 	return fmt.Sprintf("serializer: the draft holds %d things that no release may hold, the first a %s",
 		len(e.StandIns), e.StandIns[0])
 }

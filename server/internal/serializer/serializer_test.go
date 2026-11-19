@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
 	"github.com/CyberCute-Studio/storycreep/server/internal/serializer"
 )
@@ -210,15 +211,18 @@ func TestContentHash(t *testing.T) {
 }
 
 // TestStamp checks that a stamp that would write a manifest that the schema
-// refuses is refused.
+// refuses is refused, and so is one without a moment, which would write a
+// wrong one.
 func TestStamp(t *testing.T) {
 	d := goldenDraft(t)
 	for name, st := range map[string]serializer.Stamp{
-		"no generator": {},
-		"no version": {Generator: serializer.Generator(), Release: &serializer.Release{
+		"no generator": {At: goldenMoment},
+		"no version": {Generator: serializer.Generator(), At: goldenMoment, Release: &serializer.Release{
 			ID: "snp_01HQ9A7TBE5N2WQX8K4YJ3MDCR"}},
-		"no snapshot ID": {Generator: serializer.Generator(), Release: &serializer.Release{ID: "snp_x",
-			Version: "1.0.0"}},
+		"no snapshot ID": {Generator: serializer.Generator(), At: goldenMoment, Release: &serializer.Release{
+			ID: "snp_x", Version: "1.0.0"}},
+		"no moment":            {Generator: serializer.Generator()},
+		"no moment, a release": {Generator: serializer.Generator(), Release: goldenStamp.Release},
 	} {
 		if _, err := serializer.Serialize(d, st); err == nil {
 			t.Errorf("%s: written", name)
@@ -289,6 +293,45 @@ func TestStandIns(t *testing.T) {
 	if !errors.As(err, &unpublishable) {
 		t.Fatalf("a release of the draft is %v, want an *UnpublishableError", err)
 	}
+	if !slices.Equal(unpublishable.StandIns, want) {
+		t.Errorf("the release's refusal lists\n%v\nwant\n%v", unpublishable.StandIns, want)
+	}
+	if msg := (&serializer.UnpublishableError{}).Error(); msg == "" {
+		t.Error("an UnpublishableError that lists nothing has no message")
+	}
+}
+
+// TestJumperWithoutTarget checks that a jumper without a target, which a
+// draft's may lack, is written without one in a draft's files, which the
+// published JSON Schemas and the reference runtime take of a draft, and
+// stands in for nothing; and that a release of it is refused, listing it, as
+// the reference runtime refuses a release of it, and as the validation
+// reports it (jumper_broken, of the reason none).
+func TestJumperWithoutTarget(t *testing.T) {
+	b, j, end := mn(ids.Board, "B1"), mn(ids.Node, "N1"), mn(ids.Node, "N2")
+	d := &serializer.Draft{
+		Project: serializer.Project{ID: mn(ids.Project, "J1"), Name: "Jumper", Slug: "jumper"},
+		Boards:  []serializer.Board{{ID: b, Slug: "one", Name: "One", EntryNode: end}},
+		Nodes: []serializer.Node{
+			{ID: j, Board: b, Type: published.NodeJumper},
+			{ID: end, Board: b, Type: published.NodeElement, Kind: "narration", IsEnding: true},
+		},
+	}
+	s, err := serializer.Serialize(d, goldenDraftStamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.StandIns) > 0 {
+		t.Errorf("the draft stood in for %v", s.StandIns)
+	}
+	newSchemas(t).check(t, s.Files)
+	_, err = serializer.Serialize(d, goldenStamp)
+	var unpublishable *serializer.UnpublishableError
+	if !errors.As(err, &unpublishable) {
+		t.Fatalf("a release of the draft is %v, want an *UnpublishableError", err)
+	}
+	want := []serializer.StandIn{{Kind: serializer.StandInTarget, Board: b, Node: j, Entity: j,
+		Reason: serializer.ReasonNone}}
 	if !slices.Equal(unpublishable.StandIns, want) {
 		t.Errorf("the release's refusal lists\n%v\nwant\n%v", unpublishable.StandIns, want)
 	}

@@ -20,7 +20,10 @@ import (
 // build reads it (PRD §7.3, FR-SNAP-01 AC7), so that its reads agree with
 // one another: one read of each kind of the project's rows that are not in
 // its trash, with what the published format holds of each, each text read
-// with richtext.Parse and each AST with expr.Decode, as they are stored.
+// with richtext.Parse and each AST with expr.Decode, as they are stored. It
+// returns an error that wraps pgx.ErrNoRows if the workspace has no such
+// project, or the project is in its workspace's trash, whose content nothing
+// that reads it finds.
 func Load(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID) (*Draft, error) {
 	q := queries.New(tx)
 	w, p := pgUUID(ws), pgUUID(projectID)
@@ -149,11 +152,11 @@ func (d *Draft) loadExpressions(ctx context.Context, q *queries.Queries, w, p pg
 		}
 		e := &Expression{Source: r.Source, Error: r.ErrorCode}
 		if r.Ast != nil {
-			ctx := expr.ContextScript
+			ectx := expr.ContextScript
 			if r.Field == "condition" {
-				ctx = expr.ContextCondition
+				ectx = expr.ContextCondition
 			}
-			if e.AST, err = expr.Decode(r.Ast, ctx); err != nil {
+			if e.AST, err = expr.Decode(r.Ast, ectx); err != nil {
 				return fmt.Errorf("serializer: read the AST of the %s of an expression's owner: %w", r.Field, err)
 			}
 		}

@@ -10,8 +10,10 @@
 
 -- name: SerializerProject :one
 -- SerializerProject returns the project's name, slug, and settings, whose
--- entry the serializer reads.
-SELECT name, slug, settings FROM project WHERE workspace_id = @workspace_id AND id = @id;
+-- entry the serializer reads, and no row if the workspace has no such
+-- project, or it is in the workspace's trash, as queries.Project, whose
+-- content the live views then need not leave out.
+SELECT name, slug, settings FROM project WHERE workspace_id = @workspace_id AND id = @id AND deleted_at IS NULL;
 
 -- name: SerializerBoards :many
 -- SerializerBoards returns the project's boards that are not in its trash,
@@ -43,13 +45,20 @@ SELECT id, board_id, from_node_id, from_output_id, to_node_id, "order" AS sort_k
 WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
 
 -- name: SerializerExpressions :many
--- SerializerExpressions returns the project's expressions, in the trash or
--- not, each with its owner and its field, its source, and its AST if it
--- compiles, or the code of its error if it does not; the serializer passes
--- over those of owners that it did not read.
-SELECT node_id, connection_id, branch_output_id, field, source, ast,
-    coalesce(error ->> 'code', '')::text AS error_code
-FROM expression WHERE workspace_id = @workspace_id AND project_id = @project_id ORDER BY id;
+-- SerializerExpressions returns the expressions of the project's nodes,
+-- connections, and branch outputs that are not in its trash, each with its
+-- owner and its field, its source, and its AST if it compiles, or the code of
+-- its error if it does not; the serializer passes over those of owners that
+-- it did not read all the same.
+SELECT e.node_id, e.connection_id, e.branch_output_id, e.field, e.source, e.ast,
+    coalesce(e.error ->> 'code', '')::text AS error_code
+FROM expression e
+WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id
+    AND (EXISTS (SELECT 1 FROM live_node n WHERE n.workspace_id = e.workspace_id AND n.id = e.node_id)
+        OR EXISTS (SELECT 1 FROM live_connection c WHERE c.workspace_id = e.workspace_id AND c.id = e.connection_id)
+        OR EXISTS (SELECT 1 FROM live_branch_output o WHERE o.workspace_id = e.workspace_id
+            AND o.id = e.branch_output_id))
+ORDER BY e.id;
 
 -- name: SerializerVariables :many
 -- SerializerVariables returns the project's variables that are not in its

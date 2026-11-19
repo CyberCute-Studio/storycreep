@@ -21,8 +21,10 @@
 // snapshot may, as an expression that does not compile or a reference to
 // what is in the trash, it stands in for in a draft's files as the
 // projection does, and lists (StandIn), and a release that would need a
-// stand-in it refuses to write (UnpublishableError), so that no release
-// holds an expression that failed to compile (FR-EXPR-03 AC1).
+// stand-in it refuses to write (UnpublishableError), as it does one of a
+// jumper without a target, which a draft's may lack and a release's may not,
+// so that no release holds an expression that failed to compile (FR-EXPR-03
+// AC1), nor what the reference runtime refuses of a release.
 package serializer
 
 import (
@@ -118,15 +120,17 @@ func Build(ctx context.Context, tx pgx.Tx, ws, projectID ids.UUID, s Stamp) (*Sn
 //
 // What d holds that no snapshot may it stands in for (StandIn), and lists in
 // Snapshot.StandIns, in a draft's files; a release's it refuses with an
-// *UnpublishableError, writing nothing. It fails, writing nothing, on a
-// draft that no project holds, as two boards of one slug, or a value that is
-// not of its declaration's type, and on a stamp whose release has no
-// version, or an ID that is no snapshot's, or whose generator is not named.
+// *UnpublishableError, writing nothing, and so a release of a jumper without
+// a target, which a draft's may lack (ReasonNone). It fails, writing
+// nothing, on a draft that no project holds, as two boards of one slug, or a
+// value that is not of its declaration's type, and on a stamp whose release
+// has no version, or an ID that is no snapshot's, whose generator is not
+// named, or that has no moment.
 func Serialize(d *Draft, s Stamp) (*Snapshot, error) {
 	if err := checkStamp(s); err != nil {
 		return nil, err
 	}
-	w := newWriter(d)
+	w := newWriter(d, s.Release != nil)
 	files, err := w.content()
 	if err != nil {
 		return nil, err
@@ -159,7 +163,10 @@ func Serialize(d *Draft, s Stamp) (*Snapshot, error) {
 
 // checkStamp returns an error for a stamp that would write a manifest that
 // the schema refuses: a generator without a name or a version, or a release
-// without a version, or whose ID is no snapshot's in its canonical spelling.
+// without a version, or whose ID is no snapshot's in its canonical spelling;
+// or one that would write a wrong one, of a moment that is not set, which
+// would say that the release was published, or the draft pulled, in the
+// year 1.
 func checkStamp(s Stamp) error {
 	switch r := s.Release; {
 	case s.Generator.Name == "" || s.Generator.Version == "":
@@ -169,6 +176,8 @@ func checkStamp(s Stamp) error {
 	case r != nil && !ids.IsCanonical(ids.Snapshot, r.ID):
 		return fmt.Errorf("serializer: the stamp's release has the ID %q, which is no snapshot's in its canonical "+
 			"spelling", r.ID)
+	case s.At.IsZero():
+		return errors.New("serializer: the stamp has no moment")
 	}
 	return nil
 }
@@ -198,8 +207,11 @@ func file(path string, v any) ([]byte, error) {
 // writer writes the files of a draft's snapshot, with what it reads of the
 // draft once, and what it stood in for as it wrote them.
 type writer struct {
-	d      *Draft
-	boards []*Board
+	d *Draft
+	// release is whether the snapshot is a release, of which a jumper
+	// without a target is listed as a stand-in too, which refuses it.
+	release bool
+	boards  []*Board
 	// boardIDs are the IDs of the snapshot's boards.
 	boardIDs map[string]bool
 	// nodesOf are each board's nodes, by ID, and nodes every node of the
@@ -219,8 +231,10 @@ type writer struct {
 	// the snapshot has, by ID.
 	types         map[string]*ComponentType
 	definitionsOf map[string][]*Attribute
-	components    []*Component
-	componentByID map[string]*Component
+	// definitionByID are the definitions of definitionsOf, by ID.
+	definitionByID map[string]*Attribute
+	components     []*Component
+	componentByID  map[string]*Component
 
 	standIns []StandIn
 	asts     []expr.Node
@@ -230,13 +244,14 @@ type writer struct {
 	entry    *published.Entry
 }
 
-// newWriter returns a writer of d, with what it reads of d sorted as the
-// files order it.
-func newWriter(d *Draft) *writer {
-	w := &writer{d: d, boardIDs: map[string]bool{}, nodesOf: map[string][]*Node{}, nodes: map[string]*Node{},
-		outputsOf: map[string][]*Output{}, connectionsOf: map[string][]*Connection{},
+// newWriter returns a writer of d, a release's if release, with what it
+// reads of d sorted as the files order it.
+func newWriter(d *Draft, release bool) *writer {
+	w := &writer{d: d, release: release, boardIDs: map[string]bool{}, nodesOf: map[string][]*Node{},
+		nodes: map[string]*Node{}, outputsOf: map[string][]*Output{}, connectionsOf: map[string][]*Connection{},
 		variableByID: map[string]*Variable{}, types: map[string]*ComponentType{},
-		definitionsOf: map[string][]*Attribute{}, componentByID: map[string]*Component{}, signals: map[string]bool{}}
+		definitionsOf: map[string][]*Attribute{}, definitionByID: map[string]*Attribute{},
+		componentByID: map[string]*Component{}, signals: map[string]bool{}}
 	for i := range d.Boards {
 		w.boards = append(w.boards, &d.Boards[i])
 		w.boardIDs[d.Boards[i].ID] = true
@@ -280,6 +295,7 @@ func newWriter(d *Draft) *writer {
 		a := &d.Attributes[i]
 		if _, ok := w.types[a.ComponentType]; ok {
 			w.definitionsOf[a.ComponentType] = append(w.definitionsOf[a.ComponentType], a)
+			w.definitionByID[a.ID] = a
 		}
 	}
 	for _, defs := range w.definitionsOf {
@@ -297,16 +313,12 @@ func newWriter(d *Draft) *writer {
 }
 
 // compareChildren orders two siblings by their keys, a and b, as their bytes
-// compare, and those with the same key by their IDs without their prefixes,
-// as package orderkey orders them, and the database's reads by order and id.
+// compare, and those with the same key by their IDs, as package orderkey
+// orders them, and the database's reads by order and id: siblings are of
+// one kind, whose IDs share their prefix, so that they compare as their
+// bodies do.
 func compareChildren(a, aID, b, bID string) int {
-	return cmp.Or(strings.Compare(a, b), strings.Compare(unprefixed(aID), unprefixed(bID)))
-}
-
-// unprefixed returns an ID without its prefix and its underscore.
-func unprefixed(id string) string {
-	_, body, _ := strings.Cut(id, "_")
-	return body
+	return cmp.Or(strings.Compare(a, b), strings.Compare(aID, bID))
 }
 
 // content returns the snapshot's files but the manifest, each laid out as
@@ -461,22 +473,26 @@ func (w *writer) node(b *Board, n *Node) (published.Node, map[string]bool) {
 		return br, ports
 	case published.NodeJumper:
 		j := &published.Jumper{ID: n.ID, Position: pos, Title: n.Title}
-		if t := n.TargetNode; t != "" {
-			reason := ""
-			switch to := w.nodes[t]; {
-			case to == nil:
-				reason = ReasonGone
-			case to.Type == published.NodeJumper:
-				reason = ReasonJumper
-			case n.TargetBoard != "" && n.TargetBoard != to.Board:
-				reason = ReasonBoard
-			default:
-				j.Target = &published.JumperTarget{BoardID: to.Board, NodeID: to.ID}
+		reason := ""
+		switch t, to := n.TargetNode, w.nodes[n.TargetNode]; {
+		case t == "":
+			// A jumper without a target, which a draft's may lack, and a
+			// release's may not (§7.8), as the reference runtime refuses it.
+			if w.release {
+				reason = ReasonNone
 			}
-			if reason != "" {
-				w.standIns = append(w.standIns, StandIn{Kind: StandInTarget, Board: b.ID, Node: n.ID, Entity: n.ID,
-					Ref: t, Reason: reason})
-			}
+		case to == nil:
+			reason = ReasonGone
+		case to.Type == published.NodeJumper:
+			reason = ReasonJumper
+		case n.TargetBoard != "" && n.TargetBoard != to.Board:
+			reason = ReasonBoard
+		default:
+			j.Target = &published.JumperTarget{BoardID: to.Board, NodeID: to.ID}
+		}
+		if reason != "" {
+			w.standIns = append(w.standIns, StandIn{Kind: StandInTarget, Board: b.ID, Node: n.ID, Entity: n.ID,
+				Ref: n.TargetNode, Reason: reason})
 		}
 		return j, map[string]bool{}
 	}
@@ -631,26 +647,51 @@ func (w *writer) segments(doc *richtext.Doc, board string, where at) richtext.Se
 	if doc == nil {
 		return nil
 	}
-	dropped := 0
-	keep := func(in richtext.Inline) bool {
-		ref, reason := w.unreadable(in, board)
-		if reason == "" {
-			return true
-		}
-		w.standIns = append(w.standIns, StandIn{Kind: StandInReference, Board: board, Node: where.node,
-			Entity: where.entity, Field: where.field, Ref: ref, Reason: reason})
-		dropped++
-		return false
+	// The document is copied only where it holds what is left out, as few
+	// texts do.
+	unreadable := func(in richtext.Inline) bool {
+		_, reason := w.unreadable(in, board)
+		return reason != ""
 	}
-	kept := richtext.Doc{Blocks: keepInlines(doc.Blocks, keep)}
-	if dropped == 0 {
-		kept = *doc
+	if anyInline(doc.Blocks, unreadable) {
+		doc = &richtext.Doc{Blocks: keepInlines(doc.Blocks, func(in richtext.Inline) bool {
+			ref, reason := w.unreadable(in, board)
+			if reason == "" {
+				return true
+			}
+			w.standIns = append(w.standIns, StandIn{Kind: StandInReference, Board: board, Node: where.node,
+				Entity: where.entity, Field: where.field, Ref: ref, Reason: reason})
+			return false
+		})}
 	}
-	segs := kept.Segments(w)
+	segs := doc.Segments(w)
 	if len(segs) == 0 {
 		return nil
 	}
 	return segs
+}
+
+// anyInline returns whether f holds of an inline node of blocks, those of
+// their lists' items among them, passing over a nil block.
+func anyInline(blocks []richtext.Block, f func(richtext.Inline) bool) bool {
+	for _, b := range blocks {
+		switch b := b.(type) {
+		case *richtext.Paragraph:
+			if b != nil && slices.ContainsFunc(b.Inlines, f) {
+				return true
+			}
+		case *richtext.List:
+			if b == nil {
+				continue
+			}
+			for _, item := range b.Items {
+				if anyInline(item.Blocks, f) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // keepInlines returns blocks with only the inline nodes that keep tells, in
@@ -721,16 +762,11 @@ func (w *writer) unreadable(in richtext.Inline, board string) (ref, reason strin
 // definition returns the attribute definition attribute of the type of the
 // component of the snapshot ref, or nil if there is none.
 func (w *writer) definition(ref, attribute string) *Attribute {
-	c := w.componentByID[ref]
-	if c == nil {
+	c, d := w.componentByID[ref], w.definitionByID[attribute]
+	if c == nil || d == nil || d.ComponentType != c.ComponentType {
 		return nil
 	}
-	for _, d := range w.definitionsOf[c.ComponentType] {
-		if d.ID == attribute {
-			return d
-		}
-	}
-	return nil
+	return d
 }
 
 // Value returns the name of the value that a reference of a text reads, as

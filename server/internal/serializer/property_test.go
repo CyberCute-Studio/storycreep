@@ -22,12 +22,15 @@ import (
 // often it is serialized, as Go orders a map's keys at random each time; that
 // each file is laid out as Layout lays it out, and reads back with
 // published.Decode; that the reference runtime loads the snapshot; and that a
-// release is refused exactly when a draft's files stand in for something.
+// release is refused exactly when a draft's files stand in for something, or
+// the draft has a jumper without a target, which a draft's may lack and a
+// release's may not, and that the reference runtime loads a release that is
+// not refused.
 //
 // Verifies: FR-SNAP-03/AC1
 func TestDeterministic(t *testing.T) {
 	sch := newSchemas(t)
-	standIns := 0
+	standIns, untargeted := 0, 0
 	for seed := range uint64(300) {
 		r := rand.New(rand.NewPCG(seed, 76))
 		d := randomDraft(t, r)
@@ -60,20 +63,41 @@ func TestDeterministic(t *testing.T) {
 		} else if _, err := loadSnapshot(first.Files); err != nil {
 			t.Fatalf("seed %d: the reference runtime does not load the snapshot: %v", seed, err)
 		}
-		_, err = serializer.Serialize(d, goldenStamp)
+		// The draft's jumpers without a target, which a release refuses.
+		var none []serializer.StandIn
+		for _, n := range d.Nodes {
+			if n.Type == published.NodeJumper && n.TargetNode == "" {
+				none = append(none, serializer.StandIn{Kind: serializer.StandInTarget, Board: n.Board, Node: n.ID,
+					Entity: n.ID, Reason: serializer.ReasonNone})
+			}
+		}
+		release, err := serializer.Serialize(d, goldenStamp)
 		var unpublishable *serializer.UnpublishableError
-		switch {
-		case len(first.StandIns) == 0 && err != nil:
+		switch refused := len(first.StandIns) > 0 || len(none) > 0; {
+		case !refused && err != nil:
 			t.Fatalf("seed %d: the release is refused: %v", seed, err)
-		case len(first.StandIns) > 0 && !errors.As(err, &unpublishable):
+		case !refused:
+			if _, err := loadSnapshot(release.Files); err != nil {
+				t.Fatalf("seed %d: the reference runtime does not load the release: %v", seed, err)
+			}
+		case !errors.As(err, &unpublishable):
 			t.Fatalf("seed %d: the release is %v, want an *UnpublishableError", seed, err)
+		case len(unpublishable.StandIns) != len(first.StandIns)+len(none):
+			t.Fatalf("seed %d: the release's refusal lists %v, want the draft's stand-ins %v and its jumpers "+
+				"without a target %v", seed, unpublishable.StandIns, first.StandIns, none)
 		}
 		if len(first.StandIns) > 0 {
 			standIns++
 		}
+		if len(none) > 0 {
+			untargeted++
+		}
 	}
 	if standIns == 0 || standIns == 300 {
 		t.Errorf("%d of the drafts need a stand-in, which tests only one side of the property", standIns)
+	}
+	if untargeted == 0 {
+		t.Error("no draft has a jumper without a target, which a release refuses")
 	}
 }
 

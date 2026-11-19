@@ -55,6 +55,7 @@ type env struct {
 	project   ids.UUID
 	owner     ids.UUID
 	pipeline  *commands.Pipeline
+	projects  *project.Service
 }
 
 // newEnv returns a new project of a new database, named name.
@@ -97,7 +98,7 @@ func newEnv(t *testing.T, name string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &env{db: db, workspace: ws, project: projectID, owner: owner, pipeline: pipeline}
+	return &env{db: db, workspace: ws, project: projectID, owner: owner, pipeline: pipeline, projects: projects}
 }
 
 // apply applies one batch of the commands to the project as its owner, each
@@ -495,7 +496,8 @@ func TestBranchOutputOrder(t *testing.T) {
 // its file, its nodes, and its variables; and that an expression that does
 // not compile once a variable that it reads is forced out is stood in for
 // in the draft's files, as false, and refused in a release's, so that no
-// release holds an expression that did not compile.
+// release holds an expression that did not compile; and that a project in
+// its workspace's trash is not found at all.
 //
 // Verifies: FR-EXPR-03/AC1
 func TestBuildLeavesTheTrashOut(t *testing.T) {
@@ -550,5 +552,11 @@ func TestBuildLeavesTheTrashOut(t *testing.T) {
 	}
 	if !slices.Equal(s.StandIns, unpublishable.StandIns) {
 		t.Errorf("the draft stood in for %v, want %v", s.StandIns, unpublishable.StandIns)
+	}
+	if err := e.projects.Delete(context.Background(), commands.Actor{UserID: e.owner}, e.project); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.build(t, goldenDraftStamp); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("the project in its workspace's trash is built as %v, want not found", err)
 	}
 }

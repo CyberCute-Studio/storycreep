@@ -290,9 +290,15 @@ func (q *Queries) SerializerConnections(ctx context.Context, arg SerializerConne
 }
 
 const serializerExpressions = `-- name: SerializerExpressions :many
-SELECT node_id, connection_id, branch_output_id, field, source, ast,
-    coalesce(error ->> 'code', '')::text AS error_code
-FROM expression WHERE workspace_id = $1 AND project_id = $2 ORDER BY id
+SELECT e.node_id, e.connection_id, e.branch_output_id, e.field, e.source, e.ast,
+    coalesce(e.error ->> 'code', '')::text AS error_code
+FROM expression e
+WHERE e.workspace_id = $1 AND e.project_id = $2
+    AND (EXISTS (SELECT 1 FROM live_node n WHERE n.workspace_id = e.workspace_id AND n.id = e.node_id)
+        OR EXISTS (SELECT 1 FROM live_connection c WHERE c.workspace_id = e.workspace_id AND c.id = e.connection_id)
+        OR EXISTS (SELECT 1 FROM live_branch_output o WHERE o.workspace_id = e.workspace_id
+            AND o.id = e.branch_output_id))
+ORDER BY e.id
 `
 
 type SerializerExpressionsParams struct {
@@ -310,10 +316,11 @@ type SerializerExpressionsRow struct {
 	ErrorCode      string
 }
 
-// SerializerExpressions returns the project's expressions, in the trash or
-// not, each with its owner and its field, its source, and its AST if it
-// compiles, or the code of its error if it does not; the serializer passes
-// over those of owners that it did not read.
+// SerializerExpressions returns the expressions of the project's nodes,
+// connections, and branch outputs that are not in its trash, each with its
+// owner and its field, its source, and its AST if it compiles, or the code of
+// its error if it does not; the serializer passes over those of owners that
+// it did not read all the same.
 func (q *Queries) SerializerExpressions(ctx context.Context, arg SerializerExpressionsParams) ([]SerializerExpressionsRow, error) {
 	rows, err := q.db.Query(ctx, serializerExpressions, arg.WorkspaceID, arg.ProjectID)
 	if err != nil {
@@ -455,7 +462,7 @@ func (q *Queries) SerializerOutputs(ctx context.Context, arg SerializerOutputsPa
 
 const serializerProject = `-- name: SerializerProject :one
 
-SELECT name, slug, settings FROM project WHERE workspace_id = $1 AND id = $2
+SELECT name, slug, settings FROM project WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL
 `
 
 type SerializerProjectParams struct {
@@ -479,7 +486,9 @@ type SerializerProjectRow struct {
 // order of their IDs, which the serializer does not rely on: it orders what
 // it writes itself.
 // SerializerProject returns the project's name, slug, and settings, whose
-// entry the serializer reads.
+// entry the serializer reads, and no row if the workspace has no such
+// project, or it is in the workspace's trash, as queries.Project, whose
+// content the live views then need not leave out.
 func (q *Queries) SerializerProject(ctx context.Context, arg SerializerProjectParams) (SerializerProjectRow, error) {
 	row := q.db.QueryRow(ctx, serializerProject, arg.WorkspaceID, arg.ID)
 	var i SerializerProjectRow
