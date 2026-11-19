@@ -849,3 +849,68 @@ describe("createRealtime", () => {
     expect(g.sockets).toHaveLength(1);
   });
 });
+
+describe("the listeners of the account's notifications", () => {
+  it("connect as the first listens, and are told of each message that the notifications changed, and of each socket that opens, which no store hears", () => {
+    const h = setup();
+    const heard: string[] = [];
+    h.realtime.listen(() => heard.push("first"));
+    expect(h.sockets).toHaveLength(1);
+    h.realtime.listen(() => heard.push("second"));
+    expect(h.sockets).toHaveLength(1);
+    const a = fakeStore();
+    h.realtime.subscribe("prj_a", a);
+    h.socket().open();
+    // A socket that opens may have missed a change while none was open.
+    expect(heard).toEqual(["first", "second"]);
+    h.socket().deliver({ type: "notifications" });
+    expect(heard).toEqual(["first", "second", "first", "second"]);
+    expect(a.heard).toEqual([]);
+    expect(h.log.entries()).toEqual([]);
+    // A socket lost and opened again tells them again.
+    h.socket().drop();
+    vi.advanceTimersByTime(backoffMax);
+    expect(h.sockets).toHaveLength(2);
+    h.socket().open();
+    expect(heard).toHaveLength(6);
+  });
+
+  it("keep the socket open while one listens, though no project is subscribed to, and close it five seconds after the last stops", () => {
+    const h = setup();
+    const stopFirst = h.realtime.listen(() => {});
+    const stopSecond = h.realtime.listen(() => {});
+    h.socket().open();
+    const stopStore = h.realtime.subscribe("prj_a", fakeStore());
+    stopStore();
+    vi.advanceTimersByTime(lingerTimeout * 2);
+    expect(h.socket().closed).toBe(false);
+    stopFirst();
+    // Stopping again changes nothing.
+    stopFirst();
+    vi.advanceTimersByTime(lingerTimeout * 2);
+    expect(h.socket().closed).toBe(false);
+    // A socket lost while one listens connects again.
+    h.socket().drop();
+    vi.advanceTimersByTime(backoffMax);
+    expect(h.sockets).toHaveLength(2);
+    h.socket().open();
+    stopSecond();
+    vi.advanceTimersByTime(lingerTimeout - 1);
+    expect(h.socket().closed).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(h.socket().closed).toBe(true);
+    vi.advanceTimersByTime(backoffMax * 4);
+    expect(h.sockets).toHaveLength(2);
+  });
+
+  it("tells no listener that has stopped", () => {
+    const h = setup();
+    const heard: string[] = [];
+    const stop = h.realtime.listen(() => heard.push("stopped"));
+    h.realtime.listen(() => heard.push("listening"));
+    stop();
+    h.socket().open();
+    h.socket().deliver({ type: "notifications" });
+    expect(heard).toEqual(["listening", "listening"]);
+  });
+});

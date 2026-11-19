@@ -6,6 +6,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRouter, parseSearchWith } from "@tanstack/react-router";
 import type { i18n as I18n } from "i18next";
 import type { Documents } from "./document/documents";
+import type { Realtime } from "./document/realtime";
 import { routeTree } from "./routeTree.gen";
 import { focusContentIfLost } from "./shell/focus";
 
@@ -26,6 +27,12 @@ export interface RouterContext {
    * read its content from, as its loaders do before they show.
    */
   documents: Documents;
+  /**
+   * The page's real-time channel (PRD FR-RT-01), which the shell listens to
+   * the account's notifications on while the page is signed in
+   * (FR-COMMENT-02), or none, as in a test that gives none.
+   */
+  realtime?: Realtime;
 }
 
 /**

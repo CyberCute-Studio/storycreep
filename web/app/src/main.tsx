@@ -67,6 +67,7 @@ const router = createAppRouter({
   i18n,
   checkSession: () => session.check(),
   documents,
+  realtime,
 });
 // A page whose session has ended elsewhere, or that another tab signed in
 // to another account, or to one, shows itself again, through the guards of

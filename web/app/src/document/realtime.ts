@@ -1,14 +1,18 @@
 // The real-time channel's client (PRD FR-RT-01, FR-RT-02): one WebSocket of
 // GET /api/v1/ws for the page, over which each project that a page shows is
 // subscribed to, from the seq of the latest operation that its store has,
-// and sent the operations that it missed, and then each that commits. The
-// socket is a notification path, never the source of truth (FR-RT-01 AC3):
-// a store that is told to reload, or that the socket cannot reach, reads
-// the project from the API.
+// and sent the operations that it missed, and then each that commits, and
+// over which the account's notifications tell that they changed
+// (FR-COMMENT-02, plan item 75), which its listeners read again. The socket
+// is a notification path, never the source of truth (FR-RT-01 AC3): a store
+// that is told to reload, or that the socket cannot reach, reads the project
+// from the API, and a listener is told as each socket opens too, since it
+// may have missed a change while none was open.
 //
-// It connects once a project is subscribed to, and again, once it is lost,
-// with exponential backoff and full jitter, at once when the browser says
-// that its connection is back. The server sends a heartbeat every 25
+// It connects once a project is subscribed to, or a listener listens, as the
+// shell does on every page of a signed-in account, and again, once it is
+// lost, with exponential backoff and full jitter, at once when the browser
+// says that its connection is back. The server sends a heartbeat every 25
 // seconds, so a socket that has heard nothing for a minute is taken for
 // lost. A socket closed with 4001, whose session has ended or been given a
 // new secret, connects again only once the page has asked for its session,
@@ -71,6 +75,16 @@ export interface Realtime {
    */
   subscribe(projectId: string, subscriber: Subscriber): () => void;
   /**
+   * Listens to the account's notifications, until what it returns is
+   * called: listener is called on each message that tells that they
+   * changed, {"type": "notifications"}, which the server also sends each
+   * socket of a session as its own listener of the database starts again,
+   * and each time a socket opens, as it may have missed one meanwhile, so
+   * that it reads them again. The socket stays open while a listener
+   * listens, as while a project is subscribed to.
+   */
+  listen(listener: () => void): () => void;
+  /**
    * Closes the socket at once, and opens one anew for the projects that are
    * subscribed to, then or later, as once the page's session is of another
    * account, or of none: a socket's subscriptions are of the session whose
@@ -111,9 +125,9 @@ export const backoffMax = 30_000;
 export const silenceTimeout = 60_000;
 
 /**
- * How long a socket that no project needs stays open, in milliseconds, so
- * that going from one project's pages to another's does not close it and
- * open another.
+ * How long a socket that no project or listener needs stays open, in
+ * milliseconds, so that going from one project's pages to another's does
+ * not close it and open another.
  */
 export const lingerTimeout = 5_000;
 
@@ -168,6 +182,15 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       new WebSocket(url));
   const random = options.random ?? Math.random;
   const subscribers = new Map<string, Subscriber>();
+  const listeners = new Set<() => void>();
+  // Whether anything needs the socket: a project subscribed to, or a
+  // listener of the account's notifications.
+  const needed = () => subscribers.size > 0 || listeners.size > 0;
+  const tell = () => {
+    for (const listener of [...listeners]) {
+      listener();
+    }
+  };
   // The projects whose subscription the socket holds now.
   const holding = new Set<string>();
   let socket: SocketLike | undefined;
@@ -230,7 +253,7 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       return;
     }
     drop(s);
-    if (closed || subscribers.size === 0) {
+    if (closed || !needed()) {
       return;
     }
     failures++;
@@ -259,7 +282,7 @@ export function createRealtime(options: RealtimeOptions): Realtime {
   const start = () => {
     clearTimeout(retry);
     retry = undefined;
-    if (closed || socket !== undefined || subscribers.size === 0) {
+    if (closed || socket !== undefined || !needed()) {
       return;
     }
     let s: SocketLike;
@@ -278,6 +301,9 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       for (const projectId of subscribers.keys()) {
         subscribeTo(projectId);
       }
+      // The account's notifications may have changed while no socket was
+      // open, which no message told of.
+      tell();
     };
     s.onmessage = (event) => {
       heard();
@@ -307,8 +333,9 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       return;
     }
     if (message.type === "notifications") {
-      // The account's notifications changed, which no project's subscriber
-      // reads.
+      // The account's notifications changed, which its listeners read
+      // again, and no project's subscriber reads.
+      tell();
       return;
     }
     if (message.type === "error") {
@@ -391,17 +418,36 @@ export function createRealtime(options: RealtimeOptions): Realtime {
     }
   };
   options.window?.addEventListener("online", online);
+  /** Opens a socket for what now needs one, unless one is open or waits to connect again. */
+  const needs = () => {
+    clearTimeout(linger);
+    if (socket === undefined && retry === undefined) {
+      start();
+    }
+  };
+  /** Closes the socket a while after nothing needs it, unless something needs it again meanwhile. */
+  const released = () => {
+    if (needed()) {
+      return;
+    }
+    clearTimeout(linger);
+    linger = setTimeout(() => {
+      if (!needed()) {
+        clearTimeout(retry);
+        retry = undefined;
+        lost(socket);
+      }
+    }, lingerTimeout);
+  };
 
   return {
     subscribe(projectId, subscriber) {
-      clearTimeout(linger);
       subscribers.set(projectId, subscriber);
       holding.delete(projectId);
       if (socket === undefined) {
-        if (retry === undefined) {
-          start();
-        }
+        needs();
       } else {
+        clearTimeout(linger);
         subscribeTo(projectId);
       }
       return () => {
@@ -413,15 +459,17 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         clearTimeout(resubscribes.get(projectId));
         resubscribes.delete(projectId);
         send({ type: "unsubscribe", project_id: projectId });
-        if (subscribers.size === 0) {
-          clearTimeout(linger);
-          linger = setTimeout(() => {
-            if (subscribers.size === 0) {
-              clearTimeout(retry);
-              retry = undefined;
-              lost(socket);
-            }
-          }, lingerTimeout);
+        released();
+      };
+    },
+    listen(listener) {
+      // A listener of its own, though it is the same function as another's.
+      const own = () => listener();
+      listeners.add(own);
+      needs();
+      return () => {
+        if (listeners.delete(own)) {
+          released();
         }
       };
     },
@@ -446,6 +494,7 @@ export function createRealtime(options: RealtimeOptions): Realtime {
       resubscribes.clear();
       lost(socket);
       subscribers.clear();
+      listeners.clear();
     },
   };
 }

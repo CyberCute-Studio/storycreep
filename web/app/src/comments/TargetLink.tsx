@@ -1,7 +1,8 @@
 // The link to where the threads of a target of comments show (PRD
 // FR-COMMENT-01, plan item 74), which the project's list of comments names
-// each thread by, and the search each comment that it finds, and what names
-// the node of a thread's target in both.
+// each thread by, the search each comment that it finds, and the account's
+// notifications each comment that mentions it (FR-COMMENT-02, plan item
+// 75), and what names the node of a thread's target in the first two.
 
 import type { CommentBody } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
@@ -35,17 +36,23 @@ export interface ThreadPlace {
  * it leaves, which the canvas selects, on its board's canvas, with its
  * inspector at its comments; a board's own on its page, at them; and a
  * variable's in its panel. Of one whose board or node is not known, it is
- * children alone.
+ * children alone. onFollow is called as the link is followed, as a
+ * notification's marks it read, and describedBy names what describes it.
  */
 export function ThreadTargetLink({
   projectId,
   place,
+  onFollow,
+  describedBy,
   children,
 }: {
   projectId: string;
   place: ThreadPlace;
+  onFollow?: () => void;
+  describedBy?: string;
   children: ReactNode;
 }) {
+  const followed = { onClick: onFollow, "aria-describedby": describedBy };
   switch (place.target_type) {
     case "node":
     case "connection":
@@ -63,6 +70,7 @@ export function ThreadTargetLink({
             comments: true,
           }}
           className={textLink}
+          {...followed}
         >
           {children}
         </Link>
@@ -76,6 +84,7 @@ export function ThreadTargetLink({
           params={{ projectId, boardId: place.board_id }}
           search={{ comments: true }}
           className={textLink}
+          {...followed}
         >
           {children}
         </Link>
@@ -87,6 +96,7 @@ export function ThreadTargetLink({
           params={{ projectId }}
           search={{ variable: place.target_id }}
           className={textLink}
+          {...followed}
         >
           {children}
         </Link>
