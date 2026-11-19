@@ -54,11 +54,15 @@ export function readNotificationsAgain(client: QueryClient): Promise<void> {
 /**
  * Shows read what the server has answered that it marked read: the
  * notification of id, or, with through, it and every one that the list
- * holds after it, older, in the list, with the count of the unread ones less
- * those, rather than reading them again, which the server's message of the
- * change on the real-time channel, which this page's socket hears too, has
- * the page do (useNotificationListener): reading them here as well would
- * read them twice. Of a list that does not hold id, they are read again.
+ * holds after it, older, in the list, rather than reading the list again,
+ * which the server's message of the change on the real-time channel, which
+ * this page's socket hears too, has the page do (useNotificationListener):
+ * reading it here as well would read it twice. The count of the unread ones
+ * is left to that message, which reads it again: a count less those might be
+ * less them twice, as one that the message had read again after the server
+ * marked them, before its answer came, or one that another session's mark
+ * of them had read again while the list still showed them unread, of which
+ * no message follows. Of a list that does not hold id, they are read again.
  */
 export function markedRead(
   client: QueryClient,
@@ -91,9 +95,6 @@ export function markedRead(
       ),
     })),
   });
-  client.setQueryData(unreadQuery.queryKey, (unread) =>
-    unread === undefined ? undefined : Math.max(0, unread - marked.size),
-  );
 }
 
 /** Marks the notification of id read, as the account's session, whose CSRF token it sends. */

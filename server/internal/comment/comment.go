@@ -71,6 +71,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
@@ -576,9 +577,10 @@ func (s *Service) Members(ctx context.Context, actor commands.Actor, projectID, 
 
 // withMentions sets the mentions of each of bodies that has a body to the
 // members that the body mentions (CommentBody.Mentions), with their display
-// names, read in one query in q's transaction, as they are now.
+// names, read in one query in q's transaction, as they are now, as a
+// notification's preview reads them (notification.MemberNames).
 func withMentions(ctx context.Context, q *queries.Queries, bodies []CommentBody) error {
-	var users []pgtype.UUID
+	var users []string
 	seen := map[string]bool{}
 	for i := range bodies {
 		if bodies[i].Body == nil {
@@ -593,22 +595,16 @@ func withMentions(ctx context.Context, q *queries.Queries, bodies []CommentBody)
 			bodies[i].Mentions = append(bodies[i].Mentions, CommentMention{ID: m.User})
 			if !seen[m.User] {
 				seen[m.User] = true
-				// Parse took the ID for a user's.
-				u, _ := ids.Decode(ids.User, m.User)
-				users = append(users, nullUUID(u))
+				users = append(users, m.User)
 			}
 		}
 	}
 	if len(users) == 0 {
 		return nil
 	}
-	rows, err := q.MentionedUsers(ctx, users)
+	names, err := notification.MemberNames(ctx, q, users)
 	if err != nil {
-		return fmt.Errorf("comment: read the names of the mentioned members: %w", err)
-	}
-	names := make(map[string]string, len(rows))
-	for _, r := range rows {
-		names[ids.Encode(ids.User, r.ID.Bytes)] = r.DisplayName
+		return err
 	}
 	for i := range bodies {
 		for j, m := range bodies[i].Mentions {

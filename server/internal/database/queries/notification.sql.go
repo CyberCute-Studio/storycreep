@@ -137,9 +137,10 @@ SELECT n.id, n.project_id, n.comment_id, n.actor_id, n.created_at, n.read_at, c.
     t.target_type::text AS target_type, t.target_id::uuid AS target_id, t.board_id AS target_board_id,
     t.node_id AS target_node_id, p.name AS project_name, a.display_name AS actor_name
 FROM notification n
-JOIN live_comment c ON c.workspace_id = n.workspace_id AND c.project_id = n.project_id AND c.id = n.comment_id
+JOIN comment c ON c.workspace_id = n.workspace_id AND c.project_id = n.project_id AND c.id = n.comment_id
+    AND c.deleted_at IS NULL
 JOIN comment_thread_target t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id
-    AND t.thread_id = c.thread_id
+    AND t.thread_id = c.thread_id AND t.target_live
 JOIN project p ON p.workspace_id = n.workspace_id AND p.id = n.project_id AND p.deleted_at IS NULL
 JOIN membership m ON m.workspace_id = n.workspace_id AND m.user_id = n.user_id
 LEFT JOIN project_grant g ON g.workspace_id = m.workspace_id AND g.membership_id = m.id
@@ -187,7 +188,10 @@ type NotificationsRow struct {
 // comment's thread, body, and thread's target, with the target's board and
 // node, as comment_thread_target reads them, its project's name, and the
 // display name of its actor, who mentioned the user, unless their account is
-// deleted.
+// deleted. Its comment is shown as live_comment holds it, neither deleted nor
+// of a thread whose target is not live, which it reads as the view does,
+// through the one join of comment_thread_target that the target's columns
+// come from too, rather than through the view, which would join it again.
 func (q *Queries) Notifications(ctx context.Context, arg NotificationsParams) ([]NotificationsRow, error) {
 	rows, err := q.db.Query(ctx, notifications,
 		arg.WorkspaceID,

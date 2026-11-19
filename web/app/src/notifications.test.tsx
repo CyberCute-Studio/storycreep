@@ -156,6 +156,7 @@ describe("the header's notifications", () => {
 describe("the page of the notifications", () => {
   it("lists them newest first, each with who mentioned the account, where, and when, the unread ones said so in words, and marks one read by its button", async () => {
     const user = userEvent.setup();
+    const realtime = fakeRealtime();
     const server = notificationServer([
       notification("ntf_2"),
       notification("ntf_1", {
@@ -168,8 +169,14 @@ describe("the page of the notifications", () => {
         preview: "Is gold ever spent, @Jo?",
       }),
     ]);
-    renderApp("/notifications", { session: testSession });
+    renderApp("/notifications", { session: testSession, realtime });
     const list = await screen.findByRole("list", { name: "Notifications" });
+    const banner = screen.getByRole("banner");
+    expect(
+      await within(banner).findByRole("link", {
+        name: "Notifications 1 unread",
+      }),
+    ).toBeDefined();
     const [newest, older] = within(list).getAllByRole("listitem");
     expect(within(newest).getByText("Unread")).toBeDefined();
     expect(
@@ -214,15 +221,18 @@ describe("the page of the notifications", () => {
     expect(
       within(list).queryByRole("button", { name: "Mark as read" }),
     ).toBeNull();
-    // The header's count follows, and neither is read again, as the
-    // server's message of the change has them read.
-    expect(
-      await within(screen.getByRole("banner")).findByRole("link", {
-        name: "Notifications",
-      }),
-    ).toBeDefined();
+    // Neither is read again, as the server's message of the change has them
+    // read, and the header's count is the server's, not one that the page
+    // takes the marked one from, which the message reads again.
     expect(server.callsOf("listNotifications")).toHaveLength(reads);
     expect(server.callsOf("countUnreadNotifications")).toHaveLength(counts);
+    expect(
+      within(banner).getByRole("link", { name: "Notifications 1 unread" }),
+    ).toBeDefined();
+    act(() => realtime.notify());
+    expect(
+      await within(banner).findByRole("link", { name: "Notifications" }),
+    ).toBeDefined();
   });
 
   it("marks every one read up to the newest that it lists, so that one that came after stays unread", async () => {
@@ -247,16 +257,16 @@ describe("the page of the notifications", () => {
     expect(
       await screen.findByText("Every notification listed is marked as read."),
     ).toBeDefined();
-    // Those listed show read, without being read again.
+    // Those listed show read, without being read again; the header's count
+    // is the server's, which the message reads again.
     expect(within(list).queryByText("Unread")).toBeNull();
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const banner = screen.getByRole("banner");
     expect(
-      within(screen.getByRole("banner")).getByRole("link", {
-        name: "Notifications",
-      }),
+      within(banner).getByRole("link", { name: "Notifications 2 unread" }),
     ).toBeDefined();
     // Read again, as the server's message of the change has them, the list
-    // shows the one that came after, unread alone.
+    // shows the one that came after, unread alone, and the count it alone.
     act(() => realtime.notify());
     await waitFor(() =>
       expect(within(list).getAllByRole("listitem")).toHaveLength(3),
@@ -265,6 +275,11 @@ describe("the page of the notifications", () => {
     expect(within(list).getAllByText("Unread")).toEqual([
       within(came).getByText("Unread"),
     ]);
+    expect(
+      await within(banner).findByRole("link", {
+        name: "Notifications 1 unread",
+      }),
+    ).toBeDefined();
   });
 
   it("marks one read as its link is followed", async () => {

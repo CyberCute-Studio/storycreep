@@ -176,13 +176,11 @@ func Register(r *commands.Registry) {
 				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID})); err != nil {
 				return err
 			}
-			if err := notification.Mentioned(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes,
-				tx.Actor().UserID, added); err != nil {
-				return err
-			}
 			// The preview of each of the comment's notifications is of its body
-			// as it is now, which its recipients' sessions are told of.
-			return notification.CommentChanged(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes)
+			// as it is now, which its recipients' sessions are told of, those
+			// whom it mentions anew too.
+			return notification.CommentEdited(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes,
+				tx.Actor().UserID, added)
 		},
 	})
 

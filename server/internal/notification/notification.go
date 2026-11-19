@@ -5,16 +5,16 @@
 // thread's resolution, notifies nobody.
 //
 // A comment's commands make the notifications (package comment), in the
-// batch's transaction, through Mentioned: one of the comment and each member
-// whom it first mentions, as it is posted or an edit adds the mention, never
-// twice, and never its author, who mentions themselves. Each change of an
-// account's notifications, a new one, an edit of a comment that has some,
-// which changes their preview, a deletion or a restoration of one, which
-// hides them or shows them again, and a change of their read state, sends a
-// notification of PostgreSQL's on Channel, of the account, once its
-// transaction commits, which the real-time hub of every server process hears
-// (package realtime), and tells the account's sessions' sockets of, which
-// read the notifications again (FR-COMMENT-02 AC2).
+// batch's transaction, through Mentioned, and CommentEdited of an edit: one
+// of the comment and each member whom it first mentions, as it is posted or
+// an edit adds the mention, never twice, and never its author, who mentions
+// themselves. Each change of an account's notifications, a new one, an edit
+// of a comment that has some, which changes their preview, a deletion or a
+// restoration of one, which hides them or shows them again, and a change of
+// their read state, sends a notification of PostgreSQL's on Channel, of the
+// account, once its transaction commits, which the real-time hub of every
+// server process hears (package realtime), and tells the account's sessions'
+// sockets of, which read the notifications again (FR-COMMENT-02 AC2).
 //
 // The centre is one per account, across every workspace that the account is
 // a member of, guests' included (Service): a workspace's rows are read in a
@@ -78,24 +78,53 @@ var ErrNotFound = errors.New("notification: the account has no such notification
 // commands have checked that each may be mentioned (package comment).
 func Mentioned(ctx context.Context, db queries.DBTX, workspaceID, projectID, commentID, actor ids.UUID,
 	users []ids.UUID) error {
+	q := queries.New(db)
+	notified, err := insertMentions(ctx, q, workspaceID, projectID, commentID, actor, users)
+	if err != nil {
+		return err
+	}
+	return notify(ctx, q, notified)
+}
+
+// CommentEdited notifies each of added, the members whom an edit of the
+// comment commentID of the project projectID, of the workspace workspaceID,
+// mentions anew, of the mention by actor, as Mentioned does, in db, the
+// batch's transaction, and tells each user whom the comment has notified,
+// those whom it notifies now among them, that their notifications changed,
+// as CommentChanged does, once, since the edit changes the preview of each
+// of the comment's notifications.
+func CommentEdited(ctx context.Context, db queries.DBTX, workspaceID, projectID, commentID, actor ids.UUID,
+	added []ids.UUID) error {
+	if _, err := insertMentions(ctx, queries.New(db), workspaceID, projectID, commentID, actor, added); err != nil {
+		return err
+	}
+	return CommentChanged(ctx, db, workspaceID, projectID, commentID)
+}
+
+// insertMentions adds a notification of the comment commentID to each of
+// users, but for actor and those whom the comment has notified already, each
+// once, in q's transaction, and returns the users whom it notifies.
+func insertMentions(ctx context.Context, q *queries.Queries, workspaceID, projectID, commentID, actor ids.UUID,
+	users []ids.UUID) ([]pgtype.UUID, error) {
 	var newIDs, recipients []pgtype.UUID
+	seen := map[ids.UUID]bool{actor: true}
 	for _, u := range users {
-		if u == actor || slices.Contains(recipients, nullUUID(u)) {
+		if seen[u] {
 			continue
 		}
+		seen[u] = true
 		newIDs, recipients = append(newIDs, nullUUID(ids.New())), append(recipients, nullUUID(u))
 	}
 	if len(recipients) == 0 {
-		return nil
+		return nil, nil
 	}
-	q := queries.New(db)
 	notified, err := q.InsertMentions(ctx, queries.InsertMentionsParams{WorkspaceID: nullUUID(workspaceID),
 		ProjectID: nullUUID(projectID), CommentID: nullUUID(commentID), ActorID: nullUUID(actor), Ids: newIDs,
 		UserIds: recipients})
 	if err != nil {
-		return fmt.Errorf("notification: notify the mentioned members: %w", err)
+		return nil, fmt.Errorf("notification: notify the mentioned members: %w", err)
 	}
-	return notify(ctx, q, notified)
+	return notified, nil
 }
 
 // CommentChanged tells each user whom the comment commentID of the project
@@ -316,25 +345,22 @@ func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit in
 // same index of docs, with the display names of the members that the bodies
 // mention, read in one query, as they are now.
 func (s *Service) preview(ctx context.Context, userID ids.UUID, out []NotificationBody, docs []*richtext.Doc) error {
-	var users []pgtype.UUID
+	var users []string
+	seen := map[string]bool{}
 	for _, doc := range docs {
 		for _, m := range doc.Members() {
-			if u, err := ids.Decode(ids.User, m.User); err == nil && !slices.Contains(users, nullUUID(u)) {
-				users = append(users, nullUUID(u))
+			if !seen[m.User] {
+				seen[m.User] = true
+				users = append(users, m.User)
 			}
 		}
 	}
 	names := map[string]string{}
 	if len(users) > 0 {
 		err := s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
-			rows, err := queries.New(tx).MentionedUsers(ctx, users)
-			if err != nil {
-				return fmt.Errorf("notification: read the mentioned members' names: %w", err)
-			}
-			for _, r := range rows {
-				names[ids.Encode(ids.User, r.ID.Bytes)] = r.DisplayName
-			}
-			return nil
+			var err error
+			names, err = MemberNames(ctx, queries.New(tx), users)
+			return err
 		})
 		if err != nil {
 			return err
@@ -350,6 +376,32 @@ func (s *Service) preview(ctx context.Context, userID ids.UUID, out []Notificati
 		out[i].Preview = richtext.Preview(richtext.PlainText(named.Segments(richtext.NoNames{})))
 	}
 	return nil
+}
+
+// MemberNames returns the display names of the users whose IDs, as the API
+// writes them (ids.User), are users, by those IDs, read in one query in q's
+// transaction, as a comment's mentions show them and a notification's
+// preview writes them (package comment, Service.List): a user whose account
+// is deleted, or an ID that is not a user's, has none.
+func MemberNames(ctx context.Context, q *queries.Queries, users []string) (map[string]string, error) {
+	uuids := make([]pgtype.UUID, 0, len(users))
+	for _, user := range users {
+		if u, err := ids.Decode(ids.User, user); err == nil {
+			uuids = append(uuids, nullUUID(u))
+		}
+	}
+	names := map[string]string{}
+	if len(uuids) == 0 {
+		return names, nil
+	}
+	rows, err := q.MentionedUsers(ctx, uuids)
+	if err != nil {
+		return nil, fmt.Errorf("notification: read the mentioned members' names: %w", err)
+	}
+	for _, r := range rows {
+		names[ids.Encode(ids.User, r.ID.Bytes)] = r.DisplayName
+	}
+	return names, nil
 }
 
 // formerMember is how a preview writes a mention of a member whose account
@@ -446,12 +498,14 @@ func (s *Service) Read(ctx context.Context, userID, id ids.UUID) error {
 // notification through, by when each was made and by their IDs, as List
 // orders them, so that one that was made after it, as after the page that a
 // client shows was read, stays unread, and tells the user's sessions of it
-// (Channel). A notification is made as its batch applies (Mentioned), and a
-// project's batches apply one at a time, so one of another project's batch
-// that applied before through's and committed only after the page was read
-// is made before through, and is marked read too. It returns ErrNotFound,
-// and marks nothing, if the user has no notification through in any of
-// their workspaces.
+// (Channel) once every workspace's are marked, rather than as the marks of
+// each workspace commit, which would have them read the centre half marked,
+// as often as it has workspaces. A notification is made as its batch applies
+// (Mentioned), and a project's batches apply one at a time, so one of
+// another project's batch that applied before through's and committed only
+// after the page was read is made before through, and is marked read too. It
+// returns ErrNotFound, and marks nothing, if the user has no notification
+// through in any of their workspaces.
 func (s *Service) ReadThrough(ctx context.Context, userID, through ids.UUID) error {
 	var at pgtype.Timestamptz
 	err := s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
@@ -472,16 +526,21 @@ func (s *Service) ReadThrough(ctx context.Context, userID, through ids.UUID) err
 	case !at.Valid:
 		return ErrNotFound
 	}
-	return s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
-		marked, err := q.ReadNotifications(ctx, queries.ReadNotificationsParams{WorkspaceID: nullUUID(ws),
+	marked := false
+	err = s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
+		n, err := q.ReadNotifications(ctx, queries.ReadNotificationsParams{WorkspaceID: nullUUID(ws),
 			UserID: nullUUID(userID), ThroughAt: at, ThroughID: nullUUID(through)})
 		if err != nil {
 			return false, fmt.Errorf("notification: mark the notifications read: %w", err)
 		}
-		if marked > 0 {
-			return false, notify(ctx, q, []pgtype.UUID{nullUUID(userID)})
-		}
+		marked = marked || n > 0
 		return false, nil
+	})
+	if err != nil || !marked {
+		return err
+	}
+	return s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
+		return notify(ctx, queries.New(tx), []pgtype.UUID{nullUUID(userID)})
 	})
 }
 

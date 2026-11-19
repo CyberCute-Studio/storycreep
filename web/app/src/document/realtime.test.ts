@@ -556,6 +556,24 @@ describe("createRealtime", () => {
     expectWaits(h, [2_000]);
   });
 
+  it("waits from the start again after a loss once the server has sent a heartbeat or a notifications message, as on a socket of the account's notifications alone", () => {
+    for (const message of [
+      { type: "heartbeat" },
+      { type: "notifications" },
+    ] as const) {
+      const h = setup();
+      h.realtime.listen(() => {});
+      expectWaits(h, [2_000, 4_000]);
+      // A socket that opens, and is lost before the server says anything,
+      // has not shown that it works.
+      h.socket().open();
+      expectWaits(h, [8_000]);
+      h.socket().open();
+      h.socket().deliver(message);
+      expectWaits(h, [2_000, 4_000]);
+    }
+  });
+
   it("records a socket that cannot be opened in the error log, and tries again later", () => {
     const h = setup();
     h.refuse(new SyntaxError("The URL is not one of a WebSocket."));

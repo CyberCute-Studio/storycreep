@@ -11,10 +11,12 @@
 //
 // It connects once a project is subscribed to, or a listener listens, as the
 // shell does on every page of a signed-in account, and again, once it is
-// lost, with exponential backoff and full jitter, at once when the browser
-// says that its connection is back. The server sends a heartbeat every 25
-// seconds, so a socket that has heard nothing for a minute is taken for
-// lost. A socket closed with 4001, whose session has ended or been given a
+// lost, with exponential backoff and full jitter, which starts again once a
+// socket has shown that it works, by a subscription that held or a message
+// of the server's own, a heartbeat or a notifications, and at once when the
+// browser says that its connection is back. The server sends a heartbeat
+// every 25 seconds, so a socket that has heard nothing for a minute is taken
+// for lost. A socket closed with 4001, whose session has ended or been given a
 // new secret, connects again only once the page has asked for its session,
 // and only while it still has one: a page whose session has ended is
 // signed out by that question (checkSession), and its stores go with it.
@@ -328,6 +330,13 @@ export function createRealtime(options: RealtimeOptions): Realtime {
         new Error("The real-time channel sent a message that is no object."),
       );
       return;
+    }
+    if (message.type === "heartbeat" || message.type === "notifications") {
+      // The server talks on the socket, which so works, though it may hold
+      // no subscription, as one of the account's notifications alone: the
+      // next that is lost waits from the start again, as one does whose
+      // subscription has held.
+      failures = 0;
     }
     if (message.type === "heartbeat") {
       return;

@@ -362,6 +362,26 @@ func TestMentionNotifications(t *testing.T) {
 	resultFrom(t, commentCommand(t, f.s.main, owner, p, "comment.delete", id, nil))
 	waitNotified(t, session, 2*time.Second)
 	waitNotified(t, second, 2*time.Second)
+
+	// Marking all read tells the member's sessions, once every workspace's
+	// are marked.
+	later, res := postMention(t, f.s.main, owner, p, node, mentioning(viewer.body.UserID))
+	resultFrom(t, res)
+	waitNotified(t, session, 2*time.Second)
+	waitNotified(t, second, 2*time.Second)
+	notifications = notificationsOf(t, f.s.main, viewer)
+	if len(notifications) != 1 || notifications[0].CommentID != later {
+		t.Fatalf("the member's notifications are %v, want one of %s", notificationComments(notifications), later)
+	}
+	if res := call(f.s.main, http.MethodPost, notificationsPath+"/read-all", jsonBody(t,
+		map[string]string{"through": notifications[0].ID}), viewer.header(true)); res.status != http.StatusNoContent {
+		t.Fatalf("mark all read: %d %s", res.status, res.body)
+	}
+	waitNotified(t, session, 2*time.Second)
+	waitNotified(t, second, 2*time.Second)
+	if got := unreadOf(t, f.s.main, viewer); got != 0 {
+		t.Errorf("after marking all read, the member has %d unread notifications, want 0", got)
+	}
 }
 
 // waitNotified waits for the socket to be told that its account's
