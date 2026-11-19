@@ -127,3 +127,49 @@ func (p Policy) Effective(instanceAdmin bool, membership, grant Role) Role {
 	}
 	return membership
 }
+
+// Readers returns the roles of a membership of a workspace that read its
+// projects without a grant, and the roles of a project grant that read the
+// project, as Effective resolves them for a user who is not an instance admin
+// acting as owner: those whose effective role is not None. A grant replaces
+// the membership's role, so whether a grant's role reads a project does not
+// depend on the membership's, and a query that reads who reads a project, as
+// whom a comment may mention (package comment) or whose notifications are
+// shown (package notification), filters by the two lists, in the database,
+// as Effective would. It panics if Effective made a grant's reading depend
+// on the membership's role, which the two lists could not say.
+func Readers() (memberships, grants []Role) {
+	var p Policy
+	for _, m := range Memberships() {
+		if p.Effective(false, m, None) != None {
+			memberships = append(memberships, m)
+		}
+	}
+	for _, g := range Grants() {
+		reads := p.Effective(false, Memberships()[0], g) != None
+		for _, m := range Memberships() {
+			if (p.Effective(false, m, g) != None) != reads {
+				panic("role: whether a grant of " + string(g) + " reads a project depends on the membership's role")
+			}
+		}
+		if reads {
+			grants = append(grants, g)
+		}
+	}
+	return memberships, grants
+}
+
+// ReaderNames returns the roles of Readers as the database holds them, the
+// memberships' and the grants', as the queries that filter by them take them
+// (package comment, package notification).
+func ReaderNames() (memberships, grants []string) {
+	ms, gs := Readers()
+	names := func(rs []Role) []string {
+		out := make([]string, len(rs))
+		for i, r := range rs {
+			out[i] = string(r)
+		}
+		return out
+	}
+	return names(ms), names(gs)
+}

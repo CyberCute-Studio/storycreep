@@ -1,10 +1,13 @@
 // The frame of every page of the app: a link that skips to the page's
 // content, the header, which warns of a page that travels unencrypted (PRD
-// NFR-SEC-15), opens the command palette (FR-EDIT-10), names the signed-in
-// account, and signs it out, and the content, as the page's main landmark,
-// which gets the focus once the control that had it goes (keepFocusOnPage).
-// The page's commands are registered within it (CommandsProvider), whose
-// keys act wherever the focus is on the page.
+// NFR-SEC-15), opens the command palette (FR-EDIT-10), leads to the
+// account's notifications with how many are unread (FR-COMMENT-02), names
+// the signed-in account, and signs it out, and the content, as the page's
+// main landmark, which gets the focus once the control that had it goes
+// (keepFocusOnPage). The page's commands are registered within it
+// (CommandsProvider), whose keys act wherever the focus is on the page, and
+// it listens to the account's notifications over the real-time channel
+// while the page is signed in (useNotificationListener).
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -21,6 +24,8 @@ import { signOutFailure, useSignOut } from "../auth/signOut";
 import { AppCommands, CommandsButton } from "../commands/AppCommands";
 import { CommandsProvider } from "../commands/registry";
 import { ErrorConsoleButton } from "../errors/ErrorConsole";
+import { NotificationsLink } from "../notifications/NotificationsLink";
+import { useNotificationListener } from "../notifications/queries";
 import { PRODUCT_NAME } from "../product";
 import { Button } from "../ui/Button";
 import { Alert } from "../ui/Page";
@@ -40,6 +45,7 @@ export function Shell({ children }: { children: ReactNode }) {
     const element = frame.current;
     return element === null ? undefined : keepFocusOnPage(element);
   }, []);
+  useNotificationListener();
   return (
     <Framed.Provider value={true}>
       <CommandsProvider>
@@ -102,8 +108,8 @@ function UnencryptedWarning() {
 }
 
 /**
- * The signed-in account's link to its settings, and signing out, whose
- * failure the header says under them.
+ * The signed-in account's link to its notifications, its link to its
+ * settings, and signing out, whose failure the header says under them.
  */
 function SignedInControls({
   signOut,
@@ -119,6 +125,7 @@ function SignedInControls({
   return (
     <>
       <CommandsButton />
+      <NotificationsLink />
       <Link
         to="/account"
         className="flex min-h-11 max-w-48 items-center rounded-md px-2 text-fg underline-offset-2 hover:underline"

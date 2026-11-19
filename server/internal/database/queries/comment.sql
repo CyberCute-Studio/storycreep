@@ -222,3 +222,41 @@ RETURNING rev;
 UPDATE comment SET resolved_at = NULL, resolved_by = NULL, rev = rev + 1
 WHERE workspace_id = @workspace_id AND project_id = @project_id AND id = @id AND resolved_at IS NOT NULL
 RETURNING rev;
+
+-- name: MentionAccess :many
+-- MentionAccess returns, of each user among user_ids that has an account,
+-- what whether a comment of the project may mention them is resolved from
+-- (package comment): the account's status, the role of the user's membership
+-- of the workspace, or null if they are not a member, and the role of the
+-- membership's grant on the project, or null if it has none. A user without
+-- an account has no row.
+SELECT u.id, u.status, m.role AS membership_role, g.role AS grant_role
+FROM "user" u
+LEFT JOIN membership m ON m.workspace_id = @workspace_id AND m.user_id = u.id
+LEFT JOIN project_grant g ON g.workspace_id = m.workspace_id AND g.membership_id = m.id
+    AND g.project_id = @project_id
+WHERE u.id = ANY(@user_ids::uuid[]);
+
+-- name: MentionedUsers :many
+-- MentionedUsers returns the display names of the users among user_ids that
+-- have an account, which a comment's mentions of them show.
+SELECT id, display_name FROM "user" WHERE id = ANY(@user_ids::uuid[]);
+
+-- name: MentionableMembers :many
+-- MentionableMembers returns at most max_rows of the users whom a comment of
+-- the project may mention, with their display names, in the order of their
+-- IDs, after the user after, or from the first if after is null: the members
+-- of the workspace whose accounts are active, and who read the project, by
+-- the role of their membership, member_roles being those that read a project
+-- without a grant, or of its grant on the project, grant_roles being those
+-- that read it, as package role resolves them (role.Readers).
+SELECT u.id, u.display_name
+FROM membership m
+JOIN "user" u ON u.id = m.user_id
+LEFT JOIN project_grant g ON g.workspace_id = m.workspace_id AND g.membership_id = m.id
+    AND g.project_id = @project_id
+WHERE m.workspace_id = @workspace_id AND u.status = 'active'
+    AND (g.role = ANY(@grant_roles::text[]) OR g.role IS NULL AND m.role = ANY(@member_roles::text[]))
+    AND (sqlc.narg(after)::uuid IS NULL OR u.id > sqlc.narg(after)::uuid)
+ORDER BY u.id
+LIMIT @max_rows;

@@ -1,6 +1,6 @@
 // What the editor reads of its documents' lists, by the limits of
-// schema/rich-text/README.md, and of the elements of its mentions and value
-// references.
+// schema/rich-text/README.md, and of the elements of its mentions, its
+// members' mentions, and its value references.
 
 import type { IdKind } from "@storycreep/shared/ids";
 import {
@@ -30,6 +30,11 @@ function isIdOf(id: string | null, kinds: readonly IdKind[]): id is string {
 /** Reports whether the element of a mention names a component, as the editor's mention does. */
 export function isMentionElement(element: Element): boolean {
   return isIdOf(element.getAttribute("data-id"), ["component"]);
+}
+
+/** Reports whether the element of a member's mention names a user, as the editor's member mention does (FR-COMMENT-02). */
+export function isMemberMentionElement(element: Element): boolean {
+  return isIdOf(element.getAttribute("data-id"), ["user"]);
 }
 
 /** Reports whether the element of a value reference names a variable's value, without an attribute, or a component's attribute's, as the editor's value reference does. */

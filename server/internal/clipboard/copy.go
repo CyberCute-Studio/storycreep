@@ -321,6 +321,11 @@ func declare(ctx context.Context, q *queries.Queries, ws, projectID pgtype.UUID,
 		}
 		for in := range doc.Inlines() {
 			switch in := in.(type) {
+			case *richtext.Member:
+				// A node's text and a connection's label never mention a
+				// member, which the pipeline refuses them
+				// (commands.Spec.MemberMentions), and which names no
+				// declaration of the project's.
 			case *richtext.Mention:
 				use("", in.Component, "")
 			case *richtext.Value:

@@ -67,7 +67,11 @@ func registerRealtime(m *api.Mux, s *server, public config.PublicURL) {
 			"\"project_id\"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or " +
 			"subscription_failed, whose code is not_found for a project that does not exist and one that the user " +
 			"cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, " +
-			"unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 " +
+			"unsubscribed once a check finds that the project can no longer be read, a socket opened with the " +
+			"session cookie {\"type\": \"notifications\"} once the account's notifications change, whatever it " +
+			"subscribes to, after which it reads them again (GET /api/v1/notifications), and once the server " +
+			"listens again after it could not, when it may have missed some, which a socket of an API token is " +
+			"never sent, and a heartbeat every 25 " +
 			"seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; " +
 			"the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, " +
 			"neither a message nor a pong, and drops the connection without a close, which the client sees as " +
@@ -217,6 +221,10 @@ func (s *server) socketClient(ctx context.Context, cur current, r *http.Request)
 	token, _ := bearerToken(r)
 	return realtime.Client{
 		UserID: cur.userID,
+		// A socket of the session cookie is told of its account's
+		// notifications, whose routes take a session alone, and one of an API
+		// token is not.
+		Inbox: cur.token == nil,
 		Check: func(ctx context.Context) (commands.Actor, error) {
 			if cur.token != nil {
 				cred, err := s.tokens.Authenticate(ctx, token, scope.ProjectRead, client)

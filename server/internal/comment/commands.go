@@ -16,6 +16,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
 	"github.com/CyberCute-Studio/storycreep/server/internal/scope"
 )
@@ -47,13 +48,13 @@ type createPayload struct {
 	ID       string       `json:"id" doc:"The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2)"`
 	Target   string       `json:"target,omitempty" doc:"The ID of the entity that the thread that the comment starts is on, a node, a connection, a board, or a variable of the project, as its prefix says: nd_, cn_, bd_, or var_. A reply has none, and a comment that has neither target nor parent_id, or both, is answered with 422 validation_failed, as one whose target the project does not have, or is in its trash, or is there with what is, as a node of a board in the trash."`
 	ParentID string       `json:"parent_id,omitempty" doc:"The ID of the first comment of the thread that the comment replies to. A thread is one level deep, so a reply to a reply is answered with 422 validation_failed, as one to a comment that the project does not have, or of a thread that is not shown: whose comments are all deleted, or whose target is in the project's trash. The first comment of a thread has none."`
-	Body     richtext.Doc `json:"body" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
+	Body     richtext.Doc `json:"body" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members of the project (memberMention), and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, or a mention, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists, mentioning at most 50 members. One that is not, or that holds a value reference or a mention of a component, is answered with 422 validation_failed, a value reference, a mention of a component, or the mention of a 51st member at its location in the document's canonical form, as payload.body.content[0].content[1]. Each member that it mentions is notified of it (PRD FR-COMMENT-02): a mention of a user who cannot read the project, who is not a member of its workspace, a guest without a grant of the project, or whose account is not active, is answered with 422 mention_no_access at the mention's location, which does not name the user."`
 }
 
 // editPayload is Edit's payload.
 type editPayload struct {
 	ID   string       `json:"id" doc:"The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required."`
-	Body richtext.Doc `json:"body" doc:"The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]."`
+	Body richtext.Doc `json:"body" doc:"The comment's new body, a rich-text document (PRD FR-TEXT-01) as a new comment's is. A mention of a member that the comment's body does not mention yet is held to whether the member may be mentioned, as a new comment's, and notifies the member, once: one that the comment mentions already is not, so that the comment of a member who has since lost the project's access keeps the mention. A mention that an edit takes out leaves its notification as it was."`
 }
 
 // ownPayload is the payload of a command of a comment that only its author
@@ -96,14 +97,21 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return nil, err
 			}
-			out := make(map[ids.UUID]any, len(rows))
-			for _, row := range rows {
+			bodies := make([]CommentBody, len(rows))
+			for i, row := range rows {
 				b, err := bodyOf(row)
 				if err != nil {
 					return nil, err
 				}
 				b.DeletedAt = timeOf(row.DeletedAt)
-				out[row.ID.Bytes] = b
+				bodies[i] = b
+			}
+			if err := withMentions(ctx, queries.New(tx), bodies); err != nil {
+				return nil, err
+			}
+			out := make(map[ids.UUID]any, len(rows))
+			for i, row := range rows {
+				out[row.ID.Bytes] = bodies[i]
 			}
 			return out, nil
 		},
@@ -113,7 +121,7 @@ func Register(r *commands.Registry) {
 	op, sc := authz.Comment, scope.ProjectWrite
 
 	commands.Register(r, commands.Spec[createPayload]{
-		Type: Create, Capability: op, Scope: sc, Touches: comment,
+		Type: Create, Capability: op, Scope: sc, Touches: comment, MemberMentions: true,
 		Check: checkCreate,
 		// The step of an inverse never creates a comment, but the body's
 		// rules belong with Edit's, whose step writes back the stored body
@@ -126,7 +134,7 @@ func Register(r *commands.Registry) {
 	})
 
 	commands.Register(r, commands.Spec[editPayload]{
-		Type: Edit, Capability: op, Scope: sc, Touches: comment,
+		Type: Edit, Capability: op, Scope: sc, Touches: comment, MemberMentions: true,
 		Check: func(p editPayload) input.FieldErrors { return entityID(p.ID) },
 		// The step of the inverse writes back the stored body, which the
 		// rules of a body may refuse once they are stricter
@@ -148,12 +156,31 @@ func Register(r *commands.Registry) {
 			if err != nil {
 				return err
 			}
+			before, err := richtext.Parse(c.Body)
+			if err != nil {
+				return fmt.Errorf("comment: the body of the comment %s: %w", p.ID, err)
+			}
+			// Only the members whom the edit mentions anew are held to whether
+			// they may be mentioned, so that the comment of a member who has
+			// lost the project's access since keeps the mention, and they are
+			// notified, each once (notification.Mentioned).
+			added, err := checkMentions(ctx, tx, p.Body, before)
+			if err != nil {
+				return err
+			}
 			body, err := json.Marshal(p.Body)
 			if err != nil {
 				return fmt.Errorf("comment: encode the body: %w", err)
 			}
-			return changed(tx, c.ID)(queries.New(tx).EditComment(ctx, queries.EditCommentParams{Body: body,
-				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
+			if err := changed(tx, c.ID)(queries.New(tx).EditComment(ctx, queries.EditCommentParams{Body: body,
+				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID})); err != nil {
+				return err
+			}
+			// The preview of each of the comment's notifications is of its body
+			// as it is now, which its recipients' sessions are told of, those
+			// whom it mentions anew too.
+			return notification.CommentEdited(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes,
+				tx.Actor().UserID, added)
 		},
 	})
 
@@ -175,8 +202,13 @@ func Register(r *commands.Registry) {
 			if err != nil || c.DeletedAt.Valid {
 				return err
 			}
-			return changed(tx, c.ID)(queries.New(tx).TrashComment(ctx, queries.TrashCommentParams{
-				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
+			if err := changed(tx, c.ID)(queries.New(tx).TrashComment(ctx, queries.TrashCommentParams{
+				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID})); err != nil {
+				return err
+			}
+			// The comment's notifications are hidden while it is in the trash,
+			// which its recipients' sessions are told of.
+			return notification.CommentChanged(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes)
 		},
 	})
 
@@ -197,8 +229,13 @@ func Register(r *commands.Registry) {
 			if err != nil || !c.DeletedAt.Valid {
 				return err
 			}
-			return changed(tx, c.ID)(queries.New(tx).RestoreComment(ctx, queries.RestoreCommentParams{
-				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID}))
+			if err := changed(tx, c.ID)(queries.New(tx).RestoreComment(ctx, queries.RestoreCommentParams{
+				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID})); err != nil {
+				return err
+			}
+			// The comment's notifications are shown again, as they were, which
+			// its recipients' sessions are told of.
+			return notification.CommentChanged(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes)
 		},
 	})
 
@@ -304,6 +341,10 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 		}
 		row.ParentID = parent.Comment.ID
 	}
+	mentioned, err := checkMentions(ctx, tx, p.Body, nil)
+	if err != nil {
+		return err
+	}
 	body, err := json.Marshal(p.Body)
 	if err != nil {
 		return fmt.Errorf("comment: encode the body: %w", err)
@@ -318,7 +359,55 @@ func applyCreate(ctx context.Context, tx *commands.Tx, p createPayload) error {
 	if err != nil {
 		return fmt.Errorf("comment: add the comment: %w", err)
 	}
-	return tx.Changed(ids.Comment, id.Bytes, 1)
+	if err := tx.Changed(ids.Comment, id.Bytes, 1); err != nil {
+		return err
+	}
+	return notification.Mentioned(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), id.Bytes, tx.Actor().UserID, mentioned)
+}
+
+// checkMentions returns the members whom body, a comment's new body, mentions
+// and before, its body before the command, or nil for a new comment, does
+// not, each once, in the order of their first mentions, once it has checked
+// that the comment may mention each of them (mentionable), as of the batch's
+// transaction, or refuses the batch at the location of the first mention of
+// one that it may not, for ErrMentionNoAccess, without naming the member, as
+// the client knows whom it mentioned (PRD FR-COMMENT-02 AC1). A user who has
+// no account is refused alike, so that the refusal does not tell whether the
+// account exists.
+func checkMentions(ctx context.Context, tx *commands.Tx, body richtext.Doc, before *richtext.Doc) ([]ids.UUID,
+	error) {
+	known := map[string]bool{}
+	if before != nil {
+		for _, m := range before.Members() {
+			known[m.User] = true
+		}
+	}
+	var users []ids.UUID
+	var at []string
+	for loc, m := range body.Members() {
+		if known[m.User] {
+			continue
+		}
+		known[m.User] = true
+		// Parse took the ID for a user's.
+		u, _ := ids.Decode(ids.User, m.User)
+		users, at = append(users, u), append(at, loc)
+	}
+	if len(users) == 0 {
+		return nil, nil
+	}
+	access, err := mentionable(ctx, queries.New(tx), tx.WorkspaceID(), tx.ProjectID(), users)
+	if err != nil {
+		return nil, err
+	}
+	for i, u := range users {
+		if !access[u] {
+			return nil, commands.Refuse("body"+at[i], "mentions a user who cannot read the project, as one who is "+
+				"not a member of its workspace, a guest without a grant of it, or one whose account is not active, "+
+				"whom a comment cannot mention", ErrMentionNoAccess)
+		}
+	}
+	return users, nil
 }
 
 // refuseTakenID returns the refusal of a create whose ID a comment has
@@ -355,29 +444,43 @@ func checkCreate(p createPayload) input.FieldErrors {
 
 // checkBody returns the problems of body, the body of a comment that a
 // command writes, which a stored body that the step of an inverse writes
-// back may break: a value reference or a mention, at its location in the
-// document, of which a comment holds none, so that it names nothing that
-// the story reads, and @ is left to the mentions of members (PRD
-// FR-COMMENT-02); and, of a body without them, more than MaxBodyLength
-// characters of text, or none that is printed, as one of white space alone,
-// or of a list whose items are empty, both counted as the characters of its
-// texts, which CharacterCount counts, without the bullets and the numbers
-// that its lists show, which its author did not type. The location of a
-// node is in the document's canonical form (richtext.Parse), whose
-// neighbouring texts with the same marks are one, as an editor writes them.
-// It reads nothing but body.
+// back may break: a value reference or a mention of a component, at its
+// location in the document, of which a comment holds none, so that it names
+// nothing that the story reads, and @ is left to the mentions of members
+// (PRD FR-COMMENT-02); mentions of more than MaxMentions members, at the
+// first mention of the first member past them; and, of a body without them,
+// more than MaxBodyLength characters of text, or none that is printed, as
+// one of white space alone, or of a list whose items are empty, both counted
+// as the characters of its texts, which CharacterCount counts, without the
+// bullets and the numbers that its lists show, which its author did not
+// type, and without its mentions of members, which are no text of it
+// (richtext.Member), unless it mentions one, which is all that a comment of
+// @Tomas alone says. The location of a node is in the document's canonical
+// form (richtext.Parse), whose neighbouring texts with the same marks are
+// one, as an editor writes them. It reads nothing but body.
 func checkBody(body richtext.Doc) input.FieldErrors {
 	if errs := foreign(body.Blocks, "body"); len(errs) > 0 {
 		return errs
 	}
-	segs := body.Segments(noNames{})
+	members := map[string]bool{}
+	for loc, m := range body.Members() {
+		if members[m.User] {
+			continue
+		}
+		if len(members) == MaxMentions {
+			return field("body"+loc, fmt.Sprintf("mentions a member past the %d whom a comment may mention",
+				MaxMentions))
+		}
+		members[m.User] = true
+	}
+	segs := body.Segments(richtext.NoNames{})
 	if n := richtext.CharacterCount(segs); n > MaxBodyLength {
 		return field("body", fmt.Sprintf("holds %d characters of text, more than the %d that a comment may hold",
 			n, MaxBodyLength))
 	}
-	if !printed(segs) {
+	if !printed(segs) && len(members) == 0 {
 		return field("body", "is empty: a comment holds at least one character that is not blank, as white space and U+200B "+
-			"ZERO WIDTH SPACE are")
+			"ZERO WIDTH SPACE are, or a mention of a member")
 	}
 	return nil
 }
@@ -396,8 +499,9 @@ func printed(segs []richtext.Segment) bool {
 }
 
 // foreign returns the problems of the value references and the mentions of
-// blocks, the blocks of a document or of a list item at the location at, as
-// body.content[1].content[0], each at its own location.
+// components of blocks, the blocks of a document or of a list item at the
+// location at, as body.content[1].content[0], each at its own location. A
+// mention of a member is a comment's to hold (checkBody).
 func foreign(blocks []richtext.Block, at string) input.FieldErrors {
 	var errs input.FieldErrors
 	for i, b := range blocks {
@@ -424,13 +528,6 @@ func foreign(blocks []richtext.Block, at string) input.FieldErrors {
 	}
 	return errs
 }
-
-// noNames names nothing, which a body without value references and
-// mentions asks no name of (checkBody).
-type noNames struct{}
-
-func (noNames) Value(string, string) string { return "" }
-func (noNames) Component(string) string     { return "" }
 
 // anyComment returns the comment of the batch's project whose ID is id,
 // whether or not it is deleted, with whether its thread's target is outside

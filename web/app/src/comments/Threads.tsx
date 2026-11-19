@@ -28,16 +28,29 @@
 // thread's text, or a reply or an edit open, stays with the project's
 // document until it is posted or cancelled (draftsOf), so that the form made
 // again, as once what is selected changes and changes back, opens with it.
+// A comment mentions members of the project (PRD FR-COMMENT-02, plan item
+// 75): a form's @ offers those whom the server lists (membersQuery), and a
+// comment shows each mention by the name that the list of comments gives it
+// (mentions), a former member's by the catalog's word; a mention of someone
+// who has no access to the project is refused, which the form says naming
+// whom its mention shows there.
 
-import type {
-  CommentBody,
-  RichTextDoc,
-  UndoCommandBody,
+import {
+  ApiError,
+  type CommentBody,
+  type CommentMention,
+  type RichTextDoc,
+  type UndoCommandBody,
 } from "@storycreep/shared/api";
 import { formatDateTime, formatRelativeTime } from "@storycreep/shared/i18n";
 import { newId } from "@storycreep/shared/ids";
 import { segmentsOf } from "@storycreep/shared/richtext";
-import { useMutation, useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import {
   createContext,
@@ -48,6 +61,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -63,15 +77,18 @@ import {
   type ProjectDocument,
 } from "../document/store";
 import { conflictOf, projectQuery } from "../project/queries";
+import type { MemberChoice } from "../richtext/choices";
 import type { RichTextValue } from "../richtext/convert";
+import type { RichTextNames } from "../richtext/extensions";
 import { RichTextEditor } from "../richtext/RichTextEditor";
-import { RichText } from "../script/RichText";
+import { RichText, type TextNames } from "../script/RichText";
 import { focusIsNowhere } from "../shell/focus";
 import { Button, LastingButton } from "../ui/Button";
 import { useFocusRefusal } from "../ui/Field";
 import { Alert, Status } from "../ui/Page";
 import {
   commentsOn,
+  membersQuery,
   sendComments,
   sendUndo,
   type Thread,
@@ -81,6 +98,9 @@ import {
 
 /** The most characters of text that a comment holds, as the server counts them (comment.MaxBodyLength). */
 export const maxCommentChars = 10_000;
+
+/** The most members whom a comment mentions, as the server counts them (comment.MaxMentions). */
+export const maxCommentMentions = 50;
 
 /** What a thread is on: a node, a connection, a board, or a variable, by its ID. */
 export interface CommentTarget {
@@ -121,59 +141,154 @@ export function useCommentDrafts(): [number, () => () => void] {
   return [drafts, hold];
 }
 
-/** A text names nothing, so its names are none. */
-const noNames = {
-  componentName: () => undefined,
-  valueName: () => undefined,
-};
+/**
+ * Returns the names of what a comment's text refers to: no component and no
+ * value, which a comment names none of, and each member whom it mentions by
+ * the display name that the list of comments gives them (mentions), or, of
+ * one whose account is deleted, which has none, the catalog's word.
+ */
+function mentionNames(
+  t: TFunction,
+  mentions: readonly CommentMention[] | undefined,
+): TextNames {
+  const byId = new Map(
+    (mentions ?? []).map((m) => [
+      m.id,
+      m.display_name ?? t("comments.former_member"),
+    ]),
+  );
+  return {
+    componentName: () => undefined,
+    valueName: () => undefined,
+    memberName: (id) => byId.get(id),
+  };
+}
 
 /** The names that the derivation of a comment's text asks for, of which it has none. */
 const noSegmentNames = { value: () => "", component: () => "" };
 
 /**
+ * Returns the IDs of the members whom doc, a comment's body, mentions, each
+ * once, in the order of their first mentions.
+ */
+export function membersMentionedIn(doc: RichTextDoc): string[] {
+  const found = new Set<string>();
+  const walk = (nodes: readonly unknown[] | undefined) => {
+    for (const node of nodes ?? []) {
+      const n = node as {
+        type?: unknown;
+        attrs?: { id?: unknown };
+        content?: unknown[];
+      };
+      if (n.type === "memberMention" && typeof n.attrs?.id === "string") {
+        found.add(n.attrs.id);
+      }
+      walk(n.content);
+    }
+  };
+  walk(doc.content);
+  return [...found];
+}
+
+/**
  * Returns how many characters of text value, a comment's body as the
  * editor holds it, has, as the server counts them, those of its texts,
- * without the breaks between its paragraphs and its items, and whether one
- * of them is printed, as the server tells it (input.Printed, hasPrintedIn):
- * of a text too long for the editor to give a document of, more than
- * maxCommentChars, and printed.
+ * without the breaks between its paragraphs and its items, whether one of
+ * them is printed, as the server tells it (input.Printed, hasPrintedIn), or
+ * the text mentions a member, which the server takes as printed, as @Tomas
+ * alone is a comment, though a mention is no character of its text
+ * (FR-COMMENT-02), and how many members it mentions: of a text too long for
+ * the editor to give a document of, more than maxCommentChars, and printed.
  */
 function textOf(value: RichTextValue | undefined): {
   chars: number;
   printed: boolean;
+  mentions: number;
 } {
   if (value === undefined) {
-    return { chars: 0, printed: false };
+    return { chars: 0, printed: false, mentions: 0 };
   }
   if (value.doc === undefined) {
-    return { chars: maxCommentChars + 1, printed: true };
+    return { chars: maxCommentChars + 1, printed: true, mentions: 0 };
   }
   let chars = 0;
-  let printed = false;
+  const mentions = membersMentionedIn(value.doc).length;
+  let printed = mentions > 0;
   for (const s of segmentsOf(value.doc, noSegmentNames)) {
     if (s.kind === "text") {
       chars += [...s.value].length;
       printed ||= hasPrintedIn(s.value);
     }
   }
-  return { chars, printed };
+  return { chars, printed, mentions };
+}
+
+/** Reports whether value, a comment's body as the editor holds it, holds anything that the user typed: a character, or a mention of a member. */
+function holdsTyped(value: RichTextValue | undefined): boolean {
+  const { chars, mentions } = textOf(value);
+  return chars > 0 || mentions > 0;
 }
 
 /**
  * Returns why the server would take none of value, a comment's body as the
  * editor holds it, or undefined: no character that is printed, as one of
- * white space or of U+200B ZERO WIDTH SPACE alone, or more than
- * maxCommentChars of text, as the server counts them (textOf).
+ * white space or of U+200B ZERO WIDTH SPACE alone, and no mention of a
+ * member, more than maxCommentChars of text, as the server counts them
+ * (textOf), or mentions of more than maxCommentMentions members.
  */
 export function commentProblem(
   t: TFunction,
   value: RichTextValue | undefined,
 ): string | undefined {
-  const { chars, printed } = textOf(value);
+  const { chars, printed, mentions } = textOf(value);
   if (chars > maxCommentChars) {
     return t("comments.error.long", { max: maxCommentChars });
   }
+  if (mentions > maxCommentMentions) {
+    return t("comments.error.mentions", { max: maxCommentMentions });
+  }
   return printed ? undefined : t("comments.error.empty");
+}
+
+/**
+ * Returns the ID of the member whose mention in body, the comment's body
+ * that a form sent, error refuses, as mention_no_access does at the
+ * mention's location in the body's canonical form, which the editor gives
+ * the form (payload.body.content[0].content[1]), or undefined for another
+ * error, or a location of no member's mention in body.
+ */
+function refusedMention(
+  error: unknown,
+  body: RichTextDoc | undefined,
+): string | undefined {
+  if (
+    !(error instanceof ApiError) ||
+    error.error?.code !== "mention_no_access" ||
+    body === undefined
+  ) {
+    return undefined;
+  }
+  const problems = error.error.details?.errors;
+  const location = Array.isArray(problems)
+    ? (problems[0] as { location?: unknown } | undefined)?.location
+    : undefined;
+  const path =
+    typeof location === "string"
+      ? /\.payload\.body((?:\.content\[\d+\])+)$/.exec(location)?.[1]
+      : undefined;
+  if (path === undefined) {
+    return undefined;
+  }
+  let node: unknown = body;
+  for (const [, index] of path.matchAll(/\.content\[(\d+)\]/g)) {
+    node = (node as { content?: unknown[] } | undefined)?.content?.[
+      Number(index)
+    ];
+  }
+  const found = node as { type?: unknown; attrs?: { id?: unknown } };
+  return found?.type === "memberMention" && typeof found.attrs?.id === "string"
+    ? found.attrs.id
+    : undefined;
 }
 
 /** The field of a comment's form that a refusal's location names: its body, wherever in it. */
@@ -186,16 +301,28 @@ function bodyField(location: string): string | undefined {
 /**
  * Returns what a form or a button of the threads says of error, the
  * server's refusal of its batch, in the threads' own words: author_required,
- * of a comment that is another's, and revision_conflict, of a comment that
+ * of a comment that is another's, revision_conflict, of a comment that
  * changed elsewhere since the list showed it, or since its edit's field
- * opened, as changed, which a form says keeping what was typed.
+ * opened, as changed, which a form says keeping what was typed, and
+ * mention_no_access, of a mention of someone who has no access to the
+ * project, whom a form names as its mention shows them (unmentionable), as
+ * the server's refusal names nobody.
  */
-function refusalOfComment(error: unknown, t: TFunction, form: boolean) {
+function refusalOfComment(
+  error: unknown,
+  t: TFunction,
+  form: boolean,
+  unmentionable?: string,
+) {
   return refusalOf(error, t, bodyField, {
     author_required: t("comments.error.author_required"),
     revision_conflict: form
       ? t("comments.error.changed_edit")
       : t("comments.error.changed"),
+    mention_no_access:
+      unmentionable === undefined
+        ? t("comments.error.mention_no_access_someone")
+        : t("comments.error.mention_no_access", { name: unmentionable }),
   });
 }
 
@@ -477,6 +604,7 @@ function NewThread({
   return (
     <div className="space-y-2">
       <CommentForm
+        projectId={doc.projectId}
         label={label}
         hint={t("comments.new_hint")}
         submit={t("comments.post")}
@@ -489,7 +617,7 @@ function NewThread({
           // the same text typed again once no answer came is the same
           // batch (keptId).
           const draft = drafts.get(key);
-          if (textOf(value).chars === 0) {
+          if (!holdsTyped(value)) {
             if (draft?.kept === undefined) {
               drafts.delete(key);
             } else {
@@ -856,6 +984,7 @@ export function ThreadList({
           {threads.map((thread) => (
             <ThreadItem
               key={thread.root.id}
+              projectId={doc.projectId}
               send={send}
               drafts={drafts}
               thread={thread}
@@ -883,6 +1012,7 @@ export function ThreadList({
 
 /** A thread: what it is on, where the list names it, its comments, the line of the Undo of a deletion of one of them, and its buttons. */
 function ThreadItem({
+  projectId,
   send,
   drafts,
   thread,
@@ -897,6 +1027,7 @@ function ThreadItem({
   onDelete,
   onResolve,
 }: {
+  projectId: string;
   send: Send;
   /** The drafts of the forms of the threads, which a reply's and an edit's open with (draftsOf). */
   drafts: Map<string, Draft>;
@@ -931,6 +1062,7 @@ function ThreadItem({
   const comment = (c: CommentBody, reply: boolean) => (
     <CommentItem
       key={c.id}
+      projectId={projectId}
       send={send}
       drafts={drafts}
       comment={c}
@@ -982,6 +1114,7 @@ function ThreadItem({
       {writable &&
         (replying ? (
           <ReplyForm
+            projectId={projectId}
             send={send}
             rootId={root.id}
             draft={draftOf(drafts, replyKey)}
@@ -1038,6 +1171,7 @@ function ThreadItem({
  * than post the reply twice.
  */
 function ReplyForm({
+  projectId,
   send,
   rootId,
   draft,
@@ -1045,6 +1179,7 @@ function ReplyForm({
   onCancel,
   onDone,
 }: {
+  projectId: string;
   send: Send;
   rootId: string;
   /** What the form holds, unsent, which the page's document keeps while it is open (draftsOf). */
@@ -1058,6 +1193,7 @@ function ReplyForm({
   const [initial] = useState(() => draft.body);
   return (
     <CommentForm
+      projectId={projectId}
       label={t("comments.reply_label")}
       submit={t("comments.reply_post")}
       initial={initial}
@@ -1083,6 +1219,7 @@ function ReplyForm({
 
 /** A comment: who wrote it and when, its body, and the user's own buttons of it, or, deleted, that it is, as the server lists a thread's first comment that is deleted while a reply of it is not. */
 function CommentItem({
+  projectId,
   send,
   drafts,
   comment: c,
@@ -1092,6 +1229,7 @@ function CommentItem({
   idOf,
   onDelete,
 }: {
+  projectId: string;
   send: Send;
   /** The drafts of the forms of the threads, which an edit's opens with (draftsOf). */
   drafts: Map<string, Draft>;
@@ -1156,6 +1294,7 @@ function CommentItem({
       change it, as no longer once the project is archived meanwhile. */}
       {editing && own ? (
         <EditForm
+          projectId={projectId}
           comment={c}
           body={c.body}
           draft={draftOf(drafts, editKey)}
@@ -1177,7 +1316,10 @@ function CommentItem({
       ) : (
         <>
           <div className="break-words">
-            <RichText doc={c.body} names={noNames} />
+            <RichText
+              doc={c.body}
+              names={mentionNames(t, c.mentions ?? undefined)}
+            />
           </div>
           {own && (
             <div className="flex flex-wrap gap-2">
@@ -1236,6 +1378,7 @@ function currentRev(error: unknown, id: string): number | undefined {
  * made last (draftsOf).
  */
 function EditForm({
+  projectId,
   comment: c,
   body,
   draft,
@@ -1244,6 +1387,7 @@ function EditForm({
   onCancel,
   onDone,
 }: {
+  projectId: string;
   comment: CommentBody;
   body: RichTextDoc;
   /** What the form holds, unsent, which the page's document keeps while it is open (draftsOf). */
@@ -1259,6 +1403,8 @@ function EditForm({
   const [rev, setRev] = useState(() => draft.rev ?? c.rev);
   return (
     <CommentForm
+      projectId={projectId}
+      mentions={c.mentions ?? undefined}
       label={t("comments.edit_label")}
       submit={t("comments.save")}
       initial={initial}
@@ -1293,9 +1439,14 @@ function EditForm({
 }
 
 /**
- * The form of a comment's body: a rich text of formatting and links alone,
- * which the server takes, with why it would not under the field, the
- * server's refusal among them, as author_required of another's comment,
+ * The form of a comment's body: a rich text of formatting, links, and
+ * mentions of the project's members, whom its @ offers, as the server lists
+ * them (membersQuery), which the server takes, with why it would not under
+ * the field, the server's refusal among them, as author_required of
+ * another's comment, or mention_no_access of a mention of someone who has
+ * lost the project's access since the form read the members, which it says
+ * naming them as their mention shows them, and after which it reads the
+ * members again, so that @ no longer offers them,
  * whose text is read-only while its batch is under way, as the canvas's
  * editor of a text is, so that nothing is typed after what was sent, which
  * the form, emptied or closed once its comment is posted, would lose, and
@@ -1307,6 +1458,8 @@ function EditForm({
  * it, hold what was typed, which they tell the page of (CommentDrafts).
  */
 function CommentForm({
+  projectId,
+  mentions,
   label,
   hint,
   submit,
@@ -1317,6 +1470,10 @@ function CommentForm({
   onDone,
   onCancel,
 }: {
+  /** The comment's project, whose members the form offers to mention. */
+  projectId: string;
+  /** The members whom the comment that the form edits mentions, as the list of comments names them, which its text shows by those names. */
+  mentions?: readonly CommentMention[];
   label: string;
   hint?: string;
   /** The submit button's label. */
@@ -1346,11 +1503,25 @@ function CommentForm({
   const [problem, setProblem] = useState<string>();
   // The editor, made anew, empty, once its comment is posted.
   const [posted, setPosted] = useState(0);
+  const client = useQueryClient();
+  const members = useQuery(membersQuery(projectId)).data;
+  const names = useMemberNames(mentions, members);
+  const choices = useMemo(
+    () =>
+      members?.map((m): MemberChoice => ({ id: m.id, name: m.display_name })),
+    [members],
+  );
   const send = useMutation({ mutationFn: onSend });
-  const refusal = refusalOfComment(send.error, t, true);
+  const refused = refusedMention(send.error, send.variables);
+  const refusal = refusalOfComment(
+    send.error,
+    t,
+    true,
+    refused === undefined ? undefined : names.member?.(refused),
+  );
   useFocusRefusal(form, send.error, focusHere);
   const hold = useContext(CommentDrafts);
-  const holds = onCancel !== undefined || textOf(value).chars > 0;
+  const holds = onCancel !== undefined || holdsTyped(value);
   useEffect(() => {
     if (holds && hold !== undefined) {
       return hold();
@@ -1374,8 +1545,19 @@ function CommentForm({
     }
     try {
       await send.mutateAsync(value.doc);
-    } catch {
-      // The form says why under its field (refusal).
+    } catch (error) {
+      // The form says why under its field (refusal). A mention of someone
+      // who has lost the project's access since the form read the members
+      // has the members read again, so that @ no longer offers them, while
+      // their mention keeps their name (useMemberNames).
+      if (
+        error instanceof ApiError &&
+        error.error?.code === "mention_no_access"
+      ) {
+        void client.invalidateQueries({
+          queryKey: membersQuery(projectId).queryKey,
+        });
+      }
       return;
     }
     if (onDone !== undefined) {
@@ -1393,6 +1575,8 @@ function CommentForm({
         label={label}
         hint={hint}
         references={false}
+        names={names}
+        members={choices}
         editable={!send.isPending}
         defaultValue={posted === 0 ? initial : undefined}
         error={problem ?? refusal?.fields.body ?? refusal?.message}
@@ -1421,4 +1605,61 @@ function CommentForm({
       </div>
     </form>
   );
+}
+
+/**
+ * Returns the names of what a comment's form shows of the members whom its
+ * text mentions: each by the display name that the comment's list gives it
+ * (mentions), a former member's by the catalog's word, or that the project's
+ * members (members) give them, the latest of those that the form has seen,
+ * so that a mention keeps its name once the members are read again without
+ * them, as once the server refused it for their access. The names are the
+ * same object while they name each member alike, so that the editor shows
+ * its mentions again only once a name changes.
+ */
+function useMemberNames(
+  mentions: readonly CommentMention[] | undefined,
+  members: readonly { id: string; display_name: string }[] | undefined,
+): RichTextNames {
+  const { t } = useTranslation();
+  const former = t("comments.former_member");
+  const seen = useRef<{
+    of: ReadonlyMap<string, string>;
+    names: RichTextNames;
+  }>(undefined);
+  return useMemo(() => {
+    const of = new Map(seen.current?.of);
+    for (const m of mentions ?? []) {
+      of.set(m.id, m.display_name ?? former);
+    }
+    for (const m of members ?? []) {
+      of.set(m.id, m.display_name);
+    }
+    if (seen.current !== undefined && sameNames(seen.current.of, of)) {
+      return seen.current.names;
+    }
+    const names: RichTextNames = {
+      mention: () => undefined,
+      value: () => undefined,
+      member: (id) => of.get(id),
+    };
+    seen.current = { of, names };
+    return names;
+  }, [mentions, members, former]);
+}
+
+/** Reports whether a and b name the same members alike. */
+function sameNames(
+  a: ReadonlyMap<string, string>,
+  b: ReadonlyMap<string, string>,
+): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const [id, name] of b) {
+    if (a.get(id) !== name) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -24,6 +24,8 @@ const elaraId = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BV3";
 const bramId = "cmp_01HQ8Z3XK4F7NAWR5TCQ9M2BV4";
 const trustId = "atr_01HQ8Z3XK4F7NAWR5TCQ9M2BV5";
 const coinId = "var_01HQ8Z3XK4F7NAWR5TCQ9M2BV6";
+const tomasId = "usr_01HQ8Z3XK4F7NAWR5TCQ9M2BV7";
+const miraId = "usr_01HQ8Z3XK4F7NAWR5TCQ9M2BV8";
 
 const choices: RichTextChoices = {
   values: [
@@ -177,6 +179,70 @@ describe("the { and @ of the rich-text editor", () => {
         { attrs: { id: elaraId }, marks: [{ type: "bold" }], type: "mention" },
       ),
     );
+  });
+
+  // A comment (plan item 75) mentions the project's members, whom its @
+  // offers, as the page lists them, and refers to nothing of the story's:
+  // its { is text.
+  test("the @ of a comment offers the project's members, whatever their case and diacritics, and inserts a mention of the one chosen, which shows their name, while its { is text", async () => {
+    const { textbox, last } = renderEditor({
+      references: false,
+      choices: undefined,
+      members: [
+        { id: tomasId, name: "Tomáš Novák" },
+        { id: miraId, name: "Mira" },
+      ],
+      names: {
+        ...names,
+        member: (id) =>
+          id === tomasId ? "Tomáš Novák" : id === miraId ? "Mira" : undefined,
+      },
+    });
+    textbox.focus();
+    await userEvent.keyboard("{{go");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await userEvent.keyboard(" ask @");
+    const list = await screen.findByRole("listbox", {
+      name: "Members to mention",
+    });
+    expect(offersIn(list)).toEqual(["[@Tomáš Novák]", "@Mira"]);
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(document.activeElement).toBe(textbox);
+    await userEvent.keyboard(" and @tomas");
+    expect(
+      offersIn(
+        await screen.findByRole("listbox", { name: "Members to mention" }),
+      ),
+    ).toEqual(["[@Tomáš Novák]"]);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(last()?.doc).toEqual(
+      paragraphOf(
+        { text: "{go ask ", type: "text" },
+        { attrs: { id: miraId }, type: "memberMention" },
+        { text: " and ", type: "text" },
+        { attrs: { id: tomasId }, type: "memberMention" },
+      ),
+    );
+    expect(textbox.textContent).toBe("{go ask @Mira and @Tomáš Novák");
+    await userEvent.keyboard(" @zz");
+    expect(
+      await screen.findByText(
+        "No member of the project matches what you typed.",
+      ),
+    ).toBeDefined();
+  });
+
+  test("a story's text never offers members, though a page gives them", async () => {
+    renderEditor({ members: [{ id: miraId, name: "Mira" }] });
+    const textbox = screen.getByRole("textbox", { name: "Body" });
+    textbox.focus();
+    await userEvent.keyboard("@mi");
+    expect(
+      await screen.findByText("No component matches what you typed."),
+    ).toBeDefined();
+    expect(screen.queryByRole("listbox")).toBeNull();
   });
 
   test("Escape closes the list and keeps what was typed, after which the brace offers nothing until the caret has left it", async () => {

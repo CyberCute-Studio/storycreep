@@ -103,6 +103,9 @@ export const commands = {
   },
   "go.projects": { group: "navigation", on: page, keys: [] },
   "go.account": { group: "navigation", on: page, keys: [] },
+  // The account's notifications (FR-COMMENT-02, plan item 75), of the
+  // palette alone, as every other page's command but the search.
+  "go.notifications": { group: "navigation", on: page, keys: [] },
   "go.boards": { group: "navigation", on: page, keys: [] },
   "go.variables": { group: "navigation", on: page, keys: [] },
   "go.components": { group: "navigation", on: page, keys: [] },
@@ -345,6 +348,8 @@ export function commandName(t: TFunction, id: CommandId): string {
       return t("command.go.projects");
     case "go.account":
       return t("command.go.account");
+    case "go.notifications":
+      return t("command.go.notifications");
     case "go.boards":
       return t("command.go.boards");
     case "go.variables":

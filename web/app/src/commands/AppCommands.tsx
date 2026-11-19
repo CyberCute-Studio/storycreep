@@ -1,8 +1,8 @@
 // The commands of every page of a signed-in account (PRD FR-EDIT-10, plan
 // note N72): the palette's, the table of the shortcuts', and those that go
-// to the projects and to the account, and the dialogs of the palette and
-// of the table, with the header's button that opens the palette, so that
-// a finger reaches it too.
+// to the projects, to the account, and to its notifications (FR-COMMENT-02),
+// and the dialogs of the palette and of the table, with the header's button
+// that opens the palette, so that a finger reaches it too.
 
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
@@ -64,6 +64,9 @@ export function AppCommands({ signedIn }: { signedIn: boolean }) {
           },
           "go.projects": { run: () => void navigate({ to: "/projects" }) },
           "go.account": { run: () => void navigate({ to: "/account" }) },
+          "go.notifications": {
+            run: () => void navigate({ to: "/notifications" }),
+          },
         }
       : {},
   );

@@ -293,6 +293,107 @@
       "hash": "sha256:a893a22a46af838ba40fa316d53642a4a1aff5f8f5fb9243c0e8c1bafc16f087"
     },
     {
+      "note": "a mention of a member, which only a comment's body holds, derives nothing: it is no word of the text, so its neighbours are segments of their own, and the plain text, the preview, and the counts read them alone",
+      "doc": {
+        "content": [
+          {
+            "content": [
+              {
+                "text": "Ask ",
+                "type": "text"
+              },
+              {
+                "attrs": {
+                  "id": "usr_01HQ8Z9N5R3T7W2XKDPVQ6MBCF"
+                },
+                "type": "memberMention"
+              },
+              {
+                "text": " about the lamp.",
+                "type": "text"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [
+        {
+          "kind": "text",
+          "marks": [],
+          "value": "Ask "
+        },
+        {
+          "kind": "text",
+          "marks": [],
+          "value": " about the lamp."
+        }
+      ],
+      "text": "Ask  about the lamp.",
+      "preview": "Ask about the lamp.",
+      "words": 4,
+      "characters": 20,
+      "hash": "sha256:ccbc1cfbe02b49f185cf62c080800ae817884dd60c74575e25e8e7ea432cbd0c"
+    },
+    {
+      "note": "the canonical form of a mention of a member: its ID in its canonical spelling and its marks in alphabetical order; a document of nothing but one derives what an empty one does",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "memberMention",
+                "marks": [
+                  {
+                    "type": "italic"
+                  },
+                  {
+                    "type": "bold"
+                  }
+                ],
+                "attrs": {
+                  "id": "USR_01hq8z9n5r3t7w2xkdpvq6mbcf"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": {
+        "content": [
+          {
+            "content": [
+              {
+                "attrs": {
+                  "id": "usr_01HQ8Z9N5R3T7W2XKDPVQ6MBCF"
+                },
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "italic"
+                  }
+                ],
+                "type": "memberMention"
+              }
+            ],
+            "type": "paragraph"
+          }
+        ],
+        "type": "doc"
+      },
+      "segments": [],
+      "text": "",
+      "preview": "",
+      "words": 0,
+      "characters": 0,
+      "hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
       "note": "lists: an item segment begins each item, and a paragraph segment the paragraph after the list",
       "doc": {
         "content": [
@@ -5675,6 +5776,107 @@
         ]
       },
       "reason": "wrong_type",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention of a member without attrs",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "memberMention"
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0"
+    },
+    {
+      "note": "a mention of a member without an id",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "memberMention",
+                "attrs": {}
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "missing_field",
+      "pointer": "/content/0/content/0/attrs"
+    },
+    {
+      "note": "a mention of a member with a label",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "memberMention",
+                "attrs": {
+                  "id": "usr_01HQ8Z9N5R3T7W2XKDPVQ6MBCF",
+                  "label": "Tomas"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "unknown_field",
+      "pointer": "/content/0/content/0/attrs/label"
+    },
+    {
+      "note": "a mention of a member whose id is a component's",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "memberMention",
+                "attrs": {
+                  "id": "cmp_01HQ8Z7KD3M9P2W5XRTVNQ4BCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
+      "pointer": "/content/0/content/0/attrs/id"
+    },
+    {
+      "note": "a mention of a component whose id is a user's",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "mention",
+                "attrs": {
+                  "id": "usr_01HQ8Z9N5R3T7W2XKDPVQ6MBCF"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "reference",
       "pointer": "/content/0/content/0/attrs/id"
     },
     {

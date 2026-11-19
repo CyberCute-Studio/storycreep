@@ -42,6 +42,7 @@ function jsonOf(node: PMNode): Json {
     case "hardBreak":
       return { ...marksOf(node.marks), type };
     case "mention":
+    case "memberMention":
       return { attrs: { id: node.attrs.id }, ...marksOf(node.marks), type };
     case "valueRef":
       return {

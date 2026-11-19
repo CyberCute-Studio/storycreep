@@ -21,7 +21,8 @@
     "operation": "op",
     "asset": "ast",
     "job": "job",
-    "play_state": "pst"
+    "play_state": "pst",
+    "notification": "ntf"
   },
   "encode": [
     {
@@ -181,6 +182,11 @@
       "kind": "play_state",
       "uuid": "0199e5b7-e92b-76f2-965e-f5c8208aafb7",
       "id": "pst_01K7JVFT9BEVS9CQQNS0G8NBXQ"
+    },
+    {
+      "kind": "notification",
+      "uuid": "0199e5c4-3a1e-7d02-8b4f-5e6a7c8d9e0f",
+      "id": "ntf_01K7JW8EGYFM18PKTYD9Y8V7GF"
     }
   ],
   "decode": [

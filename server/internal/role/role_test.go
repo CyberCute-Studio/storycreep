@@ -121,3 +121,53 @@ func TestGrants(t *testing.T) {
 		t.Errorf("Grants() = %v, want %v", got, want)
 	}
 }
+
+// TestReaders checks that Readers lists the roles of a membership that read
+// a project without a grant, every one but guest's, and those of a grant that
+// read it, every grant's, as Effective resolves them for a user who is no
+// instance admin, so that the queries that filter by them read the projects
+// as Effective does: any workspace role but guest, or a guest with a grant.
+func TestReaders(t *testing.T) {
+	t.Parallel()
+	memberships, grants := Readers()
+	if want := []Role{Owner, Admin, Editor, Commenter, Viewer}; fmt.Sprint(memberships) != fmt.Sprint(want) {
+		t.Errorf("the memberships that read a project without a grant are %v, want %v", memberships, want)
+	}
+	if want := Grants(); fmt.Sprint(grants) != fmt.Sprint(want) {
+		t.Errorf("the grants that read a project are %v, want %v", grants, want)
+	}
+	reads := func(m, g Role) bool {
+		if g != None {
+			for _, r := range grants {
+				if r == g {
+					return true
+				}
+			}
+			return false
+		}
+		for _, r := range memberships {
+			if r == m {
+				return true
+			}
+		}
+		return false
+	}
+	for _, m := range Memberships() {
+		for _, g := range append([]Role{None}, Grants()...) {
+			if got, want := reads(m, g), (Policy{}).Effective(false, m, g) != None; got != want {
+				t.Errorf("membership %s, grant %s: the lists read %v, Effective %v", m, g, got, want)
+			}
+		}
+	}
+}
+
+// TestReaderNames checks that ReaderNames names the roles of Readers, in
+// their order.
+func TestReaderNames(t *testing.T) {
+	t.Parallel()
+	memberships, grants := Readers()
+	names, grantNames := ReaderNames()
+	if fmt.Sprint(names) != fmt.Sprint(memberships) || fmt.Sprint(grantNames) != fmt.Sprint(grants) {
+		t.Errorf("ReaderNames() = %v, %v, want %v, %v", names, grantNames, memberships, grants)
+	}
+}

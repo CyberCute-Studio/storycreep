@@ -87,7 +87,8 @@ export interface RenderAppOptions {
   routes?: AnyRoute;
   /**
    * The page's real-time channel, as a fake that sends the operations of
-   * other sessions (fakeRealtime); none if not set.
+   * other sessions, and tells the shell's listener that the account's
+   * notifications changed (fakeRealtime); none if not set.
    */
   realtime?: Realtime;
 }
@@ -153,7 +154,13 @@ export function renderApp(path: string, options: RenderAppOptions = {}) {
     routeTree: options.routes ?? routeTree,
     basepath: "/app",
     history: createMemoryHistory({ initialEntries: [`/app${path}`] }),
-    context: { queryClient, i18n, checkSession, documents },
+    context: {
+      queryClient,
+      i18n,
+      checkSession,
+      documents,
+      realtime: options.realtime,
+    },
     // The address's values read as the app reads them.
     parseSearch,
     disableGlobalCatchBoundary: true,

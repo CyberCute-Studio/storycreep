@@ -80,6 +80,7 @@ const (
 	CodeImageInvalid          Code = "image_invalid"
 	CodeSlugInvalid           Code = "slug_invalid"
 	CodeKeyInvalid            Code = "key_invalid"
+	CodeMentionNoAccess       Code = "mention_no_access"
 	CodeRateLimited           Code = "rate_limited"
 	CodeInternal              Code = "internal_error"
 	CodeNotReady              Code = "not_ready"
@@ -167,8 +168,8 @@ var codes = []codeSpec{
 	{CodeSessionRequired, http.StatusForbidden, i18n.K("error.session_required"),
 		"The route takes no API token, whatever its scopes, and needs the session cookie of a signed-in user " +
 			"instead, which `POST /api/v1/auth/login` sets (PRD FR-AUTH-04): every route of an account, its " +
-			"session, sessions, password, and email address, of a workspace's members, invitations, project " +
-			"grants, settings, and usage, of creating a workspace, of creating, deleting, and restoring projects " +
+			"session, sessions, password, email address, and notifications, of a workspace's members, invitations, " +
+			"project grants, settings, and usage, of creating a workspace, of creating, deleting, and restoring projects " +
 			"and the trash, of API tokens, and of the instance admin, so that a token cannot make another, change " +
 			"a credential, change who has access, or administer a workspace. Every other route that needs a " +
 			"signed-in user takes a token that holds its scope, as its description says."},
@@ -455,6 +456,17 @@ var codes = []codeSpec{
 			"`and`, `or`, `not`, `global`, `board`, `null`, `if`, `else`, and `elseif`. `details.reason` says which " +
 			"rule it breaks: `format` or `reserved`. `details.errors` names the field, with its `location` and a " +
 			"`message`, as for `validation_failed`."},
+	{CodeMentionNoAccess, http.StatusUnprocessableEntity, i18n.K("error.mention_no_access"),
+		"A comment's body mentions a user who cannot read the project, whom a comment cannot mention (PRD " +
+			"FR-COMMENT-02 AC1): a `comment.create` of `POST /api/v1/projects/{project_id}/commands`, or a " +
+			"`comment.edit` that mentions a user whom the comment does not mention yet, of a user who is not a " +
+			"member of the project's workspace, a guest of it without a grant of the project, or one whose account " +
+			"is not active, or of an ID that is no account's, which the answer does not tell apart. A member of " +
+			"any role who reads the project, a viewer or a guest with a grant too, may be mentioned, as `GET " +
+			"/api/v1/projects/{project_id}/members` lists them. Nothing of the batch applies. `details.errors` names " +
+			"the first such mention, at its `location` in the body's canonical form, as " +
+			"`payload.body.content[0].content[1]`, with a `message`, as for `validation_failed`, and without naming " +
+			"the user, whom the client knows it mentioned."},
 	{CodeRateLimited, http.StatusTooManyRequests, i18n.K("error.rate_limited"),
 		"The client made too many requests (PRD FR-API-04 AC3, NFR-SEC-06), or signing in with an email address " +
 			"failed too often in a row (FR-AUTH-05). The `Retry-After` header says how many seconds to wait. " +

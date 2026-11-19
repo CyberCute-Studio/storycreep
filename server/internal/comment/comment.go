@@ -9,11 +9,27 @@
 // A thread is a first comment, its root, which names the thread's target,
 // and the replies to it, one level deep; a thread is open or resolved, as its
 // root holds it. A comment's body is a rich-text document (package richtext)
-// of formatting and links alone, of at most MaxBodyLength characters of
-// text: the commands refuse a value reference or a mention in it, so that a
-// comment names nothing that the story reads, is never a usage of a variable
-// or a component (FR-DEP-01), and never keeps one from being deleted, and @
-// is left to the mentions of members (FR-COMMENT-02). Comments are no part
+// of formatting, links, and mentions of members alone, of at most
+// MaxBodyLength characters of text: the commands refuse a value reference or
+// a mention of a component in it, so that a comment names nothing that the
+// story reads, is never a usage of a variable or a component (FR-DEP-01),
+// and never keeps one from being deleted, and @ is left to the mentions of
+// members (FR-COMMENT-02), which only a comment's body holds of the
+// project's texts (commands.Spec.MemberMentions).
+//
+// A comment mentions at most MaxMentions members, each of whom it may
+// mention (Mentionable): a member of the project's workspace who reads the
+// project, by their membership's role or a grant of it, a guest included,
+// whose account is active, as the batch's transaction reads them; any other
+// mention is refused for ErrMentionNoAccess, at its location (FR-COMMENT-02
+// AC1). A comment notifies each member whom it mentions, but for its author,
+// once, as it is posted or an edit adds the mention (package notification),
+// and its deletion and its restoration tell its recipients' sessions that
+// their notifications changed. An edit holds only the members whom it
+// mentions anew to whether they may be mentioned, so that the comment of a
+// member who has lost the project's access since keeps the mention; an undo
+// of an edit that took out such a mention is refused as any edit that adds
+// it would be. Comments are no part
 // of the story: the published format, the exports, the validation, and the
 // writing statistics hold none of them (FR-COMMENT-01 AC3), though project
 // search finds them (FR-PROJ-03, package search).
@@ -55,8 +71,10 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/richtext"
+	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 )
 
 // MaxBodyLength is the most characters of text that a comment's body may
@@ -65,11 +83,65 @@ import (
 // feeds, the bullets, and the numbers of its paragraphs and lists.
 const MaxBodyLength = 10_000
 
+// MaxMentions is the most members that a comment's body may mention, each
+// counted once however often it mentions them.
+const MaxMentions = 50
+
 // ErrNotAuthor is the reason for which a command of a comment that only its
 // author may send, an edit, a deletion, or a restoration of it, refuses a
 // batch that another user sends, or that anyone sends once the author's
 // account is deleted (commands.Refuse).
 var ErrNotAuthor = errors.New("comment: only the comment's author may change it")
+
+// ErrMentionNoAccess is the reason for which a comment's create or edit
+// refuses a batch whose body mentions a user whom the comment may not mention
+// (Mentionable), at the mention's location (commands.Refuse), which the API
+// answers with mention_no_access (PRD FR-COMMENT-02 AC1).
+var ErrMentionNoAccess = errors.New("comment: the mentioned user cannot read the project")
+
+// memberRoles are the roles of a membership that read a project without a
+// grant, and grantRoles those of a grant that read it, as the queries take
+// them (role.ReaderNames).
+var memberRoles, grantRoles = role.ReaderNames()
+
+// Mentionable reports whether a comment of a project may mention a user, of
+// whom status is the account's status, membership the role of their
+// membership of the project's workspace, role.None if they are not a member,
+// and grant the role of the membership's grant on the project, role.None if
+// it has none: whether the account is active and the user reads the project,
+// their effective role on it not none (PRD §5.5), whatever their role, a
+// viewer's or a guest's with a grant too. An instance admin's access to every
+// project (role.Policy.InstanceAdminAccess) is no membership, which makes
+// nobody mentionable, so the role is resolved as for one who is not an
+// instance admin. MentionableMembers lists the users of whom it reports
+// true, by role.Readers, which agrees with it.
+func Mentionable(status string, membership, grant role.Role) bool {
+	return status == "active" && (role.Policy{}).Effective(false, membership, grant) != role.None
+}
+
+// mentionable returns, of each of users, whether a comment of the project
+// projectID, of the workspace workspaceID, may mention them (Mentionable),
+// as q's transaction reads them, false for a user who has no account.
+func mentionable(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.UUID, users []ids.UUID) (
+	map[ids.UUID]bool, error) {
+	rows, err := q.MentionAccess(ctx, queries.MentionAccessParams{WorkspaceID: nullUUID(workspaceID),
+		ProjectID: nullUUID(projectID), UserIds: uuids(users)})
+	if err != nil {
+		return nil, fmt.Errorf("comment: read the mentioned users' access: %w", err)
+	}
+	out := make(map[ids.UUID]bool, len(rows))
+	for _, r := range rows {
+		membership, grant := role.None, role.None
+		if r.MembershipRole.Valid {
+			membership = role.Role(r.MembershipRole.String)
+		}
+		if r.GrantRole.Valid {
+			grant = role.Role(r.GrantRole.String)
+		}
+		out[r.ID.Bytes] = Mentionable(r.Status, membership, grant)
+	}
+	return out, nil
+}
 
 // TargetType is the kind of the entity that a thread is on, its target.
 type TargetType string
@@ -151,8 +223,11 @@ type CommentBody struct {
 	// a connection leaves.
 	NodeID    string        `json:"node_id,omitempty" doc:"The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none."`
 	NodeTitle *string       `json:"node_title,omitempty" doc:"The title of the target's node, which may be empty, and which a comment has exactly when it has node_id"`
-	Body      *richtext.Doc `json:"body,omitempty" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, without value references or mentions. A deleted comment has none."`
-	Deleted   bool          `json:"deleted" doc:"Whether the comment is deleted, which a list shows of the first comment of a thread whose replies are not all deleted, without its body and its author, as long as one of them is not"`
+	Body      *richtext.Doc `json:"body,omitempty" doc:"The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members (memberMention), and text that may be bold, italic, struck through, code, or a link, without value references or mentions of components. A deleted comment has none."`
+	// Mentions are the members that Body mentions, each once, in the order
+	// of their first mentions, and none of a deleted comment.
+	Mentions []CommentMention `json:"mentions,omitempty" doc:"The members that the comment's body mentions, each once, in the order of their first mentions, with their display names as they are now, by which a client shows each mention as @ and the name (PRD FR-COMMENT-02). A comment whose body mentions nobody, and a deleted comment, have none."`
+	Deleted  bool             `json:"deleted" doc:"Whether the comment is deleted, which a list shows of the first comment of a thread whose replies are not all deleted, without its body and its author, as long as one of them is not"`
 	// Author is nil for a deleted comment, and for one whose author's
 	// account is deleted.
 	Author    *CommentAuthor `json:"author,omitempty" doc:"The comment's author, the one user who may edit it or delete it. A deleted comment has none, and nor does one whose author's account is deleted, which nobody may change."`
@@ -169,6 +244,22 @@ type CommentBody struct {
 	// only an answer of revision_conflict shows.
 	DeletedAt *time.Time `json:"deleted_at,omitempty" doc:"When the comment went to the project's trash, if it is there, which only an answer of revision_conflict shows"`
 	key       Key
+}
+
+// CommentMention is a member that a comment's body mentions, as the API
+// shows it: their ID, and their display name, unless their account is
+// deleted, which a client shows in words of its own, as a former member.
+type CommentMention struct {
+	ID          string `json:"id" doc:"The user's ID, as the mention's attrs.id spells it canonically"`
+	DisplayName string `json:"display_name,omitempty" doc:"The user's display name as it is now. A user whose account is deleted has none."`
+}
+
+// MentionableMember is a user whom a comment of a project may mention
+// (Mentionable), as the list of them shows them, by which a client offers
+// whom to mention.
+type MentionableMember struct {
+	ID          string `json:"id" doc:"The user's ID"`
+	DisplayName string `json:"display_name" doc:"The user's display name"`
 }
 
 // Key is where a comment is in the list of a project's comments
@@ -387,7 +478,7 @@ func (s *Service) List(ctx context.Context, actor commands.Actor, projectID ids.
 			}
 			out = append(out, b)
 		}
-		return nil
+		return withMentions(ctx, q, out)
 	})
 	if err != nil {
 		return nil, err
@@ -455,6 +546,60 @@ func (s *Service) Authors(ctx context.Context, actor commands.Actor, projectID, 
 		return nil, err
 	}
 	return out, nil
+}
+
+// Members returns at most limit of the users whom a comment of the project
+// projectID may mention (Mentionable), each with their display name, in the
+// order of their IDs: the first, if after is zero, or else those after the
+// user after, as the members' list by which a client offers whom to mention
+// (PRD FR-COMMENT-02). Reading it is reading the project, which every role
+// does. It returns the errors of project.Service.Get.
+func (s *Service) Members(ctx context.Context, actor commands.Actor, projectID, after ids.UUID, limit int) (
+	[]MentionableMember, error) {
+	out := []MentionableMember{}
+	err := s.read(ctx, actor, projectID, func(q *queries.Queries, workspaceID pgtype.UUID) error {
+		rows, err := q.MentionableMembers(ctx, queries.MentionableMembersParams{WorkspaceID: workspaceID,
+			ProjectID: nullUUID(projectID), GrantRoles: grantRoles, MemberRoles: memberRoles, After: nullUUID(after),
+			MaxRows: int32(min(limit, 1<<20))})
+		if err != nil {
+			return fmt.Errorf("comment: list the members whom a comment may mention: %w", err)
+		}
+		for _, r := range rows {
+			out = append(out, MentionableMember{ID: ids.Encode(ids.User, r.ID.Bytes), DisplayName: r.DisplayName})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// withMentions sets the mentions of each of bodies that has a body to the
+// members that the body mentions (CommentBody.Mentions), with their display
+// names, read in one query in q's transaction, as they are now, as a
+// notification's preview reads them (notification.MemberNames).
+func withMentions(ctx context.Context, q *queries.Queries, bodies []CommentBody) error {
+	var users []string
+	for i := range bodies {
+		for _, user := range notification.MembersOf(bodies[i].Body) {
+			bodies[i].Mentions = append(bodies[i].Mentions, CommentMention{ID: user})
+			users = append(users, user)
+		}
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	names, err := notification.MemberNames(ctx, q, users)
+	if err != nil {
+		return err
+	}
+	for i := range bodies {
+		for j, m := range bodies[i].Mentions {
+			bodies[i].Mentions[j].DisplayName = names[m.ID]
+		}
+	}
+	return nil
 }
 
 // nullUUID returns id as a uuid column, null if id is zero.

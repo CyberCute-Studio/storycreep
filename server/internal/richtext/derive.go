@@ -23,6 +23,16 @@ type Names interface {
 	Component(id string) string
 }
 
+// NoNames names nothing, which a document without value references and
+// mentions of components, as a comment's body, asks no name of.
+type NoNames struct{}
+
+// Value returns "".
+func (NoNames) Value(string, string) string { return "" }
+
+// Component returns "".
+func (NoNames) Component(string) string { return "" }
+
 // The kinds of segment.
 const (
 	SegmentText      = "text"
@@ -188,7 +198,9 @@ func (d *Doc) Derive(names Names) Derived {
 
 // Segments returns the document's segments, with the names of what it
 // refers to, which names gives and which must not be nil. A document whose
-// only block is an empty paragraph has none. The document is one that Parse
+// only block is an empty paragraph has none, and a mention of a member has
+// none either, which is no word of the text (Member): a paragraph of nothing
+// but one derives what an empty one derives. The document is one that Parse
 // returned or that MarshalJSON writes, as for Derive.
 func (d *Doc) Segments(names Names) Segments {
 	if names == nil {
@@ -267,6 +279,10 @@ func (sg *segmenter) inlines(inlines []Inline) {
 			}
 			s = Segment{Kind: SegmentMention, Marks: in.Marks.names(), Href: in.Marks.Link,
 				Ref: in.Component, Value: sg.names.Component(in.Component)}
+		case *Member:
+			// A mention of a member, which a comment's body alone holds, is no
+			// word of the text, and no published text holds one (Member).
+			continue
 		case *Value:
 			if in == nil {
 				continue
@@ -282,6 +298,51 @@ func (sg *segmenter) inlines(inlines []Inline) {
 		}
 		sg.segs = append(sg.segs, s)
 	}
+}
+
+// WithMembers returns the document with each mention of a member in place of
+// a text, of the mention's marks, of what name writes of the member whose
+// user's ID it is given, as @Elara, or without the mention where name writes
+// "", for what shows a comment's text with whom it mentions, as a
+// notification's preview (package notification), which derives it as any
+// document. It changes nothing of d, and returns a Doc that a program built,
+// whose neighbouring texts with the same marks derive as one, as a stored
+// document's do (canonicalInlines).
+func (d *Doc) WithMembers(name func(user string) string) Doc {
+	var blocks func(bs []Block) []Block
+	blocks = func(bs []Block) []Block {
+		out := make([]Block, 0, len(bs))
+		for _, b := range bs {
+			switch b := b.(type) {
+			case *Paragraph:
+				if b == nil {
+					continue
+				}
+				p := &Paragraph{Inlines: make([]Inline, 0, len(b.Inlines))}
+				for _, in := range b.Inlines {
+					if m, ok := in.(*Member); ok && m != nil {
+						if text := name(canonicalID(m.User)); text != "" {
+							p.Inlines = append(p.Inlines, &Text{Text: text, Marks: m.Marks})
+						}
+						continue
+					}
+					p.Inlines = append(p.Inlines, in)
+				}
+				out = append(out, p)
+			case *List:
+				if b == nil {
+					continue
+				}
+				l := &List{Ordered: b.Ordered, Start: b.Start, Items: make([]Item, len(b.Items))}
+				for i, item := range b.Items {
+					l.Items[i] = Item{Blocks: blocks(item.Blocks)}
+				}
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	return Doc{Blocks: blocks(d.Blocks)}
 }
 
 // PlainText returns the plain text of a document's segments, as the text

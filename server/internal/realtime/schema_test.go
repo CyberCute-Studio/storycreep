@@ -107,6 +107,7 @@ func TestMessagesMatchSchema(t *testing.T) {
 			RetryAfter: 12},
 		invalidMessage,
 		HeartbeatMessage{Type: typeHeartbeat},
+		NotificationsMessage{Type: typeNotifications},
 	}
 	for _, msg := range sent {
 		v := instance(t, msg)

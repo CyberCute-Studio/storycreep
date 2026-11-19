@@ -594,6 +594,9 @@
           "$ref": "#/$defs/RichTextMention"
         },
         {
+          "$ref": "#/$defs/RichTextMemberMention"
+        },
+        {
           "$ref": "#/$defs/RichTextValueRef"
         }
       ]
@@ -722,6 +725,35 @@
       "maxItems": 5,
       "type": "array"
     },
+    "RichTextMemberMention": {
+      "additionalProperties": false,
+      "description": "A mention of a member of the project, a user who reads it, which a client shows as @ and the member's display name, and which tells the member of the comment. Only a comment's body holds one, which the server checks beyond this schema, and nothing is derived of it: it is no word of the text.",
+      "properties": {
+        "attrs": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RichTextUserId"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "marks": {
+          "$ref": "#/$defs/RichTextMarks"
+        },
+        "type": {
+          "const": "memberMention"
+        }
+      },
+      "required": [
+        "attrs",
+        "type"
+      ],
+      "type": "object"
+    },
     "RichTextMention": {
       "additionalProperties": false,
       "description": "A mention of a component, which the text shows by the component's name.",
@@ -804,6 +836,11 @@
         "type"
       ],
       "type": "object"
+    },
+    "RichTextUserId": {
+      "description": "A user's ID.",
+      "pattern": "^[Uu][Ss][Rr]_[01234567][0123456789AaBbCcDdEeFfGgHhJjKkMmNnPpQqRrSsTtVvWwXxYyZz]{25}$",
+      "type": "string"
     },
     "RichTextValueRef": {
       "additionalProperties": false,

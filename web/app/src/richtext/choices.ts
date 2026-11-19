@@ -1,9 +1,11 @@
 // What the { and @ of a rich text offer (PRD FR-TEXT-02, FR-TEXT-03, plan
 // note N73): the values and the components that the page gives the editor,
-// narrowed to those whose names have a word that starts as each word typed
-// after the trigger does, as the command palette narrows its commands
-// (ui/match.ts), and a value's format, the digits after the point that a
-// number is shown with, typed after a colon, as {gold:2.
+// or, in a comment, the members of the project that @ mentions
+// (FR-COMMENT-02, plan item 75), narrowed to those whose names have a word
+// that starts as each word typed after the trigger does, as the command
+// palette narrows its commands (ui/match.ts), and a value's format, the
+// digits after the point that a number is shown with, typed after a colon,
+// as {gold:2.
 
 import { foldName, foldWords, wordsMatcher } from "../ui/match";
 import { isDecimals } from "./schema";
@@ -35,16 +37,47 @@ export interface MentionChoice {
   terms?: readonly string[];
 }
 
+/** A member of the project that @ offers to mention in a comment (FR-COMMENT-02). */
+export interface MemberChoice {
+  /** The user's ID. */
+  id: string;
+  /** Their display name, as Tomas, which their mention shows. */
+  name: string;
+  /** What else the list says of them, if anything. */
+  detail?: string;
+  /** Other names that what is typed finds them by. */
+  terms?: readonly string[];
+}
+
 /** What a page's rich text may refer to, which its { and @ offer. */
 export interface RichTextChoices {
   values: readonly ValueChoice[];
   mentions: readonly MentionChoice[];
 }
 
-/** What the list of a suggestion offers: a value, with the format typed after its name, if one was, or a component. */
+/** What a comment may mention, which its @ offers: the project's members. */
+export interface MemberChoices {
+  members: readonly MemberChoice[];
+}
+
+/**
+ * What the triggers of a text offer: a story's text, which a page gives
+ * RichTextChoices, offers values on { and components on @; a comment, which
+ * refers to nothing of the story's, offers the project's members on @
+ * alone (MemberChoices), and its { is text, as any other character.
+ */
+export type Offerable = RichTextChoices | MemberChoices;
+
+/** Reports whether offerable is a comment's, which offers members alone. */
+function ofComment(offerable: Offerable): offerable is MemberChoices {
+  return "members" in offerable;
+}
+
+/** What the list of a suggestion offers: a value, with the format typed after its name, if one was, a component, or a member. */
 export type Offer =
   | { kind: "value"; choice: ValueChoice; decimals?: number }
-  | { kind: "mention"; choice: MentionChoice };
+  | { kind: "mention"; choice: MentionChoice }
+  | { kind: "member"; choice: MemberChoice };
 
 /** The most offers that the list shows, of a query that more match, which the user narrows by typing on. */
 export const MAX_OFFERS = 20;
@@ -124,15 +157,40 @@ function matching<T extends { name: string; terms?: readonly string[] }>(
 }
 
 /**
- * Returns what the list of open offers of choices, at most MAX_OFFERS of
- * them, and how many match in all: the values that what was typed after {
- * names, with its format, or the components that what was typed after @
- * names.
+ * Reports whether the trigger of open offers anything of what a text may
+ * refer to: every trigger of a story's text, and the @ of a comment alone.
+ */
+export function offersAt(
+  offerable: Offerable,
+  open: Pick<Suggestion, "trigger">,
+): boolean {
+  return !ofComment(offerable) || open.trigger === "@";
+}
+
+/**
+ * Returns what the list of open offers of what a text may refer to, at most
+ * MAX_OFFERS of them, and how many match in all: the values that what was
+ * typed after { names, with its format, or the components that what was
+ * typed after @ names, or, in a comment, the members that it names; and
+ * none of a trigger that offers nothing (offersAt), as the { of a comment.
  */
 export function offersOf(
-  choices: RichTextChoices,
+  offerable: Offerable,
   open: Pick<Suggestion, "trigger" | "query">,
 ): { offers: Offer[]; total: number } {
+  if (ofComment(offerable)) {
+    if (open.trigger !== "@") {
+      return { offers: [], total: 0 };
+    }
+    const found = matching(offerable.members, open.query);
+    return {
+      offers: found
+        .slice(0, MAX_OFFERS)
+        .map((choice) => ({ kind: "member", choice })),
+      total: found.length,
+    };
+  }
+  const choices = offerable;
   if (open.trigger === "@") {
     const found = matching(choices.mentions, open.query);
     return {

@@ -1,6 +1,8 @@
 // A fake of the page's real-time channel (document/realtime.ts), for the
 // tests of pages: what they subscribe to, and the operations of other
-// sessions that a test sends them, as the server would.
+// sessions that a test sends them, as the server would, and the messages
+// that tell the page's listeners that the account's notifications changed
+// (FR-COMMENT-02).
 
 import type { OperationMessage } from "@storycreep/shared/realtime";
 import type { Realtime, Subscriber } from "../document/realtime";
@@ -29,11 +31,16 @@ export interface FakeRealtime extends Realtime {
     commands: { type: string; payload: unknown; command_id?: string }[],
     revisions: { id: string; rev: number }[],
   ): void;
+  /** Reports how many listeners of the account's notifications listen, as the shell's of a signed-in page. */
+  listening(): number;
+  /** Tells each listener of the account's notifications that they changed, as {"type": "notifications"} does. */
+  notify(): void;
 }
 
 /** Returns a fake of the page's real-time channel. */
 export function fakeRealtime(): FakeRealtime {
   const subscribers = new Map<string, Subscriber>();
+  const listeners = new Set<() => void>();
   let ids = 0;
   return {
     subscribe(projectId, subscriber) {
@@ -44,11 +51,25 @@ export function fakeRealtime(): FakeRealtime {
         }
       };
     },
+    listen(listener) {
+      const own = () => listener();
+      listeners.add(own);
+      return () => {
+        listeners.delete(own);
+      };
+    },
     reconnect() {
       // The fake's subscriptions go with no session's cookie.
     },
     close() {
       subscribers.clear();
+      listeners.clear();
+    },
+    listening: () => listeners.size,
+    notify() {
+      for (const listener of [...listeners]) {
+        listener();
+      }
     },
     subscribed: (projectId) => subscribers.has(projectId),
     hold(projectId, seq) {

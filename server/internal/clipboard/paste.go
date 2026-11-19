@@ -425,6 +425,8 @@ func (pl *plan) text(t Text) (*richtext.Doc, error) {
 	}
 	for in := range doc.Inlines() {
 		switch in := in.(type) {
+		case *richtext.Member:
+			// Check refused a text that mentions a member (checkText).
 		case *richtext.Mention:
 			if to := pl.r.components[in.Component]; to != "" {
 				in.Component = to

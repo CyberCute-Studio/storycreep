@@ -30,6 +30,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/invite"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/playstate"
 	"github.com/CyberCute-Studio/storycreep/server/internal/project"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
@@ -105,6 +106,9 @@ type server struct {
 	// comments reads the projects' threaded comments, which their commands
 	// change (package comment).
 	comments *comment.Service
+	// notifications reads the accounts' notifications, which the comments'
+	// commands make, and marks them read (package notification).
+	notifications *notification.Service
 	// clipboard copies nodes as a clipboard, and reports what of one a paste
 	// would resolve to nothing.
 	clipboard *clipboard.Service
@@ -197,6 +201,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
 	s.playStates = playstate.New(readyDB{s.ready}, playstate.Options{Projects: s.projects})
 	s.comments = comment.New(readyDB{s.ready}, comment.Options{Projects: s.projects})
+	s.notifications = notification.New(readyDB{s.ready})
 	s.trash = trash.New(readyDB{s.ready}, trash.Options{Projects: s.projects})
 	s.assets = asset.New(readyDB{s.ready}, asset.Options{
 		Projects:     s.projects,
@@ -292,6 +297,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerClipboard(s.main, s.clipboard)
 	registerPlayStates(s.main, s.playStates)
 	registerComments(s.main, s.comments)
+	registerNotifications(s.main, s.notifications)
 	registerRenames(s.main, s.variables, s.components)
 	registerTrash(s.main, s.trash)
 	registerAssets(s.main, s.assets)

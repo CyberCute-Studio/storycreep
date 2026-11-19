@@ -902,7 +902,7 @@ export interface CommentBody {
   board_id?: string;
   /** The name of the target's board, which a comment has exactly when it has board_id */
   board_name?: string;
-  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, without value references or mentions. A deleted comment has none. */
+  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members (memberMention), and text that may be bold, italic, struck through, code, or a link, without value references or mentions of components. A deleted comment has none. */
   body?: RichTextDoc;
   /** When the comment was posted */
   created_at: string;
@@ -914,6 +914,8 @@ export interface CommentBody {
   edited_at?: string;
   /** The comment's ID */
   id: string;
+  /** The members that the comment's body mentions, each once, in the order of their first mentions, with their display names as they are now, by which a client shows each mention as @ and the name (PRD FR-COMMENT-02). A comment whose body mentions nobody, and a deleted comment, have none. */
+  mentions?: Array<CommentMention> | null;
   /** The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none. */
   node_id?: string;
   /** The title of the target's node, which may be empty, and which a comment has exactly when it has node_id */
@@ -964,7 +966,7 @@ export interface CommentCreateCommand {
 
 /** The payload of a command of the type comment.create. */
 export interface CommentCreatePayload {
-  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, mentions of members of the project (memberMention), and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, or a mention, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists, mentioning at most 50 members. One that is not, or that holds a value reference or a mention of a component, is answered with 422 validation_failed, a value reference, a mention of a component, or the mention of a 51st member at its location in the document's canonical form, as payload.body.content[0].content[1]. Each member that it mentions is notified of it (PRD FR-COMMENT-02): a mention of a user who cannot read the project, who is not a member of its workspace, a guest without a grant of the project, or whose account is not active, is answered with 422 mention_no_access at the mention's location, which does not name the user. */
   body: RichTextDoc;
   /** The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
   id: string;
@@ -1004,9 +1006,16 @@ export interface CommentEditCommand {
 
 /** The payload of a command of the type comment.edit. */
 export interface CommentEditPayload {
-  /** The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  /** The comment's new body, a rich-text document (PRD FR-TEXT-01) as a new comment's is. A mention of a member that the comment's body does not mention yet is held to whether the member may be mentioned, as a new comment's, and notifies the member, once: one that the comment mentions already is not, so that the comment of a member who has since lost the project's access keeps the mention. A mention that an edit takes out leaves its notification as it was. */
   body: RichTextDoc;
   /** The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required. */
+  id: string;
+}
+
+export interface CommentMention {
+  /** The user's display name as it is now. A user whose account is deleted has none. */
+  display_name?: string;
+  /** The user's ID, as the mention's attrs.id spells it canonically */
   id: string;
 }
 
@@ -2064,6 +2073,13 @@ export interface MembershipBody {
   updated_at: string;
 }
 
+export interface MentionableMember {
+  /** The user's display name */
+  display_name: string;
+  /** The user's ID */
+  id: string;
+}
+
 export interface MeteredUsageBody {
   /** How much the workspace uses */
   used: number;
@@ -2378,6 +2394,51 @@ export interface NodeUpdatePayload {
   title?: string;
 }
 
+export interface NotificationActor {
+  /** The user's display name */
+  display_name: string;
+  /** The user's ID */
+  id: string;
+}
+
+export interface NotificationBody {
+  /** Who mentioned the account, the comment's author, unless their account is deleted */
+  actor?: NotificationActor;
+  /** The ID of the target's board: a node's, a connection's, or a board variable's, or the board itself. A global variable has none. */
+  board_id?: string;
+  /** The ID of the comment that mentions the account */
+  comment_id: string;
+  /** When the comment mentioned the account: when it was posted, or edited to mention it */
+  created_at: string;
+  /** The notification's ID */
+  id: string;
+  /** What the notification tells of: mention, a comment that mentions the account */
+  kind: "mention";
+  /** The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none. */
+  node_id?: string;
+  /** The preview of the comment's body as it is now, as a rich text's preview is derived (PRD FR-TEXT-01), with each member that it mentions written as @ and the member's display name as it is now, or as @… once the member's account is deleted */
+  preview: string;
+  /** The comment's project */
+  project: NotificationProject;
+  /** When the account marked the notification read, if it did. An unread one has none. */
+  read_at?: string;
+  /** The ID of the thread's target */
+  target_id: string;
+  /** The kind of the thread's target: a node, a connection, a board, or a variable */
+  target_type: "node" | "connection" | "board" | "variable";
+  /** The ID of the comment's thread, its first comment's */
+  thread_id: string;
+  /** The ID of the workspace of the comment's project */
+  workspace_id: string;
+}
+
+export interface NotificationProject {
+  /** The project's ID */
+  id: string;
+  /** The project's name */
+  name: string;
+}
+
 export interface PageAPITokenBody {
   items: Array<APITokenBody>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2456,8 +2517,20 @@ export interface PageMembershipBody {
   next_cursor: string | null;
 }
 
+export interface PageMentionableMember {
+  items: Array<MentionableMember>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageNode {
   items: Array<Node>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageNotificationBody {
+  items: Array<NotificationBody>;
   /** The cursor of the next page, or null if this is the last page */
   next_cursor: string | null;
 }
@@ -2910,6 +2983,11 @@ export interface ProjectUpdateSettingsPayload {
   publish_min_role?: "editor" | "admin";
 }
 
+export interface ReadAllBody {
+  /** The ID of the newest notification that the client shows, as the first of the list's first page: it and every notification of the account made before it are marked read, so that one that arrived after the client read the list stays unread, but for one of another project's batch that applied before through's and committed after the list was read */
+  through: string;
+}
+
 export interface RegisterBody {
   /** The name that other people see, of 1 to 100 characters, not all of them blank, and without control characters, bidirectional controls and line separators among them. White space around it is removed. */
   display_name: string;
@@ -3049,7 +3127,7 @@ export interface RichTextHardBreak {
   type: "hardBreak";
 }
 
-export type RichTextInline = RichTextText | RichTextHardBreak | RichTextMention | RichTextValueRef;
+export type RichTextInline = RichTextText | RichTextHardBreak | RichTextMention | RichTextMemberMention | RichTextValueRef;
 
 /** Italic. */
 export interface RichTextItalic {
@@ -3084,6 +3162,15 @@ export interface RichTextListItem {
 /** The marks of an inline node, each at most once, which the server checks beyond this schema. The code mark is not combined with another. */
 export type RichTextMarks = Array<RichTextBold | RichTextCode | RichTextItalic | RichTextLink | RichTextStrike>;
 
+/** A mention of a member of the project, a user who reads it, which a client shows as @ and the member's display name, and which tells the member of the comment. Only a comment's body holds one, which the server checks beyond this schema, and nothing is derived of it: it is no word of the text. */
+export interface RichTextMemberMention {
+  attrs: {
+    id: RichTextUserId;
+  };
+  marks?: RichTextMarks;
+  type: "memberMention";
+}
+
 /** A mention of a component, which the text shows by the component's name. */
 export interface RichTextMention {
   attrs: {
@@ -3110,6 +3197,9 @@ export interface RichTextText {
   text: string;
   type: "text";
 }
+
+/** A user's ID. */
+export type RichTextUserId = string;
 
 /** A reference to a value, which the text shows as the runtime renders it: a variable's, or a runtime attribute's of a component. */
 export interface RichTextValueRef {
@@ -3340,6 +3430,11 @@ export interface UndoCommandBody {
   payload: Record<string, unknown>;
   /** The command's type */
   type: string;
+}
+
+export interface UnreadBody {
+  /** How many of the account's notifications that are shown are unread, across its workspaces */
+  unread: number;
 }
 
 export interface UnreconnectedBody {
@@ -3773,7 +3868,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name, as is a rich text of a payload that mentions a member (memberMention), which only a comment's body may, at the mention, as body.commands[0].payload.text.content[0].content[1]; a comment's body that mentions a user who cannot read the project is answered with 422 mention_no_access at the mention. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *
@@ -3911,6 +4006,17 @@ export interface Operations {
     };
     responses: {
       200: PageCommentCount;
+    };
+  };
+  /**
+   * Count the signed-in account's unread notifications
+   *
+   * Returns how many of the signed-in account's notifications that are shown are unread, across its workspaces, as a client's badge of the centre shows them. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such a comment, and a change of their read state, sends {"type": "notifications"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  countUnreadNotifications: {
+    input: Record<string, never>;
+    responses: {
+      200: UnreadBody;
     };
   };
   /**
@@ -4827,6 +4933,24 @@ export interface Operations {
     };
   };
   /**
+   * List the signed-in account's notifications
+   *
+   * Lists the signed-in account's notifications that are shown, newest first, by when each was made, as the server's clock has it, a page at a time across the account's workspaces. Each names the comment that mentions the account, its thread, and the thread's target, with the target's board and node, as the list of a project's comments names them, by which a client opens it, its project, who mentioned the account, and a preview of the comment's body as it is now, with each member that it mentions written as @ and their display name, and whether, and when, the account read it. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such a comment, and a change of their read state, sends {"type": "notifications"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). Requests that read share a rate limit of 1,200 a minute for each IP address, and 600 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listNotifications: {
+    input: {
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageNotificationBody;
+    };
+  };
+  /**
    * List a project's saved play states
    *
    * Lists the project's saved play states that are not in its trash, each without its state, which GET /api/v1/projects/{project_id}/play-states/{play_state_id} returns, in the order of their IDs, oldest first (PRD FR-PLAY-05). Every member who reads the project sees them all, whoever saved them. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type play_state.* save, rename, replace the state of, delete, and restore them, which an owner, an admin, or an editor of the project may send. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -4868,6 +4992,28 @@ export interface Operations {
     };
     responses: {
       200: PageGrantBody;
+    };
+  };
+  /**
+   * List the members whom a project's comments may mention
+   *
+   * Lists the users whom a comment of the project may mention (PRD FR-COMMENT-02), each with their display name, in the order of their IDs, by which a client offers whom to mention: the members of the project's workspace who read the project, by any role of their membership, or by a grant of the project, a viewer's and a guest's with a grant too, whose accounts are active. A comment's body that mentions anyone else is refused with 422 mention_no_access. Reading it is reading the project, which every role does, a member who may not list the workspace's members, as a guest, too. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listProjectMembers: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageMentionableMember;
     };
   };
   /**
@@ -5161,7 +5307,7 @@ export interface Operations {
   /**
    * Open the real-time channel
    *
-   * Upgrades to a WebSocket (RFC 6455), over which the client subscribes to the projects that it reads, and is sent each batch of commands that commits to them, from every server of the instance, in the order of their seqs (PRD FR-RT-01, FR-RT-02). The operation log is the source of truth, and the socket only a way to be told of it sooner: a client that connects again subscribes with the seq of the latest operation that it has, and is sent those that it missed, or told to reload the project (resync_required) when the log no longer has them, or more than 10,000 follow. The messages are JSON, each in a text message of its own, as schema/realtime/v1/messages.schema.json describes them: a client sends {"type": "subscribe", "project_id", "since"} and {"type": "unsubscribe", "project_id"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or subscription_failed, whose code is not_found for a project that does not exist and one that the user cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, unsubscribed once a check finds that the project can no longer be read, and a heartbeat every 25 seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, neither a message nor a pong, and drops the connection without a close, which the client sees as 1006, once a message to it takes longer than 30 seconds to write. A socket subscribes to 100 projects at most, each subscription counts in the rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, and the user's access to each project, are checked again before each subscription and each page of operations that it is sent, and not while it is sent nothing: a check that finds that the session has ended, or has a new secret, as a change of the password gives the session that made it, or that the token no longer holds, closes the socket with 4001, after which a client connects again if a request with the credential that it holds now, as GET /api/v1/auth/session with the cookie, is answered, and signs in again, or takes another token, if it is refused with 401; one that finds that the project can no longer be read ends its subscription, at the project's next operation. It closes with 1001 as the server stops, and 1011 when the server fails, as when it cannot read the database, after either of which, as after a connection dropped, a client connects again, with exponential backoff and jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the request's host by that URL's scheme is refused with 403 csrf_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Openings of the real-time channel's WebSocket share a rate limit of 60 a minute for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is connect, and whose Retry-After header says how many seconds to wait.
+   * Upgrades to a WebSocket (RFC 6455), over which the client subscribes to the projects that it reads, and is sent each batch of commands that commits to them, from every server of the instance, in the order of their seqs (PRD FR-RT-01, FR-RT-02). The operation log is the source of truth, and the socket only a way to be told of it sooner: a client that connects again subscribes with the seq of the latest operation that it has, and is sent those that it missed, or told to reload the project (resync_required) when the log no longer has them, or more than 10,000 follow. The messages are JSON, each in a text message of its own, as schema/realtime/v1/messages.schema.json describes them: a client sends {"type": "subscribe", "project_id", "since"} and {"type": "unsubscribe", "project_id"}, at most 4 KiB each; a subscription is answered with subscribed, resync_required, or subscription_failed, whose code is not_found for a project that does not exist and one that the user cannot read alike, and an unsubscription with unsubscribed. The client is sent operation messages, unsubscribed once a check finds that the project can no longer be read, a socket opened with the session cookie {"type": "notifications"} once the account's notifications change, whatever it subscribes to, after which it reads them again (GET /api/v1/notifications), and once the server listens again after it could not, when it may have missed some, which a socket of an API token is never sent, and a heartbeat every 25 seconds, beside a ping, which a client that hears nothing for a minute takes for a lost connection; the server closes the socket with 1008 once it has heard nothing from the client for 75 seconds, neither a message nor a pong, and drops the connection without a close, which the client sees as 1006, once a message to it takes longer than 30 seconds to write. A socket subscribes to 100 projects at most, each subscription counts in the rate limit of reads, and a user has 50 sockets open to a server at most, past which the upgrade is answered with 429 rate_limited, whose details.reason is connections. The socket's session or token, and the user's access to each project, are checked again before each subscription and each page of operations that it is sent, and not while it is sent nothing: a check that finds that the session has ended, or has a new secret, as a change of the password gives the session that made it, or that the token no longer holds, closes the socket with 4001, after which a client connects again if a request with the credential that it holds now, as GET /api/v1/auth/session with the cookie, is answered, and signs in again, or takes another token, if it is refused with 401; one that finds that the project can no longer be read ends its subscription, at the project's next operation. It closes with 1001 as the server stops, and 1011 when the server fails, as when it cannot read the database, after either of which, as after a connection dropped, a client connects again, with exponential backoff and jitter, and subscribes with the seqs that it has. A request that does not upgrade is answered with 426 upgrade_required. A socket opened with the session cookie whose Origin header names neither STORYCREEP_PUBLIC_URL's origin nor the request's host by that URL's scheme is refused with 403 csrf_failed. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Openings of the real-time channel's WebSocket share a rate limit of 60 a minute for each IP address, 30 for each account, and 30 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is connect, and whose Retry-After header says how many seconds to wait.
    */
   openRealtimeSocket: {
     input: Record<string, never>;
@@ -5223,6 +5369,43 @@ export interface Operations {
     };
     responses: {
       200: PageRenameSite;
+    };
+  };
+  /**
+   * Mark the signed-in account's notifications read
+   *
+   * Marks read the signed-in account's notifications that are unread, shown or not, in every workspace of the account, that were made at or before the notification through, by when each was made and by their IDs, as the list orders them, so that one that arrived after the client read the list stays unread. A notification is made as the batch that makes it applies, as the server's clock has it, so one of a batch of another project that applied before through's and committed only after the client read the list is made before through, and is marked read too. A through that is not one of the account's notifications, in any of its workspaces, is answered with 404 not_found, and marks nothing; one that does not decode as a notification's ID with 400 invalid_id. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such a comment, and a change of their read state, sends {"type": "notifications"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  readAllNotifications: {
+    input: {
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+      body: ReadAllBody;
+    };
+    responses: {
+      204: undefined;
+    };
+  };
+  /**
+   * Mark a notification read
+   *
+   * Marks one of the signed-in account's notifications read, shown or not, which a notification read already stays as it is. A notification that the account does not have, in any of its workspaces, is answered with 404 not_found. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such a comment, and a change of their read state, sends {"type": "notifications"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  readNotification: {
+    input: {
+      path: {
+        /** The notification's ID */
+        notification_id: string;
+      };
+      headers: {
+        /** The session's CSRF token, csrf_token, which signing in and GET /api/v1/auth/session return; without it the answer is 403 csrf_failed */
+        "X-CSRF-Token": string;
+      };
+    };
+    responses: {
+      204: undefined;
     };
   };
   /**
@@ -5694,6 +5877,7 @@ export const routes = {
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   copyNodes: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/copy" },
   countComments: { method: "GET", path: "/api/v1/projects/{project_id}/comments/counts" },
+  countUnreadNotifications: { method: "GET", path: "/api/v1/notifications/unread" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
@@ -5741,8 +5925,10 @@ export const routes = {
   listMemberGrants: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}/grants" },
   listMembers: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/members" },
   listNodeReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/referenced-by" },
+  listNotifications: { method: "GET", path: "/api/v1/notifications" },
   listPlayStates: { method: "GET", path: "/api/v1/projects/{project_id}/play-states" },
   listProjectGrants: { method: "GET", path: "/api/v1/projects/{project_id}/grants" },
+  listProjectMembers: { method: "GET", path: "/api/v1/projects/{project_id}/members" },
   listProjectTokens: { method: "GET", path: "/api/v1/projects/{project_id}/tokens" },
   listProjects: { method: "GET", path: "/api/v1/workspaces/{workspace_id}/projects" },
   listSessions: { method: "GET", path: "/api/v1/auth/sessions" },
@@ -5760,6 +5946,8 @@ export const routes = {
   openRealtimeSocket: { method: "GET", path: "/api/v1/ws" },
   previewComponentRename: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview" },
   previewVariableRename: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview" },
+  readAllNotifications: { method: "POST", path: "/api/v1/notifications/read-all" },
+  readNotification: { method: "POST", path: "/api/v1/notifications/{notification_id}/read" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },
   registerWithInvite: { method: "POST", path: "/api/v1/invites/register" },
   removeMember: { method: "DELETE", path: "/api/v1/workspaces/{workspace_id}/members/{membership_id}" },
