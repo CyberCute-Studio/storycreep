@@ -934,8 +934,8 @@ export async function projectDraft(
     schemaVersion: 1,
     snapshot: {
       channel: "draft",
-      // As the conformance suite's fixtures have it: the hash of the files'
-      // paths and hashes, which no runtime checks (plan item 78).
+      // As the server's serializer computes it (PRD §7.3): the hash of the
+      // files' paths and hashes, which no runtime checks.
       contentHash: await fileHash(
         new TextEncoder().encode(all),
         pace,

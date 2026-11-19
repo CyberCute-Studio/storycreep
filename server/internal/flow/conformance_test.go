@@ -564,8 +564,9 @@ func (s *suite) files() (map[string][]byte, error) {
 		hashes[path] = hashOf(files[path])
 		all.WriteString(path + " " + string(hashes[path]) + "\n")
 	}
-	// The content hash is the server's (plan item 78), which a runtime does
-	// not check: the fixtures' is the hash of their files' paths and hashes.
+	// The content hash, which a runtime does not check, is the server's, as
+	// package serializer computes it: the hash of the files' paths and hashes
+	// (PRD §7.3).
 	contentHash := hashOf([]byte(all.String()))
 	var snapshot published.Snapshot = &published.ReleaseSnapshot{ContentHash: contentHash,
 		ID: mnemonicID(ids.Snapshot, s.code), Note: "Conformance suite " + s.name,
