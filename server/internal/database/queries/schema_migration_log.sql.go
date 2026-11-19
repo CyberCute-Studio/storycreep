@@ -15,7 +15,8 @@ const insertSchemaMigrationStep = `-- name: InsertSchemaMigrationStep :exec
 
 INSERT INTO schema_migration_log (id, workspace_id, project_id, snapshot_id, from_version, to_version, entries)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (workspace_id, project_id, snapshot_id, from_version) DO NOTHING
+ON CONFLICT (workspace_id, project_id, snapshot_id, from_version) DO UPDATE
+SET to_version = EXCLUDED.to_version, entries = EXCLUDED.entries, created_at = now()
 `
 
 type InsertSchemaMigrationStepParams struct {
@@ -32,10 +33,9 @@ type InsertSchemaMigrationStepParams struct {
 // AC2). schema_migration_log is a tenant table, which a transaction of its
 // workspace reads.
 // InsertSchemaMigrationStep logs a step of the migration of a snapshot's
-// files, and does nothing where the snapshot's step from the version is
-// logged already: the migration's output, stored with it, holds no files of
-// that version to migrate again (PRD §6.4), so only a repeated log of the same
-// steps finds one.
+// files, and where the snapshot's step from the version is logged already,
+// replaces its report, and when it was logged, with this run's, as after a fix
+// of the migration, so that the log tells of the files that are stored.
 func (q *Queries) InsertSchemaMigrationStep(ctx context.Context, arg InsertSchemaMigrationStepParams) error {
 	_, err := q.db.Exec(ctx, insertSchemaMigrationStep,
 		arg.ID,

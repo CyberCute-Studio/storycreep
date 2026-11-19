@@ -5,10 +5,10 @@
 -- stored content, a snapshot's files, to the next version of the published
 -- format could not carry forward as it was, since that version cannot hold it,
 -- so that a migration never loses a value silently. A snapshot's step from a
--- version is logged once, with what it reported, which may be nothing, in the
--- transaction that stores what the migration wrote: the server stores content
--- at the current version (§6.4), so the snapshot then holds no files of the
--- step's version for a later run to migrate again.
+-- version has one row, with what it reported, which may be nothing, written in
+-- the transaction that stores what the migration wrote; a later run of the
+-- step, as after a fix of its migration, replaces the report, so that the log
+-- tells of the files that are stored.
 --
 -- A row is of a snapshot of its project, which plan item 78 stores, and which
 -- that item's migration gives the foreign key to its snapshot that deletes
@@ -43,7 +43,7 @@ ALTER TABLE schema_migration_log ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECU
 CREATE POLICY workspace_isolation ON schema_migration_log TO storycreep_app
 	USING (workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 
--- The application logs the steps, and reads them; the cascades alone delete
--- them.
-GRANT SELECT, INSERT ON schema_migration_log TO storycreep_app;
+-- The application logs the steps, replaces a step's report with a later
+-- run's, and reads them; the cascades alone delete them.
+GRANT SELECT, INSERT, UPDATE ON schema_migration_log TO storycreep_app;
 GRANT SELECT ON schema_migration_log TO storycreep_maintenance;

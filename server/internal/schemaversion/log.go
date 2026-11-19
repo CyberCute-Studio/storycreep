@@ -27,10 +27,10 @@ type Logged struct {
 // transaction of the workspace, the one that stores what the migration wrote,
 // so that the log holds what a stored migration did not carry forward
 // exactly when its files are stored. A step that the log holds already of the
-// snapshot, from its version, is left as it was: once the migration's output
-// is stored, at the current version (PRD §6.4), the snapshot holds no files of
-// that version for a later run to migrate again, so only a repeated Record of
-// the same steps logs it again.
+// snapshot, from its version, has its report, and when it was logged,
+// replaced with this one's, as a later run of the migration, after a fix of
+// it, may report otherwise, so that the log tells of the files that are
+// stored.
 func Record(ctx context.Context, db queries.DBTX, workspaceID, projectID, snapshotID ids.UUID, steps []Step) error {
 	q := queries.New(db)
 	for _, s := range steps {
