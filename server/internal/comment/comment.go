@@ -98,19 +98,10 @@ var ErrNotAuthor = errors.New("comment: only the comment's author may change it"
 // answers with mention_no_access (PRD FR-COMMENT-02 AC1).
 var ErrMentionNoAccess = errors.New("comment: the mentioned user cannot read the project")
 
-// readers are the roles of a membership that read a project without a grant,
-// and those of a grant that read it (role.Readers), as the queries take them.
-var memberRoles, grantRoles = func() ([]string, []string) {
-	ms, gs := role.Readers()
-	strs := func(rs []role.Role) []string {
-		out := make([]string, len(rs))
-		for i, r := range rs {
-			out[i] = string(r)
-		}
-		return out
-	}
-	return strs(ms), strs(gs)
-}()
+// memberRoles are the roles of a membership that read a project without a
+// grant, and grantRoles those of a grant that read it, as the queries take
+// them (role.ReaderNames).
+var memberRoles, grantRoles = role.ReaderNames()
 
 // Mentionable reports whether a comment of a project may mention a user, of
 // whom status is the account's status, membership the role of their

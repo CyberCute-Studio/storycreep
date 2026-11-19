@@ -176,8 +176,13 @@ func Register(r *commands.Registry) {
 				WorkspaceID: c.WorkspaceID, ProjectID: c.ProjectID, ID: c.ID})); err != nil {
 				return err
 			}
-			return notification.Mentioned(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes, tx.Actor().UserID,
-				added)
+			if err := notification.Mentioned(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes,
+				tx.Actor().UserID, added); err != nil {
+				return err
+			}
+			// The preview of each of the comment's notifications is of its body
+			// as it is now, which its recipients' sessions are told of.
+			return notification.CommentChanged(ctx, tx, tx.WorkspaceID(), tx.ProjectID(), c.ID.Bytes)
 		},
 	})
 
@@ -470,7 +475,7 @@ func checkBody(body richtext.Doc) input.FieldErrors {
 		}
 		members[m.User] = true
 	}
-	segs := body.Segments(noNames{})
+	segs := body.Segments(richtext.NoNames{})
 	if n := richtext.CharacterCount(segs); n > MaxBodyLength {
 		return field("body", fmt.Sprintf("holds %d characters of text, more than the %d that a comment may hold",
 			n, MaxBodyLength))
@@ -525,13 +530,6 @@ func foreign(blocks []richtext.Block, at string) input.FieldErrors {
 	}
 	return errs
 }
-
-// noNames names nothing, which a body without value references and
-// mentions asks no name of (checkBody).
-type noNames struct{}
-
-func (noNames) Value(string, string) string { return "" }
-func (noNames) Component(string) string     { return "" }
 
 // anyComment returns the comment of the batch's project whose ID is id,
 // whether or not it is deleted, with whether its thread's target is outside

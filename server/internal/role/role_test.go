@@ -160,3 +160,14 @@ func TestReaders(t *testing.T) {
 		}
 	}
 }
+
+// TestReaderNames checks that ReaderNames names the roles of Readers, in
+// their order.
+func TestReaderNames(t *testing.T) {
+	t.Parallel()
+	memberships, grants := Readers()
+	names, grantNames := ReaderNames()
+	if fmt.Sprint(names) != fmt.Sprint(memberships) || fmt.Sprint(grantNames) != fmt.Sprint(grants) {
+		t.Errorf("ReaderNames() = %v, %v, want %v, %v", names, grantNames, memberships, grants)
+	}
+}

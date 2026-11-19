@@ -7,7 +7,7 @@
 import type { CommentBody } from "@storycreep/shared/api";
 import { Link } from "@tanstack/react-router";
 import type { TFunction } from "i18next";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { textLink } from "../ui/Page";
 
 /**
@@ -37,7 +37,9 @@ export interface ThreadPlace {
  * inspector at its comments; a board's own on its page, at them; and a
  * variable's in its panel. Of one whose board or node is not known, it is
  * children alone. onFollow is called as the link is followed, as a
- * notification's marks it read, and describedBy names what describes it.
+ * notification's marks it read: by a click, with a key that opens it in a
+ * new tab or window too, and by a click of the middle button, which opens it
+ * in a new tab, and describedBy names what describes it.
  */
 export function ThreadTargetLink({
   projectId,
@@ -52,7 +54,18 @@ export function ThreadTargetLink({
   describedBy?: string;
   children: ReactNode;
 }) {
-  const followed = { onClick: onFollow, "aria-describedby": describedBy };
+  const followed = {
+    onClick: onFollow,
+    // A click of the middle button is no click, but an auxclick.
+    onAuxClick:
+      onFollow &&
+      ((event: MouseEvent<HTMLAnchorElement>) => {
+        if (event.button === 1) {
+          onFollow();
+        }
+      }),
+    "aria-describedby": describedBy,
+  };
   switch (place.target_type) {
     case "node":
     case "connection":

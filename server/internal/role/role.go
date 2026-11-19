@@ -158,3 +158,18 @@ func Readers() (memberships, grants []Role) {
 	}
 	return memberships, grants
 }
+
+// ReaderNames returns the roles of Readers as the database holds them, the
+// memberships' and the grants', as the queries that filter by them take them
+// (package comment, package notification).
+func ReaderNames() (memberships, grants []string) {
+	ms, gs := Readers()
+	names := func(rs []Role) []string {
+		out := make([]string, len(rs))
+		for i, r := range rs {
+			out[i] = string(r)
+		}
+		return out
+	}
+	return names(ms), names(gs)
+}

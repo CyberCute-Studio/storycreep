@@ -349,6 +349,19 @@ func TestMentionNotifications(t *testing.T) {
 	}
 	waitNotified(t, session, 2*time.Second)
 	waitNotified(t, second, 2*time.Second)
+
+	// An edit of the comment, which changes the notification's preview, and
+	// its deletion, which hides it, tell the member's sessions too.
+	resultFrom(t, commentCommand(t, f.s.main, owner, p, "comment.edit", id, map[string]any{
+		"body": richText(memberInline(viewer.body.UserID), textInline(", is the lamp lit?"))}))
+	waitNotified(t, session, 2*time.Second)
+	waitNotified(t, second, 2*time.Second)
+	if got := notificationsOf(t, f.s.main, viewer); len(got) != 1 || got[0].Preview != "@Viewer, is the lamp lit?" {
+		t.Errorf("after the edit, the member's notifications are %+v", got)
+	}
+	resultFrom(t, commentCommand(t, f.s.main, owner, p, "comment.delete", id, nil))
+	waitNotified(t, session, 2*time.Second)
+	waitNotified(t, second, 2*time.Second)
 }
 
 // waitNotified waits for the socket to be told that its account's

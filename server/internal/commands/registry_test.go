@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -377,7 +378,34 @@ func TestMemberMentions(t *testing.T) {
 	if _, problems := r.specs["note.docs"].decode([]byte(`{"summary": `+plain+`}`), false); len(problems) != 0 {
 		t.Errorf("a payload without mentions of members is answered with %v", problems)
 	}
+
+	// A document in an unexported field, which the payload's JSON never
+	// fills, is none of the payload's, which decodes without one there.
+	Register(r, Spec[hiddenDocPayload]{Type: "note.hidden", Capability: authz.ListMembers, Scope: scope.ProjectWrite,
+		Touches: []ids.Kind{ids.Node}, NonUndoable: true,
+		Apply: func(context.Context, *Tx, hiddenDocPayload) error { return nil }})
+	if got := docFields(reflect.TypeFor[hiddenDocPayload]()); !slices.Equal(got, []string{"summary"}) {
+		t.Errorf("the documents of a payload with one in an unexported field are %v, want [summary]", got)
+	}
+	if _, problems := r.specs["note.hidden"].decode([]byte(`{"summary": `+plain+`}`), false); len(problems) != 0 {
+		t.Errorf("a payload with a document in an unexported field is answered with %v", problems)
+	}
+	if _, problems := r.specs["note.hidden"].decode([]byte(`{"summary": `+mentions+`}`), false); len(problems) != 1 ||
+		problems[0].Field != "summary.content[1].content[1]" {
+		t.Errorf("a payload with a document in an unexported field that mentions a member in its own is answered "+
+			"with %v", problems)
+	}
 }
+
+// hiddenDocPayload is a payload with a rich-text document of its own, and one
+// in an unexported field, which its JSON never fills.
+type hiddenDocPayload struct {
+	Summary richtext.Doc `json:"summary"`
+	note    richtext.Doc
+}
+
+// The unexported document is read by nothing but the registry's reflection.
+var _ = hiddenDocPayload{}.note
 
 // registerPayload registers a type of command whose payload is a P.
 func registerPayload[P any](t *testing.T) {

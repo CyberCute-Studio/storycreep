@@ -23,6 +23,16 @@ type Names interface {
 	Component(id string) string
 }
 
+// NoNames names nothing, which a document without value references and
+// mentions of components, as a comment's body, asks no name of.
+type NoNames struct{}
+
+// Value returns "".
+func (NoNames) Value(string, string) string { return "" }
+
+// Component returns "".
+func (NoNames) Component(string) string { return "" }
+
 // The kinds of segment.
 const (
 	SegmentText      = "text"

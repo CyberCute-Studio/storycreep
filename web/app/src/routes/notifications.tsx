@@ -17,6 +17,7 @@ import { requireSession } from "../auth/session";
 import { ThreadTargetLink } from "../comments/TargetLink";
 import {
   markAllRead,
+  markedRead,
   markRead,
   notificationListQuery,
   readNotificationsAgain,
@@ -63,9 +64,12 @@ function Notifications() {
   const newest = list.data?.pages[0]?.items[0];
   const all = useMutation({
     mutationFn: (through: string) => markAllRead(session, through),
-    // Read again whatever the answer, as one that the account no longer
-    // has, which the list may still show.
-    onSettled: () => readNotificationsAgain(client),
+    // Marked, they show read, which the server's message of the change has
+    // the page confirm as it reads them again (markedRead); refused, as of
+    // one that the account no longer has, which the list may still show,
+    // they are read again.
+    onSuccess: (_, through) => markedRead(client, through, true),
+    onError: () => readNotificationsAgain(client),
   });
   const anyUnread =
     unread > 0 || items.some((item) => item.read_at === undefined);
@@ -130,11 +134,14 @@ function NotificationItem({ item }: { item: NotificationBody }) {
   const bylineId = `${ids}-byline`;
   const read = useMutation({
     mutationFn: () => markRead(session, item.id),
-    // Read again whatever the answer, as of one that the account no longer
-    // has, which the server answers with not_found; the page that a
-    // followed link leads to reads the count anew too, after the page has
-    // gone, as the mutation's own options run then still.
-    onSettled: () => readNotificationsAgain(client),
+    // Marked, it shows read, which the server's message of the change has
+    // the page confirm as it reads the notifications again (markedRead);
+    // refused, as one that the account no longer has, which the server
+    // answers with not_found, they are read again. The page that a
+    // followed link leads to shows the count less it too, after the page
+    // has gone, as the mutation's own options run then still.
+    onSuccess: () => markedRead(client, item.id),
+    onError: () => readNotificationsAgain(client),
   });
   const unread = item.read_at === undefined;
   const at = new Date(item.created_at);

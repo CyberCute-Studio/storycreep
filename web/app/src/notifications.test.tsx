@@ -1,5 +1,11 @@
 import type { NotificationBody } from "@storycreep/shared/api";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, testSession } from "./test/app";
@@ -11,7 +17,9 @@ import { fakeRealtime } from "./test/realtime";
 // account's notifications as the server does: the header's count of the
 // unread ones, which follows the real-time channel's message that they
 // changed, and the page that lists them, marks one read, as its own button
-// and its link do, and marks every one read up to the newest that it lists.
+// and its link do, and marks every one read up to the newest that it lists,
+// each shown read as the server answers, without reading them again, which
+// the server's message of the change has the page do.
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -191,6 +199,8 @@ describe("the page of the notifications", () => {
       within(older).queryByRole("button", { name: "Mark as read" }),
     ).toBeNull();
 
+    const reads = server.callsOf("listNotifications").length;
+    const counts = server.callsOf("countUnreadNotifications").length;
     await user.click(
       within(newest).getByRole("button", { name: "Mark as read" }),
     );
@@ -204,21 +214,25 @@ describe("the page of the notifications", () => {
     expect(
       within(list).queryByRole("button", { name: "Mark as read" }),
     ).toBeNull();
-    // The header's count is read again too.
+    // The header's count follows, and neither is read again, as the
+    // server's message of the change has them read.
     expect(
       await within(screen.getByRole("banner")).findByRole("link", {
         name: "Notifications",
       }),
     ).toBeDefined();
+    expect(server.callsOf("listNotifications")).toHaveLength(reads);
+    expect(server.callsOf("countUnreadNotifications")).toHaveLength(counts);
   });
 
   it("marks every one read up to the newest that it lists, so that one that came after stays unread", async () => {
     const user = userEvent.setup();
+    const realtime = fakeRealtime();
     const server = notificationServer([
       notification("ntf_2"),
       notification("ntf_1", { actor: { id: "usr_bo", display_name: "Bo" } }),
     ]);
-    renderApp("/notifications", { session: testSession });
+    renderApp("/notifications", { session: testSession, realtime });
     const list = await screen.findByRole("list", { name: "Notifications" });
     expect(within(list).getAllByText("Unread")).toHaveLength(2);
     // One comes after the page listed them, which it has not read yet.
@@ -233,7 +247,17 @@ describe("the page of the notifications", () => {
     expect(
       await screen.findByText("Every notification listed is marked as read."),
     ).toBeDefined();
-    // Read again, the list shows the one that came after, unread alone.
+    // Those listed show read, without being read again.
+    expect(within(list).queryByText("Unread")).toBeNull();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "Notifications",
+      }),
+    ).toBeDefined();
+    // Read again, as the server's message of the change has them, the list
+    // shows the one that came after, unread alone.
+    act(() => realtime.notify());
     await waitFor(() =>
       expect(within(list).getAllByRole("listitem")).toHaveLength(3),
     );
@@ -259,6 +283,27 @@ describe("the page of the notifications", () => {
         },
       ]),
     );
+  });
+
+  it("marks one read as its link is opened in a new tab by the middle button, and not by another", async () => {
+    const server = notificationServer([notification("ntf_2")]);
+    renderApp("/notifications", { session: testSession });
+    const list = await screen.findByRole("list", { name: "Notifications" });
+    const link = within(list).getByRole("link", {
+      name: "Show the thread on the node",
+    });
+    fireEvent(link, new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    expect(server.callsOf("readNotification")).toEqual([]);
+    fireEvent(link, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    await waitFor(() =>
+      expect(server.callsOf("readNotification")).toEqual([
+        {
+          path: { notification_id: "ntf_2" },
+          headers: { "X-CSRF-Token": testSession.csrf_token },
+        },
+      ]),
+    );
+    await waitFor(() => expect(within(list).queryByText("Unread")).toBeNull());
   });
 
   it("says that nobody has mentioned the account yet, and offers nothing to mark", async () => {

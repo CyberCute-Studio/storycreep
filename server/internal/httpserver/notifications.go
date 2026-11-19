@@ -37,7 +37,7 @@ type readNotificationInput struct {
 
 // readAllBody is the body of POST /api/v1/notifications/read-all.
 type readAllBody struct {
-	Through string `json:"through" doc:"The ID of the newest notification that the client shows, as the first of the list's first page: it and every notification of the account before it are marked read, so that one that arrived after the client read the list stays unread"`
+	Through string `json:"through" doc:"The ID of the newest notification that the client shows, as the first of the list's first page: it and every notification of the account made before it are marked read, so that one that arrived after the client read the list stays unread, but for one of another project's batch that applied before through's and committed after the list was read"`
 }
 
 type readAllInput struct {
@@ -62,7 +62,8 @@ const notificationsDoc = " The centre is the account's, across every workspace t
 	"notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the " +
 	"project's trash, while its project is not in the trash, and while the account reads the project, and comes " +
 	"back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new " +
-	"one, a deletion or a restoration of a comment that it has one of, and a change of their read state, sends " +
+	"one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such " +
+	"a comment, and a change of their read state, sends " +
 	"{\"type\": \"notifications\"} to each socket of the account's sessions of GET /api/v1/ws, which reads them " +
 	"again."
 
@@ -156,7 +157,9 @@ func registerNotifications(m *api.Mux, notifications *notification.Service) {
 		Description: "Marks read the signed-in account's notifications that are unread, shown or not, in every " +
 			"workspace of the account, that were made at or before the notification through, by when each was made " +
 			"and by their IDs, as the list orders them, so that one that arrived after the client read the list " +
-			"stays unread. A through that is not one of the account's notifications, in any of its workspaces, is " +
+			"stays unread. A notification is made as the batch that makes it applies, as the server's clock has it, " +
+			"so one of a batch of another project that applied before through's and committed only after the client " +
+			"read the list is made before through, and is marked read too. A through that is not one of the account's notifications, in any of its workspaces, is " +
 			"answered with 404 not_found, and marks nothing; one that does not decode as a notification's ID with " +
 			"400 invalid_id." + notificationsDoc + csrfDoc,
 		Tags:          []string{"Notifications"},

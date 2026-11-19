@@ -51,6 +51,51 @@ export function readNotificationsAgain(client: QueryClient): Promise<void> {
   return client.invalidateQueries({ queryKey: notificationsKey });
 }
 
+/**
+ * Shows read what the server has answered that it marked read: the
+ * notification of id, or, with through, it and every one that the list
+ * holds after it, older, in the list, with the count of the unread ones less
+ * those, rather than reading them again, which the server's message of the
+ * change on the real-time channel, which this page's socket hears too, has
+ * the page do (useNotificationListener): reading them here as well would
+ * read them twice. Of a list that does not hold id, they are read again.
+ */
+export function markedRead(
+  client: QueryClient,
+  id: string,
+  through = false,
+): void {
+  const list = client.getQueryData(notificationListQuery.queryKey);
+  const items = list?.pages.flatMap((page) => page.items) ?? [];
+  const at = items.findIndex((n) => n.id === id);
+  if (list === undefined || at === -1) {
+    void readNotificationsAgain(client);
+    return;
+  }
+  const marked = new Set(
+    items
+      .slice(at, through ? undefined : at + 1)
+      .filter((n) => n.read_at === undefined)
+      .map((n) => n.id),
+  );
+  if (marked.size === 0) {
+    return;
+  }
+  const now = new Date().toISOString();
+  client.setQueryData(notificationListQuery.queryKey, {
+    ...list,
+    pages: list.pages.map((page) => ({
+      ...page,
+      items: page.items.map((n) =>
+        marked.has(n.id) ? { ...n, read_at: now } : n,
+      ),
+    })),
+  });
+  client.setQueryData(unreadQuery.queryKey, (unread) =>
+    unread === undefined ? undefined : Math.max(0, unread - marked.size),
+  );
+}
+
 /** Marks the notification of id read, as the account's session, whose CSRF token it sends. */
 export async function markRead(
   session: SignedInBody | null | undefined,

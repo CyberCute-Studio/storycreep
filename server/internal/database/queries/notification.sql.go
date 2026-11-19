@@ -246,8 +246,8 @@ type NotifyCommentRecipientsParams struct {
 
 // NotifyCommentRecipients tells each user whom the comment has notified that
 // their notifications changed, as NotifyUsers does, as once the comment is
-// deleted, which hides their notifications, or restored, which shows them
-// again.
+// edited, which changes their notifications' preview, deleted, which hides
+// them, or restored, which shows them again.
 func (q *Queries) NotifyCommentRecipients(ctx context.Context, arg NotifyCommentRecipientsParams) error {
 	_, err := q.db.Exec(ctx, notifyCommentRecipients,
 		arg.Channel,
@@ -314,7 +314,8 @@ type ReadNotificationsParams struct {
 // that are unread, shown or not, made at or before the one made at
 // through_at whose ID is through_id, by when each was made and by their IDs,
 // as Notifications orders them, so that one made after it stays unread, and
-// returns how many it marked.
+// returns how many it marked. A notification is made as its batch applies,
+// not as it commits (InsertMentions).
 func (q *Queries) ReadNotifications(ctx context.Context, arg ReadNotificationsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, readNotifications,
 		arg.WorkspaceID,

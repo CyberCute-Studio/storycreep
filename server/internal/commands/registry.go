@@ -629,26 +629,25 @@ func Register[P any](r *Registry, s Spec[P]) {
 }
 
 // docFields returns the names, in a payload's JSON, of the fields of the
-// payload's type t that hold a rich-text document, a richtext.Doc or a
-// pointer to one, in their order.
+// payload's type t that hold a rich-text document (docFieldIndexes), in
+// their order.
 func docFields(t reflect.Type) []string {
 	var out []string
-	for i := range t.NumField() {
-		f := t.Field(i)
-		if f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]() {
-			out = append(out, jsonName(f))
-		}
+	for _, i := range docFieldIndexes(t) {
+		out = append(out, jsonName(t.Field(i)))
 	}
 	return out
 }
 
-// docFieldIndexes returns the indexes of the fields of the payload's type t
-// that hold a rich-text document, a richtext.Doc or a pointer to one, in
-// their order, as docFields names them.
+// docFieldIndexes returns the indexes of the exported fields of the
+// payload's type t that hold a rich-text document, a richtext.Doc or a
+// pointer to one, in their order: an unexported one, which a payload's JSON
+// never fills, holds none of the payload's.
 func docFieldIndexes(t reflect.Type) []int {
 	var out []int
 	for i := range t.NumField() {
-		if f := t.Field(i); f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]() {
+		if f := t.Field(i); f.IsExported() &&
+			(f.Type == reflect.TypeFor[richtext.Doc]() || f.Type == reflect.TypeFor[*richtext.Doc]()) {
 			out = append(out, i)
 		}
 	}

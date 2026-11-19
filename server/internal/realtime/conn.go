@@ -705,15 +705,18 @@ func (c *conn) drop(sub *subscription) {
 // heard of a later seq, tells one to reload the project if the hub has found
 // the project's seq gone back behind what it was sent (Hub.rewind), and
 // reads one whose project the hub has found gone (Hub.vanish), which ends
-// it.
+// it. The check of a notification serves the first delivery after it too.
 func (c *conn) deliverHeard() error {
+	var checked *commands.Actor
 	if c.notified.Swap(false) {
-		if _, err := c.check(); err != nil {
+		actor, err := c.check()
+		if err != nil {
 			return err
 		}
 		if err := c.send(NotificationsMessage{Type: typeNotifications}); err != nil {
 			return err
 		}
+		checked = &actor
 	}
 	for _, sub := range c.subs {
 		to := sub.rewound.Swap(nil)
@@ -722,9 +725,10 @@ func (c *conn) deliverHeard() error {
 		if !reload && !vanished && sub.heard.Load() <= sub.sent {
 			continue
 		}
-		if err := c.deliver(sub, nil, reload); err != nil {
+		if err := c.deliver(sub, checked, reload); err != nil {
 			return err
 		}
+		checked = nil
 	}
 	return nil
 }

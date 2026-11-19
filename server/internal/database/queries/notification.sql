@@ -33,8 +33,8 @@ SELECT pg_notify(@channel::text, u::text) FROM unnest(@user_ids::uuid[]) AS u;
 -- name: NotifyCommentRecipients :exec
 -- NotifyCommentRecipients tells each user whom the comment has notified that
 -- their notifications changed, as NotifyUsers does, as once the comment is
--- deleted, which hides their notifications, or restored, which shows them
--- again.
+-- edited, which changes their notifications' preview, deleted, which hides
+-- them, or restored, which shows them again.
 SELECT pg_notify(@channel::text, n.user_id::text) FROM notification n
 WHERE n.workspace_id = @workspace_id AND n.project_id = @project_id AND n.comment_id = @comment_id;
 
@@ -100,7 +100,8 @@ WHERE workspace_id = @workspace_id AND user_id = @user_id AND id = @id;
 -- that are unread, shown or not, made at or before the one made at
 -- through_at whose ID is through_id, by when each was made and by their IDs,
 -- as Notifications orders them, so that one made after it stays unread, and
--- returns how many it marked.
+-- returns how many it marked. A notification is made as its batch applies,
+-- not as it commits (InsertMentions).
 UPDATE notification SET read_at = clock_timestamp()
 WHERE workspace_id = @workspace_id AND user_id = @user_id AND read_at IS NULL
     AND (created_at, id) <= (@through_at::timestamptz, @through_id::uuid);

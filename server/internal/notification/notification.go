@@ -8,12 +8,13 @@
 // batch's transaction, through Mentioned: one of the comment and each member
 // whom it first mentions, as it is posted or an edit adds the mention, never
 // twice, and never its author, who mentions themselves. Each change of an
-// account's notifications, a new one, a deletion or a restoration of a
-// comment that has some, which hides them or shows them again, and a change
-// of their read state, sends a notification of PostgreSQL's on Channel, of
-// the account, once its transaction commits, which the real-time hub of every
-// server process hears (package realtime), and tells the account's sessions'
-// sockets of, which read the notifications again (FR-COMMENT-02 AC2).
+// account's notifications, a new one, an edit of a comment that has some,
+// which changes their preview, a deletion or a restoration of one, which
+// hides them or shows them again, and a change of their read state, sends a
+// notification of PostgreSQL's on Channel, of the account, once its
+// transaction commits, which the real-time hub of every server process hears
+// (package realtime), and tells the account's sessions' sockets of, which
+// read the notifications again (FR-COMMENT-02 AC2).
 //
 // The centre is one per account, across every workspace that the account is
 // a member of, guests' included (Service): a workspace's rows are read in a
@@ -24,8 +25,9 @@
 // trash), while its project is not in the trash, and while its recipient
 // reads the project, by the role of their membership of its workspace or of
 // the membership's grant (role.Readers), and is back as it was, read or not,
-// once all of that holds again: nothing writes it meanwhile. Its routes take
-// a session alone (FR-AUTH-04).
+// once all of that holds again: nothing but marking it read, which takes a
+// hidden one too (Read, ReadThrough), writes it meanwhile. Its routes take a
+// session alone (FR-AUTH-04).
 package notification
 
 import (
@@ -99,8 +101,9 @@ func Mentioned(ctx context.Context, db queries.DBTX, workspaceID, projectID, com
 // CommentChanged tells each user whom the comment commentID of the project
 // projectID, of the workspace workspaceID, has notified that their
 // notifications changed, on Channel, once db, the batch's transaction,
-// commits, as once the comment is deleted, which hides its notifications, or
-// restored, which shows them again, so that their sessions read them again.
+// commits, as once the comment is edited, which changes their preview,
+// deleted, which hides them, or restored, which shows them again, so that
+// their sessions read them again.
 func CommentChanged(ctx context.Context, db queries.DBTX, workspaceID, projectID, commentID ids.UUID) error {
 	if err := queries.New(db).NotifyCommentRecipients(ctx, queries.NotifyCommentRecipientsParams{Channel: Channel,
 		WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID), CommentID: nullUUID(commentID)}); err != nil {
@@ -195,19 +198,10 @@ var targetKinds = map[string]ids.Kind{"node": ids.Node, "connection": ids.Connec
 // comment_thread_target names it, or zero for a kind that is not a target's.
 func TargetKind(t string) ids.Kind { return targetKinds[t] }
 
-// readers are the roles of a membership that read a project without a grant,
-// and those of a grant that read it, as the queries take them (role.Readers).
-var memberRoles, grantRoles = func() ([]string, []string) {
-	ms, gs := role.Readers()
-	strs := func(rs []role.Role) []string {
-		out := make([]string, len(rs))
-		for i, r := range rs {
-			out[i] = string(r)
-		}
-		return out
-	}
-	return strs(ms), strs(gs)
-}()
+// memberRoles are the roles of a membership that read a project without a
+// grant, and grantRoles those of a grant that read it, as the queries take
+// them (role.ReaderNames).
+var memberRoles, grantRoles = role.ReaderNames()
 
 // DB runs a transaction of the application login, as *database.DB does.
 type DB interface {
@@ -268,13 +262,15 @@ func (s *Service) each(ctx context.Context, userID ids.UUID,
 // as the server's clock has it, and by their IDs where those are the same,
 // UUIDv7s that the server makes: the first, if after is zero, or else those
 // after it. It reads each workspace in a transaction of its own, for the
-// first limit after after, and merges them. Each has its comment's preview,
-// with the display names of the members that the comment mentions as they
-// are now (NotificationBody.Preview).
+// first limit after after, and merges them, and reads the comments' bodies
+// of those that it returns alone. Each has its comment's preview, with the
+// display names of the members that the comment mentions as they are now
+// (NotificationBody.Preview).
 func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit int) ([]NotificationBody, error) {
 	type listed struct {
-		n   NotificationBody
-		doc *richtext.Doc
+		ws  ids.UUID
+		row queries.NotificationsRow
+		key Key
 	}
 	var all []listed
 	err := s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
@@ -286,11 +282,7 @@ func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit in
 			return false, fmt.Errorf("notification: list the notifications: %w", err)
 		}
 		for _, r := range page {
-			n, doc, err := bodyOf(ws, r)
-			if err != nil {
-				return false, err
-			}
-			all = append(all, listed{n, doc})
+			all = append(all, listed{ws: ws, row: r, key: Key{At: r.CreatedAt.Time, ID: r.ID.Bytes}})
 		}
 		return false, nil
 	})
@@ -299,9 +291,9 @@ func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit in
 	}
 	slices.SortFunc(all, func(a, b listed) int {
 		switch {
-		case before(a.n.key, b.n.key):
+		case before(a.key, b.key):
 			return -1
-		case before(b.n.key, a.n.key):
+		case before(b.key, a.key):
 			return 1
 		}
 		return 0
@@ -310,7 +302,9 @@ func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit in
 	out := make([]NotificationBody, len(all))
 	docs := make([]*richtext.Doc, len(all))
 	for i, l := range all {
-		out[i], docs[i] = l.n, l.doc
+		if out[i], docs[i], err = bodyOf(l.ws, l.row); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.preview(ctx, userID, out, docs); err != nil {
 		return nil, err
@@ -353,7 +347,7 @@ func (s *Service) preview(ctx context.Context, userID ids.UUID, out []Notificati
 			}
 			return formerMember
 		})
-		out[i].Preview = richtext.Preview(richtext.PlainText(named.Segments(noNames{})))
+		out[i].Preview = richtext.Preview(richtext.PlainText(named.Segments(richtext.NoNames{})))
 	}
 	return nil
 }
@@ -363,13 +357,6 @@ func (s *Service) preview(ctx context.Context, userID ids.UUID, out []Notificati
 // otherwise, as a client writes a former member in its own words where it
 // shows the comment itself.
 const formerMember = "@…"
-
-// noNames names nothing, which a comment's body, without value references and
-// mentions of components, asks no name of.
-type noNames struct{}
-
-func (noNames) Value(string, string) string { return "" }
-func (noNames) Component(string) string     { return "" }
 
 // bodyOf returns the notification r of the workspace ws as the API shows it,
 // but for its preview, with its comment's body, or an error if the body is
@@ -459,8 +446,12 @@ func (s *Service) Read(ctx context.Context, userID, id ids.UUID) error {
 // notification through, by when each was made and by their IDs, as List
 // orders them, so that one that was made after it, as after the page that a
 // client shows was read, stays unread, and tells the user's sessions of it
-// (Channel). It returns ErrNotFound, and marks nothing, if the user has no
-// notification through in any of their workspaces.
+// (Channel). A notification is made as its batch applies (Mentioned), and a
+// project's batches apply one at a time, so one of another project's batch
+// that applied before through's and committed only after the page was read
+// is made before through, and is marked read too. It returns ErrNotFound,
+// and marks nothing, if the user has no notification through in any of
+// their workspaces.
 func (s *Service) ReadThrough(ctx context.Context, userID, through ids.UUID) error {
 	var at pgtype.Timestamptz
 	err := s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
