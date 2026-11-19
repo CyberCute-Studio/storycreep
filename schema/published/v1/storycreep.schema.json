@@ -85,7 +85,7 @@
         },
         "contentHash": {
           "$ref": "#/$defs/Hash",
-          "description": "The hash of the draft's content when it was pulled."
+          "description": "The hash of the draft's content when it was pulled, as a release's is computed (PRD §7.3)."
         },
         "id": false,
         "note": false,
@@ -294,7 +294,7 @@
         },
         "contentHash": {
           "$ref": "#/$defs/Hash",
-          "description": "The hash of the snapshot's content."
+          "description": "The hash of the snapshot's content: the SHA-256 of a line of each of its files but the manifest, in the order of their paths, of its path, a space, its hash as files holds it, and a line feed (PRD §7.3)."
         },
         "id": {
           "$ref": "#/$defs/SnapshotId"

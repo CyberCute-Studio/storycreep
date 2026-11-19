@@ -132,7 +132,7 @@ type Snapshot interface {
 
 // ReleaseSnapshot is a published release.
 type ReleaseSnapshot struct {
-	ContentHash Hash      `json:"contentHash" doc:"The hash of the snapshot's content."`
+	ContentHash Hash      `json:"contentHash" doc:"The hash of the snapshot's content: the SHA-256 of a line of each of its files but the manifest, in the order of their paths, of its path, a space, its hash as files holds it, and a line feed (PRD §7.3)."`
 	ID          string    `json:"id" id:"snapshot"`
 	Note        string    `json:"note" doc:"The note that the release was published with."`
 	PublishedAt Timestamp `json:"publishedAt"`
@@ -142,7 +142,7 @@ type ReleaseSnapshot struct {
 // DraftSnapshot is the working draft, as it was when it was pulled, which has
 // neither an ID nor a version (§7.8).
 type DraftSnapshot struct {
-	ContentHash Hash      `json:"contentHash" doc:"The hash of the draft's content when it was pulled."`
+	ContentHash Hash      `json:"contentHash" doc:"The hash of the draft's content when it was pulled, as a release's is computed (PRD §7.3)."`
 	PulledAt    Timestamp `json:"pulledAt"`
 }
 

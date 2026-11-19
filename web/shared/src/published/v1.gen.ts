@@ -350,7 +350,7 @@ export interface Counts {
 /** The working draft, as it was when it was pulled, which has neither an ID nor a version (PRD §7.8). */
 export interface DraftSnapshot {
   channel: "draft";
-  /** The hash of the draft's content when it was pulled. */
+  /** The hash of the draft's content when it was pulled, as a release's is computed (PRD §7.3). */
   contentHash: Hash;
   id?: never;
   note?: never;
@@ -494,7 +494,7 @@ export interface ProjectInfo {
 /** A published release. */
 export interface ReleaseSnapshot {
   channel: "release";
-  /** The hash of the snapshot's content. */
+  /** The hash of the snapshot's content: the SHA-256 of a line of each of its files but the manifest, in the order of their paths, of its path, a space, its hash as files holds it, and a line feed (PRD §7.3). */
   contentHash: Hash;
   id: SnapshotId;
   /** The note that the release was published with. */
