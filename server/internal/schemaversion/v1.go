@@ -92,21 +92,28 @@ func NewSchemas(dir string, docs map[string][]byte) (*Schemas, error) {
 	return s, nil
 }
 
+// schemaOf are the names of the schemas of a snapshot's JSON files but its
+// boards', by their paths (PRD §6.3).
+var schemaOf = map[string]string{
+	published.ManifestPath:       "storycreep",
+	published.SettingsPath:       "settings",
+	published.VariablesPath:      "variables",
+	published.ComponentTypesPath: "component_types",
+	published.ComponentsPath:     "components",
+}
+
 // Check validates each JSON file of f against its schema, in the order of
 // their paths, and fails on the first that its schema refuses, and on a file
-// that no schema is of, as one of a path that no snapshot's file has.
+// that no schema is of, as one of a path that no snapshot's file has: the
+// manifest and each file of the project have their own paths (schemaOf), and
+// a board's file is boards/<name>.json.
 func (s *Schemas) Check(f Files) error {
 	for _, p := range slices.Sorted(maps.Keys(f)) {
 		if !IsJSON(p) {
 			continue
 		}
-		var name string
-		switch {
-		case p == published.ManifestPath:
-			name = "storycreep"
-		case strings.HasPrefix(p, "project/") && path.Dir(p) == "project":
-			name = strings.TrimSuffix(path.Base(p), ".json")
-		case strings.HasPrefix(p, "boards/") && path.Dir(p) == "boards" && strings.HasSuffix(p, ".json"):
+		name, ok := schemaOf[p]
+		if !ok && path.Dir(p) == "boards" && strings.HasSuffix(p, ".json") {
 			name = "board"
 		}
 		sch, ok := s.files[name]

@@ -71,7 +71,8 @@ func TestFixtures(t *testing.T) {
 
 // TestValidate checks that Validate refuses a snapshot of version 1 that a
 // consumer refuses: one that a schema refuses, whose hashes are not its
-// files', that holds a file that no snapshot has, or one that its manifest
+// files', that holds a file that no snapshot has, of a path that no
+// snapshot's file has, though a schema's name, or one that its manifest
 // does not list, that the reference runtime refuses, and one of a version
 // that the server does not read, newer or older, as 0.
 func TestValidate(t *testing.T) {
@@ -106,6 +107,10 @@ func TestValidate(t *testing.T) {
 		}), "content hash"},
 		{"a file that no snapshot has", extra("notes.json", []byte("{}\n")), "no file of a snapshot"},
 		{"a file of no snapshot's path", extra("project/settings.json.bak", f[published.SettingsPath]),
+			"no file of a snapshot"},
+		// A schema's name is no path of a project's file.
+		{"a board's file in project/", extra("project/board.json", f[board]), "no file of a snapshot"},
+		{"a manifest in project/", extra("project/storycreep.json", f[published.ManifestPath]),
 			"no file of a snapshot"},
 		{"a board's file that the manifest does not list", extra("boards/lighthouse.json", f[board]),
 			"does not list"},

@@ -294,6 +294,33 @@ func TestMigrationReportsWhatItRounds(t *testing.T) {
 	sameFiles(t, "the synthetic fixture rendered at version 1 and migrated back", back, syntheticFixture(t))
 }
 
+// TestMigrateAndRenderTakeWhatValidates checks that Migrate and Render
+// refuse a snapshot that does not validate at its version, one whose file's
+// hash is not the manifest's, rather than migrate it forward or render it
+// down and seal what they write again (Seal), which would hide it.
+func TestMigrateAndRenderTakeWhatValidates(t *testing.T) {
+	const board = "boards/harbour-intro.json"
+	retitle := func(b map[string]any) { nodeOf(t, b, "nd_000000000000000000000000N1")["title"] = "Retitled" }
+	older := unsealedEdit(t, v1Fixture(t), board, retitle)
+	newer := unsealedEdit(t, syntheticFixture(t), board, retitle)
+	for _, c := range []struct {
+		name     string
+		run      func(schemaversion.Files, int) (schemaversion.Files, []schemaversion.Step, error)
+		f        schemaversion.Files
+		from, to int
+	}{
+		{"Migrate forward", schemaversion.Migrate, older, synthetic.Number - 1, synthetic.Number},
+		{"Render forward", schemaversion.Render, older, synthetic.Number - 1, synthetic.Number},
+		{"Render down", schemaversion.Render, newer, synthetic.Number, synthetic.Number - 1},
+	} {
+		got, _, err := c.run(c.f, c.to)
+		if want := fmt.Sprintf("does not validate at its version %d", c.from); err == nil || got != nil ||
+			!strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "with the hash of its bytes") {
+			t.Errorf("%s of a file whose hash is not the manifest's: %v; want an error that says %q", c.name, err, want)
+		}
+	}
+}
+
 // TestMigrationLogStored checks that the steps of the migration of a
 // snapshot's files are stored in its project's migration log, with what they
 // reported, as Migrate returned them.

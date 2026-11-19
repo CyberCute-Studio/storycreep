@@ -281,7 +281,7 @@ func Documents() (map[string][]byte, error) {
 		target := SchemaDir + "/" + name
 		doc["$id"] = schemagen.BaseURL + target
 		title, _ := doc["title"].(string)
-		const prefix = "Storycreep published format, version 1: "
+		prefix := fmt.Sprintf("Storycreep published format, version %d: ", Number-1)
 		if !strings.HasPrefix(title, prefix) {
 			return nil, fmt.Errorf("synthetic: %s's title does not start with %q", p, prefix)
 		}
@@ -303,8 +303,9 @@ func Documents() (map[string][]byte, error) {
 			def, _ := defs[name].(map[string]any)
 			props, _ := def["properties"].(map[string]any)
 			if sv, ok := props["schemaVersion"].(map[string]any); ok {
-				if sv["const"] != json.Number("1") {
-					return nil, fmt.Errorf("synthetic: %s: %s's schemaVersion is not the constant 1", p, name)
+				if sv["const"] != json.Number(strconv.Itoa(Number-1)) {
+					return nil, fmt.Errorf("synthetic: %s: %s's schemaVersion is not the constant %d", p, name,
+						Number-1)
 				}
 				sv["const"] = json.Number(strconv.Itoa(Number))
 				sv["description"] = fmt.Sprintf("The version of the published format, %d.", Number)

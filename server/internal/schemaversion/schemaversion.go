@@ -14,8 +14,11 @@
 // of a snapshot's files at one version to its files at the version before,
 // which fails with an *UnrepresentableError, naming each construct, where
 // that version cannot express what they hold, and never writes what that
-// version cannot express (AC3). What Migrate and Render return validates
-// against its version, as a consumer of it validates it (FR-SYNC-01 AC2).
+// version cannot express (AC3). Migrate and Render take only a snapshot that
+// validates against its own version, since a migration or a renderer seals
+// what it writes again (Seal), which would hide hashes that were not its
+// files', and what they return validates against its version, as a consumer
+// of it validates it (FR-SYNC-01 AC2).
 //
 // A release build reads version 1 alone, which package published's types are
 // of. The test-only synthetic version, one above the newest real one (note
@@ -32,7 +35,6 @@ import (
 	"strings"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/published"
-	"github.com/CyberCute-Studio/storycreep/server/internal/value"
 )
 
 // Files are a snapshot's files, by their paths from the directory that holds
@@ -249,39 +251,20 @@ func (server Range) Negotiate(client Range) (int, error) {
 	return v, nil
 }
 
-// VersionOf returns the schemaVersion of the manifest of f, an integer
-// however its JSON writes it (published.Int), as 1 or 1.0, of at most
-// published.MaxInt in magnitude. One that the server does not read, as 0, is
-// a version all the same, which Validate, Migrate, and Render refuse with an
-// *UnsupportedError, as a runtime refuses it as schema_unsupported
-// (flow.ErrSchemaUnsupported).
+// VersionOf returns the schemaVersion of the manifest of f, as the reference
+// runtime reads it (published.SchemaVersionOf): an integer however its JSON
+// writes it, as 1 or 1.0, of at most published.MaxInt in magnitude. One that
+// the server does not read, as 0, is a version all the same, which Validate,
+// Migrate, and Render refuse with an *UnsupportedError, as a runtime refuses
+// it as schema_unsupported (flow.ErrSchemaUnsupported).
 func VersionOf(f Files) (int, error) {
-	m, err := Object(f, published.ManifestPath)
-	if err != nil {
-		return 0, err
-	}
-	raw, ok := m["schemaVersion"]
+	data, ok := f[published.ManifestPath]
 	if !ok {
-		return 0, fmt.Errorf("schemaversion: %s has no schemaVersion", published.ManifestPath)
+		return 0, fmt.Errorf("schemaversion: the snapshot has no %s", published.ManifestPath)
 	}
-	n, err := integral(raw)
+	n, err := published.SchemaVersionOf(data)
 	if err != nil {
-		return 0, fmt.Errorf("schemaversion: %s's schemaVersion is no version", published.ManifestPath)
-	}
-	return n, nil
-}
-
-// integral returns v, a value of a tree that value.ReadJSON read, as an
-// integer, however its JSON writes it, of at most published.MaxInt in
-// magnitude.
-func integral(v any) (int, error) {
-	num, ok := v.(json.Number)
-	if !ok {
-		return 0, errors.New("schemaversion: not a number")
-	}
-	var n value.Integral
-	if err := n.UnmarshalJSON([]byte(num)); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("schemaversion: %w", err)
 	}
 	return int(n), nil
 }
@@ -302,22 +285,17 @@ func Validate(f Files) error {
 }
 
 // Migrate migrates f, a snapshot's files of a version that the server reads,
-// forward to the version to, which is no older, one version at a time, and
-// returns the files, which validate against the version to, and each step
-// that it took, with what the step reported, which Record stores in the
-// project's migration log (FR-DATA-03 AC2). It returns f itself, and no step,
-// where f is of the version to and validates against it. It fails with an
+// which validate against it, forward to the version to, which is no older,
+// one version at a time, and returns the files, which validate against the
+// version to, and each step that it took, with what the step reported, which
+// Record stores in the project's migration log (FR-DATA-03 AC2). It returns f
+// itself, and no step, where f is of the version to. It fails with an
 // *UnsupportedError where the server does not read f's version or to, and
-// with another error where to is older than f's.
+// with another error where to is older than f's, or where f does not
+// validate against its version, whose hashes, among the rest, a migration
+// would otherwise seal again as though they were its files' (validAt).
 func Migrate(f Files, to int) (Files, []Step, error) {
-	from, err := VersionOf(f)
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, err := version(from); err != nil {
-		return nil, nil, err
-	}
-	target, err := version(to)
+	from, err := validAt(f, to)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -326,11 +304,9 @@ func Migrate(f Files, to int) (Files, []Step, error) {
 			to)
 	}
 	if to == from {
-		if err := target.Validate(f); err != nil {
-			return nil, nil, fmt.Errorf("schemaversion: the snapshot does not validate at its version %d: %w", to, err)
-		}
 		return f, nil, nil
 	}
+	target, _ := version(to)
 	var steps []Step
 	for n := from + 1; n <= to; n++ {
 		v, _ := version(n)
@@ -353,36 +329,36 @@ func Migrate(f Files, to int) (Files, []Step, error) {
 }
 
 // Render returns f, a snapshot's files of a version that the server reads,
-// rendered at the version to: f itself at its own version, as Migrate
-// returns it; migrated forward to a newer one, as Migrate migrates it, with
-// its steps; and rendered down to an older one, one version at a time, by
-// each version's renderer (Version.Down), so that what it returns validates
-// against the version to (FR-SYNC-01 AC2). It fails with an
+// which validate against it, rendered at the version to: f itself at its own
+// version, as Migrate returns it; migrated forward to a newer one, as Migrate
+// migrates it, with its steps; and rendered down to an older one, one version
+// at a time, by each version's renderer (Version.Down), so that what it
+// returns validates against the version to (FR-SYNC-01 AC2). It fails with an
 // *UnrepresentableError where a version that it renders down to cannot
 // express what f holds, writing nothing that that version cannot express
-// (FR-DATA-03 AC3), and with an *UnsupportedError where the server does not
-// read f's version or to.
+// (FR-DATA-03 AC3), with an *UnsupportedError where the server does not read
+// f's version or to, and with another error where f does not validate
+// against its version, as Migrate does.
 func Render(f Files, to int) (Files, []Step, error) {
-	from, err := VersionOf(f)
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, err := version(from); err != nil {
-		return nil, nil, err
-	}
-	target, err := version(to)
-	if err != nil {
-		return nil, nil, err
-	}
-	if to >= from {
+	if from, err := VersionOf(f); err == nil && to >= from {
 		return Migrate(f, to)
 	}
+	from, err := validAt(f, to)
+	if err != nil {
+		return nil, nil, err
+	}
+	target, _ := version(to)
 	for n := from; n > to; n-- {
 		// Every version above the oldest has a renderer (register).
 		v, _ := version(n)
 		prev, err := v.Down(f)
-		if err != nil {
+		var unrepresentable *UnrepresentableError
+		if errors.As(err, &unrepresentable) {
+			// It names the versions, and each construct.
 			return nil, nil, err
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("schemaversion: the rendering of version %d at %d: %w", n, n-1, err)
 		}
 		if got, err := VersionOf(prev); err != nil || got != n-1 {
 			return nil, nil, fmt.Errorf("schemaversion: the renderer of version %d wrote no snapshot of version %d",
@@ -395,4 +371,26 @@ func Render(f Files, to int) (Files, []Step, error) {
 			"validate: %w", to, err)
 	}
 	return f, nil, nil
+}
+
+// validAt returns the version of f, which validates against it, of the
+// versions that the server reads, as to is, or fails with an
+// *UnsupportedError where the server does not read f's version or to, and
+// with another error where f does not validate against its version.
+func validAt(f Files, to int) (int, error) {
+	from, err := VersionOf(f)
+	if err != nil {
+		return 0, err
+	}
+	source, err := version(from)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := version(to); err != nil {
+		return 0, err
+	}
+	if err := source.Validate(f); err != nil {
+		return 0, fmt.Errorf("schemaversion: the snapshot does not validate at its version %d: %w", from, err)
+	}
+	return from, nil
 }

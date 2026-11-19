@@ -219,8 +219,9 @@ func checkBundle(t *testing.T, client *http.Client, base string) {
 
 // checkVersion checks that the instance at base reports, at /version, the
 // versions of the published format that a release reads, exactly the real
-// ones, whose schemas /schema/published holds, so that the image has no
-// synthetic version of the tests' (PRD FR-DATA-03, plan item 77); and the
+// ones, whose schemas /schema/published holds, while no version's support
+// window has ended (PRD §6.4), so that the image has no synthetic version of
+// the tests' (PRD FR-DATA-03, plan item 77); and the
 // commit that image was built from, which its revision label names. The
 // build stamps the commit into the binary with -ldflags -X
 // (deploy/Dockerfile), which go build ignores for a variable that does not

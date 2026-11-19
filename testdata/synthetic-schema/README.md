@@ -1,6 +1,6 @@
 # The synthetic schema version
 
-A test-only version of the published game format (PRD FR-DATA-03, §6.4, plan notes N2 and N84). Only version 1 of the format exists, but the criteria of a migration, of down-rendering, and of a pull between a server and an addon of different versions need two. This version is the second. It is defined only in test code and in this directory, which is outside the published `/schema` tree. Only test servers serve it, and no release build or packaged addon has it.
+A test-only version of the published game format (PRD FR-DATA-03, §6.4, plan notes N2 and N84). Only version 1 of the format exists, but the criteria of a migration, of down-rendering, and of a pull between a server and an addon of different versions need two. This version is the second. It is defined only in test code and in this directory, which is outside the published `/schema` tree. No release build or packaged addon has it. No server serves it yet: only the Go tests that import `schemaversion/synthetic` read it, and the test server that serves it to the addon comes with its pull (plan item 101).
 
 ## Its number
 

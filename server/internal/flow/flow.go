@@ -112,11 +112,11 @@ const out = "out"
 // schemaVersion is published.SchemaVersion, the one version that it reads,
 // which a manifest of another is refused for as the runtime's
 // schema_unsupported, with an error that wraps ErrSchemaUnsupported too,
-// before anything else of it is read (schemaVersionOf); that the snapshot's
-// astVersion is at most expr.ASTVersion, which a newer one is refused for as
-// the runtime's
-// ast_unsupported, with an error that wraps ErrASTUnsupported too, and at
-// least the highest version of the constructs that its ASTs use
+// before anything else of it is read (published.SchemaVersionOf), as play
+// mode's loader refuses the same manifests; that the snapshot's astVersion
+// is at most expr.ASTVersion, which a newer one is refused for as the
+// runtime's ast_unsupported, with an error that wraps ErrASTUnsupported too,
+// and at least the highest version of the constructs that its ASTs use
 // (expr.VersionOf), as every runtime trusts it to be (FR-EXPR-04); that a
 // text's or a label's value is of a variable that an expression of its board
 // reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that every value
@@ -163,7 +163,9 @@ func (l *loader) load(fsys fs.FS) error {
 	if err != nil {
 		return err
 	}
-	if v, ok := schemaVersionOf(data); ok && v != published.SchemaVersion {
+	// A manifest whose schemaVersion is no version is refused below, as its
+	// schema refuses it.
+	if v, err := published.SchemaVersionOf(data); err == nil && v != published.SchemaVersion {
 		return fmt.Errorf("%w: the snapshot's schemaVersion is %d, and this runtime reads %d", ErrSchemaUnsupported, v,
 			published.SchemaVersion)
 	}
@@ -289,33 +291,6 @@ var filePattern = func() *regexp.Regexp {
 	}
 	return regexp.MustCompile(pattern)
 }()
-
-// schemaVersionOf returns the schemaVersion of data, a manifest, where data
-// is a JSON object that value.ReadJSON reads, as no file holds null, whose
-// schemaVersion is an integer, however its JSON writes it, of at most
-// published.MaxInt in magnitude, as the Go types read one (published.Int),
-// and reports whether it is, so that Load refuses a manifest of another
-// version as schema_unsupported before it reads anything else of it, and play
-// mode's loader refuses the same manifests so.
-func schemaVersionOf(data []byte) (int64, bool) {
-	tree, err := value.ReadJSON(data)
-	if err != nil {
-		return 0, false
-	}
-	m, ok := tree.(map[string]any)
-	if !ok {
-		return 0, false
-	}
-	n, ok := m["schemaVersion"].(json.Number)
-	if !ok {
-		return 0, false
-	}
-	var v published.Int
-	if err := v.UnmarshalJSON([]byte(n)); err != nil {
-		return 0, false
-	}
-	return int64(v), true
-}
 
 // isFilePath reports whether path is the path of a snapshot's file but the
 // manifest, as the pull's path rules take it (PRD §7.5): of the forms of

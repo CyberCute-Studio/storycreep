@@ -44,6 +44,33 @@ import (
 // types are of (§6.4).
 const SchemaVersion = 1
 
+// SchemaVersionOf returns the schemaVersion of data, a manifest's bytes, of
+// whatever version: an Int, however its JSON writes it, as 1 or 1.0, of a
+// JSON object that value.ReadJSON reads. It fails where data is no such
+// object, or its schemaVersion no such Int. The reference runtime reads a
+// manifest's version so before anything else of it (flow.Load), and package
+// schemaversion so (schemaversion.VersionOf).
+func SchemaVersionOf(data []byte) (int64, error) {
+	tree, err := value.ReadJSON(data)
+	if err != nil {
+		return 0, fmt.Errorf("published: %s: %w", ManifestPath, err)
+	}
+	m, ok := tree.(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("published: %s is no JSON object", ManifestPath)
+	}
+	raw, ok := m["schemaVersion"]
+	if !ok {
+		return 0, fmt.Errorf("published: %s has no schemaVersion", ManifestPath)
+	}
+	num, ok := raw.(json.Number)
+	var n Int
+	if !ok || n.UnmarshalJSON([]byte(num)) != nil {
+		return 0, fmt.Errorf("published: %s's schemaVersion is no version", ManifestPath)
+	}
+	return int64(n), nil
+}
+
 // The paths of a snapshot's files, from the directory that holds them,
 // res://storycreep/ in a game (§6.3), but for its boards' (BoardPath) and its
 // assets'.
