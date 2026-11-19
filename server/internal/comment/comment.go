@@ -581,22 +581,10 @@ func (s *Service) Members(ctx context.Context, actor commands.Actor, projectID, 
 // notification's preview reads them (notification.MemberNames).
 func withMentions(ctx context.Context, q *queries.Queries, bodies []CommentBody) error {
 	var users []string
-	seen := map[string]bool{}
 	for i := range bodies {
-		if bodies[i].Body == nil {
-			continue
-		}
-		mentioned := map[string]bool{}
-		for _, m := range bodies[i].Body.Members() {
-			if mentioned[m.User] {
-				continue
-			}
-			mentioned[m.User] = true
-			bodies[i].Mentions = append(bodies[i].Mentions, CommentMention{ID: m.User})
-			if !seen[m.User] {
-				seen[m.User] = true
-				users = append(users, m.User)
-			}
+		for _, user := range notification.MembersOf(bodies[i].Body) {
+			bodies[i].Mentions = append(bodies[i].Mentions, CommentMention{ID: user})
+			users = append(users, user)
 		}
 	}
 	if len(users) == 0 {

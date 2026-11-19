@@ -168,15 +168,28 @@ export function commentAuthorsQuery(doc: ProjectDocument) {
 }
 
 /**
+ * How long the members whom a project's comments may mention are kept
+ * before a form that shows reads them again, in milliseconds: a minute, so
+ * that each form that shows meanwhile, as each reply's and each edit's, does
+ * not read every page of them again.
+ */
+const membersKept = 60_000;
+
+/**
  * The members of the project whom a comment may mention (PRD FR-COMMENT-02,
  * plan item 75), with their display names, every page of them, which a form
  * of a comment reads once it shows, and offers as @ is typed in it, by the
  * project: those who read the project, by any role, as the server lists
  * them, whom the server refuses no mention of, while they still read it.
+ * They are kept a while (membersKept), but read anew at once as a mention is
+ * refused since its member no longer reads the project, whom they may still
+ * hold, and as the project's access changes in this tab, which reads the
+ * project's queries again (["projects", projectId]).
  */
 export function membersQuery(projectId: string) {
   return queryOptions({
     queryKey: ["projects", projectId, "members"],
+    staleTime: membersKept,
     queryFn: async ({ signal }): Promise<MentionableMember[]> =>
       everyPage(
         async (cursor) =>

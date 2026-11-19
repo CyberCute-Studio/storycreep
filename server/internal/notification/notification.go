@@ -291,10 +291,10 @@ func (s *Service) each(ctx context.Context, userID ids.UUID,
 // as the server's clock has it, and by their IDs where those are the same,
 // UUIDv7s that the server makes: the first, if after is zero, or else those
 // after it. It reads each workspace in a transaction of its own, for the
-// first limit after after, and merges them, and reads the comments' bodies
-// of those that it returns alone. Each has its comment's preview, with the
-// display names of the members that the comment mentions as they are now
-// (NotificationBody.Preview).
+// first limit after after, each with its comment's body, merges them, and
+// parses the bodies of those that it returns alone. Each has its comment's
+// preview, with the display names of the members that the comment mentions
+// as they are now (NotificationBody.Preview).
 func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit int) ([]NotificationBody, error) {
 	type listed struct {
 		ws  ids.UUID
@@ -346,14 +346,8 @@ func (s *Service) List(ctx context.Context, userID ids.UUID, after Key, limit in
 // mention, read in one query, as they are now.
 func (s *Service) preview(ctx context.Context, userID ids.UUID, out []NotificationBody, docs []*richtext.Doc) error {
 	var users []string
-	seen := map[string]bool{}
 	for _, doc := range docs {
-		for _, m := range doc.Members() {
-			if !seen[m.User] {
-				seen[m.User] = true
-				users = append(users, m.User)
-			}
-		}
+		users = append(users, MembersOf(doc)...)
 	}
 	names := map[string]string{}
 	if len(users) > 0 {
@@ -378,15 +372,37 @@ func (s *Service) preview(ctx context.Context, userID ids.UUID, out []Notificati
 	return nil
 }
 
+// MembersOf returns the IDs of the members whom doc mentions, as the API
+// writes them (ids.User), each once, in the order of their first mentions,
+// as a comment's mentions list them and a notification's preview names them
+// (MemberNames), or none of a nil doc, as of a deleted comment's body.
+func MembersOf(doc *richtext.Doc) []string {
+	if doc == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range doc.Members() {
+		if !seen[m.User] {
+			seen[m.User] = true
+			out = append(out, m.User)
+		}
+	}
+	return out
+}
+
 // MemberNames returns the display names of the users whose IDs, as the API
 // writes them (ids.User), are users, by those IDs, read in one query in q's
-// transaction, as a comment's mentions show them and a notification's
-// preview writes them (package comment, Service.List): a user whose account
-// is deleted, or an ID that is not a user's, has none.
+// transaction, each once however often users holds it, as of the mentions
+// of several bodies (MembersOf), as a comment's mentions show them and a
+// notification's preview writes them (package comment, Service.List): a user
+// whose account is deleted, or an ID that is not a user's, has none.
 func MemberNames(ctx context.Context, q *queries.Queries, users []string) (map[string]string, error) {
 	uuids := make([]pgtype.UUID, 0, len(users))
+	seen := map[ids.UUID]bool{}
 	for _, user := range users {
-		if u, err := ids.Decode(ids.User, user); err == nil {
+		if u, err := ids.Decode(ids.User, user); err == nil && !seen[u] {
+			seen[u] = true
 			uuids = append(uuids, nullUUID(u))
 		}
 	}
@@ -505,7 +521,11 @@ func (s *Service) Read(ctx context.Context, userID, id ids.UUID) error {
 // another project's batch that applied before through's and committed only
 // after the page was read is made before through, and is marked read too. It
 // returns ErrNotFound, and marks nothing, if the user has no notification
-// through in any of their workspaces.
+// through in any of their workspaces. Each workspace's marks commit on their
+// own, so a workspace that fails, whose error it returns, leaves those of the
+// workspaces before it marked: the sessions are told of them all the same,
+// as they are of every mark once it committed, even once the request is
+// cancelled, for at most tellTimeout.
 func (s *Service) ReadThrough(ctx context.Context, userID, through ids.UUID) error {
 	var at pgtype.Timestamptz
 	err := s.each(ctx, userID, func(q *queries.Queries, ws ids.UUID) (bool, error) {
@@ -536,13 +556,21 @@ func (s *Service) ReadThrough(ctx context.Context, userID, through ids.UUID) err
 		marked = marked || n > 0
 		return false, nil
 	})
-	if err != nil || !marked {
+	if !marked {
 		return err
 	}
-	return s.db.InTx(ctx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
-		return notify(ctx, queries.New(tx), []pgtype.UUID{nullUUID(userID)})
+	tellCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tellTimeout)
+	defer cancel()
+	told := s.db.InTx(tellCtx, database.Scope{UserID: userID}, func(tx pgx.Tx) error {
+		return notify(tellCtx, queries.New(tx), []pgtype.UUID{nullUUID(userID)})
 	})
+	return errors.Join(err, told)
 }
+
+// tellTimeout bounds how long ReadThrough tells the account's sessions of the
+// marks that committed once its request is cancelled or a workspace's marks
+// failed.
+const tellTimeout = 5 * time.Second
 
 // nullUUID returns id as a uuid column, null if id is zero.
 func nullUUID(id ids.UUID) pgtype.UUID {

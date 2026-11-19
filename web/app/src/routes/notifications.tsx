@@ -65,9 +65,9 @@ function Notifications() {
   const all = useMutation({
     mutationFn: (through: string) => markAllRead(session, through),
     // Marked, they show read, which the server's message of the change has
-    // the page confirm as it reads them again, the header's count too
-    // (markedRead); refused, as of one that the account no longer has,
-    // which the list may still show, they are read again.
+    // the page confirm as it reads them again, and the header's count is
+    // read again at once (markedRead); refused, as of one that the account
+    // no longer has, which the list may still show, they are read again.
     onSuccess: (_, through) => markedRead(client, through, true),
     onError: () => readNotificationsAgain(client),
   });
@@ -135,10 +135,11 @@ function NotificationItem({ item }: { item: NotificationBody }) {
   const read = useMutation({
     mutationFn: () => markRead(session, item.id),
     // Marked, it shows read, which the server's message of the change has
-    // the page confirm as it reads the notifications again, the header's
-    // count too, on the page that a followed link leads to as well
-    // (markedRead); refused, as one that the account no longer has, which
-    // the server answers with not_found, they are read again.
+    // the page confirm as it reads the notifications again, and the
+    // header's count is read again at once, on the page that a followed
+    // link leads to as well (markedRead); refused, as one that the account
+    // no longer has, which the server answers with not_found, they are read
+    // again.
     onSuccess: () => markedRead(client, item.id),
     onError: () => readNotificationsAgain(client),
   });

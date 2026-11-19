@@ -18,8 +18,9 @@ import { fakeRealtime } from "./test/realtime";
 // unread ones, which follows the real-time channel's message that they
 // changed, and the page that lists them, marks one read, as its own button
 // and its link do, and marks every one read up to the newest that it lists,
-// each shown read as the server answers, without reading them again, which
-// the server's message of the change has the page do.
+// each shown read in the list as the server answers, without reading the
+// list again, which the server's message of the change has the page do, and
+// the header's count read again at once, which is only ever the server's.
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -207,7 +208,6 @@ describe("the page of the notifications", () => {
     ).toBeNull();
 
     const reads = server.callsOf("listNotifications").length;
-    const counts = server.callsOf("countUnreadNotifications").length;
     await user.click(
       within(newest).getByRole("button", { name: "Mark as read" }),
     );
@@ -221,15 +221,12 @@ describe("the page of the notifications", () => {
     expect(
       within(list).queryByRole("button", { name: "Mark as read" }),
     ).toBeNull();
-    // Neither is read again, as the server's message of the change has them
-    // read, and the header's count is the server's, not one that the page
-    // takes the marked one from, which the message reads again.
+    // The list is not read again, as the server's message of the change has
+    // it read; the header's count, the server's answer to a read of it
+    // alone, rather than one that the page takes the marked one from, is
+    // read again at once, though the channel tells nothing, as while no
+    // socket is open.
     expect(server.callsOf("listNotifications")).toHaveLength(reads);
-    expect(server.callsOf("countUnreadNotifications")).toHaveLength(counts);
-    expect(
-      within(banner).getByRole("link", { name: "Notifications 1 unread" }),
-    ).toBeDefined();
-    act(() => realtime.notify());
     expect(
       await within(banner).findByRole("link", { name: "Notifications" }),
     ).toBeDefined();
@@ -257,16 +254,20 @@ describe("the page of the notifications", () => {
     expect(
       await screen.findByText("Every notification listed is marked as read."),
     ).toBeDefined();
-    // Those listed show read, without being read again; the header's count
-    // is the server's, which the message reads again.
+    // Those listed show read, without the list being read again, and the
+    // header's count is read again at once, though the channel tells
+    // nothing, as while no socket is open: the server's, of the one that
+    // came after alone.
     expect(within(list).queryByText("Unread")).toBeNull();
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
     const banner = screen.getByRole("banner");
     expect(
-      within(banner).getByRole("link", { name: "Notifications 2 unread" }),
+      await within(banner).findByRole("link", {
+        name: "Notifications 1 unread",
+      }),
     ).toBeDefined();
-    // Read again, as the server's message of the change has them, the list
-    // shows the one that came after, unread alone, and the count it alone.
+    // Read again, as the server's message of the change has it, the list
+    // shows the one that came after, unread alone.
     act(() => realtime.notify());
     await waitFor(() =>
       expect(within(list).getAllByRole("listitem")).toHaveLength(3),
@@ -276,9 +277,7 @@ describe("the page of the notifications", () => {
       within(came).getByText("Unread"),
     ]);
     expect(
-      await within(banner).findByRole("link", {
-        name: "Notifications 1 unread",
-      }),
+      within(banner).getByRole("link", { name: "Notifications 1 unread" }),
     ).toBeDefined();
   });
 

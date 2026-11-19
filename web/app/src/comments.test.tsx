@@ -1717,6 +1717,39 @@ describe("mentions of members", () => {
     expect(posted.closest("p")?.textContent).toBe("Ask @Mira about the lamp.");
   });
 
+  it("reads the members once for the forms that show a while after, offering them in a reply's form without reading them again", async () => {
+    const user = userEvent.setup();
+    const root = thread(
+      "cmt_01",
+      "variable",
+      gold.id,
+      "Is gold ever spent?",
+      mira,
+    );
+    const server = commentProject([root], {
+      members: () => [tomas, miraMember],
+    });
+    const comments = await openGold();
+    const reads = () =>
+      server.calls.mock.calls.filter(
+        ([operation]) => operation === "listProjectMembers",
+      ).length;
+    await waitFor(() => expect(reads()).toBe(1));
+    await user.click(within(comments).getByRole("button", { name: "Reply" }));
+    const answer = within(comments).getByRole("textbox", { name: "Reply" });
+    await waitFor(() => expect(document.activeElement).toBe(answer));
+    typeInto(answer, "Ask @to");
+    const list = await screen.findByRole("listbox", {
+      name: "Members to mention",
+    });
+    expect(
+      within(list)
+        .getAllByRole("option")
+        .map((o) => o.firstElementChild?.textContent),
+    ).toEqual(["@Tomas"]);
+    expect(reads()).toBe(1);
+  });
+
   it("shows a comment's mentions by the names that the list gives them, and a former member's by the catalog's word, and posts a mention alone", async () => {
     const user = userEvent.setup();
     const gone = newId("user");

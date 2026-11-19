@@ -58,11 +58,14 @@ export function readNotificationsAgain(client: QueryClient): Promise<void> {
  * which the server's message of the change on the real-time channel, which
  * this page's socket hears too, has the page do (useNotificationListener):
  * reading it here as well would read it twice. The count of the unread ones
- * is left to that message, which reads it again: a count less those might be
- * less them twice, as one that the message had read again after the server
- * marked them, before its answer came, or one that another session's mark
- * of them had read again while the list still showed them unread, of which
- * no message follows. Of a list that does not hold id, they are read again.
+ * is only ever the server's answer to a read of it, which is read again at
+ * once: a count less those might be less them twice, as one that the
+ * message had read again after the server marked them, before its answer
+ * came, and one left to the message stays as it was while no socket is
+ * open, as while one connects again, or where a proxy lets none through,
+ * with Mark all as read still offered, to mark nothing. The message reads
+ * it once more, which is the cost of that. Of a list that does not hold id,
+ * they are read again, the count with them.
  */
 export function markedRead(
   client: QueryClient,
@@ -76,6 +79,7 @@ export function markedRead(
     void readNotificationsAgain(client);
     return;
   }
+  void client.invalidateQueries({ queryKey: unreadQuery.queryKey });
   const marked = new Set(
     items
       .slice(at, through ? undefined : at + 1)

@@ -1,6 +1,7 @@
 package notification_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -10,10 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/isolationtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
+	"github.com/CyberCute-Studio/storycreep/server/internal/notification"
 	"github.com/CyberCute-Studio/storycreep/server/internal/role"
 )
 
@@ -118,5 +121,87 @@ func TestNotificationIsolation(t *testing.T) {
 		}},
 	} {
 		f.Check(t, op)
+	}
+}
+
+// failingDB runs the transactions of db, but fails each of the workspace
+// fail, as a workspace whose transaction times out would.
+type failingDB struct {
+	notification.DB
+	fail ids.UUID
+}
+
+var errWorkspaceFailed = errors.New("the workspace's transaction failed")
+
+func (d failingDB) InTx(ctx context.Context, scope database.Scope, fn func(tx pgx.Tx) error) error {
+	if scope.WorkspaceID == d.fail {
+		return errWorkspaceFailed
+	}
+	return d.DB.InTx(ctx, scope, fn)
+}
+
+// TestReadThroughFailsPartWay checks that Mark all as read, whose workspaces'
+// marks commit each on their own, still tells the account's sessions of the
+// marks of the workspaces before one whose marks failed, as it returns that
+// workspace's error, so that their other sessions read their notifications
+// again rather than keep showing those unread.
+//
+// Verifies: FR-COMMENT-02/AC2
+func TestReadThroughFailsPartWay(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := dbtest.New(t)
+	f := isolationtest.New(t, d, isolationtest.Tables)
+	user, err := isolationtest.NewUser(ctx, f.Admin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The account's notification in each of two workspaces, of each one's
+	// comment; the workspaces are read in the order of their IDs.
+	first, second := f.A, f.B
+	if bytes.Compare(second.ID[:], first.ID[:]) < 0 {
+		first, second = second, first
+	}
+	notified := map[*isolationtest.Workspace]ids.UUID{}
+	for _, w := range []*isolationtest.Workspace{first, second} {
+		if _, err := f.Admin().Exec(ctx, "INSERT INTO membership (id, workspace_id, user_id, role) VALUES "+
+			"($1, $2, $3, 'viewer')", ids.New(), w.ID, user); err != nil {
+			t.Fatal(err)
+		}
+		id := ids.New()
+		if _, err := f.Admin().Exec(ctx, "INSERT INTO notification (id, workspace_id, project_id, user_id, "+
+			"comment_id, actor_id, kind) VALUES ($1, $2, $3, $4, $5, $6, 'mention')", id, w.ID, w.Rows["project"],
+			user, w.Rows["comment"], w.UserID); err != nil {
+			t.Fatal(err)
+		}
+		notified[w] = id
+	}
+	listen := d.Admin(t)
+	if _, err := listen.Exec(ctx, "LISTEN "+notification.Channel); err != nil {
+		t.Fatal(err)
+	}
+
+	// Through the first workspace's notification, whose workspace is the
+	// only one that finding it reads; the second's marks fail.
+	svc := notification.New(failingDB{DB: f.DB, fail: second.ID})
+	if err := svc.ReadThrough(ctx, user, notified[first]); !errors.Is(err, errWorkspaceFailed) {
+		t.Fatalf("ReadThrough with the second workspace failing: %v, want its error", err)
+	}
+	var read bool
+	if err := f.Admin().QueryRow(ctx, "SELECT read_at IS NOT NULL FROM notification WHERE id = $1",
+		notified[first]).Scan(&read); err != nil {
+		t.Fatal(err)
+	}
+	if !read {
+		t.Fatal("the first workspace's notification is unread, want its mark committed")
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n, err := listen.WaitForNotification(waitCtx)
+	if err != nil {
+		t.Fatalf("no notification of the account's sessions of the marks that committed: %v", err)
+	}
+	if n.Channel != notification.Channel || n.Payload != user.String() {
+		t.Errorf("notified %q on %q, want %q on %q", n.Payload, n.Channel, user, notification.Channel)
 	}
 }
