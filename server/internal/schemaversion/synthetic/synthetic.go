@@ -104,13 +104,16 @@ func idOf(p string, entity map[string]any) (string, error) {
 }
 
 // up migrates a snapshot's files of the version before to the synthetic
-// version: every file of the synthetic version's number, and each node's
-// position rounded to whole units, half away from zero, each that was not
-// whole reported, with its position before and after.
+// version: every file of the synthetic version's number (Relabel), and each
+// node's position rounded to whole units, half away from zero, each that was
+// not whole reported, with its position before and after.
 func up(f schemaversion.Files) (schemaversion.Files, []schemaversion.Entry, error) {
+	relabeled, err := schemaversion.Relabel(f, Number)
+	if err != nil {
+		return nil, nil, err
+	}
 	var entries []schemaversion.Entry
-	out, err := schemaversion.Edit(f, func(p string, file map[string]any) error {
-		file["schemaVersion"] = json.Number(strconv.Itoa(Number))
+	out, err := schemaversion.Edit(relabeled, func(p string, file map[string]any) error {
 		if !isBoard(p) {
 			return nil
 		}
@@ -174,13 +177,16 @@ func up(f schemaversion.Files) (schemaversion.Files, []schemaversion.Entry, erro
 }
 
 // down renders a snapshot's files of the synthetic version as the version
-// before: every file of that version's number, which takes every whole
-// position, or fails with an *UnrepresentableError naming each node whose
-// title is longer than that version holds.
+// before: every file of that version's number (Relabel), which takes every
+// whole position, or fails with an *UnrepresentableError naming each node
+// whose title is longer than that version holds.
 func down(f schemaversion.Files) (schemaversion.Files, error) {
+	relabeled, err := schemaversion.Relabel(f, Number-1)
+	if err != nil {
+		return nil, err
+	}
 	var long []schemaversion.Construct
-	out, err := schemaversion.Edit(f, func(p string, file map[string]any) error {
-		file["schemaVersion"] = json.Number(strconv.Itoa(Number - 1))
+	out, err := schemaversion.Edit(relabeled, func(p string, file map[string]any) error {
 		if !isBoard(p) {
 			return nil
 		}

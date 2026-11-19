@@ -103,6 +103,18 @@ func fixtureDir(t *testing.T, n int) string {
 // a tree, its manifest sealed again (schemaversion.Seal), or fails the test.
 func edited(t *testing.T, f schemaversion.Files, path string, edit func(map[string]any)) schemaversion.Files {
 	t.Helper()
+	out, err := schemaversion.Seal(unsealedEdit(t, f, path, edit))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// unsealedEdit returns a copy of f in which edit has changed the file at
+// path, as a tree, its manifest's hashes left as they were, or fails the
+// test.
+func unsealedEdit(t *testing.T, f schemaversion.Files, path string, edit func(map[string]any)) schemaversion.Files {
+	t.Helper()
 	out, err := schemaversion.Edit(f, func(p string, file map[string]any) error {
 		if p == path {
 			edit(file)
@@ -110,9 +122,6 @@ func edited(t *testing.T, f schemaversion.Files, path string, edit func(map[stri
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err = schemaversion.Seal(out); err != nil {
 		t.Fatal(err)
 	}
 	return out

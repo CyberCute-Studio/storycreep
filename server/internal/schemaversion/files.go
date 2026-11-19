@@ -98,7 +98,9 @@ func Relabel(f Files, n int) (Files, error) {
 // fails where the manifest does not list exactly f's other files, and leaves
 // the rest of the manifest, its generator and its snapshot's ID, version,
 // note, and moment among it, as it was: a snapshot rendered at another version
-// is the same release, of the same moment.
+// is the same release, of the same moment, though its content hash is that of
+// its files at that version, which differ from the release's at its own, since
+// a consumer checks the content hash against the files that it is given.
 func Seal(f Files) (Files, error) {
 	m, listed, snapshot, err := manifestOf(f)
 	if err != nil {

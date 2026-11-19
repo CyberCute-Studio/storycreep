@@ -112,11 +112,12 @@ const out = "out"
 // schemaVersion is published.SchemaVersion, the one version that it reads,
 // which a manifest of another is refused for as the runtime's
 // schema_unsupported, with an error that wraps ErrSchemaUnsupported too,
-// before anything else of it is read (published.SchemaVersionOf), as play
-// mode's loader refuses the same manifests; that the snapshot's astVersion
-// is at most expr.ASTVersion, which a newer one is refused for as the
-// runtime's ast_unsupported, with an error that wraps ErrASTUnsupported too,
-// and at least the highest version of the constructs that its ASTs use
+// before anything else of it is read but that it is JSON that value.ReadJSON
+// reads, as every version's manifest is (PRD §6.4, published.SchemaVersionOf),
+// as play mode's loader refuses the same manifests; that the snapshot's
+// astVersion is at most expr.ASTVersion, which a newer one is refused for as
+// the runtime's ast_unsupported, with an error that wraps ErrASTUnsupported
+// too, and at least the highest version of the constructs that its ASTs use
 // (expr.VersionOf), as every runtime trusts it to be (FR-EXPR-04); that a
 // text's or a label's value is of a variable that an expression of its board
 // reads (FR-TEXT-02, §5.8.3), or of a runtime attribute; and that every value

@@ -29,9 +29,10 @@ describe("the versions that a build reads", () => {
   });
 
   // A manifest of another version is the runtime's schema_unsupported (PRD
-  // §6.4), before anything else of it is checked, a newer
-  // astVersion among it, as Go's Load refuses it, and one that is no version
-  // is a LoadError of its schema.
+  // §6.4), before anything else of it is checked, a newer astVersion among
+  // it, as Go's Load refuses it, but that it is JSON as every version's
+  // manifest is, so that one that holds null is a LoadError whatever its
+  // version; and one that is no version is a LoadError of its schema.
   test("refuse another version as schema_unsupported", async () => {
     const refused = load(fixture(2));
     await expect(refused).rejects.toBeInstanceOf(SchemaUnsupportedError);
@@ -48,6 +49,11 @@ describe("the versions that a build reads", () => {
     );
     await expect(older).rejects.toBeInstanceOf(SchemaUnsupportedError);
     await expect(older).rejects.not.toBeInstanceOf(ASTUnsupportedError);
+    const withNull = load(
+      withManifest(fixture(1), { schemaVersion: 2, generator: null }),
+    );
+    await expect(withNull).rejects.toThrow("holds null");
+    await expect(withNull).rejects.not.toBeInstanceOf(SchemaUnsupportedError);
     for (const schemaVersion of [1.5, "1", 2 ** 53]) {
       const none = load(withManifest(fixture(1), { schemaVersion }));
       await expect(none, String(schemaVersion)).rejects.toBeInstanceOf(

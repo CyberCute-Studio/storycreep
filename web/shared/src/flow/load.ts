@@ -247,9 +247,10 @@ export class Snapshot {
  * the manifest's schemaVersion is one of the versions of the published
  * format that it reads (supportedSchema), which a manifest of another is
  * refused for as the runtime's schema_unsupported, with a
- * SchemaUnsupportedError, before anything else of it is checked, where Go's
- * Load refuses it so (schemaVersionOf); that the snapshot's astVersion is at
- * most AST_VERSION, which a newer one is refused
+ * SchemaUnsupportedError, before anything else of it is checked but that it
+ * is JSON that readJSONBytes reads, as every version's manifest is (PRD
+ * §6.4), where Go's Load refuses it so (schemaVersionOf); that the
+ * snapshot's astVersion is at most AST_VERSION, which a newer one is refused
  * for as the runtime's ast_unsupported, with an ASTUnsupportedError, and at
  * least the highest version of the constructs that its ASTs use (versionOf);
  * that a text's or a label's value is of a variable that an expression of
@@ -355,8 +356,9 @@ function newestSchemas(): VersionSchemas {
 // raw is an object whose schemaVersion is an integer, however it is written,
 // within ±MAX_INT, as the Go types read one, so that load refuses a manifest
 // of a version that it does not read as schema_unsupported, before it checks
-// anything else of it, where Go's Load does (schemaVersionOf), and otherwise
-// undefined.
+// anything else of it but that it is JSON that readJSONBytes reads, as every
+// version's manifest is (PRD §6.4), where Go's Load does (schemaVersionOf),
+// and otherwise undefined.
 function schemaVersionOf(raw: JsonValue): number | undefined {
   if (!isJsonObject(raw)) {
     return undefined;

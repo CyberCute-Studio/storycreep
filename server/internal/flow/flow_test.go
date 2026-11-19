@@ -198,6 +198,11 @@ func TestLoad(t *testing.T) {
 			func(m map[string]any) { m["schemaVersion"], m["astVersion"] = 0, 99 }, "schema_unsupported"},
 		{"a manifest whose schemaVersion is no integer", choicesSuite(), published.ManifestPath,
 			func(m map[string]any) { m["schemaVersion"] = 1.5 }, "1.5 is no integer"},
+		// But that it is JSON that value.ReadJSON reads, as every version's
+		// manifest is (PRD §6.4), so that one that holds null is a file that
+		// does not decode, whatever its version.
+		{"a manifest of another schemaVersion that holds null", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["schemaVersion"], m["generator"] = 2, nil }, "holds null"},
 		{"a board's file of another board", choicesSuite(), main, func(b map[string]any) {
 			b["board"].(map[string]any)["entryNodeId"] = nd("MARKET")
 		}, "not the index's"},

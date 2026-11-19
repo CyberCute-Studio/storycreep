@@ -23,10 +23,15 @@ import (
 var v1 = Version{Number: 1, Validate: validateV1}
 
 // validateV1 checks f as a consumer of version 1 does: each file against its
-// JSON Schema of /schema/published/v1, the manifest's hashes of the files
-// and the content hash (Sealed), and the snapshot as the reference runtime
-// loads it (RuntimeLoads), which checks what schema/published/README.md says
-// a consumer checks beyond the schemas.
+// JSON Schema of /schema/published/v1, as package published generates it from
+// its types, the manifest's hashes of the files and the content hash
+// (Sealed), and the snapshot as the reference runtime loads it
+// (RuntimeLoads), which checks what schema/published/README.md says a
+// consumer checks beyond the schemas. The types and the runtime are of the
+// newest real version, which version 1 is only until another lands, so that
+// a real version 2, which changes both, gives version 1 a validator that
+// depends on neither first (CONTRIBUTING.md), or version 1's fixture no
+// longer validates (TestFixtures).
 func validateV1(f Files) error {
 	s, err := v1Schemas()
 	if err != nil {

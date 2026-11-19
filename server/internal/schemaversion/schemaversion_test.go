@@ -139,23 +139,6 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// unsealedEdit returns a copy of f in which edit has changed the file at
-// path, as a tree, its manifest's hashes left as they were, or fails the
-// test.
-func unsealedEdit(t *testing.T, f schemaversion.Files, path string, edit func(map[string]any)) schemaversion.Files {
-	t.Helper()
-	out, err := schemaversion.Edit(f, func(p string, file map[string]any) error {
-		if p == path {
-			edit(file)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
-
 // TestVersionOf checks that VersionOf reads a manifest's schemaVersion as an
 // integer however its JSON writes it, one that the server does not read
 // among them, and refuses one that is no integer.

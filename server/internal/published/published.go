@@ -48,7 +48,8 @@ const SchemaVersion = 1
 // whatever version: an Int, however its JSON writes it, as 1 or 1.0, of a
 // JSON object that value.ReadJSON reads. It fails where data is no such
 // object, or its schemaVersion no such Int. The reference runtime reads a
-// manifest's version so before anything else of it (flow.Load), and package
+// manifest's version so before anything else of it but what value.ReadJSON
+// checks, which every version's files keep (PRD §6.4, flow.Load), and package
 // schemaversion so (schemaversion.VersionOf).
 func SchemaVersionOf(data []byte) (int64, error) {
 	tree, err := value.ReadJSON(data)
