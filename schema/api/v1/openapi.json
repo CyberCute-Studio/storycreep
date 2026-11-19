@@ -10168,6 +10168,28 @@
         ],
         "type": "object"
       },
+      "SchemaRange": {
+        "additionalProperties": false,
+        "properties": {
+          "max": {
+            "description": "The newest version",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "min": {
+            "description": "The oldest version",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ],
+        "type": "object"
+      },
       "SessionBody": {
         "additionalProperties": false,
         "properties": {
@@ -11871,6 +11893,10 @@
             "description": "The version of Go the binary was built with",
             "type": "string"
           },
+          "published_schema": {
+            "$ref": "#/components/schemas/SchemaRange",
+            "description": "The versions of the published game format, its schemaVersion, that the server reads, migrates a snapshot to, and renders a snapshot at, which a pull negotiates with the addon's: the newest version that both read (PRD §6.4, FR-SYNC-07)"
+          },
           "version": {
             "description": "The release version, or (devel) for any other build, such as the main branch's image",
             "type": "string"
@@ -11878,7 +11904,8 @@
         },
         "required": [
           "version",
-          "go_version"
+          "go_version",
+          "published_schema"
         ],
         "type": "object"
       },

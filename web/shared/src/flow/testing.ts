@@ -51,6 +51,39 @@ export function readTree(dir: string): Map<string, Uint8Array> {
   return files;
 }
 
+/**
+ * Returns the fixture of the version n of the published format (PRD §6.4):
+ * schema/fixtures/v1 of version 1, and the synthetic version's of
+ * testdata/synthetic-schema (plan note N2).
+ */
+export function fixture(n: number): Map<string, Uint8Array> {
+  const root = join(import.meta.dirname, "../../../..");
+  return readTree(
+    n === 1
+      ? join(root, "schema/fixtures/v1")
+      : join(root, `testdata/synthetic-schema/fixtures/v${n}`),
+  );
+}
+
+/**
+ * Returns files with their manifest's keys set as edit sets them, which the
+ * loader reads without a hash.
+ */
+export function withManifest(
+  files: ReadonlyMap<string, Uint8Array>,
+  edit: Record<string, unknown>,
+): Map<string, Uint8Array> {
+  const out = new Map(files);
+  const m = JSON.parse(
+    new TextDecoder().decode(files.get("storycreep.json")),
+  ) as Record<string, unknown>;
+  out.set(
+    "storycreep.json",
+    new TextEncoder().encode(JSON.stringify({ ...m, ...edit })),
+  );
+  return out;
+}
+
 /** A scenario, or another object of a suite's files, read with each number as it is written. */
 export type Raw = { [key: string]: JsonValue };
 

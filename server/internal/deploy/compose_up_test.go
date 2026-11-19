@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -216,6 +217,9 @@ func checkBundle(t *testing.T, client *http.Client, base string) {
 }
 
 // checkVersion checks that the instance at base reports, at /version, the
+// versions of the published format that a release reads, exactly the real
+// ones, whose schemas /schema/published holds, so that the image has no
+// synthetic version of the tests' (PRD FR-DATA-03, plan item 77); and the
 // commit that image was built from, which its revision label names. The
 // build stamps the commit into the binary with -ldflags -X
 // (deploy/Dockerfile), which go build ignores for a variable that does not
@@ -223,6 +227,26 @@ func checkBundle(t *testing.T, client *http.Client, base string) {
 // image built without STORYCREEP_COMMIT has no revision to compare.
 func checkVersion(ctx context.Context, t *testing.T, base, image string) {
 	t.Helper()
+	res, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + "/version")
+	if err != nil {
+		t.Fatalf("GET /version: %v", err)
+	}
+	defer res.Body.Close()
+	var v struct {
+		Commit          string `json:"commit"`
+		PublishedSchema struct {
+			Min int `json:"min"`
+			Max int `json:"max"`
+		} `json:"published_schema"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&v); err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /version: %d, %v", res.StatusCode, err)
+	}
+	real := realSchemaVersions(t)
+	if got := [2]int{v.PublishedSchema.Min, v.PublishedSchema.Max}; got != [2]int{real[0], real[len(real)-1]} {
+		t.Errorf("/version declares the published format's versions %d–%d, and /schema/published holds %v", got[0],
+			got[1], real)
+	}
 	out, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format",
 		`{{index .Config.Labels "org.opencontainers.image.revision"}}`, image).Output()
 	if err != nil {
@@ -230,24 +254,36 @@ func checkVersion(ctx context.Context, t *testing.T, base, image string) {
 	}
 	revision := strings.TrimSpace(string(out))
 	if revision == "" {
-		t.Logf("%s has no revision label, so its /version is not checked", image)
+		t.Logf("%s has no revision label, so its /version's commit is not checked", image)
 		return
-	}
-	res, err := (&http.Client{Timeout: 10 * time.Second}).Get(base + "/version")
-	if err != nil {
-		t.Fatalf("GET /version: %v", err)
-	}
-	defer res.Body.Close()
-	var v struct {
-		Commit string `json:"commit"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&v); err != nil || res.StatusCode != http.StatusOK {
-		t.Fatalf("GET /version: %d, %v", res.StatusCode, err)
 	}
 	if v.Commit != revision {
 		t.Errorf("/version reports the commit %q, and the image's revision label %q; want the same", v.Commit,
 			revision)
 	}
+}
+
+// realSchemaVersions returns the real versions of the published format, the
+// oldest first: those whose JSON Schemas /schema/published holds, in a
+// directory v<N> of each.
+func realSchemaVersions(t *testing.T) []int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join("..", "..", "..", "schema", "published"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []int
+	for _, e := range entries {
+		var n int
+		if _, err := fmt.Sscanf(e.Name(), "v%d", &n); err == nil && e.IsDir() && e.Name() == fmt.Sprintf("v%d", n) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	if len(out) == 0 {
+		t.Fatal("/schema/published holds no version")
+	}
+	return out
 }
 
 // checkHealthy checks that both services are running and healthy.

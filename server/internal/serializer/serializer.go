@@ -30,8 +30,6 @@ package serializer
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -139,12 +137,10 @@ func Serialize(d *Draft, s Stamp) (*Snapshot, error) {
 		return nil, &UnpublishableError{StandIns: w.standIns}
 	}
 	hashes := make(map[string]published.Hash, len(files))
-	var all strings.Builder
-	for _, path := range slices.Sorted(maps.Keys(files)) {
-		hashes[path] = hashOf(files[path])
-		all.WriteString(path + " " + string(hashes[path]) + "\n")
+	for path, data := range files {
+		hashes[path] = published.HashOf(data)
 	}
-	contentHash := hashOf([]byte(all.String()))
+	contentHash := published.ContentHash(hashes)
 	var snapshot published.Snapshot = &published.DraftSnapshot{ContentHash: contentHash,
 		PulledAt: published.TimestampOf(s.At)}
 	if r := s.Release; r != nil {
@@ -180,13 +176,6 @@ func checkStamp(s Stamp) error {
 		return errors.New("serializer: the stamp has no moment")
 	}
 	return nil
-}
-
-// hashOf returns the hash of a file's bytes, sha256: and their SHA-256 in
-// lowercase hexadecimal, as the manifest holds it.
-func hashOf(data []byte) published.Hash {
-	sum := sha256.Sum256(data)
-	return published.Hash("sha256:" + hex.EncodeToString(sum[:]))
 }
 
 // file returns v, a file's value of package published's types, as the file's

@@ -6,24 +6,6 @@
 // a file that breaks a pattern or a bound that the Go types do not check as
 // they read a file, which no server writes, though Go's Load may load it.
 
-import boardSchema from "../../../../schema/published/v1/board.schema.json" with {
-  type: "json",
-};
-import componentTypesSchema from "../../../../schema/published/v1/component_types.schema.json" with {
-  type: "json",
-};
-import componentsSchema from "../../../../schema/published/v1/components.schema.json" with {
-  type: "json",
-};
-import settingsSchema from "../../../../schema/published/v1/settings.schema.json" with {
-  type: "json",
-};
-import manifestSchema from "../../../../schema/published/v1/storycreep.schema.json" with {
-  type: "json",
-};
-import variablesSchema from "../../../../schema/published/v1/variables.schema.json" with {
-  type: "json",
-};
 import {
   AST_VERSION,
   type Context,
@@ -33,9 +15,10 @@ import {
   decode,
   ExprError,
   fixedView,
+  isIntegral,
   isJsonObject,
   JsonError,
-  type JsonNumber,
+  JsonNumber,
   type JsonValue,
   type Node,
   Project,
@@ -64,8 +47,14 @@ import type {
   Variables,
 } from "../published";
 import { foldCase } from "./fold";
-import { ANY_VALUE, type Schema, validate } from "./schema";
+import { type Schema, validate } from "./schema";
 import { fileHash, type Pace } from "./sha256";
+import {
+  type SchemaRange,
+  schemasOf,
+  supportedSchema,
+  type VersionSchemas,
+} from "./versions";
 
 /** The paths of a snapshot's files but its boards' and its assets'. */
 export const MANIFEST_PATH = "storycreep.json";
@@ -98,6 +87,34 @@ export class ASTUnsupportedError extends LoadError {
   constructor(message: string) {
     super(`ast_unsupported: ${message}`);
     this.name = "ASTUnsupportedError";
+  }
+}
+
+/**
+ * load's error, a LoadError, for a snapshot whose manifest's schemaVersion
+ * is none of the versions of the published format that it reads
+ * (supportedSchema), the runtime's schema_unsupported (FR-SYNC-07 AC3, PRD
+ * §6.4), which a runtime of that version may run, as the Go runtime's Load
+ * refuses one with ErrSchemaUnsupported.
+ */
+export class SchemaUnsupportedError extends LoadError {
+  readonly code = "schema_unsupported";
+  /** The manifest's schemaVersion. */
+  readonly version: number;
+  /** The versions that load reads. */
+  readonly supported: SchemaRange;
+
+  constructor(version: number, supported: SchemaRange) {
+    const range =
+      supported.min === supported.max
+        ? String(supported.min)
+        : `${supported.min}–${supported.max}`;
+    super(
+      `schema_unsupported: the snapshot's schemaVersion is ${version}, and this runtime reads ${range}`,
+    );
+    this.name = "SchemaUnsupportedError";
+    this.version = version;
+    this.supported = supported;
   }
 }
 
@@ -226,8 +243,13 @@ export class Snapshot {
  * storycreep.json, and checks it as the Go runtime's Load does: every item
  * of what schema/published/README.md says a consumer checks beyond the
  * schemas, each file's hash among them, and a node's tags compared as their
- * case folds; and beyond that list, what the runtime relies on: that the
- * snapshot's astVersion is at most AST_VERSION, which a newer one is refused
+ * case folds; and beyond that list, what the runtime relies on: first, that
+ * the manifest's schemaVersion is one of the versions of the published
+ * format that it reads (supportedSchema), which a manifest of another is
+ * refused for as the runtime's schema_unsupported, with a
+ * SchemaUnsupportedError, before anything else of it is checked, where Go's
+ * Load refuses it so (schemaVersionOf); that the snapshot's astVersion is at
+ * most AST_VERSION, which a newer one is refused
  * for as the runtime's ast_unsupported, with an ASTUnsupportedError, and at
  * least the highest version of the constructs that its ASTs use (versionOf);
  * that a text's or a label's value is of a variable that an expression of
@@ -235,7 +257,8 @@ export class Snapshot {
  * every value is of its declaration's type, a string, an enum's among them,
  * of at most 4,096 characters without a NUL, as the language's are. Beyond
  * what Go's Load checks, it checks each file that it reads against its JSON
- * Schema, of schema/published/v1, before it reads anything of it, so that
+ * Schema, of its manifest's version (versions.ts), before it reads anything
+ * of it, so that
  * it refuses a file that breaks a pattern or a bound of its schema, which
  * the server never writes, though Go's Load, which is no validator of the
  * schemas, may load it; but it leaves a board's ASTs to decode, which
@@ -321,96 +344,34 @@ function isFilePath(path: string): boolean {
   return slug.length <= 64 && !devices.has(slug);
 }
 
-// withoutASTs returns the schema of a board's file with the ast of each
-// expression, a condition's or a script's, taken as any value (AnyValue), so
-// that it reads none of the definitions of an AST: readBoard decodes each
-// AST that the schema would have read, and decode refuses exactly what those
-// definitions refuse, as the Go test TestDecodeAgreesWithSchema and its twin
-// in flow.test.ts check, so that the loader reads each AST once, not twice.
-function withoutASTs(board: Schema): Schema {
-  type Definition = { readonly properties: Record<string, Schema> };
-  const defs = { ...(board as { $defs: Record<string, Definition> }).$defs };
-  for (const name of ["Condition", "Script"]) {
-    defs[name] = {
-      ...defs[name],
-      properties: { ...defs[name].properties, ast: { $ref: ANY_VALUE } },
-    };
-  }
-  return { ...(board as object), $defs: defs };
+// newestSchemas returns what load checks the files of the newest version
+// that it reads against, as it checks a manifest whose schemaVersion is no
+// version, which its schema refuses.
+function newestSchemas(): VersionSchemas {
+  return schemasOf(supportedSchema().max) as VersionSchemas;
 }
 
-// The keywords whose values are schemas, which goTypes reads too: one, a
-// list of them, or an object of them; but for propertyNames, which it
-// leaves out.
-const subschemas = {
-  one: new Set(["additionalProperties", "items"]),
-  list: new Set(["oneOf"]),
-  object: new Set(["$defs", "properties"]),
-};
-
-// The keywords of a pattern or a bound, which the Go types do not check.
-const patternsAndBounds = new Set([
-  "maxItems",
-  "maxLength",
-  "maximum",
-  "minItems",
-  "minLength",
-  "minimum",
-  "pattern",
-  "propertyNames",
-]);
-
-// goTypes returns the schema s with only what the Go types check of a file
-// as published.Decode reads it into them: without a pattern, a pattern of an
-// object's keys (propertyNames), or a bound, but for an integer's, which is
-// within ±MAX_INT, as Go's Int reads one whatever its schema's minimum and
-// maximum. Its types, its constants, its enums, its variants, and the keys
-// that it requires are those of s.
-function goTypes(s: Schema): Schema {
-  if (typeof s !== "object") {
-    return s;
+// schemaVersionOf returns the schemaVersion of raw, a manifest's JSON, where
+// raw is an object whose schemaVersion is an integer, however it is written,
+// within ±MAX_INT, as the Go types read one, so that load refuses a manifest
+// of a version that it does not read as schema_unsupported, before it checks
+// anything else of it, where Go's Load does (schemaVersionOf), and otherwise
+// undefined.
+function schemaVersionOf(raw: JsonValue): number | undefined {
+  if (!isJsonObject(raw)) {
+    return undefined;
   }
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(s)) {
-    if (patternsAndBounds.has(k)) {
-      continue;
-    }
-    if (subschemas.one.has(k)) {
-      out[k] = goTypes(v as Schema);
-    } else if (subschemas.list.has(k)) {
-      out[k] = (v as Schema[]).map(goTypes);
-    } else if (subschemas.object.has(k)) {
-      out[k] = Object.fromEntries(
-        Object.entries(v as Record<string, Schema>).map(([name, d]) => [
-          name,
-          goTypes(d),
-        ]),
-      );
-    } else {
-      out[k] = v;
-    }
+  const v = raw.schemaVersion;
+  if (
+    !(v instanceof JsonNumber) ||
+    !isIntegral(v.raw) ||
+    compareNumbers(v.raw, String(semantics.MAX_INT)) > 0 ||
+    compareNumbers(v.raw, String(-semantics.MAX_INT)) < 0
+  ) {
+    return undefined;
   }
-  if (out.type === "integer") {
-    out.minimum = -semantics.MAX_INT;
-    out.maximum = semantics.MAX_INT;
-  }
-  return out;
+  return v.value;
 }
-
-// The schemas of the files, and of the manifest what the Go types check of
-// it, which Go's Load reads its astVersion of (manifest).
-const schemas = {
-  manifest: manifestSchema as Schema,
-  manifestTypes: goTypes(manifestSchema as Schema),
-  settings: settingsSchema as Schema,
-  variables: variablesSchema as Schema,
-  componentTypes: componentTypesSchema as Schema,
-  components: componentsSchema as Schema,
-  board: withoutASTs(boardSchema as Schema),
-};
-
-/** @internal The schema that load checks a board's file against. */
-export const BOARD_SCHEMA = schemas.board;
 
 // fail returns the LoadError of the problem.
 function fail(problem: string): LoadError {
@@ -479,6 +440,9 @@ class Loader {
   private readonly decoded = new Map<object, Node>();
   private readonly asts: Node[] = [];
   private manifestFiles: Record<string, string> = {};
+  // schemas are those of the manifest's version, which every file is
+  // checked against (manifest).
+  private schemas: VersionSchemas = newestSchemas();
   // release is set for a release's snapshot, every jumper of which has a
   // target.
   private release = false;
@@ -572,6 +536,15 @@ class Loader {
       throw fail(`there is no ${MANIFEST_PATH}`);
     }
     const raw = readJSONFile(MANIFEST_PATH, opened.bytes);
+    const version = schemaVersionOf(raw);
+    if (version !== undefined) {
+      const schemas = schemasOf(version);
+      if (schemas === undefined) {
+        throw new SchemaUnsupportedError(version, supportedSchema());
+      }
+      this.schemas = schemas;
+    }
+    const schemas = this.schemas;
     const problem = validate(schemas.manifest, raw);
     if (
       isJsonObject(raw) &&
@@ -666,7 +639,7 @@ class Loader {
   private async readBoard(path: string): Promise<BoardFile> {
     const { file: f, raw } = await this.readFile<BoardFile>(
       path,
-      schemas.board,
+      this.schemas.board,
       "ast",
     );
     // expression decodes the AST of e, the expression of the key of the
@@ -722,19 +695,19 @@ class Loader {
     this.manifestFiles = m.files;
     this.release = m.snapshot.channel === "release";
     const settings = (
-      await this.readFile<Settings>(SETTINGS_PATH, schemas.settings)
+      await this.readFile<Settings>(SETTINGS_PATH, this.schemas.settings)
     ).file;
     const variables = await this.readFile<Variables>(
       VARIABLES_PATH,
-      schemas.variables,
+      this.schemas.variables,
     );
     const types = await this.readFile<ComponentTypes>(
       COMPONENT_TYPES_PATH,
-      schemas.componentTypes,
+      this.schemas.componentTypes,
     );
     const components = await this.readFile<Components>(
       COMPONENTS_PATH,
-      schemas.components,
+      this.schemas.components,
     );
     const boardFiles = new Map<string, BoardFile>();
     for (const b of m.boards) {

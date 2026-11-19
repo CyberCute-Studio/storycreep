@@ -21,6 +21,7 @@ export {
   MANIFEST_PATH,
   OUT,
   type Output,
+  SchemaUnsupportedError,
   SETTINGS_PATH,
   Snapshot,
   type SnapshotFiles,
@@ -46,3 +47,4 @@ export {
 export { type Schema, validate } from "./schema";
 export { fileHash, type Pace } from "./sha256";
 export { render } from "./text";
+export { type SchemaRange, supportedSchema } from "./versions";

@@ -189,6 +189,15 @@ func TestLoad(t *testing.T) {
 		}, "the label of " + cn("ASK") + ": a value is of"},
 		{"a file that does not decode", choicesSuite(), main, func(b map[string]any) { b["schemaVersion"] = 2 },
 			"schemaVersion"},
+		// A manifest of another version is schema_unsupported before anything
+		// else, a newer astVersion among it, and one that is no version is a
+		// file that does not decode.
+		{"a manifest of another schemaVersion", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["schemaVersion"] = 2 }, "schema_unsupported"},
+		{"a manifest of an older schemaVersion and a newer astVersion", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["schemaVersion"], m["astVersion"] = 0, 99 }, "schema_unsupported"},
+		{"a manifest whose schemaVersion is no integer", choicesSuite(), published.ManifestPath,
+			func(m map[string]any) { m["schemaVersion"] = 1.5 }, "1.5 is no integer"},
 		{"a board's file of another board", choicesSuite(), main, func(b map[string]any) {
 			b["board"].(map[string]any)["entryNodeId"] = nd("MARKET")
 		}, "not the index's"},
@@ -268,6 +277,11 @@ func TestLoad(t *testing.T) {
 		// runtime may run.
 		if errors.Is(err, ErrASTUnsupported) != (c.want == "ast_unsupported") {
 			t.Errorf("%s: %v; want an error of ErrASTUnsupported only of a newer astVersion", c.name, err)
+		}
+		// And a manifest of another schemaVersion alone is
+		// ErrSchemaUnsupported, which a runtime of that version may run.
+		if errors.Is(err, ErrSchemaUnsupported) != (c.want == "schema_unsupported") {
+			t.Errorf("%s: %v; want an error of ErrSchemaUnsupported only of another schemaVersion", c.name, err)
 		}
 	}
 	// The checks that an edit of one file alone fails before: of what the

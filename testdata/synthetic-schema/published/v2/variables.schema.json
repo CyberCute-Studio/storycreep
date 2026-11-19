@@ -1,0 +1,459 @@
+{
+  "$defs": {
+    "AnyValue": {
+      "description": "Any JSON value but null, at any depth: what an object may hold of a property that this version of the format does not define, which a consumer ignores (PRD §6.4).",
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "type": "object"
+        }
+      ]
+    },
+    "BoardId": {
+      "description": "A board's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^bd_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Variable": {
+      "description": "A variable's declaration (FR-VAR-01, FR-VAR-02).",
+      "oneOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": false,
+            "default": {
+              "description": "The variable's default, of its type.",
+              "type": "boolean"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": false,
+            "scope": {
+              "const": "global",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "bool",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": false,
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": false,
+            "scope": {
+              "const": "global",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "int",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": false,
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maximum": 1.7976931348623157e+308,
+              "minimum": -1.7976931348623157e+308,
+              "type": "number"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": false,
+            "scope": {
+              "const": "global",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "float",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": false,
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": false,
+            "scope": {
+              "const": "global",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "string",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": {
+              "$ref": "#/$defs/BoardId",
+              "description": "The board that the variable is of."
+            },
+            "default": {
+              "description": "The variable's default, of its type.",
+              "type": "boolean"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": {
+              "description": "Whether the variable is reset to its default whenever the flow enters its board (PRD §5.8.5). Without it, false.",
+              "type": "boolean"
+            },
+            "scope": {
+              "const": "board",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "bool",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "boardId",
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": {
+              "$ref": "#/$defs/BoardId",
+              "description": "The board that the variable is of."
+            },
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maximum": 9007199254740991,
+              "minimum": -9007199254740991,
+              "type": "integer"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": {
+              "description": "Whether the variable is reset to its default whenever the flow enters its board (PRD §5.8.5). Without it, false.",
+              "type": "boolean"
+            },
+            "scope": {
+              "const": "board",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "int",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "boardId",
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": {
+              "$ref": "#/$defs/BoardId",
+              "description": "The board that the variable is of."
+            },
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maximum": 1.7976931348623157e+308,
+              "minimum": -1.7976931348623157e+308,
+              "type": "number"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": {
+              "description": "Whether the variable is reset to its default whenever the flow enters its board (PRD §5.8.5). Without it, false.",
+              "type": "boolean"
+            },
+            "scope": {
+              "const": "board",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "float",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "boardId",
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnyValue"
+          },
+          "properties": {
+            "boardId": {
+              "$ref": "#/$defs/BoardId",
+              "description": "The board that the variable is of."
+            },
+            "default": {
+              "description": "The variable's default, of its type.",
+              "maxLength": 4096,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "description": {
+              "description": "What the variable is for. Without it, the variable has no description.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/VariableId"
+            },
+            "key": {
+              "description": "The key by which expressions and game code name the variable, unique among its scope's.",
+              "maxLength": 64,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            "resetOnEnter": {
+              "description": "Whether the variable is reset to its default whenever the flow enters its board (PRD §5.8.5). Without it, false.",
+              "type": "boolean"
+            },
+            "scope": {
+              "const": "board",
+              "description": "Whether the variable is global or of a board, which it is visible in alone (FR-VAR-02)."
+            },
+            "type": {
+              "const": "string",
+              "description": "The variable's type, by which a consumer reads its default and its values, never by their JSON form (PRD §5.8.9)."
+            }
+          },
+          "required": [
+            "boardId",
+            "default",
+            "id",
+            "key",
+            "scope",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "VariableId": {
+      "description": "A variable's ID, in its canonical spelling (PRD §5.2).",
+      "pattern": "^var_[01234567][0123456789ABCDEFGHJKMNPQRSTVWXYZ]{25}$",
+      "type": "string"
+    },
+    "Variables": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AnyValue"
+      },
+      "description": "A snapshot's project/variables.json: every variable, global and of each board (PRD §6.3, §6.5).",
+      "properties": {
+        "schemaVersion": {
+          "const": 2,
+          "description": "The version of the published format, 2.",
+          "type": "integer"
+        },
+        "variables": {
+          "description": "Every variable, sorted by ID.",
+          "items": {
+            "$ref": "#/$defs/Variable"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "variables"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/CyberCute-Studio/storycreep/main/testdata/synthetic-schema/published/v2/variables.schema.json",
+  "$ref": "#/$defs/Variables",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A snapshot's project/variables.json (PRD §6.3, §6.5). This is the test-only synthetic version 2 of the format, which only test builds read; testdata/synthetic-schema/README.md describes it.",
+  "title": "Storycreep published format, synthetic version 2: project/variables.json"
+}

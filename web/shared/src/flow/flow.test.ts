@@ -46,11 +46,12 @@ import {
 } from "../expr";
 import type { SaveState } from "../save-state";
 import { foldCase, nfc } from "./fold";
-import { ASTUnsupportedError, BOARD_SCHEMA, LoadError, load } from "./load";
+import { ASTUnsupportedError, LoadError, load } from "./load";
 import { type Choice, Runtime, StateError, ValueError } from "./runtime";
 import { type Schema, validate } from "./schema";
 import { YIELD_EVERY } from "./sha256";
 import { conformance, readTree } from "./testing";
+import { BOARD_SCHEMA } from "./versions";
 
 // The IDs of the suites' entities, by their mnemonics, as the Go suites name
 // them: the body is the mnemonic after zeros.

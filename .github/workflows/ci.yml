@@ -119,6 +119,16 @@ jobs:
         working-directory: server
         run: go test -short ./...
 
+      # PRD FR-DATA-03 and plan note N2: the tests of the criteria that need
+      # two versions of the published format, against the test-only synthetic
+      # version, which only the synthetic_schema build tag compiles in. A
+      # package that adds such tests is added here and to the database job's.
+      - name: Go tests of the synthetic schema version
+        working-directory: server
+        run: |
+          go vet -tags synthetic_schema ./internal/schemaversion/...
+          go test -short -tags synthetic_schema ./internal/schemaversion/...
+
       - name: PRD and plan checks
         run: pnpm docs:check
 
@@ -166,6 +176,12 @@ jobs:
         env:
           STORYCREEP_TEST_POSTGRES_IMAGE: postgres:${{ matrix.postgres }}-alpine
         run: go test ./...
+
+      - name: Go tests of the synthetic schema version
+        working-directory: server
+        env:
+          STORYCREEP_TEST_POSTGRES_IMAGE: postgres:${{ matrix.postgres }}-alpine
+        run: go test -tags synthetic_schema ./internal/schemaversion/...
 
   # PRD §10.6, NFR-A11Y-08, and NFR-SEC-09: the web app as the server serves
   # it, built with the app's bundle, in a desktop browser and on a touch

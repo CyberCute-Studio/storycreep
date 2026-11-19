@@ -21,6 +21,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/config"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
 	"github.com/CyberCute-Studio/storycreep/server/internal/logging"
+	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 )
 
 // TestMain runs the tests with dbtest.Run, which keeps the libpq environment
@@ -536,12 +537,23 @@ func TestOperationalEndpoints(t *testing.T) {
 	}
 	res := do(s.main, http.MethodGet, "/version", nil)
 	var v struct {
-		Version   string `json:"version"`
-		GoVersion string `json:"go_version"`
+		Version         string `json:"version"`
+		GoVersion       string `json:"go_version"`
+		PublishedSchema struct {
+			Min int `json:"min"`
+			Max int `json:"max"`
+		} `json:"published_schema"`
 	}
 	if err := json.Unmarshal(res.body, &v); err != nil || res.status != http.StatusOK || v.Version == "" ||
 		!strings.HasPrefix(v.GoVersion, "go") {
 		t.Errorf("/version: %d %s", res.status, res.body)
+	}
+	// The versions of the published format that the server reads (PRD §6.4),
+	// which a build without the synthetic_schema tag has as exactly the real
+	// ones (schemaversion's TestReleaseRange).
+	if s := schemaversion.Supported(); v.PublishedSchema.Min != s.Min || v.PublishedSchema.Max != s.Max {
+		t.Errorf("/version declares the published format's versions %d–%d; want %s", v.PublishedSchema.Min,
+			v.PublishedSchema.Max, s)
 	}
 	res = do(s.main, http.MethodPost, "/healthz", nil)
 	if res.status != http.StatusMethodNotAllowed || res.header.Get("Allow") != "GET, HEAD" {

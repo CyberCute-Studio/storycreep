@@ -23,9 +23,12 @@ package published
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -65,6 +68,25 @@ type Hash string
 func (Hash) JSONSchema(*schemagen.Generator) *schemagen.Schema {
 	return &schemagen.Schema{Type: "string", Pattern: "^sha256:[0-9a-f]{64}$",
 		Description: "sha256: and the lowercase hexadecimal SHA-256 of the bytes."}
+}
+
+// HashOf returns the hash of a file's bytes, as the manifest's files hold it.
+func HashOf(data []byte) Hash {
+	sum := sha256.Sum256(data)
+	return Hash("sha256:" + hex.EncodeToString(sum[:]))
+}
+
+// ContentHash returns the content hash of a snapshot whose files, but the
+// manifest, have the hashes files, by their paths (§7.3): the hash of a line
+// of each file, in the order of their paths, of its path, a space, its hash,
+// and a line feed, so that it is the same for the same content whatever the
+// manifest's generator and snapshot blocks say.
+func ContentHash(files map[string]Hash) Hash {
+	var all strings.Builder
+	for _, path := range slices.Sorted(maps.Keys(files)) {
+		all.WriteString(path + " " + string(files[path]) + "\n")
+	}
+	return HashOf([]byte(all.String()))
 }
 
 // Timestamp is a moment, in UTC, to the second, as 2026-10-12T18:04:31Z.

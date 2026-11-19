@@ -412,6 +412,15 @@ var Tables = []Table{
 			"kind) VALUES ($1, $2, $3, $4, $5, $6, 'mention')",
 			[]any{id, w.ID, w.Rows["project"], user, w.Rows["comment"], w.UserID}}, nil
 	}},
+	{Name: "schema_migration_log", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A step of the migration of a snapshot of the workspace's project of
+		// its own, since a snapshot's step from a version is logged once.
+		id := ids.New()
+		return Statement{id, "INSERT INTO schema_migration_log (id, workspace_id, project_id, snapshot_id, " +
+			`from_version, to_version, entries) VALUES ($1, $2, $3, $4, 1, 2, '[{"after": {"x": 0, "y": 0}, ` +
+			`"before": {"x": 0.13, "y": -0.05}, "field": "position", "file": "boards/harbour-intro.json"}]')`,
+			[]any{id, w.ID, w.Rows["project"], ids.New()}}, nil
+	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
 		id := ids.New()
