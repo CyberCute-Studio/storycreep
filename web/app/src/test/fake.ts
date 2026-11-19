@@ -79,9 +79,10 @@ export const testProject: ProjectBody = {
  * of what a board's page reads besides its board, the graph of its badge of
  * dependencies (plan item 70), of no board, and its threaded comments and
  * their counts (plan item 74), of none, as the variables' page reads them
- * too, so that a test of a board's page that does not answer them shows no
- * badge and no thread, rather than a read that fails and is tried again in
- * the test's background.
+ * too, and the members whom a comment's form offers to mention (plan item
+ * 75), none, so that a test of a board's page that does not answer them
+ * shows no badge and no thread, rather than a read that fails and is tried
+ * again in the test's background.
  */
 export function startPage(
   operation: Call[0],
@@ -98,6 +99,7 @@ export function startPage(
     case "listComments":
     case "countComments":
     case "listCommentAuthors":
+    case "listProjectMembers":
       return { items: [], next_cursor: null };
   }
   return undefined;

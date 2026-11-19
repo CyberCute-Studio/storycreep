@@ -3,6 +3,7 @@ import type {
   CommentAuthor,
   CommentBody,
   CommentCount,
+  MentionableMember,
   RichTextDoc,
   Variable,
 } from "@storycreep/shared/api";
@@ -17,6 +18,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Engine, Frame } from "./canvas/engine";
+import { membersMentionedIn } from "./comments/Threads";
 import { itemButton } from "./content/ContentTree";
 import { renderApp, testSession } from "./test/app";
 import { testNode } from "./test/canvas";
@@ -176,8 +178,11 @@ type Sent = { type: string; payload: Record<string, unknown> }[];
  * refusal of a batch, if any, before it applies; held holds a batch, if it
  * gives a promise, until that resolves, as the batch then applies; listed
  * answers each read of the list with what it makes of the comments listed,
- * as late as it resolves; and archived tells whether a read of the project
- * finds it archived.
+ * as late as it resolves; archived tells whether a read of the project
+ * finds it archived; and members gives the members whom a comment may
+ * mention, as each read of them lists them, by whose names, or none of a
+ * user who is not one, as a former member, the list of comments names each
+ * member that a comment's body mentions, as the server does (mentions).
  */
 function commentProject(
   stored: Stored[],
@@ -188,6 +193,7 @@ function commentProject(
     listed?: (items: CommentBody[]) => Promise<CommentBody[]>;
     held?: (commands: Sent) => Promise<void> | undefined;
     archived?: () => boolean;
+    members?: () => MentionableMember[];
   } = {},
 ) {
   const comments = [...stored];
@@ -196,6 +202,20 @@ function commentProject(
   const trashed = new Set<string>();
   let nodeRev = quay.rev;
   const byId = (id: string) => comments.find((c) => c.id === id);
+  // The members whom a body mentions, by their names now, as the server
+  // lists them, or none, of a comment that mentions nobody.
+  const mentionsOf = (body: RichTextDoc): Partial<CommentBody> => {
+    const ids = membersMentionedIn(body);
+    const members = options.members?.() ?? [];
+    return ids.length === 0
+      ? {}
+      : {
+          mentions: ids.map((id) => {
+            const name = members.find((m) => m.id === id)?.display_name;
+            return name === undefined ? { id } : { id, display_name: name };
+          }),
+        };
+  };
   const live = (root: Stored) =>
     !(root.target_type === "node" && trashed.has(root.target_id));
   const where = (root: Stored): Partial<CommentBody> => {
@@ -230,6 +250,7 @@ function commentProject(
           body: c.body,
           author: c.author,
           ...(c.edited_at === undefined ? {} : { edited_at: c.edited_at }),
+          ...mentionsOf(c.body),
         }),
     ...(c.parent_id === undefined
       ? {
@@ -453,6 +474,8 @@ function commentProject(
       }
       case "countComments":
         return { items: counts(), next_cursor: null };
+      case "listProjectMembers":
+        return { items: options.members?.() ?? [], next_cursor: null };
       case "listCommentAuthors": {
         const authors = new Map<string, CommentAuthor>();
         for (const { root, replies } of threads()) {
@@ -1630,6 +1653,172 @@ describe("a target's threads", () => {
     ).toBeDefined();
     expect(within(comments).queryByRole("textbox")).toBeNull();
     expect(within(comments).queryAllByRole("button")).toEqual([]);
+  });
+});
+
+describe("mentions of members", () => {
+  const tomas: MentionableMember = {
+    id: newId("user"),
+    display_name: "Tomas",
+  };
+  const miraMember: MentionableMember = { id: mira.id, display_name: "Mira" };
+
+  /** Returns a paragraph of inlines. */
+  const inlines = (
+    ...content: NonNullable<
+      Extract<RichTextDoc["content"][number], { type: "paragraph" }>["content"]
+    >
+  ): RichTextDoc => ({
+    type: "doc",
+    content: [{ type: "paragraph", content }],
+  });
+
+  it("offers the project's members as @ is typed in a comment, and posts a mention of the one chosen, which the thread shows by their name", async () => {
+    const user = userEvent.setup();
+    const server = commentProject([], { members: () => [tomas, miraMember] });
+    const comments = await openGold();
+    expect(await within(comments).findByText("No comments yet.")).toBeDefined();
+    const field = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    await waitFor(() =>
+      expect(
+        server.calls.mock.calls.some(
+          ([operation]) => operation === "listProjectMembers",
+        ),
+      ).toBe(true),
+    );
+    act(() => field.focus());
+    typeInto(field, "Ask @mi");
+    const list = await screen.findByRole("listbox", {
+      name: "Members to mention",
+    });
+    const offers = within(list).getAllByRole("option");
+    expect(offers.map((o) => o.firstElementChild?.textContent)).toEqual([
+      "@Mira",
+    ]);
+    await user.click(offers[0]);
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    typeInto(field, " about the lamp.");
+    expect(field.textContent).toBe("Ask @Mira about the lamp.");
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    const [[create]] = server.batches();
+    expect(create.payload.body).toEqual(
+      inlines(
+        { type: "text", text: "Ask " },
+        { type: "memberMention", attrs: { id: mira.id } },
+        { type: "text", text: " about the lamp." },
+      ),
+    );
+    const posted = await within(comments).findByText("@Mira");
+    expect(posted.closest("p")?.textContent).toBe("Ask @Mira about the lamp.");
+  });
+
+  it("shows a comment's mentions by the names that the list gives them, and a former member's by the catalog's word, and posts a mention alone", async () => {
+    const user = userEvent.setup();
+    const gone = newId("user");
+    const root = thread("cmt_01", "variable", gold.id, "", mira, {
+      body: inlines(
+        { type: "memberMention", attrs: { id: tomas.id } },
+        { type: "text", text: " and " },
+        { type: "memberMention", attrs: { id: gone } },
+        { type: "text", text: ", look." },
+      ),
+    });
+    const server = commentProject([root], { members: () => [tomas] });
+    const comments = await openGold();
+    const shown = await within(comments).findByText("@Tomas");
+    expect(shown.closest("p")?.textContent).toBe(
+      "@Tomas and @former member, look.",
+    );
+    // A mention alone is a comment, which the server takes.
+    replaceIn(
+      within(comments).getByRole("textbox", { name: "New comment" }),
+      inlines({ type: "memberMention", attrs: { id: tomas.id } }),
+    );
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    expect(await within(comments).findByText("Comment posted.")).toBeDefined();
+    expect(server.batches()).toHaveLength(1);
+  });
+
+  it("says a mention of someone who has no access to the project in the form's words, naming them as their mention shows them, and reads the members again, keeping their mention's name", async () => {
+    const user = userEvent.setup();
+    let members = [tomas, miraMember];
+    const server = commentProject([], {
+      members: () => members,
+      refuse: (commands) =>
+        commands[0].type === "comment.create"
+          ? refused(422, {
+              code: "mention_no_access",
+              message:
+                "The comment mentions someone who has no access to this project, so they cannot be mentioned.",
+              details: {
+                errors: [
+                  {
+                    location:
+                      "body.commands[0].payload.body.content[0].content[1]",
+                    message: "mentions someone who cannot read the project",
+                  },
+                ],
+              },
+            })
+          : undefined,
+    });
+    const comments = await openGold();
+    expect(await within(comments).findByText("No comments yet.")).toBeDefined();
+    const field = within(comments).getByRole("textbox", {
+      name: "New comment",
+    });
+    await waitFor(() => expect(field.textContent).toBe(""));
+    // The member lost the project's access since the form read the members.
+    await waitFor(() =>
+      expect(
+        server.calls.mock.calls.filter(
+          ([operation]) => operation === "listProjectMembers",
+        ),
+      ).toHaveLength(1),
+    );
+    members = [miraMember];
+    replaceIn(
+      field,
+      inlines(
+        { type: "text", text: "Ask " },
+        { type: "memberMention", attrs: { id: tomas.id } },
+        { type: "text", text: "." },
+      ),
+    );
+    await waitFor(() => expect(field.textContent).toBe("Ask @Tomas."));
+    await user.click(
+      within(comments).getByRole("button", { name: "Post comment" }),
+    );
+    const said = await within(comments).findByText(
+      "Tomas has no access to this project, so they cannot be mentioned.",
+    );
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(
+      said.id,
+    );
+    await waitFor(() => expect(document.activeElement).toBe(field));
+    // The members are read again, without Tomas, whose mention keeps his
+    // name, as does what the form says.
+    await waitFor(() =>
+      expect(
+        server.calls.mock.calls.filter(
+          ([operation]) => operation === "listProjectMembers",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(field.textContent).toBe("Ask @Tomas.");
+    expect(
+      within(comments).getByText(
+        "Tomas has no access to this project, so they cannot be mentioned.",
+      ),
+    ).toBeDefined();
   });
 });
 

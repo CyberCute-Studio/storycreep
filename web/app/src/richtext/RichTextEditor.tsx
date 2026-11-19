@@ -13,7 +13,9 @@
 // FR-TEXT-03, Suggestions.tsx), and its toolbar sets the format of the value
 // reference selected. A text that may refer to nothing, as a comment, has
 // formatting and links alone: what is pasted into it refers to nothing
-// either (references).
+// either (references); where the page gives it the project's members, its @
+// offers them, and inserts a mention of the member chosen (members,
+// FR-COMMENT-02), which only a comment holds.
 
 import type { RichTextDoc } from "@storycreep/shared/api";
 import {
@@ -51,7 +53,7 @@ import {
   SelectField,
   TextField,
 } from "../ui/Field";
-import type { RichTextChoices } from "./choices";
+import type { MemberChoice, Offerable, RichTextChoices } from "./choices";
 import { type RichTextValue, storedOf } from "./convert";
 import {
   type ChipLabels,
@@ -59,6 +61,7 @@ import {
   type RichTextNames,
   relabel,
   richTextExtensions,
+  withoutMembers,
   withoutReferences,
 } from "./extensions";
 import { typedHref } from "./link";
@@ -95,10 +98,10 @@ export interface RichTextEditorProps {
   /** What the empty editor shows. */
   placeholder?: string;
   /**
-   * What the text's mentions and value references show of what they refer
-   * to. The editor shows them again, walking the whole text, whenever it is
-   * another object, so a page keeps the same one until the names change, as
-   * useMemo keeps it.
+   * What the text's mentions, its members' mentions, and its value
+   * references show of what they refer to. The editor shows them again,
+   * walking the whole text, whenever it is another object, so a page keeps
+   * the same one until the names change, as useMemo keeps it.
    */
   names?: RichTextNames;
   /**
@@ -117,6 +120,18 @@ export interface RichTextEditorProps {
    * none that the server would refuse it for.
    */
   references?: boolean;
+  /**
+   * The members of the project whom a text that may hold no references, as
+   * a comment's, may mention (FR-COMMENT-02, plan item 75), which @ typed at
+   * the start of a word offers, inserting a mention of the member chosen,
+   * which names nobody else's. Without it, @ is text, as any other
+   * character, and a story's text, which may hold references, never offers
+   * them; a mention of a member is pasted into any text as the text that it
+   * showed, as @Tomas (cleanPastedHTML's chips), and dropped into a story's
+   * as that text too (withoutMembers). A page keeps the same list until the
+   * members change, as useMemo keeps it.
+   */
+  members?: readonly MemberChoice[];
 }
 
 /**
@@ -194,6 +209,7 @@ export function RichTextEditor({
   names,
   choices,
   references = true,
+  members,
 }: RichTextEditorProps) {
   const { t } = useTranslation();
   const id = useId();
@@ -206,10 +222,15 @@ export function RichTextEditor({
   // What the editor's callbacks, made once with it, read as the page renders.
   const unknownMention = t("richtext.unknown_mention");
   const unknownValue = t("richtext.unknown_value");
+  const unknownMember = t("richtext.unknown_member");
   const current = {
     onChange,
     names,
-    unknown: { mention: unknownMention, value: unknownValue },
+    unknown: {
+      mention: unknownMention,
+      value: unknownValue,
+      member: unknownMember,
+    },
     placeholder,
     references,
   };
@@ -228,6 +249,9 @@ export function RichTextEditor({
           ? undefined
           : latest.current.names?.value(ref, attribute)) ??
         latest.current.unknown.value,
+      member: (ref) =>
+        (ref === undefined ? undefined : latest.current.names?.member?.(ref)) ??
+        latest.current.unknown.member,
     };
     const extensions = richTextExtensions({
       labels,
@@ -241,8 +265,17 @@ export function RichTextEditor({
   // A document that the editor cannot keep as it is is shown, as its schema
   // reads it, but not changed.
   const changeable = editable && !initial.unreadable;
-  // Whether { and @ offer what the text may refer to.
-  const suggests = changeable && choices !== undefined;
+  // What { and @ offer of what the text may refer to: a story's text, the
+  // values and the components that the page gives it, and a comment, the
+  // members alone, on @.
+  const commentMembers = useMemo(
+    () => (members === undefined ? undefined : { members }),
+    [members],
+  );
+  const offerable: Offerable | undefined = references
+    ? choices
+    : commentMembers;
+  const suggests = changeable && offerable !== undefined;
   // Why the server would refuse what the editor holds, which the page's own
   // error goes before, of a text that the user may change, which they can
   // mend. A text that the editor cannot keep says so before the page's
@@ -267,12 +300,16 @@ export function RichTextEditor({
       // comment, is its text alone where it has them: the text that a
       // mention or a value reference copied from another text showed there
       // (cleanPastedHTML's chips), which this one has no name of, or else
-      // the text that it shows here (withoutReferences).
+      // the text that it shows here (withoutReferences). A mention of a
+      // member, which only a comment holds, is pasted as its text into any
+      // text, as the paste's cleaning keeps none, and dropped as its text
+      // into a story's (withoutMembers), while one moved within a comment
+      // stays.
       transformPastedHTML: (html: string) =>
         cleanPastedHTML(html, latest.current.references),
       transformPasted: (slice: Slice) =>
         latest.current.references
-          ? slice
+          ? withoutMembers(slice, initial.labels)
           : withoutReferences(slice, initial.labels),
       attributes: {
         id,
@@ -333,7 +370,7 @@ export function RichTextEditor({
     if (editor !== null) {
       relabel(editor);
     }
-  }, [editor, names, unknownMention, unknownValue, placeholder]);
+  }, [editor, names, unknownMention, unknownValue, unknownMember, placeholder]);
   return (
     <FieldFrame
       id={id}
@@ -361,10 +398,10 @@ export function RichTextEditor({
               />
             )}
             <EditorContent editor={editor} />
-            {suggests && editor !== null && (
+            {suggests && offerable !== undefined && editor !== null && (
               <Suggestions
                 editor={editor}
-                choices={choices}
+                choices={offerable}
                 keys={suggestKeys}
               />
             )}

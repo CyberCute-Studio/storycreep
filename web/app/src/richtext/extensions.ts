@@ -40,6 +40,7 @@ import { normalizer } from "./normalize";
 import { cleanPastedHTML } from "./paste";
 import {
   isDecimals,
+  isMemberMentionElement,
   isMentionElement,
   isValueRefElement,
   liftKeepsList,
@@ -48,22 +49,29 @@ import {
 } from "./schema";
 import { type Suggestion, suggester } from "./suggest";
 
-/** What the editor shows of the value references and the mentions of a text, which name what the project holds. */
+/** What the editor shows of the value references and the mentions of a text, which name what the project holds, and of the mentions of a comment's members. */
 export interface RichTextNames {
   /** The name of a component, which its mention shows, or undefined for one that the page does not know. */
   mention: (id: string) => string | undefined;
   /** The name of a variable, or of a component's attribute, which its value reference shows, or undefined for one that the page does not know. */
   value: (ref: string, attribute: string | undefined) => string | undefined;
+  /**
+   * The display name of a user, which a mention of a member of the project
+   * shows in a comment (FR-COMMENT-02), the catalog's word of one whose
+   * account is deleted, or undefined for one that the page does not know.
+   */
+  member?: (id: string) => string | undefined;
 }
 
 /**
- * What a mention shows of its component, and a value reference of its value:
- * their names, or a word for what they are, as of an ID that is undefined,
- * where the node's is no string.
+ * What a mention shows of its component, a value reference of its value,
+ * and a member's mention of the member: their names, or a word for what
+ * they are, as of an ID that is undefined, where the node's is no string.
  */
 export interface ChipLabels {
   mention: (id: string | undefined) => string;
   value: (ref: string | undefined, attribute: string | undefined) => string;
+  member: (id: string | undefined) => string;
 }
 
 /**
@@ -79,9 +87,10 @@ export function valueChipText(name: string, decimals: unknown): string {
 }
 
 /**
- * Returns what a node of the editor shows as its text, if it is a mention or
- * a value reference: @ before the component's name, or the value's name in
- * braces, with its format (valueChipText). The labels are asked of the
+ * Returns what a node of the editor shows as its text, if it is a mention, a
+ * member's mention, or a value reference: @ before the component's name or
+ * the member's, or the value's name in braces, with its format
+ * (valueChipText). The labels are asked of the
  * node's IDs only where they are strings, as the schema has them, and of
  * none otherwise, as of a text that the editor cannot keep, which may hold
  * any JSON there (readOf), so that a page's names are given only the
@@ -92,6 +101,8 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
   switch (node.type.name) {
     case "mention":
       return `@${labels.mention(typeof id === "string" ? id : undefined)}`;
+    case "memberMention":
+      return `@${labels.member(typeof id === "string" ? id : undefined)}`;
     case "valueRef":
       return valueChipText(
         typeof ref === "string" &&
@@ -104,6 +115,12 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
   return undefined;
 }
 
+/** The nodes that refer to what a story holds, which a comment holds none of (withoutReferences). */
+const references: ReadonlySet<string> = new Set(["mention", "valueRef"]);
+
+/** The node of a mention of a member, which only a comment holds (withoutMembers). */
+const members: ReadonlySet<string> = new Set(["memberMention"]);
+
 /**
  * Returns slice with each mention and value reference in it as the text
  * that it shows of labels, with its marks, as @Elara or {gold}, as what is
@@ -115,10 +132,32 @@ function chipText(node: PMNode, labels: ChipLabels): string | undefined {
  * left of them, as of a slice that no HTML gave.
  */
 export function withoutReferences(slice: Slice, labels: ChipLabels): Slice {
+  return asText(slice, labels, references);
+}
+
+/**
+ * Returns slice with each mention of a member in it as the text that it
+ * shows, as @Tomas, as what is dropped into a story's text becomes, which
+ * holds none (FR-COMMENT-02): the paste's HTML gives every member's mention
+ * as its text already, as it keeps none (cleanPastedHTML's chips), and this
+ * takes what is left of them, as of a slice that no HTML gave.
+ */
+export function withoutMembers(slice: Slice, labels: ChipLabels): Slice {
+  return asText(slice, labels, members);
+}
+
+/** Returns slice with each node of the types named in it as the text that it shows of labels, with its marks. */
+function asText(
+  slice: Slice,
+  labels: ChipLabels,
+  types: ReadonlySet<string>,
+): Slice {
   const strip = (fragment: Fragment): Fragment => {
     const nodes: PMNode[] = [];
     fragment.forEach((node) => {
-      const text = chipText(node, labels);
+      const text = types.has(node.type.name)
+        ? chipText(node, labels)
+        : undefined;
       if (text !== undefined) {
         nodes.push(node.type.schema.text(text, node.marks));
       } else {
@@ -140,8 +179,8 @@ export function withoutReferences(slice: Slice, labels: ChipLabels): Slice {
  * it is pasted into.
  */
 function chipNode(
-  name: "mention" | "valueRef",
-  type: "mention" | "value-ref",
+  name: "mention" | "valueRef" | "memberMention",
+  type: "mention" | "value-ref" | "member-mention",
   accepts: (element: HTMLElement) => boolean,
   attributes: Attributes,
 ) {
@@ -154,7 +193,11 @@ function chipNode(
 
     addOptions() {
       return {
-        labels: { mention: (id) => id ?? "", value: (ref) => ref ?? "" },
+        labels: {
+          mention: (id) => id ?? "",
+          value: (ref) => ref ?? "",
+          member: (id) => id ?? "",
+        },
       };
     },
 
@@ -194,6 +237,27 @@ const Mention = chipNode("mention", "mention", isMentionElement, {
     renderHTML: (attributes) => ({ "data-id": attributes.id }),
   },
 });
+
+/**
+ * A mention of a member of the project, which shows the member's display
+ * name (FR-COMMENT-02), with the user's ID in attrs.id. Only a comment holds
+ * one, which the editor offers as @ is typed in it, and keeps from a drop
+ * within it, but no paste keeps, as its HTML's element is no chip of the
+ * paste's cleaning, which reads it as the text that it shows (chipOf), and
+ * a story's text takes one dropped into it as its text (withoutMembers).
+ */
+const MemberMention = chipNode(
+  "memberMention",
+  "member-mention",
+  isMemberMentionElement,
+  {
+    id: {
+      isRequired: true,
+      parseHTML: (element) => element.getAttribute("data-id"),
+      renderHTML: (attributes) => ({ "data-id": attributes.id }),
+    },
+  },
+);
 
 /**
  * A reference to a value, which shows the value (FR-TEXT-02): a variable's,
@@ -576,6 +640,7 @@ export function richTextExtensions(options: ExtensionOptions): AnyExtension[] {
     ...toolbarMarks,
     StoredLink,
     Mention.configure({ labels }),
+    MemberMention.configure({ labels }),
     ValueRef.configure({ labels }),
     UndoRedo,
     ...(placeholder === undefined

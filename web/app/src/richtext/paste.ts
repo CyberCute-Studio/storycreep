@@ -909,7 +909,9 @@ class Reader {
  * Returns the attributes of a mention or a value reference that the editor
  * wrote, which a paste keeps, or undefined for another element: one of
  * another app's, as a mention of a user, which names no component, is read
- * as the other inline elements are, so that its text stays.
+ * as the other inline elements are, so that its text stays, and so is the
+ * editor's own mention of a member of a comment (FR-COMMENT-02), which a
+ * paste never keeps, into a comment either, as @Tomas.
  */
 function chipOf(element: Element): [string, string][] | undefined {
   if (element.localName !== "span") {

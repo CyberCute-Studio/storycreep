@@ -48,7 +48,11 @@ export function testEditor(
     element,
     content,
     extensions: richTextExtensions({
-      labels: { mention: () => "component", value: () => "value" },
+      labels: {
+        mention: () => "component",
+        value: () => "value",
+        member: () => "member",
+      },
     }),
     injectCSS: false,
     editorProps,

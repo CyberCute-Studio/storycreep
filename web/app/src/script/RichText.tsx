@@ -4,7 +4,8 @@
 // hundreds of texts would take seconds to start; a mention shows its
 // component's name, and a value reference its value's, as an expression of
 // the text's board names it, as the cards and the editor show them
-// (labels.ts's referenceNames). A block, an inline, or a mark of a type
+// (labels.ts's referenceNames), and a comment's mention of a member the
+// member's display name (FR-COMMENT-02), as the comment's list names it. A block, an inline, or a mark of a type
 // that the page does not know, as a newer server's may send to a page
 // loaded before it, shows its text alone, or nothing, as a card does, but
 // a block or an inline of one is no sign of an empty text (isEmptyText).
@@ -18,8 +19,10 @@ import type {
 import type { ReactNode } from "react";
 import type { LabelContext } from "../canvas/labels";
 
-/** What a text names of what it refers to. */
-export type TextNames = Pick<LabelContext, "componentName" | "valueName">;
+/** What a text names of what it refers to, and, of a comment, the members whom it mentions (memberName), whose names a story's text has none of. */
+export type TextNames = Pick<LabelContext, "componentName" | "valueName"> & {
+  memberName?: (id: string) => string | undefined;
+};
 
 /** Returns what wraps marks around content, the link outermost, and code innermost, as the editor nests them. */
 function marked(content: ReactNode, marks: RichTextMarks | undefined) {
@@ -70,6 +73,12 @@ function inlineOf(i: RichTextInline, key: number, names: TextNames) {
       return (
         <span key={key} className="font-medium" data-mention="">
           {marked(`@${names.componentName(i.attrs.id) ?? "…"}`, i.marks)}
+        </span>
+      );
+    case "memberMention":
+      return (
+        <span key={key} className="font-medium" data-member-mention="">
+          {marked(`@${names.memberName?.(i.attrs.id) ?? "…"}`, i.marks)}
         </span>
       );
     case "valueRef":

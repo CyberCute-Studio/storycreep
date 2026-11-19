@@ -631,4 +631,70 @@ describe("the rich-text editor", () => {
       type: "doc",
     });
   });
+
+  // A mention of a member (plan item 75) is a comment's alone, which no
+  // paste keeps: pasted into a story's text, or a comment's, it is the text
+  // that it showed where it was copied, with its marks.
+  test("takes a member's mention pasted into a story's text as the text that it showed where it was copied", () => {
+    const member = newId("user");
+    const { textbox, last } = renderEditor();
+    act(() => {
+      (
+        textbox as unknown as { editor: { view: EditorView } }
+      ).editor.view.pasteHTML(
+        `<p>Ask <strong><span data-type="member-mention" data-id="${member}" class="rich-text-chip">@Tomas</span></strong>.</p>`,
+      );
+    });
+    expect(last()?.doc).toEqual({
+      content: [
+        {
+          content: [
+            { text: "Ask ", type: "text" },
+            { marks: [{ type: "bold" }], text: "@Tomas", type: "text" },
+            { text: ".", type: "text" },
+          ],
+          type: "paragraph",
+        },
+      ],
+      type: "doc",
+    });
+  });
+
+  test("shows a comment's mentions of members by the names that the page gives them, or by a word for a member that it does not know, and takes one pasted into it as the text that it showed", () => {
+    const tomas = newId("user");
+    const gone = newId("user");
+    const { textbox, last } = renderEditor({
+      references: false,
+      names: {
+        mention: () => undefined,
+        value: () => undefined,
+        member: (id) => (id === tomas ? "Tomas" : undefined),
+      },
+      defaultValue: {
+        content: [
+          {
+            content: [
+              { attrs: { id: tomas }, type: "memberMention" },
+              { text: " and ", type: "text" },
+              { attrs: { id: gone }, type: "memberMention" },
+            ],
+            type: "paragraph",
+          },
+        ],
+        type: "doc",
+      },
+    });
+    expect(textbox.textContent).toBe("@Tomas and @member");
+    act(() => {
+      (
+        textbox as unknown as { editor: { view: EditorView } }
+      ).editor.view.pasteHTML(
+        `<p>, <span data-type="member-mention" data-id="${tomas}" class="rich-text-chip">@Tomas</span></p>`,
+      );
+    });
+    const content = last()?.doc?.content[0];
+    expect(content?.type === "paragraph" ? content.content : undefined).toEqual(
+      expect.arrayContaining([{ text: ", @Tomas", type: "text" }]),
+    );
+  });
 });

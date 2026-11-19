@@ -18,6 +18,7 @@ import type {
   CommentAuthor,
   CommentBody,
   CommentCount,
+  MentionableMember,
   ProjectBody,
   UndoCommandBody,
 } from "@storycreep/shared/api";
@@ -163,6 +164,33 @@ export function commentAuthorsQuery(doc: ProjectDocument) {
           ).body,
       );
     },
+  });
+}
+
+/**
+ * The members of the project whom a comment may mention (PRD FR-COMMENT-02,
+ * plan item 75), with their display names, every page of them, which a form
+ * of a comment reads once it shows, and offers as @ is typed in it, by the
+ * project: those who read the project, by any role, as the server lists
+ * them, whom the server refuses no mention of, while they still read it.
+ */
+export function membersQuery(projectId: string) {
+  return queryOptions({
+    queryKey: ["projects", projectId, "members"],
+    queryFn: async ({ signal }): Promise<MentionableMember[]> =>
+      everyPage(
+        async (cursor) =>
+          (
+            await api.call(
+              "listProjectMembers",
+              {
+                path: { project_id: projectId },
+                query: { cursor, limit: allAtOnce },
+              },
+              { signal },
+            )
+          ).body,
+      ),
   });
 }
 
