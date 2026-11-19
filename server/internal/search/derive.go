@@ -21,29 +21,30 @@ const Name = "search_entries"
 
 // Register registers in r the derivation that writes, once every command of
 // a batch has applied, the documents of the entities that the batch may have
-// changed the document of: each node, connection, variable, and component
-// that a command of the batch changed, and each component of a type that a
-// definition that a command changed is of, as deleting a definition, which
-// changes neither its type nor the components, takes their values of it out
-// of their documents; but for the changes that commands of neutral types
-// alone made, or, of a node or a connection, those of neutral and rewriting
-// types alone. It changes no entity's revision, as the index is no part of
-// what the API shows of one. Register it after expression.Register, whose
-// derivation's changes of the owners of expressions it passes over.
+// changed the document of: each node, connection, variable, component, and
+// comment that a command of the batch changed, and each component of a type
+// that a definition that a command changed is of, as deleting a definition,
+// which changes neither its type nor the components, takes their values of
+// it out of their documents; but for the changes that commands of neutral
+// types alone made, or, of a node or a connection, those of neutral and
+// rewriting types alone. It changes no entity's revision, as the index is no
+// part of what the API shows of one. Register it after expression.Register,
+// whose derivation's changes of the owners of expressions it passes over.
 func Register(r *commands.Registry) {
 	commands.RegisterDerivation(r, commands.Derivation{Name: Name, Derive: derive})
 }
 
 // neutral are the types of command that change a node, a connection, a
-// variable, a component, or an attribute definition, but nothing that a
-// document holds (NewDocument): a move, a deletion to the trash or a
+// variable, a component, a comment, or an attribute definition, but nothing
+// that a document holds (NewDocument): a move, a deletion to the trash or a
 // restoration, which the search reads of the entities themselves, a change
-// of a field that no document holds, as a variable's default or a
-// definition's key, and the mutes of the validation's findings, with the
-// name of the derivation that compiles expressions (expression.Name, which
-// this package does not import), which changes their owners' revisions
-// alone. A definition's move is neutral, since a component's document holds
-// its values in the order of their definitions' IDs, not of their places.
+// of a field that no document holds, as a variable's default, a definition's
+// key, or a thread's resolution, and the mutes of the validation's findings,
+// with the name of the derivation that compiles expressions
+// (expression.Name, which this package does not import), which changes
+// their owners' revisions alone. A definition's move is neutral, since a
+// component's document holds its values in the order of their definitions'
+// IDs, not of their places.
 // derive passes over a change that these alone made, so that moving a
 // selection of 2,000 nodes reads none of them. A type that is not here is
 // taken to change documents, so that a new type of command indexes too
@@ -59,6 +60,7 @@ var neutral = []commands.Type{
 	"component.set_image", "component.move", "component.delete", "component.restore",
 	"attribute.rename", "attribute.set_key", "attribute.set_default", "attribute.set_runtime", "attribute.move",
 	"validation.mute", "validation.unmute",
+	"comment.delete", "comment.restore", "comment.resolve", "comment.unresolve",
 }
 
 // neutralTypes holds the types of neutral, which derive looks the type of
@@ -102,10 +104,10 @@ func derive(ctx context.Context, tx *commands.Tx, changed []commands.Change) err
 }
 
 // selection is the entities whose documents index writes: the nodes, the
-// connections, the variables, and the components, and the components of the
-// types that the definitions are of.
+// connections, the variables, the components, and the comments, and the
+// components of the types that the definitions are of.
 type selection struct {
-	nodes, connections, variables, components, attributes []pgtype.UUID
+	nodes, connections, variables, components, attributes, comments []pgtype.UUID
 }
 
 // add adds the entity id of the kind k to s, if it is of a kind that has a
@@ -123,13 +125,15 @@ func (s *selection) add(k ids.Kind, id ids.UUID) {
 		s.components = append(s.components, u)
 	case ids.AttributeDef:
 		s.attributes = append(s.attributes, u)
+	case ids.Comment:
+		s.comments = append(s.comments, u)
 	}
 }
 
 // empty reports whether s holds no entity.
 func (s *selection) empty() bool {
 	return len(s.nodes) == 0 && len(s.connections) == 0 && len(s.variables) == 0 && len(s.components) == 0 &&
-		len(s.attributes) == 0
+		len(s.attributes) == 0 && len(s.comments) == 0
 }
 
 // index writes the document of each entity of sel of the project projectID
@@ -221,6 +225,19 @@ func index(ctx context.Context, q *queries.Queries, workspaceID, projectID ids.U
 		for _, r := range rows {
 			if err := add(Source{Kind: Component, ID: r.ID.Bytes, Title: r.Name, Key: r.Key, Doc: r.Doc,
 				Values: r.AttributeValues}, r.EntryTitle, r.EntryBodySha256, r.EntryVersion); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if len(sel.comments) > 0 {
+		rows, err := q.CommentSearchSources(ctx, queries.CommentSearchSourcesParams{WorkspaceID: ws,
+			ProjectID: project, Ids: sel.comments})
+		if err := read(Comment, err); err != nil {
+			return 0, err
+		}
+		for _, r := range rows {
+			if err := add(Source{Kind: Comment, ID: r.ID.Bytes, Doc: r.Doc}, r.EntryTitle, r.EntryBodySha256,
+				r.EntryVersion); err != nil {
 				return 0, err
 			}
 		}

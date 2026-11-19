@@ -18,8 +18,10 @@ export interface Theme {
   fg: number;
   /** A node's type and text. */
   muted: number;
-  /** The selection's outline, the rubber band, and the line of a link under way. */
+  /** The selection's outline, the rubber band, the line of a link under way, and the badge of a node's open comments. */
   accent: number;
+  /** The count on the badge of a node's open comments, over the accent. */
+  accentFg: number;
   /** What is wrong, as a broken jumper's edge and the line that says so. */
   danger: number;
   /** Where play mode is: the current node's ring, and the path that the flow took (plan note N78). */
@@ -36,6 +38,7 @@ const tokens = {
   fg: "--color-fg",
   muted: "--color-fg-muted",
   accent: "--color-accent",
+  accentFg: "--color-accent-fg",
   danger: "--color-danger",
   play: "--color-play",
 } as const;
@@ -45,7 +48,8 @@ const tokens = {
  * as under Windows's contrast themes, for each of the tokens, as it draws
  * the page's own elements: the board and the cards on Canvas, their edges
  * and text in CanvasText, what is wrong among them, which its words say,
- * the selection in Highlight, and where play mode is in LinkText. The browser
+ * the selection in Highlight, the count of a badge of comments over it in
+ * HighlightText, and where play mode is in LinkText. The browser
  * forces the colour of the probe that reads a token as well, so that each
  * token would read as the text's colour, and the board be drawn in one.
  */
@@ -56,6 +60,7 @@ const systemColors: Record<keyof typeof tokens, string> = {
   fg: "CanvasText",
   muted: "CanvasText",
   accent: "Highlight",
+  accentFg: "HighlightText",
   danger: "CanvasText",
   play: "LinkText",
 };
@@ -68,6 +73,7 @@ const fallback: Theme = {
   fg: 0x15171c,
   muted: 0x4b5260,
   accent: 0x2b50c8,
+  accentFg: 0xffffff,
   danger: 0xb3261e,
   play: 0x0d6b43,
   dark: false,
@@ -107,6 +113,7 @@ export function readTheme(element: HTMLElement, forced = false): Theme {
       fg: read("fg"),
       muted: read("muted"),
       accent: read("accent"),
+      accentFg: read("accentFg"),
       danger: read("danger"),
       play: read("play"),
       // Dark where the board stands out of white more than of black, as
@@ -128,6 +135,7 @@ export function sameTheme(a: Theme, b: Theme): boolean {
     a.fg === b.fg &&
     a.muted === b.muted &&
     a.accent === b.accent &&
+    a.accentFg === b.accentFg &&
     a.danger === b.danger &&
     a.play === b.play &&
     a.dark === b.dark

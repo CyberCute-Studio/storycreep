@@ -9,6 +9,7 @@ import (
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/board"
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/component"
 	"github.com/CyberCute-Studio/storycreep/server/internal/connection"
 	"github.com/CyberCute-Studio/storycreep/server/internal/dependency"
@@ -66,11 +67,12 @@ func TestPrefixQuery(t *testing.T) {
 
 // TestNewDocument checks what the document of each kind of entity holds: a
 // node's title and the plain text of its text, without what its value
-// references show or its mentions name; a connection's label, without a
-// title; a variable's key and description; and a component's name, and its
-// key, description, and values, each on a line of its own, but for those
-// that are empty, with each control character but a line feed and a tab a
-// space, and a body cut after MaxBodyLength characters.
+// references show or its mentions name; a connection's label, and a
+// comment's body, without a title; a variable's key and description; and a
+// component's name, and its key, description, and values, each on a line of
+// its own, but for those that are empty, with each control character but a
+// line feed and a tab a space, and a body cut after MaxBodyLength
+// characters.
 func TestNewDocument(t *testing.T) {
 	text := `{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Ask "},` +
 		`{"type":"mention","attrs":{"id":"cmp_01M5ZX8E8GFQ1V3JZ6Q3ZT2N4K"}},{"type":"text","text":"about the"},` +
@@ -90,6 +92,9 @@ func TestNewDocument(t *testing.T) {
 			search.Document{Kind: search.Node, ID: id, Title: "Gate"}},
 		{"connection", search.Source{Kind: search.Connection, ID: id, Doc: []byte(text)},
 			search.Document{Kind: search.Connection, ID: id, Body: "Ask  about the key.\n• Then go."}},
+		{"comment", search.Source{Kind: search.Comment, ID: id,
+			Doc: []byte(`{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Is it lit?"}]}]}`)},
+			search.Document{Kind: search.Comment, ID: id, Body: "Is it lit?"}},
 		{"variable", search.Source{Kind: search.Variable, ID: id, Title: "lantern_lit",
 			Description: "Whether\tthe lantern\nis lit."},
 			search.Document{Kind: search.Variable, ID: id, Title: "lantern_lit", Body: "Whether\tthe lantern\nis lit."}},
@@ -131,6 +136,7 @@ func TestNeutral(t *testing.T) {
 	component.Register(r)
 	node.Register(r)
 	connection.Register(r)
+	comment.Register(r)
 	expression.Register(r)
 	dependency.Register(r)
 	validation.Register(r)

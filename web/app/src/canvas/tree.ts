@@ -5,9 +5,10 @@
 // type, and its text's opening, a branch's outputs, or a jumper's target,
 // and under each node the connections that leave it, in the order of its
 // ports and of each port's choices, each named by the node that it enters,
-// its label, and, of a branch's, the output that it leaves. The canvas's
-// pixels tell none of it to assistive technology; the tree (CanvasTree.tsx) is
-// what does.
+// its label, and, of a branch's, the output that it leaves, and each with
+// how many open threads of comments it has, which the canvas marks it with
+// (plan item 74). The canvas's pixels tell none of it to assistive
+// technology; the tree (CanvasTree.tsx) is what does.
 
 import type { BranchOutput, Connection, Node } from "@storycreep/shared/api";
 import type { NameSources } from "../content/textNames";
@@ -31,13 +32,19 @@ export type TreeKey =
   | "canvas.tree.connection"
   | "canvas.tree.connection_labelled"
   | "canvas.tree.output_connection"
-  | "canvas.tree.output_connection_labelled";
+  | "canvas.tree.output_connection_labelled"
+  | "canvas.tree.commented";
 
 /** The page's messages, as the tree and the labels of cards read them. */
 export type TreeMessages = (
   key: TreeKey | Parameters<LabelContext["t"]>[0],
-  args?: Record<string, string>,
+  args?: Record<string, string | number>,
 ) => string;
+
+/** Returns label with how many open threads of comments what it names has, count, where it has any, which the canvas marks it with. */
+function withComments(label: string, count: number, t: TreeMessages): string {
+  return count > 0 ? t("canvas.tree.commented", { label, count }) : label;
+}
 
 /** A node of the board, as the tree lists it. */
 export interface TreeRow {
@@ -59,19 +66,23 @@ export interface TreeChoice {
 /** What is between the lines of a text that a name says on one line (oneLine), as a name is read. */
 const betweenLines = "; ";
 
-/** Returns what names a node whose card shows labels: its title, the line of its type, and what its card's body says, on one line; or its title alone, of a type that the canvas does not know, whose card shows no more (labelsOf). */
+/** Returns what names a node whose card shows labels: its title, the line of its type, and what its card's body says, on one line, or its title alone, of a type that the canvas does not know, whose card shows no more (labelsOf), and how many open threads of comments its badge counts. */
 export function nodeLabel(labels: NodeLabels, t: TreeMessages): string {
   if (labels.kind === "") {
-    return labels.title;
+    return withComments(labels.title, labels.comments ?? 0, t);
   }
   const body = oneLine(labels.body, betweenLines);
-  return body === ""
-    ? t("canvas.tree.node", { title: labels.title, kind: labels.kind })
-    : t("canvas.tree.node_body", {
-        title: labels.title,
-        kind: labels.kind,
-        body,
-      });
+  return withComments(
+    body === ""
+      ? t("canvas.tree.node", { title: labels.title, kind: labels.kind })
+      : t("canvas.tree.node_body", {
+          title: labels.title,
+          kind: labels.kind,
+          body,
+        }),
+    labels.comments ?? 0,
+    t,
+  );
 }
 
 /**
@@ -137,7 +148,8 @@ export function treeRows(): (
  * by the node that it enters, as that node's card titles it, by its label,
  * as plain words, where it has one, and, of a branch's, by the row of the
  * output that it leaves, as the branch's card says it, and, after them,
- * those of a port that the node does not have. It reads the scene's
+ * those of a port that the node does not have, and with how many open
+ * threads of comments it has, which comments returns. It reads the scene's
  * connections once for all of ids, rather than once for each.
  */
 export function treeChoices(
@@ -145,6 +157,7 @@ export function treeChoices(
   view: NameSources,
   ids: ReadonlySet<string>,
   t: TreeMessages,
+  comments: (id: string) => number = () => 0,
 ): Map<string, TreeChoice[]> {
   const of = new Map<string, TreeChoice[]>();
   if (ids.size === 0) {
@@ -168,7 +181,7 @@ export function treeChoices(
     const choices =
       node === undefined
         ? []
-        : choicesOfNode(scene, names, node, connections, t);
+        : choicesOfNode(scene, names, node, connections, t, comments);
     if (choices.length > 0) {
       of.set(id, choices);
     }
@@ -183,6 +196,7 @@ function choicesOfNode(
   node: Node,
   leaving: readonly Connection[],
   t: TreeMessages,
+  comments: (id: string) => number,
 ): TreeChoice[] {
   const choices: TreeChoice[] = [];
   const list = (c: Connection, output: BranchOutput | undefined) => {
@@ -191,7 +205,7 @@ function choicesOfNode(
     const label = oneLine(plainText(c.label, names), betweenLines);
     choices.push({
       id: c.id,
-      label:
+      label: withComments(
         output === undefined
           ? label === ""
             ? t("canvas.tree.connection", { target })
@@ -206,6 +220,9 @@ function choicesOfNode(
                 target,
                 label,
               }),
+        comments(c.id),
+        t,
+      ),
     });
   };
   const ports = portsOf(node);

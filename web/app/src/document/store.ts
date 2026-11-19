@@ -46,6 +46,7 @@ import {
   signedOutBy,
 } from "../api";
 import { csrfHeaders } from "../auth/session";
+import { commentsKey } from "../comments/queries";
 import { dependenciesKey } from "../dependencies/queries";
 import type { ErrorLog } from "../errors/log";
 import { playStatesKey } from "../play/queries";
@@ -97,6 +98,16 @@ import {
 
 /** A command of a batch, without the ID that the document gives it. */
 export type Command = DistributiveOmit<CommandBody, "command_id">;
+
+/** How the document sends a batch of the page's (ProjectDocument.send). */
+export interface SendOptions {
+  /**
+   * Whether the batch's undo joins the page's history, which Ctrl+Z sends,
+   * as it does unless this is false: a comment's commands are no step of
+   * it, whose own undo the comment offers where it was (plan item 74).
+   */
+  history?: boolean;
+}
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
   ? Omit<T, K>
@@ -438,6 +449,38 @@ const statisticsPause = 500;
  */
 const derivedPause = 1_000;
 
+/**
+ * How long, in milliseconds, the document waits after it has had the
+ * threads of comments read again before it has them read again for the
+ * operations that applied meanwhile (Follower): twice a second at most, as
+ * nearly any operation may change what they show of their targets, as a
+ * node's title or its board's name, while a run of them, as a drag's or
+ * another session's typing, has them read once each pause, rather than once
+ * for each.
+ */
+const commentsPause = 500;
+
+/**
+ * The prefixes of the types of command of what is no part of the project's
+ * draft, which the document holds none of, and which the page reads as
+ * queries of their own: the saved play states (play/queries.ts) and the
+ * threaded comments (comments/queries.ts). Their commands change none of
+ * the draft, nor what the trash lists, nor what the server derives of the
+ * draft, and the document reads their queries again as their operations
+ * apply (followed).
+ */
+const outsideDraft = ["play_state.", "comment."] as const;
+
+/** Reports whether command is of what is no part of the project's draft (outsideDraft), of the prefix of, if given. */
+function outside(
+  command: { readonly type: string },
+  of?: (typeof outsideDraft)[number],
+): boolean {
+  return of === undefined
+    ? outsideDraft.some((prefix) => command.type.startsWith(prefix))
+    : command.type.startsWith(of);
+}
+
 /** The fields of an entity that no command writes, which a conflict does not compare. */
 const meta = new Set(["rev", "created_at", "updated_at"]);
 
@@ -718,6 +761,8 @@ export class ProjectDocument {
   private lostTimer: ReturnType<typeof setTimeout> | undefined;
   /** What has the reads that the server derives of the whole project read again as operations apply: the writing statistics, the validation report, and the dependency graph (followed). */
   private readonly followers: readonly Follower[];
+  /** What has the threads of comments read again as operations apply (followed). */
+  private readonly comments: Follower;
   private unsubscribe: (() => void) | undefined;
   private disposed = false;
 
@@ -737,6 +782,11 @@ export class ProjectDocument {
         derivedPause,
       ),
     ];
+    this.comments = new Follower(
+      options.queryClient,
+      commentsKey(projectId),
+      commentsPause,
+    );
     this.now = options.now ?? (() => new Date().toISOString());
     const userId = options.queryClient.getQueryData(
       sessionQuery.queryKey,
@@ -937,6 +987,7 @@ export class ProjectDocument {
     for (const follower of this.followers) {
       follower.dispose();
     }
+    this.comments.dispose();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.history.close();
@@ -1427,12 +1478,18 @@ export class ProjectDocument {
    * or, for none, what the project read anew may have, with the role that
    * it read: the project itself, which the project's pages read with its
    * role, as the document has it, without what the operation took out of
-   * it, as an unarchive's archived_at, the trash, which a deletion or a
-   * restoration changes, but of a play state, the saved play states, which
-   * their commands change and the document holds none of (play/queries.ts),
+   * it, as an unarchive's archived_at; the trash, which a deletion or a
+   * restoration of the draft's changes; the saved play states, which their
+   * commands change and the document holds none of (play/queries.ts); the
+   * threaded comments, which their commands change, and nearly any other
+   * operation may change what they show of, as the deletion or the
+   * restoration of what they are on, whose threads are in the trash with
+   * it, though nothing writes them then, a node's title, a board's name, or
+   * a connection's node, by which a link opens one (comments/queries.ts);
    * and the reads that the server derives of the whole project, which any
    * change of the draft may: the writing statistics, the validation report,
-   * and the dependency graph (Follower).
+   * and the dependency graph (Follower). What is no part of the draft
+   * (outsideDraft) changes neither the trash nor what the server derives.
    */
   private followed(
     op: Operation | undefined,
@@ -1441,36 +1498,34 @@ export class ProjectDocument {
     readAt?: number,
   ): void {
     this.projectFollowed(before, role, readAt);
-    // A command of a saved play state changes none of the draft, and its
-    // deletion and its restoration none of what the trash lists, which lists
-    // no play state.
-    const playState = (c: { readonly type: string }) =>
-      c.type.startsWith("play_state.");
+    const commands = op?.commands ?? [];
+    // Reports whether the operation's commands are all of what is no part
+    // of the draft (outsideDraft), of the prefix of, if given, as those of
+    // the saved play states alone, which change nothing that the other
+    // reads show.
+    const only = (of?: (typeof outsideDraft)[number]) =>
+      op !== undefined &&
+      commands.length > 0 &&
+      commands.every((c) => outside(c, of));
     if (
       op === undefined ||
-      op.commands.some(
-        (c) => !playState(c) && /\.(delete|restore)(_many)?$/.test(c.type),
+      commands.some(
+        (c) => !outside(c) && /\.(delete|restore)(_many)?$/.test(c.type),
       )
     ) {
       void this.options.queryClient.invalidateQueries({
         queryKey: ["projects", this.projectId, "trash"],
       });
     }
-    if (op === undefined || op.commands.some(playState)) {
+    if (op === undefined || commands.some((c) => outside(c, "play_state."))) {
       void this.options.queryClient.invalidateQueries({
         queryKey: playStatesKey(this.projectId),
       });
     }
-    // The writing statistics, which nearly every command changes, as the
-    // server counts each text as a batch changes it (statistics/queries.ts),
-    // and the validation report and the dependency graph, which the server
-    // derives of the draft as each is read (validation/queries.ts,
-    // dependencies/queries.ts), but for an operation of the saved play
-    // states alone, which has a command of them at least.
-    if (
-      op === undefined ||
-      !(op.commands.length > 0 && op.commands.every(playState))
-    ) {
+    if (!only("play_state.")) {
+      this.comments.follow();
+    }
+    if (!only()) {
       for (const follower of this.followers) {
         follower.follow();
       }
@@ -2276,10 +2331,15 @@ export class ProjectDocument {
    * did, rather than apply it again. What the batch expects of an entity
    * is moved past the page's own batches that applied on top of that
    * revision, which are no change made elsewhere (ownMoves). The batch's
-   * undo joins the history.
+   * undo joins the history, unless options say that it does not, as of a
+   * comment's commands, which are no step of the page's undo (plan item 74):
+   * the history is then as it was, its redo too.
    */
-  send(commands: readonly Command[]): Promise<CommandResultBody> {
-    const sending = this.sendAfterSteps(commands);
+  send(
+    commands: readonly Command[],
+    options: SendOptions = {},
+  ): Promise<CommandResultBody> {
+    const sending = this.sendAfterSteps(commands, undefined, options);
     this.sends.add(sending);
     const settled = () => {
       this.sends.delete(sending);
@@ -2303,7 +2363,8 @@ export class ProjectDocument {
    */
   private sendAfterSteps(
     commands: readonly Command[],
-    waiting?: Waiting,
+    waiting: Waiting | undefined,
+    options: SendOptions,
   ): Promise<CommandResultBody> {
     const underWay = this.stepUnderWay;
     if (underWay !== undefined) {
@@ -2313,7 +2374,7 @@ export class ProjectDocument {
         this.waiting.push(held);
         this.show();
       }
-      const after = () => this.sendAfterSteps(commands, held);
+      const after = () => this.sendAfterSteps(commands, held, options);
       return underWay.done.then(after, after);
     }
     if (waiting !== undefined) {
@@ -2321,7 +2382,7 @@ export class ProjectDocument {
       // the time that it was made at, which the page showed it with.
       this.waiting = this.waiting.filter((w) => w !== waiting);
     }
-    const batch = this.sendBatch(commands, waiting?.time);
+    const batch = this.sendBatch(commands, waiting?.time, options);
     this.batches.add(batch);
     const settled = () => {
       this.batches.delete(batch);
@@ -2330,14 +2391,15 @@ export class ProjectDocument {
     return batch;
   }
 
-  /** Sends a batch as send does, made at time, or now, adding its undo to the history once it has applied. */
+  /** Sends a batch as send does, made at time, or now, adding its undo to the history once it has applied, unless options say that it does not. */
   private async sendBatch(
     commands: readonly Command[],
-    time?: string,
+    time: string | undefined,
+    options: SendOptions,
   ): Promise<CommandResultBody> {
     const sent = await this.enqueue(commands, conflictRetries, false, time);
     const answer = sent.answer;
-    if (answer.status === "applied") {
+    if (answer.status === "applied" && options.history !== false) {
       this.history.done(
         answer.undo == null || answer.undo.length === 0
           ? undefined
@@ -2704,6 +2766,21 @@ export class ProjectDocument {
         partOfHeld(view, id, shown) ?? partOfHeld(after, id, now.get(id));
       if (part !== undefined) {
         parts.add(part);
+      }
+    }
+    // A command of what is no part of the draft (outsideDraft), as a
+    // comment's, changes none of it, but changes what it expects, at the
+    // revision that it expects, so that the batches queued behind it that
+    // were made on top of that revision, as a thread's resolution behind
+    // its first comment's edit, expect what its answer leaves, rather than
+    // be refused for the page's own change (moveQueued).
+    for (const command of withIds) {
+      if (outside(command)) {
+        for (const [id, rev] of Object.entries(command.expected_rev ?? {})) {
+          if (!before.has(canonical(id))) {
+            before.set(canonical(id), rev);
+          }
+        }
       }
     }
     return new Promise<Sent>((resolve, reject) => {
@@ -3306,14 +3383,15 @@ function withParts(
 }
 
 /** A conflict of a refusal for a revision (revision_conflict). */
-interface Conflict {
+export interface Conflict {
   id: string;
   expected_rev: number;
   exists: boolean;
   current_rev?: number;
 }
 
-function conflictsOf(error: ApiError): Conflict[] {
+/** Returns the conflicts of error, a refusal for a revision, each of an entity whose revision changed elsewhere, or none of another error. */
+export function conflictsOf(error: ApiError): Conflict[] {
   const conflicts = (error.error?.details as { conflicts?: unknown })
     ?.conflicts;
   return Array.isArray(conflicts) ? (conflicts as Conflict[]) : [];

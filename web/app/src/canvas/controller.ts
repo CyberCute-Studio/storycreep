@@ -363,6 +363,24 @@ export class CanvasController implements GestureHost {
   }
   /** Reports whether the canvas draws the jumper node as broken, as one whose target was deleted (FR-EDIT-05 AC1), which the page tells. */
   broken: (node: Node) => boolean = () => false;
+  /**
+   * Returns how many open threads of comments the node or the connection of
+   * id has (plan item 74), which the page tells as it reads them, and tells
+   * of each change of (recount): a node's card counts them on its badge,
+   * whose labels hold them, as the page makes them, a connection's line is
+   * marked in its middle, and the tree says them.
+   */
+  comments: (id: string) => number = () => 0;
+  /** Counts the changes of what comments returns (recount). */
+  private commentsVersion = 0;
+  /** How many of the board's nodes have open threads, of the document's nodes and the comments' version that it was counted at, which the end-to-end tests read. */
+  private commentedCount:
+    | {
+        nodes: ReadonlyMap<string, Node>;
+        comments: number;
+        count: number;
+      }
+    | undefined;
   /** Whether a move or a resize snaps to the board's grid (FR-EDIT-02). */
   snap = true;
   private v: Viewport = { x: 0, y: 0, zoom: 1 };
@@ -759,6 +777,42 @@ export class CanvasController implements GestureHost {
     this.labelsVersion++;
     this.invalidate();
     this.tellWatchers();
+  }
+
+  /**
+   * Tells that what comments returns changed, as once the page read the
+   * counts of the board's threads again: the cards say it again, as their
+   * labels hold it, and the lines of the connections, and the tree, are
+   * drawn and made anew.
+   */
+  recount(): void {
+    this.commentsVersion++;
+    this.relabel();
+  }
+
+  /**
+   * How many of the board's nodes have open threads, counted once for each
+   * change of the document's nodes or of the comments, rather than in each
+   * frame.
+   */
+  private commented(): number {
+    const nodes = this.docSeen.nodes;
+    const c = this.commentedCount;
+    if (
+      c !== undefined &&
+      c.nodes === nodes &&
+      c.comments === this.commentsVersion
+    ) {
+      return c.count;
+    }
+    let count = 0;
+    this.scene.nodes.forEach((_, item) => {
+      if (this.comments(item.node.id) > 0) {
+        count++;
+      }
+    });
+    this.commentedCount = { nodes, comments: this.commentsVersion, count };
+    return count;
   }
 
   /**
@@ -2111,6 +2165,8 @@ export class CanvasController implements GestureHost {
         dimVersion: this.dimVersion,
         play: this.play,
         playVersion: this.playVersion,
+        comments: this.comments,
+        commentsVersion: this.commentsVersion,
         theme,
       });
     } catch (error) {
@@ -2197,6 +2253,9 @@ export class CanvasController implements GestureHost {
       dimmed: String(this.dimmed()),
       // The board's jumpers that are drawn as broken (FR-EDIT-05 AC1).
       broken: String(this.brokenJumpers()),
+      // The board's nodes whose cards have a badge of open threads of
+      // comments (plan item 74).
+      commented: String(this.commented()),
       // Whether the frame drew the board's content, once it was read.
       ready: String(this.ready),
     };

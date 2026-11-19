@@ -853,7 +853,7 @@ export interface CommandBatchesBody {
 }
 
 /** A command of the batch: its ID, its type, its payload, as the type's schema says, and the revisions that it expects (PRD FR-API-03). */
-export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ClipboardPasteCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDeleteManyCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeRestoreManyCommand | NodeUpdateCommand | PlayStateCreateCommand | PlayStateDeleteCommand | PlayStateRenameCommand | PlayStateRestoreCommand | PlayStateSetStateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
+export type CommandBody = AttributeCreateCommand | AttributeDeleteCommand | AttributeMoveCommand | AttributeRenameCommand | AttributeRestoreCommand | AttributeRetypeCommand | AttributeSetDefaultCommand | AttributeSetKeyCommand | AttributeSetOptionsCommand | AttributeSetRuntimeCommand | BoardCreateCommand | BoardDeleteCommand | BoardDescribeCommand | BoardMoveCommand | BoardRenameCommand | BoardRestoreCommand | BoardSetColorCommand | BoardSetEntryNodeCommand | BoardSetSlugCommand | BranchOutputCreateCommand | BranchOutputDeleteCommand | BranchOutputReorderCommand | BranchOutputRestoreCommand | BranchOutputUpdateCommand | ClipboardPasteCommand | CommentCreateCommand | CommentDeleteCommand | CommentEditCommand | CommentResolveCommand | CommentRestoreCommand | CommentUnresolveCommand | ComponentCreateCommand | ComponentDeleteCommand | ComponentDescribeCommand | ComponentMoveCommand | ComponentRenameCommand | ComponentRestoreCommand | ComponentSetAttributeCommand | ComponentSetImageCommand | ComponentSetKeyCommand | ComponentTypeCreateCommand | ComponentTypeDeleteCommand | ComponentTypeRenameCommand | ComponentTypeRestoreCommand | ComponentTypeSetIconCommand | ComponentTypeSetKeyCommand | ConnectionCreateCommand | ConnectionDeleteCommand | ConnectionReconnectCommand | ConnectionReorderCommand | ConnectionRestoreCommand | ConnectionUpdateCommand | FolderCreateCommand | FolderDeleteCommand | FolderMoveCommand | FolderRenameCommand | FolderRestoreCommand | NodeCreateCommand | NodeDeleteCommand | NodeDeleteManyCommand | NodeDuplicateCommand | NodeMoveCommand | NodeRestoreCommand | NodeRestoreManyCommand | NodeUpdateCommand | PlayStateCreateCommand | PlayStateDeleteCommand | PlayStateRenameCommand | PlayStateRestoreCommand | PlayStateSetStateCommand | ProjectArchiveCommand | ProjectDeleteCommand | ProjectDescribeCommand | ProjectRenameCommand | ProjectRestoreCommand | ProjectSetSlugCommand | ProjectUnarchiveCommand | ProjectUpdateSettingsCommand | ValidationMuteCommand | ValidationUnmuteCommand | VariableCreateCommand | VariableDeleteCommand | VariableDescribeCommand | VariableMoveCommand | VariableRenameCommand | VariableRestoreCommand | VariableRetypeCommand | VariableSetDefaultCommand | VariableSetResetOnEnterCommand | VariableSetScopeCommand;
 
 export interface CommandOutcomeBody {
   /** Why the batch was rejected: the error that a request of the batch alone would be answered with, as the error envelope holds it */
@@ -886,6 +886,179 @@ export interface CommandResultBody {
 export interface CommandResultsBody {
   /** A result for each batch of the request, in the order of the batches */
   results: Array<CommandOutcomeBody> | null;
+}
+
+export interface CommentAuthor {
+  /** The user's display name */
+  display_name: string;
+  /** The user's ID */
+  id: string;
+}
+
+export interface CommentBody {
+  /** The comment's author, the one user who may edit it or delete it. A deleted comment has none, and nor does one whose author's account is deleted, which nobody may change. */
+  author?: CommentAuthor;
+  /** The ID of the target's board: a node's, a connection's, or a board variable's, or the board itself. A global variable has none. */
+  board_id?: string;
+  /** The name of the target's board, which a comment has exactly when it has board_id */
+  board_name?: string;
+  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, without value references or mentions. A deleted comment has none. */
+  body?: RichTextDoc;
+  /** When the comment was posted */
+  created_at: string;
+  /** Whether the comment is deleted, which a list shows of the first comment of a thread whose replies are not all deleted, without its body and its author, as long as one of them is not */
+  deleted: boolean;
+  /** When the comment went to the project's trash, if it is there, which only an answer of revision_conflict shows */
+  deleted_at?: string;
+  /** When the comment's body last changed after it was posted, if it ever did: its author's edit, or the undo of one */
+  edited_at?: string;
+  /** The comment's ID */
+  id: string;
+  /** The ID of the node that a client opens the target by: a node's own, or the node that a connection leaves. A board and a variable have none. */
+  node_id?: string;
+  /** The title of the target's node, which may be empty, and which a comment has exactly when it has node_id */
+  node_title?: string;
+  /** The ID of the first comment of the thread that a reply replies to. A thread's first comment has none. */
+  parent_id?: string;
+  /** The ID of the comment's project */
+  project_id: string;
+  /** Whether the thread is resolved, which its first comment alone holds. A reply has none. */
+  resolved?: boolean;
+  /** When the thread was resolved, if it is, which its first comment alone holds */
+  resolved_at?: string;
+  /** Who resolved the thread, if it is resolved, which its first comment alone holds, unless their account is deleted */
+  resolved_by?: CommentAuthor;
+  /** The comment's revision, which every change of it increments, its thread's resolution included, and which a change expects with expected_rev */
+  rev: number;
+  /** The ID of the thread's target */
+  target_id: string;
+  /** The kind of the thread's target, which every comment of the thread names: a node, a connection, a board, or a variable */
+  target_type: "node" | "connection" | "board" | "variable";
+  /** The ID of the comment's thread, its first comment's: the comment's own for a first comment, and its parent_id for a reply */
+  thread_id: string;
+  /** When the comment's body last changed, as it was posted or edited */
+  updated_at: string;
+}
+
+export interface CommentCount {
+  /** How many of the target's threads are open */
+  open: number;
+  /** How many of the target's threads are resolved */
+  resolved: number;
+  /** The target's ID */
+  target_id: string;
+  /** The kind of the target: a node, a connection, a board, or a variable */
+  target_type: "node" | "connection" | "board" | "variable";
+}
+
+/** A command of the type comment.create. */
+export interface CommentCreateCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentCreatePayload;
+  /** The command's type. */
+  type: "comment.create";
+}
+
+/** The payload of a command of the type comment.create. */
+export interface CommentCreatePayload {
+  /** The comment's body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  body: RichTextDoc;
+  /** The new comment's ID, a cmt_ ID of a UUIDv7 that the client makes, which no entity of the instance has (PRD §5.2) */
+  id: string;
+  /** The ID of the first comment of the thread that the comment replies to. A thread is one level deep, so a reply to a reply is answered with 422 validation_failed, as one to a comment that the project does not have, or of a thread that is not shown: whose comments are all deleted, or whose target is in the project's trash. The first comment of a thread has none. */
+  parent_id?: string;
+  /** The ID of the entity that the thread that the comment starts is on, a node, a connection, a board, or a variable of the project, as its prefix says: nd_, cn_, bd_, or var_. A reply has none, and a comment that has neither target nor parent_id, or both, is answered with 422 validation_failed, as one whose target the project does not have, or is in its trash, or is there with what is, as a node of a board in the trash. */
+  target?: string;
+}
+
+/** A command of the type comment.delete. */
+export interface CommentDeleteCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentDeletePayload;
+  /** The command's type. */
+  type: "comment.delete";
+}
+
+/** The payload of a command of the type comment.delete. */
+export interface CommentDeletePayload {
+  /** The comment's ID: one of the user's own. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required. */
+  id: string;
+}
+
+/** A command of the type comment.edit. */
+export interface CommentEditCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentEditPayload;
+  /** The command's type. */
+  type: "comment.edit";
+}
+
+/** The payload of a command of the type comment.edit. */
+export interface CommentEditPayload {
+  /** The comment's new body, a rich-text document (PRD FR-TEXT-01) of paragraphs, lists, line breaks, and text that may be bold, italic, struck through, code, or a link, of at least one character that is not blank, as white space and U+200B ZERO WIDTH SPACE are, and of at most 10,000 characters of text, those of its texts, without the line feeds, the bullets, and the numbers of its paragraphs and lists. One that is not, or that holds a value reference or a mention, is answered with 422 validation_failed, a value reference or a mention at its location in the document's canonical form, as payload.body.content[0].content[1]. */
+  body: RichTextDoc;
+  /** The comment's ID: one of the user's own, which is not deleted, and of a thread whose target is not in the project's trash. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required. */
+  id: string;
+}
+
+/** A command of the type comment.resolve. */
+export interface CommentResolveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentResolvePayload;
+  /** The command's type. */
+  type: "comment.resolve";
+}
+
+/** The payload of a command of the type comment.resolve. */
+export interface CommentResolvePayload {
+  /** The ID of the thread's first comment, of a thread that is shown, one of whose comments is not deleted, and whose target is not in the project's trash. A reply, whose thread its first comment names, is answered with 422 validation_failed. */
+  id: string;
+}
+
+/** A command of the type comment.restore. */
+export interface CommentRestoreCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentRestorePayload;
+  /** The command's type. */
+  type: "comment.restore";
+}
+
+/** The payload of a command of the type comment.restore. */
+export interface CommentRestorePayload {
+  /** The comment's ID: one of the user's own. Another user's comment, or one whose author's account is deleted, is answered with 403 author_required. */
+  id: string;
+}
+
+/** A command of the type comment.unresolve. */
+export interface CommentUnresolveCommand {
+  /** The command's ID, a UUID that the client makes, unique within the project. A command whose ID the project's batches applied already is answered as it was, and not applied again. */
+  command_id: string;
+  /** The revision that the client read of each entity that the command changes or refers to, by the entity's ID, as prj_…: the batch applies only if every entity still has it before the batch, and is answered with 409 revision_conflict otherwise. An entity that the batch creates has none. Without it, the command expects no revision. */
+  expected_rev?: Record<string, number>;
+  payload: CommentUnresolvePayload;
+  /** The command's type. */
+  type: "comment.unresolve";
+}
+
+/** The payload of a command of the type comment.unresolve. */
+export interface CommentUnresolvePayload {
+  /** The ID of the thread's first comment, of a thread that is shown, one of whose comments is not deleted, and whose target is not in the project's trash. A reply, whose thread its first comment names, is answered with 422 validation_failed. */
+  id: string;
 }
 
 export interface CompileError {
@@ -2217,6 +2390,24 @@ export interface PageBoard {
   next_cursor: string | null;
 }
 
+export interface PageCommentAuthor {
+  items: Array<CommentAuthor>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageCommentBody {
+  items: Array<CommentBody>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
+export interface PageCommentCount {
+  items: Array<CommentCount>;
+  /** The cursor of the next page, or null if this is the last page */
+  next_cursor: string | null;
+}
+
 export interface PageComponentType {
   items: Array<ComponentType>;
   /** The cursor of the next page, or null if this is the last page */
@@ -2798,22 +2989,26 @@ export interface ResetPasswordBody {
 }
 
 export interface Result {
-  /** The ID of the entity's board: a node's, a connection's, or a board variable's. A global variable and a component have none. */
+  /** The ID of the entity's board: a node's, a connection's, or a board variable's, or a comment's target's, which may be the board itself. A global variable and a component have none, and nor does a comment on a global variable. */
   board_id?: string;
   /** The name of the entity's board, which a result has exactly when it has board_id */
   board_name?: string;
   /** The entity's ID */
   id: string;
-  /** The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none. */
+  /** The ID of the node that a client opens the result by: a node's own, the node that a connection leaves, or a comment's target's, a node target's own or the node that a connection target leaves. A variable and a component have none, and nor does a comment on a board or a variable. */
   node_id?: string;
   /** The title of the result's node, which may be empty, and which a result has exactly when it has node_id */
   node_title?: string;
-  /** Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part. */
+  /** Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, a component's key, description, and values of text, each on a line of its own, or a comment's body. An empty body has no part. */
   snippet: Array<Span>;
-  /** The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part. */
+  /** The ID of the target of a comment's thread, which a result has exactly when it has target_type */
+  target_id?: string;
+  /** The kind of the target of a comment's thread, by which a client opens the thread: a node, a connection, a board, or a variable. Only a comment has one. */
+  target_type?: "node" | "connection" | "board" | "variable";
+  /** The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection and a comment have none, and an empty title no part. */
   title: Array<Span>;
-  /** The kind of the entity: a node, a connection, a variable, or a component */
-  type: "node" | "connection" | "variable" | "component";
+  /** The kind of the entity: a node, a connection, a variable, a component, or a comment */
+  type: "node" | "connection" | "variable" | "component" | "comment";
 }
 
 export interface RevokedBody {
@@ -3578,7 +3773,7 @@ export interface Operations {
   /**
    * Apply batches of commands to a project
    *
-   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
+   * Applies a batch of commands to a project, every change of whose content is a command of a type that the body's schema describes, with its payload (PRD FR-API-03). The body is a batch, {"commands": [...]}, or a list of batches, {"batches": [{"commands": [...]}, ...]}. A batch applies whole, in one transaction, or not at all, and is one step of undo: its answer holds its undo, the commands that undo it, each with the revisions that it expects, which a client sends back as a batch, each with a command_id of its own, to undo it, and which is refused with 409 revision_conflict, applying nothing, if what the batch changed has changed since (PRD FR-EDIT-08). Each command is authorised by the signed-in user's role as its type's operation of the permission matrix needs (PRD §5.6), and a role that does not allow one refuses its batch with 403 insufficient_role, or owner_required; a change of a comment that only its author may make, an edit, a deletion, or a restoration of it, that another user sends refuses its batch with 403 author_required, whatever their role. A batch with a command that only a session may apply, as deleting or restoring the project, which an API token sends is refused with 403 session_required, whatever the token's scopes (PRD FR-AUTH-04). A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). Every expected_rev of a batch is checked against the entities as they are before the batch, and a stale one refuses it with 409 revision_conflict, whose details hold the entities' current revisions and states. An archived project refuses a batch with 409 project_archived, unless each of its commands applies to an archived project, as unarchiving, deleting, or restoring it does, and a batch that would take the workspace past a limit of its plan is refused with 409 limit_exceeded. A batch that unarchives the project applies to it whatever its other commands, as does one that restores it from the trash, unless the project is archived too, which it still is once restored, so that such a batch applies other commands only if it unarchives the project too, or they apply to an archived project; so the undo of a batch that archived or deleted the project with others applies. A batch that its schema, or its commands' own checks, refuse is answered with 422 validation_failed, whose details locate each problem, as body.commands[2].payload.name. A command may also refuse its batch for what the project's state makes of its payload, at the payload's field, as body.commands[0].payload.folder_id: with 422 validation_failed for a value that the state does not take, as the ID of a folder that the project does not have, or that is deleted, or with the code that the field's description names, as 422 slug_invalid for a slug that is not one, 409 slug_taken for a slug that another board has, 409 folder_not_empty for a folder to delete that holds folders, boards, variables, or components, 422 key_invalid for a key of a variable, a component type, an attribute definition, or a component that is not an identifier, 409 key_taken for a key that another entity of its scope has, 409 component_type_in_use for a component type to delete of which a component that is not in the trash is, 409 board_referenced for a board to delete whose nodes jumpers on other boards target, which the command does not confirm, whose details list them, or 409 branch_output_connected for a branch output to delete that connections leave, which the command does not confirm, whose details list them. A batch whose undo, the inverses of its commands as the operation log keeps them, each number without an exponent, would take more than 4 MiB, with the revisions that they expect, or would have more than 1000 commands, so that the batch that undoes it would not fit in a request, is refused with 422 validation_failed, whose details.reason is undo_too_large, at the command that takes it past: at its payload, as body.commands[3].payload, or at the field whose change the undo holds the values of, as body.commands[3].payload.type for an attribute.retype that would lose too much. The batch that undoes another is bounded alike, by its own undo, which writes again what the other's commands wrote, so the undo of a batch whose commands wrote more than 4 MiB, as several large descriptions over small ones, is refused so too, and is sent in smaller batches, each of which expects what it writes back, as the undo field describes.
    *
    * A command_id is the client's, unique within the project, and makes the batch idempotent. A batch sent again, as when its answer was lost, is answered as it was the first time and applies nothing again, before the project's state and the workspace's limits are checked: the same batch, with the same commands in the same order, for at least 24 hours, whether it applied or was refused with revision_conflict, project_archived, or limit_exceeded; after that, a batch whose commands applied is answered with the status already_applied, the seq that applied them, and the current revisions of the entities that they changed, and one that was refused is checked anew. So is any other batch whose commands were all applied before, however they are grouped. A batch with commands that were applied and commands that were not is refused with 422 idempotency_mismatch, which lists the applied ones, and applies nothing. A command's payload is not compared with the one that its ID was applied with. Any other refusal, as of the role, is checked anew when the batch is sent again.
    *
@@ -3692,6 +3887,30 @@ export interface Operations {
     };
     responses: {
       200: Clipboard;
+    };
+  };
+  /**
+   * Count the threads of a project's comments
+   *
+   * Lists each node, connection, board, and variable of the project that a thread that is shown is on, with how many of its threads are open and how many resolved, in the order of the targets' kinds and IDs (PRD FR-COMMENT-01), as the canvas shows a node's, a connection's, or a board's, and the variables' panel a variable's. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A board whose ID does not decode is answered with 400 invalid_id, and one that the project does not have keeps nothing. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  countComments: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The ID of a board: only the board, and its nodes, its connections, and its variables, are counted. Without it, every target of the project. */
+        board?: string;
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageCommentCount;
     };
   };
   /**
@@ -4329,6 +4548,58 @@ export interface Operations {
     };
     responses: {
       200: PageBoard;
+    };
+  };
+  /**
+   * List the authors of a project's comments
+   *
+   * Lists the users who wrote a comment of the project that is not deleted, of a thread that is shown, each with their display name, in the order of their IDs (PRD FR-COMMENT-01), by which the list of the project's comments is filtered, as a member who may not list the workspace's members, as a guest, sees them too. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listCommentAuthors: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+      };
+    };
+    responses: {
+      200: PageCommentAuthor;
+    };
+  };
+  /**
+   * List a project's comments
+   *
+   * Lists the comments of the project's threads that are shown and that the filters keep, thread by thread, the newest thread first, by when its first comment was posted, and within a thread its first comment, then its replies, oldest first, by when each was posted, as the server's clock has it rather than the times of the IDs that the clients made (PRD FR-COMMENT-01). Each comment names its thread's target, and the target's board and node, by which a client opens it, and a thread's first comment whether the thread is resolved. A thread's first comment that is deleted while a reply of the thread is not is listed as deleted, without its body and its author, and a deleted reply is not listed. A thread is shown while one of its comments is not deleted and its target is not in the project's trash, nor there with what is, as a node with its board, or a connection with its node, and comes back as it was once the target is restored (PRD FR-COMMENT-01 AC2). Comments change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type comment.* post, edit, delete, and restore comments, and resolve and unresolve threads, which an owner, an admin, an editor, or a commenter of the project may send, but an edit, a deletion, or a restoration of a comment its author alone. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An author, a board, or a target whose ID does not decode, or is of another kind, is answered with 400 invalid_id, and one that the project does not have keeps nothing. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  listComments: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      query?: {
+        /** The ID of a user: only the threads in which they wrote a comment that is not deleted are listed, as GET /api/v1/projects/{project_id}/comments/authors lists them. Without it, every thread. */
+        author?: string;
+        /** The ID of a board: only the threads on the board, and on its nodes, its connections, and its variables, are listed. Without it, those of every board, and of the global variables. */
+        board?: string;
+        /** The next_cursor of the previous page; empty for the first page */
+        cursor?: string;
+        /** How many items the page holds at most */
+        limit?: number;
+        /** Whether the threads listed are open or resolved. Without it, both. */
+        status?: "open" | "resolved";
+        /** The ID of a node, a connection, a board, or a variable: only the threads on it are listed, of a board those on the board itself, and not on its nodes. Another kind of ID is answered with 400 invalid_id. Without it, those of every target. */
+        target?: string;
+      };
+    };
+    responses: {
+      200: PageCommentBody;
     };
   };
   /**
@@ -5234,7 +5505,7 @@ export interface Operations {
   /**
    * Search a project
    *
-   * Lists the project's nodes, connections, variables, and components that are not in its trash whose titles or bodies hold a word that starts with each word of the query, compared without regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's key and description, and a component's name, key, description, and values of text, of the types string, text, and enum. A text is searched as its author wrote it, without what its value references show or its mentions name, which the usage lists find (GET /api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a body as far as its first 100,000 characters. Each result names its kind, its board and its node, by which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). The results are in the order of how well each word of the query matches them, a match in a title above one in a body, then of their kinds and IDs. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A query that holds a control character is answered with 422 validation_failed at query.q, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   * Lists the project's nodes, connections, variables, components, and comments that are not in its trash whose titles or bodies hold a word that starts with each word of the query, compared without regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's key and description, a component's name, key, description, and values of text, of the types string, text, and enum, and a comment's body, of a comment that is not deleted, of a thread whose target is not in the trash (FR-COMMENT-01). A text is searched as its author wrote it, without what its value references show or its mentions name, which the usage lists find (GET /api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a body as far as its first 100,000 characters. Each result names its kind, its board and its node, and a comment its thread's target, by which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). The results are in the order of how well each word of the query matches them, a match in a title above one in a body, then of their kinds and IDs. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A query that holds a control character is answered with 422 validation_failed at query.q, once the project is found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
    */
   searchProject: {
     input: {
@@ -5250,7 +5521,7 @@ export interface Operations {
         /** What to search for, of 1 to 200 characters, without control characters: each of its words must start a word of a result's title or body, compared without regard to case or diacritics, so that ela tru finds Elara trusts and zlut finds Žluťoučký. A query without a word, as one of punctuation alone, finds nothing. */
         q: string;
         /** A kind of entity: only the results of that kind are listed. Without it, those of every kind. */
-        type?: "node" | "connection" | "variable" | "component";
+        type?: "node" | "connection" | "variable" | "component" | "comment";
       };
     };
     responses: {
@@ -5422,6 +5693,7 @@ export const routes = {
   changePassword: { method: "POST", path: "/api/v1/auth/password" },
   completeSetup: { method: "POST", path: "/api/v1/setup" },
   copyNodes: { method: "POST", path: "/api/v1/projects/{project_id}/clipboard/copy" },
+  countComments: { method: "GET", path: "/api/v1/projects/{project_id}/comments/counts" },
   createInvite: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/invites" },
   createProject: { method: "POST", path: "/api/v1/workspaces/{workspace_id}/projects" },
   createProjectToken: { method: "POST", path: "/api/v1/projects/{project_id}/tokens" },
@@ -5458,6 +5730,8 @@ export const routes = {
   listBoardNodes: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/nodes" },
   listBoardReferrers: { method: "GET", path: "/api/v1/projects/{project_id}/boards/{board_id}/referenced-by" },
   listBoards: { method: "GET", path: "/api/v1/projects/{project_id}/boards" },
+  listCommentAuthors: { method: "GET", path: "/api/v1/projects/{project_id}/comments/authors" },
+  listComments: { method: "GET", path: "/api/v1/projects/{project_id}/comments" },
   listComponentTypes: { method: "GET", path: "/api/v1/projects/{project_id}/component-types" },
   listComponentUsages: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/usages" },
   listComponents: { method: "GET", path: "/api/v1/projects/{project_id}/components" },

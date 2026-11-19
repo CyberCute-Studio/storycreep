@@ -2,16 +2,20 @@
 -- with deleted_at, which the live views leave out (migration 00019). The
 -- tables whose rows the trash lists are its boards', its nodes', its
 -- variables', and its components'; its folders', its component types', its
--- attribute definitions', its branch outputs', its connections', and its play
--- states' rows go to the trash too, but are not listed. Each such table has a
--- branch here, in the list and in the purge, which package trash's tests hold
--- it to. A row that belongs to a board, as a board's node or variable, is in
--- the trash with its board too, which lists the board alone, and is purged
--- with it, by the cascade of its foreign key to the board, even one deleted on
--- its own, before its board, which the list holds, and whose own time in the
--- trash ends first. A branch output is in the trash with its node alike, and a
--- connection with either of its nodes, and with the output that it leaves, and
--- each is purged with it.
+-- attribute definitions', its branch outputs', its connections', its play
+-- states', and its comments' rows go to the trash too, but are not listed.
+-- Each such table has a branch here, in the list and in the purge, which
+-- package trash's tests hold it to. A row that belongs to a board, as a
+-- board's node or variable, is in the trash with its board too, which lists
+-- the board alone, and is purged with it, by the cascade of its foreign key to
+-- the board, even one deleted on its own, before its board, which the list
+-- holds, and whose own time in the trash ends first. A branch output is in the
+-- trash with its node alike, and a connection with either of its nodes, and
+-- with the output that it leaves, and each is purged with it, and a comment's
+-- thread with its target, as the live view of the comments reads it. A
+-- comment's root is purged only once none of its replies is outside the
+-- trash, or has been in it for less than its time, and its purge deletes its
+-- replies, by the cascade of their foreign key to it.
 
 -- name: TrashItems :many
 -- TrashItems returns the entities in the project's trash that it lists, the
@@ -70,7 +74,11 @@ WHERE p.workspace_id = @workspace_id AND (
     OR EXISTS (SELECT 1 FROM component_type t WHERE t.workspace_id = p.workspace_id AND t.project_id = p.id
         AND t.deleted_at <= now() - @retention::interval)
     OR EXISTS (SELECT 1 FROM play_state s WHERE s.workspace_id = p.workspace_id AND s.project_id = p.id
-        AND s.deleted_at <= now() - @retention::interval))
+        AND s.deleted_at <= now() - @retention::interval)
+    OR EXISTS (SELECT 1 FROM comment c WHERE c.workspace_id = p.workspace_id AND c.project_id = p.id
+        AND c.deleted_at <= now() - @retention::interval
+        AND NOT EXISTS (SELECT 1 FROM comment r WHERE r.workspace_id = c.workspace_id AND r.project_id = c.project_id
+            AND r.parent_id = c.id AND (r.deleted_at IS NULL OR r.deleted_at > now() - @retention::interval))))
 ORDER BY p.id;
 
 -- name: LockProjectToPurge :one
@@ -169,6 +177,24 @@ WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN 
     WHERE s.workspace_id = @workspace_id AND s.project_id = @project_id
         AND s.deleted_at <= now() - @retention::interval
     ORDER BY s.deleted_at, s.id
+    LIMIT @max_rows
+);
+
+-- name: PurgeComments :execrows
+-- PurgeComments deletes at most max_rows of the project's comments that have
+-- been in its trash for retention, those that have been there longest first,
+-- but for a root of which a reply is outside the trash, or has been in it for
+-- less, which its thread still shows as deleted, and returns how many it
+-- deleted, not counting the replies that the purge of a root deletes with
+-- it.
+DELETE FROM comment d
+WHERE d.workspace_id = @workspace_id AND d.project_id = @project_id AND d.id IN (
+    SELECT c.id FROM comment c
+    WHERE c.workspace_id = @workspace_id AND c.project_id = @project_id
+        AND c.deleted_at <= now() - @retention::interval
+        AND NOT EXISTS (SELECT 1 FROM comment r WHERE r.workspace_id = c.workspace_id AND r.project_id = c.project_id
+            AND r.parent_id = c.id AND (r.deleted_at IS NULL OR r.deleted_at > now() - @retention::interval))
+    ORDER BY c.deleted_at, c.id
     LIMIT @max_rows
 );
 

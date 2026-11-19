@@ -10,7 +10,9 @@
 // node (InspectorFlow.tsx, plan note N69). Of several, it aligns,
 // distributes, colours, and tags them. Of either, it duplicates and deletes
 // what is selected. Of the connection selected, in place of nodes, it is
-// the connection's form.
+// the connection's form. Of one node, or of the connection, it shows their
+// threaded comments last (plan item 74), which are all that it shows on a
+// board that the user may not change, as a commenter's or a viewer's.
 
 import type { Node, NodeUpdatePayload } from "@storycreep/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +30,7 @@ import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api } from "../api";
 import { refusalOf } from "../auth/refusal";
+import { Comments, type CommentTarget } from "../comments/Threads";
 import { AssetImage } from "../content/AssetImage";
 import {
   ConflictNotice,
@@ -80,9 +83,14 @@ import { titleOf, typeOf } from "./labels";
 import { nodeRect } from "./layout";
 import type { TargetLookup } from "./targets";
 
+/** The ID of the heading of the comments of what the inspector shows, which a link to a thread on a node, or on a connection, brings into view. */
+export const inspectorCommentsId = "inspector-comments";
+
 /** What the inspector is given. */
 export interface InspectorProps {
   projectId: string;
+  /** Whether the user may change the board, without which the inspector shows the comments of what is selected alone. */
+  editable: boolean;
   /** The selected nodes, as the canvas has them. */
   selection: ReadonlySet<string>;
   /** The connection selected, in place of nodes, if one is. */
@@ -102,11 +110,16 @@ export interface InspectorProps {
   returnFocus: () => HTMLElement | null;
   /** The inspector's heading, which the canvas gives the focus as the user asks again for the inspector that is open (Panel's headingRef). */
   headingRef?: RefObject<HTMLHeadingElement | null>;
+  /** Whether a link to a thread asks for the comments of what is selected, whose section, once they are read, gives their heading the focus (Comments' asked). */
+  commentsAsked?: boolean;
+  /** Called as the comments have answered the ask (Comments' onShown). */
+  onCommentsShown?: () => void;
 }
 
 /** The inspector of what is selected on the canvas. */
 export function Inspector({
   projectId,
+  editable,
   selection,
   connection: connectionId,
   actions,
@@ -118,6 +131,8 @@ export function Inspector({
   onClose,
   returnFocus,
   headingRef,
+  commentsAsked = false,
+  onCommentsShown,
 }: InspectorProps) {
   const { t } = useTranslation();
   const doc = useProjectDocument(projectId);
@@ -171,6 +186,19 @@ export function Inspector({
   );
   const single = nodes.length === 1 ? nodes[0] : undefined;
   const tooMany = nodes.length > maxEdited;
+  // The section of the comments of target, the inspector's last, under one
+  // heading's ID, which a link to a thread asks for (commentsAsked), made
+  // anew under key, where it is given, for another target.
+  const comments = (target: CommentTarget, key?: string) => (
+    <Comments
+      key={key}
+      projectId={projectId}
+      target={target}
+      headingId={inspectorCommentsId}
+      asked={commentsAsked}
+      onShown={onCommentsShown}
+    />
+  );
   const untitled = t("boards.untitled_node");
   const title =
     connection !== undefined
@@ -196,23 +224,35 @@ export function Inspector({
       headingRef={heading}
     >
       {connection !== undefined ? (
-        <ConnectionInspector
-          // The parts of one connection, made anew for another.
-          key={connection.id}
-          projectId={projectId}
-          connection={connection}
-          actions={actions}
-          onSelectNode={(id) => {
-            onSelectNode(id);
-            toHeading();
-          }}
-          onDelete={() => {
-            void actions.removeConnection(connection.id);
-            toHeading();
-          }}
-        />
+        // The parts of one connection, made anew for another.
+        <div key={connection.id} className="space-y-6">
+          {editable && (
+            <ConnectionInspector
+              projectId={projectId}
+              connection={connection}
+              actions={actions}
+              onSelectNode={(id) => {
+                onSelectNode(id);
+                toHeading();
+              }}
+              onDelete={() => {
+                void actions.removeConnection(connection.id);
+                toHeading();
+              }}
+            />
+          )}
+          {comments({ type: "connection", id: connection.id })}
+        </div>
       ) : nodes.length === 0 ? (
-        <p className="text-fg-muted">{t("inspector.empty")}</p>
+        <p className="text-fg-muted">
+          {editable ? t("inspector.empty") : t("inspector.empty_comments")}
+        </p>
+      ) : !editable ? (
+        single === undefined ? (
+          <p className="text-fg-muted">{t("inspector.one_for_comments")}</p>
+        ) : (
+          comments({ type: "node", id: single.id }, single.id)
+        )
       ) : (
         <div className="space-y-6">
           {single !== undefined && (
@@ -313,6 +353,10 @@ export function Inspector({
               </Button>
             </div>
           </section>
+          {single !== undefined &&
+            // Made anew for another node, under a key of its own, which the
+            // node's parts above have.
+            comments({ type: "node", id: single.id }, `comments-${single.id}`)}
         </div>
       )}
     </Panel>

@@ -1,8 +1,9 @@
 import type { Variable } from "@storycreep/shared/api";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commentCountsQuery, openOf } from "../comments/queries";
 import { ContentTree, FilterField, itemButton } from "../content/ContentTree";
 import { typeName } from "../content/ValueField";
 import {
@@ -61,6 +62,7 @@ function VariablesPage() {
     editsProject(project.role) && project.archived_at === undefined;
   const doc = useProjectDocument(projectId);
   const variables = useDocumentState(doc, (state) => state.view.variables);
+  const commentCounts = useQuery(commentCountsQuery(doc)).data;
   const folders = useDocumentState(doc, (state) => state.view.folders);
   const boardData = useTree(doc);
   // The project's boards, in the order of their tree.
@@ -163,17 +165,27 @@ function VariablesPage() {
             onSelect={select}
             newItemHere={t("variables.new_here")}
             onCreateIn={(parentId, opener) => setCreating({ parentId, opener })}
-            renderItem={(variable) => (
-              <>
-                <span className="font-mono break-all">{variable.key}</span>
-                <span className="text-sm break-words text-fg-muted">
-                  {t("variables.item_detail", {
-                    type: typeName(t, variable.type),
-                    scope: scopeOf(variable),
-                  })}
-                </span>
-              </>
-            )}
+            renderItem={(variable) => {
+              // How many of its threads of comments are open (plan item 74),
+              // which its panel shows.
+              const open = openOf(commentCounts, variable.id);
+              return (
+                <>
+                  <span className="font-mono break-all">{variable.key}</span>
+                  <span className="text-sm break-words text-fg-muted">
+                    {t("variables.item_detail", {
+                      type: typeName(t, variable.type),
+                      scope: scopeOf(variable),
+                    })}
+                  </span>
+                  {open > 0 && (
+                    <span className="text-sm text-fg-muted">
+                      {t("variables.item_comments", { count: open })}
+                    </span>
+                  )}
+                </>
+              );
+            }}
             header={(newFolder) => (
               <>
                 <div className="flex flex-wrap items-center gap-2">

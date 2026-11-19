@@ -593,6 +593,50 @@ describe("play mode", () => {
     );
   });
 
+  // A comment that the user writes on the board, under its canvas, which
+  // the board's page does not take away unsent as it follows the flow to
+  // another board's page: it waits until the form holds no text (plan item
+  // 74), and then follows the flow.
+  it("waits for a comment written on the board, unsent, before it follows the flow to another board's page", async () => {
+    const user = userEvent.setup();
+    playProject();
+    const { router } = renderApp(
+      `/projects/${project.id}/boards/${harbour.id}`,
+      { session: testSession },
+    );
+    const canvas = await openBoard(harbour);
+    canvas.focus();
+    fireEvent.keyDown(canvas, { key: "p", code: "KeyP" });
+    const panel = await screen.findByRole("region", { name: "Play" });
+    await within(panel).findByText("Trust 1.");
+    const field = await screen.findByRole("textbox", { name: "New comment" });
+    const editor = (
+      field as unknown as {
+        editor: {
+          commands: {
+            insertContent: (text: string) => void;
+            clearContent: (emitUpdate: boolean) => void;
+          };
+        };
+      }
+    ).editor;
+    act(() => editor.commands.insertContent("Is the quay lit?"));
+    await user.click(
+      within(panel).getByRole("button", { name: "Visit Elara" }),
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(panel).getByRole("heading", { name: "Meeting" }),
+      ),
+    );
+    expect(router.state.location.pathname).toBe(
+      `/projects/${project.id}/boards/${harbour.id}`,
+    );
+    expect(field.textContent).toBe("Is the quay lit?");
+    act(() => editor.commands.clearContent(true));
+    await openBoard(elara);
+  });
+
   // A tablet's turn that makes room for the panel beside the canvas, while
   // its sheet waits for the editor of a text, leaves the focus in the text.
   it("leaves the focus in the editor of a text as the window grows wide enough for the panel beside the canvas", async () => {

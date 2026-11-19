@@ -64,8 +64,8 @@ func RegisterJobs(r *jobs.Registry, log *slog.Logger) {
 	jobs.Periodic(r, reindexInterval, reindex{})
 }
 
-// Reindex writes the document of each node, connection, variable, and
-// component, in the trash or not, that has none of the current Version or a
+// Reindex writes the document of each node, connection, variable, component,
+// and comment, in the trash or not, that has none of the current Version or a
 // newer one, of each project that it has not indexed whole of the version or
 // a newer one, and records that it has once it finds none lacking
 // (search_state), so that its later runs pass over the project, as

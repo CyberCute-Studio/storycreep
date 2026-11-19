@@ -11,7 +11,9 @@
 // page gives it what its text may refer to, { offers the values that a
 // reference shows, and @ the components that a mention names (FR-TEXT-02,
 // FR-TEXT-03, Suggestions.tsx), and its toolbar sets the format of the value
-// reference selected.
+// reference selected. A text that may refer to nothing, as a comment, has
+// formatting and links alone: what is pasted into it refers to nothing
+// either (references).
 
 import type { RichTextDoc } from "@storycreep/shared/api";
 import {
@@ -22,6 +24,7 @@ import {
   tryParseRichText,
   tryParseRichTextOfAnySize,
 } from "@storycreep/shared/richtext";
+import type { Slice } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
 import {
   type Editor,
@@ -51,12 +54,15 @@ import {
 import type { RichTextChoices } from "./choices";
 import { type RichTextValue, storedOf } from "./convert";
 import {
+  type ChipLabels,
   pasteProps,
   type RichTextNames,
   relabel,
   richTextExtensions,
+  withoutReferences,
 } from "./extensions";
 import { typedHref } from "./link";
+import { cleanPastedHTML } from "./paste";
 import { type SuggestionKeys, Suggestions } from "./Suggestions";
 
 export interface RichTextEditorProps {
@@ -101,6 +107,16 @@ export interface RichTextEditorProps {
    * mention may name. Without it, they are text, as any other character.
    */
   choices?: RichTextChoices;
+  /**
+   * Whether the text may hold mentions and value references, as by default.
+   * One that may not, as a comment's (plan item 74), whose { and @ are text
+   * as any other character, as without choices, has no button of a value's
+   * format, and takes a mention or a value reference pasted or dropped into
+   * it as the text that it showed where it was copied, as @Elara, whose
+   * name the text need not know (cleanPastedHTML's chips), so that it holds
+   * none that the server would refuse it for.
+   */
+  references?: boolean;
 }
 
 /**
@@ -177,6 +193,7 @@ export function RichTextEditor({
   placeholder,
   names,
   choices,
+  references = true,
 }: RichTextEditorProps) {
   const { t } = useTranslation();
   const id = useId();
@@ -194,6 +211,7 @@ export function RichTextEditor({
     names,
     unknown: { mention: unknownMention, value: unknownValue },
     placeholder,
+    references,
   };
   const latest = useRef(current);
   useEffect(() => {
@@ -201,25 +219,24 @@ export function RichTextEditor({
   });
   const [initial] = useState(() => {
     const content = defaultValue ?? emptyRichText();
+    const labels: ChipLabels = {
+      mention: (ref) =>
+        (ref === undefined ? undefined : latest.current.names?.mention(ref)) ??
+        latest.current.unknown.mention,
+      value: (ref, attribute) =>
+        (ref === undefined
+          ? undefined
+          : latest.current.names?.value(ref, attribute)) ??
+        latest.current.unknown.value,
+    };
     const extensions = richTextExtensions({
-      labels: {
-        mention: (ref) =>
-          (ref === undefined
-            ? undefined
-            : latest.current.names?.mention(ref)) ??
-          latest.current.unknown.mention,
-        value: (ref, attribute) =>
-          (ref === undefined
-            ? undefined
-            : latest.current.names?.value(ref, attribute)) ??
-          latest.current.unknown.value,
-      },
+      labels,
       placeholder: () => latest.current.placeholder ?? "",
       onLinkShortcut: () => setLinking(true),
       onSuggestionKey: (event, open, view) =>
         suggestKeys.current?.(event, open, view) ?? false,
     });
-    return { content, extensions, ...readOf(content) };
+    return { content, extensions, labels, ...readOf(content) };
   });
   // A document that the editor cannot keep as it is is shown, as its schema
   // reads it, but not changed.
@@ -246,6 +263,17 @@ export function RichTextEditor({
   const editorProps = useMemo(
     () => ({
       ...pasteProps,
+      // What is pasted or dropped into a text without references, as a
+      // comment, is its text alone where it has them: the text that a
+      // mention or a value reference copied from another text showed there
+      // (cleanPastedHTML's chips), which this one has no name of, or else
+      // the text that it shows here (withoutReferences).
+      transformPastedHTML: (html: string) =>
+        cleanPastedHTML(html, latest.current.references),
+      transformPasted: (slice: Slice) =>
+        latest.current.references
+          ? slice
+          : withoutReferences(slice, initial.labels),
       attributes: {
         id,
         role: "textbox",
@@ -260,7 +288,7 @@ export function RichTextEditor({
         class: "rich-text min-h-24 rounded-b-md px-3 py-2 text-fg break-words",
       },
     }),
-    [id, labelId, describedBy, invalid, changeable, suggests],
+    [id, labelId, describedBy, invalid, changeable, suggests, initial],
   );
   const editor = useEditor({
     content: initial.content,
@@ -329,7 +357,7 @@ export function RichTextEditor({
                 editor={editor}
                 label={label}
                 onLink={() => setLinking(true)}
-                onFormat={() => setFormatting(true)}
+                onFormat={references ? () => setFormatting(true) : undefined}
               />
             )}
             <EditorContent editor={editor} />
@@ -418,7 +446,7 @@ function valueSelected(editor: Editor): boolean {
   );
 }
 
-/** The editor's toolbar: its marks, its link, its lists, each pressed where the selection has it, and the format of the value reference selected. */
+/** The editor's toolbar: its marks, its link, its lists, each pressed where the selection has it, and the format of the value reference selected, of a text that may hold one (onFormat). */
 function FormatBar({
   editor,
   label,
@@ -428,7 +456,8 @@ function FormatBar({
   editor: Editor;
   label: string;
   onLink: () => void;
-  onFormat: () => void;
+  /** Opens the format of the value reference selected, of a text that may hold one. */
+  onFormat?: () => void;
 }) {
   const { t } = useTranslation();
   const mod = modifier();
@@ -521,14 +550,18 @@ function FormatBar({
       >
         <path d="M11 7h9M11 12h9M11 17h9M4 5h1.5v4M4 9h3M4 13.5a1.5 1.5 0 0 1 3 0c0 1.2-3 1.8-3 3.5h3" />
       </FormatButton>
-      <Toolbar.Separator className="mx-1 w-px self-stretch bg-border" />
-      <FormatButton
-        label={t("richtext.format")}
-        disabled={!state.value}
-        onPress={onFormat}
-      >
-        <path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" />
-      </FormatButton>
+      {onFormat !== undefined && (
+        <>
+          <Toolbar.Separator className="mx-1 w-px self-stretch bg-border" />
+          <FormatButton
+            label={t("richtext.format")}
+            disabled={!state.value}
+            onPress={onFormat}
+          >
+            <path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" />
+          </FormatButton>
+        </>
+      )}
     </Toolbar.Root>
   );
 }

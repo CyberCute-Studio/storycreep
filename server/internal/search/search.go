@@ -1,10 +1,10 @@
 // Package search keeps the index of a project's content that project search
 // reads, and answers the search from it (PRD FR-PROJ-03, plan note N57):
 // PostgreSQL's full-text search over a document of each node, connection,
-// variable, and component of a project (Document), compared without regard
-// to case or diacritics, through the search configuration that migration
-// 00029 creates, which reads every word of every language whole, with
-// unaccent's dictionary (FR-PROJ-03 AC4).
+// variable, component, and comment of a project (Document), compared without
+// regard to case or diacritics, through the search configuration that
+// migration 00029 creates, which reads every word of every language whole,
+// with unaccent's dictionary (FR-PROJ-03 AC4).
 //
 // Each entity has its document whether it is in the trash or not, which the
 // derivation that Register registers with the pipeline writes once every
@@ -17,7 +17,9 @@
 // content that is there already when migration 00029 applies, and every
 // document again once a version of the server changes what a document holds.
 // A search reads the documents of the entities that are not in the trash
-// alone, so that the trash changes no document (FR-PROJ-06 AC2).
+// alone, so that the trash changes no document (FR-PROJ-06 AC2): of the
+// comments, those that the live view of the comments holds, which are not
+// deleted, and whose threads' targets are not in the trash.
 package search
 
 import (
@@ -30,6 +32,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/commands"
+	"github.com/CyberCute-Studio/storycreep/server/internal/comment"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/queries"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/input"
@@ -40,13 +43,13 @@ import (
 // result is of, and which its filter keeps.
 type Kind string
 
-// The kinds of entity that have a document. Item 74 of the plan adds a
-// comment's.
+// The kinds of entity that have a document.
 const (
 	Node       Kind = "node"
 	Connection Kind = "connection"
 	Variable   Kind = "variable"
 	Component  Kind = "component"
+	Comment    Kind = "comment"
 )
 
 // kinds are the kinds of entity that have a document, in the order in which
@@ -55,7 +58,8 @@ const (
 var kinds = []struct {
 	kind Kind
 	ids  ids.Kind
-}{{Component, ids.Component}, {Connection, ids.Connection}, {Node, ids.Node}, {Variable, ids.Variable}}
+}{{Comment, ids.Comment}, {Component, ids.Component}, {Connection, ids.Connection}, {Node, ids.Node},
+	{Variable, ids.Variable}}
 
 // Kinds returns the kinds of entity that have a document, in the order of
 // their names.
@@ -95,8 +99,9 @@ func IsKind(k Kind) bool { return idKind(k) != 0 }
 // (queries.UpsertSearchEntries), so that the newer job writes them again,
 // while the older job leaves alone the documents and the states of a newer
 // version (queries.ProjectsToIndex, queries.UnindexedSearchEntities,
-// queries.SetSearchState).
-const Version = 1
+// queries.SetSearchState). Version 2 adds the comments' documents (plan item
+// 74).
+const Version = 2
 
 // MaxQueryLength is how many characters a search's query has at most.
 const MaxQueryLength = 200
@@ -131,23 +136,28 @@ type Span struct {
 }
 
 // Result is an entity whose document a search's query matches, as the API
-// shows it, with its board and its node, by which a client opens it, and
-// its title and a snippet of its body with the query's matches marked
-// (FR-PROJ-03 AC2).
+// shows it, with its board and its node, and a comment's target, by which a
+// client opens it, and its title and a snippet of its body with the query's
+// matches marked (FR-PROJ-03 AC2).
 type Result struct {
-	Type Kind   `json:"type" enum:"node,connection,variable,component" doc:"The kind of the entity: a node, a connection, a variable, or a component"`
+	Type Kind   `json:"type" enum:"node,connection,variable,component,comment" doc:"The kind of the entity: a node, a connection, a variable, a component, or a comment"`
 	ID   string `json:"id" doc:"The entity's ID"`
 	// BoardID and BoardName are those of a node, a connection, and a
-	// variable of a board, and none of a global variable or a component.
-	BoardID   string  `json:"board_id,omitempty" doc:"The ID of the entity's board: a node's, a connection's, or a board variable's. A global variable and a component have none."`
+	// variable of a board, and of a comment's target's, and none of a global
+	// variable or a component.
+	BoardID   string  `json:"board_id,omitempty" doc:"The ID of the entity's board: a node's, a connection's, or a board variable's, or a comment's target's, which may be the board itself. A global variable and a component have none, and nor does a comment on a global variable."`
 	BoardName *string `json:"board_name,omitempty" doc:"The name of the entity's board, which a result has exactly when it has board_id"`
-	// NodeID and NodeTitle are those of a node itself, and of the node that
-	// a connection leaves.
-	NodeID    string  `json:"node_id,omitempty" doc:"The ID of the node that a client opens the result by: a node's own, or the node that a connection leaves. A variable and a component have none."`
+	// NodeID and NodeTitle are those of a node itself, of the node that a
+	// connection leaves, and of a comment's target's.
+	NodeID    string  `json:"node_id,omitempty" doc:"The ID of the node that a client opens the result by: a node's own, the node that a connection leaves, or a comment's target's, a node target's own or the node that a connection target leaves. A variable and a component have none, and nor does a comment on a board or a variable."`
 	NodeTitle *string `json:"node_title,omitempty" doc:"The title of the result's node, which may be empty, and which a result has exactly when it has node_id"`
-	Title     []Span  `json:"title" nullable:"false" doc:"The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection has none, and an empty title no part."`
-	Snippet   []Span  `json:"snippet" nullable:"false" doc:"Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, or a component's key, description, and values of text, each on a line of its own. An empty body has no part."`
-	key       Key
+	// TargetType and TargetID are a comment's thread's target's, and none of
+	// another kind of entity.
+	TargetType string `json:"target_type,omitempty" enum:"node,connection,board,variable" doc:"The kind of the target of a comment's thread, by which a client opens the thread: a node, a connection, a board, or a variable. Only a comment has one."`
+	TargetID   string `json:"target_id,omitempty" doc:"The ID of the target of a comment's thread, which a result has exactly when it has target_type"`
+	Title      []Span `json:"title" nullable:"false" doc:"The entity's title, whole, in parts, with the words that match a word of the query marked: a node's title, a variable's key, or a component's name. A connection and a comment have none, and an empty title no part."`
+	Snippet    []Span `json:"snippet" nullable:"false" doc:"Some of the first 10,000 characters of the entity's body, in parts, with the words that match a word of the query marked: from such a word on, up to 35 words, or, where fewer than 15 are left from it, up to 35 words that end those characters, the last of which may be a word that they cut; or else, where they hold no word that the query matched, as where it matched only the title, or only words of the body past them, the body's first 15 words, without a mark. A body of at most 15 words is whole. The body is a node's text, a connection's label, a variable's description, a component's key, description, and values of text, each on a line of its own, or a comment's body. An empty body has no part."`
+	key        Key
 }
 
 // Key is where a result is in its list (Result.Key), by which a page of the
@@ -223,13 +233,14 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 		if len(lexemes) == 0 {
 			return nil
 		}
-		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
+		params := queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
 			TitleWords: TitleQueries(lexemes), WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID),
 			Kind: string(kind), After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
 			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20)),
-			SnippetSource: MaxSnippetSource})
+			SnippetSource: MaxSnippetSource}
+		rows, err := searchRows(ctx, q, params)
 		if err != nil {
-			return fmt.Errorf("search: read the results: %w", err)
+			return err
 		}
 		for _, r := range rows {
 			res, err := resultOf(r)
@@ -246,6 +257,38 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 	return out, nil
 }
 
+// searchRows returns the rows of the search of params: by queries.Search, of
+// a search that may read a comment, of every kind or of the comments, of a
+// project that has a document of a comment, or else by
+// queries.SearchWithoutComments, whose rows are the same, without the
+// planning of the comments' branch that the statement would cost every
+// search of a project without comments, as they say.
+func searchRows(ctx context.Context, q *queries.Queries, params queries.SearchParams) ([]queries.SearchRow, error) {
+	if params.Kind == "" || Kind(params.Kind) == Comment {
+		comments, err := q.SearchHasComments(ctx, queries.SearchHasCommentsParams{WorkspaceID: params.WorkspaceID,
+			ProjectID: params.ProjectID})
+		if err != nil {
+			return nil, fmt.Errorf("search: read whether the project has comments: %w", err)
+		}
+		if comments {
+			rows, err := q.Search(ctx, params)
+			if err != nil {
+				return nil, fmt.Errorf("search: read the results: %w", err)
+			}
+			return rows, nil
+		}
+	}
+	plain, err := q.SearchWithoutComments(ctx, queries.SearchWithoutCommentsParams(params))
+	if err != nil {
+		return nil, fmt.Errorf("search: read the results: %w", err)
+	}
+	rows := make([]queries.SearchRow, len(plain))
+	for i, r := range plain {
+		rows[i] = queries.SearchRow(r)
+	}
+	return rows, nil
+}
+
 // resultOf returns the row r of a search as the API shows it.
 func resultOf(r queries.SearchRow) (Result, error) {
 	k := idKind(Kind(r.Kind))
@@ -255,6 +298,13 @@ func resultOf(r queries.SearchRow) (Result, error) {
 	res := Result{Type: Kind(r.Kind), ID: ids.Encode(k, r.EntityID.Bytes), BoardID: encode(ids.Board, r.BoardID),
 		NodeID: encode(ids.Node, r.NodeID), Title: Spans(r.Title), Snippet: Spans(r.Snippet),
 		key: Key{Rank: r.Rank, Kind: Kind(r.Kind), ID: r.EntityID.Bytes}}
+	if r.TargetType.Valid {
+		target := comment.TargetType(r.TargetType.String).Kind()
+		if target == 0 {
+			return Result{}, fmt.Errorf("search: a comment on a target of the kind %q", r.TargetType.String)
+		}
+		res.TargetType, res.TargetID = r.TargetType.String, encode(target, r.TargetID)
+	}
 	if r.BoardID.Valid {
 		res.BoardName = &r.BoardName.String
 	}

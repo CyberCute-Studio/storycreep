@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { api, pagedQuery } from "../api";
 import { refusalOf } from "../auth/refusal";
 import { useCommandHandlers } from "../commands/registry";
+import { placeNodeTitle, ThreadTargetLink } from "../comments/TargetLink";
 import { projectQuery } from "../project/queries";
 import { takeSearchFocus } from "../search/focus";
 import { searchText } from "../search/query";
@@ -16,7 +17,13 @@ import { Alert, Page, Status, textLink } from "../ui/Page";
 /** A kind of what the search finds, which its filter narrows the results to. */
 type Kind = Result["type"];
 
-const kinds: readonly Kind[] = ["node", "connection", "variable", "component"];
+const kinds: readonly Kind[] = [
+  "node",
+  "connection",
+  "variable",
+  "component",
+  "comment",
+];
 
 /** The search of the page: what to search for, and of which kind, which a link names. */
 interface SearchSearch {
@@ -75,7 +82,9 @@ function searchQuery(projectId: string, q: string, type: Kind | undefined) {
 // and the words of its title and its text that matched marked (AC2), and
 // a link to where it is: a node, or a connection, on its board's canvas,
 // by its node, which the canvas selects and shows whole, as a usage list's
-// site does (plan item 61), and a variable or a component in its panel.
+// site does (plan item 61), a variable or a component in its panel, and a
+// comment, which has no title, by what its thread is on, where its comments
+// show (plan item 74), as the project's list of comments links to it.
 // The search's command, Ctrl+/ on every platform, gives the field the focus here,
 // and opens the page with the focus in it from the project's other pages
 // (FR-EDIT-10).
@@ -267,10 +276,10 @@ function ResultItem({
 }) {
   const { t } = useTranslation();
   const untitled = t("boards.untitled_node");
-  const node =
-    result.node_title === undefined || result.node_title === ""
-      ? untitled
-      : result.node_title;
+  const node = placeNodeTitle(t, result.node_title);
+  if (result.type === "comment") {
+    return <CommentResult projectId={projectId} result={result} />;
+  }
   const title =
     result.type === "connection" ? (
       t("search.connection_from", { node })
@@ -324,6 +333,71 @@ function ResultItem({
       <p className="text-sm text-fg-muted">
         {t("search.kinds", { kind: result.type })}
         {where !== undefined && ` · ${where}`}
+      </p>
+      {result.snippet.length > 0 && (
+        <p className="whitespace-pre-line">
+          <Marked parts={result.snippet} />
+        </p>
+      )}
+    </li>
+  );
+}
+
+/**
+ * A comment found (plan item 74), which has no title: what its thread is
+ * on, as a link to where its comments show, as the project's list of
+ * comments links to it, a node's, and a connection's by the node that it
+ * leaves, in the canvas's inspector, a board's on its page, and a
+ * variable's in its panel, its kind, its board, but of a board's own
+ * thread, which its link names by its board, and the snippet of its text,
+ * marked.
+ */
+function CommentResult({
+  projectId,
+  result,
+}: {
+  projectId: string;
+  result: Result;
+}) {
+  const { t } = useTranslation();
+  const node = placeNodeTitle(t, result.node_title);
+  const board = result.board_name ?? "";
+  const label =
+    result.target_type === "node"
+      ? t("search.comment_on_node", { node })
+      : result.target_type === "connection"
+        ? t("search.comment_on_connection", { node })
+        : result.target_type === "board"
+          ? t("search.comment_on_board", { board })
+          : t("search.comment_on_variable");
+  // A comment's result names its thread's target, which the server gives
+  // every comment's.
+  const link =
+    result.target_type === undefined || result.target_id === undefined ? (
+      label
+    ) : (
+      <ThreadTargetLink
+        projectId={projectId}
+        place={{
+          target_type: result.target_type,
+          target_id: result.target_id,
+          board_id: result.board_id,
+          node_id: result.node_id,
+        }}
+      >
+        {label}
+      </ThreadTargetLink>
+    );
+  return (
+    <li className="space-y-1 break-words" data-result={result.id}>
+      <p className="font-medium">{link}</p>
+      <p className="text-sm text-fg-muted">
+        {t("search.kinds", { kind: result.type })}
+        {/* A board's own thread is named by its board, which its link
+        says already. */}
+        {result.board_name !== undefined &&
+          result.target_type !== "board" &&
+          ` · ${t("search.on_board", { board: result.board_name })}`}
       </p>
       {result.snippet.length > 0 && (
         <p className="whitespace-pre-line">

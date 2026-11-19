@@ -11,6 +11,59 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const commentSearchSources = `-- name: CommentSearchSources :many
+SELECT c.id, c.body AS doc, e.title AS entry_title,
+    coalesce(encode(sha256(convert_to(e.body, 'UTF8')), 'hex'), '')::text AS entry_body_sha256,
+    e.version AS entry_version
+FROM comment c
+LEFT JOIN search_entry e ON e.workspace_id = c.workspace_id AND e.project_id = c.project_id
+    AND e.kind = 'comment' AND e.entity_id = c.id
+WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = ANY($3::uuid[])
+`
+
+type CommentSearchSourcesParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+	Ids         []pgtype.UUID
+}
+
+type CommentSearchSourcesRow struct {
+	ID              pgtype.UUID
+	Doc             []byte
+	EntryTitle      pgtype.Text
+	EntryBodySha256 string
+	EntryVersion    pgtype.Int4
+}
+
+// CommentSearchSources returns what the documents of the project's comments
+// whose IDs are among ids are made of, deleted or not, their bodies, with
+// each comment's document as the index holds it, or none.
+func (q *Queries) CommentSearchSources(ctx context.Context, arg CommentSearchSourcesParams) ([]CommentSearchSourcesRow, error) {
+	rows, err := q.db.Query(ctx, commentSearchSources, arg.WorkspaceID, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CommentSearchSourcesRow
+	for rows.Next() {
+		var i CommentSearchSourcesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Doc,
+			&i.EntryTitle,
+			&i.EntryBodySha256,
+			&i.EntryVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const componentSearchSources = `-- name: ComponentSearchSources :many
 SELECT m.id, m.name, m.key::text AS key, m.description AS doc,
     ARRAY(
@@ -221,8 +274,8 @@ type NodeSearchSourcesRow struct {
 }
 
 // Project search (package search, PRD FR-PROJ-03, plan note N57): a document
-// of each node, connection, variable, and component of a project, in the
-// trash or not, which a search reads of the entities that are not. A
+// of each node, connection, variable, component, and comment of a project, in
+// the trash or not, which a search reads of the entities that are not. A
 // batch's transaction writes the documents of the entities that it changed,
 // once every command of the batch has applied, under the lock of the
 // project's row (NodeSearchSources and the other kinds', which read each
@@ -309,49 +362,60 @@ func (q *Queries) ProjectsToIndex(ctx context.Context, arg ProjectsToIndexParams
 
 const search = `-- name: Search :many
 WITH hits AS (
-    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, e.vector
+    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, NULL::text AS target_type, NULL::uuid AS target_id,
+        e.vector
     FROM search_entry e
     JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.entity_id
     WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'node'
         AND $5::text IN ('', 'node') AND e.vector @@ $6::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, e.vector
+    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, NULL, NULL, e.vector
     FROM search_entry e
     JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
         AND c.id = e.entity_id
     WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'connection'
         AND $5::text IN ('', 'connection') AND e.vector @@ $6::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, e.vector
+    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, NULL, NULL, e.vector
     FROM search_entry e
     JOIN live_variable v ON v.workspace_id = e.workspace_id AND v.project_id = e.project_id AND v.id = e.entity_id
     WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'variable'
         AND $5::text IN ('', 'variable') AND e.vector @@ $6::tsquery
     UNION ALL
-    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, e.vector
+    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, NULL, NULL, e.vector
     FROM search_entry e
     JOIN live_component m ON m.workspace_id = e.workspace_id AND m.project_id = e.project_id
         AND m.id = e.entity_id
     WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'component'
         AND $5::text IN ('', 'component') AND e.vector @@ $6::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, t.board_id, t.node_id, t.target_type, t.target_id, e.vector
+    FROM search_entry e
+    JOIN comment c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.entity_id
+    JOIN comment_thread_target t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id
+        AND t.thread_id = c.thread_id
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'comment'
+        AND $5::text IN ('', 'comment') AND e.vector @@ $6::tsquery
+        AND c.deleted_at IS NULL AND t.target_live
 ), title_words AS MATERIALIZED (
     SELECT t.word::tsquery AS query FROM unnest($7::text[]) AS t (word)
 ), ranked AS (
-    SELECT h.kind, h.entity_id, h.board_id, h.node_id,
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id,
         ((SELECT count(*) FROM title_words t WHERE r.title @@ t.query) + r.rank / (1 + r.rank))::real AS rank
     FROM hits h
     CROSS JOIN LATERAL (
         SELECT ts_filter(h.vector, '{a}') AS title, ts_rank(h.vector, $1::tsquery)::float8 AS rank OFFSET 0
     ) AS r
 ), page AS (
-    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.rank
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id, h.rank
     FROM ranked h
     WHERE NOT $8::boolean OR h.rank < $9::real OR h.rank = $9::real
         AND (h.kind > $10::text OR h.kind = $10::text AND h.entity_id > $11::uuid)
     ORDER BY h.rank DESC, h.kind, h.entity_id
     LIMIT $12
 )
-SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title, p.rank,
+SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title,
+    p.target_type, p.target_id, p.rank,
     ts_headline('public.storycreep_search'::regconfig, e.title, $1::tsquery,
         'HighlightAll=true, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS title,
     ts_headline('public.storycreep_search'::regconfig, left(e.body, $2::integer), $1::tsquery,
@@ -380,15 +444,17 @@ type SearchParams struct {
 }
 
 type SearchRow struct {
-	Kind      string
-	EntityID  pgtype.UUID
-	BoardID   pgtype.UUID
-	BoardName pgtype.Text
-	NodeID    pgtype.UUID
-	NodeTitle pgtype.Text
-	Rank      float32
-	Title     string
-	Snippet   string
+	Kind       string
+	EntityID   pgtype.UUID
+	BoardID    pgtype.UUID
+	BoardName  pgtype.Text
+	NodeID     pgtype.UUID
+	NodeTitle  pgtype.Text
+	TargetType pgtype.Text
+	TargetID   pgtype.UUID
+	Rank       float32
+	Title      string
+	Snippet    string
 }
 
 // Search returns at most max_rows of the documents of the project's
@@ -415,11 +481,13 @@ type SearchRow struct {
 // that reads its columns, which would compute them again where it names
 // them.
 // Each comes with its board, a node's, a connection's, or a variable's of a
-// board, with the board's name, its node, a node itself or the node that a
-// connection leaves, with the node's title, and its title and its body as
-// ts_headline marks the matches of words in them, between the characters
-// U+0002 and U+0003, which no document holds (search.Document): the whole
-// title, and of the body's first snippet_source characters
+// board, or a comment's, its thread's target's (comment_thread_target), with
+// the board's name, its node, a node itself, the node that a connection
+// leaves, or a comment's target's, with the node's title, a comment's
+// target, its kind and its UUID, and its title and its body as ts_headline
+// marks the matches of words in them, between the characters U+0002 and
+// U+0003, which no document holds (search.Document): the whole title, and of
+// the body's first snippet_source characters
 // (search.MaxSnippetSource), so that what ts_headline reads of each row,
 // which it reads whole, is bounded however long the bodies are, from a match
 // of one of the words on, up to 35 words, or, where fewer than 15 are left
@@ -430,7 +498,9 @@ type SearchRow struct {
 // document, matches and ranks, shows its start without a mark. The kinds
 // are words of lowercase ASCII letters, which every collation orders alike,
 // as Go does. The kinds' conditions on the parameter are evaluated once, so
-// that a search of one kind reads the documents of no other.
+// that a search of one kind reads the documents of no other. A search that
+// reads no comment reads by SearchWithoutComments, whose text is this one's
+// without the comments' branch.
 func (q *Queries) Search(ctx context.Context, arg SearchParams) ([]SearchRow, error) {
 	rows, err := q.db.Query(ctx, search,
 		arg.Words,
@@ -460,6 +530,8 @@ func (q *Queries) Search(ctx context.Context, arg SearchParams) ([]SearchRow, er
 			&i.BoardName,
 			&i.NodeID,
 			&i.NodeTitle,
+			&i.TargetType,
+			&i.TargetID,
 			&i.Rank,
 			&i.Title,
 			&i.Snippet,
@@ -474,6 +546,29 @@ func (q *Queries) Search(ctx context.Context, arg SearchParams) ([]SearchRow, er
 	return items, nil
 }
 
+const searchHasComments = `-- name: SearchHasComments :one
+SELECT EXISTS (
+    SELECT 1 FROM search_entry e
+    WHERE e.workspace_id = $1 AND e.project_id = $2 AND e.kind = 'comment'
+)::boolean AS has
+`
+
+type SearchHasCommentsParams struct {
+	WorkspaceID pgtype.UUID
+	ProjectID   pgtype.UUID
+}
+
+// SearchHasComments returns whether the project has a document of a comment,
+// deleted or not, and in the trash or not, by which a search of every kind,
+// or of the comments, reads its results by Search, rather than by
+// SearchWithoutComments.
+func (q *Queries) SearchHasComments(ctx context.Context, arg SearchHasCommentsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, searchHasComments, arg.WorkspaceID, arg.ProjectID)
+	var has bool
+	err := row.Scan(&has)
+	return has, err
+}
+
 const searchLexemes = `-- name: SearchLexemes :one
 SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, $1::text))::text[] AS lexemes
 `
@@ -486,6 +581,149 @@ func (q *Queries) SearchLexemes(ctx context.Context, query string) ([]string, er
 	var lexemes []string
 	err := row.Scan(&lexemes)
 	return lexemes, err
+}
+
+const searchWithoutComments = `-- name: SearchWithoutComments :many
+WITH hits AS (
+    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, NULL::text AS target_type, NULL::uuid AS target_id,
+        e.vector
+    FROM search_entry e
+    JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.entity_id
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'node'
+        AND $5::text IN ('', 'node') AND e.vector @@ $6::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.entity_id
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'connection'
+        AND $5::text IN ('', 'connection') AND e.vector @@ $6::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_variable v ON v.workspace_id = e.workspace_id AND v.project_id = e.project_id AND v.id = e.entity_id
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'variable'
+        AND $5::text IN ('', 'variable') AND e.vector @@ $6::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_component m ON m.workspace_id = e.workspace_id AND m.project_id = e.project_id
+        AND m.id = e.entity_id
+    WHERE e.workspace_id = $3 AND e.project_id = $4 AND e.kind = 'component'
+        AND $5::text IN ('', 'component') AND e.vector @@ $6::tsquery
+), title_words AS MATERIALIZED (
+    SELECT t.word::tsquery AS query FROM unnest($7::text[]) AS t (word)
+), ranked AS (
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id,
+        ((SELECT count(*) FROM title_words t WHERE r.title @@ t.query) + r.rank / (1 + r.rank))::real AS rank
+    FROM hits h
+    CROSS JOIN LATERAL (
+        SELECT ts_filter(h.vector, '{a}') AS title, ts_rank(h.vector, $1::tsquery)::float8 AS rank OFFSET 0
+    ) AS r
+), page AS (
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id, h.rank
+    FROM ranked h
+    WHERE NOT $8::boolean OR h.rank < $9::real OR h.rank = $9::real
+        AND (h.kind > $10::text OR h.kind = $10::text AND h.entity_id > $11::uuid)
+    ORDER BY h.rank DESC, h.kind, h.entity_id
+    LIMIT $12
+)
+SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title,
+    p.target_type, p.target_id, p.rank,
+    ts_headline('public.storycreep_search'::regconfig, e.title, $1::tsquery,
+        'HighlightAll=true, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS title,
+    ts_headline('public.storycreep_search'::regconfig, left(e.body, $2::integer), $1::tsquery,
+        'MaxWords=35, MinWords=15, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS snippet
+FROM page p
+JOIN search_entry e ON e.workspace_id = $3 AND e.project_id = $4 AND e.kind = p.kind
+    AND e.entity_id = p.entity_id
+LEFT JOIN board b ON b.workspace_id = $3 AND b.project_id = $4 AND b.id = p.board_id
+LEFT JOIN node nd ON nd.workspace_id = $3 AND nd.project_id = $4 AND nd.id = p.node_id
+ORDER BY p.rank DESC, p.kind, p.entity_id
+`
+
+type SearchWithoutCommentsParams struct {
+	Words         interface{}
+	SnippetSource int32
+	WorkspaceID   pgtype.UUID
+	ProjectID     pgtype.UUID
+	Kind          string
+	Query         interface{}
+	TitleWords    []string
+	After         bool
+	AfterRank     float32
+	AfterKind     string
+	AfterID       pgtype.UUID
+	MaxRows       int32
+}
+
+type SearchWithoutCommentsRow struct {
+	Kind       string
+	EntityID   pgtype.UUID
+	BoardID    pgtype.UUID
+	BoardName  pgtype.Text
+	NodeID     pgtype.UUID
+	NodeTitle  pgtype.Text
+	TargetType pgtype.Text
+	TargetID   pgtype.UUID
+	Rank       float32
+	Title      string
+	Snippet    string
+}
+
+// SearchWithoutComments is Search without its branch of the comments, whose
+// results are Search's of a project that has no document of a comment
+// (SearchHasComments), or of a search of another kind, which reads no
+// comment: PostgreSQL plans each statement again for its parameters, and the
+// comments' branch, which joins the live views of every kind of a thread's
+// target, takes the planner longer than the rest of the statement, which a
+// project without comments would wait for on every search
+// (BenchmarkSearch, whose fixture has none). Its text is Search's without
+// that branch, which TestSearchWithoutComments holds it to: change both at
+// once.
+func (q *Queries) SearchWithoutComments(ctx context.Context, arg SearchWithoutCommentsParams) ([]SearchWithoutCommentsRow, error) {
+	rows, err := q.db.Query(ctx, searchWithoutComments,
+		arg.Words,
+		arg.SnippetSource,
+		arg.WorkspaceID,
+		arg.ProjectID,
+		arg.Kind,
+		arg.Query,
+		arg.TitleWords,
+		arg.After,
+		arg.AfterRank,
+		arg.AfterKind,
+		arg.AfterID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchWithoutCommentsRow
+	for rows.Next() {
+		var i SearchWithoutCommentsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.EntityID,
+			&i.BoardID,
+			&i.BoardName,
+			&i.NodeID,
+			&i.NodeTitle,
+			&i.TargetType,
+			&i.TargetID,
+			&i.Rank,
+			&i.Title,
+			&i.Snippet,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setIndexLockWait = `-- name: SetIndexLockWait :exec
@@ -553,6 +791,13 @@ WHERE m.workspace_id = $2 AND m.project_id = $3 AND NOT EXISTS (
     SELECT 1 FROM search_entry e WHERE e.workspace_id = m.workspace_id AND e.project_id = m.project_id
         AND e.kind = 'component' AND e.entity_id = m.id AND e.version >= $4
 )
+UNION ALL
+SELECT 'comment', c.id
+FROM comment c
+WHERE c.workspace_id = $2 AND c.project_id = $3 AND NOT EXISTS (
+    SELECT 1 FROM search_entry e WHERE e.workspace_id = c.workspace_id AND e.project_id = c.project_id
+        AND e.kind = 'comment' AND e.entity_id = c.id AND e.version >= $4
+)
 LIMIT $1
 `
 
@@ -569,9 +814,9 @@ type UnindexedSearchEntitiesRow struct {
 }
 
 // UnindexedSearchEntities returns at most max_rows of the project's nodes,
-// connections, variables, and components, in the trash or not, that have no
-// document of the version, or of a newer one, which an older version's job
-// leaves as it is, each with its kind.
+// connections, variables, components, and comments, in the trash or not,
+// that have no document of the version, or of a newer one, which an older
+// version's job leaves as it is, each with its kind.
 func (q *Queries) UnindexedSearchEntities(ctx context.Context, arg UnindexedSearchEntitiesParams) ([]UnindexedSearchEntitiesRow, error) {
 	rows, err := q.db.Query(ctx, unindexedSearchEntities,
 		arg.MaxRows,

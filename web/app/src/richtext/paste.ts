@@ -619,10 +619,13 @@ class Reader {
   private readonly begun = new Set<Element>();
   /** The elements that hold one of visibility:visible (visibleWithin), which the walk reads though they are not shown. */
   private readonly holdsVisible: Set<Element>;
+  /** Whether a mention or a value reference that the editor wrote is kept as one (chipOf), or read as the text that it showed, as other inline elements are (cleanPastedHTML's chips). */
+  private readonly chips: boolean;
 
-  constructor(faithful: boolean, holdsVisible: Set<Element>) {
+  constructor(faithful: boolean, holdsVisible: Set<Element>, chips: boolean) {
     this.faithful = faithful;
     this.holdsVisible = holdsVisible;
+    this.chips = chips;
   }
 
   /** Ends the paragraph that inline content went to. */
@@ -715,7 +718,7 @@ class Reader {
       );
       return;
     }
-    const chip = chipOf(element);
+    const chip = this.chips ? chipOf(element) : undefined;
     if (chip !== undefined) {
       if (shown) {
         this.paragraph().runs.push({
@@ -1273,13 +1276,17 @@ function wrapsInline(element: Element): boolean {
  * and its white space kept, list items that no list element holds kept so,
  * a list item's missing first paragraph missing, and each list element a
  * list, so that what is copied from the editor is pasted as it was cut from
- * its blocks.
+ * its blocks. Of a text that holds no mention and no value reference, as a
+ * comment (chips false), the spans of the editor's are read as the text
+ * that they showed where they were copied, as @Elara or {gold}, with their
+ * marks, as another app's inline elements are, rather than as what they
+ * refer to, which the text it is pasted into has no name of.
  */
-export function cleanPastedHTML(html: string): string {
+export function cleanPastedHTML(html: string, chips = true): string {
   const source = new DOMParser().parseFromString(unstyled(html), "text/html");
   applyStyles(source);
   const slice = sliceOf(source);
-  const reader = new Reader(slice !== undefined, visibleWithin(source));
+  const reader = new Reader(slice !== undefined, visibleWithin(source), chips);
   reader.read(source.body, {
     marks: { bold: false, italic: false, strike: false, code: false },
     lists: 0,

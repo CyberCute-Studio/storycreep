@@ -31,7 +31,11 @@ import type {
   ClipboardReport,
 } from "@storycreep/shared/api";
 import { formatNumber } from "@storycreep/shared/i18n";
-import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useQuery,
+  useQueryClient,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   lazy,
@@ -62,6 +66,7 @@ import {
   usePlatform,
   useRegistry,
 } from "../commands/registry";
+import { commentCountsQuery } from "../comments/queries";
 import { boardPart } from "../document/doc";
 import {
   useBoard,
@@ -445,10 +450,28 @@ interface BoardCanvasProps {
    */
   focusConnection?: string;
   /**
+   * Whether the canvas, once it has opened on the node of focus, opens its
+   * inspector at its comments (plan item 74), as a link to a thread on the
+   * node, or on a connection that leaves it, asks, whatever the user's role.
+   */
+  focusComments?: boolean;
+  /**
+   * Whether the page holds what the user typed in a form of comments,
+   * unsent, as one of the inspector's or of the board's own under the
+   * canvas (plan item 74), which the page counts of the CommentDrafts that
+   * it gives them both, and waits for itself, as it does not take it away
+   * as it follows play mode's flow, as it does not the canvas's own
+   * (onHolding), so that play's panel keeps the focus where the flow is
+   * while the page waits for it.
+   */
+  drafting?: boolean;
+  /**
    * Tells whether the canvas has open what the user types in, which a page
-   * change would take away unsaved: the inspector, or the editor of a text,
-   * as it opens and closes, which the board's page waits for to close before
-   * it follows play mode's flow to another board's page (plan note N78).
+   * change would take away unsaved: the inspector of a board that the user
+   * may change, or the editor of a text, as it opens and closes, which the
+   * board's page waits for to close before it follows play mode's flow to
+   * another board's page (plan note N78), as it waits for the forms of
+   * comments that it counts (drafting, plan item 74).
    */
   onHolding?: (holding: boolean) => void;
 }
@@ -481,6 +504,8 @@ function BoardCanvasOf({
   editable = false,
   focus,
   focusConnection,
+  focusComments = false,
+  drafting = false,
   onHolding,
 }: BoardCanvasProps) {
   const { t } = useTranslation();
@@ -550,6 +575,20 @@ function BoardCanvasOf({
     setInspecting(true);
     inspectorHeading.current?.focus();
   }, []);
+  // Whether a link to a thread asks for the comments of what is selected
+  // (plan item 74), once the canvas has opened on its node: the inspector
+  // opens, and the section of its comments, once they are read, gives their
+  // heading the focus (Comments' asked), which answers the ask. The ask is
+  // of what the link selected alone: it goes as the selection changes, as
+  // once the user selects another node, or more, before the comments are
+  // read, so that the section of what is selected then takes no focus, and
+  // with the inspector, as once it is closed before, so that the inspector
+  // opened later takes none either.
+  const [commentsAsked, setCommentsAsked] = useState(false);
+  if (commentsAsked && !inspecting) {
+    setCommentsAsked(false);
+  }
+  const commentsShown = useCallback(() => setCommentsAsked(false), []);
   // The element whose text the canvas's editor shows over it, if any.
   const [editing, setEditing] = useState<string>();
   // The last bulk move, once it joined the history, which the canvas offers
@@ -601,10 +640,12 @@ function BoardCanvasOf({
       selection: (ids) => {
         setSelection(ids);
         setSelections((n) => n + 1);
+        setCommentsAsked(false);
       },
       connection: (id) => {
         setConnection(id);
         setSelections((n) => n + 1);
+        setCommentsAsked(false);
       },
       offer: (o) => setOffer(o),
       menu: (target, held) => {
@@ -913,8 +954,14 @@ function BoardCanvasOf({
   // followed, before, as once the project was archived meanwhile, whose
   // inspector would else come back once the archive is lifted.
   const opensInspector = useRef(false);
+  // A link to a thread opens the inspector at its comments, whatever the
+  // user's role, and on a sheet too, as the thread is what it asked for, as
+  // the link is followed, rather than as a later link on the page opens the
+  // node again while the address still says so.
+  const opensComments = useRef(focusComments);
   useLayoutEffect(() => {
     opensInspector.current = editable && docked;
+    opensComments.current = focusComments;
   });
   // A connection that the link names is selected only if it leaves the
   // node, as a link of a connection names the node that it leaves: one of a
@@ -922,7 +969,7 @@ function BoardCanvasOf({
   // has since reconnected, leaves the node selected, rather than select a
   // connection elsewhere on the board while the canvas shows the node.
   const openNode = useCallback(
-    (id: string, connection?: string) =>
+    (id: string, connection?: string, comments = false) =>
       controller.focus(id, () => {
         if (
           connection !== undefined &&
@@ -931,7 +978,11 @@ function BoardCanvasOf({
         ) {
           controller.selectConnection(connection);
         }
-        if (opensInspector.current) {
+        if (comments) {
+          // After the selection that the link made, which the ask is of.
+          setInspecting(true);
+          setCommentsAsked(true);
+        } else if (opensInspector.current) {
           setInspecting(true);
         }
       }),
@@ -939,7 +990,7 @@ function BoardCanvasOf({
   );
   useEffect(() => {
     if (focus !== undefined) {
-      openNode(focus, focusConnection);
+      openNode(focus, focusConnection, opensComments.current);
     }
   }, [openNode, focus, focusConnection]);
   // A link on the page to a node of this board that the address names
@@ -1380,7 +1431,8 @@ function BoardCanvasOf({
     // The keys that labels names, each a literal there, are the catalog's,
     // as extraction reads them. What labels read of the document is made
     // once for each state of it that they read, rather than for each card,
-    // with the targets of jumpers that lookup tells of.
+    // with the targets of jumpers that lookup tells of, and with the node's
+    // open threads of comments, which its badge counts (plan item 74).
     const labelsBy = (lookup: TargetLookup) => {
       let context: { view: LabelSources; c: LabelContext } | undefined;
       return (item: { node: BoardNode }) => {
@@ -1388,7 +1440,9 @@ function BoardCanvasOf({
         if (context?.view !== view) {
           context = { view, c: labelContext(view, boardId, t, lookup) };
         }
-        return labelsOf(item.node, context.c);
+        const labels = labelsOf(item.node, context.c);
+        const comments = controller.comments(item.node.id);
+        return comments > 0 ? { ...labels, comments } : labels;
       };
     };
     controller.labels = labelsBy(targets);
@@ -1411,6 +1465,27 @@ function BoardCanvasOf({
     sync();
     return doc.store.subscribe(sync);
   }, [controller, doc, boardId, t, sceneTags, targets, targetReads]);
+
+  // The open threads of comments of the board's nodes and connections (plan
+  // item 74), which the canvas marks, and its tree says, read again as
+  // operations apply (followed), but in a run of the benchmark, which
+  // measures the canvas alone: it neither reads them nor takes what another
+  // read of the page's, as the board's header's, holds of them.
+  const counts = useQuery({
+    ...commentCountsQuery(doc, boardId),
+    enabled: !benching,
+  }).data;
+  const commentCounts = benching ? undefined : counts;
+  useEffect(() => {
+    const open = new Map<string, number>();
+    for (const c of commentCounts ?? []) {
+      if (c.open > 0) {
+        open.set(c.target_id, c.open);
+      }
+    }
+    controller.comments = (id) => open.get(id) ?? 0;
+    controller.recount();
+  }, [controller, commentCounts]);
 
   // The board's nodes and connections, read once, first by the read that
   // the page's loader started (read), whose failure the canvas says, rather
@@ -1611,7 +1686,12 @@ function BoardCanvasOf({
   // What the user types in on the canvas, the inspector or the editor of a
   // text, open, which the board's page does not take away unsaved as it
   // follows play's flow to another board's page, but waits for to close
-  // (onHolding), while the panel keeps the focus where the flow is.
+  // (onHolding), while the panel keeps the focus where the flow is. The
+  // inspector of a board that the user may not change, as a commenter's or
+  // a viewer's, shows the comments of what is selected alone, which hold
+  // what was typed while one of their forms does, as the board's own under
+  // the canvas do, which the page counts and waits for itself (drafting,
+  // plan item 74), and which the panel waits for too.
   const holding = (inspecting && editable) || editing !== undefined;
   useEffect(() => {
     onHolding?.(holding);
@@ -1621,8 +1701,7 @@ function BoardCanvasOf({
   // over the canvas, not while the editor of a text is open, which it would
   // else hold inert under it. The palette's commands that go to what the
   // panel shows are of the panel shown alone.
-  const playShown =
-    playing && !(inspecting && editable) && (docked || editing === undefined);
+  const playShown = playing && !inspecting && (docked || editing === undefined);
   // The name of its type, which the toolbar says with its title as it says
   // that it is selected: none, of a type that the page does not know.
   const onlyType = onlyNode === undefined ? "" : typeOf(onlyNode, t);
@@ -1898,10 +1977,12 @@ function BoardCanvasOf({
             ...ofController("canvas.delete"),
             enabled: deletable,
           },
-          "canvas.inspector": { run: () => setInspecting((open) => !open) },
           "canvas.snap": { run: toggleSnap },
         }
       : {}),
+    // The inspector, of which a user who may not change the board sees the
+    // comments of what is selected alone (plan item 74).
+    "canvas.inspector": { run: () => setInspecting((open) => !open) },
   };
   useCommandHandlers("page", canvasHandlers);
   // Each command of the page's but those of whileDragging runs only while
@@ -2103,6 +2184,19 @@ function BoardCanvasOf({
         >
           {t("canvas.minimap")}
         </Button>
+        {/* The inspector of a board that the user may not change, as a
+        commenter's or a viewer's, shows the comments of what is selected
+        alone (plan item 74); an editor's button is among the edits. */}
+        {!editable && (
+          <Button
+            ref={inspectorButton}
+            aria-pressed={inspecting}
+            onClick={() => setInspecting((open) => !open)}
+            className={pressedClass}
+          >
+            {t("canvas.inspector")}
+          </Button>
+        )}
         {settingsId !== undefined && (
           // The board's settings, under the canvas, which neither a swipe
           // nor the wheel scrolls the page to over the canvas, which keeps
@@ -2321,11 +2415,7 @@ function BoardCanvasOf({
           </p>
         )}
       </fieldset>
-      <div
-        className={
-          (inspecting && editable) || playing ? besidePanel : undefined
-        }
-      >
+      <div className={inspecting || playing ? besidePanel : undefined}>
         <div className="relative min-w-0">
           <div
             ref={hostRef}
@@ -2713,9 +2803,10 @@ function BoardCanvasOf({
             />
           )}
         </div>
-        {inspecting && editable && (
+        {inspecting && (
           <Inspector
             projectId={projectId}
+            editable={editable}
             selection={selection}
             connection={connection}
             actions={actions}
@@ -2734,6 +2825,8 @@ function BoardCanvasOf({
             onClose={() => setInspecting(false)}
             returnFocus={() => inspectorButton.current}
             headingRef={inspectorHeading}
+            commentsAsked={commentsAsked}
+            onCommentsShown={commentsShown}
           />
         )}
         {/* Play mode's panel, while play is under way, where the inspector,
@@ -2753,7 +2846,7 @@ function BoardCanvasOf({
             session={session}
             returnFocus={() => hostRef.current}
             focusOnOpen={editing === undefined}
-            holding={holding}
+            holding={holding || drafting}
             editable={editable}
           />
         )}

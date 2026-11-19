@@ -1,6 +1,7 @@
 // Package searchtest checks the index of project search (package search, PRD
 // FR-PROJ-03) against a recomputation of it from scratch: from what every
-// node, connection, variable, and component of a project holds, as it is
+// node, connection, variable, component, and comment of a project holds, as
+// it is
 // stored, rather than from what the batches that wrote them changed, which
 // is how the pipeline keeps the index.
 package searchtest
@@ -28,8 +29,8 @@ type Querier interface {
 // recomputation of them from scratch gives (search.NewDocument), each
 // document that the index lacks, or holds otherwise, as "lacks …", and each
 // that it has beyond them, as "has …", or nothing if they are the same: a
-// document of the current version of each node, connection, variable, and
-// component of the project, in the trash or not.
+// document of the current version of each node, connection, variable,
+// component, and comment of the project, in the trash or not.
 func Drift(ctx context.Context, conn Querier, project ids.UUID) ([]string, error) {
 	rows, err := conn.Query(ctx, `SELECT 'node', id, title, text, '', '', '{}'::text[] FROM node
 			WHERE project_id = $1
@@ -44,7 +45,9 @@ func Drift(ctx context.Context, conn Querier, project ids.UUID) ([]string, error
 			WHERE a.component_id = m.id AND d.deleted_at IS NULL AND d.type IN ('string', 'text', 'enum')
 				AND jsonb_typeof(a.value) = 'string'
 			ORDER BY d.id)
-		FROM component m WHERE m.project_id = $1`, project)
+		FROM component m WHERE m.project_id = $1
+		UNION ALL
+		SELECT 'comment', id, '', body, '', '', '{}' FROM comment WHERE project_id = $1`, project)
 	if err != nil {
 		return nil, err
 	}

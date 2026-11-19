@@ -6,6 +6,7 @@ import {
   type Folder,
   NetworkError,
   type Node,
+  type RichTextDoc,
   type UndoCommandBody,
   type Variable,
 } from "@storycreep/shared/api";
@@ -1005,6 +1006,57 @@ describe("the page's own batches", () => {
     });
   });
 
+  // A comment is no part of the draft, whose batches change none of it
+  // (plan item 74), so what a batch of one changes is what it expects.
+  it("moves what a batch of a comment expects past the page's batch of the same comment that it was queued behind, though the document holds no comment", async () => {
+    const first = Promise.withResolvers<CommandResultBody>();
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        first.promise,
+        applied(3, [{ id: "cmt_a", rev: 5 }]),
+      ),
+    });
+    const { doc } = await open();
+    const body: RichTextDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Lit." }] },
+      ],
+    };
+    // The edit of a thread's first comment, and its resolution, which the
+    // page made on top of the revision that the list showed, before the
+    // edit's answer came.
+    const edit = doc.send(
+      [
+        {
+          type: "comment.edit",
+          payload: { id: "cmt_a", body },
+          expected_rev: { cmt_a: 3 },
+        },
+      ],
+      { history: false },
+    );
+    const resolve = doc.send(
+      [
+        {
+          type: "comment.resolve",
+          payload: { id: "cmt_a" },
+          expected_rev: { cmt_a: 3 },
+        },
+      ],
+      { history: false },
+    );
+    await vi.waitFor(() => expect(server.batches).toHaveLength(1));
+    first.resolve(applied(2, [{ id: "cmt_a", rev: 4 }]));
+    await edit;
+    await resolve;
+    expect(server.batches.map((batch) => batch[0].expected_rev)).toEqual([
+      { cmt_a: 3 },
+      { cmt_a: 4 },
+    ]);
+  });
+
   it("moves what a batch expects past the page's own batch that applied on top of that revision, as a dialog's that opened before the answer to it came, rather than be refused for the page's own change", async () => {
     const server = serve({
       ...tree([board("bd_a", "Harbour")]),
@@ -1747,6 +1799,64 @@ describe("undo and redo (FR-EDIT-08)", () => {
       name: "Harbour at night",
       rev: 6,
     });
+    expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
+  });
+
+  // A comment's actions are no steps of the page's undo (plan item 74): a
+  // batch of them, sent outside the history, leaves its undo and its redo
+  // as they were, whose redo then redoes what it did before, and resolves
+  // with its own undo, which the comment offers in its place.
+  it("sends a batch outside the history, as of a comment, which leaves the steps to undo and to redo as they were", async () => {
+    const deleteBack = {
+      type: "comment.restore",
+      payload: { id: "cmt_a" },
+      expected_rev: { cmt_a: 2 },
+    };
+    const server = serve({
+      ...tree([board("bd_a", "Harbour")]),
+      applyCommands: inTurn(
+        applied(
+          2,
+          [{ id: "bd_a", rev: 4 }],
+          [renameBack("bd_a", "Harbour", 4)],
+        ),
+        applied(
+          3,
+          [{ id: "bd_a", rev: 5 }],
+          [renameBack("bd_a", "Harbour at night", 5)],
+        ),
+        applied(4, [{ id: "cmt_a", rev: 2 }], [deleteBack]),
+        applied(
+          5,
+          [{ id: "bd_a", rev: 6 }],
+          [renameBack("bd_a", "Harbour", 6)],
+        ),
+      ),
+    });
+    const { doc } = await open();
+    await doc.send([rename("bd_a", "Harbour at night", 3)]);
+    await doc.undo();
+    expect(doc.store.getState()).toMatchObject({ undoable: 0, redoable: 1 });
+    const version = doc.store.getState().historyVersion;
+    const answer = await doc.send(
+      [{ type: "comment.delete", payload: { id: "cmt_a" } }],
+      { history: false },
+    );
+    expect(answer.undo).toEqual([deleteBack]);
+    expect(doc.store.getState()).toMatchObject({
+      undoable: 0,
+      redoable: 1,
+      historyVersion: version,
+    });
+    // The redo is still the rename's, which the comment's batch kept.
+    await doc.redo();
+    expect(server.batches[3]).toEqual([
+      {
+        ...renameBack("bd_a", "Harbour at night", 5),
+        command_id: expect.any(String),
+      },
+    ]);
+    expect(shown(doc, "bd_a")).toMatchObject({ name: "Harbour at night" });
     expect(doc.store.getState()).toMatchObject({ undoable: 1, redoable: 0 });
   });
 

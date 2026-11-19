@@ -35,6 +35,8 @@ import manifestSchema from "../../../../schema/published/v1/storycreep.schema.js
 import variablesSchema from "../../../../schema/published/v1/variables.schema.json" with {
   type: "json",
 };
+import { applyCommands } from "../document/apply";
+import { Draft } from "../document/doc";
 import { testConnection, testNode } from "../test/canvas";
 import {
   draftOf,
@@ -432,6 +434,71 @@ describe("a draft with what no snapshot holds", () => {
       "cn_00000000000000000000000012",
       "cn_00000000000000000000000013",
     ]);
+  });
+});
+
+// A draft whose project has threaded comments (plan item 74), on a node, a
+// connection, the board, and a variable, with a reply, an edit, and a
+// resolve, of a word that no other text of the draft has: the operations
+// of the comments' commands, as the page's own batches and other sessions'
+// bring them, apply to the project's document by its appliers.
+describe("a draft whose project has comments", () => {
+  // Verifies: FR-COMMENT-01/AC3
+  test("is projected without a comment's text or ID in any file", async () => {
+    const word = "Zanzibar";
+    const ids = [
+      "cmt_00000000000000000000000031",
+      "cmt_00000000000000000000000032",
+      "cmt_00000000000000000000000033",
+      "cmt_00000000000000000000000034",
+      "cmt_00000000000000000000000035",
+    ];
+    const body = (n: number) => richText(text(`${word} ${n}`));
+    const draft = new Draft(brokenDraft, now.toISOString());
+    applyCommands(draft, [
+      {
+        type: "comment.create",
+        payload: {
+          id: ids[0],
+          target: "nd_00000000000000000000000006",
+          body: body(0),
+        },
+      },
+      {
+        type: "comment.create",
+        payload: {
+          id: ids[1],
+          target: "cn_00000000000000000000000012",
+          body: body(1),
+        },
+      },
+      {
+        type: "comment.create",
+        payload: { id: ids[2], target: intro.id, body: body(2) },
+      },
+      {
+        type: "comment.create",
+        payload: { id: ids[3], target: gold.id, body: body(3) },
+      },
+      {
+        type: "comment.create",
+        payload: { id: ids[4], parent_id: ids[0], body: body(4) },
+      },
+      { type: "comment.edit", payload: { id: ids[4], body: body(5) } },
+      { type: "comment.resolve", payload: { id: ids[0] } },
+      { type: "comment.delete", payload: { id: ids[3] } },
+      { type: "comment.restore", payload: { id: ids[3] } },
+    ]);
+    const commented = draft.finish(brokenDraft.seq + 1);
+    const { files } = await projectDraft(commented, { now });
+    for (const [path, bytes] of files) {
+      const written = decoder.decode(bytes);
+      expect(written, path).not.toContain(word);
+      expect(written.toLowerCase(), path).not.toContain("cmt_");
+    }
+    // The comments change nothing of the snapshot: its files are those of
+    // the draft without them.
+    expect(files).toEqual((await projectDraft(brokenDraft, { now })).files);
   });
 });
 

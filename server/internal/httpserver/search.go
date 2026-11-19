@@ -16,7 +16,7 @@ import (
 type searchInput struct {
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Query     string `query:"q" required:"true" minLength:"1" maxLength:"200" doc:"What to search for, of 1 to 200 characters, without control characters: each of its words must start a word of a result's title or body, compared without regard to case or diacritics, so that ela tru finds Elara trusts and zlut finds Žluťoučký. A query without a word, as one of punctuation alone, finds nothing."`
-	Type      string `query:"type" enum:"node,connection,variable,component" doc:"A kind of entity: only the results of that kind are listed. Without it, those of every kind."`
+	Type      string `query:"type" enum:"node,connection,variable,component,comment" doc:"A kind of entity: only the results of that kind are listed. Without it, those of every kind."`
 	api.PageParams
 }
 
@@ -42,16 +42,18 @@ func registerSearch(m *api.Mux, searches *search.Service) {
 		Method:      http.MethodGet,
 		Path:        "/api/v1/projects/{project_id}/search",
 		Summary:     "Search a project",
-		Description: "Lists the project's nodes, connections, variables, and components that are not in its trash " +
-			"whose titles or bodies hold a word that starts with each word of the query, compared without regard " +
-			"to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a variable's " +
-			"key and description, and a component's name, key, description, and values of text, of the types " +
-			"string, text, and enum. A text is searched as its author wrote it, without what its value " +
-			"references show or its mentions name, which the usage lists find (GET " +
+		Description: "Lists the project's nodes, connections, variables, components, and comments that are not in " +
+			"its trash whose titles or bodies hold a word that starts with each word of the query, compared without " +
+			"regard to case or diacritics (PRD FR-PROJ-03): a node's title and text, a connection's label, a " +
+			"variable's key and description, a component's name, key, description, and values of text, of the " +
+			"types string, text, and enum, and a comment's body, of a comment that is not deleted, of a thread " +
+			"whose target is not in the trash (FR-COMMENT-01). A text is searched as its author wrote it, without " +
+			"what its value references show or its mentions name, which the usage lists find (GET " +
 			"/api/v1/projects/{project_id}/variables/{variable_id}/usages and its twin for components), and a " +
-			"body as far as its first 100,000 characters. Each result names its kind, its board and its node, by " +
-			"which a client opens it, and its title and a snippet of its body's first 10,000 characters, each in " +
-			"parts, with the words that match a word of the query marked (AC2). The results are in the order of " +
+			"body as far as its first 100,000 characters. Each result names its kind, its board and its node, and a " +
+			"comment its thread's target, by which a client opens it, and its title and a snippet of its body's " +
+			"first 10,000 characters, each in parts, with the words that match a word of the query marked (AC2). " +
+			"The results are in the order of " +
 			"how well each word of the query matches them, a match in a title above one in a body, then of their " +
 			"kinds and IDs." +
 			projectNotFoundDoc + tokenNotFoundDoc + " A query that holds a control character is answered with 422 " +

@@ -1,5 +1,5 @@
 import type { Board } from "@storycreep/shared/api";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
@@ -15,6 +15,8 @@ import { BoardCanvas, type CanvasOptions } from "../canvas/BoardCanvas";
 import type { RendererKind } from "../canvas/engine";
 import type { Rect } from "../canvas/viewport";
 import { useCommandHandlers } from "../commands/registry";
+import { commentCountsQuery, openOf } from "../comments/queries";
+import { CommentDrafts, Comments, useCommentDrafts } from "../comments/Threads";
 import {
   ConflictNotice,
   changedOf,
@@ -37,6 +39,7 @@ import {
   readBoard,
 } from "../project/queries";
 import { ScriptView } from "../script/ScriptView";
+import { followInPage } from "../shell/focus";
 import { canonicalId, found } from "../shell/found";
 import { NotFound } from "../shell/NotFound";
 import { Button, buttonClass, currentClass } from "../ui/Button";
@@ -54,7 +57,9 @@ import { useDocumentTitle } from "../ui/title";
  * script view in place of its canvas (plan item 68); the node that a link
  * opens the canvas on (plan item 61), as a usage list's, or whose entry the
  * script view shows, and the connection leaving it that the canvas then
- * selects, as a link to a finding of the connection (plan item 70); and
+ * selects, as a link to a finding of the connection (plan item 70); the
+ * comments that a link to a thread opens (plan item 74), the node's or the
+ * connection's in the canvas's inspector, or else the board's own; and
  * what the canvas's benchmark and the reference
  * tablet's checklist read (docs/canvas-checklist.md): the renderer to use,
  * whatever the browser's would be, and a scripted run of the canvas, of how
@@ -64,12 +69,16 @@ export interface BoardSearch {
   view?: "script";
   node?: string;
   connection?: string;
+  comments?: true;
   renderer?: RendererKind;
   bench?: "pan" | "panzoom" | "load" | "edit";
   seconds?: number;
   area?: string;
   warm?: number | "pass";
 }
+
+/** The ID of the heading of the board's own comments, which the header's link, and a link to them, bring into view. */
+const boardCommentsId = "board-comments";
 
 /** The longest run that the benchmark makes, in seconds: an hour. */
 const maxBenchSeconds = 3600;
@@ -110,6 +119,9 @@ export const Route = createFileRoute("/projects/$projectId/boards/$boardId")({
       if (typeof search.connection === "string" && search.connection !== "") {
         out.connection = canonicalId("connection", search.connection);
       }
+    }
+    if (search.comments === true || search.comments === "true") {
+      out.comments = true;
     }
     if (
       search.renderer === "webgl" ||
@@ -283,6 +295,25 @@ function BoardContent({
     [search.renderer, search.bench, search.seconds, search.area, search.warm],
   );
   const script = search.view === "script";
+  // The board's own threads of comments under the canvas, and how many of
+  // them are open, which its header's link to them says (plan item 74), but
+  // in a run of the benchmark, which measures the canvas alone
+  // (BoardCanvas), and so shows and reads no comments, as their reads again
+  // as each of its edits applies (followed) would land in its frames; and
+  // whether a link to them, without a node to open, asks for them, whose
+  // heading takes the focus once they are read (Comments' asked), in the
+  // frame after, once the canvas above them has taken the window's height
+  // below where it starts, which it measures as it is laid out and takes in
+  // a render after the page's first effects have run.
+  const benching = search.bench !== undefined;
+  const openThreads = openOf(
+    useQuery({
+      ...commentCountsQuery(doc, board.id),
+      enabled: !benching,
+    }).data,
+    board.id,
+  );
+  const toBoardComments = search.comments === true && search.node === undefined;
   // The loader's read, which the view that mounts takes as its first, as
   // the canvas and the script view do, but once the document holds the
   // board's content of a read since, as Try again's in one view after the
@@ -320,8 +351,10 @@ function BoardContent({
   // the snapshot still holds, is not opened, as its page is none: the page
   // shown stays, and its panel takes the turn (followsFlow). While the
   // canvas has open what the user types in, the inspector or the editor of
-  // a text, which the page change would take away unsaved, the page waits
-  // for it to close, and then follows the flow to where it is by then
+  // a text, which the page change would take away unsaved, or a form of the
+  // board's comments, its own or the inspector's, holds what was typed in
+  // it, unsent (CommentDrafts), the page waits for it to close, or to be
+  // sent or emptied, and then follows the flow to where it is by then
   // (BoardCanvas's onHolding).
   const session = playSessionOf(doc);
   const playTurn = useStore(session.store, (s) =>
@@ -331,9 +364,15 @@ function BoardContent({
     s.status === "playing" ? s.flow.board : "",
   );
   const [holding, setHolding] = useState(false);
+  // How many forms of the board's comments, its own under the canvas and
+  // the canvas's inspector's, hold what the user typed, unsent
+  // (CommentDrafts), which the page counts and waits for itself, as it
+  // waits for the canvas's, since the script view has no canvas to tell it
+  // of them, and tells the canvas of (drafting).
+  const [drafts, holdDraft] = useCommentDrafts();
   const seenTurn = useRef(playTurn);
   useEffect(() => {
-    if (playTurn === seenTurn.current || holding) {
+    if (playTurn === seenTurn.current || holding || drafts > 0) {
       return;
     }
     seenTurn.current = playTurn;
@@ -345,7 +384,16 @@ function BoardContent({
           prev.renderer === undefined ? {} : { renderer: prev.renderer },
       });
     }
-  }, [playTurn, playBoard, board.id, navigate, projectId, doc, holding]);
+  }, [
+    playTurn,
+    playBoard,
+    board.id,
+    navigate,
+    projectId,
+    doc,
+    holding,
+    drafts,
+  ]);
   return (
     <div className="space-y-6">
       {/* The views' switch is beside the board's name, rather than under
@@ -367,55 +415,85 @@ function BoardContent({
           </h1>
           <BoardBadge projectId={projectId} boardId={board.id} />
         </div>
-        <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
-          {/* The router marks the link of the view shown current, as it
-          matches the page's search: the canvas's names no view, which its
-          link says it does not (explicitUndefined), as else every search
-          would match it, the script view's too. */}
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: board.id }}
-            search={{ view: undefined }}
-            activeOptions={{ explicitUndefined: true }}
-            className={`${buttonClass()} ${currentClass}`}
-          >
-            {t("board.view_canvas")}
-          </Link>
-          <Link
-            to="/projects/$projectId/boards/$boardId"
-            params={{ projectId, boardId: board.id }}
-            search={{ view: "script" }}
-            className={`${buttonClass()} ${currentClass}`}
-          >
-            {t("board.view_script")}
-          </Link>
-        </nav>
+        <div className="flex flex-wrap gap-2">
+          {/* The board's own comments, under the canvas, as its settings
+          are, which the link brings into view with the focus on their
+          heading, with how many of their threads are open (plan item 74),
+          but in a run of the benchmark, which shows none. */}
+          {!benching && (
+            <a
+              href={`#${boardCommentsId}`}
+              onClick={(e) => followInPage(e, boardCommentsId)}
+              className={buttonClass()}
+            >
+              {t("board.comments_link", { count: openThreads })}
+            </a>
+          )}
+          <nav aria-label={t("board.views")} className="flex flex-wrap gap-2">
+            {/* The router marks the link of the view shown current, as it
+            matches the page's search: the canvas's names no view, which its
+            link says it does not (explicitUndefined), as else every search
+            would match it, the script view's too. */}
+            <Link
+              to="/projects/$projectId/boards/$boardId"
+              params={{ projectId, boardId: board.id }}
+              search={{ view: undefined }}
+              activeOptions={{ explicitUndefined: true }}
+              className={`${buttonClass()} ${currentClass}`}
+            >
+              {t("board.view_canvas")}
+            </Link>
+            <Link
+              to="/projects/$projectId/boards/$boardId"
+              params={{ projectId, boardId: board.id }}
+              search={{ view: "script" }}
+              className={`${buttonClass()} ${currentClass}`}
+            >
+              {t("board.view_script")}
+            </Link>
+          </nav>
+        </div>
       </div>
-      {script ? (
-        <ScriptView
-          projectId={projectId}
-          board={board}
-          read={firstRead}
-          editable={editable}
-          focus={search.node}
-        />
-      ) : (
-        <BoardCanvas
-          projectId={projectId}
-          boardId={board.id}
-          boardName={board.name}
-          settingsId="board-settings"
-          read={firstRead}
-          options={options}
-          initial={last.initial}
-          onView={last.onView}
-          workspaceId={project.workspace_id}
-          editable={editable}
-          focus={search.node}
-          focusConnection={search.connection}
-          onHolding={setHolding}
-        />
-      )}
+      <CommentDrafts.Provider value={holdDraft}>
+        {script ? (
+          <ScriptView
+            projectId={projectId}
+            board={board}
+            read={firstRead}
+            editable={editable}
+            focus={search.node}
+          />
+        ) : (
+          <BoardCanvas
+            projectId={projectId}
+            boardId={board.id}
+            boardName={board.name}
+            settingsId="board-settings"
+            read={firstRead}
+            options={options}
+            initial={last.initial}
+            onView={last.onView}
+            workspaceId={project.workspace_id}
+            editable={editable}
+            focus={search.node}
+            focusConnection={search.connection}
+            focusComments={search.comments === true}
+            drafting={drafts > 0}
+            onHolding={setHolding}
+          />
+        )}
+        {!benching && (
+          <div className="mx-auto max-w-3xl">
+            <Comments
+              projectId={projectId}
+              target={{ type: "board", id: board.id }}
+              headingId={boardCommentsId}
+              level={2}
+              asked={toBoardComments}
+            />
+          </div>
+        )}
+      </CommentDrafts.Provider>
       <section
         aria-labelledby="board-settings"
         className="mx-auto max-w-3xl space-y-6"

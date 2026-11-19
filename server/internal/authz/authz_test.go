@@ -55,6 +55,8 @@ func TestMatrix(t *testing.T) {
 		EditContent: {y, y, y, n, n},
 		// Manage variables, components, component types (P).
 		ManageVariablesAndComponents: {y, y, y, n, n},
+		// Create/resolve comments (P).
+		Comment: {y, y, y, y, n},
 		// Publish a snapshot (P), whose editor's ✓ CheckPublish raises with
 		// publish_min_role.
 		PublishSnapshot: {y, y, y, n, n},
@@ -67,7 +69,7 @@ func TestMatrix(t *testing.T) {
 	}
 	scopes := map[Operation]Scope{ReadProject: Project, UploadAssets: Project, ChangeProjectSettings: Project,
 		ManageBoards: Project, ManageFolders: Project, EditContent: Project, ManageVariablesAndComponents: Project,
-		PublishSnapshot: Project, ManageOwnProjectTokens: Project}
+		PublishSnapshot: Project, ManageOwnProjectTokens: Project, Comment: Project}
 	for _, op := range Operations() {
 		row, ok := want[op]
 		if !ok {

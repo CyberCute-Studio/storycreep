@@ -87,6 +87,12 @@ const (
 	// components, component types", FR-VAR-01), which the components and
 	// their types (plan item 34) join.
 	ManageVariablesAndComponents Operation = "project.variables"
+	// Comment is starting a project's threads of comments, replying to
+	// them, and resolving and unresolving them, and editing, deleting, and
+	// restoring one's own comments (P, "Create/resolve comments",
+	// FR-COMMENT-01), which a commenter may do too: package comment refuses
+	// a change of another user's comment for its author, whatever the role.
+	Comment Operation = "project.comments"
 	// PublishSnapshot is publishing a snapshot of a project (P, "Publish a
 	// snapshot", FR-SNAP-01), which an editor may do unless the project's
 	// publish_min_role is admin (FR-SNAP-01 AC3), as CheckPublish says, and
@@ -166,6 +172,7 @@ var matrix = map[Operation]rule{
 	ManageFolders:                {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	EditContent:                  {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageVariablesAndComponents: {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
+	Comment:                      {scope: Project, least: role.Commenter, denied: ErrInsufficientRole},
 	PublishSnapshot:              {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	ManageOwnProjectTokens:       {scope: Project, least: role.Editor, denied: ErrInsufficientRole},
 	// The workspace's own tokens and the others' are rows of their own.

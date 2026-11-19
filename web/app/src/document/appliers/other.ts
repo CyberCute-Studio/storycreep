@@ -1,19 +1,20 @@
-// The appliers of the clipboard's paste (PRD FR-EDIT-07), of the
-// validation's mutes (FR-VAL-02), and of the saved play states
-// (FR-PLAY-05). A paste's nodes, outputs, and connections are the
-// clipboard's, but what their texts, speakers, covers, targets, and
-// expressions become depends on what the destination's names resolve to, the
-// trash among them, and on what the server compiles, so the applier predicts
-// none of them: the store reads the board's content again, which brings them
-// all in a few lists, where an unsure prediction of each of a thousand nodes
-// and their connections would have the store read each apart. A mute is in
-// no entity's body, but changes the revision of the entity whose finding it
-// mutes, unless it changes nothing, as a mute with the reason that the
-// finding has, which the store then sets back, as the operation's revisions
-// do not name it. A play state is no part of the document: play mode reads
-// the project's list of them as a query of its own, which the store reads
-// again as an operation of them applies (followed), so their appliers change
-// nothing.
+// The appliers of the clipboard's paste (PRD FR-EDIT-07), of the validation's
+// mutes (FR-VAL-02), of the saved play states (FR-PLAY-05), and of the threaded
+// comments (FR-COMMENT-01). A paste's nodes, outputs, and connections are the
+// clipboard's, but what their texts, speakers, covers, targets, and expressions
+// become depends on what the destination's names resolve to, the trash among
+// them, and on what the server compiles, so the applier predicts none of them:
+// the store reads the board's content again, which brings them all in a few
+// lists, where an unsure prediction of each of a thousand nodes and their
+// connections would have the store read each apart. A mute is in no entity's
+// body, but changes the revision of the entity whose finding it mutes, unless
+// it changes nothing, as a mute with the reason that the finding has, which the
+// store then sets back, as the operation's revisions do not name it. A play
+// state is no part of the document: play mode reads the project's list of them
+// as a query of its own, which the store reads again as an operation of them
+// applies (followed), so their appliers change nothing, and neither is a
+// comment, which the server reads to the page as the project's threads, so that
+// its appliers change nothing either.
 
 import { type Appliers, canonical } from "../apply";
 import { boardPart, type Draft, nodeOfOutput, placeOf } from "../doc";
@@ -27,9 +28,15 @@ type Types =
   | "play_state.rename"
   | "play_state.set_state"
   | "play_state.delete"
-  | "play_state.restore";
+  | "play_state.restore"
+  | "comment.create"
+  | "comment.edit"
+  | "comment.delete"
+  | "comment.restore"
+  | "comment.resolve"
+  | "comment.unresolve";
 
-/** Changes nothing of the document, which holds no play state. */
+/** Changes nothing of the document, which holds no play state and no comment. */
 function none(): void {}
 
 /** Changes the entity of entityId, whose finding a mute changes, as the server changes it: its revision alone. */
@@ -104,4 +111,10 @@ export const otherAppliers: Appliers<Types> = {
   "play_state.set_state": none,
   "play_state.delete": none,
   "play_state.restore": none,
+  "comment.create": none,
+  "comment.edit": none,
+  "comment.delete": none,
+  "comment.restore": none,
+  "comment.resolve": none,
+  "comment.unresolve": none,
 };
