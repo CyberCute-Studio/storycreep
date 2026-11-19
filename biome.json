@@ -13,6 +13,7 @@
       "!schema/api/v1/openapi.json",
       "!schema/**/*.schema.json",
       "!schema/conformance/**/*.json",
+      "!server/internal/serializer/testdata",
       "!web/app/src/richtext/testdata"
     ]
   },

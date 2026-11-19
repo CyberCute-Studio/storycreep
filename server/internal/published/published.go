@@ -15,7 +15,7 @@
 // variable's default or a node, an empty text or label, which a file leaves
 // out, or an AST that expr.Decode does not read back as its context's, as one
 // whose names are not resolved. They do not lay the JSON out as §6.2 says,
-// sorted and indented, which the serializer does (plan item 76), and Decode
+// sorted and indented, which package serializer does (Layout), and Decode
 // reads a file, refusing what its doc lists, as null anywhere and an unknown
 // value of a type, kind, or op field, and ignoring a key that it does not
 // know (§6.4), but it is no validator of the schemas.
