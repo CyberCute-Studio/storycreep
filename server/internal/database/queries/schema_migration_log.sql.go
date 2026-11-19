@@ -33,8 +33,9 @@ type InsertSchemaMigrationStepParams struct {
 // workspace reads.
 // InsertSchemaMigrationStep logs a step of the migration of a snapshot's
 // files, and does nothing where the snapshot's step from the version is
-// logged already, which reported the same, since a step is a pure function of
-// the files.
+// logged already: the migration's output, stored with it, holds no files of
+// that version to migrate again (PRD §6.4), so only a repeated log of the same
+// steps finds one.
 func (q *Queries) InsertSchemaMigrationStep(ctx context.Context, arg InsertSchemaMigrationStepParams) error {
 	_, err := q.db.Exec(ctx, insertSchemaMigrationStep,
 		arg.ID,

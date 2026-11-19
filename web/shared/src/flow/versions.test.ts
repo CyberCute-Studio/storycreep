@@ -105,9 +105,7 @@ describe("the versions that a build reads", () => {
         }
       }
     };
-    for (const pkg of readdirSync(join(root, "web"))) {
-      walk(join(root, "web", pkg));
-    }
+    walk(join(root, "web"));
     expect(importers).toEqual([]);
   });
 });

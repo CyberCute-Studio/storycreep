@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -101,33 +100,13 @@ func Relabel(f Files, n int) (Files, error) {
 // note, and moment among it, as it was: a snapshot rendered at another version
 // is the same release, of the same moment.
 func Seal(f Files) (Files, error) {
-	m, err := Object(f, published.ManifestPath)
+	m, listed, snapshot, err := manifestOf(f)
 	if err != nil {
 		return nil, err
 	}
-	listed, ok := m["files"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("schemaversion: %s has no files", published.ManifestPath)
-	}
-	hashes := make(map[string]published.Hash, len(f))
-	for path, data := range f {
-		if path == published.ManifestPath {
-			continue
-		}
-		if _, ok := listed[path]; !ok {
-			return nil, fmt.Errorf("schemaversion: %s does not list %s", published.ManifestPath, path)
-		}
-		hashes[path] = published.HashOf(data)
-	}
-	for path := range listed {
-		if _, ok := f[path]; !ok {
-			return nil, fmt.Errorf("schemaversion: %s lists %s, which the snapshot does not have", published.ManifestPath,
-				path)
-		}
-	}
-	snapshot, ok := m["snapshot"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("schemaversion: %s has no snapshot", published.ManifestPath)
+	hashes, err := hashesOf(f, listed)
+	if err != nil {
+		return nil, err
 	}
 	files := make(map[string]any, len(hashes))
 	for path, h := range hashes {
@@ -145,29 +124,64 @@ func Seal(f Files) (Files, error) {
 // Sealed checks that the manifest of f lists exactly f's other files, each
 // with the hash of its bytes, and that its snapshot's content hash is theirs
 // (§7.3), as Seal leaves them, and as a consumer checks them, whatever the
-// version, of a manifest that holds them as version 1's does.
+// version, of a manifest that holds them as version 1's does. It names the
+// first file, in the order of their paths, that the manifest does not list
+// so.
 func Sealed(f Files) error {
-	sealed, err := Seal(f)
+	_, listed, snapshot, err := manifestOf(f)
 	if err != nil {
 		return err
 	}
-	m, err := Object(f, published.ManifestPath)
+	hashes, err := hashesOf(f, listed)
 	if err != nil {
 		return err
 	}
-	want, err := Object(sealed, published.ManifestPath)
-	if err != nil {
-		return err
+	for _, path := range slices.Sorted(maps.Keys(hashes)) {
+		if listed[path] != string(hashes[path]) {
+			return fmt.Errorf("schemaversion: %s does not list %s with the hash of its bytes", published.ManifestPath,
+				path)
+		}
 	}
-	if !reflect.DeepEqual(m["files"], want["files"]) {
-		return fmt.Errorf("schemaversion: %s does not list each file with the hash of its bytes",
-			published.ManifestPath)
-	}
-	got, _ := m["snapshot"].(map[string]any)
-	sealedSnapshot, _ := want["snapshot"].(map[string]any)
-	if got["contentHash"] != sealedSnapshot["contentHash"] {
-		return fmt.Errorf("schemaversion: the snapshot's content hash is %v, and its files' %v", got["contentHash"],
-			sealedSnapshot["contentHash"])
+	if got, want := snapshot["contentHash"], string(published.ContentHash(hashes)); got != want {
+		return fmt.Errorf("schemaversion: the snapshot's content hash is %v, and its files' %v", got, want)
 	}
 	return nil
+}
+
+// manifestOf returns the manifest of f as a tree, its files, and its
+// snapshot, or fails where it has none of them.
+func manifestOf(f Files) (m, listed, snapshot map[string]any, err error) {
+	if m, err = Object(f, published.ManifestPath); err != nil {
+		return nil, nil, nil, err
+	}
+	if listed, _ = m["files"].(map[string]any); listed == nil {
+		return nil, nil, nil, fmt.Errorf("schemaversion: %s has no files", published.ManifestPath)
+	}
+	if snapshot, _ = m["snapshot"].(map[string]any); snapshot == nil {
+		return nil, nil, nil, fmt.Errorf("schemaversion: %s has no snapshot", published.ManifestPath)
+	}
+	return m, listed, snapshot, nil
+}
+
+// hashesOf returns the hash of each of f's files but the manifest, by their
+// paths, or fails where listed, the files that the manifest lists, are not
+// exactly those, naming the first that differs in the order of their paths.
+func hashesOf(f Files, listed map[string]any) (map[string]published.Hash, error) {
+	hashes := make(map[string]published.Hash, len(f))
+	for _, path := range slices.Sorted(maps.Keys(f)) {
+		if path == published.ManifestPath {
+			continue
+		}
+		if _, ok := listed[path]; !ok {
+			return nil, fmt.Errorf("schemaversion: %s does not list %s", published.ManifestPath, path)
+		}
+		hashes[path] = published.HashOf(f[path])
+	}
+	for _, path := range slices.Sorted(maps.Keys(listed)) {
+		if _, ok := hashes[path]; !ok {
+			return nil, fmt.Errorf("schemaversion: %s lists %s, which is none of the snapshot's other files",
+				published.ManifestPath, path)
+		}
+	}
+	return hashes, nil
 }

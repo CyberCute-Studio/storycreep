@@ -4,4 +4,4 @@ One fixture project for each published version of the published game format, a s
 
 A version's fixture is written once, when the version is the newest. After that it never changes: it is what the server wrote of a project at that version, and later servers have to keep migrating it forward. Do not regenerate it once another version supersedes it.
 
-- [`v1/`](v1/) is the serializer's golden snapshot as it was while version 1 was the newest (`server/internal/serializer/testdata/golden`). It is a release of three boards whose cases are those of §6.2: escapes, numbers, positions to hundredths, an author's orders, every kind of node and of a branch's output, texts with a mention, values, and a break, and an empty board.
+- [`v1/`](v1/) is a copy of the serializer's golden snapshot (`server/internal/serializer/testdata/golden`) as it was when this fixture was written. It does not follow later changes of the golden. It is a release of three boards whose cases are those of §6.2: escapes, numbers, positions to hundredths, an author's orders, every kind of node and of a branch's output, texts with a mention, values, and a break, and an empty board.

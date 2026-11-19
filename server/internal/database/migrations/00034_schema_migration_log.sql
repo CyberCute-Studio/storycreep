@@ -4,10 +4,11 @@
 -- N84), which package schemaversion keeps: what a migration of a project's
 -- stored content, a snapshot's files, to the next version of the published
 -- format could not carry forward as it was, since that version cannot hold it,
--- so that a migration never loses a value silently. A step of a migration is
--- a pure function of the snapshot's files, so a snapshot's step from a
--- version is logged once, with what it reported, which may be nothing, and
--- every later run of it reports the same.
+-- so that a migration never loses a value silently. A snapshot's step from a
+-- version is logged once, with what it reported, which may be nothing, in the
+-- transaction that stores what the migration wrote: the server stores content
+-- at the current version (§6.4), so the snapshot then holds no files of the
+-- step's version for a later run to migrate again.
 --
 -- A row is of a snapshot of its project, which plan item 78 stores, and which
 -- that item's migration gives the foreign key to its snapshot that deletes

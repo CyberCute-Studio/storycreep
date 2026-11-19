@@ -45,6 +45,9 @@ func TestFixtures(t *testing.T) {
 			continue
 		}
 		for p, data := range f {
+			if !schemaversion.IsJSON(p) {
+				continue
+			}
 			if laid, err := serializer.Layout(data); err != nil || !bytes.Equal(laid, data) {
 				t.Errorf("%s/%s is not laid out as every file is: %v", dir, p, err)
 			}
@@ -70,7 +73,7 @@ func TestFixtures(t *testing.T) {
 // consumer refuses: one that a schema refuses, whose hashes are not its
 // files', that holds a file that no snapshot has, or one that its manifest
 // does not list, that the reference runtime refuses, and one of a version
-// that the server does not read.
+// that the server does not read, newer or older, as 0.
 func TestValidate(t *testing.T) {
 	f := readTree(t, "schema/fixtures/v1")
 	const board = "boards/harbour-intro.json"
@@ -122,9 +125,12 @@ func TestValidate(t *testing.T) {
 		unsupported.Supported != r || !errors.Is(err, schemaversion.ErrUnsupported) {
 		t.Errorf("a manifest of version %d: %v; want an *UnsupportedError of %d and %s", r.Max+1, err, r.Max+1, r)
 	}
-	none := edited(t, f, published.ManifestPath, func(m map[string]any) { m["schemaVersion"] = 0 })
-	if err := schemaversion.Validate(none); err == nil || errors.Is(err, schemaversion.ErrUnsupported) {
-		t.Errorf("a manifest of version 0: %v; want an error of no version", err)
+	// A version below the oldest is one that the server does not read, as a
+	// runtime refuses it as schema_unsupported (flow.ErrSchemaUnsupported).
+	older := edited(t, f, published.ManifestPath, func(m map[string]any) { m["schemaVersion"] = 0 })
+	if err := schemaversion.Validate(older); !errors.As(err, &unsupported) || unsupported.Version != 0 ||
+		!errors.Is(err, schemaversion.ErrUnsupported) {
+		t.Errorf("a manifest of version 0: %v; want an *UnsupportedError of 0", err)
 	}
 }
 
@@ -146,7 +152,8 @@ func unsealedEdit(t *testing.T, f schemaversion.Files, path string, edit func(ma
 }
 
 // TestVersionOf checks that VersionOf reads a manifest's schemaVersion as an
-// integer however its JSON writes it, and refuses one that is no version.
+// integer however its JSON writes it, one that the server does not read
+// among them, and refuses one that is no integer.
 func TestVersionOf(t *testing.T) {
 	for _, c := range []struct {
 		manifest string
@@ -155,6 +162,8 @@ func TestVersionOf(t *testing.T) {
 		{`{"schemaVersion": 1}`, 1},
 		{`{"schemaVersion": 1.0}`, 1},
 		{`{"schemaVersion": 2e0}`, 2},
+		{`{"schemaVersion": 0}`, 0},
+		{`{"schemaVersion": -1}`, -1},
 	} {
 		got, err := schemaversion.VersionOf(schemaversion.Files{published.ManifestPath: []byte(c.manifest)})
 		if err != nil || got != c.want {
@@ -162,7 +171,7 @@ func TestVersionOf(t *testing.T) {
 		}
 	}
 	for _, manifest := range []string{`{}`, `{"schemaVersion": "1"}`, `{"schemaVersion": 1.5}`,
-		`{"schemaVersion": 0}`, `{"schemaVersion": -1}`, `[1]`, `{"schemaVersion": null}`, `{`} {
+		`{"schemaVersion": 9007199254740992}`, `[1]`, `{"schemaVersion": null}`, `{`} {
 		if got, err := schemaversion.VersionOf(schemaversion.Files{published.ManifestPath: []byte(manifest)}); err ==
 			nil {
 			t.Errorf("%s: %d; want an error", manifest, got)
@@ -175,10 +184,12 @@ func TestVersionOf(t *testing.T) {
 
 // TestMigrateAndRenderAtOneVersion checks that Migrate and Render return a
 // snapshot of the version that they are asked for as it is, with no step,
-// and refuse a version that the server does not read.
+// where it validates at that version, refuse one that does not, and refuse a
+// version that the server does not read.
 func TestMigrateAndRenderAtOneVersion(t *testing.T) {
 	f := readTree(t, "schema/fixtures/v1")
 	r := schemaversion.Supported()
+	invalid := edited(t, f, "boards/empty.json", func(b map[string]any) { b["board"] = "Empty" })
 	for name, run := range map[string]func(schemaversion.Files, int) (schemaversion.Files, []schemaversion.Step,
 		error){"Migrate": schemaversion.Migrate, "Render": schemaversion.Render} {
 		got, steps, err := run(f, 1)
@@ -189,6 +200,10 @@ func TestMigrateAndRenderAtOneVersion(t *testing.T) {
 			if !bytes.Equal(got[p], f[p]) {
 				t.Errorf("%s at version 1 changed %s", name, p)
 			}
+		}
+		if got, _, err := run(invalid, 1); err == nil || got != nil ||
+			!strings.Contains(err.Error(), "does not validate") {
+			t.Errorf("%s at version 1 of a snapshot that does not validate: %v; want an error", name, err)
 		}
 		for _, n := range []int{0, r.Max + 1} {
 			var unsupported *schemaversion.UnsupportedError

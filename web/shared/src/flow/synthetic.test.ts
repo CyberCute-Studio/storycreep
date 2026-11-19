@@ -1,30 +1,12 @@
-import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { SYNTHETIC_VERSION } from "../../../../testdata/synthetic-schema/register";
 import { LoadError, load, SchemaUnsupportedError } from "./load";
-import { fixture, withManifest } from "./testing";
+import { edited, type FileJSON, fixture, withManifest } from "./testing";
 import { supportedSchema } from "./versions";
 
 // The loader with the test-only synthetic version registered, as its hook
 // registers it (plan notes N2 and N84), which this file alone imports, as
 // vitest runs each test file in a module graph of its own.
-
-/** files with the board's file at path edited, and its hash the manifest's. */
-function withBoard(
-  files: Map<string, Uint8Array>,
-  path: string,
-  edit: (board: { nodes: Record<string, unknown>[] }) => void,
-): Map<string, Uint8Array> {
-  const out = new Map(files);
-  const board = JSON.parse(new TextDecoder().decode(files.get(path)));
-  edit(board);
-  const bytes = new TextEncoder().encode(`${JSON.stringify(board, null, 2)}\n`);
-  out.set(path, bytes);
-  const m = JSON.parse(new TextDecoder().decode(files.get("storycreep.json")));
-  m.files[path] = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  out.set("storycreep.json", new TextEncoder().encode(JSON.stringify(m)));
-  return out;
-}
 
 describe("with the synthetic version registered", () => {
   test("the loader reads it after version 1", () => {
@@ -55,15 +37,15 @@ describe("with the synthetic version registered", () => {
   test("check each file against its manifest's version", async () => {
     const board = "boards/harbour-intro.json";
     for (const edit of [
-      (b: { nodes: Record<string, unknown>[] }) => {
+      (b: FileJSON) => {
         b.nodes[0].position = { x: 1.5, y: 0 };
       },
-      (b: Record<string, unknown>) => {
+      (b: FileJSON) => {
         b.schemaVersion = 1;
       },
     ]) {
       const refused = load(
-        withBoard(fixture(SYNTHETIC_VERSION), board, edit as never),
+        edited(fixture(SYNTHETIC_VERSION), { [board]: edit }),
       );
       await expect(refused, String(edit)).rejects.toBeInstanceOf(LoadError);
       await expect(refused, String(edit)).rejects.not.toBeInstanceOf(

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,17 +266,19 @@ func checkVersion(ctx context.Context, t *testing.T, base, image string) {
 
 // realSchemaVersions returns the real versions of the published format, the
 // oldest first: those whose JSON Schemas /schema/published holds, in a
-// directory v<N> of each.
+// directory v<N> of each, N from 1, as package schemaversion's tests read
+// them (realVersions).
 func realSchemaVersions(t *testing.T) []int {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join("..", "..", "..", "schema", "published"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	versionDir := regexp.MustCompile(`^v([1-9][0-9]*)$`)
 	var out []int
 	for _, e := range entries {
-		var n int
-		if _, err := fmt.Sscanf(e.Name(), "v%d", &n); err == nil && e.IsDir() && e.Name() == fmt.Sprintf("v%d", n) {
+		if m := versionDir.FindStringSubmatch(e.Name()); e.IsDir() && m != nil {
+			n, _ := strconv.Atoi(m[1])
 			out = append(out, n)
 		}
 	}

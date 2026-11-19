@@ -138,8 +138,8 @@ func TestLog(t *testing.T) {
 	}
 	e.record(t, project, second, []schemaversion.Step{{From: 1, To: 2, Entries: reported}, {From: 2, To: 3}})
 	e.record(t, project, first, []schemaversion.Step{{From: 1, To: 2}})
-	// The step from 1 again, as a later run of the migration takes it, which
-	// reports the same, is left as it was.
+	// The step from 1 again, as a repeated Record of it logs it, is left as it
+	// was.
 	e.record(t, project, second, []schemaversion.Step{{From: 1, To: 2}})
 	got := e.log(t, project)
 	want := []schemaversion.Logged{

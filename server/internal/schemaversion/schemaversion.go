@@ -2,7 +2,7 @@
 // published game format, its schemaVersion (PRD §6.4, FR-DATA-03, plan item
 // 77, note N84): the versions that the server reads and validates
 // (Validate), migrates a snapshot's files forward to, one version at a time
-// (Migrate), and renders them at, down to the version before the newest
+// (Migrate), and renders them at, down to the oldest, one version at a time
 // (Render), and the range of them that it declares at /version (Supported),
 // which a pull negotiates with the addon's (Negotiate, FR-SYNC-07).
 //
@@ -75,8 +75,10 @@ type Version struct {
 	Up func(Files) (Files, []Entry, error)
 	// Down renders a snapshot's files of this version as the version before,
 	// or fails with an *UnrepresentableError where that version cannot express
-	// what they hold, as a construct that it does not have. It is nil where
-	// the server renders no version before this one.
+	// what they hold, as a construct that it does not have. It is nil for the
+	// oldest version that the server reads, as Up is, and set for every
+	// other, so that the server renders a snapshot at every version that it
+	// reads, as it declares (Supported).
 	Down func(Files) (Files, error)
 }
 
@@ -107,21 +109,23 @@ type Step struct {
 var versions = []Version{v1}
 
 // register adds v to the versions that the server reads, as the newest. It
-// panics unless v is the version after the newest, with a validator and a
-// migration from the version before it, since a registry that skipped a
-// version would migrate no snapshot across the gap.
+// panics unless v is the version after the newest, with a validator, a
+// migration from the version before it, and a renderer down to that version,
+// since a registry that skipped a version would migrate no snapshot across
+// the gap, and one without a renderer would declare a version that it
+// renders no snapshot at.
 func register(v Version) {
 	newest := versions[len(versions)-1].Number
-	if v.Number != newest+1 || v.Validate == nil || v.Up == nil {
-		panic(fmt.Sprintf("schemaversion: version %d is registered after %d, or without a validator or a migration",
-			v.Number, newest))
+	if v.Number != newest+1 || v.Validate == nil || v.Up == nil || v.Down == nil {
+		panic(fmt.Sprintf("schemaversion: version %d is registered after %d, or without a validator, a migration, "+
+			"or a renderer", v.Number, newest))
 	}
 	versions = append(versions, v)
 }
 
 // Supported returns the versions that the server reads, the oldest to the
 // newest, which it declares (/version), validates, migrates a snapshot to,
-// and renders a snapshot at where its renderers reach.
+// and renders a snapshot at.
 func Supported() Range {
 	return Range{Min: versions[0].Number, Max: versions[len(versions)-1].Number}
 }
@@ -246,7 +250,11 @@ func (server Range) Negotiate(client Range) (int, error) {
 }
 
 // VersionOf returns the schemaVersion of the manifest of f, an integer
-// however its JSON writes it (published.Int), as 1 or 1.0.
+// however its JSON writes it (published.Int), as 1 or 1.0, of at most
+// published.MaxInt in magnitude. One that the server does not read, as 0, is
+// a version all the same, which Validate, Migrate, and Render refuse with an
+// *UnsupportedError, as a runtime refuses it as schema_unsupported
+// (flow.ErrSchemaUnsupported).
 func VersionOf(f Files) (int, error) {
 	m, err := Object(f, published.ManifestPath)
 	if err != nil {
@@ -257,7 +265,7 @@ func VersionOf(f Files) (int, error) {
 		return 0, fmt.Errorf("schemaversion: %s has no schemaVersion", published.ManifestPath)
 	}
 	n, err := integral(raw)
-	if err != nil || n < 1 {
+	if err != nil {
 		return 0, fmt.Errorf("schemaversion: %s's schemaVersion is no version", published.ManifestPath)
 	}
 	return n, nil
@@ -298,8 +306,9 @@ func Validate(f Files) error {
 // returns the files, which validate against the version to, and each step
 // that it took, with what the step reported, which Record stores in the
 // project's migration log (FR-DATA-03 AC2). It returns f itself, and no step,
-// where f is of the version to. It fails with an *UnsupportedError where the
-// server does not read f's version or to, and where to is older than f's.
+// where f is of the version to and validates against it. It fails with an
+// *UnsupportedError where the server does not read f's version or to, and
+// with another error where to is older than f's.
 func Migrate(f Files, to int) (Files, []Step, error) {
 	from, err := VersionOf(f)
 	if err != nil {
@@ -317,6 +326,9 @@ func Migrate(f Files, to int) (Files, []Step, error) {
 			to)
 	}
 	if to == from {
+		if err := target.Validate(f); err != nil {
+			return nil, nil, fmt.Errorf("schemaversion: the snapshot does not validate at its version %d: %w", to, err)
+		}
 		return f, nil, nil
 	}
 	var steps []Step
@@ -341,15 +353,15 @@ func Migrate(f Files, to int) (Files, []Step, error) {
 }
 
 // Render returns f, a snapshot's files of a version that the server reads,
-// rendered at the version to: f itself at its own version; migrated forward
-// to a newer one, as Migrate migrates it, with its steps; and rendered down
-// to an older one, one version at a time, by each version's renderer
-// (Version.Down), where the renderers reach it, so that what it returns
-// validates against the version to (FR-SYNC-01 AC2). It fails with an
+// rendered at the version to: f itself at its own version, as Migrate
+// returns it; migrated forward to a newer one, as Migrate migrates it, with
+// its steps; and rendered down to an older one, one version at a time, by
+// each version's renderer (Version.Down), so that what it returns validates
+// against the version to (FR-SYNC-01 AC2). It fails with an
 // *UnrepresentableError where a version that it renders down to cannot
 // express what f holds, writing nothing that that version cannot express
 // (FR-DATA-03 AC3), and with an *UnsupportedError where the server does not
-// read f's version or to, or renders no version as old as to.
+// read f's version or to.
 func Render(f Files, to int) (Files, []Step, error) {
 	from, err := VersionOf(f)
 	if err != nil {
@@ -366,10 +378,8 @@ func Render(f Files, to int) (Files, []Step, error) {
 		return Migrate(f, to)
 	}
 	for n := from; n > to; n-- {
+		// Every version above the oldest has a renderer (register).
 		v, _ := version(n)
-		if v.Down == nil {
-			return nil, nil, &UnsupportedError{Version: to, Supported: Range{Min: n, Max: Supported().Max}}
-		}
 		prev, err := v.Down(f)
 		if err != nil {
 			return nil, nil, err

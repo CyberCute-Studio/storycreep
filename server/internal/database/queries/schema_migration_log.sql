@@ -5,8 +5,9 @@
 -- name: InsertSchemaMigrationStep :exec
 -- InsertSchemaMigrationStep logs a step of the migration of a snapshot's
 -- files, and does nothing where the snapshot's step from the version is
--- logged already, which reported the same, since a step is a pure function of
--- the files.
+-- logged already: the migration's output, stored with it, holds no files of
+-- that version to migrate again (PRD §6.4), so only a repeated log of the same
+-- steps finds one.
 INSERT INTO schema_migration_log (id, workspace_id, project_id, snapshot_id, from_version, to_version, entries)
 VALUES (@id, @workspace_id, @project_id, @snapshot_id, @from_version, @to_version, @entries)
 ON CONFLICT (workspace_id, project_id, snapshot_id, from_version) DO NOTHING;

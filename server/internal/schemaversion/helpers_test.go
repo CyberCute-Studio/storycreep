@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,22 +16,38 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	flag.Parse()
+	if regenerate != nil {
+		if err := regenerate(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	os.Exit(dbtest.Run(m))
 }
 
-// update rewrites the files that the tests compare with what they generate:
-// the synthetic version's schemas and its fixture, with the synthetic_schema
-// build tag (go test -tags synthetic_schema ./internal/schemaversion/...
-// -update).
-var update = flag.Bool("update", false, "rewrite the synthetic version's schemas and fixture")
+// regenerate, which the tests of the synthetic version set with the
+// synthetic_schema build tag, rewrites the files that the tests compare with
+// what they generate where -update asks it to, before any test reads them, so
+// that no test reads them as they were (synthetic_test.go).
+var regenerate func() error
 
 // root is the repository's root, from this package's directory.
 var root = filepath.Join("..", "..", "..")
 
 // readTree returns every file under dir, a directory from the repository's
-// root, by its path from dir, with forward slashes.
+// root, by its path from dir, with forward slashes, or fails the test.
 func readTree(t *testing.T, dir string) schemaversion.Files {
 	t.Helper()
+	files, err := readFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// readFiles returns every file under dir, as readTree does.
+func readFiles(dir string) (schemaversion.Files, error) {
 	files := schemaversion.Files{}
 	base := filepath.Join(root, filepath.FromSlash(dir))
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
@@ -46,29 +61,7 @@ func readTree(t *testing.T, dir string) schemaversion.Files {
 		files[filepath.ToSlash(rel)], err = os.ReadFile(p)
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return files
-}
-
-// writeTree replaces the files under dir, a directory from the repository's
-// root, with files.
-func writeTree(t *testing.T, dir string, files schemaversion.Files) {
-	t.Helper()
-	base := filepath.Join(root, filepath.FromSlash(dir))
-	if err := os.RemoveAll(base); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range slices.Sorted(maps.Keys(files)) {
-		file := filepath.Join(base, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(file, files[p], 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return files, err
 }
 
 // realVersions returns the real versions of the published format, the

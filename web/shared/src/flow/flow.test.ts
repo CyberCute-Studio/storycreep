@@ -50,7 +50,7 @@ import { ASTUnsupportedError, LoadError, load } from "./load";
 import { type Choice, Runtime, StateError, ValueError } from "./runtime";
 import { type Schema, validate } from "./schema";
 import { YIELD_EVERY } from "./sha256";
-import { conformance, readTree } from "./testing";
+import { conformance, edited, readTree } from "./testing";
 import { BOARD_SCHEMA } from "./versions";
 
 // The IDs of the suites' entities, by their mnemonics, as the Go suites name
@@ -69,29 +69,12 @@ type Obj = Record<string, any>;
 
 // suite returns the files of a suite's snapshot, each edited by edits, which
 // change a file's JSON, and the manifest's hash of each file that they
-// change, but for the manifest, which its edit changes last.
+// change, but for the manifest, which its edit changes last (edited).
 function suite(
   name: string,
   edits: Record<string, (f: Obj) => void> = {},
 ): Map<string, Uint8Array> {
-  const files = readTree(join(conformance, name, "snapshot"));
-  const m = JSON.parse(
-    new TextDecoder().decode(files.get("storycreep.json")),
-  ) as Obj;
-  for (const [path, edit] of Object.entries(edits)) {
-    if (path === "storycreep.json") {
-      continue;
-    }
-    const f = JSON.parse(new TextDecoder().decode(files.get(path))) as Obj;
-    edit(f);
-    const bytes = new TextEncoder().encode(`${JSON.stringify(f, null, 2)}\n`);
-    files.set(path, bytes);
-    m.files[path] =
-      `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  }
-  edits["storycreep.json"]?.(m);
-  files.set("storycreep.json", new TextEncoder().encode(JSON.stringify(m)));
-  return files;
+  return edited(readTree(join(conformance, name, "snapshot")), edits);
 }
 
 // refuseResizable throws, as a browser's WebCrypto and TextDecoder do, of a

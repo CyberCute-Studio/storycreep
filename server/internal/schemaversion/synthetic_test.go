@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"maps"
 	"math"
@@ -27,6 +28,69 @@ import (
 // synthetic_schema build tag:
 //
 //	go test -tags synthetic_schema ./internal/schemaversion/...
+
+// update rewrites the files that the tests compare with what they generate,
+// the synthetic version's schemas and its fixture, before any test reads them
+// (regenerate): go test -tags synthetic_schema ./internal/schemaversion/...
+// -update. A run without the tag has no such flag.
+var update = flag.Bool("update", false, "rewrite the synthetic version's schemas and fixture")
+
+func init() {
+	regenerate = func() error {
+		if !*update {
+			return nil
+		}
+		schemas, err := syntheticSchemas()
+		if err != nil {
+			return err
+		}
+		if err := writeTree(synthetic.SchemaDir, schemas); err != nil {
+			return err
+		}
+		v1, err := readFiles("schema/fixtures/v1")
+		if err != nil {
+			return err
+		}
+		migrated, _, err := schemaversion.Migrate(v1, synthetic.Number)
+		if err != nil {
+			return err
+		}
+		return writeTree(synthetic.FixtureDir, migrated)
+	}
+}
+
+// syntheticSchemas returns the synthetic version's JSON Schemas as Documents
+// generates them, by their names in synthetic.SchemaDir.
+func syntheticSchemas() (schemaversion.Files, error) {
+	docs, err := synthetic.Documents()
+	if err != nil {
+		return nil, err
+	}
+	out := schemaversion.Files{}
+	for p, data := range docs {
+		out[path.Base(p)] = data
+	}
+	return out, nil
+}
+
+// writeTree replaces the files under dir, a directory from the repository's
+// root, with files.
+func writeTree(dir string, files schemaversion.Files) error {
+	base := filepath.Join(root, filepath.FromSlash(dir))
+	if err := os.RemoveAll(base); err != nil {
+		return err
+	}
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		file := filepath.Join(base, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(file, files[p], 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // v1Fixture and syntheticFixture return the fixtures of version 1 and of the
 // synthetic version.
@@ -89,20 +153,45 @@ func TestSyntheticVersion(t *testing.T) {
 	}
 }
 
+// TestRegister checks that a version is registered only as the one after the
+// newest, with a validator, a migration, and a renderer, so that the server
+// migrates a snapshot to, and renders one at, every version that it declares.
+func TestRegister(t *testing.T) {
+	valid := func(schemaversion.Files) error { return nil }
+	up := func(f schemaversion.Files) (schemaversion.Files, []schemaversion.Entry, error) { return f, nil, nil }
+	down := func(f schemaversion.Files) (schemaversion.Files, error) { return f, nil }
+	next := synthetic.Number + 1
+	for _, c := range []struct {
+		name string
+		v    schemaversion.Version
+	}{
+		{"the newest again", schemaversion.Version{Number: synthetic.Number, Validate: valid, Up: up, Down: down}},
+		{"one that skips a version", schemaversion.Version{Number: next + 1, Validate: valid, Up: up, Down: down}},
+		{"one without a validator", schemaversion.Version{Number: next, Up: up, Down: down}},
+		{"one without a migration", schemaversion.Version{Number: next, Validate: valid, Down: down}},
+		{"one without a renderer", schemaversion.Version{Number: next, Validate: valid, Up: up}},
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Register of %s: want a panic", c.name)
+				}
+			}()
+			schemaversion.Register(c.v)
+		}()
+	}
+	if got := schemaversion.Supported().Max; got != synthetic.Number {
+		t.Errorf("the newest version that the server reads is %d; want %d", got, synthetic.Number)
+	}
+}
+
 // TestSyntheticSchemas checks that testdata/synthetic-schema holds the
 // synthetic version's JSON Schemas as Documents generates them; -update
 // writes them.
 func TestSyntheticSchemas(t *testing.T) {
-	docs, err := synthetic.Documents()
+	want, err := syntheticSchemas()
 	if err != nil {
 		t.Fatal(err)
-	}
-	want := schemaversion.Files{}
-	for p, data := range docs {
-		want[path.Base(p)] = data
-	}
-	if *update {
-		writeTree(t, synthetic.SchemaDir, want)
 	}
 	sameFiles(t, synthetic.SchemaDir+" (go test -tags synthetic_schema ./internal/schemaversion/... -update)",
 		readTree(t, synthetic.SchemaDir), want)
@@ -114,9 +203,6 @@ func TestSyntheticFixture(t *testing.T) {
 	migrated, _, err := schemaversion.Migrate(v1Fixture(t), synthetic.Number)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if *update {
-		writeTree(t, synthetic.FixtureDir, migrated)
 	}
 	sameFiles(t, synthetic.FixtureDir+" (go test -tags synthetic_schema ./internal/schemaversion/... -update)",
 		syntheticFixture(t), migrated)
