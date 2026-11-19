@@ -816,7 +816,7 @@ These restate the PRD's standing criteria (§4.0, SC1–SC5) together with the p
 ### Milestone M — Snapshots, sync server, and data portability
 
 ### 76. Deterministic serializer
-**Status:** todo · **Depends on:** 41, 47
+**Status:** done ([#90](https://github.com/CyberCute-Studio/storycreep/pull/90)) · **Depends on:** 41, 47
 **PRD:** §6.2, §6.3, FR-SNAP-03 (AC1, AC3), FR-EXPR-03 (AC1, AC2), FR-TEXT-03 (AC2), FR-EDIT-03 (AC1, exported JSON), FR-EDIT-04 (AC2), R4
 - Serialises the draft into the published layout: `Load` reads the draft in its caller's transaction, which reads as of one moment, one read of each kind of the project's rows outside its trash, through the live views, of what the published format holds of each, and nothing of who made or changed it, nor when (`queries/serializer.sql`), and `Serialize` writes the files as the types of package `published` write them, laid out by `Layout`: keys sorted by their code points, two spaces of indentation, no HTML escaping, numbers as their declarations type them (`value.Value.Read`), positions to hundredths, semantic array order, a branch's outputs each of the kind of its place, omitted optional fields, the component types of the snapshot's components alone, and no personal data (`server/internal/serializer`, N83).
 - Manifest with the `boards` index, per-file SHA-256, and the content hash, the SHA-256 of a line of each content file's path and hash, in the order of their paths (PRD §7.3), which a stamp's generator and snapshot blocks do not touch (`Stamp`). Each expression is its stored AST and its source, which the settings' `signals` and the manifest's `astVersion` read; mentions resolved to names plus a machine-readable reference, in each text's segments (`richtext.Doc.Segments`).
