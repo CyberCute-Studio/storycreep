@@ -115,26 +115,43 @@ CREATE POLICY workspace_isolation ON comment TO storycreep_app
 -- which a client opens it, as the reads of the API and the search's results
 -- name them; and whether it is outside the project's trash, nor there with
 -- what is, as its live view reads it.
+-- Each kind of target is a branch of its own, which a root's CHECK puts it in
+-- exactly one of, and which reads whether its target is live by a join of
+-- the target's live view rather than a subquery of it: PostgreSQL runs no
+-- plan that reads a correlated subquery in a parallel worker, so such a
+-- subquery would keep every read that joins this view, as the search,
+-- whose other kinds' documents it reads in parallel, from running in
+-- parallel at all (BenchmarkSearch), and the branches leave the planner
+-- fewer tables to join at once.
 CREATE VIEW comment_thread_target WITH (security_invoker = true) AS
-	SELECT r.workspace_id, r.project_id, r.id AS thread_id, r.resolved_at,
-		(CASE WHEN r.node_id IS NOT NULL THEN 'node' WHEN r.connection_id IS NOT NULL THEN 'connection'
-			WHEN r.board_id IS NOT NULL THEN 'board' ELSE 'variable' END)::text AS target_type,
-		coalesce(r.node_id, r.connection_id, r.board_id, r.variable_id)::uuid AS target_id,
-		coalesce(n.board_id, cn.board_id, r.board_id, v.board_id)::uuid AS board_id,
-		coalesce(r.node_id, cn.from_node_id)::uuid AS node_id,
-		(EXISTS (SELECT 1 FROM live_node l WHERE l.workspace_id = r.workspace_id AND l.project_id = r.project_id
-				AND l.id = r.node_id)
-			OR EXISTS (SELECT 1 FROM live_connection l WHERE l.workspace_id = r.workspace_id
-				AND l.project_id = r.project_id AND l.id = r.connection_id)
-			OR EXISTS (SELECT 1 FROM live_board l WHERE l.workspace_id = r.workspace_id
-				AND l.project_id = r.project_id AND l.id = r.board_id)
-			OR EXISTS (SELECT 1 FROM live_variable l WHERE l.workspace_id = r.workspace_id
-				AND l.project_id = r.project_id AND l.id = r.variable_id))::boolean AS target_live
+	SELECT r.workspace_id, r.project_id, r.id AS thread_id, r.resolved_at, 'node'::text AS target_type,
+		r.node_id AS target_id, n.board_id, r.node_id AS node_id, l.id IS NOT NULL AS target_live
 	FROM comment r
-	LEFT JOIN node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
-	LEFT JOIN connection cn ON cn.workspace_id = r.workspace_id AND cn.project_id = r.project_id
+	JOIN node n ON n.workspace_id = r.workspace_id AND n.project_id = r.project_id AND n.id = r.node_id
+	LEFT JOIN live_node l ON l.workspace_id = r.workspace_id AND l.project_id = r.project_id AND l.id = r.node_id
+	WHERE r.parent_id IS NULL
+	UNION ALL
+	SELECT r.workspace_id, r.project_id, r.id, r.resolved_at, 'connection'::text, r.connection_id, cn.board_id,
+		cn.from_node_id, l.id IS NOT NULL
+	FROM comment r
+	JOIN connection cn ON cn.workspace_id = r.workspace_id AND cn.project_id = r.project_id
 		AND cn.id = r.connection_id
-	LEFT JOIN variable v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.variable_id
+	LEFT JOIN live_connection l ON l.workspace_id = r.workspace_id AND l.project_id = r.project_id
+		AND l.id = r.connection_id
+	WHERE r.parent_id IS NULL
+	UNION ALL
+	SELECT r.workspace_id, r.project_id, r.id, r.resolved_at, 'board'::text, r.board_id, r.board_id, NULL::uuid,
+		l.id IS NOT NULL
+	FROM comment r
+	LEFT JOIN live_board l ON l.workspace_id = r.workspace_id AND l.project_id = r.project_id AND l.id = r.board_id
+	WHERE r.parent_id IS NULL AND r.board_id IS NOT NULL
+	UNION ALL
+	SELECT r.workspace_id, r.project_id, r.id, r.resolved_at, 'variable'::text, r.variable_id, v.board_id,
+		NULL::uuid, l.id IS NOT NULL
+	FROM comment r
+	JOIN variable v ON v.workspace_id = r.workspace_id AND v.project_id = r.project_id AND v.id = r.variable_id
+	LEFT JOIN live_variable l ON l.workspace_id = r.workspace_id AND l.project_id = r.project_id
+		AND l.id = r.variable_id
 	WHERE r.parent_id IS NULL;
 
 -- The comments that are not deleted and whose thread's target is not in the

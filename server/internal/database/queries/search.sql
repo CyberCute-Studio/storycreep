@@ -183,7 +183,9 @@ SELECT tsvector_to_array(to_tsvector('public.storycreep_search'::regconfig, @que
 -- document, matches and ranks, shows its start without a mark. The kinds
 -- are words of lowercase ASCII letters, which every collation orders alike,
 -- as Go does. The kinds' conditions on the parameter are evaluated once, so
--- that a search of one kind reads the documents of no other.
+-- that a search of one kind reads the documents of no other. A search that
+-- reads no comment reads by SearchWithoutComments, whose text is this one's
+-- without the comments' branch.
 WITH hits AS (
     SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, NULL::text AS target_type, NULL::uuid AS target_id,
         e.vector
@@ -214,11 +216,90 @@ WITH hits AS (
     UNION ALL
     SELECT e.kind, e.entity_id, t.board_id, t.node_id, t.target_type, t.target_id, e.vector
     FROM search_entry e
-    JOIN live_comment c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.entity_id
+    JOIN comment c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id AND c.id = e.entity_id
     JOIN comment_thread_target t ON t.workspace_id = c.workspace_id AND t.project_id = c.project_id
         AND t.thread_id = c.thread_id
     WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'comment'
         AND @kind::text IN ('', 'comment') AND e.vector @@ @query::tsquery
+        AND c.deleted_at IS NULL AND t.target_live
+), title_words AS MATERIALIZED (
+    SELECT t.word::tsquery AS query FROM unnest(@title_words::text[]) AS t (word)
+), ranked AS (
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id,
+        ((SELECT count(*) FROM title_words t WHERE r.title @@ t.query) + r.rank / (1 + r.rank))::real AS rank
+    FROM hits h
+    CROSS JOIN LATERAL (
+        SELECT ts_filter(h.vector, '{a}') AS title, ts_rank(h.vector, @words::tsquery)::float8 AS rank OFFSET 0
+    ) AS r
+), page AS (
+    SELECT h.kind, h.entity_id, h.board_id, h.node_id, h.target_type, h.target_id, h.rank
+    FROM ranked h
+    WHERE NOT @after::boolean OR h.rank < @after_rank::real OR h.rank = @after_rank::real
+        AND (h.kind > @after_kind::text OR h.kind = @after_kind::text AND h.entity_id > @after_id::uuid)
+    ORDER BY h.rank DESC, h.kind, h.entity_id
+    LIMIT @max_rows
+)
+SELECT p.kind, p.entity_id, p.board_id, b.name AS board_name, p.node_id, nd.title AS node_title,
+    p.target_type, p.target_id, p.rank,
+    ts_headline('public.storycreep_search'::regconfig, e.title, @words::tsquery,
+        'HighlightAll=true, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS title,
+    ts_headline('public.storycreep_search'::regconfig, left(e.body, @snippet_source::integer), @words::tsquery,
+        'MaxWords=35, MinWords=15, StartSel=' || chr(2) || ', StopSel=' || chr(3))::text AS snippet
+FROM page p
+JOIN search_entry e ON e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = p.kind
+    AND e.entity_id = p.entity_id
+LEFT JOIN board b ON b.workspace_id = @workspace_id AND b.project_id = @project_id AND b.id = p.board_id
+LEFT JOIN node nd ON nd.workspace_id = @workspace_id AND nd.project_id = @project_id AND nd.id = p.node_id
+ORDER BY p.rank DESC, p.kind, p.entity_id;
+
+-- name: SearchHasComments :one
+-- SearchHasComments returns whether the project has a document of a comment,
+-- deleted or not, and in the trash or not, by which a search of every kind,
+-- or of the comments, reads its results by Search, rather than by
+-- SearchWithoutComments.
+SELECT EXISTS (
+    SELECT 1 FROM search_entry e
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'comment'
+)::boolean AS has;
+
+-- name: SearchWithoutComments :many
+-- SearchWithoutComments is Search without its branch of the comments, whose
+-- results are Search's of a project that has no document of a comment
+-- (SearchHasComments), or of a search of another kind, which reads no
+-- comment: PostgreSQL plans each statement again for its parameters, and the
+-- comments' branch, which joins the live views of every kind of a thread's
+-- target, takes the planner longer than the rest of the statement, which a
+-- project without comments would wait for on every search
+-- (BenchmarkSearch, whose fixture has none). Its text is Search's without
+-- that branch, which TestSearchWithoutComments holds it to: change both at
+-- once.
+WITH hits AS (
+    SELECT e.kind, e.entity_id, n.board_id, n.id AS node_id, NULL::text AS target_type, NULL::uuid AS target_id,
+        e.vector
+    FROM search_entry e
+    JOIN live_node n ON n.workspace_id = e.workspace_id AND n.project_id = e.project_id AND n.id = e.entity_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'node'
+        AND @kind::text IN ('', 'node') AND e.vector @@ @query::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, c.board_id, c.from_node_id, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_connection c ON c.workspace_id = e.workspace_id AND c.project_id = e.project_id
+        AND c.id = e.entity_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'connection'
+        AND @kind::text IN ('', 'connection') AND e.vector @@ @query::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, v.board_id, NULL::uuid, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_variable v ON v.workspace_id = e.workspace_id AND v.project_id = e.project_id AND v.id = e.entity_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'variable'
+        AND @kind::text IN ('', 'variable') AND e.vector @@ @query::tsquery
+    UNION ALL
+    SELECT e.kind, e.entity_id, NULL::uuid, NULL::uuid, NULL, NULL, e.vector
+    FROM search_entry e
+    JOIN live_component m ON m.workspace_id = e.workspace_id AND m.project_id = e.project_id
+        AND m.id = e.entity_id
+    WHERE e.workspace_id = @workspace_id AND e.project_id = @project_id AND e.kind = 'component'
+        AND @kind::text IN ('', 'component') AND e.vector @@ @query::tsquery
 ), title_words AS MATERIALIZED (
     SELECT t.word::tsquery AS query FROM unnest(@title_words::text[]) AS t (word)
 ), ranked AS (

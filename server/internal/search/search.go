@@ -233,13 +233,14 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 		if len(lexemes) == 0 {
 			return nil
 		}
-		rows, err := q.Search(ctx, queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
+		params := queries.SearchParams{Query: PrefixQuery(lexemes), Words: AnyPrefixQuery(lexemes),
 			TitleWords: TitleQueries(lexemes), WorkspaceID: nullUUID(workspaceID), ProjectID: nullUUID(projectID),
 			Kind: string(kind), After: after.Kind != "", AfterRank: after.Rank, AfterKind: string(after.Kind),
 			AfterID: pgtype.UUID{Bytes: after.ID, Valid: true}, MaxRows: int32(min(limit, 1<<20)),
-			SnippetSource: MaxSnippetSource})
+			SnippetSource: MaxSnippetSource}
+		rows, err := searchRows(ctx, q, params)
 		if err != nil {
-			return fmt.Errorf("search: read the results: %w", err)
+			return err
 		}
 		for _, r := range rows {
 			res, err := resultOf(r)
@@ -254,6 +255,38 @@ func (s *Service) Search(ctx context.Context, actor commands.Actor, projectID id
 		return nil, err
 	}
 	return out, nil
+}
+
+// searchRows returns the rows of the search of params: by queries.Search, of
+// a search that may read a comment, of every kind or of the comments, of a
+// project that has a document of a comment, or else by
+// queries.SearchWithoutComments, whose rows are the same, without the
+// planning of the comments' branch that the statement would cost every
+// search of a project without comments, as they say.
+func searchRows(ctx context.Context, q *queries.Queries, params queries.SearchParams) ([]queries.SearchRow, error) {
+	if params.Kind == "" || Kind(params.Kind) == Comment {
+		comments, err := q.SearchHasComments(ctx, queries.SearchHasCommentsParams{WorkspaceID: params.WorkspaceID,
+			ProjectID: params.ProjectID})
+		if err != nil {
+			return nil, fmt.Errorf("search: read whether the project has comments: %w", err)
+		}
+		if comments {
+			rows, err := q.Search(ctx, params)
+			if err != nil {
+				return nil, fmt.Errorf("search: read the results: %w", err)
+			}
+			return rows, nil
+		}
+	}
+	plain, err := q.SearchWithoutComments(ctx, queries.SearchWithoutCommentsParams(params))
+	if err != nil {
+		return nil, fmt.Errorf("search: read the results: %w", err)
+	}
+	rows := make([]queries.SearchRow, len(plain))
+	for i, r := range plain {
+		rows[i] = queries.SearchRow(r)
+	}
+	return rows, nil
 }
 
 // resultOf returns the row r of a search as the API shows it.
