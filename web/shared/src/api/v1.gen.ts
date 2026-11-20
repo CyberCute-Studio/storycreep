@@ -341,7 +341,7 @@ export interface Board {
 export interface BoardChanges {
   /** The board, as the to side has it, or as the from side has it for a board that the to side does not have. */
   board: BoardRef;
-  /** What happened to the board itself: added or removed, with every node, branch output, and connection of it, or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did. */
+  /** What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, one that it has on another board being a change of its own, a node or a connection moved; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did. */
   change?: "added" | "removed" | "modified";
   /** The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on. */
   changes: Array<EntityChange>;
@@ -1772,7 +1772,7 @@ export interface DiffInputBody {
   from: string;
   /** The most changes that the answer lists, from 1 to 5,000. Without it, 1,000. */
   limit?: number;
-  /** The ID of the snapshot that the diff is into, a ready one of the project's, or draft, for the project's draft as it is now, which an API token needs project:read for */
+  /** The ID of the snapshot that the diff is into, a ready one of the project's, or draft, as written, in lower case, for the project's draft as it is now, which an API token needs project:read for */
   to: string;
 }
 

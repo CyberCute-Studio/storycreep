@@ -25,6 +25,7 @@ var ids = strings.NewReplacer(
 	`<@B1>`, `{"id": "<B1>", "name": "Harbour Intro\u2028Part one", "slug": "harbour-intro"}`,
 	`<@B2>`, `{"id": "<B2>", "name": "Keeper's \"Gate\" \\ back", "slug": "keepers-gate"}`,
 	`<@B3>`, `{"id": "<B3>", "name": "Empty", "slug": "empty"}`,
+	`<@B4>`, `{"id": "<B4>", "name": "Lighthouse", "slug": "lighthouse"}`,
 )
 
 // refs replaces the placeholders of the IDs.
@@ -105,6 +106,19 @@ var corpusCases = []corpusCase{
 			]}
 		],
 		"summary": {"moved": 3, "kinds": {"connection": {"moved": 1}, "node": {"moved": 2}}}
+	}`},
+	{"rehomed", "A board that only one side has is added or removed, but a node or a connection of it that the " +
+		"other side has on another board is moved, onto the added board or off the removed one, not added or " +
+		"removed with it.", "added", "rehomed", `{
+		"boards": [
+			{"board": <@B3>, "change": "removed"},
+			{"board": <@B4>, "change": "added", "changes": [
+				{"change": "moved", "fromBoard": <@B3>, "id": "<N20>", "kind": "node", "preview": "Gulls cry.", "title": "Quay", "toBoard": <@B4>, "type": "element"},
+				{"change": "moved", "fromBoard": <@B3>, "id": "<N21>", "kind": "node", "preview": "Silence.", "toBoard": <@B4>, "type": "element"},
+				{"change": "moved", "from": "<N20>", "fromBoard": <@B3>, "id": "<K20>", "kind": "connection", "label": "Listen", "to": "<N21>", "toBoard": <@B4>}
+			]}
+		],
+		"summary": {"added": 1, "moved": 3, "removed": 1, "kinds": {"board": {"added": 1, "removed": 1}, "connection": {"moved": 1}, "node": {"moved": 2}}}
 	}`},
 	{"cosmetic", "Nodes whose position alone changed are modified and cosmetic, and counted as cosmetic.", "base",
 		"cosmetic", `{

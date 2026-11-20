@@ -20,7 +20,7 @@ type diffInput struct {
 	ProjectID string `path:"project_id" doc:"The project's ID"`
 	Body      struct {
 		From  string `json:"from" doc:"The ID of the snapshot that the diff is from, a ready one of the project's, as the release that a game has pinned, whether or not it is the newest (PRD FR-SYNC-02 AC1)"`
-		To    string `json:"to" doc:"The ID of the snapshot that the diff is into, a ready one of the project's, or draft, for the project's draft as it is now, which an API token needs project:read for"`
+		To    string `json:"to" doc:"The ID of the snapshot that the diff is into, a ready one of the project's, or draft, as written, in lower case, for the project's draft as it is now, which an API token needs project:read for"`
 		Limit int    `json:"limit,omitempty" minimum:"1" maximum:"5000" doc:"The most changes that the answer lists, from 1 to 5,000. Without it, 1,000."`
 	}
 }

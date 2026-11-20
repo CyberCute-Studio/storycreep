@@ -866,6 +866,184 @@
       "to": "moved"
     },
     {
+      "description": "A board that only one side has is added or removed, but a node or a connection of it that the other side has on another board is moved, onto the added board or off the removed one, not added or removed with it.",
+      "diff": {
+        "boards": [
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B3",
+              "name": "Empty",
+              "slug": "empty"
+            },
+            "change": "removed",
+            "changes": [],
+            "omitted": 0
+          },
+          {
+            "board": {
+              "id": "bd_000000000000000000000000B4",
+              "name": "Lighthouse",
+              "slug": "lighthouse"
+            },
+            "change": "added",
+            "changes": [
+              {
+                "change": "moved",
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "nd_00000000000000000000000N20",
+                "kind": "node",
+                "preview": "Gulls cry.",
+                "title": "Quay",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B4",
+                  "name": "Lighthouse",
+                  "slug": "lighthouse"
+                },
+                "type": "element"
+              },
+              {
+                "change": "moved",
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "nd_00000000000000000000000N21",
+                "kind": "node",
+                "preview": "Silence.",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B4",
+                  "name": "Lighthouse",
+                  "slug": "lighthouse"
+                },
+                "type": "element"
+              },
+              {
+                "change": "moved",
+                "from": "nd_00000000000000000000000N20",
+                "fromBoard": {
+                  "id": "bd_000000000000000000000000B3",
+                  "name": "Empty",
+                  "slug": "empty"
+                },
+                "id": "cn_00000000000000000000000K20",
+                "kind": "connection",
+                "label": "Listen",
+                "to": "nd_00000000000000000000000N21",
+                "toBoard": {
+                  "id": "bd_000000000000000000000000B4",
+                  "name": "Lighthouse",
+                  "slug": "lighthouse"
+                }
+              }
+            ],
+            "omitted": 0
+          }
+        ],
+        "from": {
+          "contentHash": "sha256:b4db444655627d43713a3bad787ca195c3207aadade5eb2087f953286502d8a5",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "project": {
+          "attributes": [],
+          "componentTypes": [],
+          "components": [],
+          "fields": [],
+          "omitted": 0,
+          "variables": []
+        },
+        "schemaVersion": 1,
+        "summary": {
+          "added": 1,
+          "cosmetic": 0,
+          "kinds": {
+            "attribute": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "board": {
+              "added": 1,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 1
+            },
+            "branch_output": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "component_type": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "connection": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 1,
+              "removed": 0
+            },
+            "node": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 2,
+              "removed": 0
+            },
+            "project": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            },
+            "variable": {
+              "added": 0,
+              "cosmetic": 0,
+              "modified": 0,
+              "moved": 0,
+              "removed": 0
+            }
+          },
+          "modified": 0,
+          "moved": 3,
+          "removed": 1
+        },
+        "to": {
+          "contentHash": "sha256:4397dc527c2346c55b54a157e66b9e476352c1c2f486e6bcda26835f45c8605a",
+          "id": "snp_000000000000000000000000G1",
+          "kind": "snapshot",
+          "version": "1.4.0"
+        },
+        "truncated": false
+      },
+      "from": "added",
+      "name": "rehomed",
+      "to": "rehomed"
+    },
+    {
       "description": "Nodes whose position alone changed are modified and cosmetic, and counted as cosmetic.",
       "diff": {
         "boards": [

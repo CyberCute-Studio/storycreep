@@ -55,8 +55,11 @@ import (
 // in a fraction of a second (NFR-PERF-13). It compares snapshots that
 // validate (schemaversion.Validate), and fails where what it reads of either
 // side is not of the format's version, as published.Decode refuses it, where
-// its manifest's index names a board whose file it does not have, or where it
-// has an entity's ID twice.
+// its manifest's index names a board whose file it does not have, or where
+// what it reads has an entity's ID twice. It checks nothing of what it does
+// not read: a file, a node, or a connection that it skips, and of a board's
+// file anything but its nodes and connections, the board's own fields being
+// its manifest's.
 func Compare(from, to map[string][]byte) (*Diff, error) {
 	d, err := compareFiles(from, to)
 	if err != nil {

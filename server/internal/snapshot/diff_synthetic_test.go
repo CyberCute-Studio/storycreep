@@ -38,7 +38,8 @@ func TestDiffAtTheServersVersion(t *testing.T) {
 	e.store(t, newer, v2)
 	older := e.mustPublish(t, "1.1.0")
 	e.store(t, older, e.releaseFiles(t, older))
-	// The zero UUID is the draft's.
+	// A pair whose second is the zero UUID is this test's mark of a diff into
+	// the draft, which DiffDraft makes: no ID stands for the draft.
 	for _, pair := range [][2]ids.UUID{{snapshotID(t, newer), snapshotID(t, older)},
 		{snapshotID(t, older), snapshotID(t, newer)}, {snapshotID(t, newer), {}}} {
 		var d *diff.Diff

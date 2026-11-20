@@ -380,6 +380,18 @@ var corpusSets = []corpusSet{
 		hush.(*published.Element).Title = "Hush"
 		return s
 	}},
+	// rehomed removes the empty board, and moves added's two elements and
+	// their connection, which it held, to a board that it adds, the
+	// lighthouse, as an author who splits a board or merges two does.
+	{"rehomed", func(t *testing.T, sets map[string]*snap) *snap {
+		s := of(t, sets, "added")
+		quay := s.board(t, b3)
+		s.boards = slices.DeleteFunc(s.boards, func(b *published.Board) bool { return b.Board.ID == b3 })
+		s.boards = append(s.boards, &published.Board{SchemaVersion: published.SchemaVersion,
+			Board: published.BoardInfo{ID: b4, Name: "Lighthouse", Slug: "lighthouse"},
+			Nodes: quay.Nodes, Connections: quay.Connections})
+		return s
+	}},
 	// cosmetic moves two elements on their canvas, and changes nothing else.
 	{"cosmetic", func(t *testing.T, sets map[string]*snap) *snap {
 		s := of(t, sets, "base")

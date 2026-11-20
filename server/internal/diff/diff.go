@@ -90,7 +90,7 @@ type ProjectChanges struct {
 // nodes, branch outputs, and connections.
 type BoardChanges struct {
 	Board   BoardRef       `json:"board" doc:"The board, as the to side has it, or as the from side has it for a board that the to side does not have."`
-	Change  string         `json:"change,omitempty" enum:"added,removed,modified" doc:"What happened to the board itself: added or removed, with every node, branch output, and connection of it, or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did."`
+	Change  string         `json:"change,omitempty" enum:"added,removed,modified" doc:"What happened to the board itself: added or removed, with each node, branch output, and connection of it that the other side does not have, one that it has on another board being a change of its own, a node or a connection moved; or modified, with the changes of its fields. Without it, the board itself did not change, and only what it holds did."`
 	Changes []EntityChange `json:"changes" nullable:"false" doc:"The changes of what the board holds: its nodes, then their branch outputs, then its connections, each kind sorted by ID, [] for none. A node or a connection that was added, modified, or moved is listed on the board that the to side has it on, and one that was removed on the board that the from side had it on."`
 	Fields  []FieldChange  `json:"fields,omitempty" nullable:"false" doc:"The changes of the board's fields, its entryNodeId, name, and slug, sorted by field, of a board that was modified."`
 	Omitted int            `json:"omitted" minimum:"0" doc:"How many changes of what the board holds were left out to size the diff, 0 for none."`
