@@ -51,7 +51,10 @@ Every response with a 4xx or 5xx status has the same body, the error envelope
   the language. The messages below are the English ones.
 - ` + "`details`" + ` is an object whose keys the code decides, or is absent. It
   is for programs, so the messages in it, as in ` + "`details.errors`" + `, are
-  in English.
+  in English, but for the findings of a validation report, as of
+  ` + "`publish_blocked`" + `, whose messages are in the request's language, as the
+  report's are, or in English where its catalog lacks one, the languages that
+  ` + "`Content-Language`" + ` lists after the message's.
 - ` + "`request_id`" + ` is the request's ID, which is also in the
   ` + "`X-Request-ID`" + ` response header and in every line the server logs
   about the request.

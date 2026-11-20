@@ -50,6 +50,12 @@ type serialArgs struct {
 
 func (serialArgs) Kind() string { return "test_serial" }
 
+// timeoutArgs are the arguments of a test job of a kind with a timeout of
+// its own (Timeout).
+type timeoutArgs struct{}
+
+func (timeoutArgs) Kind() string { return "test_timeout" }
+
 // testRetry is a retry policy whose waits are short enough for a test.
 var testRetry = backoff{first: 100 * time.Millisecond, max: time.Second}
 
@@ -526,9 +532,63 @@ func TestSerialJobs(t *testing.T) {
 	}
 }
 
+// TestTimeout checks that a job of a kind with a timeout of its own has that
+// long to run before its context is cancelled, and that a job of another kind
+// has a minute.
+func TestTimeout(t *testing.T) {
+	t.Parallel()
+	d := dbtest.New(t)
+	reg := NewRegistry()
+	left := make(chan time.Duration, 2)
+	until := func(ctx context.Context) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			left <- 0
+			return
+		}
+		left <- time.Until(deadline)
+	}
+	Register(reg, func(ctx context.Context, _ *Job[timeoutArgs]) error {
+		until(ctx)
+		return nil
+	})
+	Timeout(reg, timeoutArgs{}, 10*time.Minute)
+	Register(reg, func(ctx context.Context, _ *Job[recordArgs]) error {
+		until(ctx)
+		return nil
+	})
+	q, db := open(t, d, reg, true)
+	enqueue(t, q, db, timeoutArgs{}, nil)
+	if got := receive(t, left); got <= 9*time.Minute || got > 10*time.Minute {
+		t.Errorf("the job of the kind with a timeout of 10 minutes has %v left as it starts, want nearly 10 minutes",
+			got)
+	}
+	enqueue(t, q, db, recordArgs{}, nil)
+	if got := receive(t, left); got <= 0 || got > time.Minute {
+		t.Errorf("the job of a kind without a timeout has %v left as it starts, want at most a minute", got)
+	}
+}
+
 func TestRegistryPanics(t *testing.T) {
 	t.Parallel()
 	for name, f := range map[string]func(){
+		"timeout without a worker": func() { Timeout(NewRegistry(), recordArgs{}, time.Minute) },
+		"timeout twice": func() {
+			reg := NewRegistry()
+			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+			Timeout(reg, recordArgs{}, 2*time.Minute)
+			Timeout(reg, recordArgs{}, 3*time.Minute)
+		},
+		"timeout of an hour": func() {
+			reg := NewRegistry()
+			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+			Timeout(reg, recordArgs{}, time.Hour)
+		},
+		"timeout of nothing": func() {
+			reg := NewRegistry()
+			Register(reg, func(context.Context, *Job[recordArgs]) error { return nil })
+			Timeout(reg, recordArgs{}, 0)
+		},
 		"periodic without a worker": func() { Periodic(NewRegistry(), time.Minute, recordArgs{}) },
 		"periodic too often": func() {
 			reg := NewRegistry()

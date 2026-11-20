@@ -333,7 +333,8 @@ func TestMigrationLogStored(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newLogEnv(t)
-	project, snapshot := e.project(t), ids.New()
+	project := e.project(t)
+	snapshot := e.snapshot(t, project)
 	e.record(t, project, snapshot, steps)
 	got := e.log(t, project)
 	if len(got) != 1 || got[0].Snapshot != ids.Encode(ids.Snapshot, snapshot) || got[0].From != steps[0].From ||

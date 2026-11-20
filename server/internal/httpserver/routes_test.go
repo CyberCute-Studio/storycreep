@@ -58,6 +58,14 @@ var tokenRoutes = map[api.Route]scope.Scope{
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/comments/counts"}:  scope.ProjectRead,
 	// So are the members whom its comments may mention.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/members"}: scope.ProjectRead,
+	// Its snapshots are its releases: publishing one needs snapshot:write,
+	// and reading one, or the version that the next is proposed, snapshot:read,
+	// but its stored report project:read, as a failed snapshot's is of a
+	// draft that was never released.
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/snapshots"}:                         scope.SnapshotWrite,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/next-version"}:             scope.SnapshotRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}"}:            scope.SnapshotRead,
+	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/validation"}: scope.ProjectRead,
 	// So are its component types and components, which change through its
 	// commands.
 	{Method: http.MethodGet, Pattern: "/api/v1/projects/{project_id}/component-types"}:                     scope.ProjectRead,

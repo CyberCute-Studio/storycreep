@@ -850,13 +850,20 @@ var permissionMatrix = []struct {
 		},
 	},
 	{
-		// Publishing a snapshot (plan item 76) is this row's too, and
-		// publish_min_role, which TestForcedDeletionRole checks, raises its
-		// editor's ✓.
+		// Publishing a snapshot (plan item 78) is this row's, and so is
+		// forcing the deletion of a variable that the content uses
+		// (FR-VAR-04), and publish_min_role, which TestPublishRole and
+		// TestForcedDeletionRole check, raises its editor's ✓.
 		row:     "Publish a snapshot",
 		op:      authz.PublishSnapshot,
 		allowed: [5]bool{true, true, true, false, false},
 		ops: []matrixOp{
+			{name: "publish a snapshot", project: true, success: http.StatusAccepted,
+				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
+					return call(f.s.main, http.MethodPost, snapshotsPath(f.project(t, "")), jsonBody(t,
+						map[string]any{"version": "1.0.0", "note": "Harbour intro", "acknowledged_seq": 0}),
+						si.header(true))
+				}},
 			{name: "force the deletion of a variable that the content uses", project: true, success: http.StatusOK,
 				do: func(t *testing.T, f *rolesFixture, si signedIn) response {
 					p := f.project(t, "")
@@ -1163,6 +1170,7 @@ var viewerReads = map[api.Capability]bool{
 	api.ManageProjectGrants:     false,
 	api.ReadProject:             true,
 	api.ChangeProjectSettings:   false,
+	api.PublishSnapshots:        false,
 	// Listing tokens is managing them, which needs editor at least.
 	api.ManageWorkspaceTokens: false,
 	api.ManageProjectTokens:   false,
@@ -1222,22 +1230,31 @@ func sampleValue(t *testing.T, registry huma.Registry, s *huma.Schema) any {
 // admin, as the project's settings do. The upload's is a small PNG image.
 // The clipboard's routes take the IDs of the project's entities, which params
 // holds (routeParams): a copy of its node, and a report of a clipboard of
-// another node onto its board.
-var sampleBodies = map[api.Route]func(t *testing.T, params map[string]string) []byte{
+// another node onto its board. A publication's is of a version of its own,
+// greater than any before it, since a project's versions increase, which a
+// sample of the schema's pattern would not be, and acknowledges the
+// project's report as its owner reads it, every warning of it, so that the
+// publish gate lets it through.
+var sampleBodies = map[api.Route]func(t *testing.T, f *rolesFixture, params map[string]string) []byte{
+	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/snapshots"}: func(t *testing.T,
+		f *rolesFixture, params map[string]string) []byte {
+		report := validationReport(t, f.s.main, f.as["owner"], params["project_id"])
+		return publishBody(t, fmt.Sprintf("2.0.%d", fixtureVersions.Add(1)), report)
+	},
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/commands"}: func(t *testing.T,
-		_ map[string]string) []byte {
+		_ *rolesFixture, _ map[string]string) []byte {
 		return jsonBody(t, map[string]any{"commands": []any{map[string]any{"command_id": ids.New().String(),
 			"type": "project.unarchive", "payload": map[string]any{}}}})
 	},
-	{Method: http.MethodPost, Pattern: assetsPath}: func(t *testing.T, _ map[string]string) []byte {
+	{Method: http.MethodPost, Pattern: assetsPath}: func(t *testing.T, _ *rolesFixture, _ map[string]string) []byte {
 		return testPNG(t, 4, 3)
 	},
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/copy"}: func(t *testing.T,
-		params map[string]string) []byte {
+		_ *rolesFixture, params map[string]string) []byte {
 		return jsonBody(t, map[string]any{"node_ids": []string{params["node_id"]}})
 	},
 	{Method: http.MethodPost, Pattern: "/api/v1/projects/{project_id}/clipboard/resolve"}: func(t *testing.T,
-		params map[string]string) []byte {
+		_ *rolesFixture, params map[string]string) []byte {
 		return jsonBody(t, map[string]any{"board_id": params["board_id"], "clipboard": map[string]any{
 			"format": "storycreep.clipboard", "version": 1, "project_id": params["project_id"],
 			"board_id": params["board_id"], "nodes": []any{map[string]any{"id": newNodeID(), "type": "element",
@@ -1337,7 +1354,7 @@ func callsOf(t *testing.T, f *rolesFixture, params map[string]string, routes []a
 		}
 		var body []byte
 		if sample, ok := sampleBodies[r]; ok {
-			body = sample(t, params)
+			body = sample(t, f, params)
 		} else if op.RequestBody != nil {
 			mt := op.RequestBody.Content["application/json"]
 			if mt == nil || mt.Schema == nil {
@@ -1377,6 +1394,7 @@ func routeParams(t *testing.T, f *rolesFixture) map[string]string {
 		"node_id":           f.node(t, p),
 		"connection_id":     f.connection(t, p),
 		"play_state_id":     f.playState(t, p),
+		"snapshot_id":       f.snapshot(t, p),
 		"from_board_id":     f.board(t, p),
 		"to_board_id":       f.board(t, p),
 		// No account has the notification, which the routes of the

@@ -436,6 +436,29 @@ type ProjectGrant struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type Snapshot struct {
+	ID                   pgtype.UUID
+	WorkspaceID          pgtype.UUID
+	ProjectID            pgtype.UUID
+	Version              string
+	VersionMajor         int32
+	VersionMinor         int32
+	VersionPatch         int32
+	Note                 string
+	Status               string
+	FailureCode          pgtype.Text
+	AcknowledgedSeq      int64
+	AcknowledgedWarnings []byte
+	SourceSeq            pgtype.Int8
+	ValidationReport     []byte
+	SchemaVersion        pgtype.Int4
+	ContentHash          pgtype.Text
+	Counts               []byte
+	PublishedBy          pgtype.UUID
+	PublishedAt          pgtype.Timestamptz
+	BuiltAt              pgtype.Timestamptz
+}
+
 type Variable struct {
 	ID           pgtype.UUID
 	WorkspaceID  pgtype.UUID

@@ -129,6 +129,16 @@ const (
 	// of the project, its actor (FR-SNAP-01 AC6). It belongs to the
 	// project's workspace, and its subject is the project.
 	ActionProjectPublishPolicyChange Action = "project.publish_policy_change"
+	// ActionSnapshotPublish is the publication of a snapshot of a project, a
+	// release, by a member whose role the project's publish_min_role allows
+	// it, its actor (FR-SNAP-01), once the draft passed the publish gate's
+	// pre-check (FR-DEP-04). It belongs to the project's workspace, its
+	// subject is the snapshot, which is building then, and its metadata's
+	// project_id names the project and its version the version that the
+	// actor chose, a number of the grammar MAJOR.MINOR.PATCH. Whether the
+	// build made the snapshot ready or failed is the snapshot's own record,
+	// not the log's.
+	ActionSnapshotPublish Action = "snapshot.publish"
 	// ActionProjectGrantCreate is a member's new grant on a project, with the
 	// role that its metadata's role names, which replaces the member's role
 	// in the workspace on that project, by an owner or admin of the
@@ -254,6 +264,8 @@ var events = []eventSpec{
 	{action: ActionProjectPurge, inWorkspace: true, subject: "project", results: []Result{ResultSuccess}},
 	{action: ActionProjectPublishPolicyChange, inWorkspace: true, subject: "project", results: []Result{ResultSuccess},
 		metadata: []string{"publish_min_role", "previous_publish_min_role"}},
+	{action: ActionSnapshotPublish, inWorkspace: true, subject: "snapshot", results: []Result{ResultSuccess},
+		metadata: []string{"project_id", "version"}},
 	{action: ActionProjectGrantCreate, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},
 		metadata: []string{"project_id", "role"}},
 	{action: ActionProjectGrantChange, inWorkspace: true, subject: "membership", results: []Result{ResultSuccess},

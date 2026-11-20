@@ -36,6 +36,17 @@ export interface AccountBody {
   locale?: string;
 }
 
+export interface Acknowledgement {
+  /** The code of the warning (PRD FR-DEP-03), as the report's finding has it */
+  code: "port_unconnected" | "var_read_never_written" | "var_written_never_read" | "node_unreachable" | "node_empty" | "choice_duplicate_label" | "dead_end" | "board_entry_missing" | "connection_self" | "connection_parallel";
+  /** The ID of the entity that the warning is about, as the report's finding has it */
+  entity_id: string;
+  /** The field of the entity that the warning is about, as the report's finding has it, if it has one */
+  field?: string;
+  /** What else the warning names, as the report's finding has it, if it names something */
+  target?: Target;
+}
+
 export interface Asset {
   /** The size of the file as it is stored, in bytes: for an SVG, once the server has removed what it does not allow */
   bytes: number;
@@ -1740,6 +1751,16 @@ export interface End {
   site: "node" | "node_on_enter" | "node_on_exit" | "node_text" | "connection_condition" | "connection_on_traverse" | "connection_label" | "branch_output_condition";
 }
 
+export interface EntityCounts {
+  boards: number;
+  components: number;
+  connections: number;
+  /** The nodes of every type: elements, branches, and jumpers */
+  nodes: number;
+  /** The variables, global and of each board */
+  variables: number;
+}
+
 export interface EntityRevisionBody {
   /** The entity's ID, as prj_… */
   id: string;
@@ -2983,6 +3004,24 @@ export interface ProjectUpdateSettingsPayload {
   publish_min_role?: "editor" | "admin";
 }
 
+export interface Proposal {
+  /** The newest version of the project's snapshots that are building or ready, if it has any, which a new snapshot's version must be greater than */
+  latest_version?: string;
+  /** The proposed version: a patch bump of the newest version of the project's snapshots that are building or ready, or 0.1.0 for a project that has none. Its author may publish another that is greater than the newest. */
+  version: string;
+}
+
+export interface PublishInputBody {
+  /** The seq of the validation report that the author validated, GET /api/v1/projects/{project_id}/validation's, which may not be past the project's operation sequence */
+  acknowledged_seq: number;
+  /** The warnings of that report that the author acknowledged, each by its code, its entity, its field, and its target, as the report's finding has them. Publishing needs every warning of the draft that is not muted acknowledged. The snapshot keeps those that name a warning of the draft as the publish gate validates it, each once. */
+  acknowledged_warnings?: Array<Acknowledgement> | null;
+  /** The snapshot's changelog note, of 1 to 2,000 characters, not all of them blank, without white space around it, its line breaks as line feeds, which the snapshot's manifest holds too (PRD FR-SNAP-01) */
+  note: string;
+  /** The snapshot's version, MAJOR.MINOR.PATCH, each a number from 0 to 999,999,999 without a leading zero, which must be greater than every version of the project's snapshots that are building or ready. GET /api/v1/projects/{project_id}/snapshots/next-version proposes one. */
+  version: string;
+}
+
 export interface ReadAllBody {
   /** The ID of the newest notification that the client shows, as the first of the list's first page: it and every notification of the account made before it are marked read, so that one that arrived after the client read the list stays unread, but for one of another project's batch that applied before through's and committed after the list was read */
   through: string;
@@ -3337,6 +3376,37 @@ export interface SignedInBody {
   user_id: string;
 }
 
+export interface Snapshot {
+  /** The project's operation sequence of the validation report that its author acknowledged when they published it */
+  acknowledged_seq: number;
+  /** When its build ended, which a snapshot that is ready or failed has */
+  built_at?: string;
+  /** The hash of its content, which its manifest holds (PRD §7.3), the same for the same content, which a ready snapshot has */
+  content_hash?: string;
+  /** How many of each entity it holds, as its manifest counts them, which a ready snapshot has */
+  counts?: EntityCounts;
+  /** Why it failed, which a failed snapshot has, and no other: validation_failed, an error of its build's validation; validation_changed, a warning that its author did not acknowledge, of a draft that changed since the report that they acknowledged; or build_failed, a failure of the build itself */
+  failure_code?: "validation_failed" | "validation_changed" | "build_failed";
+  /** The snapshot's ID */
+  id: string;
+  /** Its changelog note, which its manifest holds too */
+  note: string;
+  /** The ID of the project that it is a snapshot of */
+  project_id: string;
+  /** When it was published, which its manifest names to the second */
+  published_at: string;
+  /** The ID of the user who published it, whom it no longer names once their account is deleted */
+  published_by?: string;
+  /** The version of the published format that its files are of, which a ready snapshot has */
+  schema_version?: number;
+  /** The project's operation sequence as of the draft that its build read, validated, and serialized, of which its stored report and its files are (PRD FR-DEP-04 AC4), which a ready snapshot has, and a failed one whose build read the draft */
+  source_seq?: number;
+  /** Where it is in its lifecycle (PRD §7.3): building until its build ends, then ready, with its files, which never change, or failed, without files, kept as the record of the attempt, whose version is free again */
+  status: "building" | "ready" | "failed";
+  /** Its version, MAJOR.MINOR.PATCH, which its author chose (PRD FR-SNAP-01): unique among the project's snapshots that are building or ready, and greater than every version of them before it */
+  version: string;
+}
+
 export interface Source {
   /** The owner's field that holds the expression: a node's on_enter or on_exit, a connection's condition or on_traverse, or a branch output's condition */
   field: "on_enter" | "on_exit" | "condition" | "on_traverse";
@@ -3514,7 +3584,7 @@ export interface UsageBody {
   nodes: MeteredUsageBody;
   /** The workspace's projects that count towards its limit: those that are neither archived nor in its trash */
   projects: LimitUsageBody;
-  /** The snapshots of the workspace's projects */
+  /** The snapshots of the workspace's projects that are building or ready; a failed one, only the record of an attempt, does not count */
   snapshots: MeteredUsageBody;
   /** The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together. */
   storage_bytes: LimitUsageBody;
@@ -4345,6 +4415,22 @@ export interface Operations {
     };
   };
   /**
+   * Propose the next snapshot's version
+   *
+   * Returns the version that the server proposes for the project's next snapshot (PRD §7.3): a patch bump of the newest version of its snapshots that are building or ready, which it names too, or 0.1.0 for a project that has none. The author may publish any version that is greater than the newest. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getNextSnapshotVersion: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+    };
+    responses: {
+      200: Proposal;
+    };
+  };
+  /**
    * Get a node
    *
    * Returns a node of the project, an element with its text. They change through the project's command endpoint, POST /api/v1/projects/{project_id}/commands, whose commands of the type node.* create, change, move, duplicate, delete, and restore them. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A node that the project does not have, or that is in its trash, itself or with its board, is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
@@ -4478,6 +4564,42 @@ export interface Operations {
     input: Record<string, never>;
     responses: {
       200: SetupBody;
+    };
+  };
+  /**
+   * Get a snapshot
+   *
+   * Returns a snapshot of the project: its version, its note, who published it and when, and where it is in its lifecycle (PRD §7.3), building until its build ends, then ready, with its content hash, its schema version, and its entity counts, or failed, with its failure_code, which a client reads to learn how a publication ended. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getSnapshot: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The snapshot's ID */
+        snapshot_id: string;
+      };
+    };
+    responses: {
+      200: Snapshot;
+    };
+  };
+  /**
+   * Get a snapshot's validation report
+   *
+   * Returns the validation report that the snapshot's build computed and stored with it (PRD FR-DEP-04 AC2): the report of the draft as of the snapshot's source_seq, as GET /api/v1/projects/{project_id}/validation reports a draft, with its messages in the request's locale, which describes exactly what the build read, and so a ready snapshot's files (AC4), or why a failed one failed. It needs the scope project:read of an API token, since a failed snapshot's report is of a draft that was never released. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). A snapshot that the project does not have is answered with 404 not_found. So is a snapshot that holds no report: one that is building still, or whose build failed before it read the draft. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope project:read, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. Requests that read share a rate limit of 1,200 a minute for each IP address, 600 for each account, and 600 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is read, and whose Retry-After header says how many seconds to wait.
+   */
+  getSnapshotValidation: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+        /** The snapshot's ID */
+        snapshot_id: string;
+      };
+    };
+    responses: {
+      200: Report;
     };
   };
   /**
@@ -5381,6 +5503,23 @@ export interface Operations {
     };
   };
   /**
+   * Publish a snapshot
+   *
+   * Publishes the project's draft as a snapshot, a release, of the version and the note that the author chose (PRD FR-SNAP-01, §7.3), and answers 202 with the snapshot, building, whose URL Location names. The publish gate first validates the draft as it is now, as GET /api/v1/projects/{project_id}/validation does (PRD FR-DEP-04): a draft with an error is answered with 409 publish_blocked, which lists the errors, and one with a warning that is neither muted nor among acknowledged_warnings with 409 warnings_unacknowledged, which lists those warnings, so that the author acknowledges them with the report's seq as acknowledged_seq. The version must be greater than every version of the project's snapshots that are building or ready, or the answer is 409 version_not_newer, with the newest; a failed snapshot's version may be published again. A job then builds the snapshot: it reads the draft as of one moment, whose seq the snapshot records as its source_seq, validates it again, which alone decides, and serializes it into the published layout, whose files it validates against the schemas of the published format. The snapshot becomes ready, and never changes again, or failed, with its failure_code: validation_failed for an error, validation_changed for a warning that was not acknowledged of a draft that changed since acknowledged_seq, or build_failed. Its build's report is stored with it either way, at GET /api/v1/projects/{project_id}/snapshots/{snapshot_id}/validation. An owner, an admin, or an editor of the project may publish, unless the project's publish_min_role is admin, which leaves editors out, and anyone else with a role on it is answered with 403 insufficient_role (PRD FR-SNAP-01 AC3). The publication is recorded in the audit log. A project that does not exist, is in the trash, or on which the signed-in user's role is none, as it is for a user who is not a member of its workspace or a guest without a grant on it, is answered with 404 not_found, so that the answer does not tell whether it exists. So is a project that the request's API token does not cover: one of another workspace, or one other than the project that the token is narrowed to (PRD FR-AUTH-04 AC3). An archived project is read-only, and the change is answered with 409 project_archived. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or an API token that holds the scope snapshot:write, or a scope that implies it, as Authorization: Bearer <token>; otherwise the answer is 401 unauthenticated, or 403 insufficient_scope for a token without the scope, each with the Bearer scheme's challenge in its WWW-Authenticate header (RFC 6750). A request made with a token does no more than the token's owner's role allows at the time. It changes something, so a request made with the session cookie also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed; a request made with a token needs none. Requests that change something share a rate limit of 600 a minute for each IP address, 300 for each account, and 300 for each API token, whose requests count against its owner's account too. The RateLimit headers say how much is left of the limit of whichever of them has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
+   */
+  publishSnapshot: {
+    input: {
+      path: {
+        /** The project's ID */
+        project_id: string;
+      };
+      body: PublishInputBody;
+    };
+    responses: {
+      202: Snapshot;
+    };
+  };
+  /**
    * Mark the signed-in account's notifications read
    *
    * Marks read the signed-in account's notifications that are unread, shown or not, in every workspace of the account, that were made at or before the notification through, by when each was made and by their IDs, as the list orders them, so that one that arrived after the client read the list stays unread. A notification is made as the batch that makes it applies, as the server's clock has it, so one of a batch of another project that applied before through's and committed only after the client read the list is made before through, and is marked read too. A through that is not one of the account's notifications, in any of its workspaces, is answered with 404 not_found, and marks nothing; one that does not decode as a notification's ID with 400 invalid_id. The centre is the account's, across every workspace that it is a member of, guests' included, and holds a notification of each comment that mentions the account (PRD FR-COMMENT-02), once, made as the comment is posted or an edit adds the mention, never by the account's own comments. A notification is shown while its comment is shown, neither deleted nor of a thread whose target is in the project's trash, while its project is not in the trash, and while the account reads the project, and comes back as it was, read or not, once all of that holds again. Each change of the account's notifications, a new one, an edit of a comment that it has one of, which changes its preview, a deletion or a restoration of such a comment, and a change of their read state, sends {"type": "notifications"} to each socket of the account's sessions of GET /api/v1/ws, which reads them again. It needs a signed-in user: the session cookie that POST /api/v1/auth/login sets, or the answer is 401 unauthenticated. It is session-only: a request made with an API token, whatever its scopes, is answered with 403 session_required (PRD FR-AUTH-04). It changes something, so it also needs the session's CSRF token in the X-CSRF-Token header, or the answer is 403 csrf_failed. Requests that change something share a rate limit of 600 a minute for each IP address, and 300 for each account. The RateLimit headers say how much is left of the limit of whichever of the two has the fewest requests left, and a request over a limit is answered with 429 rate_limited, whose details.bucket is write, and whose Retry-After header says how many seconds to wait.
@@ -5904,6 +6043,7 @@ export const routes = {
   getDependencyGraph: { method: "GET", path: "/api/v1/projects/{project_id}/dependencies" },
   getHealth: { method: "GET", path: "/healthz" },
   getInstance: { method: "GET", path: "/api/v1/instance" },
+  getNextSnapshotVersion: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/next-version" },
   getNode: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}" },
   getNodeStatistics: { method: "GET", path: "/api/v1/projects/{project_id}/nodes/{node_id}/statistics" },
   getOpenAPIDocument: { method: "GET", path: "/api/v1/openapi.json" },
@@ -5913,6 +6053,8 @@ export const routes = {
   getReadiness: { method: "GET", path: "/readyz" },
   getSession: { method: "GET", path: "/api/v1/auth/session" },
   getSetup: { method: "GET", path: "/api/v1/setup" },
+  getSnapshot: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}" },
+  getSnapshotValidation: { method: "GET", path: "/api/v1/projects/{project_id}/snapshots/{snapshot_id}/validation" },
   getVariable: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}" },
   getVersion: { method: "GET", path: "/version" },
   getWorkspace: { method: "GET", path: "/api/v1/workspaces/{workspace_id}" },
@@ -5955,6 +6097,7 @@ export const routes = {
   openRealtimeSocket: { method: "GET", path: "/api/v1/ws" },
   previewComponentRename: { method: "GET", path: "/api/v1/projects/{project_id}/components/{component_id}/rename-preview" },
   previewVariableRename: { method: "GET", path: "/api/v1/projects/{project_id}/variables/{variable_id}/rename-preview" },
+  publishSnapshot: { method: "POST", path: "/api/v1/projects/{project_id}/snapshots" },
   readAllNotifications: { method: "POST", path: "/api/v1/notifications/read-all" },
   readNotification: { method: "POST", path: "/api/v1/notifications/{notification_id}/read" },
   registerAccount: { method: "POST", path: "/api/v1/auth/register" },

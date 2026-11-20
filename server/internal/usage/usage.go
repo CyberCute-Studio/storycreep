@@ -77,8 +77,10 @@ const (
 	// each blob of its assets once, however many assets share it, but not
 	// the thumbnails that the server derives (package asset).
 	StorageBytes Key = "storage_bytes"
-	// Snapshots is how many snapshots a workspace's projects have. It is
-	// counted exactly.
+	// Snapshots is how many snapshots a workspace's projects have that are
+	// building or ready, as a failed one is only the record of an attempt
+	// (package snapshot): a publication adds one, and a build that fails
+	// takes it away. It is counted exactly.
 	Snapshots Key = "snapshots"
 	// APIRequests is how many requests the workspace's API tokens have made
 	// (plan note N31): each request that a token is accepted for adds one,

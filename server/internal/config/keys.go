@@ -552,7 +552,7 @@ var keys = []key{
 			"only to its own database: a shared login would reach all of them, and migrating one would change the " +
 			"password the others log in with. The pool parameters, such as `pool_max_conns`, configure the pool " +
 			"that serves requests. A server that runs the background jobs opens a second pool of the login for " +
-			"them, configured the same way but with at most 8 connections, whatever `pool_max_conns` says. The " +
+			"them, configured the same way but with at most 9 connections, whatever `pool_max_conns` says. The " +
 			"real-time channel's hub keeps one more connection of the login, beside the pools, from the first " +
 			"subscription of one of the server's WebSockets on, which `LISTEN`s for the batches of commands that " +
 			"commit (PRD ADR-005), so a connection pooler between the server and PostgreSQL must run in session " +

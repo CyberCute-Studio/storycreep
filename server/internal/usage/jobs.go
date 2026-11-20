@@ -102,6 +102,7 @@ var drifts = map[Key]func(q *queries.Queries, ctx context.Context, workspaceID p
 	Nodes:        (*queries.Queries).NodeDrift,
 	Members:      (*queries.Queries).MemberDrift,
 	StorageBytes: (*queries.Queries).StorageDrift,
+	Snapshots:    (*queries.Queries).SnapshotDrift,
 }
 
 // Reconcile corrects every workspace's usage of each key that a recount can

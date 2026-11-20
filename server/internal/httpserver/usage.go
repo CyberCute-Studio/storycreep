@@ -36,7 +36,7 @@ type usageBody struct {
 	Nodes        meteredUsageBody `json:"nodes" doc:"The nodes of the workspace's projects"`
 	Members      limitUsageBody   `json:"members" doc:"The workspace's members, guests included"`
 	StorageBytes limitUsageBody   `json:"storage_bytes" doc:"The bytes that the workspace's stored files take up. Uploads that run at once may take it past its limit by what they add together."`
-	Snapshots    meteredUsageBody `json:"snapshots" doc:"The snapshots of the workspace's projects"`
+	Snapshots    meteredUsageBody `json:"snapshots" doc:"The snapshots of the workspace's projects that are building or ready; a failed one, only the record of an attempt, does not count"`
 	APIRequests  meteredUsageBody `json:"api_requests" doc:"The requests that the workspace's API tokens have made: each that a token was accepted for, whatever its answer then; a request that a token is refused for, as one without the route's scope, is not counted"`
 }
 

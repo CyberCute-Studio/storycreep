@@ -3,10 +3,14 @@ package schemaversion_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/CyberCute-Studio/storycreep/server/internal/database"
 	"github.com/CyberCute-Studio/storycreep/server/internal/database/dbtest"
@@ -54,6 +58,24 @@ func (e *logEnv) project(t *testing.T) ids.UUID {
 	}
 	return id
 }
+
+// snapshot adds a snapshot of the project, building, and returns its ID,
+// which a step of the log is of (migration 00035).
+func (e *logEnv) snapshot(t *testing.T, project ids.UUID) ids.UUID {
+	t.Helper()
+	id, patch := ids.New(), snapshotPatch.Add(1)
+	if _, err := e.admin.Exec(context.Background(), "INSERT INTO snapshot (id, workspace_id, project_id, version, "+
+		"version_major, version_minor, version_patch, note, acknowledged_seq, acknowledged_warnings) "+
+		"VALUES ($1, $2, $3, $4, 1, 0, $5, 'Harbour intro', 0, '[]')", id, e.workspace, project,
+		fmt.Sprintf("1.0.%d", patch), patch); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// snapshotPatch numbers the versions of the tests' snapshots, which are
+// unique within a project.
+var snapshotPatch atomic.Int32
 
 // record logs steps of the snapshot of the project, in a transaction of the
 // workspace, or fails the test.
@@ -119,7 +141,8 @@ func sameJSONValue(t *testing.T, a, b json.RawMessage) bool {
 // its project's migration log, with what it reported, a changed value and a
 // dropped one, or nothing, which Log reads back, by the snapshots' IDs; that
 // a later run of a step that the log holds already replaces its report; that
-// a project's log is its own; and that the log is deleted with its project.
+// a project's log is its own, of its own snapshots, which the database holds
+// to as well; and that the log is deleted with its project.
 //
 // Verifies: FR-DATA-03/AC2
 func TestLog(t *testing.T) {
@@ -127,7 +150,7 @@ func TestLog(t *testing.T) {
 	ctx := context.Background()
 	e := newLogEnv(t)
 	project, other := e.project(t), e.project(t)
-	first, second := ids.New(), ids.New()
+	first, second := e.snapshot(t, project), e.snapshot(t, project)
 	if second.String() < first.String() {
 		first, second = second, first
 	}
@@ -159,6 +182,22 @@ func TestLog(t *testing.T) {
 	}
 	if got := e.log(t, other); len(got) != 0 {
 		t.Errorf("another project's log holds %+v; want none", got)
+	}
+	// A step of a snapshot of another project of the workspace is refused.
+	err := e.db.InTx(ctx, database.Scope{WorkspaceID: e.workspace, UserID: e.member}, func(tx pgx.Tx) error {
+		return schemaversion.Record(ctx, tx, e.workspace, other, first, []schemaversion.Step{{From: 1, To: 2}})
+	})
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
+		t.Errorf("a step of another project's snapshot is logged with %v; want refused by the foreign key", err)
+	}
+	// A snapshot's steps are deleted with it, as by the cascade of its
+	// project's purge.
+	if _, err := e.admin.Exec(ctx, "DELETE FROM snapshot WHERE id = $1", second); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.log(t, project); len(got) != 1 || got[0].Snapshot != ids.Encode(ids.Snapshot, first) {
+		t.Errorf("once a snapshot is deleted, the log holds %+v; want the other snapshot's step alone", got)
 	}
 	if _, err := e.admin.Exec(ctx, "DELETE FROM project WHERE id = $1", project); err != nil {
 		t.Fatal(err)

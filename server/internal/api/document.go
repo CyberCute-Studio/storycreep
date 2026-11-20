@@ -100,7 +100,9 @@ func (m *Mux) errorResponse() *huma.Response {
 		Description: "An error, in the error envelope; docs/error-codes.md lists the codes",
 		Headers: map[string]*huma.Header{
 			"Content-Language": {Schema: &huma.Schema{Type: huma.TypeString,
-				Description: "The language of the envelope's message, as a BCP 47 tag, such as en"}},
+				Description: "The language of the envelope's message, as a BCP 47 tag, such as en, and then " +
+					"those of the messages that its details hold, as the findings of 409 publish_blocked, where " +
+					"they are in another, as English is for a message that the locale's catalog lacks"}},
 			WWWAuthenticateHeader: {Schema: &huma.Schema{Type: huma.TypeString,
 				Description: "The challenge of the Bearer scheme (RFC 6750 §3): with 401 unauthenticated from a " +
 					"route that takes an API token, and to a request whose API token is not valid, with " +

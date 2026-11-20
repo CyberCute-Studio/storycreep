@@ -39,6 +39,7 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/schemaversion"
 	"github.com/CyberCute-Studio/storycreep/server/internal/search"
 	"github.com/CyberCute-Studio/storycreep/server/internal/setup"
+	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
 	"github.com/CyberCute-Studio/storycreep/server/internal/statistics"
 	"github.com/CyberCute-Studio/storycreep/server/internal/trash"
 	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
@@ -95,6 +96,9 @@ type server struct {
 	// validation validates the projects' drafts, whose mutes their commands
 	// change (package validation).
 	validation *validation.Service
+	// snapshots publishes the projects' drafts as snapshots, builds them, and
+	// reads them (package snapshot).
+	snapshots *snapshot.Service
 	// search searches the projects' content, from the index that their
 	// commands keep (package search).
 	search *search.Service
@@ -197,6 +201,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	s.connections = connection.New(readyDB{s.ready}, connection.Options{Projects: s.projects})
 	s.dependencies = dependency.New(readyDB{s.ready}, dependency.Options{Projects: s.projects})
 	s.validation = validation.New(readyDB{s.ready}, validation.Options{Projects: s.projects})
+	s.snapshots = snapshot.New(readyDB{s.ready}, snapshot.Options{Projects: s.projects, Queue: s.queue, Log: log})
 	s.search = search.New(readyDB{s.ready}, search.Options{Projects: s.projects})
 	s.statistics = statistics.New(readyDB{s.ready}, statistics.Options{Projects: s.projects})
 	s.clipboard = clipboard.New(readyDB{s.ready}, clipboard.Options{Projects: s.projects})
@@ -293,6 +298,7 @@ func newServer(cfg *config.Config, log *slog.Logger) *server {
 	registerConnections(s.main, s.connections)
 	registerDependencies(s.main, s.dependencies)
 	registerValidation(s.main, s.validation)
+	registerSnapshots(s.main, s.snapshots)
 	registerSearch(s.main, s.search)
 	registerStatistics(s.main, s.statistics)
 	registerClipboard(s.main, s.clipboard)

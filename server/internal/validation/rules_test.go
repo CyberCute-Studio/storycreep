@@ -539,11 +539,14 @@ func TestMutable(t *testing.T) {
 // the code of validation.mute's and validation.unmute's payloads those that
 // a mute may silence, of any kind of entity (Mutable).
 func TestCodeEnums(t *testing.T) {
-	var all, mutable []string
+	var all, mutable, warnings []string
 	for _, r := range Rules() {
 		all = append(all, string(r.Code))
 		if r.Mutable() {
 			mutable = append(mutable, string(r.Code))
+		}
+		if r.Severity == Warning {
+			warnings = append(warnings, string(r.Code))
 		}
 	}
 	for _, tt := range []struct {
@@ -553,6 +556,7 @@ func TestCodeEnums(t *testing.T) {
 		{reflect.TypeFor[Finding](), all},
 		{reflect.TypeFor[mutePayload](), mutable},
 		{reflect.TypeFor[unmutePayload](), mutable},
+		{reflect.TypeFor[Acknowledgement](), warnings},
 	} {
 		f, ok := tt.schema.FieldByName("Code")
 		if !ok {

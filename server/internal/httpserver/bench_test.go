@@ -19,6 +19,8 @@ import (
 	"github.com/CyberCute-Studio/storycreep/server/internal/ids"
 	"github.com/CyberCute-Studio/storycreep/server/internal/node"
 	"github.com/CyberCute-Studio/storycreep/server/internal/ratelimit"
+	"github.com/CyberCute-Studio/storycreep/server/internal/snapshot"
+	"github.com/CyberCute-Studio/storycreep/server/internal/validation"
 	"github.com/CyberCute-Studio/storycreep/server/internal/variable"
 )
 
@@ -232,6 +234,88 @@ func BenchmarkValidation(b *testing.B) {
 	b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
 	if p95 >= validationTarget {
 		b.Errorf("the p95 of the validation is %v, want under %v (NFR-PERF-10, FR-DEP-03 AC2)", p95, validationTarget)
+	}
+}
+
+// snapshotBuildTarget is NFR-PERF-12's target, the build of a snapshot of
+// the large fixture's project, server-side.
+const snapshotBuildTarget = 20 * time.Second
+
+// snapshotBuilds is how many builds BenchmarkSnapshotBuild times, whatever
+// -benchtime asks: a build of large takes seconds, so the 300 iterations of
+// CI's benchmark job would take over 20 minutes, past the ten that a run of
+// every benchmark has, while ten builds take about a minute.
+const snapshotBuilds = 10
+
+// BenchmarkSnapshotBuild times the build of a snapshot of the large
+// fixture's project, as its job builds it: the read of the draft, its
+// validation, its serialization, the validation of its files against the
+// published format's schemas, and their storage. The owner publishes each
+// snapshot first through the API, as a client publishes it, acknowledging
+// the report's warnings, which the timed build leaves out, and the build
+// must make it ready. It builds snapshotBuilds snapshots, or fewer if the
+// loop ends first, and the loop's later iterations do nothing, so it reports
+// the mean of the builds as its ns/op, which would otherwise be their total
+// spread over every iteration.
+//
+// Verifies: NFR-PERF-12
+func BenchmarkSnapshotBuild(b *testing.B) {
+	bs := newBenchServer(b, fixture.Large)
+	ctx := context.Background()
+	res := send(bs.s.main, http.MethodGet, projectPath(bs.project), nil, "", bs.header)
+	var p struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &p) != nil {
+		b.Fatalf("the project: %d %s", res.status, res.body)
+	}
+	ws, err := ids.Decode(ids.Workspace, p.WorkspaceID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	res = send(bs.s.main, http.MethodGet, validationPath(bs.project), nil, "", bs.header)
+	var report validation.Report
+	if res.status != http.StatusOK || json.Unmarshal(res.body, &report) != nil {
+		b.Fatalf("the report: %d %s", res.status, res.body)
+	}
+	var took []time.Duration
+	version := 0
+	for b.Loop() {
+		if len(took) == snapshotBuilds {
+			continue
+		}
+		version++
+		res := send(bs.s.main, http.MethodPost, snapshotsPath(bs.project),
+			publishBody(b, "1.0."+strconv.Itoa(version), report), "", bs.header)
+		var published snapshot.Snapshot
+		if res.status != http.StatusAccepted || json.Unmarshal(res.body, &published) != nil {
+			b.Fatalf("the publication: %d %s", res.status, res.body)
+		}
+		id, err := ids.Decode(ids.Snapshot, published.ID)
+		if err != nil {
+			b.Fatal(err)
+		}
+		start := time.Now()
+		if err := bs.s.snapshots.Build(ctx, ws, id); err != nil {
+			b.Fatal(err)
+		}
+		took = append(took, time.Since(start))
+		res = send(bs.s.main, http.MethodGet, snapshotsPath(bs.project)+"/"+published.ID, nil, "", bs.header)
+		var built snapshot.Snapshot
+		if res.status != http.StatusOK || json.Unmarshal(res.body, &built) != nil || built.Status != snapshot.Ready {
+			b.Fatalf("the built snapshot: %d %s, want ready", res.status, res.body)
+		}
+	}
+	var total time.Duration
+	for _, d := range took {
+		total += d
+	}
+	b.ReportMetric(float64(total)/float64(len(took)), "ns/op")
+	p95 := percentile(took, 95)
+	b.ReportMetric(float64(p95)/float64(time.Millisecond), "p95-ms")
+	b.Logf("timed %d builds", len(took))
+	if p95 >= snapshotBuildTarget {
+		b.Errorf("NFR-PERF-12: the p95 of the build is %v, want under %v", p95, snapshotBuildTarget)
 	}
 }
 

@@ -412,14 +412,36 @@ var Tables = []Table{
 			"kind) VALUES ($1, $2, $3, $4, $5, $6, 'mention')",
 			[]any{id, w.ID, w.Rows["project"], user, w.Rows["comment"], w.UserID}}, nil
 	}},
-	{Name: "schema_migration_log", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+	{Name: "snapshot", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
+		// A snapshot of the workspace's project, building, of a version of its
+		// own, since a project's versions are unique.
+		id, patch := ids.New(), versionPatch()
+		return Statement{id, snapshotInsert, []any{id, w.ID, w.Rows["project"], patch}}, nil
+	}},
+	{Name: "snapshot_file", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
+		// A file of a snapshot of the workspace's project of its own, building,
+		// to which alone a file is added.
+		snapshot, err := NewSnapshot(ctx, admin, w)
+		if err != nil {
+			return Statement{}, err
+		}
+		id := ids.New()
+		return Statement{id, "INSERT INTO snapshot_file (id, workspace_id, snapshot_id, path, sha256, bytes) " +
+			"VALUES ($1, $2, $3, 'storycreep.json', 'sha256:' || repeat('0', 64), '\\x7b7d')",
+			[]any{id, w.ID, snapshot}}, nil
+	}},
+	{Name: "schema_migration_log", Insert: func(ctx context.Context, admin Querier, w *Workspace) (Statement, error) {
 		// A step of the migration of a snapshot of the workspace's project of
 		// its own, since a snapshot's step from a version is logged once.
+		snapshot, err := NewSnapshot(ctx, admin, w)
+		if err != nil {
+			return Statement{}, err
+		}
 		id := ids.New()
 		return Statement{id, "INSERT INTO schema_migration_log (id, workspace_id, project_id, snapshot_id, " +
 			`from_version, to_version, entries) VALUES ($1, $2, $3, $4, 1, 2, '[{"after": {"x": 0, "y": 0}, ` +
 			`"before": {"x": 0.13, "y": -0.05}, "field": "position", "file": "boards/harbour-intro.json"}]')`,
-			[]any{id, w.ID, w.Rows["project"], ids.New()}}, nil
+			[]any{id, w.ID, w.Rows["project"], snapshot}}, nil
 	}},
 	{Name: "usage_counter", Insert: func(_ context.Context, _ Querier, w *Workspace) (Statement, error) {
 		// A workspace has one counter of a key.
@@ -468,6 +490,30 @@ func TokenHash() []byte {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return b
+}
+
+// snapshotInsert adds a snapshot, building, of the workspace $2's project
+// $3, of the version 1.0.$4, with the ID $1.
+const snapshotInsert = "INSERT INTO snapshot (id, workspace_id, project_id, version, version_major, version_minor, " +
+	"version_patch, note, acknowledged_seq, acknowledged_warnings) " +
+	"VALUES ($1, $2, $3, '1.0.' || $4::integer, 1, 0, $4, 'Harbour intro', 0, '[]')"
+
+// versionPatch returns a random patch number of a version, as a snapshot of
+// a project of its own needs.
+func versionPatch() int32 {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return int32(binary.BigEndian.Uint32(b[:]) % 999_999_999)
+}
+
+// NewSnapshot adds a snapshot, building, of the workspace w's project through
+// q, of a version of its own, and returns its ID.
+func NewSnapshot(ctx context.Context, q Querier, w *Workspace) (ids.UUID, error) {
+	id := ids.New()
+	if _, err := q.Exec(ctx, snapshotInsert, id, w.ID, w.Rows["project"], versionPatch()); err != nil {
+		return ids.UUID{}, fmt.Errorf("add a snapshot: %w", err)
+	}
+	return id, nil
 }
 
 // NewUser adds a user through q, and returns its ID.
